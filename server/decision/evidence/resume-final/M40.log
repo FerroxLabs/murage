@@ -1,0 +1,37 @@
+COMMAND node_modules/.bin/vitest run server/decision/seam.test.ts -t M40
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/seam.test.ts > M40 invalid JSON on ordinary rows is admitted without parsing; permission erasure aborts
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/seam.test.ts (5 tests | 1 failed | 3 skipped) 563ms
+   ↓ A1 R2 M10 M11 M12 M15 M17 refuse unregistered final rows through real Store and raw SQL
+   ↓ A1 M14 M16 action identity and unknown payload fields cannot change; terminal patches emitted
+   ↓ A1 M18 emit-only forged permission patch is dropped; credentials cannot carry cards
+   ✓ M40 invalid JSON on ordinary rows is admitted without parsing; permission erasure aborts  319ms
+   × M40 malformed options JSON is inert and can be repaired without a JSON parser error 241ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed | 3 skipped (5)
+   Start at  08:18:11
+   Duration  4.98s (transform 3.44s, setup 4.10s, import 210ms, tests 563ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/seam.test.ts > M40 malformed options JSON is inert and can be repaired without a JSON parser error
+Error: malformed JSON
+ ❯ StatementSync.instrumentedStatement [as run] server/io-budget.ts:615:26
+    613|         let failed: unknown;
+    614|         try {
+    615|           const result = original(...args);
+       |                          ^
+    616|           if (writes) {
+    617|             transactionSource = budget.currentSource() ?? key;
+ ❯ server/decision/seam.test.ts:33:109
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

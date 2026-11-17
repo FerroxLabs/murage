@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createComposioLifecycle } from "./composio-lifecycle.mjs";
 import { brokerTokenFingerprint } from "./flux-composio-token.mjs";
 import { EventEmitter } from "node:events";
 
@@ -20,11 +21,17 @@ import {
   createTokenRejectionHandler,
   EVICTION_CODES,
   LIFECYCLE_INTERVAL_MS,
+  LIFECYCLE_RATE_LIMIT_BACKOFF_MS,
+  ONLINE_RETURN_MIN_GAP_MS,
   lifecycleDelay,
   shouldRunLifecycleNow,
   TOKEN_TAKEN_OVER,
   TRANSIENT_BACKOFF_MS,
 } from "./composio-lifecycle-policy.mjs";
+
+// MAIN RULING 1115-COMPOSIO-429-REVIEW: pin the jitter source; all existing delay assertions remain exact.
+beforeEach(() => { vi.spyOn(Math, "random").mockReturnValue(1); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 const TOKEN = "a".repeat(64);
 const OTHER = "b".repeat(64);
@@ -355,20 +362,104 @@ describe("the lifecycle scheduler", () => {
   });
 });
 
-// main.mjs is too large to run in a test, so only the wiring is pinned by
-// shape; the behaviour it wires (queue, scheduler, handler) is tested above.
+// Execute the factory used by desktop main, including its private queue and custody.
 describe("what main.mjs wires", () => {
   const main = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "main.mjs"), "utf8");
+  function productionFixture(saved = true) {
+    let credentials = { fluxApiKey: "sk-flux-fixture-owner", fluxComposioBrokerToken: TOKEN };
+    const events = [];
+    const transport = vi.fn(async (url, init) => {
+      if (url.endsWith("/v1/tokens")) {
+        events.push("mint");
+        return Response.json({ token: OTHER, expiresAt: new Date(Date.now() + 30 * 86400_000).toISOString() });
+      }
+      events.push(`revoke:${new Headers(init.headers).get("authorization").slice(7)}`);
+      return new Response(null, { status: 200 });
+    });
+    let rows = [];
+    const authority = createComposioLifecycle({
+      getConfiguration: () => ({ fluxBrokerUrl: "https://broker.example.test", prepareLegacy: false }),
+      getCredentials: () => credentials,
+      saveCredentials: async next => { events.push("save"); if (saved) credentials = next; return saved; },
+      transport, store: { load: () => rows, save: next => { rows = structuredClone(next); } },
+    });
+    return { authority, events, transport, credentials: () => credentials };
+  }
 
-  it("uses the tested queue, scheduler and rejection handler", () => {
-    expect(main).toMatch(/const runComposioLifecycle = createLifecycleQueue\(runComposioLifecyclePass\)/);
-    expect(main).toMatch(/createLifecycleScheduler\(\{\s+net,\s+powerMonitor,/);
-    expect(main).toMatch(/composioScheduler\.afterPass\(\{\s+rateLimited,\s+transient: transient/);
-    expect(main).toMatch(/murage:flux-composio-token-rejected[\s\S]{0,500}composioTokenRejections\.onRejected/);
-    expect(main).not.toMatch(/runComposioLifecycle\(\{ force: true \}\)/);
+  it("uses the tested queue, scheduler and rejection handler", async () => {
+    vi.useFakeTimers();
+    const f = productionFixture(), powerMonitor = new EventEmitter();
+    const run = vi.fn(options => f.authority.request({ operation: "reconnect", ...options }));
+    const scheduler = createLifecycleScheduler({ net: { isOnline: () => true }, powerMonitor, run });
+    const handler = createTokenRejectionHandler({ getCredentials: f.credentials, markTakenOver: vi.fn(),
+      remint: fp => run({ force: true, rejectedTokenFingerprint: fp }) });
+    try {
+      expect(main).toContain("composioAuthority = createComposioLifecycle({"); // MAIN RULING 1115-COMPOSIO-A1
+      const a = f.authority.request({ operation: "reconnect" });
+      const b = f.authority.request({ operation: "reconnect" });
+      expect(a).toBe(b); // MAIN RULING 1115-COMPOSIO-A1: production queue coalesces.
+      await Promise.all([a, b]);
+      expect(f.events.filter(event => event === "mint")).toHaveLength(1); // MAIN RULING 1115-COMPOSIO-A1
+      scheduler.start(); powerMonitor.emit("resume");
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(run).toHaveBeenCalledTimes(1); // MAIN RULING 1115-COMPOSIO-A1: scheduler reaches the factory.
+      await handler.onRejected(rejection(OTHER));
+      expect(run).toHaveBeenCalledTimes(2); // MAIN RULING 1115-COMPOSIO-A1: rejection reaches the factory.
+      expect(run).toHaveBeenLastCalledWith({ force: true, rejectedTokenFingerprint: brokerTokenFingerprint(OTHER) }); // MAIN RULING 1115-COMPOSIO-A1
+      expect(f.events.filter(event => event === "mint")).toHaveLength(3); // MAIN RULING 1115-COMPOSIO-A1
+      expect(main).toMatch(/murage:flux-composio-token-rejected[\s\S]{0,500}composioTokenRejections\.onRejected/);
+    } finally { scheduler.stop(); f.authority.dispose(); vi.useRealTimers(); }
   });
 
-  it("revokes a replaced token only after the new document is saved", () => {
-    expect(main).toMatch(/updateSecureCredentialDocument[\s\S]{0,900}saved \? entry\.previous : entry\.minted/);
+  it.each([true, false])("revokes the correct token after the save attempt (saved=%s)", async saved => {
+    const f = productionFixture(saved);
+    try {
+      await f.authority.request({ operation: "reconnect" });
+      expect(f.events).toEqual(["mint", "save", `revoke:${saved ? TOKEN : OTHER}`]); // MAIN RULING 1115-COMPOSIO-A1
+      expect(f.credentials().fluxComposioBrokerToken).toBe(saved ? OTHER : TOKEN); // MAIN RULING 1115-COMPOSIO-A1
+    } finally { f.authority.dispose(); }
+  });
+});
+
+describe("a flapping network adapter (Windows) never multiplies passes", () => {
+  function flapSetup() {
+    const powerMonitor = new EventEmitter();
+    const network = { online: true, isOnline: () => network.online };
+    const run = vi.fn(async () => {});
+    const scheduler = createLifecycleScheduler({ net: network, powerMonitor, run, now: () => Date.now() });
+    return { network, run, scheduler };
+  }
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("does not run on a network return inside a rate-limit backoff", async () => {
+    const { network, run, scheduler } = flapSetup();
+    scheduler.start();
+    scheduler.afterPass({ rateLimited: true });
+    // ten minutes of offline/online flapping every tick
+    for (let tick = 0; tick < 120; tick++) {
+      network.online = tick % 2 === 1;
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(LIFECYCLE_RATE_LIMIT_BACKOFF_MS).toBe(60 * 60_000);
+  });
+
+  it("runs on a network return at most once per minimum gap", async () => {
+    const { network, run, scheduler } = flapSetup();
+    scheduler.start();
+    scheduler.afterPass({ transient: true });
+    // ten minutes of flapping: with the old rule this was one pass per return (60)
+    for (let tick = 0; tick < 120; tick++) {
+      network.online = tick % 2 === 1;
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    expect(run.mock.calls.length).toBeGreaterThan(0);
+    expect(run.mock.calls.length).toBeLessThanOrEqual(Math.ceil(10 * 60_000 / ONLINE_RETURN_MIN_GAP_MS) + 1);
+  });
+
+  it("holdUntil blocks a return and a past one does not", () => {
+    expect(shouldRunLifecycleNow({ now: 100, nextAt: 10_000_000, online: true, wasOnline: false, holdUntil: 500 })).toBe(false);
+    expect(shouldRunLifecycleNow({ now: 600, nextAt: 10_000_000, online: true, wasOnline: false, holdUntil: 500 })).toBe(true);
   });
 });

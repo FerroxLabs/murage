@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "ae650cd69e2129057ae07565e205a1274674a005",
+  "date": "2026-11-15",
+  "base": "7ed777368bf7c1c63db51363c159e19e14df7825",
+  "scope": "1115-COPY-LEDGER-REVIEW: retained accepted verdicts, corrected last-changing locale-line author",
+  "strings": {
+    "en:sendNotice.toolTurnRefused": {
+      "text": "I couldn't use that tool on this turn, so I stopped here. Your next message will work as usual.",
+      "en": "I couldn't use that tool on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "en:sendNotice.stepTurnRefused": {
+      "text": "I couldn't use that step on this turn, so I stopped here. Your next message will work as usual.",
+      "en": "I couldn't use that step on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    }
+  },
+  "files": {}
+}

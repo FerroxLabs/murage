@@ -16,6 +16,7 @@ export interface MemoryCorrectionReview {
 }
 export interface MemoryInspection {
   record: MemoryRecord;
+  incomplete?: boolean;
   evidence: Array<{ sourceId: string; revision: number; startByte: number; endByte: number; text: string; path?: string; hash: string; speaker: string }>;
   lineage: Array<{ id: string; version: number }>;
   correction?: MemoryCorrectionReview | null;
@@ -78,6 +79,7 @@ export function MemoryReview({ inspection, audiences, busy = false, onAction, on
     {record.state === "candidate" && record.reviewReason && <p className="text-[12px] text-ink-secondary">{record.reviewReason}</p>}
     <div className="space-y-2">
       <h4 className="text-[13px] font-medium">{t("memoryReview.sources")}</h4>
+      {inspection.incomplete && <p role="status" className="text-[12px] text-ink-secondary">Only part of this memory's sources and history is shown.</p>}
       {!evidence.length && <p className="text-[12px] text-ink-secondary">{t("memoryReview.noSources")}</p>}
       {evidence.map(source => <Disclosure key={`${source.sourceId}:${source.revision}:${source.startByte}`} label={<span className="break-words font-normal">{source.path ?? t("memoryReview.conversation")} · {speakerLabel(source.speaker)}</span>}>
         <p className="mt-2 whitespace-pre-wrap break-words text-[13px]">{source.text}</p>

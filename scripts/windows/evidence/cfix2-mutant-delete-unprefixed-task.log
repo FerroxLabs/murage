@@ -1,0 +1,6 @@
+PASS new prefixed task cleaned; preexisting prefixed task preserved
+[31;1mException: [0m/work/scripts/windows/ownership-check.ps1:7[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m   7 | [0m … ,[string]$Name) {if(-not $Condition){[36;1mthrow "ASSERTION: $Name"[0m};"PASS  …[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                        ~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mASSERTION: unprefixed new task FAIL and never deleted[0m

@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Read a CLI's own JSON config before Murage merges an entry into it.
 //
 // A config file that exists but cannot be read or parsed is the user's data,
@@ -116,7 +117,7 @@ function looksLikeJsonc(text: string): boolean {
   const stripped = stripJsoncSyntax(text);
   if (stripped === text) return false;
   try {
-    JSON.parse(stripped);
+    registerBusyloopPayloadSite("read", JSON.parse(stripped));
     return true;
   } catch {
     return false;
@@ -129,7 +130,7 @@ export function parseNativeJsonConfig(text: string, displayPath: string): Record
   if (!text.trim()) return {};
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = registerBusyloopPayloadSite("read", JSON.parse(text));
   } catch {
     throw new NativeConfigRefusal(displayPath, looksLikeJsonc(text) ? "comments" : "invalid-json");
   }

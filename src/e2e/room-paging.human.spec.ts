@@ -10,7 +10,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -60,7 +60,7 @@ const mounted = (page: Page) =>
   }, ids);
 
 test("an earlier page keeps the message still when the speaker's name leaves its row", async ({ page }, info) => {
-  await page.addInitScript(() => localStorage.setItem("murage-email-gate", "skipped"));
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   const sidebar = await openSidebar(page);
   await sidebar.getByText(ROOM, { exact: true }).click();

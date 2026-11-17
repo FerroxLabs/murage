@@ -1,0 +1,64 @@
+it-remote: afix-bld-hl-userscreate on murage-vt3 (load here 18)
+PASS starting-commit RED: two collected behavioral assertion failures
+
+ RUN  v4.1.12 /work
+
+stdout | server/highlevel/users-create-host.test.ts > R1/R2 real host opens one exact ordinary review then sends one journaled complete POST
+outside: first-mark thread=thread_1 source=email site=unlabelled
+
+stdout | server/highlevel/users-create-host.test.ts > R10 leak guard v2 intercepts actual process output and host callbacks across restart
+[synthetic positive-control output removed]
+
+ ❯ server/highlevel/users-create-host.test.ts (20 tests | 1 failed) 326ms
+   ✓ R1/R2 real host opens one exact ordinary review then sends one journaled complete POST 61ms
+   ✓ R3 unproven desktop owner is refused before inventory, review or provider dispatch 7ms
+   ✓ R2 foreign user authority refuses before inventory: {"companyId":"foreign"} 7ms
+   ✓ R2 foreign user authority refuses before inventory: {"locationIds":["foreign"]} 7ms
+   ✓ R2 foreign user authority refuses before inventory: {"type":"agency"} 6ms
+   ✓ R9 inventory blocks existing before review or POST 9ms
+   ✓ R9 inventory blocks partial before review or POST 8ms
+   ✓ R9 inventory blocks foreign before review or POST 8ms
+   ✓ R9 inventory blocks duplicate before review or POST 8ms
+   ✓ R8/R9 new RPC after uncertain dispatch keeps the identity barrier even when inventory is empty 19ms
+   ✓ R8/R9 restart after interrupted settlement performs one read and zero resends: complete 27ms
+   ✓ R8/R9 restart after interrupted settlement performs one read and zero resends: empty 22ms
+   ✓ R8/R9 restart after interrupted settlement performs one read and zero resends: partial 22ms
+   ✓ R8/R9 restart after interrupted settlement performs one read and zero resends: contradictory 23ms
+   ✓ R8 two distinct action IDs racing for the same normalized identity have one POST owner 19ms
+   × R10 leak guard v2 intercepts actual process output and host callbacks across restart 8ms
+   ✓ recipient flag defaults false and refuses all creates before inventory or approval 6ms
+   ✓ recipient flag and owner are rechecked after approval before private generation 14ms
+   ✓ restart reconciliation remains read-only when recipient creation flag is disabled 23ms
+   ✓ ordinary users.create card requires authenticated desktop fact and the exact rendered review digest 19ms
+stdout | server/highlevel/users-create-starting.test.ts > starting RED: exact ordinary approval creates privately without desktop completion
+outside: first-mark thread=thread_1 source=email site=unlabelled
+
+ ✓ server/highlevel/users-create-starting.test.ts (2 tests) 64ms
+ ✓ scripts/highlevel-userscreate-red-verdict.test.mjs (1 test) 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/highlevel/users-create-host.test.ts > R10 leak guard v2 intercepts actual process output and host callbacks across restart
+AssertionError: expected [Function] to throw an error
+
+- Expected:
+null
+
++ Received:
+undefined
+
+ ❯ server/highlevel/users-create-host.test.ts:166:45
+    164|     // Positive controls go through the real writers, including split …
+    165|     console.log(Buffer.from(password).toString('base64'));
+    166|     expect(() => output.assertClean(guard)).toThrow('A secret reached …
+       |                                             ^
+    167|     output.restore();
+    168|     const control = captureUserCreateOutput();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 22 passed (23)
+   Start at  12:36:23
+   Duration  6.87s (transform 3.63s, setup 5.31s, import 814ms, tests 397ms, environment 0ms)

@@ -11,17 +11,35 @@ export const LIFECYCLE_RATE_LIMIT_BACKOFF_MS = 60 * 60_000;
 export const TRANSIENT_BACKOFF_MS = Object.freeze([15_000, 30_000, 60_000, 120_000, 300_000]);
 
 /** Milliseconds until the next lifecycle pass. */
-export function lifecycleDelay({ transientFailures = 0, rateLimited = false } = {}) {
-  if (rateLimited) return LIFECYCLE_RATE_LIMIT_BACKOFF_MS;
-  if (transientFailures <= 0) return LIFECYCLE_INTERVAL_MS;
-  return TRANSIENT_BACKOFF_MS[Math.min(transientFailures, TRANSIENT_BACKOFF_MS.length) - 1];
+export function lifecycleDelay({ transientFailures = 0, rateLimited = false, rateLimitFailures = 1, retryAfterMs = 0 } = {}) {
+  if (!rateLimited && transientFailures <= 0) return LIFECYCLE_INTERVAL_MS;
+  const nominal = rateLimited
+    ? Math.min(LIFECYCLE_RATE_LIMIT_BACKOFF_MS * 2 ** Math.min(Math.max(0, rateLimitFailures - 1), 20), 4 * LIFECYCLE_RATE_LIMIT_BACKOFF_MS)
+    : TRANSIENT_BACKOFF_MS[Math.min(transientFailures, TRANSIENT_BACKOFF_MS.length) - 1];
+  return Math.max(Math.round(nominal * (0.5 + 0.5 * Math.random())), retryAfterMs);
 }
 
+/** A server deadline is a floor, including values beyond the client delay cap. */
+export function lifecycleRetryAfterMs(value, now = Date.now()) {
+  if (typeof value !== "string" || !value.trim()) return 0;
+  const text = value.trim();
+  const delay = /^\d+$/.test(text) ? Number(text) * 1000 : Date.parse(text) - now;
+  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
+}
+
+/** The soonest a network return may start another pass after the last one. A
+ * Windows adapter that flaps (a VPN, a virtual switch, a sleeping Wi-Fi radio)
+ * reports offline then online every few seconds; each return used to run a
+ * pass at once, a mint per flap against a limit every install shares. */
+export const ONLINE_RETURN_MIN_GAP_MS = 60_000;
+
 /** The tick's question. Offline never runs (it would only fail again); the
- * moment the network returns it runs at once, whatever backoff is pending. */
-export function shouldRunLifecycleNow({ now, nextAt, online, wasOnline }) {
+ * moment the network returns it runs at once, whatever transient backoff is
+ * pending, but never inside `holdUntil` (a rate-limit backoff, or the minimum
+ * gap since the last pass). */
+export function shouldRunLifecycleNow({ now, nextAt, online, wasOnline, holdUntil = 0 }) {
   if (!online) return false;
-  if (!wasOnline) return true;
+  if (!wasOnline) return now >= holdUntil;
   return now >= nextAt;
 }
 
@@ -54,6 +72,7 @@ export function createTokenRejectionHandler({ getCredentials, markTakenOver, rem
   let armed = null;
   let lastFailedAt = 0;
   let running = null;
+  let lastResult;
 
   const heldToken = () => {
     const token = (getCredentials() ?? {}).fluxComposioBrokerToken;
@@ -62,9 +81,9 @@ export function createTokenRejectionHandler({ getCredentials, markTakenOver, rem
 
   async function mint(fingerprintArg) {
     const before = heldToken();
-    await remint(fingerprintArg);
+    lastResult = await remint(fingerprintArg);
     const after = heldToken();
-    if (after && after !== before) {
+    if (after && after !== before && (lastResult === undefined || lastResult?.reconnected === true)) {
       armed = { fingerprint: brokerTokenFingerprint(after), at: now() };
       lastFailedAt = 0;
       return true;
@@ -86,10 +105,15 @@ export function createTokenRejectionHandler({ getCredentials, markTakenOver, rem
       return "taken-over";
     }
     if (lastFailedAt !== 0 && now() - lastFailedAt < TRANSIENT_BACKOFF_MS[0]) return "backoff";
-    return (await mint(tokenFingerprint)) ? "reminted" : "failed";
+    return (await mint(tokenFingerprint)) ? "reminted" : lastResult?.outcome === "held" ? "held" : "failed";
   }
 
   return {
+    /** The authority can complete recovery on its timer, outside this handler. */
+    noteReplacement(tokenFingerprint, at = now()) {
+      const token = heldToken();
+      if (token && brokerTokenFingerprint(token) === tokenFingerprint) { armed = { fingerprint: tokenFingerprint, at }; lastFailedAt = 0; }
+    },
     /** Rejections that arrive together are one decision. */
     onRejected(rejection = {}) {
       if (running) return running;
@@ -100,7 +124,8 @@ export function createTokenRejectionHandler({ getCredentials, markTakenOver, rem
      * like any other, so a device that pushes straight back is not answered
      * with another automatic mint. */
     async reconnect() {
-      await mint(undefined);
+      const reconnected = await mint(undefined);
+      return { ...lastResult, reconnected };
     },
   };
 }
@@ -137,11 +162,14 @@ export function createLifecycleScheduler({
   run,
   isShuttingDown = () => false,
   now = Date.now,
+  dispatchers = {},
   tickMs = 5_000,
   wakeDelayMs = 3_000,
 }) {
   let nextAt = 0;
   let rateLimitedUntil = 0;
+  let rateLimitFailures = 0;
+  let lastRunAt = -Infinity;
   let transientFailures = 0;
   let wasOnline = true;
   let timer = null;
@@ -150,17 +178,19 @@ export function createLifecycleScheduler({
   /** Set while a forced re-mint has not yet produced a token: every scheduled
    * retry is itself forced, so recovery never waits for the next 401. */
   let retryForce = null;
-  const go = () => {
+  const go = (source = "tick") => {
+    lastRunAt = now();
+    nextAt = Math.max(nextAt, lastRunAt + ONLINE_RETURN_MIN_GAP_MS);
     const options = retryForce === null ? {} : { force: true, ...(retryForce ? { rejectedTokenFingerprint: retryForce } : {}) };
-    void Promise.resolve(run(options)).catch(() => {});
+    void Promise.resolve((dispatchers[source] ?? run)(options)).catch(() => {});
   };
   const onResume = () => {
     if (isShuttingDown()) return;
     clearTimeout(wakeTimer);
     wakeTimer = setTimeout(() => {
       wakeTimer = null;
-      if (isShuttingDown() || now() < rateLimitedUntil) return;
-      go();
+      if (isShuttingDown() || !net.isOnline() || now() < rateLimitedUntil) return;
+      go("resume");
     }, wakeDelayMs);
     wakeTimer.unref?.();
   };
@@ -174,8 +204,8 @@ export function createLifecycleScheduler({
         const online = net.isOnline();
         const was = wasOnline;
         wasOnline = online;
-        if (!shouldRunLifecycleNow({ now: now(), nextAt, online, wasOnline: was })) return;
-        go();
+        if (!shouldRunLifecycleNow({ now: now(), nextAt, online, wasOnline: was, holdUntil: Math.max(rateLimitedUntil, lastRunAt + ONLINE_RETURN_MIN_GAP_MS) })) return;
+        go(was ? "tick" : "online");
       }, tickMs);
       timer.unref?.();
       powerMonitor.on("resume", onResume);
@@ -188,12 +218,15 @@ export function createLifecycleScheduler({
       powerMonitor.removeListener("resume", onResume);
     },
     /** A pass finished: when is the next one due. */
-    afterPass({ rateLimited = false, transient = false, retryForce: retry } = {}) {
+    afterPass({ rateLimited = false, transient = false, retryAfter, retryForce: retry } = {}) {
       retryForce = typeof retry === "string" ? retry : null;
       transientFailures = transient ? transientFailures + 1 : 0;
-      const delay = lifecycleDelay({ rateLimited, transientFailures });
-      nextAt = now() + delay;
-      rateLimitedUntil = rateLimited ? now() + delay : 0;
+      rateLimitFailures = rateLimited ? rateLimitFailures + 1 : 0;
+      const retryAfterMs = lifecycleRetryAfterMs(retryAfter, now());
+      const delay = lifecycleDelay({ rateLimited, transientFailures, rateLimitFailures, retryAfterMs });
+      nextAt = Math.max(rateLimitedUntil, now() + delay);
+      // Network returns and wake events must respect 5xx and Retry-After too.
+      rateLimitedUntil = rateLimited || transient || retryAfterMs > 0 ? nextAt : 0;
     },
   };
 }

@@ -1,3 +1,5 @@
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { startLiveSession } from './testing/live-session-fixture.ts';
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -17,7 +19,8 @@ import { Store } from "../store.ts";
 import { captureWork } from "./chunks.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
-import { ensureScope, memoryAccess, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { ensureScope, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { MemoryDispatchReceipt } from "./dispatch.ts";
@@ -39,7 +42,6 @@ import { decorateMemoryInstance } from "../harness/memory-adapter.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { markSessionKnown } from "./testing/legacy-file-model.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { access as xAccess, append as xAppend, bot as xBot, hits, person as xPerson, QUERY as X_QUERY, world as xWorld } from "./testing/xthread-world.ts";
 
@@ -79,8 +81,9 @@ function world() {
     const a = access();
     const bundle = await buildMemoryBundle(`blue door code ${n}`, a, bridge, { allowance: LineageAllowance.tool() });
     const receipt = new MemoryDispatchReceipt(bundle, a, "claude");
-    receipt.sessionStarted(session); receipt.accepted();
-    markSessionKnown(threadId, "claude", session, bot.id);
+    const confirmation = startLiveSession(a, "claude", session);
+    receipt.sessionStarted(session, Boolean(confirmation), confirmation); receipt.accepted();
+
     const reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: "", turnId: `t${n}`, from: { botId: bot.id, name: "Sable", color: "x" } } as never);
     receipt.output(reply.id);
     store.patchMessage(threadId, reply.id, { text: `Noted fact ${n}.` } as never);
@@ -333,8 +336,9 @@ async function readers() {
     const bundle = await buildMemoryBundle(X_QUERY, a, hits([x]), { allowance: LineageAllowance.tool(), withheldMessage: readerWithheldMessage(a) });
     expect({ name, cites: bundle.recordVersions.some(v => v.id === x.id) }).toEqual({ name, cites: true });
     const receipt = new MemoryDispatchReceipt(bundle, a, "claude");
-    receipt.sessionStarted(session); receipt.accepted();
-    markSessionKnown(thread, "claude", session, "finch");
+    const confirmation = startLiveSession(a, "claude", session);
+    receipt.sessionStarted(session, Boolean(confirmation), confirmation); receipt.accepted();
+
     xAppend(thread, xPerson(`ask-${name}`, "what is the side gate code?"));
     xAppend(thread, xBot(`reply-${name}`, { text: "The side gate code is GATE-7731." }));
     receipt.output(`reply-${name}`);

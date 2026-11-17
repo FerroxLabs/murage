@@ -1,0 +1,10 @@
+--- a/server/drivers/cli-stdin.ts
++++ b/server/drivers/cli-stdin.ts
+@@ -42,6 +42,7 @@
+     try { write(); } finally { this.forwarded = undefined; }
+   }
+   route(frame: StdinFrame): "write" | "held" | "blocked" {
++    if (this.barrier === "open") return "write"; // MUTANT: bypass allowlist
+     if (this.forwarded?.wire === frame.wire && this.forwarded.done === frame.done) {
+       this.forwarded = undefined;
+       return "write";

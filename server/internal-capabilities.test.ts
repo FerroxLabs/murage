@@ -1,5 +1,11 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import "../scripts/test-truth-intended-assertion.test-helper.mjs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import ts from "typescript";
+import vm from "node:vm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { InternalCapabilities, requiredInternalKind, type InternalCapabilityKind } from "./internal-capabilities.ts";
 
 function mint(registry: InternalCapabilities, threadId = "thread", generation = "generation", kind: InternalCapabilityKind = "agents") {
@@ -8,6 +14,53 @@ function mint(registry: InternalCapabilities, threadId = "thread", generation = 
 }
 
 describe("internal turn capabilities", () => {
+  it.each(['generation','thread','bot','all','replacement','completion','expiry'])("releases deduplicated memory view leases on %s", ending => {
+    let now=1, acquired=0, released=0;
+    const registry=new InternalCapabilities({now:()=>now,orphanMs:10});
+    registry.begin('bot','thread','generation');
+    const {claim}=mint(registry,'thread','generation','memory');
+    const retain=()=>{acquired++;return ()=>{released++;};};
+    registry.retainMemoryView(claim,'view',retain);
+    registry.retainMemoryView(claim,'view',retain);
+    registry.retainMemoryView(claim,'other-view',retain);
+    expect(acquired).toBe(2);
+    if(ending==='generation')registry.revokeGeneration('thread','generation');
+    if(ending==='thread')registry.revokeThread('thread');
+    if(ending==='bot')registry.revokeBot('bot');
+    if(ending==='all')registry.revokeAll();
+    if(ending==='replacement')registry.begin('bot','thread','replacement');
+    if(ending==='completion'){registry.bindProviderTurn('thread','generation','provider');registry.completeProviderTurn('thread','provider');}
+    if(ending==='expiry'){now=11;expect(registry.isActive(claim)).toBe(false);}
+    expect(released).toBe(2);
+    expect(()=>registry.retainMemoryView(claim,'view',retain)).toThrow('MEMORY_UNAUTHORIZED');
+    registry.revokeAll();
+    expect(released).toBe(2);
+  });
+
+  it.each(['return','throw','abort'])("turn finally releases memory readers on %s", async ending => {
+    const registry=new InternalCapabilities();registry.begin('bot','thread','generation');
+    const {claim}=mint(registry,'thread','generation','memory');
+    let released=0;
+    registry.retainMemoryView(claim,'view',()=>()=>{released++;});
+    registry.bindProviderTurn('thread','generation','provider');
+    const source=readFileSync(new URL('./index.ts',import.meta.url),'utf8');
+    const ast=ts.createSourceFile('index.ts',source,ts.ScriptTarget.Latest,true);
+    const candidates:ts.TryStatement[]=[];
+    const visit=(node:ts.Node)=>{
+      if(ts.isTryStatement(node)&&node.finallyBlock?.getText(ast).includes('internalCapabilities.completeProviderTurn(event.threadId, event.turnId)'))candidates.push(node);
+      ts.forEachChild(node,visit);
+    };
+    visit(ast);
+    const terminal=candidates.sort((a,b)=>a.getWidth(ast)-b.getWidth(ast))[0]?.finallyBlock;
+    expect(terminal).toBeDefined();
+    const context=vm.createContext({internalCapabilities:registry,internalTurnOwners:new Map([['thread',{generation:'generation'}]]),
+      pendingRoomStop:undefined,terminalLease:{identity:{dispatchGeneration:'generation'}},console,queueMicrotask});
+    vm.runInContext(ts.transpileModule(`globalThis.finalize=event=>{${terminal!.getText(ast)}}`,{compilerOptions:{target:ts.ScriptTarget.ES2023}}).outputText,context);
+    context.finalize({threadId:'thread',turnId:'provider',type:ending==='abort'?'session.exited':'turn.completed',ok:ending==='return'});
+    expect(registry.isActive(claim)).toBe(false);
+    expect(released).toBe(1);
+  });
+
   it("returns immutable exact claims and rejects malformed bearers and forged objects", () => {
     const registry = new InternalCapabilities();
     registry.begin("bot", "thread", "generation");
@@ -289,5 +342,87 @@ describe("the highlevel kind (1.0.11 native HighLevel, GAP-HIGHLEVEL-109 section
     expect(body("revokeInternalThread")).toContain("highlevelCalls.turnEndedForThread(threadId)");
     expect(body("revokeInternalBot")).toContain("highlevelCalls.turnEndedForBot(botId)");
     expect(body("revokeAllInternalTurns")).toContain("highlevelCalls.turnEndedAll()");
+  });
+});
+
+
+describe("consuming turn cleanup", () => {
+  let server: VerificationServer, headers: Record<string, string>;
+  const href = (file: string) => JSON.stringify(pathToFileURL(join(process.cwd(), file)).href);
+  const rows = () => {
+    const file = join(server.info.dataDir, 'lease-events');
+    return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
+  };
+  const api = async (method: string, path: string, body?: unknown) => {
+    const response = await fetch(server.info.url + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    expect(response.ok).toBe(true);
+    return response.json() as Promise<any>;
+  };
+  beforeAll(async () => {
+    server = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+      const fs = await import('node:fs'), path = await import('node:path');
+      const {InternalCapabilities} = await import(${href('server/internal-capabilities.ts')});
+      const {BUILT_IN_DRIVERS} = await import(${href('server/drivers/builtIn.ts')});
+      const {makeLateTerminalDriver} = await import(${href('server/testing/fake-late-terminal-driver.ts')});
+      const root = process.env.MURAGE_DATA_DIR;
+      const log = row => fs.appendFileSync(path.join(root,'lease-events'), JSON.stringify(row)+'\\n');
+      const begin = InternalCapabilities.prototype.begin;
+      InternalCapabilities.prototype.begin = function(botId, threadId, generation, humanPrincipal) {
+        const id = begin.call(this,botId,threadId,generation,humanPrincipal);
+        const token = this.mint({botId,threadId,generation:id,humanPrincipal,kind:'memory',depth:0,skillAuthoring:false});
+        const claim = this.resolve('Bearer '+token);
+        this.retainMemoryView(claim,'fixture-view',()=>{log({type:'retained',threadId,generation:id});return ()=>{log({type:'released',threadId,generation:id});queueMicrotask(()=>log({type:'retired',threadId,generation:id,active:this.isActive(claim),resolvable:this.resolve('Bearer '+token)!==null}));};});
+        return id;
+      };
+      const driver = makeLateTerminalDriver({fencedDefaults:true}), create = driver.create.bind(driver);
+      driver.create = async input => {
+        const instance = await create(input), send = instance.adapter.sendTurn.bind(instance.adapter);
+        instance.adapter.onEvent(event=>{if(event.type==='turn.completed'||event.type==='session.exited')log({type:'terminal',threadId:event.threadId});});
+        instance.adapter.sendTurn = async turn => {
+          const ending = turn.text.includes('LEASE_THROW') ? 'throw' : turn.text.includes('LEASE_ABORT') ? 'abort' : 'return';
+          log({type:'dispatch',threadId:turn.threadId,ending});
+          if(ending==='throw')throw Error('fixture dispatch failed before acceptance');
+          if(ending==='abort') {
+            turn.beforeSubmit?.();
+            return {turnId:'lease-abort'};
+          }
+          return send(turn);
+        };
+        // This in-process provider has no child or deferred terminal event.
+        instance.adapter.interruptTurn = async () => ({closeConfirmed:true});
+        return instance;
+      };
+      BUILT_IN_DRIVERS.push(driver);
+      const configPath=path.join(root,'config.json'), config=JSON.parse(fs.readFileSync(configPath,'utf8'));
+      config.instances.late={driver:'fakeLateTerminal',environment:{}};
+      fs.writeFileSync(configPath,JSON.stringify(config));
+    ` });
+    const { secret } = await (await fetch(server.info.url + '/api/desktop-secret')).json() as { secret: string };
+    headers = { 'content-type':'application/json', 'x-murage-surface':'desktop', 'x-murage-surface-secret':secret };
+  });
+  afterAll(async () => { await server?.close(); });
+  it.each(['return','throw','abort'])('actual turn %s releases its memory lease', async ending => {
+    const bot = (await api('POST','/api/bots',{name:'Lease fixture',modelSelection:{instanceId:'late',model:'late-1'}})).bot;
+    await api('PATCH',`/api/bots/${bot.id}`,{computer:'off',browser:false,composio:false});
+    await api('POST',`/api/bots/${bot.id}/messages`,{text:`LEASE_${ending.toUpperCase()}`,threadId:bot.threadId});
+    const events = () => rows().filter(row=>row.threadId===bot.threadId);
+    await expect.poll(()=>events().some(row=>row.type==='dispatch')).toBe(true);
+    expect(events().find(row=>row.type==='dispatch').ending).toBe(ending);
+    const retained = events().filter(row=>row.type==='retained');
+    expect(retained).toHaveLength(1);
+    if(ending==='abort') {
+      expect(events().filter(row=>row.type==='released')).toEqual([]);
+      await api('POST',`/api/bots/${bot.id}/interrupt`,{all:true});
+    }
+    await expect.poll(async()=> (await api('GET','/api/bots?messages=0')).bots.find((row:any)=>row.id===bot.id)?.busy).not.toBe(true);
+    expect(events().filter(row=>row.type==='released')).toHaveLength(1);
+    await expect.poll(()=>events().filter(row=>row.type==='released')).toEqual([
+      {type:'released',threadId:bot.threadId,generation:retained[0].generation},
+    ]);
+    if(ending!=='return')expect(events().filter(row=>row.type==='terminal')).toEqual([]);
+    else expect(events().filter(row=>row.type==='terminal')).toHaveLength(1);
+    await expect.poll(async()=> (await api('GET','/api/bots?messages=0')).bots.find((row:any)=>row.id===bot.id)?.busy).not.toBe(true);
+    expect(events().filter(row=>row.type==='released')).toHaveLength(1);
+    expect(events().filter(row=>row.type==='retired')).toEqual([{type:'retired',threadId:bot.threadId,generation:retained[0].generation,active:false,resolvable:false}]);
   });
 });

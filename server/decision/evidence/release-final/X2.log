@@ -1,0 +1,38 @@
+COMMAND node_modules/.bin/vitest run server/decision/base-parity.test.ts -t R3
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/base-parity.test.ts (5 tests | 1 failed | 4 skipped) 13ms
+   ↓ R13 405 frozen 1.0.18 verdicts remain byte equal on BASE
+   ↓ R10 outside-marked owner request runs: ssh host 'echo fixture'
+   ↓ R10 outside-marked owner request runs: cd d && ls
+   ↓ R10 outside-marked owner request runs: git commit -am x && git push origin HEAD && rm -f /tmp/x.tmp
+   × R3 data fields never become executable evidence 10ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  07:37:35
+   Duration  8.85s (transform 7.00s, setup 8.29s, import 390ms, tests 13ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/base-parity.test.ts > R3 data fields never become executable evidence
+AssertionError: expected [ { path: 'root', op: 'delete' } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/decision/base-parity.test.ts:14:180
+     12| });
+     13| it('R3 data fields never become executable evidence',()=>{
+     14|  for(const tool of ['email_send','peer_ask','memory_review','publish']…
+       |                                                                                                                                                                                    ^
+     15| });
+     16|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

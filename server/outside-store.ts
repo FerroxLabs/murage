@@ -8,7 +8,8 @@
 // and a durability barrier cuts the file back to its last "\n" and fsyncs before any line is appended, so an acknowledged line
 // can never be joined onto torn bytes. Any other unreadable line throws, which leaves the store not ready, so every turn
 // reads as marked (fail closed).
-import { appendFileSync, closeSync, existsSync, fstatSync, fsyncSync, ftruncateSync, openSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync } from "./counted-fs.ts";
+import { closeSync, existsSync, fstatSync, fsyncSync, ftruncateSync, openSync, readFileSync, statSync } from "node:fs";
 import { syncParentDirectoryStatus, writeFileAtomic } from "./atomic.ts";
 import type { RegistryEntry } from "./download-registry.ts";
 import { noteOutsideStoreWrite, noteStoreFailure } from "./email/external-marks.ts";

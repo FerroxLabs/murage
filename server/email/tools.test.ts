@@ -1,3 +1,5 @@
+import { createMemoryEmailSecrets, createMemoryEmailRuntime } from "../testing/email-store-fixture.ts";
+import { legacyEmailDecisionFixture } from "./testing/legacy-decision-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -24,7 +26,7 @@ vi.mock("../artifacts.ts", async (original) => {
 });
 
 import { FluxEmailClient } from "./flux-email-client.ts";
-import { EmailSecretStore, emailCredentialProvider } from "./email-secrets.ts";
+import { emailCredentialProvider } from "./email-secrets.ts";
 import { EmailStore } from "./email-store.ts";
 import { EmailSendService } from "./send-service.ts";
 import { EmailTools, EMAIL_LINES, type EmailToolResult } from "./tools.ts";
@@ -32,7 +34,6 @@ import { EMAIL_RULE, EMAIL_RESULT_CAP, EMAIL_TOO_LARGE, emailOrigin } from "./fe
 import { ATTACHMENT_LINES } from "./attachments.ts";
 import { authorizeEmailCall, emailMounts, EMAIL_DRAFT_ONLY_ABSENT, EMAIL_ENGINE_ABSENT, EMAIL_UNAVAILABLE, type EmailCallLive, type EmailMountInput } from "./admission.ts";
 import { emailTurns, forgetAllEmailTurns, recordEmailTurn, type EmailTurnRecord } from "./email-turns.ts";
-import { EmailRuntime } from "./runtime.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { emailToolsFor, EMAIL_TOOLS } from "../drivers/email-tool-schemas.ts";
 import { emailPrimer } from "../capabilities-primer.ts";
@@ -55,16 +56,17 @@ let tools: EmailTools;
 let root: string;
 const record: EmailTurnRecord = { botId: "b1", threadId: "t1", mode: "send", kind: "direct", origin: "desktop" };
 
-function setup(policy: "ask" | "auto" = "auto") {
+async function setup(policy: "ask" | "auto" = "auto") {
+  const authority = await legacyEmailDecisionFixture();
   clock = 1_800_000_000_000;
   fake = new FakeFlux();
   store = new EmailStore(new DatabaseSync(":memory:"));
-  const secrets = new EmailSecretStore();
+  const secrets = createMemoryEmailSecrets();
   secrets.setOwner({ token: "owner-token", keyId: "key_owner" });
   secrets.setBotKey("b1", { token: "bot-token", keyId: "key_b1" });
   const client = new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: emailCredentialProvider(secrets, () => null), timeoutMs: 100 });
   let n = 0;
-  send = new EmailSendService({ store, client, installId: "inst", now: () => clock, newId: () => `send-${++n}` });
+  send = new EmailSendService({ store, client, authorityFor: () => authority, installId: "inst", now: () => clock, newId: () => `send-${++n}` });
   root = mkdtempSync(join(tmpdir(), "email-ws-"));
   tools = new EmailTools({ store, send, client, workspaceRoot: () => root, bot: () => undefined, now: () => clock });
   store.insertBinding({ botId: "b1", inboxId: INBOX, address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy, failure: null, updatedAt: clock });
@@ -421,7 +423,7 @@ describe("attachments: the verified sequence, the budget and the types (F26, F27
 
 describe("EmailRuntime: dark launch", () => {
   const emailTables = (db: DatabaseSync) => (db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'email_%'").all() as Array<{ name: string }>).map(row => row.name);
-  const runtimeWith = (db: DatabaseSync, accountKey: string | null) => new EmailRuntime({
+  const runtimeWith = (db: DatabaseSync, accountKey: string | null) => createMemoryEmailRuntime({
     accountKey: () => accountKey, database: () => db, transaction: fn => fn(), fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test",
     workspaceRoot: () => root, bot: () => undefined, now: () => clock,
   });
@@ -433,9 +435,9 @@ describe("EmailRuntime: dark launch", () => {
     fake.always("GET", /\/v1\/email\/capabilities$/, { status: 200, body: { enabled: false } });
     const runtime = runtimeWith(db, "fx-account-key");
     await runtime.start();
-    expect(runtime.mount("gen-1", mountInput)).toEqual({ mounted: false, line: null });
+    expect(runtime.mount("gen-1", mountInput)).toEqual({ mounted: false, line: "Email is off. Turn it on in Settings > Bot email." });
     expect(emailTurns.size).toBe(0);
-    expect(await runtime.call("email_send", { botId: "b1", threadId: "t1", generation: "gen-1" }, { to: ["x@y.test"], subject: "s", text: "t" }, live)).toEqual({ status: 403, body: { error: EMAIL_UNAVAILABLE } });
+    expect(await runtime.call("email_send", { botId: "b1", threadId: "t1", generation: "gen-1" }, { to: ["x@y.test"], subject: "s", text: "t" }, live)).toEqual({ status: 200, body: { text: "Email is off. Turn it on in Settings > Bot email." } });
     expect(runtime.bindingState("b1")).toBeNull();
     expect(emailTables(db)).toEqual([]);
     expect(fake.requests.map(request => request.path)).toEqual(["/v1/email/capabilities"]);

@@ -1,0 +1,292 @@
+{
+  "objects": [
+    {
+      "type": "table",
+      "name": "inbox_raw",
+      "tbl_name": "inbox_raw",
+      "sql": "CREATE TABLE inbox_raw(thread_id TEXT NOT NULL, message_id TEXT NOT NULL, source_row INTEGER NOT NULL, at INTEGER NOT NULL,\n    kind TEXT NOT NULL, expired INTEGER NOT NULL, run_id, routine_id, source_key TEXT NOT NULL, status TEXT, summary TEXT, title TEXT,\n    kind_segment TEXT NOT NULL, terminal INTEGER NOT NULL, decision INTEGER NOT NULL, PRIMARY KEY(thread_id,message_id))"
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_inbox_raw_1",
+      "tbl_name": "inbox_raw",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "inbox_raw_rank_5",
+      "tbl_name": "inbox_raw",
+      "sql": "CREATE INDEX inbox_raw_rank_5 ON inbox_raw(source_key,terminal DESC,at DESC,source_row DESC)"
+    },
+    {
+      "type": "table",
+      "name": "inbox_keys",
+      "tbl_name": "inbox_keys",
+      "sql": "CREATE TABLE inbox_keys(source_key TEXT PRIMARY KEY, copies INTEGER NOT NULL) WITHOUT ROWID"
+    },
+    {
+      "type": "table",
+      "name": "inbox_items",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE TABLE inbox_items(source_key TEXT PRIMARY KEY, thread_id TEXT NOT NULL, message_id TEXT NOT NULL, source_row INTEGER NOT NULL,\n    at INTEGER NOT NULL, kind TEXT NOT NULL, expired INTEGER NOT NULL, run_id, routine_id, status TEXT, summary TEXT, title TEXT, kind_segment TEXT NOT NULL,\n    copies INTEGER NOT NULL, decision INTEGER NOT NULL, to_read INTEGER NOT NULL, segment TEXT NOT NULL, owed_or_over INTEGER NOT NULL,\n    read_version TEXT, snoozed_until INTEGER, cleared_at INTEGER, live INTEGER NOT NULL)"
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_inbox_items_1",
+      "tbl_name": "inbox_items",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_v_all_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_v_all_5 ON inbox_items(decision DESC,at DESC,source_key)"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_l_all_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_l_all_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE live=1"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_v_approvals_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_v_approvals_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='approval'"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_l_approvals_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_l_approvals_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='approval' AND live=1"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_v_decisions_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_v_decisions_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE expired=0 AND decision=1"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_l_decisions_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_l_decisions_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE expired=0 AND decision=1 AND live=1"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_v_questions_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_v_questions_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='question'"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_l_questions_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_l_questions_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='question' AND live=1"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_v_connections_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_v_connections_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='connection'"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_l_connections_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_l_connections_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE owed_or_over=1 AND segment='connection' AND live=1"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_v_routines_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_v_routines_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE kind_segment='routine'"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_l_routines_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_l_routines_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE kind_segment='routine' AND live=1"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_v_to_read_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_v_to_read_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE to_read=1 AND (status<>'digest' OR read_version IS NULL)"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_l_to_read_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_l_to_read_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE to_read=1 AND (status<>'digest' OR read_version IS NULL) AND live=1"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_v_results_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_v_results_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text')"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_l_results_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_l_results_5 ON inbox_items(decision DESC,at DESC,source_key) WHERE decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text') AND live=1"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_routine_at_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_routine_at_5 ON inbox_items(at) WHERE kind_segment='routine'"
+    },
+    {
+      "type": "index",
+      "name": "inbox_items_snoozed_5",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE INDEX inbox_items_snoozed_5 ON inbox_items(snoozed_until) WHERE snoozed_until IS NOT NULL"
+    },
+    {
+      "type": "table",
+      "name": "inbox_counts",
+      "tbl_name": "inbox_counts",
+      "sql": "CREATE TABLE inbox_counts(thread_id TEXT PRIMARY KEY, v_all INTEGER NOT NULL DEFAULT 0, v_approvals INTEGER NOT NULL DEFAULT 0, v_decisions INTEGER NOT NULL DEFAULT 0, v_questions INTEGER NOT NULL DEFAULT 0, v_connections INTEGER NOT NULL DEFAULT 0, v_routines INTEGER NOT NULL DEFAULT 0, v_to_read INTEGER NOT NULL DEFAULT 0, v_results INTEGER NOT NULL DEFAULT 0, l_all INTEGER NOT NULL DEFAULT 0, l_approvals INTEGER NOT NULL DEFAULT 0, l_decisions INTEGER NOT NULL DEFAULT 0, l_questions INTEGER NOT NULL DEFAULT 0, l_connections INTEGER NOT NULL DEFAULT 0, l_routines INTEGER NOT NULL DEFAULT 0, l_to_read INTEGER NOT NULL DEFAULT 0, l_results INTEGER NOT NULL DEFAULT 0, o_approvals INTEGER NOT NULL DEFAULT 0, o_questions INTEGER NOT NULL DEFAULT 0, o_connections INTEGER NOT NULL DEFAULT 0, o_decisions INTEGER NOT NULL DEFAULT 0, o_unread INTEGER NOT NULL DEFAULT 0, owed_open INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID"
+    },
+    {
+      "type": "table",
+      "name": "inbox_projection_state",
+      "tbl_name": "inbox_projection_state",
+      "sql": "CREATE TABLE inbox_projection_state(name TEXT PRIMARY KEY, done INTEGER NOT NULL, cursor INTEGER NOT NULL) WITHOUT ROWID"
+    },
+    {
+      "type": "table",
+      "name": "setup_marks",
+      "tbl_name": "setup_marks",
+      "sql": "CREATE TABLE setup_marks(source_row INTEGER PRIMARY KEY, thread_id TEXT NOT NULL, message_id TEXT NOT NULL, kind TEXT NOT NULL, solid INTEGER NOT NULL, at INTEGER NOT NULL, http_status, provider)"
+    },
+    {
+      "type": "index",
+      "name": "setup_marks_message_5",
+      "tbl_name": "setup_marks",
+      "sql": "CREATE INDEX setup_marks_message_5 ON setup_marks(thread_id,message_id)"
+    },
+    {
+      "type": "index",
+      "name": "setup_marks_tail_5",
+      "tbl_name": "setup_marks",
+      "sql": "CREATE INDEX setup_marks_tail_5 ON setup_marks(thread_id,kind,at DESC,source_row DESC)"
+    },
+    {
+      "type": "index",
+      "name": "setup_marks_solid_5",
+      "tbl_name": "setup_marks",
+      "sql": "CREATE INDEX setup_marks_solid_5 ON setup_marks(thread_id,kind,solid)"
+    },
+    {
+      "type": "table",
+      "name": "inbox_fill_deferred",
+      "tbl_name": "inbox_fill_deferred",
+      "sql": "CREATE TABLE inbox_fill_deferred(source_row INTEGER PRIMARY KEY, thread_id TEXT NOT NULL)"
+    },
+    {
+      "type": "index",
+      "name": "inbox_fill_deferred_thread_5",
+      "tbl_name": "inbox_fill_deferred",
+      "sql": "CREATE INDEX inbox_fill_deferred_thread_5 ON inbox_fill_deferred(thread_id)"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_deferred_removed",
+      "tbl_name": "messages",
+      "sql": "CREATE TRIGGER inbox_deferred_removed AFTER DELETE ON messages BEGIN\n    DELETE FROM inbox_fill_deferred WHERE source_row=OLD.rowid;\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_deferred_reinserted",
+      "tbl_name": "messages",
+      "sql": "CREATE TRIGGER inbox_deferred_reinserted AFTER INSERT ON messages BEGIN\n    DELETE FROM inbox_fill_deferred WHERE source_row=NEW.rowid;\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_deferred_updated",
+      "tbl_name": "messages",
+      "sql": "CREATE TRIGGER inbox_deferred_updated AFTER UPDATE ON messages BEGIN\n    DELETE FROM inbox_fill_deferred WHERE source_row=OLD.rowid;\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "setup_marks_insert",
+      "tbl_name": "messages",
+      "sql": "CREATE TRIGGER setup_marks_insert AFTER INSERT ON messages BEGIN\n    DELETE FROM setup_marks WHERE thread_id=NEW.thread_id AND message_id=NEW.id;\n    INSERT INTO setup_marks(source_row,thread_id,message_id,kind,solid,at,http_status,provider) SELECT m.rowid, m.thread_id, m.id,\n    CASE m.kind WHEN 'text' THEN 'reply' ELSE 'refusal' END,\n    CASE WHEN m.kind='text' AND trim(COALESCE(m.text,''),char(32,9,10,11,12,13,160))<>'' THEN 1 ELSE 0 END, m.at,\n    CASE WHEN m.kind='activity' THEN json_extract(m.json,'$.tool.providerError.httpStatus') END,\n    CASE WHEN m.kind='activity' THEN json_extract(m.json,'$.tool.providerError.provider') END\n  FROM messages m WHERE m.rowid=NEW.rowid AND m.kind IN ('text','activity') AND (instr(m.json,'turnTerminal')>0 OR instr(m.json,'providerError')>0) AND CASE WHEN json_valid(m.json) THEN CASE m.kind\n      WHEN 'text' THEN m.role='bot' AND json_extract(m.json,'$.turnTerminal')=1\n      WHEN 'activity' THEN json_type(m.json,'$.tool.providerError')='object'\n    END ELSE 0 END;\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "setup_marks_update",
+      "tbl_name": "messages",
+      "sql": "CREATE TRIGGER setup_marks_update AFTER UPDATE ON messages WHEN (instr(OLD.json,'turnTerminal')>0 OR instr(OLD.json,'providerError')>0) OR (instr(NEW.json,'turnTerminal')>0 OR instr(NEW.json,'providerError')>0) BEGIN\n    DELETE FROM setup_marks WHERE thread_id=OLD.thread_id AND message_id=OLD.id;\n    INSERT INTO setup_marks(source_row,thread_id,message_id,kind,solid,at,http_status,provider) SELECT m.rowid, m.thread_id, m.id,\n    CASE m.kind WHEN 'text' THEN 'reply' ELSE 'refusal' END,\n    CASE WHEN m.kind='text' AND trim(COALESCE(m.text,''),char(32,9,10,11,12,13,160))<>'' THEN 1 ELSE 0 END, m.at,\n    CASE WHEN m.kind='activity' THEN json_extract(m.json,'$.tool.providerError.httpStatus') END,\n    CASE WHEN m.kind='activity' THEN json_extract(m.json,'$.tool.providerError.provider') END\n  FROM messages m WHERE m.rowid=NEW.rowid AND m.kind IN ('text','activity') AND (instr(m.json,'turnTerminal')>0 OR instr(m.json,'providerError')>0) AND CASE WHEN json_valid(m.json) THEN CASE m.kind\n      WHEN 'text' THEN m.role='bot' AND json_extract(m.json,'$.turnTerminal')=1\n      WHEN 'activity' THEN json_type(m.json,'$.tool.providerError')='object'\n    END ELSE 0 END;\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "setup_marks_delete",
+      "tbl_name": "messages",
+      "sql": "CREATE TRIGGER setup_marks_delete AFTER DELETE ON messages WHEN (instr(OLD.json,'turnTerminal')>0 OR instr(OLD.json,'providerError')>0) BEGIN\n    DELETE FROM setup_marks WHERE thread_id=OLD.thread_id AND message_id=OLD.id;\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_raw_added",
+      "tbl_name": "inbox_raw",
+      "sql": "CREATE TRIGGER inbox_raw_added AFTER INSERT ON inbox_raw BEGIN\n    UPDATE inbox_keys SET copies=copies+1 WHERE source_key=NEW.source_key;\n    INSERT INTO inbox_keys(source_key,copies) SELECT NEW.source_key,1 WHERE NOT EXISTS (SELECT 1 FROM inbox_keys WHERE source_key=NEW.source_key);\n    DELETE FROM inbox_items WHERE source_key=NEW.source_key;\n    INSERT INTO inbox_items(source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live)\n    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END,\n      CASE WHEN h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      CASE WHEN h.kind_segment='routine' AND h.status IN ('pending','waiting','needs-input','needs-you') THEN 'question' ELSE h.kind_segment END,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') OR h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      s.read_version, s.snoozed_until, s.cleared_at,\n      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END\n    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key\n    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=NEW.source_key ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)\n      AND NOT(h.status='completed' AND length(trim(h.summary))=0);\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_raw_removed",
+      "tbl_name": "inbox_raw",
+      "sql": "CREATE TRIGGER inbox_raw_removed AFTER DELETE ON inbox_raw BEGIN\n    UPDATE inbox_keys SET copies=copies-1 WHERE source_key=OLD.source_key;\n    DELETE FROM inbox_keys WHERE source_key=OLD.source_key AND copies<=0;\n    DELETE FROM inbox_items WHERE source_key=OLD.source_key;\n    INSERT INTO inbox_items(source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live)\n    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END,\n      CASE WHEN h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      CASE WHEN h.kind_segment='routine' AND h.status IN ('pending','waiting','needs-input','needs-you') THEN 'question' ELSE h.kind_segment END,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') OR h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      s.read_version, s.snoozed_until, s.cleared_at,\n      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END\n    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key\n    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=OLD.source_key ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)\n      AND NOT(h.status='completed' AND length(trim(h.summary))=0);\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_state_added",
+      "tbl_name": "inbox_item_state",
+      "sql": "CREATE TRIGGER inbox_state_added AFTER INSERT ON inbox_item_state BEGIN DELETE FROM inbox_items WHERE source_key=NEW.source_key;\n    INSERT INTO inbox_items(source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live)\n    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END,\n      CASE WHEN h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      CASE WHEN h.kind_segment='routine' AND h.status IN ('pending','waiting','needs-input','needs-you') THEN 'question' ELSE h.kind_segment END,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') OR h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      s.read_version, s.snoozed_until, s.cleared_at,\n      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END\n    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key\n    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=NEW.source_key ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)\n      AND NOT(h.status='completed' AND length(trim(h.summary))=0); END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_state_changed",
+      "tbl_name": "inbox_item_state",
+      "sql": "CREATE TRIGGER inbox_state_changed AFTER UPDATE ON inbox_item_state BEGIN DELETE FROM inbox_items WHERE source_key=NEW.source_key;\n    INSERT INTO inbox_items(source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live)\n    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END,\n      CASE WHEN h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      CASE WHEN h.kind_segment='routine' AND h.status IN ('pending','waiting','needs-input','needs-you') THEN 'question' ELSE h.kind_segment END,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') OR h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      s.read_version, s.snoozed_until, s.cleared_at,\n      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END\n    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key\n    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=NEW.source_key ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)\n      AND NOT(h.status='completed' AND length(trim(h.summary))=0); END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_state_removed",
+      "tbl_name": "inbox_item_state",
+      "sql": "CREATE TRIGGER inbox_state_removed AFTER DELETE ON inbox_item_state BEGIN DELETE FROM inbox_items WHERE source_key=OLD.source_key;\n    INSERT INTO inbox_items(source_key,thread_id,message_id,source_row,at,kind,expired,run_id,routine_id,status,summary,title,kind_segment,copies,decision,to_read,segment,owed_or_over,read_version,snoozed_until,cleared_at,live)\n    SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END,\n      CASE WHEN h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      CASE WHEN h.kind_segment='routine' AND h.status IN ('pending','waiting','needs-input','needs-you') THEN 'question' ELSE h.kind_segment END,\n      CASE WHEN h.status IN ('pending','waiting','needs-input','needs-you') OR h.status IN ('blocked','limit-reached','failed','missed','paused','digest') THEN 1 ELSE 0 END,\n      s.read_version, s.snoozed_until, s.cleared_at,\n      CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END\n    FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key\n    WHERE h.rowid=(SELECT x.rowid FROM inbox_raw x WHERE x.source_key=OLD.source_key ORDER BY x.terminal DESC,x.at DESC,x.source_row DESC LIMIT 1)\n      AND NOT(h.status='completed' AND length(trim(h.summary))=0); END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_item_added",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE TRIGGER inbox_item_added AFTER INSERT ON inbox_items BEGIN\n    INSERT INTO inbox_counts(thread_id) SELECT NEW.thread_id WHERE NOT EXISTS (SELECT 1 FROM inbox_counts WHERE thread_id=NEW.thread_id);\n    UPDATE inbox_counts SET v_all=v_all+(CASE WHEN 1 THEN 1 ELSE 0 END),\n      v_approvals=v_approvals+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='approval' THEN 1 ELSE 0 END),\n      v_decisions=v_decisions+(CASE WHEN NEW.expired=0 AND NEW.decision=1 THEN 1 ELSE 0 END),\n      v_questions=v_questions+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='question' THEN 1 ELSE 0 END),\n      v_connections=v_connections+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='connection' THEN 1 ELSE 0 END),\n      v_routines=v_routines+(CASE WHEN NEW.kind_segment='routine' THEN 1 ELSE 0 END),\n      v_to_read=v_to_read+(CASE WHEN NEW.to_read=1 AND (NEW.status<>'digest' OR NEW.read_version IS NULL) THEN 1 ELSE 0 END),\n      v_results=v_results+(CASE WHEN NEW.decision=0 AND NEW.to_read=0 AND NEW.kind IN ('routine.run','goal.run','text') THEN 1 ELSE 0 END),\n      l_all=l_all+(CASE WHEN NEW.live=1 THEN 1 ELSE 0 END),\n      l_approvals=l_approvals+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='approval' AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_decisions=l_decisions+(CASE WHEN NEW.expired=0 AND NEW.decision=1 AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_questions=l_questions+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='question' AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_connections=l_connections+(CASE WHEN NEW.owed_or_over=1 AND NEW.segment='connection' AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_routines=l_routines+(CASE WHEN NEW.kind_segment='routine' AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_to_read=l_to_read+(CASE WHEN NEW.to_read=1 AND (NEW.status<>'digest' OR NEW.read_version IS NULL) AND NEW.live=1 THEN 1 ELSE 0 END),\n      l_results=l_results+(CASE WHEN NEW.decision=0 AND NEW.to_read=0 AND NEW.kind IN ('routine.run','goal.run','text') AND NEW.live=1 THEN 1 ELSE 0 END),\n      o_approvals=o_approvals+(CASE WHEN NEW.decision=1 AND NEW.segment='approval' AND NEW.live=1 THEN 1 ELSE 0 END),\n      o_questions=o_questions+(CASE WHEN NEW.decision=1 AND NEW.segment='question' AND NEW.live=1 THEN 1 ELSE 0 END),\n      o_connections=o_connections+(CASE WHEN NEW.decision=1 AND NEW.segment='connection' AND NEW.live=1 THEN 1 ELSE 0 END),\n      o_decisions=o_decisions+(CASE WHEN NEW.decision=1 AND NEW.live=1 THEN 1 ELSE 0 END),\n      o_unread=o_unread+(CASE WHEN NEW.to_read=1 AND NEW.read_version IS NULL AND NEW.live=1 THEN 1 ELSE 0 END),\n      owed_open=owed_open+(CASE WHEN NEW.decision=1 AND NEW.expired=0 THEN 1 ELSE 0 END) WHERE thread_id=NEW.thread_id;\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_item_removed",
+      "tbl_name": "inbox_items",
+      "sql": "CREATE TRIGGER inbox_item_removed AFTER DELETE ON inbox_items BEGIN\n    UPDATE inbox_counts SET v_all=v_all-(CASE WHEN 1 THEN 1 ELSE 0 END),\n      v_approvals=v_approvals-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='approval' THEN 1 ELSE 0 END),\n      v_decisions=v_decisions-(CASE WHEN OLD.expired=0 AND OLD.decision=1 THEN 1 ELSE 0 END),\n      v_questions=v_questions-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='question' THEN 1 ELSE 0 END),\n      v_connections=v_connections-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='connection' THEN 1 ELSE 0 END),\n      v_routines=v_routines-(CASE WHEN OLD.kind_segment='routine' THEN 1 ELSE 0 END),\n      v_to_read=v_to_read-(CASE WHEN OLD.to_read=1 AND (OLD.status<>'digest' OR OLD.read_version IS NULL) THEN 1 ELSE 0 END),\n      v_results=v_results-(CASE WHEN OLD.decision=0 AND OLD.to_read=0 AND OLD.kind IN ('routine.run','goal.run','text') THEN 1 ELSE 0 END),\n      l_all=l_all-(CASE WHEN OLD.live=1 THEN 1 ELSE 0 END),\n      l_approvals=l_approvals-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='approval' AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_decisions=l_decisions-(CASE WHEN OLD.expired=0 AND OLD.decision=1 AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_questions=l_questions-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='question' AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_connections=l_connections-(CASE WHEN OLD.owed_or_over=1 AND OLD.segment='connection' AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_routines=l_routines-(CASE WHEN OLD.kind_segment='routine' AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_to_read=l_to_read-(CASE WHEN OLD.to_read=1 AND (OLD.status<>'digest' OR OLD.read_version IS NULL) AND OLD.live=1 THEN 1 ELSE 0 END),\n      l_results=l_results-(CASE WHEN OLD.decision=0 AND OLD.to_read=0 AND OLD.kind IN ('routine.run','goal.run','text') AND OLD.live=1 THEN 1 ELSE 0 END),\n      o_approvals=o_approvals-(CASE WHEN OLD.decision=1 AND OLD.segment='approval' AND OLD.live=1 THEN 1 ELSE 0 END),\n      o_questions=o_questions-(CASE WHEN OLD.decision=1 AND OLD.segment='question' AND OLD.live=1 THEN 1 ELSE 0 END),\n      o_connections=o_connections-(CASE WHEN OLD.decision=1 AND OLD.segment='connection' AND OLD.live=1 THEN 1 ELSE 0 END),\n      o_decisions=o_decisions-(CASE WHEN OLD.decision=1 AND OLD.live=1 THEN 1 ELSE 0 END),\n      o_unread=o_unread-(CASE WHEN OLD.to_read=1 AND OLD.read_version IS NULL AND OLD.live=1 THEN 1 ELSE 0 END),\n      owed_open=owed_open-(CASE WHEN OLD.decision=1 AND OLD.expired=0 THEN 1 ELSE 0 END) WHERE thread_id=OLD.thread_id;\n    DELETE FROM inbox_counts WHERE thread_id=OLD.thread_id AND v_all<=0;\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_project_insert",
+      "tbl_name": "messages",
+      "sql": "CREATE TRIGGER inbox_project_insert AFTER INSERT ON messages BEGIN\n    DELETE FROM inbox_raw WHERE thread_id=NEW.thread_id AND message_id=NEW.id;\n    INSERT INTO inbox_raw(source_row,thread_id,message_id,at,kind,expired,run_id,routine_id,source_key,status,summary,title,kind_segment,terminal,decision) SELECT p.*, CASE WHEN p.status IN ('resolved','completed','failed','cancelled','stopped','missed') THEN 1 ELSE 0 END, CASE WHEN p.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END\n  FROM (SELECT m.rowid AS source_row, m.thread_id, m.id AS message_id, m.at, m.kind,\n    COALESCE(json_extract(m.json,'$.card.expired'),0) AS expired,\n    json_extract(m.json,'$.routineRun.runId') AS run_id, json_extract(m.json,'$.routineRun.routineId') AS routine_id,\n    json_array(m.thread_id,m.kind,CASE m.kind\n      WHEN 'options' THEN COALESCE(json_extract(m.json,'$.card.requestId'),json_extract(m.json,'$.card.routineRequest.requestId'),json_extract(m.json,'$.card.skillRequest.requestId'),m.id)\n      WHEN 'secret' THEN COALESCE(json_extract(m.json,'$.secret.requestKey'),m.id)\n      WHEN 'connector' THEN COALESCE(json_extract(m.json,'$.connector.resumeKey') || ':' || json_extract(m.json,'$.connector.slug'),m.id)\n      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.resumeKey') || ':' || json_extract(m.json,'$.mcpSignIn.name'),m.id)\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.runId'),m.id)\n      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.runId'),m.id)\n      WHEN 'text' THEN json_extract(m.json,'$.artifactIds[0]')\n      -- RULE 3, WHERE THE GROUPING ALREADY HAPPENS. An engine that is not\n      -- signed in writes one of these every time a turn tries to use it, and\n      -- they were keyed by message id, so twenty attempts were twenty rows\n      -- saying the same sentence. One key per thread per cause makes them one\n      -- row carrying the count.\n      WHEN 'activity' THEN CASE\n        WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection'\n        ELSE m.id END\n      ELSE m.id END) AS source_key,\n    CASE m.kind\n      WHEN 'options' THEN CASE\n        WHEN json_extract(m.json,'$.card.expired')=1 AND json_extract(m.json,'$.card.unattended')=1\n          AND COALESCE(json_extract(m.json,'$.card.sentAsMessage'),0)=0 AND COALESCE(json_extract(m.json,'$.card.dismissed'),0)=0 THEN 'missed'\n        WHEN json_type(m.json,'$.card.answered')='text' OR json_extract(m.json,'$.card.dismissed')=1 THEN 'resolved'\n        -- D7: an approval whose request died with a previous process\n        -- (index.ts boot sweep) is not waiting on anyone any more.\n        WHEN json_extract(m.json,'$.card.orphaned')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'secret' THEN CASE WHEN json_extract(m.json,'$.secret.provided')=1 OR json_extract(m.json,'$.secret.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'connector' THEN CASE WHEN json_extract(m.json,'$.connector.status')='connected' OR json_extract(m.json,'$.connector.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      -- A link server's sign-in that ended mid-turn (MCP-LINK 3.12): owed until\n      -- the owner signs in again or sets the card aside.\n      WHEN 'mcpSignIn' THEN CASE WHEN json_extract(m.json,'$.mcpSignIn.status')='signed-in' OR json_extract(m.json,'$.mcpSignIn.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.goalStatus'),json_extract(m.json,'$.routineRun.status'))\n      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'digest' ELSE 'failed' END\n      WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status') WHEN 'text' THEN 'completed' ELSE 'failed' END AS status,\n    -- The projection keeps a PREVIEW (the list shows 280 characters, a digest 1000): capped in SQL so the full text of a huge message is never copied into the projection.\n    substr(CASE m.kind WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN COALESCE(json_extract(m.json,'$.tool.name'),'') ELSE '' END\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.summary'),json_extract(m.json,'$.routineRun.error'),'')\n      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.detail'),'') WHEN 'text' THEN COALESCE(json_extract(m.json,'$.text'),'Saved file')\n      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.body'),'') ELSE '' END, 1, 2048) AS summary,\n    substr(CASE m.kind WHEN 'options' THEN CASE\n      WHEN json_type(m.json,'$.card.routineRequest')='object' THEN 'Routine proposal'\n      WHEN json_type(m.json,'$.card.skillRequest')='object' THEN 'Skill proposal'\n      -- Question shape wins over the native tool on pending and expired cards.\n      WHEN json_extract(m.json,'$.card.expired')=1 THEN\n        CASE WHEN (COALESCE(json_extract(m.json,'$.card.folderTrust'),0) IN (0,'')\n  AND (json_type(m.json,'$.card.question')='text' OR json_type(m.json,'$.card.questions')='array')) THEN 'Question expired' WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval expired' ELSE 'Question expired' END\n      WHEN (COALESCE(json_extract(m.json,'$.card.folderTrust'),0) IN (0,'')\n  AND (json_type(m.json,'$.card.question')='text' OR json_type(m.json,'$.card.questions')='array')) THEN 'Question needs an answer'\n      WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval requested' ELSE 'Question needs an answer' END\n      WHEN 'secret' THEN 'Credential setup requested' WHEN 'connector' THEN 'Connection setup'\n      WHEN 'mcpSignIn' THEN 'Sign in to ' || COALESCE(json_extract(m.json,'$.mcpSignIn.host'),'a server')\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.routineName'),'Routine result')\n      WHEN 'goal.run' THEN 'Team goal result' WHEN 'text' THEN 'Saved file'\n      -- A provider having a bad morning and an engine that is not signed in\n      -- are not the same news, and only one of them is anybody's job.\n      WHEN 'activity' THEN CASE\n        WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'Daily digest'\n        WHEN json_extract(m.json,'$.tool.authRequired')=1 THEN 'Sign in needed'\n        WHEN json_extract(m.json,'$.tool.setup')=1 THEN 'Setup needed'\n        ELSE 'Provider needs attention' END\n      ELSE 'Provider needs attention' END, 1, 2048) AS title,\n    -- WHICH OF THE FIVE LISTS THIS BELONGS IN.\n    --\n    -- The kind column says what SHAPE the message is. This says what it\n    -- costs the owner to ignore it, which is the only question the Inbox is\n    -- sorted on.\n    --\n    -- The split inside 'options' is the one the owner asked for: a card\n    -- with question shape wants an answer, even with a native tool. Other\n    -- cards carrying a TOOL ask permission for a specific drafted act;\n    -- tool-less cards also want a judgement. They\n    -- read the same in a list and are nothing alike to answer.\n    --\n    -- An 'activity' row that is a missing login or an unfinished setup is a\n    -- CONNECTION, not provider news: it needs the owner's hands and no\n    -- amount of waiting fixes it. A provider simply erroring is news.\n    CASE m.kind\n      WHEN 'options' THEN CASE WHEN (COALESCE(json_extract(m.json,'$.card.folderTrust'),0) IN (0,'')\n  AND (json_type(m.json,'$.card.question')='text' OR json_type(m.json,'$.card.questions')='array')) THEN 'question' WHEN json_type(m.json,'$.card.tool')='text' THEN 'approval' ELSE 'question' END\n      WHEN 'secret' THEN 'connection' WHEN 'connector' THEN 'connection' WHEN 'mcpSignIn' THEN 'connection'\n      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'result' WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection' ELSE 'routine' END\n      WHEN 'routine.run' THEN 'routine' WHEN 'goal.run' THEN 'routine'\n      ELSE 'result' END AS kind_segment\n    FROM messages m WHERE m.rowid=NEW.rowid AND m.role='bot' AND m.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity','text') AND CASE WHEN json_valid(m.json) THEN CASE m.kind\n      WHEN 'options' THEN json_type(m.json,'$.card.requestId')='text' OR json_type(m.json,'$.card.routineRequest')='object' OR json_type(m.json,'$.card.skillRequest')='object'\n      WHEN 'secret' THEN json_type(m.json,'$.secret')='object'\n      WHEN 'connector' THEN json_type(m.json,'$.connector')='object'\n      WHEN 'mcpSignIn' THEN json_type(m.json,'$.mcpSignIn')='object'\n      WHEN 'routine.run' THEN json_extract(m.json,'$.routineRun.status') NOT IN ('queued','running')\n      WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status')!='working'\n      WHEN 'activity' THEN (json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text') OR (json_extract(m.json,'$.tool.ok')=0 AND (json_extract(m.json,'$.tool.setup')=1 OR json_extract(m.json,'$.tool.authRequired')=1 OR json_type(m.json,'$.tool.providerError')='object'))\n      WHEN 'text' THEN json_type(m.json,'$.artifactIds[0]')='text' AND length(json_extract(m.json,'$.artifactIds[0]'))=36\n    END ELSE 0 END) p;\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_project_update",
+      "tbl_name": "messages",
+      "sql": "CREATE TRIGGER inbox_project_update AFTER UPDATE ON messages WHEN (OLD.role='bot' AND (OLD.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity') OR (OLD.kind='text' AND instr(OLD.json,'artifactIds')>0))) OR (NEW.role='bot' AND (NEW.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity') OR (NEW.kind='text' AND instr(NEW.json,'artifactIds')>0))) BEGIN\n    DELETE FROM inbox_raw WHERE thread_id=OLD.thread_id AND message_id=OLD.id;\n    INSERT INTO inbox_raw(source_row,thread_id,message_id,at,kind,expired,run_id,routine_id,source_key,status,summary,title,kind_segment,terminal,decision) SELECT p.*, CASE WHEN p.status IN ('resolved','completed','failed','cancelled','stopped','missed') THEN 1 ELSE 0 END, CASE WHEN p.status IN ('pending','waiting','needs-input','needs-you') THEN 1 ELSE 0 END\n  FROM (SELECT m.rowid AS source_row, m.thread_id, m.id AS message_id, m.at, m.kind,\n    COALESCE(json_extract(m.json,'$.card.expired'),0) AS expired,\n    json_extract(m.json,'$.routineRun.runId') AS run_id, json_extract(m.json,'$.routineRun.routineId') AS routine_id,\n    json_array(m.thread_id,m.kind,CASE m.kind\n      WHEN 'options' THEN COALESCE(json_extract(m.json,'$.card.requestId'),json_extract(m.json,'$.card.routineRequest.requestId'),json_extract(m.json,'$.card.skillRequest.requestId'),m.id)\n      WHEN 'secret' THEN COALESCE(json_extract(m.json,'$.secret.requestKey'),m.id)\n      WHEN 'connector' THEN COALESCE(json_extract(m.json,'$.connector.resumeKey') || ':' || json_extract(m.json,'$.connector.slug'),m.id)\n      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.resumeKey') || ':' || json_extract(m.json,'$.mcpSignIn.name'),m.id)\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.runId'),m.id)\n      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.runId'),m.id)\n      WHEN 'text' THEN json_extract(m.json,'$.artifactIds[0]')\n      -- RULE 3, WHERE THE GROUPING ALREADY HAPPENS. An engine that is not\n      -- signed in writes one of these every time a turn tries to use it, and\n      -- they were keyed by message id, so twenty attempts were twenty rows\n      -- saying the same sentence. One key per thread per cause makes them one\n      -- row carrying the count.\n      WHEN 'activity' THEN CASE\n        WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection'\n        ELSE m.id END\n      ELSE m.id END) AS source_key,\n    CASE m.kind\n      WHEN 'options' THEN CASE\n        WHEN json_extract(m.json,'$.card.expired')=1 AND json_extract(m.json,'$.card.unattended')=1\n          AND COALESCE(json_extract(m.json,'$.card.sentAsMessage'),0)=0 AND COALESCE(json_extract(m.json,'$.card.dismissed'),0)=0 THEN 'missed'\n        WHEN json_type(m.json,'$.card.answered')='text' OR json_extract(m.json,'$.card.dismissed')=1 THEN 'resolved'\n        -- D7: an approval whose request died with a previous process\n        -- (index.ts boot sweep) is not waiting on anyone any more.\n        WHEN json_extract(m.json,'$.card.orphaned')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'secret' THEN CASE WHEN json_extract(m.json,'$.secret.provided')=1 OR json_extract(m.json,'$.secret.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'connector' THEN CASE WHEN json_extract(m.json,'$.connector.status')='connected' OR json_extract(m.json,'$.connector.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      -- A link server's sign-in that ended mid-turn (MCP-LINK 3.12): owed until\n      -- the owner signs in again or sets the card aside.\n      WHEN 'mcpSignIn' THEN CASE WHEN json_extract(m.json,'$.mcpSignIn.status')='signed-in' OR json_extract(m.json,'$.mcpSignIn.dismissed')=1 THEN 'resolved' ELSE 'pending' END\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.goalStatus'),json_extract(m.json,'$.routineRun.status'))\n      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'digest' ELSE 'failed' END\n      WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status') WHEN 'text' THEN 'completed' ELSE 'failed' END AS status,\n    -- The projection keeps a PREVIEW (the list shows 280 characters, a digest 1000): capped in SQL so the full text of a huge message is never copied into the projection.\n    substr(CASE m.kind WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN COALESCE(json_extract(m.json,'$.tool.name'),'') ELSE '' END\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.summary'),json_extract(m.json,'$.routineRun.error'),'')\n      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.detail'),'') WHEN 'text' THEN COALESCE(json_extract(m.json,'$.text'),'Saved file')\n      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.body'),'') ELSE '' END, 1, 2048) AS summary,\n    substr(CASE m.kind WHEN 'options' THEN CASE\n      WHEN json_type(m.json,'$.card.routineRequest')='object' THEN 'Routine proposal'\n      WHEN json_type(m.json,'$.card.skillRequest')='object' THEN 'Skill proposal'\n      -- Question shape wins over the native tool on pending and expired cards.\n      WHEN json_extract(m.json,'$.card.expired')=1 THEN\n        CASE WHEN (COALESCE(json_extract(m.json,'$.card.folderTrust'),0) IN (0,'')\n  AND (json_type(m.json,'$.card.question')='text' OR json_type(m.json,'$.card.questions')='array')) THEN 'Question expired' WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval expired' ELSE 'Question expired' END\n      WHEN (COALESCE(json_extract(m.json,'$.card.folderTrust'),0) IN (0,'')\n  AND (json_type(m.json,'$.card.question')='text' OR json_type(m.json,'$.card.questions')='array')) THEN 'Question needs an answer'\n      WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval requested' ELSE 'Question needs an answer' END\n      WHEN 'secret' THEN 'Credential setup requested' WHEN 'connector' THEN 'Connection setup'\n      WHEN 'mcpSignIn' THEN 'Sign in to ' || COALESCE(json_extract(m.json,'$.mcpSignIn.host'),'a server')\n      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.routineName'),'Routine result')\n      WHEN 'goal.run' THEN 'Team goal result' WHEN 'text' THEN 'Saved file'\n      -- A provider having a bad morning and an engine that is not signed in\n      -- are not the same news, and only one of them is anybody's job.\n      WHEN 'activity' THEN CASE\n        WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'Daily digest'\n        WHEN json_extract(m.json,'$.tool.authRequired')=1 THEN 'Sign in needed'\n        WHEN json_extract(m.json,'$.tool.setup')=1 THEN 'Setup needed'\n        ELSE 'Provider needs attention' END\n      ELSE 'Provider needs attention' END, 1, 2048) AS title,\n    -- WHICH OF THE FIVE LISTS THIS BELONGS IN.\n    --\n    -- The kind column says what SHAPE the message is. This says what it\n    -- costs the owner to ignore it, which is the only question the Inbox is\n    -- sorted on.\n    --\n    -- The split inside 'options' is the one the owner asked for: a card\n    -- with question shape wants an answer, even with a native tool. Other\n    -- cards carrying a TOOL ask permission for a specific drafted act;\n    -- tool-less cards also want a judgement. They\n    -- read the same in a list and are nothing alike to answer.\n    --\n    -- An 'activity' row that is a missing login or an unfinished setup is a\n    -- CONNECTION, not provider news: it needs the owner's hands and no\n    -- amount of waiting fixes it. A provider simply erroring is news.\n    CASE m.kind\n      WHEN 'options' THEN CASE WHEN (COALESCE(json_extract(m.json,'$.card.folderTrust'),0) IN (0,'')\n  AND (json_type(m.json,'$.card.question')='text' OR json_type(m.json,'$.card.questions')='array')) THEN 'question' WHEN json_type(m.json,'$.card.tool')='text' THEN 'approval' ELSE 'question' END\n      WHEN 'secret' THEN 'connection' WHEN 'connector' THEN 'connection' WHEN 'mcpSignIn' THEN 'connection'\n      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'result' WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection' ELSE 'routine' END\n      WHEN 'routine.run' THEN 'routine' WHEN 'goal.run' THEN 'routine'\n      ELSE 'result' END AS kind_segment\n    FROM messages m WHERE m.rowid=NEW.rowid AND m.role='bot' AND m.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity','text') AND CASE WHEN json_valid(m.json) THEN CASE m.kind\n      WHEN 'options' THEN json_type(m.json,'$.card.requestId')='text' OR json_type(m.json,'$.card.routineRequest')='object' OR json_type(m.json,'$.card.skillRequest')='object'\n      WHEN 'secret' THEN json_type(m.json,'$.secret')='object'\n      WHEN 'connector' THEN json_type(m.json,'$.connector')='object'\n      WHEN 'mcpSignIn' THEN json_type(m.json,'$.mcpSignIn')='object'\n      WHEN 'routine.run' THEN json_extract(m.json,'$.routineRun.status') NOT IN ('queued','running')\n      WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status')!='working'\n      WHEN 'activity' THEN (json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text') OR (json_extract(m.json,'$.tool.ok')=0 AND (json_extract(m.json,'$.tool.setup')=1 OR json_extract(m.json,'$.tool.authRequired')=1 OR json_type(m.json,'$.tool.providerError')='object'))\n      WHEN 'text' THEN json_type(m.json,'$.artifactIds[0]')='text' AND length(json_extract(m.json,'$.artifactIds[0]'))=36\n    END ELSE 0 END) p;\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "inbox_project_delete",
+      "tbl_name": "messages",
+      "sql": "CREATE TRIGGER inbox_project_delete AFTER DELETE ON messages WHEN (OLD.role='bot' AND (OLD.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity') OR (OLD.kind='text' AND instr(OLD.json,'artifactIds')>0))) BEGIN\n    DELETE FROM inbox_raw WHERE thread_id=OLD.thread_id AND message_id=OLD.id;\n  END"
+    }
+  ]
+}

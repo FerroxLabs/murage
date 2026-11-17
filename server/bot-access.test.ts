@@ -1,20 +1,38 @@
+import { serviceQueueFixture } from './testing/service-queue-fixture.ts';
 import { mkdirSync,readFileSync } from "node:fs";
-import { beforeEach,expect,it,vi } from "vitest";
+import { afterEach,beforeEach,expect,it,vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase } from "./database.ts";
 import { Store } from "./store.ts";
-import { accessOwnerView,assertConnectedAppCall,assertStoredConnectedAppAccess,requestBotAccess,reviewBotAccess,restrictedConnectorTools,connectedAppsListScope } from "./bot-access.ts";
+import { accessOwnerView,readAppAccessDenials,assertConnectedAppCall,assertStoredConnectedAppAccess,requestBotAccess as requestBotAccessProduct,botAccessApprovalQueue,reviewBotAccess as reviewBotAccessProduct,restrictedConnectorTools,connectedAppsListScope } from "./bot-access.ts";
 import { botAccessPolicy } from "./bot-access-role.ts";
 import { permissionStatus } from "./permission-status.ts";
 import { ACCESS_REQUEST_TTL_MS, accessRequestExpiresAt } from "../shared/bot-access.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
-beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
+beforeEach(()=>{vi.useFakeTimers({toFake:["Date"]});closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
+afterEach(()=>vi.useRealTimers());
 const account={toolkit:"gmail",accountId:"ca_fixture_owned"};
 const grant={...account,tools:["GMAIL_SEND_EMAIL","GMAIL_FETCH_EMAILS"]};
 function setup(){const store=new Store(()=>({instanceId:"fixture",model:"fixture"}));const chief=store.createBot({name:"Chief",section:"Leadership"});const lead=store.createBot({name:"Lead",section:"Studio"});const bot=store.createBot({name:"Specialist",section:"Studio"});const other=store.createBot({name:"Other",section:"Elsewhere"});store.setChiefOfStaff(chief.id,undefined,"workspace");store.setChiefOfStaff(lead.id,undefined,"section");store.patchBot(bot.id,{composio:false});return{store,chief,lead,bot,other};}
+// Exercise the producer with the same verifier-issued claim and registered queue
+// used by the service boundary. Keep Ask so every approval assertion still runs.
+function requestBotAccess(store: Store, sender: Parameters<typeof requestBotAccessProduct>[1], input: unknown, now = Date.now()) {
+ vi.setSystemTime(now);
+ const fixture = serviceQueueFixture(store);
+ fixture.queue(botAccessApprovalQueue(store));
+ return requestBotAccessProduct(store, sender, input, now, {
+  authority: fixture.authorityFor(sender.threadId, sender.id), threadId: sender.threadId, accounts: [account],
+ });
+}
+function reviewBotAccess(...args: Parameters<typeof reviewBotAccessProduct>) {
+ const fixture = serviceQueueFixture(args[0]);
+ fixture.queue(botAccessApprovalQueue(args[0]));
+ if (args[4] !== undefined) vi.setSystemTime(args[4]);
+ return reviewBotAccessProduct(...args);
+}
 function call(tool="GMAIL_SEND_EMAIL",selected="ca_fixture_owned",args:object={to:"fake@example.invalid",body:"fixture"}){return{jsonrpc:"2.0",id:1,method:"tools/call",params:{name:"COMPOSIO_MULTI_EXECUTE_TOOL",arguments:{tools:[{tool_slug:tool,account:selected,arguments:args}],sync_response_to_workbench:false}}};}
 function enable(f:ReturnType<typeof setup>,writes=true){const request=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:botAccessPolicy(f.bot).revision,grants:[grant],allowWrites:writes});return reviewBotAccess(f.store,f.bot.id,{action:"approve",requestId:request.requestId,revision:request.revision},[account]);}
-it("queues a durable bundle without self-granting or enabling apps",()=>{const f=setup();const response=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:0,grants:[grant],allowWrites:true});expect(response.status).toBe("Waiting for owner review");expect(f.bot.composio).toBe(false);expect(()=>assertConnectedAppCall(f.bot,call())).toThrow("disabled");const restored=new Store(()=>f.bot.modelSelection);expect(botAccessPolicy(restored.bot(f.bot.id)!).requests).toHaveLength(1);});
+it("queues a durable bundle without self-granting or enabling apps",()=>{const f=setup();const response=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:0,grants:[grant],allowWrites:true});expect(response.status).toBe("Waiting for owner review");expect(f.bot.composio).toBe(false);expect(()=>assertConnectedAppCall(f.bot,call())).toThrow(/off.*Settings/);const restored=new Store(()=>f.bot.modelSelection);expect(botAccessPolicy(restored.bot(f.bot.id)!).requests).toHaveLength(1);});
 it("rejects spoofed grants and cross-team manager requests",()=>{const f=setup();expect(()=>requestBotAccess(f.store,f.bot,{botId:f.bot.id,revision:0,grants:[grant]})).toThrow("responsible manager");expect(()=>requestBotAccess(f.store,f.lead,{botId:f.other.id,revision:0,grants:[grant]})).toThrow("responsible manager");expect(()=>requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:0,grants:[grant],approve:true})).toThrow("Invalid");});
 it("rejects stale owner decisions and non-owned accounts",()=>{const f=setup();const request=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:0,grants:[grant]});expect(()=>reviewBotAccess(f.store,f.bot.id,{action:"approve",requestId:request.requestId,revision:0},[account])).toThrow("changed");expect(()=>reviewBotAccess(f.store,f.bot.id,{action:"approve",requestId:request.requestId,revision:request.revision},[])).toThrow("no longer connected");expect(f.bot.composio).toBe(false);});
 it("allows an explicitly owner-approved fake write only after the policy gate",async()=>{const f=setup();enable(f);const relay=vi.fn(async(_request:unknown)=>({ok:true}));assertConnectedAppCall(f.bot,call());await relay(call());expect(relay).toHaveBeenCalledOnce();expect(f.bot.composio).toBe(true);expect(botAccessPolicy(f.bot).mode).toBe("restricted");});
@@ -96,7 +114,7 @@ it("a stored connected-app result is handed back only while the bot's CURRENT gr
  expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:used,complete:true})).toThrow("not been approved");
  expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:[{tool:"GMAIL_FETCH_EMAILS",account:"ca_fixture_owned"}],complete:true})).not.toThrow();
  f.store.patchBot(f.bot.id,{composio:false});
- expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:[{tool:"GMAIL_FETCH_EMAILS",account:"ca_fixture_owned"}],complete:true})).toThrow("disabled");
+ expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:[{tool:"GMAIL_FETCH_EMAILS",account:"ca_fixture_owned"}],complete:true})).toThrow(/off.*Settings/);
 });
 it("a restricted bot is denied a stored result whose tools or accounts are unknown",()=>{
  const f=setup();enable(f);
@@ -220,7 +238,7 @@ it("keeps unknown execution fields, offload and disabled-app checks with metadat
  const offload=rmcpRequest();offload.params.arguments.sync_response_to_workbench=true;
  expect(()=>assertConnectedAppCall(f.bot,offload)).toThrow("Workbench");
  f.store.patchBot(f.bot.id,{composio:false});
- expect(()=>assertConnectedAppCall(f.bot,rmcpRequest())).toThrow("disabled");
+ expect(()=>assertConnectedAppCall(f.bot,rmcpRequest())).toThrow(/off.*Settings/);
 });
 
 it("validates metadata before the existing stored-action status path",()=>{
@@ -241,4 +259,46 @@ it("rejects metadata on other methods, a write tool and a foreign account with a
  const long=rmcpRequest();long.params._meta={progressToken:"x".repeat(257)};expect(()=>assertConnectedAppCall(f.bot,long)).toThrow("Unsupported connected-app request fields");
  const nested=rmcpRequest();nested.params._meta={progressToken:0,_meta:{progressToken:1}};expect(()=>assertConnectedAppCall(f.bot,nested)).toThrow("Unsupported connected-app request fields");
  const batch=[rmcpRequest()];expect(()=>assertConnectedAppCall(f.bot,batch)).toThrow();
+});
+
+it('08:05 connected-app stored denials run at No limits and keep lower-level restrictions',()=>{
+ const f=setup();f.store.patchBot(f.bot.id,{composio:true});
+ reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:accessOwnerView(f.bot).policy.revision,mode:"restricted",allowWrites:true,grants:[grant]},[account]);
+ const before=accessOwnerView(f.bot);
+ reviewBotAccess(f.store,f.bot.id,{action:'configure',revision:before.policy.revision,mode:'restricted',allowWrites:false,grants:[]},[]);
+ expect(readAppAccessDenials(f.bot).length).toBeGreaterThan(0);
+ expect(()=>assertConnectedAppCall(f.bot,call(),{noLimits:true})).not.toThrow();
+ expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:[{tool:'GMAIL_SEND_EMAIL',account:account.accountId}],complete:true},{noLimits:true})).not.toThrow();
+ expect(restrictedConnectorTools(f.bot,1,true)).toBeNull();
+ expect(connectedAppsListScope(f.bot,0,true).initialTools).toBeUndefined();
+ expect(connectedAppsListScope(f.bot,0,true).revision).not.toBe(connectedAppsListScope(f.bot,0).revision);
+ expect(()=>assertConnectedAppCall(f.bot,call())).toThrow('blocked connected-app writes');
+});
+it.each([false,true])('08:05 connected-app feature off remains off and names Settings with noLimits=%s',noLimits=>{
+ const f=setup();f.store.patchBot(f.bot.id,{composio:true});
+ reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:accessOwnerView(f.bot).policy.revision,mode:"restricted",allowWrites:true,grants:[grant]},[account]);f.bot.composio=false;
+ expect(()=>assertConnectedAppCall(f.bot,call(),{noLimits})).toThrow(/off.*Settings/);
+ expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:[{tool:'GMAIL_SEND_EMAIL',account:account.accountId}],complete:true},{noLimits})).toThrow(/off.*Settings/);
+});
+
+it("refuses a producer call without a verified service authority before opening an approval", () => {
+ const f = setup();
+ const fixture = serviceQueueFixture(f.store);
+ fixture.queue(botAccessApprovalQueue(f.store));
+ const before = f.store.messagesFor(f.lead.threadId).slice();
+ expect(() => requestBotAccessProduct(f.store, f.lead, {botId:f.bot.id,revision:0,grants:[grant]}))
+  .toThrow('A verified service execution claim is required.');
+ expect(botAccessPolicy(f.bot).requests).toEqual([]);
+ expect(f.store.messagesFor(f.lead.threadId)).toEqual(before);
+});
+it("refuses a forged claim without changing grants or opening an approval", () => {
+ const f = setup();
+ const fixture = serviceQueueFixture(f.store);
+ fixture.queue(botAccessApprovalQueue(f.store));
+ const before = f.store.messagesFor(f.lead.threadId).slice();
+ expect(() => requestBotAccessProduct(f.store, f.lead, {botId:f.bot.id,revision:0,grants:[grant]}, Date.now(), {
+  authority:{claim:{} as import('./decision/index.ts').ExecutionClaim,proof:{}},threadId:f.lead.threadId,accounts:[account],
+ })).toThrow('unverified-execution-claim');
+ expect(botAccessPolicy(f.bot).requests).toEqual([]);
+ expect(f.store.messagesFor(f.lead.threadId)).toEqual(before);
 });

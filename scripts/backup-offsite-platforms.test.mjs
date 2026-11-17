@@ -163,14 +163,15 @@ describe("runtime attestation and capability, per platform", () => {
     expect(packagedResticPath(resources, platform, arch)).toBe(expected);
   });
   it("unshipped targets have no restic", () => { expect(packagedResticPath("/r", "linux", "arm64")).toBeNull(); expect(packagedResticPath("/r", "freebsd", "x64")).toBeNull(); });
-  it.each([["linux", "x64"], ["win32", "x64"], ["darwin", "x64"]].filter(([platform]) => !posixOnWindows(platform)))("%s-%s: exact pinned bytes are trusted, anything else is not", async (platform, arch) => {
+  it.each([["linux", "x64"], ["win32", "x64"], ["darwin", "x64"]].filter(([platform]) => !posixOnWindows(platform)))("%s-%s: exact raw provenance and platform admission are checked separately", async (platform, arch) => {
     const root = scratch(), file = path.join(root, "restic"), good = Buffer.from(`pinned ${platform}`);
     fs.writeFileSync(file, good, { mode: 0o755 });
     const target = `${platform}-${arch}`; overrides.set(target, { ...RESTIC_PINS[target], originalSha256: sha(good) });
     try {
       await withPlatform(platform, arch, async () => {
         expect(trustedBackupResticExecutable(file)).toBe(true);
-        expect(await trustedBackupResticExecutableAsync(file)).toBe(true);
+        // MAIN RULING: Windows admission additionally requires final signed-byte pins, owning app identity and native trust; a raw hash alone now refuses. Signed success is exercised in windows-upstream-signing.test.mjs.
+        expect(await trustedBackupResticExecutableAsync(file)).toBe(platform !== "win32");
         fs.writeFileSync(file, "tampered"); expect(trustedBackupResticExecutable(file)).toBe(false); expect(await trustedBackupResticExecutableAsync(file)).toBe(false);
         fs.writeFileSync(file, good); fs.symlinkSync(file, path.join(root, "link")); expect(trustedBackupResticExecutable(path.join(root, "link"))).toBe(false);
         // Group- or world-writable is refused where modes exist; Windows has none.

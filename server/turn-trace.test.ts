@@ -27,7 +27,7 @@ describe("turn trace", () => {
     trace.once("ttft"); trace.once("ttft");
     endTurnTrace("t2", "ok");
     expect(lines).toHaveLength(5);
-    expect(lines[0]).toMatch(/^\[turn-trace\] id=[0-9a-f]{8} phase=received at=50ms since=50ms cold=true$/);
+    expect(lines[0]).toMatch(/^\[turn-trace\] id=[0-9a-f]{8} phase=received at=50ms since=50ms cold=true threadKey=[0-9a-f]{16}$/);
     expect(lines[1]).toContain("phase=mount.connectors");
     expect(lines[1]).toContain("outcome=ok ms=30");
     expect(lines[2]).toContain("outcome=error ms=5");

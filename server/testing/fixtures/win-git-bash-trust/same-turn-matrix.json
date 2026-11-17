@@ -1,0 +1,4717 @@
+{
+  "schema": 1,
+  "provenance": "synthetic-definition",
+  "engines": [
+    "claude",
+    "pi",
+    "fuigo"
+  ],
+  "dialect": "bash",
+  "fuigoTransport": "outer PowerShell; engine must structurally broker the nested Bash plan",
+  "cases": [
+    {
+      "id": "matrix-001",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-002",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-003",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-004",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-005",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-006",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-007",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-008",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-009",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-010",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-011",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-012",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-013",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-014",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-015",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-016",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-017",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-018",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-019",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-020",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-021",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-022",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-023",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-024",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "./hello.sh",
+      "inputDigest": "cc81d0d2b547310c5fe6e71902f2cc2edb89b08a34de78373ae70f89e23857b7",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 10,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-025",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-026",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-027",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-028",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-029",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-030",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-031",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-032",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-033",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-034",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-035",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-036",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-037",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-038",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-039",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-040",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-041",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-042",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-043",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-044",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-045",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-046",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-047",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-048",
+      "prefix": "plain",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "bash hello.sh",
+      "inputDigest": "e0322d0b2c39aab1c1860c2908f754cf142907d016278c98753884a46700b02c",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 0,
+        "endByte": 4,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-049",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "printf '#!/bin/bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "ba1e0421ab28d57b7fa0f06d2b1dd7c2ee95dcc1dfa8a3e2945307f0ea46a1af",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 46,
+        "endByte": 56,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-050",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "printf '#!/bin/bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "ba1e0421ab28d57b7fa0f06d2b1dd7c2ee95dcc1dfa8a3e2945307f0ea46a1af",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 46,
+        "endByte": 56,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-051",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "printf '#!/bin/bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "b5795c0e1388e18922f36da741bb38875fd694de32870f5b42663a6f8284c0ae",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 50,
+        "endByte": 60,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-052",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "printf '#!/bin/bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "b5795c0e1388e18922f36da741bb38875fd694de32870f5b42663a6f8284c0ae",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 50,
+        "endByte": 60,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-053",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "printf '#!/usr/bin/bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "5ec40108be853b00384b5d37c00bc86a154bfeafb3494b1c266f2d30fd11cc96",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 50,
+        "endByte": 60,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-054",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "printf '#!/usr/bin/bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "5ec40108be853b00384b5d37c00bc86a154bfeafb3494b1c266f2d30fd11cc96",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 50,
+        "endByte": 60,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-055",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "printf '#!/usr/bin/bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "cb44fa29550dd7b12bd914925c6124b74bea65d11e325707f75e1bb633142a4b",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 54,
+        "endByte": 64,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-056",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "printf '#!/usr/bin/bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "cb44fa29550dd7b12bd914925c6124b74bea65d11e325707f75e1bb633142a4b",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 54,
+        "endByte": 64,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-057",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "printf '#!/usr/bin/env bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "e5fc258a094a8ff69164c42c195d1315c7927cb88d9f02bf59185187b8a53f17",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 54,
+        "endByte": 64,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-058",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "printf '#!/usr/bin/env bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "e5fc258a094a8ff69164c42c195d1315c7927cb88d9f02bf59185187b8a53f17",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 54,
+        "endByte": 64,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-059",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "printf '#!/usr/bin/env bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "854537cdee986d7820e826d2bcbdc8ab096130e800755a2a7c6b1f5c81242bf3",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 58,
+        "endByte": 68,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-060",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "printf '#!/usr/bin/env bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "854537cdee986d7820e826d2bcbdc8ab096130e800755a2a7c6b1f5c81242bf3",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 58,
+        "endByte": 68,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-061",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "printf '#!/bin/sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "19f17e638f3a8276a20df56fad1cb74c10527aaa0ea9999912a94ccca1e517e3",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 44,
+        "endByte": 54,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-062",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "printf '#!/bin/sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "19f17e638f3a8276a20df56fad1cb74c10527aaa0ea9999912a94ccca1e517e3",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 44,
+        "endByte": 54,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-063",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "printf '#!/bin/sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "05efb289525fbd1317501e34d6e5938da771afc2e548de0f7345aee4d0fbce04",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 48,
+        "endByte": 58,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-064",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "printf '#!/bin/sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "05efb289525fbd1317501e34d6e5938da771afc2e548de0f7345aee4d0fbce04",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 48,
+        "endByte": 58,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-065",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "printf '#!/usr/bin/sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "391f1c85a3f323d1db7ce559a59b1e1d4ae1751fb8ccfda3076c76eda0b5630b",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 48,
+        "endByte": 58,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-066",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "printf '#!/usr/bin/sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "391f1c85a3f323d1db7ce559a59b1e1d4ae1751fb8ccfda3076c76eda0b5630b",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 48,
+        "endByte": 58,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-067",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "printf '#!/usr/bin/sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "552cc2f7f213357c0d659abec2f15c193eee5a0d08b1aa3627a9b6e2865160ec",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 52,
+        "endByte": 62,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-068",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "printf '#!/usr/bin/sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "552cc2f7f213357c0d659abec2f15c193eee5a0d08b1aa3627a9b6e2865160ec",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 52,
+        "endByte": 62,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-069",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "printf '#!/usr/bin/env sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "de012ff74ebe35c4c5cdd694a0dd9b4a220633b3ca178093b60331149de8666e",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 52,
+        "endByte": 62,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-070",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "printf '#!/usr/bin/env sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "de012ff74ebe35c4c5cdd694a0dd9b4a220633b3ca178093b60331149de8666e",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 52,
+        "endByte": 62,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-071",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "printf '#!/usr/bin/env sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "56cb8b9d496fabcd4ab4f5fc724d958fdb160f5bc75c9b8537253aca0077b049",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 56,
+        "endByte": 66,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-072",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "printf '#!/usr/bin/env sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "56cb8b9d496fabcd4ab4f5fc724d958fdb160f5bc75c9b8537253aca0077b049",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 56,
+        "endByte": 66,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-073",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "printf '#!/bin/bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "910e58c6c0375c01665e7e9af44d1fccd40ad33f7b1a4d82626753b6c91093ea",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 46,
+        "endByte": 50,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-074",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "printf '#!/bin/bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "910e58c6c0375c01665e7e9af44d1fccd40ad33f7b1a4d82626753b6c91093ea",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 46,
+        "endByte": 50,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-075",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "printf '#!/bin/bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "09f7c6fd1db4597d0f1733834f78aab7f0b718da13caaa8fa50e5a5acfd2cdb8",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 50,
+        "endByte": 54,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-076",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "printf '#!/bin/bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "09f7c6fd1db4597d0f1733834f78aab7f0b718da13caaa8fa50e5a5acfd2cdb8",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 50,
+        "endByte": 54,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-077",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "printf '#!/usr/bin/bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "d75c19621d4c90053d3071965954a3a213c9c1621e800cc31ac3feecc90962bd",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 50,
+        "endByte": 54,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-078",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "printf '#!/usr/bin/bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "d75c19621d4c90053d3071965954a3a213c9c1621e800cc31ac3feecc90962bd",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 50,
+        "endByte": 54,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-079",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "printf '#!/usr/bin/bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "6fefbd9bf548f08f8817a8d69cd355cce7c184536d16078e7cc2b7432b07b8f7",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 54,
+        "endByte": 58,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-080",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "printf '#!/usr/bin/bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "6fefbd9bf548f08f8817a8d69cd355cce7c184536d16078e7cc2b7432b07b8f7",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 54,
+        "endByte": 58,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-081",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "printf '#!/usr/bin/env bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "654b3e9fc39c267b43ec57d3ee7543fc6e8d97323e1d1f1c2726b0e76ad53d35",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 54,
+        "endByte": 58,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-082",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "printf '#!/usr/bin/env bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "654b3e9fc39c267b43ec57d3ee7543fc6e8d97323e1d1f1c2726b0e76ad53d35",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 54,
+        "endByte": 58,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-083",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "printf '#!/usr/bin/env bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "d81e6e4cf60b474d4d711b95164dc985918a323ff6397881aa4838269c41450f",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 58,
+        "endByte": 62,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-084",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "printf '#!/usr/bin/env bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "d81e6e4cf60b474d4d711b95164dc985918a323ff6397881aa4838269c41450f",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 58,
+        "endByte": 62,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-085",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "printf '#!/bin/sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "4edd492fd195e3e94f89defdcccc420cc78c36236ec91b00e94556ecbeda9563",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 44,
+        "endByte": 48,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-086",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "printf '#!/bin/sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "4edd492fd195e3e94f89defdcccc420cc78c36236ec91b00e94556ecbeda9563",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 44,
+        "endByte": 48,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-087",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "printf '#!/bin/sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "7968f87b9c4d087980a41efeb818bea4c694e6a353829406e53f94a5339238bb",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 48,
+        "endByte": 52,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-088",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "printf '#!/bin/sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "7968f87b9c4d087980a41efeb818bea4c694e6a353829406e53f94a5339238bb",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 48,
+        "endByte": 52,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-089",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "printf '#!/usr/bin/sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "e3558e2182abd52837b975436cf4ccc64a1b94fbd2aa5aa076f33595da6deaa1",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 48,
+        "endByte": 52,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-090",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "printf '#!/usr/bin/sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "e3558e2182abd52837b975436cf4ccc64a1b94fbd2aa5aa076f33595da6deaa1",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 48,
+        "endByte": 52,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-091",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "printf '#!/usr/bin/sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "472dd7c976f4259f8d37c67662df1378bbb22a6067267c9855e9753fbc224e69",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 52,
+        "endByte": 56,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-092",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "printf '#!/usr/bin/sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "472dd7c976f4259f8d37c67662df1378bbb22a6067267c9855e9753fbc224e69",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 52,
+        "endByte": 56,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-093",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "printf '#!/usr/bin/env sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "4848800e523b57aab96e646204ccfcac2b7bf7135693616141fae073a57ac0fd",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 52,
+        "endByte": 56,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-094",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "printf '#!/usr/bin/env sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "4848800e523b57aab96e646204ccfcac2b7bf7135693616141fae073a57ac0fd",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 52,
+        "endByte": 56,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-095",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "printf '#!/usr/bin/env sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "664de40856fbb873200467362306d11868751dcb510dd6318834d78334875a78",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 56,
+        "endByte": 60,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-096",
+      "prefix": "plain",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "printf '#!/usr/bin/env sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "664de40856fbb873200467362306d11868751dcb510dd6318834d78334875a78",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 56,
+        "endByte": 60,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-097",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-098",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-099",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-100",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-101",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-102",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-103",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-104",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-105",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-106",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-107",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-108",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-109",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-110",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-111",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-112",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-113",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-114",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-115",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-116",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-117",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-118",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-119",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "cd 'C:/Users/fixture/work' && ./hello.sh",
+      "inputDigest": "cc564727e601e3235998bf5d929ac91844974e31039c131fe867e652e790e9dd",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 40,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-120",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "cd /c/Users/fixture/work && ./hello.sh",
+      "inputDigest": "116b6b9a63d45f352603cb4402d531b6aef8f8cedd9752e7f32bc06659a31449",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 38,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-121",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-122",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-123",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-124",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-125",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-126",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-127",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-128",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-129",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-130",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-131",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-132",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env bash\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-133",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-134",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-135",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-136",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-137",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-138",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-139",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-140",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-141",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-142",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\necho ok\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-143",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "cd 'C:/Users/fixture/work' && bash hello.sh",
+      "inputDigest": "31795a8d28bb1cb1071705f1ba25956b87daa7f978415e47328e8178ce7160ec",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 30,
+        "endByte": 34,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-144",
+      "prefix": "cd",
+      "write": "Write",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "cd /c/Users/fixture/work && bash hello.sh",
+      "inputDigest": "8d23281ef18103518f0fec21c495eb68f2dfddeb0f933b618d2033c96c904885",
+      "writeInput": {
+        "path": "hello.sh",
+        "content": "#!/usr/bin/env sh\r\necho ok\r\n"
+      },
+      "expectedOccurrence": {
+        "startByte": 28,
+        "endByte": 32,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-145",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/bin/bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "c0c4fe9a4ded8e0a4080a6beed127128c94d8f0e1e6d2bf9fe3bafbadc7d1072",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 76,
+        "endByte": 86,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-146",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "cd /c/Users/fixture/work && printf '#!/bin/bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "11b53ecfb17ce37696762ffc9d3c51debbd5ecee32637413d18429b8ab849be8",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 74,
+        "endByte": 84,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-147",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/bin/bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "3793cd0531abd26c68ea15194514b1b073c20d984d857f04d4059f254cf3d324",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 80,
+        "endByte": 90,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-148",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "cd /c/Users/fixture/work && printf '#!/bin/bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "a4554b1cf1d0998a8c3a979d6d159bd6baac127b9e8ee03380f9d793f7216691",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 78,
+        "endByte": 88,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-149",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "30d9e70b69d0184891111842d76209877edd09ca8c7c3a1ba03d2d5538c72ed5",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 80,
+        "endByte": 90,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-150",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "7a0981a291f80016bbe1e51825122dc2e135e1acc189eff3a67d60e1ee07ac0f",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 78,
+        "endByte": 88,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-151",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "51259772c89a7f4679e65a69ad8383f6571bb0059b6c43476bace0790c320441",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 84,
+        "endByte": 94,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-152",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "1515cf4522baab12e4aa437a98fafa461ffed183e37969c55f70b7d52722a388",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 82,
+        "endByte": 92,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-153",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/env bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "0cf3fe114b72e8827f1eb7526d899226c30acc83d66f5ac4766e9e3d26fb69b6",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 84,
+        "endByte": 94,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-154",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/env bash\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "cb24857f1347f8a34d4808ba6f905692dd67c5c589719a05efddd82a7bb1980c",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 82,
+        "endByte": 92,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-155",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/env bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "9dd0dd707e7eeecc2948d99f43bedac78dbe70f458011c9ae541b49cf27828af",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 88,
+        "endByte": 98,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-156",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/env bash\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "f25397b68b3bb87cb104f43e6d5737b91d2e44433b68a5626310bb75a1ba5c88",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 86,
+        "endByte": 96,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-157",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/bin/sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "bcae37c680e97a9b79d317ddac68ff57a861fcc7e4481adb35c579758427792f",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 74,
+        "endByte": 84,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-158",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "cd /c/Users/fixture/work && printf '#!/bin/sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "8116d512cf1863a419e4069ca8bcfd449aa69ae6e736ff02b73721906ef35eb9",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 72,
+        "endByte": 82,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-159",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/bin/sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "fe085326fd100a20618aa13c203c6acaaae86006105e730e1e205bf0088238d5",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 78,
+        "endByte": 88,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-160",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "cd /c/Users/fixture/work && printf '#!/bin/sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "3e5617f781d7884cfd8be7aa444a4816697928e3bea744e778a17e39ddfa3268",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 76,
+        "endByte": 86,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-161",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "64e0fec934ffa685865608be9d11c1291d99f7f887e82495c888e9d4dddddb4b",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 78,
+        "endByte": 88,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-162",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "7c692f5fc99245b38ffba387eee708b7a19d9d077007ab3585d0398e6e3f9d97",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 76,
+        "endByte": 86,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-163",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "6e9d35c40d2eee21cdf0d7c8b04e481cabe1a90caadd0c34b4cd1cdbedd591cf",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 82,
+        "endByte": 92,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-164",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "4430ced476133383a3c7563fa7495c92a8e434e75ed527cc94da655396bdce27",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 80,
+        "endByte": 90,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-165",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/env sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "03ffb719d4cbf8f337b15912ee534d5a6ca54c321ccce1995a8c89df2680e1b0",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 82,
+        "endByte": 92,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-166",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/env sh\\necho ok\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "341d3b0a89d44a00379aef382a027ff9e3aa05a66caee8d572772b48520bfb81",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 80,
+        "endByte": 90,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-167",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/env sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "43c1f008a9a16d62cee85b6cf2c3a4145f8f72df8627e7667cff43137395256d",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 86,
+        "endByte": 96,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-168",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "direct",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/env sh\\r\\necho ok\\r\\n' > hello.sh && ./hello.sh",
+      "inputDigest": "34ddfc8e757ffb75058eff4fe9ec04fe10452af0fde0dc34c6610f7494826952",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 84,
+        "endByte": 94,
+        "role": "direct-script"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-169",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/bin/bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "99b5583bb8454e50cbce8ddbd3096dc7467ed452b19ab8a7bee0335b1d28d9d0",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 76,
+        "endByte": 80,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-170",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\necho ok\n",
+      "bodyDigest": "c7eb215db98c9bdfe4950111c6bb9fcd210cc3c3d0d2e8a0875b588e30d57f70",
+      "command": "cd /c/Users/fixture/work && printf '#!/bin/bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "7cb49df6bca398403be8d600900791f3607d817442316d95be844cee2cb7d224",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 74,
+        "endByte": 78,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-171",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/bin/bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "b32d0a7e96d547ce3205e2cad2faea66f0f85674c66a5709dd3b96d3a88427cf",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 80,
+        "endByte": 84,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-172",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "bad7e30028cb3911af6d30cec888581babf9222dd2ecb9d0d4b309e82a1becf0",
+      "command": "cd /c/Users/fixture/work && printf '#!/bin/bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "9f875ad819512edf6a91b40ad6449fcbd8e62a9f1e11f43829db7a139fdc17c7",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 78,
+        "endByte": 82,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-173",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "ace1f52eea6d8a675b0a68c49107292931ee491397722aa5fca21d7de4ffbb97",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 80,
+        "endByte": 84,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-174",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\necho ok\n",
+      "bodyDigest": "1ed356cd41dec51c544796f8aa8de28abe4e7146aaa44cdf37a88546557bdcd6",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "a9eb2b6086aed489a36a0baaae0da1901dbec4da58c80de07d52d3dd502a7d7a",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 78,
+        "endByte": 82,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-175",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "5dbce81bdcace2118c953361b69d26e47d2ba2eeb1e862790bbf5f62b8072270",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 84,
+        "endByte": 88,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-176",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/bash\r\necho ok\r\n",
+      "bodyDigest": "a6effacb3547a91a294ecb8423407b5c691c5654dbcb22074b19e7786d105700",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "40cea8c42069c57ee9acd0a21f850c49e7520ae4257a1fa884ba6665027d8cda",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 82,
+        "endByte": 86,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-177",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/env bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "fdc17b7b8c42c8e32ef82b82b4c3ac78377b1c060ef3775b072933f76c8f7b66",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 84,
+        "endByte": 88,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-178",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\necho ok\n",
+      "bodyDigest": "0d7a2a90fd5f06a2eaf2b41ab8ee127b13dafa466f48f7f92ad624edce3942be",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/env bash\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "59c540d1aa29737cc4b63bfcfdaa40d826b8be0d299fb5ec5338754a66898669",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 82,
+        "endByte": 86,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-179",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/env bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "3a4646fbd5f7cdf39a06a07abd88cf280e8e317f7469b51aa6a6a5036e60419f",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 88,
+        "endByte": 92,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-180",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env bash",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env bash\r\necho ok\r\n",
+      "bodyDigest": "ec2be7c78becb8ec21e6b541090d2cf57a5b942514ec487bc0eedf913d9c9ac8",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/env bash\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "24960a7928708cf312224eab8a1cd48e84297823b52615ffe02dfca93adf5a09",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 86,
+        "endByte": 90,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-181",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/bin/sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "36e7c2a6d5b1d775415721c72b083097036507c68e5fa59a56c57688b823357b",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 74,
+        "endByte": 78,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-182",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\necho ok\n",
+      "bodyDigest": "b4d644d4279594903f1a9911956432d9473041f2984fc6014c14d7402c7d126c",
+      "command": "cd /c/Users/fixture/work && printf '#!/bin/sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "276e598707da8326928106510a978f58070747dabe916e404d73fe9d169f7e4f",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 72,
+        "endByte": 76,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-183",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/bin/sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "27b920c9140e3bbfdd4be59b9215cd8151dd4e830e0d4efda82b960e6d51221a",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 78,
+        "endByte": 82,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-184",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "65c09b27287ef3597a218fc2fd7d1602265826209a6809b5064ec1821576bd13",
+      "command": "cd /c/Users/fixture/work && printf '#!/bin/sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "5a070615440a008c0a60c4d8aa721c856ba92e59340c20b09c6d45b7396e93b9",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 76,
+        "endByte": 80,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-185",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "0fc860e58c07cf656e9c4f8c7642d6fa206be30b048d3e68ec51ca8325ae88e5",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 78,
+        "endByte": 82,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-186",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\necho ok\n",
+      "bodyDigest": "375c56dba86578c93244638a6b1e2ab3740eb9acd404aca530b169f2d4bfdcd3",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "9887a69efbef6731303c5961c94c19e70e2326bd9ab157c48a6fe879c85cedc3",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 76,
+        "endByte": 80,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-187",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "fc9516e7c562671b1965f2380d1152d814a9d944667c8a575f389e7b045ca07d",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 82,
+        "endByte": 86,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-188",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/sh\r\necho ok\r\n",
+      "bodyDigest": "70d29905977c9b7393cb13feb473a238b7a2f51d52c719a4f2d5095cb0421505",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "b5d8c433d072b66a0e1acd9198418652193ff5860d752d237544686e9f41437d",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 80,
+        "endByte": 84,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-189",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/env sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "de18943180c6081cfd7a55b276e8781359538d800e90f6f82fe53ecbeab0687d",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 82,
+        "endByte": 86,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-190",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "LF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\necho ok\n",
+      "bodyDigest": "0f01449e05e249c624128789ed95af29b757a6be55879cacde1f9b133a72e246",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/env sh\\necho ok\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "bb99aed3814453cbcbcbde5e4f44f48b947a524fbf0e858a22c8fe50fe0d4bf3",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 80,
+        "endByte": 84,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-191",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "native",
+      "handedCwd": "C:\\Users\\fixture\\work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "cd 'C:/Users/fixture/work' && printf '#!/usr/bin/env sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "2cac8073efef4787e2ac1b4d038abe1964793054480081cf9eca15eb4a4b1d69",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 86,
+        "endByte": 90,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    },
+    {
+      "id": "matrix-192",
+      "prefix": "cd",
+      "write": "printf",
+      "route": "explicit",
+      "shebang": "#!/usr/bin/env sh",
+      "lineEnding": "CRLF",
+      "cwdKind": "msys",
+      "handedCwd": "/c/Users/fixture/work",
+      "effectiveCwdNative": "C:\\Users\\fixture\\work",
+      "body": "#!/usr/bin/env sh\r\necho ok\r\n",
+      "bodyDigest": "874cc5b5b1952b63784f2745319b99aeef56ecaaea4fbb381b813a8db4115abb",
+      "command": "cd /c/Users/fixture/work && printf '#!/usr/bin/env sh\\r\\necho ok\\r\\n' > hello.sh && bash hello.sh",
+      "inputDigest": "b5aa074df888e3c9edcf288769a21d5fb695b6a4e3c768aa57e51321c0e6bf7d",
+      "writeInput": null,
+      "expectedOccurrence": {
+        "startByte": 84,
+        "endByte": 88,
+        "role": "nested-bash"
+      },
+      "requiresSeparateReservation": true,
+      "runtimeEvidence": null
+    }
+  ]
+}

@@ -18,12 +18,14 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 import { captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 
 const faults = vi.hoisted(() => ({ copy: undefined as Error | undefined, write: undefined as { name: string; error: Error } | undefined }));
-vi.mock("node:sqlite", async importOriginal => {
-  const real = await importOriginal<typeof import("node:sqlite")>();
+// Inject at the copy operation the snapshot now imports, after the meter's
+// bootstrap. All error classes and owner-facing assertions stay unchanged.
+vi.mock("./sqlite-open.ts", async importOriginal => {
+  const real = await importOriginal<typeof import("./sqlite-open.ts")>();
   return { ...real, backup: (...args: Parameters<typeof real.backup>) => faults.copy ? Promise.reject(faults.copy) : real.backup(...args) };
 });
-vi.mock("node:fs", async importOriginal => {
-  const real = await importOriginal<typeof import("node:fs")>();
+vi.mock("./counted-fs.ts", async importOriginal => {
+  const real = await importOriginal<typeof import("./counted-fs.ts")>();
   return { ...real, default: real, createWriteStream: (path: string, options: { fd: number }) => {
     const fault = faults.write;
     if (!fault || !String(path).endsWith(fault.name)) return real.createWriteStream(path, options);

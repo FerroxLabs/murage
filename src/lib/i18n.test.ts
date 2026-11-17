@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { UI_LANGUAGE_KEY, bootLanguage, documentLanguage, localeVersion, rememberLanguage, resolveLocale, setLocale, subscribeLocale, t } from "./i18n";
 import { en, loadLocalePack, localeChoices, localeCodes, localeLoaders } from "@/locales";
 import { allLocalePacks } from "@/locales/testing";
+import settingsWords from "@/locales/en-settings/settings.json";
+import pickerWords from "@/locales/en-settings/picker.json";
 import { allowedSentence } from "../../server/voice/voice-host";
 
 afterEach(() => setLocale("en"));
@@ -59,7 +61,8 @@ describe("t", () => {
   it("every registered pack carries only known keys with non-empty values", async () => {
     for (const pack of Object.values(await allLocalePacks())) {
       for (const [key, value] of Object.entries(pack)) {
-        expect(Object.hasOwn(en, key)).toBe(true);
+        // English is en.json plus the lazy Settings and picker packs (src/lib/settings-copy.ts).
+        expect(Object.hasOwn(en, key) || Object.hasOwn(settingsWords, key) || Object.hasOwn(pickerWords, key), key).toBe(true);
         expect((value ?? "").trim().length).toBeGreaterThan(0);
       }
     }

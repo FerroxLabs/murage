@@ -3,6 +3,7 @@
 """Root machine transport. Fixed endpoints; public authority snapshot only."""
 import base64
 import errno
+import hashlib
 import json
 import math
 import os
@@ -13,11 +14,13 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.error
 import urllib.request
 import uuid
+import zlib
 
 STATE = "/var/lib/murage-home"
 CONFIG = "/etc/murage-home"
@@ -26,14 +29,72 @@ PUBLIC = "/run/murage-control"
 # and writable under ProtectSystem=strict. It holds the render refusal, nothing else.
 CONTROL_STATE = "/var/lib/murage-control"
 CLOCK = "/usr/local/libexec/murage-clock"
+# Private hand-off for a renewed Flux sub-key. Never under the 0644 snapshots. This unit runs as root with NO capabilities
+# (CapabilityBoundingSet= empty in murage-control.service), so it cannot chown to the supervisor's uid or read a file only that uid
+# can read. The hand-off is therefore root-owned with the supervisor's GROUP: directory 0770 root:<supervisor gid>, key 0640 same
+# group, and the poller is a member of that group (SupplementaryGroups=murage), which is what lets it chgrp its own files without
+# CAP_CHOWN. The supervisor reads the key, writes its receipt (its own file, 0640, readable here through the group) and removes the
+# key. A turn is another user and group and has no access. The key is never logged, published or put in an environment.
+FLUX_DELIVERY = PUBLIC + "/flux-subkey"
+FLUX_DELIVERY_FILE = "key.json"
+# The supervisor writes this AFTER it has sealed the key: {op_id, generation(key)}, no key material.
+FLUX_RECEIPT_FILE = "receipt.json"
+# Root-only record of a hand-off still waiting for its receipt. Survives a poller restart; holds no key material. It lives in this
+# unit's own StateDirectory (writable under ProtectSystem=strict); /var/lib/murage-home is read-only here.
+FLUX_PENDING_ACK = CONTROL_STATE + "/flux-ack-pending.json"
+# A hand-off with no receipt after this long is dropped and renewal may proceed (the supervisor may be down).
+FLUX_ACK_WINDOW_SECONDS = 1800
+IDENTITY = CONFIG + "/identity.json"
+# Renewal wire schema: the Python mirror of shared/flux-renewal-wire.ts. The drift test
+# (server/cloud-home/flux-renewal-wire.test.ts) fails if the two disagree.
+HOME_KEY_PATTERN = r"^sk-flux-home-[A-Za-z0-9_-]{21,230}$"
+RENEWAL_OP_ID_PATTERN = r"^renew:[A-Za-z0-9_-]{1,128}:[1-9][0-9]{0,15}:[0-9]{1,16}$"
+ISO_UTC_PATTERN = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$"
+HOME_KEY = re.compile(HOME_KEY_PATTERN)
+RENEWAL_OP_ID = re.compile(RENEWAL_OP_ID_PATTERN)
+ISO_UTC = re.compile(ISO_UTC_PATTERN)
+FLUX_RENEWAL_WIRE = {
+    "renewalDueRequest": ["generation"],
+    "renewalDueResponse": ["due", "op_id"],
+    "subkeyRequest": ["generation", "op_id"],
+    "subkeyResponse": ["key", "generation", "expiresAt", "capUsd"],
+    "ackRequest": ["generation", "op_id", "key_generation"],
+    "ackResponse": ["acked"],
+    "handoff": ["key", "generation", "expiresAt", "capUsd", "op_id"],
+    "receipt": ["op_id", "generation"],
+    "patterns": {"homeKey": HOME_KEY_PATTERN, "opId": RENEWAL_OP_ID_PATTERN, "isoUtc": ISO_UTC_PATTERN},
+}
 MAX_SAFE = 9007199254740991
 # Health reported on the heartbeat. Numbers and one fixed event name only: no free text, no file
 # content, nothing that could carry an engine credential. Events are spool files dropped by the
 # abuse detector (lane 1) as {"type": "abuse.mining_suspected", "at": <ms>}.
 EVENTS = STATE + "/events"
+# The server (murage uid) cannot reach EVENTS (root 0700 parent); its restore alerts spool here (server/home-events.ts), made by the home supervisor.
+SERVER_EVENTS = "/data/.murage-events"
 BACKUP_LAST = STATE + "/backup-last"
 DATA_MOUNT = "/data"
-EVENT_TYPES = ("abuse.mining_suspected",)
+# Event types a control plane in the field accepts in health.events (its strict enum: HOME_EVENT_TYPES of the 1.0.18 line is exactly this).
+BASE_EVENT_TYPES = ("abuse.mining_suspected",)
+# Types only a control plane that advertises them accepts. It does so per heartbeat answer, in the EVENT_TYPES_HEADER response header (the
+# ack body is strict on every home in the field, so a field there would fence a 1.0.18 home). Without the advertisement of the LAST answer
+# they are held (spool files stay on disk, the spool-failed alert stays pending), never sent and never lost, so one can never make an
+# older control plane's strict schema refuse the whole heartbeat.
+EXTENDED_EVENT_TYPES = ("restore.aborted", "restore.stuck", "home.event_spool_failed", "restore.finished")
+EVENT_TYPES = BASE_EVENT_TYPES + EXTENDED_EVENT_TYPES
+EVENT_TYPES_HEADER = "X-Murage-Event-Types"
+MAX_EVENTS = 5
+MAX_EVENT_SCAN = 64
+# A finished spool file: one of the allowlisted names, a time, and for the mining watcher a pid. Dot-prefixed temp files (".<name>.tmp") and
+# anything else never match, so they cannot occupy the scan.
+EVENT_NAME = re.compile(r"(abuse\.mining_suspected|restore\.aborted|restore\.stuck)-[0-9]{1,16}(-[0-9]{1,10})?\.json")
+# A temp file left by a write that was cut short is removed once it is this old; a younger one may be a write in progress and is never touched.
+STALE_TEMP_S = 600
+SPOOL_STATE_NAME = "spool-failed-state.json"
+# The spool-failure state lives in CONTROL_STATE, the directory systemd creates and makes writable (StateDirectory=murage-control under
+# ProtectSystem=strict) before this daemon starts. It is NOT next to the events spool: /var/lib/murage-home/events is made lazily by the miner,
+# and a ReadWritePaths=- entry for a directory that does not exist yet is skipped, which left the state memory-only.
+SPOOL_STATE_PATH = CONTROL_STATE + "/" + SPOOL_STATE_NAME
+INSTANCE_ID = re.compile(r"[A-Za-z0-9_-]{16,64}")
 
 # Control wire version. Any other value (or none) fences; there is no fake literal.
 WIRE = 1
@@ -218,7 +279,7 @@ DOOR_HEADER = ("X-Murage-Door", "v2")
 OWNER_FACTOR_HEADER = ("X-Murage-Owner-Factor", "1")
 
 def machine_request(binding, operation, body=None, door=False, owner_factor=False):
-    if operation not in ("lease", "heartbeat", "desired"):
+    if operation not in ("lease", "heartbeat", "desired", "flux/subkey", "flux/renewal-due", "flux/subkey/ack"):
         raise ValueError("Invalid control operation")
     url = binding["adminUrl"] + "/v1/machines/" + binding["homeId"] + "/" + operation
     # Cloudflare's browser integrity check answers Python-urllib's default
@@ -237,13 +298,38 @@ def machine_request(binding, operation, body=None, door=False, owner_factor=Fals
         raw = response.read(65537)
         if response.status != 200 or len(raw) > 65536:
             raise ValueError("Control response refused")
-    return strict_json(raw.decode("utf-8"))
+        advertised = response.headers.get(EVENT_TYPES_HEADER) if operation == "heartbeat" and getattr(response, "headers", None) is not None else None
+    value = strict_json(raw.decode("utf-8"))
+    if operation == "heartbeat" and isinstance(value, dict):
+        value = Reply(value)
+        value.event_types = advertised
+    return value
+
+class Reply(dict):
+    """A heartbeat answer: the strict body, plus event_types, the raw X-Murage-Event-Types response header (None when absent). The
+    body is validated exactly as before; the header never enters it."""
+    event_types = None
+
+def advertised_event_types(heartbeat):
+    """The extended event types the heartbeat answer advertised: the allowlisted names in its header, nothing else. Empty when absent."""
+    raw = getattr(heartbeat, "event_types", None)
+    if not isinstance(raw, str) or len(raw) > 512:
+        return frozenset()
+    return frozenset(name.strip() for name in raw.split(",") if name.strip() in EXTENDED_EVENT_TYPES)
 
 def strict_fields(value, fields):
     if not isinstance(value, dict) or set(value) != set(fields):
         raise ValueError("Invalid control response")
 
+# Present only when the control plane runs flux routes. A strict boolean; renewal itself is not done here, and the field is dropped
+# so the stored authority snapshot keeps the exact shape the server's snapshot reader (control-state.ts) accepts.
+OPTIONAL_DESIRED_FIELDS = ("flux_renewal_due",)
+
 def validate_desired(value, binding, lease):
+    if isinstance(value, dict) and "flux_renewal_due" in value:
+        if type(value["flux_renewal_due"]) is not bool:
+            raise ValueError("Invalid control response")
+        value = {name: item for name, item in value.items() if name not in OPTIONAL_DESIRED_FIELDS}
     strict_fields(value, ("wire", "homeId", "generation", "desiredState", "engineSubscriptionGates",
                           "lease", "executionAllowed", "heartbeatFresh", "heartbeatEveryMs", "homeKey"))
     if (type(value["wire"]) is not int or value["wire"] != WIRE or value["homeId"] != binding["homeId"]
@@ -270,6 +356,168 @@ def validate_desired(value, binding, lease):
         or not isinstance(signed["signature"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{86}", signed["signature"])):
         raise ValueError("Invalid control identity envelope")
     return value
+
+def supervisor_uid(identity=IDENTITY, expected_uid=0):
+    return supervisor_ids(identity, expected_uid)[0]
+
+def supervisor_ids(identity=IDENTITY, expected_uid=0):
+    value = strict_json(read_secure(identity, True, expected_uid, 4096))
+    uid = value.get("uid") if isinstance(value, dict) else None
+    gid = value.get("gid") if isinstance(value, dict) else None
+    if not integer(uid) or not integer(gid):
+        raise ValueError("Invalid supervisor identity")
+    return uid, gid
+
+def wire_generation(value):
+    return type(value) is int and 1 <= value <= MAX_SAFE
+
+def wire_object(value, names, required):
+    """A JSON object whose keys are all in names and include every required one (zod strictObject)."""
+    if not isinstance(value, dict) or not set(value) <= set(names) or not set(required) <= set(value):
+        raise ValueError("Invalid Flux renewal response")
+    return value
+
+def valid_renewal_due(value):
+    wire_object(value, FLUX_RENEWAL_WIRE["renewalDueResponse"], ("due",))
+    due, op_id = value["due"], value.get("op_id")
+    if (type(due) is not bool or due != ("op_id" in value)
+            or ("op_id" in value and not (isinstance(op_id, str) and RENEWAL_OP_ID.fullmatch(op_id)))):
+        raise ValueError("Invalid Flux renewal response")
+    return {"due": due, "op_id": op_id}
+
+def valid_subkey(value):
+    wire_object(value, FLUX_RENEWAL_WIRE["subkeyResponse"], FLUX_RENEWAL_WIRE["subkeyResponse"])
+    cap = value["capUsd"]
+    if (not isinstance(value["key"], str) or not HOME_KEY.fullmatch(value["key"]) or not wire_generation(value["generation"])
+            or not isinstance(value["expiresAt"], str) or not ISO_UTC.fullmatch(value["expiresAt"])
+            or isinstance(cap, bool) or not isinstance(cap, (int, float)) or not math.isfinite(cap) or cap < 0):
+        raise ValueError("Invalid Flux sub-key response")
+    return {name: value[name] for name in FLUX_RENEWAL_WIRE["subkeyResponse"]}
+
+def valid_ack_response(value):
+    wire_object(value, FLUX_RENEWAL_WIRE["ackResponse"], FLUX_RENEWAL_WIRE["ackResponse"])
+    if value["acked"] is not True:
+        raise ValueError("Invalid Flux ack response")
+    return value
+
+def private_delivery_dir(directory, group_gid):
+    """The hand-off directory: owned by this process, group = the supervisor's group, 0770. No chown to another uid is needed."""
+    try:
+        os.mkdir(directory, 0o700)
+    except FileExistsError:
+        pass
+    info = os.lstat(directory)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        raise ValueError("Unsafe delivery directory")
+    if info.st_gid != group_gid:
+        os.chown(directory, -1, group_gid)
+    os.chmod(directory, 0o770)
+
+def write_flux_subkey(subkey, directory=FLUX_DELIVERY, group_gid=None, op_id=None):
+    """Sealed hand-off: 0770 directory, 0640 file, both this process's with the supervisor's group. Carries the op_id so the
+    supervisor can name its receipt. A receipt left by an earlier hand-off is removed first."""
+    private_delivery_dir(directory, group_gid)
+    try:
+        os.unlink(directory + "/" + FLUX_RECEIPT_FILE)
+    except FileNotFoundError:
+        pass
+    raw = json.dumps({**subkey, "op_id": op_id}, separators=(",", ":"), allow_nan=False).encode()
+    fd, temporary = tempfile.mkstemp(prefix=".subkey-", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            os.fchown(stream.fileno(), -1, group_gid)
+            os.fchmod(stream.fileno(), 0o640)
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, directory + "/" + FLUX_DELIVERY_FILE)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+def deliver_flux_subkey(binding, request, op_id, directory=FLUX_DELIVERY, owner_uid=None, owner_gid=None):
+    """Machine-credential call; the answer goes to the private hand-off only. Returns the ack
+    the poller still owes the control plane. The ack is sent separately (ack_flux_subkey) so a
+    lost ack is retried without minting another key. owner_uid is the supervisor's (it writes the receipt); owner_gid its group."""
+    if owner_uid is None or owner_gid is None:
+        owner_uid, owner_gid = supervisor_ids()
+    subkey = valid_subkey(request(binding, "flux/subkey", {"generation": binding["generation"], "op_id": op_id}))
+    write_flux_subkey(subkey, directory, owner_gid, op_id=op_id)
+    return {"generation": binding["generation"], "op_id": op_id, "key_generation": subkey["generation"]}
+
+def ack_flux_subkey(binding, request, pending):
+    """Tell the control plane the supervisor sealed the key. Only this moves its recorded expiry."""
+    # "generation" is the machine credential's generation and only authenticates the call: it is the CURRENT binding's, never the
+    # pending record's. A restart after a rebind would otherwise answer 401 forever for the old one; the op_id and key_generation
+    # say what is being acked, and a control plane that does not know that op answers 409, which renew_flux_subkey clears.
+    valid_ack_response(request(binding, "flux/subkey/ack", {"generation": binding["generation"], "op_id": pending["op_id"],
+                                                             "key_generation": pending["key_generation"]}))
+
+def atomic_private(path, value, expected_uid=0):
+    """Root-only state (0600): write a temporary file, fsync, rename, fsync the directory."""
+    raw = json.dumps(value, separators=(",", ":"), allow_nan=False).encode()
+    fd, temporary = tempfile.mkstemp(prefix=".pending-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+def read_pending_ack(path=FLUX_PENDING_ACK, expected_uid=0):
+    """The pending record, or None when absent or damaged (a damaged record only means renewal asks again)."""
+    try:
+        value = strict_json(read_secure(path, True, expected_uid, 4096))
+        if (not isinstance(value, dict) or set(value) != {"generation", "op_id", "key_generation", "written_at"}
+                or not wire_generation(value["generation"]) or not wire_generation(value["key_generation"])
+                or not isinstance(value["op_id"], str) or not RENEWAL_OP_ID.fullmatch(value["op_id"])
+                or type(value["written_at"]) not in (int, float) or not math.isfinite(value["written_at"])):
+            return None
+        return value
+    except (OSError, ValueError):
+        return None
+
+def clear_pending_ack(path=FLUX_PENDING_ACK):
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+def read_flux_receipt(pending, directory=FLUX_DELIVERY, owner_uid=None, owner_gid=None, expected_uid=0):
+    """True when the supervisor's receipt for exactly this pending hand-off is present. Anything else is 'not yet'.
+    The directory is this process's with the supervisor's group (group-writable, so read_secure's parent rule does not fit it); the
+    receipt is the supervisor's own regular file, 0600 or 0640, read here through the group. Its ancestors are checked as usual."""
+    if owner_uid is None or owner_gid is None:
+        owner_uid, owner_gid = supervisor_ids()
+    try:
+        secure_parents(directory, expected_uid)
+        dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            info = os.fstat(dir_fd)
+            if info.st_uid != os.geteuid() or info.st_gid != owner_gid or info.st_mode & 0o007:
+                return False
+            fd = os.open(FLUX_RECEIPT_FILE, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dir_fd)
+        finally:
+            os.close(dir_fd)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != owner_uid or stat.S_IMODE(info.st_mode) not in (0o600, 0o640)
+                    or info.st_size > 1024):
+                return False
+            value = strict_json(stream.read(1025).decode("utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(value, dict) and set(value) == {"op_id", "generation"}
+            and value["op_id"] == pending["op_id"] and value["generation"] == pending["key_generation"])
 
 def atomic_public(path, value, expected_uid=0):
     secure_parents(path, expected_uid)
@@ -335,6 +583,22 @@ APP_PROBE_URL = "http://127.0.0.1:8830/api/health"
 MISSING = object()
 MAX_SAFE_INTEGER = 2 ** 53 - 1
 
+def parse_home_events(field):
+    """Strict parse of the app's homeEvents field (v 1, at most 32 items with exactly id/type/at, 16 hex ids, outboxDegraded 0..32); None on any violation."""
+    if not isinstance(field, dict) or set(field) != {"v", "items", "outboxDegraded"} or type(field["v"]) is not int or field["v"] != 1:
+        return None
+    degraded, items = field["outboxDegraded"], field["items"]
+    if type(degraded) is not int or not 0 <= degraded <= 32 or not isinstance(items, list) or len(items) > 32:
+        return None
+    seen = set()
+    for row in items:
+        if (not isinstance(row, dict) or set(row) != {"id", "type", "at"} or not isinstance(row["id"], str) or not re.fullmatch(r"[0-9a-f]{16}", row["id"])
+                or row["id"] in seen or row["type"] not in ("restore.aborted", "restore.stuck", "home.event_spool_failed", "restore.finished")
+                or type(row["at"]) is not int or not 0 <= row["at"] <= MAX_SAFE_INTEGER):
+            return None
+        seen.add(row["id"])
+    return {"items": items, "outboxDegraded": degraded}
+
 def app_report(public_origin, opener=None, timeout=5):
     """The app's answer to GET /api/health through Caddy: {"ok": bool, "ui": True/False/None, "uiAt": int/None/MISSING,
     "instance": str/None}. ok is True only when it answers 200 with its
@@ -371,6 +635,15 @@ def app_report(public_origin, opener=None, timeout=5):
             report["door"] = "v2"
         # The owner factor: True only when the app says exactly the integer 1 (an old server never emits the field).
         report["ownerFactor"] = type(body.get("ownerFactor")) is int and body.get("ownerFactor") == 1
+        # How many ops-event spool writes failed in the app (server/home-events.ts): a count only, never text.
+        failures = body.get("eventSpoolFailures")
+        if type(failures) is int and 0 < failures <= MAX_SAFE_INTEGER:
+            report["spoolFailures"] = failures
+        field = body.get("homeEvents")
+        if field is not None:
+            parsed = parse_home_events(field)
+            if parsed is not None:
+                report["homeEvents"] = parsed
         if "ui" in body:
             report["ui"] = body["ui"] == "ok"
         ui_at = body.get("uiAt", MISSING)
@@ -703,8 +976,94 @@ def readiness_checks(data_mount=None, ui_dist=None, ui_renders=None, ui_at=MISSI
             checks["uiInstance"] = ui_instance
     return checks
 
+class Consumed(list):
+    """The spool files that may be removed once a report is accepted; by_event maps each to its exact (type, at), so only the files whose
+    event is in the body that was finally accepted are removed (a trimmed or rolled back resend leaves the rest on disk)."""
+    def __init__(self):
+        super().__init__()
+        self.by_event = {}
+
+def sweep_stale_temps(directory, now=None, between=None):
+    """Remove dot-prefixed temp files (".<name>.tmp") older than STALE_TEMP_S. A fresh one may be a write in progress and stays.
+    Writers never reuse a temp name (pid plus a random suffix), and the identity is checked again right before the unlink (same device and inode
+    as first seen, and still old), so a file opened after the first look is never removed. between(path) is a test hook run between the two looks."""
+    now = time.time() if now is None else now
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in names:
+        if not (name.startswith(".") and name.endswith(".tmp")):
+            continue
+        path = directory + "/" + name
+        try:
+            info = os.lstat(path)
+            if not (stat.S_ISREG(info.st_mode) and now - info.st_mtime > STALE_TEMP_S):
+                continue
+            if between is not None:
+                between(path)
+            again = os.lstat(path)
+            if ((again.st_dev, again.st_ino) == (info.st_dev, info.st_ino) and stat.S_ISREG(again.st_mode)
+                    and now - again.st_mtime > STALE_TEMP_S):
+                os.unlink(path)
+        except OSError:
+            continue
+
+def load_spool_state(path, context):
+    """The durable spool-failure state {"seen": the app's failure count last taken in, "pending": the time the failure was first seen, or None
+    while nothing is owed}. A missing or unreadable file falls back to the copy this process last wrote."""
+    state = {"seen": 0, "pending": None, "instance": None}
+    if context.get("spoolDirty") and isinstance(context.get("spoolState"), dict):
+        return dict(context["spoolState"])  # the last write failed: memory is newer than the file
+    try:
+        with open(path, "r") as handle:
+            raw = json.loads(handle.read(1024))
+    except (OSError, ValueError):
+        return dict(context.get("spoolState") or state)
+    if isinstance(raw, dict):
+        if type(raw.get("seen")) is int and 0 <= raw["seen"] <= MAX_SAFE:
+            state["seen"] = raw["seen"]
+        if type(raw.get("pending")) is int and 0 <= raw["pending"] <= MAX_SAFE:
+            state["pending"] = raw["pending"]
+        if isinstance(raw.get("instance"), str) and INSTANCE_ID.fullmatch(raw["instance"]):
+            state["instance"] = raw["instance"]
+    return state
+
+def save_spool_state(path, state, context):
+    """Write the state; returns True when it is on disk. A failed write is kept (context spoolState, spoolDirty) and tried again on the next poll,
+    never dropped."""
+    context["spoolState"] = dict(state)
+    context["spoolDirty"] = True
+    tmp = os.path.join(os.path.dirname(path), ".%s.%d-%s.tmp" % (os.path.basename(path), os.getpid(), os.urandom(6).hex()))
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as handle:
+            json.dump(state, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        context["spoolDirty"] = False
+        return True
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+
+def strip_extended(health):
+    """The health block without the extended event types (the shape every control plane in the field accepts)."""
+    health = dict(health or {})
+    events = [event for event in health.get("events", []) if event.get("type") in BASE_EVENT_TYPES]
+    if events:
+        health["events"] = events
+    else:
+        health.pop("events", None)
+    return health
+
 def collect_health(data_mount=None, backup_last=None, events=None, app=None, boot_id=None, ui_dist=None, ui_renders=None,
-                   ui_at=MISSING, ui_instance=None, clock=None, rejected_path=None):
+                   ui_at=MISSING, ui_instance=None, clock=None, rejected_path=None, allowed_events=BASE_EVENT_TYPES, journal_owns_legacy=False):
     """Best effort; any failure just omits that field. Returns (health_or_None, consumed_event_paths).
     app: the probe's answer (True/False) or None when not probed. boot_id: this boot's kernel id, or None. ui_renders: the app's own
     render result from the same answer (app_report "ui"), None when it reported none; ui_at and ui_instance its "uiAt" and "instance".
@@ -712,8 +1071,11 @@ def collect_health(data_mount=None, backup_last=None, events=None, app=None, boo
     clock: this poll's clock sample taken just before the app was asked ({"wallMs", "bootMs", ...}), or None. It judges the render
     time (readiness_checks now_ms) and rides as "clock" {"bootMs", "wallMs"} with the boot id: wallMs is the sample time the control
     plane bounds the report's transit with. Nothing here orders reports: the control plane's evidence epoch does (Astra AUTOCANARY-10),
-    echoed by the caller as "evidenceEpoch"."""
-    health, consumed = {}, []
+    echoed by the caller as "evidenceEpoch".
+    allowed_events: the event types that may ride this report (BASE_EVENT_TYPES plus what the last heartbeat answer advertised). A spool file of any
+    other type is left on disk untouched (held, never read into the report, never consumed), and cannot crowd out an allowed one: at most
+    MAX_SCAN files per folder are read, base types first, at most MAX_EVENTS ride, and only the files that ride are listed as consumed."""
+    health, consumed = {}, Consumed()
     if app is not None:
         health["appResponding"] = app is True
         checks = readiness_checks(data_mount, ui_dist, ui_renders if app is True else None, ui_at, ui_instance,
@@ -738,10 +1100,378 @@ def collect_health(data_mount=None, backup_last=None, events=None, app=None, boo
             health["lastBackupAt"] = value
     except (OSError, ValueError):
         pass
-    seen = []
+    candidates = []
     try:
-        directory = events or EVENTS
-        for name in sorted(os.listdir(directory))[:5]:
+        directories = [events] if events else [EVENTS, SERVER_EVENTS]
+        for directory in directories:
+            sweep_stale_temps(directory)
+            try:
+                names = sorted(name for name in os.listdir(directory) if EVENT_NAME.fullmatch(name))[:MAX_EVENT_SCAN]
+            except OSError:
+                continue
+            for name in names:
+                path = directory + "/" + name
+                try:
+                    info = os.lstat(path)
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+                        continue
+                    with open(path, "rb") as handle:
+                        parsed = json.loads(handle.read(4096))
+                    # Only the allowlisted name and a timestamp are copied; everything else in the file is dropped.
+                    if journal_owns_legacy and directory == SERVER_EVENTS and isinstance(parsed, dict) and parsed.get("type") in LEGACY_TYPES:
+                        continue  # J5b r8: r2/r3 spool files of the channel types are migrated into the journal, never carried or consumed here
+                    if (isinstance(parsed, dict) and parsed.get("type") in allowed_events and type(parsed.get("at")) is int
+                            and 0 <= parsed["at"] <= MAX_SAFE):
+                        candidates.append((parsed["type"] not in BASE_EVENT_TYPES, path, {"type": parsed["type"], "at": parsed["at"]}))
+                except (OSError, ValueError):
+                    continue
+    except OSError:
+        pass
+    seen, keys = [], set()
+    for _, path, event in sorted(candidates, key=lambda row: row[0]):
+        key = (event["type"], event["at"])
+        if key in keys:  # the same event twice (both folders, a re-spool): one rides, the extra file goes with it
+            consumed.append(path)
+            consumed.by_event[path] = key
+            continue
+        if len(seen) >= MAX_EVENTS:
+            break
+        keys.add(key)
+        seen.append(event)
+        consumed.append(path)
+        consumed.by_event[path] = key
+    if seen:
+        health["events"] = seen
+    return (health or None), consumed
+
+# ======================================================================================================================================
+# J5b r8: the home events channel (single writer). The app offers items in /api/health `homeEvents`; an intake thread takes them into a checksummed
+# journal (fsync before any ACK), lists them in the ACK file (`acked` once their `add` is durable, `accepted` once the CP took one whose `add` is not),
+# and the poll loop carries them on the heartbeat. See DESIGN-J5b-r8.md sections 5 and 6.
+# ======================================================================================================================================
+JOURNAL_NAME = "home-events.journal"
+ACK_NAME = "home-events-ack.json"
+INTAKE_S = 5.0
+DIRTY_MAX = 32
+PENDING_MAX = 63
+HOLD_PROBES = 3
+ACK_IDS_MAX = 512
+COMPACT_LINES = 1024
+SENT_KEEP = 256
+CHANNEL_TYPES = ("restore.aborted", "restore.stuck", "home.event_spool_failed", "restore.finished")
+FAILURE_TYPE = "home.event_spool_failed"
+HEX16 = re.compile(r"[0-9a-f]{16}")
+LEGACY_TYPES = ("restore.aborted", "restore.stuck")
+
+
+def legacy_id(type_, at):
+    return hashlib.sha256(("legacy\0" + type_ + "\0" + str(at)).encode()).hexdigest()[:16]
+
+
+def record_line(ops):
+    raw = json.dumps({"v": 1, "ops": ops}, separators=(",", ":")).encode()
+    return ("%08x" % (zlib.crc32(raw) & 0xFFFFFFFF)).encode() + b" " + raw + b"\n"
+
+
+def read_journal_prefix(data):
+    """The valid prefix of a journal: (list of op lists, byte length). A bad line ends it and is never skipped."""
+    records, offset = [], 0
+    while offset < len(data):
+        end = data.find(b"\n", offset)
+        if end < 0:
+            break
+        crc, _, raw = data[offset:end].partition(b" ")
+        if crc != ("%08x" % (zlib.crc32(raw) & 0xFFFFFFFF)).encode():
+            break
+        try:
+            ops = json.loads(raw)["ops"]
+            if not isinstance(ops, list) or not all(isinstance(op, dict) and op.get("r") in ("add", "sent", "drop", "hold") for op in ops):
+                break
+        except (ValueError, KeyError, TypeError):
+            break
+        records.append(ops)
+        offset = end + 1
+    return records, offset
+
+
+class Channel:
+    def __init__(self, journal, ack_path, expected_uid=0):
+        self.lock = threading.RLock()
+        self.ack_lock = threading.Lock()
+        self.unpublished = threading.Event()
+        self.ack_epoch = 0
+        self.journal, self.ack_path, self.uid = journal, ack_path, expected_uid
+        self.fd, self.good, self.lines, self.repair, self.relink = -1, 0, 0, False, False
+        self.ids = {}          # id -> [type, at, durable, reassigned]
+        self.keys = {}         # (type, at) -> id, every retained key
+        self.sent = {FAILURE_TYPE: [], "restore.aborted": [], "restore.stuck": [], "restore.finished": []}  # durable sent keys per type, oldest first
+        self.pending = {}      # key -> id, taken and not yet sent
+        self.dirty = []        # keys accepted by the CP whose `sent` record is not durable, in acceptance order
+        self.accepted_mem = set()
+        self.published = set()
+        self.drops = []        # drop ops owed to the journal
+        self.hold_ops = []
+        self.hold_key = None
+        self.order = []        # ids, oldest first
+        self.offered = []
+        self.hold_open, self.episode, self.degraded_probes = False, 0, 0
+        self.load()
+
+    # ---- journal ------------------------------------------------------------------------------------------------------------
+    def load(self):
+        try:
+            os.unlink(self.journal + ".new")
+        except OSError:
+            pass
+        try:
+            with open(self.journal, "rb") as handle:
+                data = handle.read()
+        except OSError:
+            return
+        records, size = read_journal_prefix(data)
+        if size < len(data):
+            try:
+                fd = os.open(self.journal, os.O_WRONLY | os.O_NOFOLLOW)
+                try:
+                    os.ftruncate(fd, size)
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            except OSError:
+                pass
+        self.lines = len(records)
+        for ops in records:
+            for op in ops:
+                self.replay(op)
+
+    def replay(self, op):
+        key = (op.get("type"), op.get("at"))
+        if op["r"] == "add":
+            if op["id"] not in self.ids:
+                self.order.append(op["id"])
+            self.ids[op["id"]] = [op["type"], op["at"], True, False]
+            self.keys[key] = op["id"]
+            self.pending[key] = op["id"]
+        elif op["r"] == "sent":
+            if self.pending.pop(key, None) is not None or key in self.keys:
+                self.sent.setdefault(key[0], []).append(key[1])
+        elif op["r"] == "drop":
+            self.pending.pop(key, None)
+        elif op["r"] == "hold":
+            self.episode = max(self.episode, int(op.get("episode", 0)))
+            self.hold_open = not op.get("end")
+            if type(op.get("at")) is int:
+                self.hold_key = (FAILURE_TYPE, op["at"])
+
+    def open_journal(self):
+        existed = os.path.exists(self.journal)
+        self.fd = os.open(self.journal, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        self.good = os.fstat(self.fd).st_size
+        if not existed:
+            self.fsync_dir()
+
+    def fsync_dir(self):
+        directory = os.open(os.path.dirname(self.journal), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+    def do_relink(self):
+        """Rule R: after a compaction rename the old descriptor is closed; nothing is appended or ACKed until the new inode is open and identified."""
+        try:
+            self.fsync_dir()
+            fd = os.open(self.journal, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW)
+            a, b = os.fstat(fd), os.stat(self.journal)
+            if (a.st_dev, a.st_ino) != (b.st_dev, b.st_ino):
+                os.close(fd)
+                return False
+            self.fd, self.good, self.relink, self.repair = fd, a.st_size, False, False
+            return True
+        except OSError:
+            return False
+
+    def identity_ok(self):
+        try:
+            a, b = os.fstat(self.fd), os.stat(self.journal)
+            return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+        except OSError:
+            return False
+
+    def append(self, ops):
+        """ONE atomic record. False (file left at good_len for the next attempt) on any failure."""
+        if not ops:
+            return True
+        try:
+            if self.relink and not self.do_relink():
+                return False
+            if self.fd < 0:
+                self.open_journal()
+            if not self.identity_ok():
+                try:
+                    os.close(self.fd)
+                except OSError:
+                    pass
+                self.fd, self.relink = -1, True
+                if not self.do_relink():
+                    return False
+            if self.repair:
+                os.ftruncate(self.fd, self.good)
+                os.fsync(self.fd)
+                self.repair = False
+            line = record_line(ops)
+            self.repair = True
+            view, written = memoryview(line), 0
+            while written < len(line):
+                written += os.write(self.fd, view[written:])
+            os.fsync(self.fd)
+            self.repair = False
+            self.good += len(line)
+            self.lines += 1
+            return True
+        except OSError:
+            return False
+
+    def compact(self):
+        keep = dict(self.pending)
+        for kind, ats in self.sent.items():
+            for at in ats[-SENT_KEEP:]:
+                if (kind, at) in self.keys:
+                    keep[(kind, at)] = self.keys[(kind, at)]
+        ops = []
+        for id_ in self.order:
+            meta = self.ids.get(id_)
+            if meta and meta[2] and self.keys.get((meta[0], meta[1])) == id_ and ((meta[0], meta[1]) in keep):
+                ops.append({"r": "add", "id": id_, "type": meta[0], "at": meta[1]})
+                if (meta[0], meta[1]) not in self.pending:
+                    ops.append({"r": "sent", "type": meta[0], "at": meta[1]})
+        if self.episode:
+            ops.append({"r": "hold", "episode": self.episode, **({"at": self.hold_key[1]} if self.hold_key else {}), **({} if self.hold_open else {"end": True})})
+        tmp = self.journal + ".new"
+        try:
+            with open(tmp, "wb") as handle:
+                for start in range(0, len(ops), 64):
+                    handle.write(record_line(ops[start:start + 64]))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, self.journal)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+        self.fd, self.relink, self.lines = -1, True, (len(ops) + 63) // 64
+        forgotten = [i for i in self.order if i in self.ids and self.ids[i][2] and (self.ids[i][0], self.ids[i][1]) not in keep]
+        for i in forgotten:
+            meta = self.ids.pop(i)
+            self.keys.pop((meta[0], meta[1]), None)
+        self.order = [i for i in self.order if i in self.ids]
+        for kind in self.sent:
+            self.sent[kind] = self.sent[kind][-SENT_KEEP:]
+        self.do_relink()
+
+    # ---- state --------------------------------------------------------------------------------------------------------------
+    def owed_ops(self, extra=()):
+        """Everything not yet durable, in order: adds, drops, hold ops, then `sent` for every dirty key (acceptance order)."""
+        ops = [dict(r="add", id=i, type=self.ids[i][0], at=self.ids[i][1]) for i in self.order if i in self.ids and not self.ids[i][2]]
+        return ops + list(extra) + list(self.drops) + list(self.hold_ops) + [{"r": "sent", "type": k[0], "at": k[1]} for k in self.dirty]
+
+    def flush(self, extra=()):
+        """Appends everything owed in ONE record; on success marks it durable."""
+        ops = self.owed_ops(extra)
+        if not ops:
+            return True
+        if not self.append(ops):
+            return False
+        for i in self.order:
+            if i in self.ids and not self.ids[i][2]:
+                self.ids[i][2] = True
+                self.accepted_mem.discard(i)
+        for key in self.dirty:
+            self.sent.setdefault(key[0], []).append(key[1])
+        if self.hold_ops and self.hold_ops[-1].get("end"):
+            self.hold_open = False
+        self.dirty, self.drops, self.hold_ops = [], [], []
+        if self.lines > COMPACT_LINES:
+            self.compact()
+        return True
+
+    def new_failure(self, state):
+        highest = max([k[1] for k in state["keys"] if k[0] == FAILURE_TYPE] + [0])
+        at = max(int(time.time() * 1000), highest + 1)
+        return {"id": os.urandom(8).hex(), "type": FAILURE_TYPE, "at": at}
+
+    def clone(self):
+        return {"ids": {i: list(m) for i, m in self.ids.items()}, "keys": dict(self.keys), "pending": dict(self.pending), "order": list(self.order), "drops": list(self.drops)}
+
+    def commit(self, state):
+        self.ids, self.keys, self.pending, self.order, self.drops = state["ids"], state["keys"], state["pending"], state["order"], state["drops"]
+
+    def take(self, items):
+        """Intake: new ids get a key (a collision moves to at+1, sent only once its add is durable), a bounded pending set (overflow is one durable record)."""
+        with self.lock:
+            self.offered = [row["id"] for row in items]
+            new = [row for row in items if row["id"] not in self.ids]
+            if not new:
+                return
+            state, overflow, plan = self.clone(), False, []
+            for row in new:
+                at, reassigned = row["at"], False
+                while state["keys"].get((row["type"], at), row["id"]) != row["id"]:
+                    at, reassigned = at + 1, True
+                nonfail = [k for k in state["pending"] if k[0] != FAILURE_TYPE]
+                if self.hold_key in state["pending"] and (row["type"] == FAILURE_TYPE or len(nonfail) >= PENDING_MAX):
+                    return  # keep the failure slot owned by the hold until it is accepted
+                if row["type"] != FAILURE_TYPE and len(nonfail) >= PENDING_MAX:
+                    overflow = True
+                    old = nonfail[0]
+                    plan.append({"r": "drop", "type": old[0], "at": old[1]})
+                    state["pending"].pop(old, None)
+                    for key in [k for k in state["pending"] if k[0] == FAILURE_TYPE]:
+                        plan.append({"r": "drop", "type": key[0], "at": key[1]})
+                        state["pending"].pop(key, None)
+                    fail = self.new_failure(state)
+                    state["ids"][fail["id"]] = [FAILURE_TYPE, fail["at"], False, False]
+                    state["keys"][(FAILURE_TYPE, fail["at"])] = fail["id"]
+                    state["pending"][(FAILURE_TYPE, fail["at"])] = fail["id"]
+                    state["order"].append(fail["id"])
+                if row["type"] == FAILURE_TYPE:
+                    for key in [k for k in state["pending"] if k[0] == FAILURE_TYPE]:
+                        plan.append({"r": "drop", "type": key[0], "at": key[1]})
+                        state["pending"].pop(key, None)
+                state["ids"][row["id"]] = [row["type"], at, False, reassigned]
+                state["keys"][(row["type"], at)] = row["id"]
+                state["pending"][(row["type"], at)] = row["id"]
+                state["order"].append(row["id"])
+            state["drops"] = state["drops"] + plan
+            if overflow:
+                # The overflow record is the one durable step: if it cannot be written nothing changes and the new items are not taken.
+                held = self.clone()
+                self.commit(state)
+                if not self.flush():
+                    self.commit(held)
+                return
+            self.commit(state)
+            self.flush()
+
+    def retry(self):
+        with self.lock:
+            self.flush()
+
+    def migrate_legacy(self, directory):
+        """r2/r3 spool files become journal `add` records (id = legacy_id); a file is unlinked only once its `add` is durable, so a journal that
+        refuses writes leaves it in place. A file whose id the journal already holds (a cut between the add and the unlink) is only unlinked."""
+        try:
+            names = sorted(n for n in os.listdir(directory) if EVENT_NAME.fullmatch(n))[:MAX_EVENT_SCAN]
+        except OSError:
+            return
+        rows, paths = [], {}
+        for name in names:
             path = directory + "/" + name
             try:
                 info = os.lstat(path)
@@ -749,18 +1479,183 @@ def collect_health(data_mount=None, backup_last=None, events=None, app=None, boo
                     continue
                 with open(path, "rb") as handle:
                     parsed = json.loads(handle.read(4096))
-                # Only the allowlisted name and a timestamp are copied; everything else in the file is dropped.
-                if (isinstance(parsed, dict) and parsed.get("type") in EVENT_TYPES and type(parsed.get("at")) is int
-                        and 0 <= parsed["at"] <= MAX_SAFE):
-                    seen.append({"type": parsed["type"], "at": parsed["at"]})
-                    consumed.append(path)
             except (OSError, ValueError):
                 continue
-    except OSError:
-        pass
-    if seen:
-        health["events"] = seen
-    return (health or None), consumed
+            if not (isinstance(parsed, dict) and parsed.get("type") in LEGACY_TYPES and type(parsed.get("at")) is int and 0 <= parsed["at"] <= MAX_SAFE):
+                continue
+            id_ = legacy_id(parsed["type"], parsed["at"])
+            if id_ not in paths:
+                rows.append({"id": id_, "type": parsed["type"], "at": parsed["at"]})
+            paths.setdefault(id_, []).append(path)
+        if not rows:
+            return
+        with self.lock:
+            offered = self.offered
+            self.take(rows)
+            self.offered = offered
+            for id_, files in paths.items():
+                meta = self.ids.get(id_)
+                if meta and meta[2]:
+                    for path in files:
+                        try:
+                            os.unlink(path)
+                        except OSError:
+                            pass
+
+    def hold_tick(self, degraded):
+        """Rule V: HOLD_PROBES consecutive probes with outboxDegraded > 0 start ONE episode and raise ONE failure item; the first probe at 0 ends it."""
+        with self.lock:
+            if degraded == 0:
+                self.degraded_probes = 0
+                if self.hold_open:
+                    if not any(op.get("end") for op in self.hold_ops):
+                        self.hold_ops.append({"r": "hold", "episode": self.episode, "end": True})
+                    self.flush()
+                return
+            # A recovery not yet committed is cancelled if degradation returns.
+            self.hold_ops = [op for op in self.hold_ops if not op.get("end")]
+            self.degraded_probes += 1
+            if self.degraded_probes < HOLD_PROBES or self.hold_open:
+                return
+            self.hold_open, self.episode = True, self.episode + 1
+            state = self.clone()
+            for key in [k for k in state["pending"] if k[0] == FAILURE_TYPE]:
+                state["drops"].append({"r": "drop", "type": key[0], "at": key[1]})
+                state["pending"].pop(key)
+            fail = self.new_failure(state)
+            state["ids"][fail["id"]] = [FAILURE_TYPE, fail["at"], False, False]
+            state["keys"][(FAILURE_TYPE, fail["at"])] = fail["id"]
+            state["pending"][(FAILURE_TYPE, fail["at"])] = fail["id"]
+            state["order"].append(fail["id"])
+            self.commit(state)
+            self.hold_key = (FAILURE_TYPE, fail["at"])
+            self.hold_ops.append({"r": "hold", "episode": self.episode, "at": fail["at"]})
+            self.flush()  # a journal that refuses writes leaves the item in memory (R-hold-1)
+
+    # ---- the heartbeat ------------------------------------------------------------------------------------------------------
+    def events_for_body(self, advertised, room, body_room=MAX_EVENTS):
+        with self.lock:
+            out, ordinary = [], 0
+            for key, id_ in sorted(self.pending.items(), key=lambda row: row[0][0] != FAILURE_TYPE):  # failure items first (they report a loss), then oldest first
+                if len(out) >= body_room:
+                    break
+                if key != self.hold_key and ordinary >= room:
+                    continue
+                meta = self.ids.get(id_)
+                if key[0] not in advertised or meta is None:
+                    continue
+                if meta[2] and id_ not in self.published and key != self.hold_key:
+                    continue  # durable ids ride only after the ACK that lists them is published
+                if meta[3] and not meta[2]:
+                    continue  # rule S: a reassigned key is sent only after its add is durable
+                out.append({"type": key[0], "at": key[1]})
+                if key != self.hold_key:
+                    ordinary += 1
+            return out
+
+    def has_nondurable(self, events):
+        with self.lock:
+            return any(not self.ids[self.pending[(e["type"], e["at"])]][2] for e in events if (e["type"], e["at"]) in self.pending)
+
+    def accept(self, sent_keys):
+        """The CP took these keys: pending -> dirty in order; an id whose add is not durable is `accepted`; then one flush (add, sent)."""
+        with self.lock:
+            self.unpublished.set()
+            self.ack_epoch += 1
+            for key in list(self.pending):
+                if key in sent_keys:
+                    id_ = self.pending.pop(key)
+                    self.dirty.append(key)
+                    if id_ in self.ids and not self.ids[id_][2]:
+                        self.accepted_mem.add(id_)
+            self.flush()
+
+    def ack_value(self):
+        with self.lock:
+            chosen, seen = [], set()
+            for id_ in list(self.offered) + list(reversed(self.order)):
+                meta = self.ids.get(id_)
+                if meta is None or id_ in seen:
+                    continue
+                if meta[2] or id_ in self.accepted_mem:
+                    seen.add(id_)
+                    chosen.append(id_)
+                if len(chosen) >= ACK_IDS_MAX:
+                    break
+            acked = [i for i in chosen if self.ids[i][2]]
+            accepted = [i for i in chosen if not self.ids[i][2]]
+            return {"v": 1, "control": 1, "acked": acked, "accepted": accepted}, set(acked)
+
+    def publish_ack(self, blocking=True):
+        if not self.ack_lock.acquire(blocking):
+            return False  # the intake thread never waits behind the poll thread publishing what the CP accepted
+        try:
+            return self._publish_ack()
+        finally:
+            self.ack_lock.release()
+
+    def _publish_ack(self):
+        with self.lock:
+            self.ack_epoch += 1  # invalidate probes that read the preceding ACK
+        if True:
+            with self.lock:
+                if self.relink and not self.do_relink():
+                    return False
+            if self.fd >= 0 and not self.identity_ok():
+                self.relink = True
+                return False
+            with self.lock:
+                value, acked = self.ack_value()
+                version = self.ack_epoch
+            try:
+                atomic_public(self.ack_path, value, self.uid)
+            except (OSError, ValueError):
+                return False
+            with self.lock:
+                self.published = acked
+                current = version == self.ack_epoch
+                self.ack_epoch += 1  # publication complete: invalidate reads begun during the write
+                if current:
+                    self.unpublished.clear()
+            return True
+
+
+def intake_once(channel, origin):
+    # Probes keep their cadence even while a CP call or ACK publication stalls.
+    # Only a response read wholly in the current published generation may admit ids.
+    with channel.lock:
+        epoch, blocked = channel.ack_epoch, channel.unpublished.is_set()
+    report = app_report(origin)
+    field = report.get("homeEvents") if isinstance(report, dict) and report.get("ok") else None
+    with channel.lock:
+        if field is not None:
+            fresh = not blocked and not channel.unpublished.is_set() and epoch == channel.ack_epoch
+            if fresh:
+                channel.take(field["items"])
+            if fresh or field["outboxDegraded"] > 0:
+                channel.hold_tick(field["outboxDegraded"])
+            elif not channel.hold_open:
+                channel.degraded_probes = 0
+    channel.migrate_legacy(SERVER_EVENTS)
+    channel.retry()
+    channel.publish_ack(blocking=False)
+
+
+def intake_loop(channel, binding):
+    while True:
+        time.sleep(INTAKE_S)
+        try:
+            intake_once(channel, binding.get("publicOrigin", ""))
+        except Exception:
+            print("Cloud control intake unavailable", file=sys.stderr)
+
+def with_spool_failed(health, at):
+    """The app counted a failed ops-event spool write (server/home-events.ts): raise it from here, the channel that is up. Returns the health block with the one event added (bounded at 5)."""
+    health = dict(health or {})
+    events = list(health.get("events", []))[:4]
+    events.append({"type": "home.event_spool_failed", "at": at})
+    health["events"] = events
+    return health
 
 def _poll_once(binding, context=None, request=machine_request, clock=read_clock,
               public=PUBLIC, expected_uid=0, publish_fn=publish_snapshot):
@@ -798,8 +1693,45 @@ def _poll_once(binding, context=None, request=machine_request, clock=read_clock,
     # Pass the keyword only when it is True, so a transport without the parameter keeps working exactly as before.
     owner_extra = {"owner_factor": True} if owner_factor else {}
     boot_id = context.get("bootId", read_boot_id)()
+    # The app could not spool an alert (its own count rose): raise it ourselves, once per rise (the spool it failed on is the channel that is down).
+    # Durable (SPOOL_STATE_PATH, in the StateDirectory): a reboot neither loses the owed report nor sends it twice, its time is the first rise, and a
+    # probe that failed or carries no count changes nothing.
+    # The counter is the app's, and it restarts at zero with the app (a reboot, an update), so it is kept WITH the app instance id it came from: a new
+    # instance is a fresh sequence (seen 0), whatever the number is. Without an instance id (an old app) a lower count still means a restart.
+    state_path = context.get("spoolStatePath") or SPOOL_STATE_PATH
+    spool = load_spool_state(state_path, context)
+    if context.get("spoolDirty"):
+        save_spool_state(state_path, spool, context)  # a write that failed is retried every poll
+    failures = answer.get("spoolFailures") if isinstance(answer, dict) else None
+    instance = ui_instance if isinstance(ui_instance, str) and INSTANCE_ID.fullmatch(ui_instance) else None
+    changed = False
+    if instance is not None and instance != spool.get("instance"):
+        spool["instance"], spool["seen"], changed = instance, 0, True
+    if type(failures) is int and failures >= 0 and failures != spool["seen"]:
+        if failures > spool["seen"] and spool["pending"] is None:
+            spool["pending"] = int(time.time() * 1000)
+        spool["seen"], changed = failures, True  # without an instance id a lower count is the app restarting its counter
+    if changed:
+        save_spool_state(state_path, spool, context)
+    # Event types beyond the base set ride only if the LAST heartbeat answer advertised them (EVENT_TYPES_HEADER); per response, never sticky:
+    # popped here, so a failed or refused heartbeat forgets it, and set again only by the next accepted answer.
+    advertised = context.pop("eventTypes", frozenset())
+    allowed = BASE_EVENT_TYPES + tuple(name for name in EXTENDED_EVENT_TYPES if name in advertised)
     health, consumed = collect_health(app=app, boot_id=boot_id, ui_renders=ui, ui_at=ui_at,
-                                      ui_instance=ui_instance, clock=after)
+                                      ui_instance=ui_instance, clock=after, allowed_events=allowed, journal_owns_legacy=True)
+    if spool["pending"] is not None and "home.event_spool_failed" in allowed:  # held until a control plane that accepts it has acked it
+        health = with_spool_failed(health, spool["pending"])
+    channel = context.get("channel")
+    if channel is not None:
+        body_room = MAX_EVENTS - len((health or {}).get("events", []))
+        with channel.lock:
+            # The single hold receipt has its own reservation. Ordinary dirty stays <= 32.
+            ordinary_dirty = len(channel.dirty) - int(channel.hold_key in channel.dirty)
+            room = min(body_room, DIRTY_MAX - ordinary_dirty)
+            extra = channel.events_for_body(allowed, room, body_room)
+        if extra:
+            health = dict(health or {})
+            health["events"] = list(health.get("events", [])) + extra
     # The control plane's evidence epoch from the last heartbeat ack (Astra AUTOCANARY-10), echoed: it orders reports, nothing on this
     # home does. None until an ack carried one (just started); the control plane never takes a report without the current epoch as
     # evidence, so a restarted daemon's first report is never evidence; a heartbeat that failed or was refused forgets it.
@@ -820,10 +1752,12 @@ def _poll_once(binding, context=None, request=machine_request, clock=read_clock,
         if type(epoch) is int and 0 <= epoch <= MAX_SAFE:
             health["evidenceEpoch"] = epoch
             body["health"] = health
+            oldest = strip_extended(oldest)
         else:
             if oldest:
                 body["health"] = oldest
-            oldest = None  # already the oldest shape: nothing to fall back to
+            # already the oldest shape, unless it carries advertised event types: those are the one thing an older control plane refuses
+            oldest = strip_extended(oldest) if oldest != strip_extended(oldest) else None
     try:
         try:
             heartbeat = request(binding, "heartbeat", body, door=True, **owner_extra) if door else request(binding, "heartbeat", body, **owner_extra)
@@ -855,7 +1789,20 @@ def _poll_once(binding, context=None, request=machine_request, clock=read_clock,
         raise ValueError("Heartbeat refused")
     if epoch_ack is not None:
         context["evidenceEpoch"] = epoch_ack
+    context["eventTypes"] = advertised_event_types(heartbeat)
+    if channel is not None:
+        accepted_keys = {(event.get("type"), event.get("at")) for event in (body.get("health") or {}).get("events", [])}
+        channel.accept(accepted_keys)
+        channel.publish_ack()
+    # Only what actually rode the accepted body is consumed; a resend without the extended types leaves their files (and the pending
+    # spool-failed alert) held for the next answer that advertises them.
+    sent_keys = {(event.get("type"), event.get("at")) for event in (body.get("health") or {}).get("events", [])}
+    if ("home.event_spool_failed", spool["pending"]) in sent_keys:
+        spool["pending"] = None
+        save_spool_state(state_path, spool, context)
     for path in consumed:
+        if consumed.by_event.get(path) not in sent_keys:
+            continue
         try:
             os.unlink(path)
         except OSError:
@@ -864,7 +1811,10 @@ def _poll_once(binding, context=None, request=machine_request, clock=read_clock,
     if not clocks_match(sent, after):
         fence(context, public)
         raise ValueError("Heartbeat clock changed")
-    desired = validate_desired(request(binding, "desired"), binding, lease)
+    raw_desired = request(binding, "desired")
+    desired = validate_desired(raw_desired, binding, lease)
+    # The control plane's cue (present only when its Flux routes run). Absent or false: no renewal question is asked this poll.
+    context["fluxRenewalDue"] = bool(isinstance(raw_desired, dict) and raw_desired.get("flux_renewal_due") is True)
     received = sample_clock(context, clock, public)
     deadline = min(sent["bootMs"] + 3480000, sent["bootMs"] + lease["expiresAt"] - sent["wallMs"])
     if not clocks_match(sent, received) or deadline <= received["bootMs"] or lease["expiresAt"] <= received["wallMs"]:
@@ -914,12 +1864,52 @@ def schedule_next_poll(context, started, answered, rand=random.uniform):
     delay = next_poll_delay(context, rand)
     return (answered if retrying else started) + delay
 
+def renew_flux_subkey(binding, context, request, deliver_fn=deliver_flux_subkey, ack_fn=ack_flux_subkey,
+                      pending_path=FLUX_PENDING_ACK, directory=FLUX_DELIVERY, owner_uid=None, expected_uid=0, wall=time.time, owner_gid=None):
+    """The renewal step of a poll, on its own so the whole CP -> poller path can be run against the real control plane.
+    The CP is told "delivered" only after the supervisor's receipt says the key is SEALED:
+      hand-off written -> pending record (root-only, survives restart) -> receipt appears -> ack -> pending and receipt cleared.
+    While a hand-off waits for its receipt no other key is requested, unless it has waited longer than the window.
+    A lost ack response is retried from the same pending record and receipt, never by minting again."""
+    pending = read_pending_ack(pending_path, expected_uid)
+    if pending is not None:
+        if read_flux_receipt(pending, directory, owner_uid, owner_gid, expected_uid):
+            try:
+                ack_fn(binding, request, pending)
+            except urllib.error.HTTPError as error:
+                if error.code != 409:  # 409: a newer mint superseded it, nothing left to ack
+                    raise
+            clear_pending_ack(pending_path)
+            try:
+                os.unlink(directory + "/" + FLUX_RECEIPT_FILE)
+            except FileNotFoundError:
+                pass
+        elif 0 <= wall() - pending["written_at"] < FLUX_ACK_WINDOW_SECONDS:
+            return
+        else:
+            clear_pending_ack(pending_path)
+    if context.get("fluxRenewalDue") is not True:
+        return
+    due = valid_renewal_due(request(binding, "flux/renewal-due", {"generation": binding["generation"]}))
+    if due["due"]:
+        ack = deliver_fn(binding, request, due["op_id"])
+        atomic_private(pending_path, {**ack, "written_at": int(wall())}, expected_uid)
+
 def poll_once(binding, context=None, request=machine_request, clock=read_clock,
-              public=PUBLIC, expected_uid=0, publish_fn=publish_snapshot):
+              public=PUBLIC, expected_uid=0, publish_fn=publish_snapshot, deliver_fn=deliver_flux_subkey, ack_fn=ack_flux_subkey,
+              renewal_options=None):
     if context is None:
         context = {}
     try:
-        return _poll_once(binding, context, request, clock, public, expected_uid, publish_fn)
+        snapshot = _poll_once(binding, context, request, clock, public, expected_uid, publish_fn)
+        if deliver_fn is not None:
+            # A failed renewal never fences authority; the control plane keeps saying "due"
+            # and the next poll tries again. Nothing about the response is printed.
+            try:
+                renew_flux_subkey(binding, context, request, deliver_fn, ack_fn, **(renewal_options or {}))
+            except Exception:
+                print("Cloud control Flux renewal unavailable", file=sys.stderr)
+        return snapshot
     except (ValueError, KeyError, TypeError):
         fence(context, public)
         raise
@@ -927,6 +1917,12 @@ def poll_once(binding, context=None, request=machine_request, clock=read_clock,
         if error.code < 500:
             fence(context, public)
         raise
+    finally:
+        if context.get("channel") is not None:
+            channel = context["channel"]
+            # A refused call has no new receipt; an accepted call may still owe publication.
+            # Retry the current ACK before allowing admission in either case.
+            channel.publish_ack(blocking=False)
 
 def run(load=load_private_binding, request=machine_request, clock=read_clock, sleep=time.sleep,
         monotonic=time.monotonic, public=PUBLIC, expected_uid=0):
@@ -945,6 +1941,11 @@ def run(load=load_private_binding, request=machine_request, clock=read_clock, sl
     for name in ("state.json", "home-generation.json", "home-identity.json"):
         atomic_public(public + "/" + name, {}, expected_uid)
     context = {}
+    channel = Channel(CONTROL_STATE + "/" + JOURNAL_NAME, public + "/" + ACK_NAME, expected_uid)
+    context["channel"] = channel
+    if not channel.publish_ack():  # the advertisement (and every id the journal already holds), before the first intake
+        atomic_public(public + "/" + ACK_NAME, {"v": 1, "control": 1, "acked": [], "accepted": []}, expected_uid)
+    threading.Thread(target=intake_loop, args=(channel, binding), daemon=True).start()
     next_poll = monotonic()
     while True:
         if monotonic() >= next_poll:

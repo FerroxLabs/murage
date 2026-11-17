@@ -22,6 +22,10 @@ thawAfterEach(() => thawRootSetWritesForTest(false));
 import { DATA_DIR, ensureDirs } from "./config.ts";
 import type { ProviderInstance } from "./contracts.ts";
 import { closeDatabase, database } from "./database.ts";
+import { createAcpDriver } from "./drivers/acp/core.ts";
+import { recordEvents } from "./testing/events.ts";
+import { fixtureEngineFence } from "./testing/mcp-admission-fixture.ts";
+import ts from "typescript";
 import { FuigoAgentDriver } from "./drivers/acp/fuigo.ts";
 import { ClaudeDriver } from "./drivers/claude.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
@@ -29,7 +33,8 @@ import { saveMemoryCandidate } from "./memory/authority.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
 import { captureBranchChange, captureSource } from "./memory/capture.ts";
 import { MemoryDispatchReceipt, retainedSessionInvalid } from "./memory/dispatch.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "./testing/recall-access-fixture.ts";
 import { capturedMessageWithheld, recordSessionRoots, sessionOutputRoots } from "./memory/replay-lineage.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { appendMessage } from "./message-db.ts";
@@ -42,6 +47,10 @@ import type { Message } from "./store.ts";
 import { steerWithQuoteLineage, type RunningTurnLineage } from "./steer-lineage.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { bindFixtureTurn } from "./testing/consuming-fixture.ts";
+import { fixtureBoundTurn } from "./testing/mcp-admission-fixture.ts";
+import { fencedTurnInput } from "./drivers/engine-input.ts";
+import { buildPrompt, noneRef, promptPart } from "./memory/prompt-parts.ts";
 
 const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -78,15 +87,20 @@ const CONTENT = { audience: null } as const;
 const wmsg = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: id, at: Date.now(), ...extra });
 const verdictOf = (thread: string, id: string) => denyLookup(database(), { threadId: thread, lines: [{ messageId: id, author: "generated" }] }, CONTENT).get(id)!;
 const turns: TurnLineage[] = [];
-function openTurn(threadId: string, turnId: string): TurnLineage { const turn = openTurnLineage(database(), { threadId, turnId }); turns.push(turn); return turn; }
+const boundTurns = new WeakMap<TurnLineage, ReturnType<typeof bindFixtureTurn>>();
+function openTurn(threadId: string, turnId: string): TurnLineage {
+  const turn = openTurnLineage(database(), { threadId, turnId });
+  boundTurns.set(turn, bindFixtureTurn(database(), turn, "bot"));
+  turns.push(turn); return turn;
+}
 /** reply-1 (thread "chat") rests on a1, a bot line of thread "older": stored through appendMessage so both carry lineage rows. */
-function writtenReply() {
+function writtenReply(text = "The alarm code is 4812.") {
   appendMessage("older", { ...wmsg("m1"), role: "user" });
   const t0 = openTurn("older", "t-older");
-  appendMessage("older", wmsg("a1", { parentId: "m1", text: "The alarm code is 4812." }));
+  appendMessage("older", wmsg("a1", { parentId: "m1", text }));
   closeTurnLineage(t0);
   const t1 = openTurn("chat", "t-chat");
-  appendMessage("chat", wmsg("reply-1", { text: "The alarm code is 4812." }), undefined, undefined, [{ kind: "line", threadId: "older", messageId: "a1" }]);
+  appendMessage("chat", wmsg("reply-1", { text }), undefined, undefined, [{ kind: "line", threadId: "older", messageId: "a1" }]);
   closeTurnLineage(t1);
   expect(verdictOf("chat", "reply-1").state).toBe("shown");
 }
@@ -147,13 +161,63 @@ async function runningFuigo(echoMs: number) {
   // the running turn's lineage and its engine session (v6 marks every session it saw)
   const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "fuigo-steer", startGeneration: 0, session: "s-desk", generation: "g-desk", turn: { threadId: "desk", turnId: "t-desk", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
   recordSessionRoots("desk", "fuigo-steer", "s-desk", lineage.roots);
-  return { adapter: instance.adapter, lineage };
+  const methods = (): string[] => { try { return JSON.parse(readFileSync(dump, "utf8")); } catch { return []; } };
+  return { adapter: instance.adapter, lineage, methods };
 }
 
 posixOnly("a steer's quoted reply is recorded at the write, not after the acknowledgement", () => {
+  it("rejects a stored-file steer without a hook even without a release binding", async () => {
+    const quote = join(root, "quote.txt");
+    writeFileSync(quote, "The sample total is seven.");
+    const { adapter, methods } = await runningFuigo(300);
+    expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
+    expect(await adapter.steer!("desk", readFileSync(quote, "utf8"))).toBe("rejected");
+    expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
+    expect(methods()).not.toContain("_fuigo/interject");
+  }, 30_000);
+
+  it("a hook throwing MEMORY_CONTEXT_REVOKED refuses before any interjection write", async () => {
+    const { adapter, methods } = await runningFuigo(300);
+    let checked = 0;
+    await expect(adapter.steer!("desk", "The sample total is seven.", () => {
+      checked++;
+      throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
+    })).rejects.toMatchObject({ code: "MEMORY_CONTEXT_REVOKED" });
+    expect(checked).toBe(1);
+    expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
+    expect(methods()).not.toContain("_fuigo/interject");
+  }, 30_000);
+
+  it("a stopped turn rejects a steer before consulting its hook", async () => {
+    process.env.MURAGE_FUIGO_INTERJECT_ACK_MS = "400";
+    const { adapter, methods } = await runningFuigo(300);
+    const stopping = adapter.stopAll!();
+    let checked = 0;
+    try {
+      expect(await adapter.steer!("desk", "The sample total is seven.", () => { checked++; })).toBe("rejected");
+      expect(checked).toBe(0);
+      expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
+      expect(methods()).not.toContain("_fuigo/interject");
+    } finally { await stopping; }
+  }, 30_000);
+
+  it("a withheld stored quote through steerWithQuoteLineage writes nothing", async () => {
+    const text = "The sample total is seven.";
+    writtenReply(text);
+    const { adapter, lineage, methods } = await runningFuigo(300);
+    const turn = openTurn("desk", "t-desk");
+    revokeSource();
+    expect(await steerWithQuoteLineage(adapter, "desk", `> ${text}\nUse the sample`, true, {
+      holds: () => true, steerId: "withheld-quote", lineage, quote: QUOTE, turn,
+    })).toBe("queue");
+    expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
+    expect(methods()).not.toContain("_fuigo/interject");
+    expect(turn.parents).toEqual([]);
+  }, 30_000);
+
   it("a quote whose source is revoked while Fuigo's acknowledgement is pending stays on the turn and session; the next check resets it", async () => {
     writtenReply();
-    const { adapter, lineage } = await runningFuigo(1200);
+    const { adapter, lineage, methods } = await runningFuigo(1200);
     const turn = openTurn("desk", "t-desk");
     writeSessionLineage(database(), FUIGO_SESSION, turn); // the session binds to the running turn
     let fenced = 0;
@@ -171,6 +235,8 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
     drainRevokeMarker(database());
     expect(verdictOf("desk", "reply-2").state).toBe("withheld"); // ... withheld once the revoke marker drains
     expect(await steering).toBe("steer");
+    expect(methods().filter(method => method === "_fuigo/interject")).toHaveLength(1);
+    expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
     // The engine has the quote: it stays on the turn (checked above) and reaches the session when the turn's session lineage is written.
     writeSessionLineage(database(), FUIGO_SESSION, turn);
     // The revocation validator (the next write's check) resets the session.
@@ -198,7 +264,7 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
   it("a steer the fence refuses writes nothing and records nothing", async () => {
     await memoryDerivedReply();
     const { adapter, lineage } = await runningFuigo(300);
-    const delivery = await steerWithQuoteLineage(adapter, "desk", "Use it on the side door", true, { holds: () => false, steerId: "steer-3", lineage, quote: QUOTE });
+    const delivery = await steerWithQuoteLineage(adapter, "desk", "Use it on the side door", true, { holds: () => false, steerId: "steer-3", lineage, quote: QUOTE, turn: openTurn("desk", "t-desk") });
     expect(delivery).toBe("queue");
     expect(lineage.roots.roots.size).toBe(0);
     expect(sessionOutputRoots(LineageAllowance.tool(1_000_000_000), "desk", "fuigo-steer", "s-desk").roots.size).toBe(0);
@@ -209,19 +275,170 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
 
   it("a quote whose source is revoked after its text was rendered, before the fence runs, is refused: nothing written, nothing recorded", async () => {
     await memoryDerivedReply();
-    const { adapter, lineage } = await runningFuigo(300);
+    const { adapter, lineage, methods } = await runningFuigo(300);
     const delivery = await steerWithQuoteLineage(adapter, "desk", "> The alarm code is 4812.\nUse it on the side door", true, {
       // the session itself still holds; the quote's source is revoked in between
       holds: () => { captureBranchChange(database(), "older", null); return true; },
       steerId: "steer-4", lineage, quote: QUOTE,
+      turn: openTurn("desk", "t-desk"),
     });
     // refused: the caller runs the line as its own turn, which renders the quote again
     expect(delivery).toBe("queue");
     await new Promise((r) => setTimeout(r, 500));
     expect(JSON.parse(readFileSync(join(root, "rpc.json"), "utf8")) as string[]).not.toContain("_fuigo/interject");
+    expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
     expect(lineage.roots.roots.size).toBe(0);
     expect(sessionOutputRoots(LineageAllowance.tool(1_000_000_000), "desk", "fuigo-steer", "s-desk").roots.size).toBe(0);
   }, 30_000);
+});
+
+// Owners: this lane owns the ACP final writer and its isolated caller witnesses.
+async function runningSteer() {
+  const cli = join(root, "steer-engine.mjs");
+  const dump = join(root, "steer-rpc.jsonl");
+  writeFileSync(cli, `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+import { appendFileSync } from "node:fs";
+if (process.argv.includes("--version")) { console.log("Fixture 1.0.0"); process.exit(0); }
+const out = frame => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...frame }) + "\\n");
+const update = update => out({ method: "session/update", params: { sessionId: "fixture-session", update } });
+let held;
+createInterface({ input: process.stdin }).on("line", line => {
+  const frame = JSON.parse(line);
+  appendFileSync(${JSON.stringify(dump)}, line + "\\n");
+  const result = value => out({ id: frame.id, result: value });
+  if (frame.method === "initialize") return result({ protocolVersion: 1, agentCapabilities: {}, authMethods: [] });
+  if (frame.method === "session/new") {
+    result({ sessionId: "fixture-session" });
+    update({ sessionUpdate: "available_commands_update", availableCommands: [{ name: "steer", description: "Steer" }] });
+    return;
+  }
+  if (frame.method === "session/prompt") {
+    if (frame.params.prompt[0].text.startsWith("/steer ")) {
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "⏩ Steer queued for the active turn:" } });
+      return result({ stopReason: "end_turn" });
+    }
+    held = frame.id;
+    update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "working" } });
+    return;
+  }
+  if (frame.method === "session/cancel") { if (held) out({ id: held, result: { stopReason: "cancelled" } }); return; }
+  if (frame.id !== undefined) result({});
+});
+`);
+  chmodSync(cli, 0o755);
+  const driver = createAcpDriver({
+    driverKind: "customAcp", displayName: "Fixture", models: { default: "", options: [] },
+    defaultCli: cli, nativeSource: "fixture.acp", loginNote: "fixture", spawnArgs: () => [],
+    pickAuthMethod: () => null, authFailure: "continue", isAuthenticated: () => true,
+    fluxReach: () => "elsewhere", ...{ steer: true },
+  });
+  instance = await driver.create({ instanceId: "steer-fixture", displayName: "Fixture", enabled: true,
+    environment: { HOME: root, USERPROFILE: root }, config: { cli, fullAuto: false } });
+  const recorder = recordEvents(instance.adapter);
+  try {
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "desk", text: "work" });
+    await recorder.until(event => event.type === "content.delta", 15_000);
+  } finally { recorder.stop(); }
+  const frames = (): Array<{ method: string; params?: { prompt?: Array<{ text: string }> } }> => {
+    try { return readFileSync(dump, "utf8").trim().split("\n").map(line => JSON.parse(line)); } catch { return []; }
+  };
+  const prompts = () => frames().filter(frame => frame.method === "session/prompt");
+  expect(prompts()).toHaveLength(1);
+  expect(instance.adapter.steer).toBeTypeOf("function");
+  return { adapter: instance.adapter, prompts };
+}
+
+posixOnly("ACP steer final writer", () => {
+  it("rejects a stored-file steer without a hook or release binding", async () => {
+    const { adapter, prompts } = await runningSteer();
+    const stored = join(root, "stored-quote.txt");
+    writeFileSync(stored, "The sample total is seven.");
+    expect(await adapter.steer!("desk", readFileSync(stored, "utf8"))).toBe("rejected");
+    expect(prompts()).toHaveLength(1);
+  });
+
+  it("a final hook refusal leaves the original turn running and a real passing fence still writes", async () => {
+    const { adapter, prompts } = await runningSteer();
+    let checked = 0;
+    expect(await adapter.steer!("desk", "The sample total is seven.", () => {
+      if (++checked === 2) throw new Error("MEMORY_CONTEXT_REVOKED");
+    })).toBe("rejected");
+    expect(checked).toBe(2);
+    expect(prompts()).toHaveLength(1);
+    expect(adapter.hasSession!("desk")).toBe(true);
+    const text = "Use the blue folder";
+    const input = fencedTurnInput({ threadId: "desk", prompt: buildPrompt(undefined, [promptPart(text, [noneRef("owner-turn")])]) },
+      fixtureEngineFence("desk"));
+    expect(await adapter.steer!("desk", text, input.beforeSubmit)).toBe("delivered");
+    expect(prompts().map(frame => frame.params!.prompt![0]!.text)).toEqual([expect.stringContaining("work"), `/steer ${text}`]);
+  });
+
+  it("a hook throwing a coded revocation refuses without writing", async () => {
+    const { adapter, prompts } = await runningSteer();
+    const revoked = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
+    await expect(adapter.steer!("desk", "The sample total is seven.", () => { throw revoked; })).rejects.toBe(revoked);
+    expect(prompts()).toHaveLength(1);
+  });
+
+  it("a withheld quote through steerWithQuoteLineage never writes", async () => {
+    writtenReply("The sample total is seven.");
+    const { adapter, prompts } = await runningSteer();
+    const turn = openTurn("desk", "t-desk");
+    revokeSource();
+    expect(await steerWithQuoteLineage(adapter, "desk", "> The sample total is seven.", true, {
+      holds: () => true, lineage: undefined, quote: QUOTE, turn,
+    })).toBe("queue");
+    expect(prompts()).toHaveLength(1);
+    expect(turn.parents).toEqual([]);
+  });
+
+  it("Stop precedes the steer hook", async () => {
+    const { adapter, prompts } = await runningSteer();
+    const stopping = adapter.stopAll!();
+    let checked = 0;
+    try {
+      expect(await adapter.steer!("desk", "The sample total is seven.", () => { checked++; })).toBe("rejected");
+      expect(checked).toBe(0);
+      expect(prompts()).toHaveLength(1);
+    } finally { await stopping; }
+  });
+
+  it("maps only the skipped-write missing-hook error to rejected", async () => {
+    const { acpTurnSteering } = await import("./drivers/acp/steer.ts");
+    for (const [error, outcome] of [[new Error("MEMORY_CONTEXT_REVOKED"), "rejected"], [new Error("unrelated"), "uncertain"]] as const) {
+      const steering = acpTurnSteering({ running: () => true, send: async () => { throw error; } });
+      expect(await steering.steer("The sample total is seven.")).toBe(outcome);
+    }
+    const revoked = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
+    const steering = acpTurnSteering({ running: () => true, send: async () => { throw revoked; } });
+    await expect(steering.steer("The sample total is seven.")).rejects.toBe(revoked);
+  });
+
+  it("keeps both final halt checks, normal submission, and exactly one steer request caller", () => {
+    const source = readFileSync(new URL("./drivers/acp/core.ts", import.meta.url), "utf8");
+    expect(source.replace(/\s+/g, " ")).toContain(`if (steerWrite) return emitEngineWire(beforeWrite, wire, write, () => {
+      if (turnHalted()) throw new Error("ACP_TURN_STOPPED");
+      if (!beforeWrite) throw new Error("MEMORY_CONTEXT_REVOKED");
+      beforeWrite();
+    });
+    return fencedSubmit(turn, write, wire, () => {
+      if (turnHalted()) throw new Error("ACP_TURN_STOPPED");
+      fenceBeforeWrite(fence, state, obj, settleHalted);
+    });
+    } catch (error) { if (!steerWrite) submissionRefused = true; throw error; }`.replace(/\s+/g, " "));
+    expect(source).toContain('interjectUnsupported || turnHalted() || !state.promptSent || !sessionId');
+    expect(source).toContain("steerWrite = false,\n        ) =>");
+    expect(source).toContain('}, method === "session/prompt" && !steerWrite ? turn.beforeSubmit : beforeWrite, steerWrite));');
+    const tree = ts.createSourceFile("core.ts", source, ts.ScriptTarget.Latest, true);
+    const callers: string[] = [];
+    const walk = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && node.expression.getText(tree) === "request" && node.arguments[8]?.kind === ts.SyntaxKind.TrueKeyword) callers.push(node.getText(tree));
+      ts.forEachChild(node, walk);
+    };
+    walk(tree);
+    expect(callers).toEqual(['request("session/prompt", { sessionId, prompt: [{ type: "text", text }] }, undefined, acpPromptIdleTimeoutMs(), undefined, undefined, undefined, beforeWrite, true)']);
+  });
 });
 
 // A stand-in Claude CLI that sends `init` only once the gate file exists, so a
@@ -273,9 +490,14 @@ posixOnly("a Claude steer that waits for init is checked against its quote at th
         config: { cli, permissionMode: "acceptEdits" },
       });
       const lines = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
-      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "desk", text: "one SLOW_INIT", warmIdentity: { botId: "bot", audience: "owner" } });
-      const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "claude-steer", startGeneration: 0, session: "claude-session", generation: "g-claude", turn: { threadId: "desk", turnId: "t-claude", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
       const turn = openTurn("desk", "t-desk");
+      // Initial owner text carries no stored source. Only an accepted quote
+      // may add a parent to the retained turn exercised below.
+      const initial = fencedTurnInput({ cwd: fixtureBotFolder(), threadId: "desk", warmIdentity: { botId: "bot", audience: "owner" }, releaseBinding: boundTurns.get(turn)!.binding,
+        prompt: buildPrompt(undefined, [promptPart("one SLOW_INIT", [noneRef("owner-turn")])]),
+      }, { db: database(), retained: turn, reader: CONTENT });
+      await instance.adapter.sendTurn(fixtureBoundTurn(initial));
+      const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "claude-steer", startGeneration: 0, session: "claude-session", generation: "g-claude", turn: { threadId: "desk", turnId: "t-claude", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
       const session = { threadId: "desk", driverInstance: "claude-steer", nativeSession: "claude-session" };
       writeSessionLineage(database(), session, turn);
       let fenced = 0;

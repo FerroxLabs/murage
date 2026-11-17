@@ -74,7 +74,7 @@ posixOnly("a hand-off cut short by a quit or a restart", () => {
       process.env.NODE_ENV='test';globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;
       const fs=await import('node:fs');const path=await import('node:path');
       const data=process.env.MURAGE_DATA_DIR;const file=path.join(data,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
-      const ready={FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized'};
+      const ready={FAKE_ACP_MCP_LIST:'all:ready',FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized'};
       const cli=${JSON.stringify(FAKE_ACP)};
       cfg.instances.lead={driver:'grokAgent',displayName:'Lead fixture',environment:{...ready,FAKE_ACP_MODE:'delegate-peer',FAKE_ACP_PROMPT_DUMP:path.join(data,'lead-prompt.json')},config:{cli,fullAuto:true}};
       cfg.instances.gated={driver:'grokAgent',displayName:'Gated fixture',environment:{...ready,FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'teammate-gate')},config:{cli,fullAuto:true}};

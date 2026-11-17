@@ -71,11 +71,12 @@ export const REFUND_LIMIT_TERMS_VERSIONS: readonly string[] = [];
  *  limit bind nobody.
  *  cloud-terms-964155e36e8b: the copy regenerated from the site at 1dccaff, the first text with the limit (cloud-terms-d93024bde751,
  *  the copy before it, does not carry it).
+ *  cloud-terms-d5a2fc1a2a13: the copy regenerated from the live site at murage-site 03478d48 (October 18, 2026 dates); same limit text.
  *  RULE: when legal-docs.generated.ts is regenerated and the Cloud terms id changes, APPEND the new id here if its text still carries
  *  the limit, and KEEP every earlier id that carried it (customers who accepted those versions stay bound). The guard test in
  *  test/refund-kinds.test.ts fails until the current id is listed.
  *  They bind customers only once the launch flag REFUND_LIMIT_V2_LIVE=1 is set, in the same release as the site text. */
-export const REFUND_LIMIT_V2_CLOUD_TERMS_IDS: readonly string[] = ["cloud-terms-964155e36e8b"];
+export const REFUND_LIMIT_V2_CLOUD_TERMS_IDS: readonly string[] = ["cloud-terms-964155e36e8b", "cloud-terms-d5a2fc1a2a13"];
 export const refundLimitVersions = (env: Env): string[] =>
   [...new Set([...REFUND_LIMIT_TERMS_VERSIONS, ...(env.REFUND_LIMIT_V2_LIVE === "1" ? REFUND_LIMIT_V2_CLOUD_TERMS_IDS : []),
     ...(env.REFUND_LIMIT_TERMS_VERSIONS ?? "").split(",").map((v) => v.trim()).filter(Boolean)])];
@@ -188,33 +189,61 @@ export function configuredKeys(env: Env): RingKey[] | null {
   if (prev) ring.push({ version: versionOf(env.REFUND_KEY_VERSION_PREVIOUS, v - 1)!, secret: prev });
   return ring;
 }
+/** The pure part of keyring()'s validation, shared with the read-only account-summary hint (identityHintPlan) so the two can never
+ *  disagree: a CURRENT key whose version was already retired, a key replaced under the same version (stored check-hash differs; with
+ *  strict=false a version with no stored row yet is not a fault: keyring() would record it), or a stored key version nothing configured
+ *  can read (`orphan`, looked up globally over refund_identity_keys, not for one invoice). Only keys present in `checks` are compared. */
+export interface RingFault { kind: string; detail: Record<string, unknown> }
+export function ringFault(a: { ring: RingKey[]; retired: ReadonlySet<number>; checks: ReadonlyMap<number, string>; stored: ReadonlyMap<number, string | undefined>;
+  orphan: number | undefined; strict: boolean }): RingFault | null {
+  if (a.retired.has(a.ring[0].version)) return { kind: "refund_key.retired_in_use", detail: { version: a.ring[0].version } };
+  for (const k of a.ring) {
+    const check = a.checks.get(k.version);
+    if (check === undefined) continue;
+    const row = a.stored.get(k.version);
+    if (row === undefined ? a.strict : row !== check) return { kind: "refund_key.replaced", detail: { version: k.version } };
+  }
+  if (a.orphan !== undefined) return { kind: "refund_key.previous_missing", detail: { version: a.orphan } };
+  return null;
+}
+/** The configured keys minus a retired previous one (retireRedundantKeys): no longer hashed with, even while still configured. */
+export const ringOf = (configured: RingKey[], retired: ReadonlySet<number>): RingKey[] => configured.filter((k, i) => i === 0 || !retired.has(k.version));
+const KEYCHECK_INFO = "refund-identity:keycheck";
+
 /** The keys to hash with, checked against what was used before: a key replaced under the same version, or a version stored records still
  *  use that is no longer configured, makes the keyring unusable (null) and alerts ops. Nothing is ever granted or forgotten silently. */
 export async function keyring(env: Env, now: number): Promise<RingKey[] | null> {
   const configured = configuredKeys(env);
   if (!configured) return null;
-  // A previous key that was retired (retireRedundantKeys) is no longer hashed with, even while it is still configured.
   const retired = new Set((await env.DB.prepare("SELECT version FROM refund_identity_keyring WHERE retired_at IS NOT NULL").all<{ version: number }>()).results.map((r) => r.version));
-  const ring = configured.filter((k, i) => i === 0 || !retired.has(k.version));
-  const fail = async (kind: string, detail: Record<string, unknown>) => {
+  const ring = ringOf(configured, retired);
+  const fail = async (f: RingFault) => {
     await env.DB.prepare("INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING")
-      .bind(crypto.randomUUID(), "billing", kind, "high", JSON.stringify(detail), now).run();
+      .bind(crypto.randomUUID(), "billing", f.kind, "high", JSON.stringify(f.detail), now).run();
     return null;
   };
+  const checks = new Map<number, string>();
+  const stored = new Map<number, string | undefined>();
+  const fault = (orphan?: number) => ringFault({ ring, retired, checks, stored, orphan, strict: true });
   // A CURRENT key whose version was already retired (a Worker still running the configuration from before the rotation, or a rollback):
   // hashing with it would write keys nothing can match or retire again (Astra ASTRA-REFUND3 #2).
-  if (retired.has(ring[0].version)) return fail("refund_key.retired_in_use", { version: ring[0].version });
+  let f = fault();
+  if (f) return fail(f);
   for (const k of ring) {
-    const check = await hmacHex(k.secret, "refund-identity:keycheck");
+    const check = await hmacHex(k.secret, KEYCHECK_INFO);
     await env.DB.prepare("INSERT INTO refund_identity_keyring (version,check_hash,first_used_at) VALUES (?,?,?) ON CONFLICT(version) DO NOTHING")
       .bind(k.version, check, now).run();
     const row = await env.DB.prepare("SELECT check_hash FROM refund_identity_keyring WHERE version=?").bind(k.version).first<{ check_hash: string }>();
-    if (row?.check_hash !== check) return fail("refund_key.replaced", { version: k.version });
+    checks.set(k.version, check);
+    stored.set(k.version, row?.check_hash);
+    f = fault();
+    if (f) return fail(f);
   }
   const versions = ring.map((k) => k.version);
   const orphan = await env.DB.prepare(`SELECT key_version AS v FROM refund_identity_keys WHERE key_version NOT IN (${versions.map(() => "?").join(",")}) LIMIT 1`)
     .bind(...versions).first<{ v: number }>();
-  if (orphan) return fail("refund_key.previous_missing", { version: orphan.v });
+  f = fault(orphan?.v);
+  if (f) return fail(f);
   return ring;
 }
 
@@ -443,10 +472,10 @@ function matchSql(restricted: boolean | null, invoice = "?"): string {
 /** The SQL condition (and its binds) that a "not_first_payment" refusal of `invoiceId`, asked by `userId`, still stands on: the person
  *  has no open objection, and a key of the payment still matches codes nobody has an open objection to. An objection opened (or an
  *  erasure made) after the identity check, before the refusal is committed or sent, makes it false (Astra ASTRA-REFUND4 #2). */
-export function refusalStands(invoiceId: string, userId: string): { sql: string; binds: unknown[] } {
+export function refusalStands(invoiceId: string, userId: string, invoiceSql = "?"): { sql: string; binds: unknown[] } {
   return {
-    sql: `(NOT ${OPEN_RESTRICTION_SQL}
-      AND EXISTS (${matchSql(false)}))`,
+    sql: `(NOT ${openRestrictionSql("?", invoiceSql)}
+      AND EXISTS (${matchSql(false, invoiceSql)}))`,
     binds: [userId, invoiceId, invoiceId, ...NOT_A_FIRST_PAYMENT_KINDS],
   };
 }
@@ -651,14 +680,64 @@ export async function firstPaymentCheck(env: Env, stripe: StripeClient | null, p
   return incomplete ? "identity_check_unavailable" : null;
 }
 
+/** What the stored records alone say about the 7-day offer for one payment, for the account summary: "refused" when the offer would be refused
+ *  as not_first_payment (a final match, no objection open), "granted" when nothing refuses it, undefined when it cannot be decided from
+ *  D1 alone (keys unusable or not recorded, retention passed, an objection open, a capture not settled or a match held by someone's
+ *  objection). Read-only (no keyring write, no alert, no Stripe call); fails open to undefined, never to "refused". Says nothing about which
+ *  key matched. It applies the same keyring validation as firstPaymentCheck (ringFault: stored check-hash vs the configured secret, retired
+ *  and unconfigured key versions anywhere in the records), so a keyring quote would call unusable is omitted here too.
+ *
+ *  Returns the statements to run in ONE batch (on the primary; the caller owns the session) and a decider over their results, or null
+ *  when it is already known to be undecidable. */
+export interface IdentityHintPlan { statements: D1PreparedStatement[]; decide: (results: Record<string, unknown>[][], paidAt: number) => Promise<"refused" | "granted" | undefined> }
+/** Every statement names the payment by the home's CURRENT first_invoice_id read in the same statement on the same (primary) session, and
+ *  `decide` takes the paid_at from the same primary snapshot: no input comes from the replica-read summary. */
+export function identityHintPlan(env: Env, db: D1Database | D1DatabaseSession, p: { userId: string; homeId: string }, now: number): IdentityHintPlan | null {
+  const configured = configuredKeys(env);
+  if (!configured) return null;
+  const versions = configured.map((k) => k.version);
+  const INV = "(SELECT first_invoice_id FROM billing_subscriptions WHERE home_id=?)";
+  const stands = refusalStands(p.homeId, p.userId, INV);
+  const retiredSql = "SELECT version FROM refund_identity_keyring WHERE retired_at IS NOT NULL";
+  const statements = [
+    db.prepare(retiredSql),
+    db.prepare("SELECT version,check_hash FROM refund_identity_keyring"),
+    db.prepare(`SELECT key_version AS v FROM refund_identity_keys WHERE key_version NOT IN (${versions.map(() => "?").join(",")}) OR key_version IN (${retiredSql}) LIMIT 1`).bind(...versions),
+    db.prepare(RESTRICTION_SQL).bind(p.userId),
+    db.prepare(`SELECT 1 AS x FROM refund_identity_keys WHERE invoice_id=${INV} LIMIT 1`).bind(p.homeId),
+    db.prepare(`SELECT ${openRestrictionSql("?", INV)} AS o`).bind(p.userId, p.homeId),
+    db.prepare(`SELECT ${stands.sql} AS s`).bind(...stands.binds),
+    db.prepare(`${matchSql(true, INV)} LIMIT 1`).bind(p.homeId, ...NOT_A_FIRST_PAYMENT_KINDS),
+    db.prepare(`SELECT 1 AS x FROM refund_identity_captures c WHERE c.invoice_id=${INV} AND EXISTS (SELECT 1 FROM refund_identity_settled s WHERE s.invoice_id=c.invoice_id)`).bind(p.homeId),
+  ];
+  return { statements, decide: async (r, paidAt) => {
+    if (paidAt < retentionCutoff(now)) return undefined;
+    const retired = new Set(r[0].map((x) => x.version as number));
+    const ring = ringOf(configured, retired);
+    const checks = new Map<number, string>();
+    for (const k of ring) checks.set(k.version, await hmacHex(k.secret, KEYCHECK_INFO));
+    const stored = new Map(r[1].map((x) => [x.version as number, x.check_hash as string] as const));
+    if (ringFault({ ring, retired, checks, stored, orphan: r[2][0]?.v as number | undefined, strict: false })) return undefined;
+    const restriction = (r[3][0] ?? null) as unknown as Restriction | null;
+    if (restriction && restriction.notice_sent_at === null) return undefined;
+    if (erasedFor(restriction, paidAt)) return "granted";
+    if (r[4].length === 0) return undefined;
+    // An objection of the payer of this invoice (not only the asker) also holds the check: never hide on it.
+    if (r[5][0]?.o === 1) return undefined;
+    if (r[6][0]?.s === 1) return "refused";
+    if (r[7].length > 0) return undefined; // a match held by someone's objection
+    return r[8].length > 0 ? "granted" : undefined;
+  } };
+}
+
 // ---- Objections (terms r11 section 5(2); migration 0046) ----------------------------------------------------------------------------
 
 /** erased_through (migration 0066): the latest "erase" decision for this person. It is kept apart from the current objection's lifecycle,
  *  which a new objection reopens: an erasure is never forgotten (Astra ASTRA-REFUND4 #3). */
 export interface Restriction { objected_at: number; decision: "keep" | "erase" | null; decided_at: number | null; notice_sent_at: number | null;
   erased_through: number | null; pending_since: number | null; restricted_at: number | null; dispatch_unknown_at: number | null }
-export const restrictionOf = (env: Env, userId: string) =>
-  env.DB.prepare("SELECT objected_at,decision,decided_at,notice_sent_at,erased_through,pending_since,restricted_at,dispatch_unknown_at FROM refund_identity_restrictions WHERE user_id=?").bind(userId).first<Restriction>();
+export const RESTRICTION_SQL = "SELECT objected_at,decision,decided_at,notice_sent_at,erased_through,pending_since,restricted_at,dispatch_unknown_at FROM refund_identity_restrictions WHERE user_id=?";
+export const restrictionOf = (env: Env, userId: string) => env.DB.prepare(RESTRICTION_SQL).bind(userId).first<Restriction>();
 /** True when this payment's codes were erased on an objection decision (the payment was made no later than the latest erasure). */
 const erasedFor = (r: Restriction | null, paidAt: number): boolean =>
   r !== null && r.erased_through !== null && paidAt <= r.erased_through;

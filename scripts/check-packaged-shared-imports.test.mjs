@@ -6,7 +6,9 @@
 // through signing and notarisation, and only the Linux packaged smoke caught it.
 // This test moves that failure back to where it is cheap.
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { parse } from "yaml";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
@@ -79,7 +81,7 @@ describe("every module the main process's import graph reaches is packaged", () 
     expect(packagedImportGraph([electronEntries()[0]]).files).toContain("shared/windows-sddl.mjs");
   });
 
-  it.each(["shared/windows-sddl.mjs", "shared/backup-space.mjs"])("would have caught the %s break", omitted => {
+  it.each(["shared/windows-sddl.mjs", "shared/backup-space.mjs", "shared/agy-oauth-link.mjs", "shared/stored-root-path.mjs"])("would have caught the %s break", omitted => {
     const reached = packagedImportGraph([electronEntries()[0]]).files;
     expect(reached).toContain(omitted);
     withConfig(reached.filter(file => file !== omitted), config => {
@@ -109,4 +111,30 @@ describe("every module the main process's import graph reaches is packaged", () 
     expect(bundled.length).toBeGreaterThan(0);
     expect(bundled.every((value) => value === "true")).toBe(true);
   });
+});
+
+it('electron-builder stages the require preload both inside ASAR and as an external resource', async () => {
+  const require = createRequire(import.meta.url);
+  const builder = createRequire(require.resolve('electron-builder/package.json'));
+  const { getFileMatchers } = builder('app-builder-lib/out/fileMatcher.js');
+  const { computeFileSets, getDestinationPath } = builder('app-builder-lib/out/util/appFileCopier.js');
+  const config = parse(readFileSync('electron-builder.yml', 'utf8'));
+  const root = mkdtempSync(join(tmpdir(), 'packaged-preload-'));
+  try {
+    for (const directory of ['shared', 'dist-server/shared']) {
+      mkdirSync(join(root, directory), { recursive: true });
+      writeFileSync(join(root, directory, 'win-hide-child-process.cjs'), 'module.exports = "fixture preload";');
+    }
+    const options = { defaultSrc: root, macroExpander: text => text.replaceAll('${arch}', 'x64'), customBuildOptions: {}, globalOutDir: join(root, 'release') };
+    const resources = getFileMatchers(config, 'extraResources', join(root, 'Resources'), options);
+    const files = getFileMatchers(config, 'files', join(root, 'Resources/app'), options);
+    const excluded = [];
+    for (const matcher of resources) matcher.computeParsedPatterns(excluded, root);
+    for (const matcher of files) matcher.excludePatterns = excluded;
+    const sets = await computeFileSets(files, null, { info: { projectDir: root, appDir: root, config, areNodeModulesHandledExternally: true, metadata: { dependencies: {} }, debugLogger: { add() {} } } }, false);
+    const staged = sets.flatMap(set => set.files.map(file => getDestinationPath(file, set)));
+    expect(staged).toContain(join(root, 'Resources/app/shared/win-hide-child-process.cjs'));
+    const outside = resources.find(matcher => matcher.to === join(root, 'Resources/shared/win-hide-child-process.cjs'));
+    expect(readFileSync(outside.from, 'utf8')).toBe('module.exports = "fixture preload";');
+  } finally { removeTempDirSync(root); }
 });

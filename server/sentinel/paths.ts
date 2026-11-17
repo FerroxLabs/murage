@@ -1,3 +1,4 @@
+import {writeFileSync} from "./io-meter.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -14,7 +15,7 @@
 // (nlink > 1), non-regular files, owner mismatch and path escape are refused; the output root is owner-only (0700 / 0600
 // on POSIX; on Windows an injectable DACL check, never chmod). Paths are never derived from log or manifest values,
 // except the sealed stats generation, whose name is checked against the fixed generation pattern.
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, writeFileSync, chmodSync, type Stats } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, chmodSync, type Stats } from "node:fs";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { randomBytes } from "node:crypto";

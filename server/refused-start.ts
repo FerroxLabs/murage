@@ -5,11 +5,14 @@
 // paths that start a turn for another bot (a delegation and a synchronous ask) record the full explanation there, where the owner reads it, before
 // the bot that asked is told only the kind of failure (one of the five codes).
 import { ERROR_MESSAGE_MAX } from "../shared/provider-error.ts";
-import { redactSecretsInText } from "./redact.ts";
 import type { Message } from "./store.ts";
 import { murageLine } from "./murage-line.ts";
+import { redactSecretsInText } from "./redact.ts";
 
 export function recordRefusedStart(store: { appendMessage(threadId: string, message: Omit<Message, "id" | "at">): Message }, threadId: string, why: string): Message {
-  const detail = redactSecretsInText(why);
-  return store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", tool: { name: `error: ${detail.slice(0, ERROR_MESSAGE_MAX)}`, ok: false, errorDetails: detail.slice(0, 4096) } }));
+  // MAIN RULING 1115-C4D2-GROK C1: scrub the whole refusal before either field is stored or bounded.
+  // Both fields come only from this scrubbed string. Format its removal markers as plain text so
+  // the display unit does not mistake an already scrubbed sibling for unscanned provider text.
+  const safe = redactSecretsInText(why).replace(/«redacted(?: \d+ chars)?»/g, "[redacted]");
+  return store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", tool: { name: `error: ${safe.slice(0, ERROR_MESSAGE_MAX)}`, ok: false, errorDetails: safe } }));
 }

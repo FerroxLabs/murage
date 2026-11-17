@@ -1,3 +1,8 @@
+import "../../shared/win-hide-child-process.mjs";
+import {exitWithChildIoReceipt} from "../io-child-receipts.ts";
+import { routeBrowserRead } from "../browser-read-route.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { sendProxyFrame, proxyTransportLost, proxyFetch, proxyUpstreamResponse } from "../proxy-turn-release.ts";
 // Built-in browser MCP server — spawned inside a bot's agent process (via
 // the "browser" integration). The browser itself is a WebContentsView in the
 // Electron main process; this proxy forwards each tool call to the loopback
@@ -18,6 +23,7 @@
 //   MURAGE_CONTROL_URL / MURAGE_CONTROL_TOKEN  who-is-driving endpoint: while the
 //                      person holds the wheel in the panel, actions refuse
 import { existsSync } from "node:fs";
+import { WebDocuments, validateWebRange, WEB_RANGE_PROPERTIES, WEB_READ_DESCRIPTION } from "../web-documents.ts";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 
@@ -31,7 +37,15 @@ const HOST = (process.env.MURAGE_BROWSER_URL ?? "").replace(/\/$/, "");
 const token = () => turnSecret("MURAGE_BROWSER_TOKEN");
 const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
 const PROFILE = process.env.MURAGE_BROWSER_PROFILE ?? "";
-const control = createControlClient();
+const control = createControlClient({ fetchImpl: async (...args) => {
+  const response = await proxyFetch("browser", ...args);
+  if (!response.ok) unavailableControl();
+  return response;
+} });
+function unavailableControl(): never {
+  proxyTransportLost("browser");
+  throw new Error("MEMORY_CONTEXT_REVOKED");
+}
 
 // ── what the host answers ────────────────────────────────────────────────
 const elementSchema = z.object({
@@ -174,6 +188,7 @@ export function formatObserved(page: ObservedPage): string {
 }
 
 export type HostRequest = (operation: string, body?: object) => Promise<unknown>;
+class BrowserHostRefusal extends Error {}
 
 /** Give long-poll operations enough transport headroom beyond the duration
  * the host itself is allowed to wait. Without this, a valid 30-second
@@ -195,16 +210,24 @@ export function browserHostTimeoutMs(operation: string, body: object = {}): numb
  * is exactly what the model should read, so it is thrown as-is. */
 export async function hostRequest(operation: string, body: object = {}, fetchImpl: typeof fetch = fetch): Promise<unknown> {
   if (!HOST || !token() || !BOT_ID) throw new Error("the built-in browser is not connected for this bot");
-  const res = await fetchImpl(`${HOST}/v1/bots/${encodeURIComponent(BOT_ID)}/${operation}`, {
+  const res = await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", fetchImpl(`${HOST}/v1/bots/${encodeURIComponent(BOT_ID)}/${operation}`, {
     method: "POST",
     headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" },
     body: JSON.stringify({ ...body, profile: PROFILE }),
     signal: AbortSignal.timeout(browserHostTimeoutMs(operation, body)),
+  }));
+  // R4-FLAG ruling: a refusal raised while the body is read is rethrown as-is
+  // (D4, design line 399); every other malformed or non-JSON reply seals (A3c).
+  const parsed: unknown = await proxyUpstreamResponse("browser", res).json().catch(error => {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+    proxyTransportLost("browser");
+    throw new Error("MEMORY_CONTEXT_REVOKED");
   });
-  const parsed: unknown = await res.json().catch(() => ({}));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || res.status >= 500) throw new Error("MEMORY_CONTEXT_REVOKED");
   if (!res.ok) {
     const failure = hostErrorSchema.safeParse(parsed);
-    throw new Error(failure.success ? failure.data.error : `browser host: HTTP ${res.status}`);
+    if (!failure.success) throw new Error("MEMORY_CONTEXT_REVOKED");
+    throw new BrowserHostRefusal(failure.data.error);
   }
   return parsed;
 }
@@ -299,8 +322,8 @@ export const TOOLS = [
   {
     name: "browser_read",
     description:
-      "Read the page's rendered text (articles, results, tables) as plain text. Covers the whole document, not just the part on screen, so browser_scroll does not change what it returns; a long page is cut with a note saying so. For understanding content, not for acting: use browser_snapshot for things to click.",
-    inputSchema: { type: "object", properties: {} },
+      WEB_READ_DESCRIPTION + " Reads the whole document; browser_scroll does not change the saved copy. Use browser_snapshot for things to click.",
+    inputSchema: { type: "object", additionalProperties: false, properties: WEB_RANGE_PROPERTIES },
   },
   {
     name: "browser_back",
@@ -361,6 +384,7 @@ async function requestTakeover(reason: string, request: HostRequest, waitMs = TA
     return textResult("Nobody can be paged for this browser right now. Tell the user in chat what you need them to do in the Browser panel.", true);
   }
   const initial = await control.state(true);
+  if (!initial.available) unavailableControl();
   // Page unless a plea is already open. Skipping this whenever the person
   // merely *held* the wheel was the silent-freeze bug: a hold they never took
   // deliberately has no plea for them to read, so nothing appeared in the app
@@ -368,13 +392,14 @@ async function requestTakeover(reason: string, request: HostRequest, waitMs = TA
   // plea rather than replacing it, so asking while they drive is safe.
   const requestId = initial.helpOpen ? null : await control.requestHelp(reason);
   if (!initial.helpOpen && requestId === null) {
-    return textResult("The user could not be paged right now. Tell them in chat what you need them to do in the Browser panel.", true);
+    unavailableControl();
   }
   let sawHold = initial.held;
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, pollMs));
     const state = await control.state(true);
+    if (!state.available) unavailableControl();
     if (state.held) sawHold = true;
     if (!state.held && !state.helpOpen) {
       const page = await observed(request, "snapshot");
@@ -397,19 +422,22 @@ const BROWSER_CONTROL_REFUSAL =
 const floorGate = new BuiltinFloorGate();
 
 async function observed(request: HostRequest, operation: string, body?: object, gate: BuiltinFloorGate = floorGate): Promise<ToolResult> {
-  const page = pageSchema.parse(await request(operation, body));
+  const page = pageSchema.parse(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request(operation, body)));
   gate.remember(page);
   return textResult(formatObserved(page));
 }
 
+const readDocuments = new WeakMap<HostRequest, WebDocuments>();
 export async function callTool(name: string, args: unknown, request: HostRequest = hostRequest, gate: BuiltinFloorGate = floorGate): Promise<ToolResult> {
   const stepped = (operation: string, target: { ref?: string; key?: string }) => gate.check(operation, target);
   const watched = (operation: string, body?: object) => observed(request, operation, body, gate);
   // The person driving in the panel wins. Reads are private too: a snapshot
   // or screenshot taken while they enter a password would leak it straight
   // into model context. Only the takeover wait choreography remains open.
-  if (name !== "browser_request_takeover" && (await control.state(true)).held) {
-    return textResult(BROWSER_CONTROL_REFUSAL, true);
+  if (name !== "browser_request_takeover") {
+    const state = await control.state(true);
+    if (!state.available) unavailableControl();
+    if (state.held) return textResult(BROWSER_CONTROL_REFUSAL, true);
   }
   if (name === "browser_navigate") {
     const parsed = navigateArgs.safeParse(args);
@@ -494,10 +522,23 @@ export async function callTool(name: string, args: unknown, request: HostRequest
     return watched("wait", body);
   }
   if (name === "browser_read") {
-    const page = readSchema.parse(await request("read"));
-    const url = safeBrowserUrl(page.url) ?? (page.url === "about:blank" ? "about:blank" : "URL unavailable");
-    if (!page.text.trim()) return textResult(`${page.title || "Untitled"}: ${url}\n(The page has no readable text.)`);
-    return textResult(`${page.title || "Untitled"}: ${url}\n\n${page.text}`);
+    const range = validateWebRange(args);
+    let documents = readDocuments.get(request);
+    if (!documents) { documents = new WebDocuments(); readDocuments.set(request, documents); }
+    if (range.handle) {
+      // The host validates the current bot/profile capability even for an immutable copy.
+      await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request("state"));
+      const current = await control.state(true);
+      if (!current.available || current.held) return textResult(BROWSER_CONTROL_REFUSAL, true);
+    }
+    return textResult(JSON.stringify(await routeBrowserRead("builtin", range, {
+      documents, scope: BOT_ID, authorize: () => true,
+      acceptedText: async () => {
+        const page = readSchema.parse(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request("read")));
+        const url = safeBrowserUrl(page.url) ?? (page.url === "about:blank" ? "about:blank" : "URL unavailable");
+        return { ...page, url };
+      },
+    })));
   }
   if (name === "browser_back") return watched("back");
   if (name === "browser_forward") return watched("forward");
@@ -507,19 +548,19 @@ export async function callTool(name: string, args: unknown, request: HostRequest
     return requestTakeover(parsed.data.reason, request);
   }
   if (name === "browser_state") {
-    const state = stateSchema.parse(await request("state"));
+    const state = stateSchema.parse(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request("state")));
     if (!state.url || state.url === "about:blank") return textResult(`The browser tab is empty. Use ${murageToolOnThisServer("browser_navigate")} to open a page.`);
     return textResult(`${state.title || "Untitled"}: ${safeBrowserUrl(state.url) ?? "URL unavailable"}${state.loading === true ? " (still loading)" : ""}`);
   }
   if (name === "browser_screenshot") {
-    const shot = screenshotSchema.parse(await request("screenshot"));
+    const shot = screenshotSchema.parse(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request("screenshot")));
     const mime = shot.format === "png" ? "image/png" : "image/jpeg";
     return { content: [{ type: "text", text: "Current browser page" }, { type: "image", data: shot.png, mimeType: mime }] };
   }
   return textResult(`Unknown tool: ${name}`, true);
 }
 
-const send = (message: object) => process.stdout.write(`${JSON.stringify(message)}\n`);
+const send = (message: object) => sendProxyFrame("browser", message);
 const ok = (id: unknown, result: unknown) => send({ jsonrpc: "2.0", id, result });
 const rpcError = (id: unknown, code: number, message: string) => send({ jsonrpc: "2.0", id, error: { code, message } });
 
@@ -543,7 +584,8 @@ async function handle(line: string) {
     try {
       return ok(id, await callTool(name, params?.arguments ?? {}));
     } catch (error) {
-      return ok(id, textResult(error instanceof Error ? error.message : String(error), true));
+      if (error instanceof BrowserHostRefusal) return ok(id, textResult(error.message, true));
+      return proxyTransportLost("browser");
     }
   }
   if (id !== undefined) rpcError(id, -32601, `Method not found: ${String(method)}`);
@@ -563,5 +605,5 @@ if (process.argv[1] && existsSync(process.argv[1]) && /browser-proxy\.(?:ts|js)$
       rpcError(id, -32603, error instanceof Error ? error.message : String(error));
     });
   });
-  lines.on("close", () => process.exit(0));
+  lines.on("close", () => void exitWithChildIoReceipt(0));
 }

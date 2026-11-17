@@ -1,8 +1,10 @@
+// control migration: real bound proxy ingress; existing assertions retained.
 // The browser proxy is the only thing between Murage's browser refusal and the
 // engine. It must hand Murage's own reason on (a protected page, the owner
 // holding control) and still never forward an arbitrary server error, which
 // could carry text from a page.
-import { spawn } from "node:child_process";
+import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
+import { spawnBoundProxy, boundProxyState } from "../testing/bound-proxy-fixture.ts";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -24,21 +26,34 @@ async function route(status: number, body: unknown): Promise<string> {
 }
 
 /** Run the proxy over stdio exactly as an engine does and collect replies. */
-async function exchange(base: string, requests: unknown[]): Promise<any[]> {
-  const child = spawn(process.execPath, [PROXY], {
+async function exchange(base: string, requests: unknown[], terminal = false): Promise<any[]> {
+  const child = await spawnBoundProxy("unifiedBrowser", process.execPath, [PROXY], {
     env: { PATH: process.env.PATH, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "fixture-token", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread" },
     stdio: ["pipe", "pipe", "inherit"],
   });
   let output = "";
-  child.stdout.on("data", (chunk) => { output += chunk; });
+  let accepted: () => void = () => {};
+  const delivered = new Promise<void>(resolve => { accepted = resolve; });
+  child.stdout.on("data", (chunk) => { output += chunk; if (output.trim().split("\n").filter(Boolean).length === requests.length) accepted(); });
   for (const request of requests) child.stdin.write(`${JSON.stringify(request)}\n`);
-  child.stdin.end();
-  await new Promise((resolve) => child.once("close", resolve));
+  // Keep the engine request alive until the proxy seals it. Closing stdin
+  // here would test EOF instead of the route failure under examination.
+  if (terminal) {
+    await new Promise((resolve) => child.once("close", resolve));
+    // MAIN RULING INT-CONFLICT-DEFAULT 6a9dfe7db8: require the authenticated terminal refusal as well as zero ordinary output.
+    expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: { jsonrpc: "2.0", id: null, error: { code: -32099, message: LEDGER_REFUSAL_LINE, data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true } } } });
+  } else {
+    await delivered;
+    expect(boundProxyState(child)).toEqual({ sealed: false, refusals: 0 });
+    const closed = new Promise(resolve => child.once("close", resolve)); child.kill(); await closed;
+  }
   return output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }
 
 const PROTECTED = "Murage's browser is protecting this page because the owner typed or clicked in it.";
 
+// control: a recognized policy refusal is gated application output, not a
+// transport-loss fallback (§12.1 H1a-EXEMPT, design line 401).
 it("passes Murage's own refusal to the bot word for word", async () => {
   const base = await route(409, { error: PROTECTED, code: "browser_protected_owner_input" });
   const [call] = await exchange(base, [{ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "agent_browser_snapshot" } }]);
@@ -54,8 +69,7 @@ it("answers a failed tool listing with an error that says why, not a result with
 
 it("never forwards a server error Murage did not write for the bot", async () => {
   const base = await route(500, { error: "strict mode violation: <input value=\"page secret\">" });
-  const [call] = await exchange(base, [{ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "agent_browser_snapshot" } }]);
-  expect(JSON.stringify(call)).not.toContain("page secret");
-  expect(call.result.isError).toBe(true);
-  expect(call.result.content[0].text).toContain("Browser unavailable");
+  const replies = await exchange(base, [{ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "agent_browser_snapshot" } }], true);
+  expect(JSON.stringify(replies)).not.toContain("page secret");
+  expect(replies).toEqual([]);
 });

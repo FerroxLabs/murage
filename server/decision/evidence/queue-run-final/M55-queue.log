@@ -1,0 +1,43 @@
+COMMAND node_modules/.bin/vitest run server/decision/records-crash.test.ts -t "orphaned queue re-decided RUN"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/records-crash.test.ts > A4a A4c orphaned queue re-decided RUN persists one answerId before transport and across a crash
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=69 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS app_trigger_bindings ( trigger_id TEXT PRIMARY  ms=51 source=exec:CREATE TABLE IF NOT EXISTS app_trigger_b
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/records-crash.test.ts (5 tests | 1 failed | 4 skipped) 930ms
+   ↓ A4a M53 queue-first crash, tx rollback, committed restart yield exactly one usable row
+   ↓ A4a M53 record and row roll back together when messageRewrite drops the row
+   ↓ A4c M55 answer/answerId/pending survive crash before acceptance; restart never claims execution
+   ↓ recovery refuses a missing queue adapter instead of reporting success
+   × A4a A4c orphaned queue re-decided RUN persists one answerId before transport and across a crash 921ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  06:56:29
+   Duration  11.71s (transform 8.41s, setup 9.99s, import 550ms, tests 930ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/records-crash.test.ts > A4a A4c orphaned queue re-decided RUN persists one answerId before transport and across a crash
+AssertionError: expected undefined to match object { …(2) }
+
+- Expected:
+{
+  "answerId": "79d91884-2abb-44cd-9206-e0c5992acfcd",
+  "delivery": "pending",
+}
+
++ Received:
+undefined
+
+ ❯ server/decision/records-crash.test.ts:34:140
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

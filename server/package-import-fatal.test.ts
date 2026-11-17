@@ -57,7 +57,7 @@ it("the actual import callback exits before queued writers when recovery finds a
       queueMicrotask(() => writeFileSync(join(DATA_DIR, "queued-writer"), "must not run"));
       ${executable}
     `;
-    const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { cwd: fileURLToPath(new URL("..", import.meta.url)), encoding: "utf8", timeout: 10000 });
+    const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { windowsHide: true, cwd: fileURLToPath(new URL("..", import.meta.url)), encoding: "utf8", timeout: 10000 });
     expect(child.error).toBeUndefined();
     expect(child.status).toBe(1);
     expect(child.signal).toBeNull();

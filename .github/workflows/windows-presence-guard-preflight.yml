@@ -1,0 +1,71 @@
+# Copyright 2026 Ferrox Labs
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Windows presence guard compile preflight
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact qualification source commit
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: windows-presence-guard-preflight
+  cancel-in-progress: false
+jobs:
+  compile:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      EXPECTED_SHA: ${{ inputs.source_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.20.0
+      - name: Admit exact source and runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(node --version)" = v24.20.0
+          test "$(node -p process.platform)" = win32
+          test "$(node -p process.arch)" = x64
+      - name: Node headers for the presence guard addon
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(node -p process.version)
+          dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
+          curl -fsSL "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
+          curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
+          (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
+          echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
+      - name: Verify the build and source contracts
+        shell: bash
+        run: node --test scripts/build-presence-guard.node-test.mjs electron/presence-guard-native-contract.node-test.mjs
+      - name: Compile the addon with MSVC
+        shell: bash
+        run: node scripts/build-presence-guard.mjs
+      - name: Refuse imports beyond Windows system DLLs
+        shell: bash
+        run: node scripts/windows-native-imports.mjs dist-native/presence-guard/win32-x64/presence-guard.node
+      - name: EVIDENCE - load, read, subscribe and unsubscribe in plain Node
+        shell: bash
+        run: node scripts/presence-guard-evidence.mjs dist-native/presence-guard/win32-x64/presence-guard.node dist-native/presence-guard/win32-x64/presence-evidence.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: windows-presence-guard-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist-native/presence-guard/win32-x64/presence-guard.node
+            dist-native/presence-guard/win32-x64/build.json
+            dist-native/presence-guard/win32-x64/presence-evidence.json
+          if-no-files-found: warn
+          retention-days: 7

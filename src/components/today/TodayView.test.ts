@@ -161,7 +161,14 @@ describe("the Tell box", () => {
 
   it("says Sent only after the server acknowledged the send", () => {
     const composer = read("../Composer.tsx");
-    expect(composer.match(/onSent\?\.\(\)/g)).toHaveLength(1);
+    // MAIN RULING INT-CONFLICT-DEFAULT 950bb4b9199 / 99bcb86fa9d: both send paths acknowledge through delivery.
+    expect(composer.match(/onSent\?\.\(\)/g)).toHaveLength(2);
+    const command = composer.slice(composer.indexOf('dispatch({ type: "sendEngineCommand"'), composer.indexOf("  const pickEngineCommand"));
+    expect(command).toMatch(/onSent: \(\) => \{[^}]*onSent\?\.\(\);\s*\},\s*onError:/);
+    const store = read("../../state/store.tsx");
+    const delivery = store.slice(store.lastIndexOf('case "sendEngineCommand":'), store.lastIndexOf('case "sendEngineCommand":') + 900);
+    expect(delivery).toContain("deliveryRef.current.submit(entry,");
+    expect(delivery).toContain("onReceipt: () => action.onSent?.()");
     const watch = composer.indexOf("watchDraftSend(draftId, sendId, attemptId, (outcome) => {");
     expect(watch).toBeGreaterThan(0);
     expect(composer.slice(watch, watch + 600)).toContain('if (outcome === "acked") onSent?.();');
@@ -269,6 +276,8 @@ describe("what Today reads on open", () => {
     const found = COMPOSER_FILES.flatMap((file) => [...read(file).matchAll(/["'`](\/api\/[^"'`]*)["'`]/g)].map((match) => match[1]!));
     expect(found.filter((path) => !ALLOWED.some((ok) => ok.test(path)) && !(path in GATED))).toEqual([]);
     for (const gate of Object.values(GATED)) expect(composer, gate).toContain(gate);
+    expect(composer).toContain("if (compact || !bot || !engineBotId || !threadId || commandSending) return;");
+    expect(composer).toMatch(/\.catch\(\(\) => \{\s*\/\/[^]*?setEngineCommands\(null\);\s*\}\)/);
     // the mode selector (the only caller of that PATCH) is inside the toolbar compact does not draw
     const toolbar = composer.indexOf("{!compact && <>");
     expect(composer.indexOf("<PermissionModeSelector bot={autoBot}")).toBeGreaterThan(toolbar);

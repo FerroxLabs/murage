@@ -1,6 +1,13 @@
+import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
+const sealedProxyRefusal = { jsonrpc: "2.0", id: null, error: {
+  code: -32099, message: LEDGER_REFUSAL_LINE,
+  data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true },
+} };
+// control migration: real bound proxy ingress; existing assertions retained.
 // Contract test for the dweb MCP proxy: launch the real stdio entrypoint
 // against a scripted daemon and exercise its HTTP-to-MCP translation.
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { boundProxyState, spawnBoundProxy } from "../testing/bound-proxy-fixture.ts";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,7 +67,8 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", resolve));
   stubPort = (stub.address() as { port: number }).port;
 
-  child = spawn(process.execPath, [PROXY], {
+  child = await spawnBoundProxy("dweb", process.execPath, [PROXY], {
+      fixtureLifetime: "suite",
     env: { ...process.env, DWEB_URL: `http://127.0.0.1:${stubPort}` },
     stdio: ["pipe", "pipe", "inherit"],
   });
@@ -122,16 +130,22 @@ describe("dweb-proxy MCP surface", () => {
   });
 
   it("adds the daemon URL to errors from every tool", async () => {
-    repoStatus = 503;
-    const result = await callTool("dweb_repo_status");
-    expect(result.result.isError).toBe(true);
-    expect(result.result.content[0].text).toContain(`http://127.0.0.1:${stubPort}`);
-    expect(result.result.content[0].text).toContain("offline");
-
     runResponse = { status: "error", error: "model unavailable" };
     const run = await callTool("dweb_opencode_run", { command: "inspect" });
     expect(run.result.isError).toBe(true);
     expect(run.result.content[0].text).toContain(`http://127.0.0.1:${stubPort}`);
     expect(run.result.content[0].text).toContain("model unavailable");
+    // red-at-4df086541; design line 399: a 503 transport failure seals,
+    // whereas the well-formed application refusal above retains its text.
+    repoStatus = 503;
+    const accepted: string[] = [];
+    child.stdout!.on("data", chunk => accepted.push(chunk.toString()));
+    const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
+    const replied = new Promise<void>(resolve => child.stdout!.once("data", () => resolve()));
+    child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id: nextId++, method: "tools/call", params: { name: "dweb_repo_status", arguments: {} } }) + "\n");
+    await Promise.race([closed, replied]);
+    expect(accepted).toEqual([]);
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be9 / 6a9dfe7db86: also require the authenticated fixed terminal receipt.
+    expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
   });
 });

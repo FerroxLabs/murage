@@ -5,6 +5,7 @@
 // (the nightly timing job and the build host runs set it). Every run prints one `PERF {json}` line per measurement
 // and appends it to MEMORY_PERF_OUT; the targets are enforced when MEMORY_PERF_ASSERT=1, so the same file
 // records a "before" on an older checkout without failing it.
+import { openTestIndex } from "./testing/open-index.ts";
 import { appendFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -21,7 +22,6 @@ import { continuationMemoryRevoked } from "./disclosures.ts";
 import { MemoryDispatchReceipt, resumedSessionInvalidAfterRecall } from "./dispatch.ts";
 import { closeMemoryIndexReader } from "./index-reader.ts";
 import { MemoryEligibility } from "./eligibility.ts";
-import { MemoryIndex } from "./index.ts";
 import * as replayLineage from "./replay-lineage.ts";
 import { searchMemory } from "./search.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
@@ -43,7 +43,7 @@ const summary = (values: number[]) => ({ n: values.length, p50: Math.round(perce
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 const suite = perfEnabled() ? describe : describe.skip;
-suite("memory performance on the 60k fixture", () => {
+suite("memory performance on the 60k fixture", async () => {
   const shape = perfShape();
   beforeAll(() => { loadPerfFixture(shape); }, 30 * 60_000);
   afterAll(() => { closeMemoryIndexReader(); closeDatabase(); });
@@ -51,7 +51,7 @@ suite("memory performance on the 60k fixture", () => {
   it("the turn path before the engine send: recall, receipt and the dispatch checks", async () => {
     // What the helper would answer, worked out once outside the timing: the helper is another process, so its CPU is not the main thread's.
     const queries = perfQueries(60);
-    const authority = new MemoryEligibility(join(DATA_DIR, "messages.db")), index = new MemoryIndex(join(DATA_DIR, "memory-index.db"));
+    const authority = new MemoryEligibility(join(DATA_DIR, "messages.db")), index = await openTestIndex(join(DATA_DIR, "memory-index.db"));
     const { access } = accessFor();
     const answers = new Map<string, Array<{ id: string; version: number; score: number; lexical: boolean }>>();
     for (const query of queries) {

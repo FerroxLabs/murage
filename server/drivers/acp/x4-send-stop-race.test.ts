@@ -43,7 +43,7 @@ setInterval(() => {}, 1000);
   chmodSync(cli, 0o755);
   const support: AcpSupport = { driverKind: "opencodeGo", displayName: "Fixture", defaultCli: cli, nativeSource: "fixture", loginNote: "fixture",
     models: { default: "p/m", options: [{ id: "p/m", label: "Fixture" }] }, spawnArgs: () => ["acp"], pickAuthMethod: () => null, isAuthenticated: () => true, authFailure: "continue",
-    ...(variant === "spawnNeedsCliVersion" ? { spawnNeedsCliVersion: true } : { effectiveDestination: async () => openCodeDestinationAnswer({}, { model: "p/m", memoryOff: true }) }) };
+    ...(variant === "spawnNeedsCliVersion" ? { spawnNeedsCliVersion: true } : { effectiveDestination: async () => openCodeDestinationAnswer({}, { model: "p/m", memoryOff: true }) }), fluxReach: () => "elsewhere" as const };
   const instance = await createAcpDriver(support).create({ instanceId: "x4-race", displayName: "Fixture", enabled: true, environment: {}, config: { cli, fullAuto: false } });
   instances.push(instance);
   const events: Array<{ type: string; stopReason?: string }> = [];

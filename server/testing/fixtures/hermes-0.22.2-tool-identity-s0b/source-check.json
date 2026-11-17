@@ -1,0 +1,8 @@
+{
+  "archive_sha256": "616649f8ac7e3bb186999d000d77511e733b3930bd2b5921be4a85673320ef8b",
+  "unmodified_files": 18605,
+  "unmodified_python_files": 8503,
+  "same_python_node_cli_hashes_as_S0": true,
+  "same_dependency_versions_as_S0": true,
+  "gate_box_equivalence": "not established"
+}

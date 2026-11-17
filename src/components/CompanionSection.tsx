@@ -33,8 +33,10 @@ import {
 import { t } from "@/lib/i18n";
 import { companionPairingMode } from "../lib/phone-setup";
 import { tailnetHttpsHelp } from "../lib/tailnet-https";
+import { KEEP_AWAKE_DETAIL } from "../lib/keep-awake";
+import type { SettingsMode } from "@/lib/settings-mode";
 import { useDesktopSurface } from "../lib/use-surface";
-import { Card, Switch } from "./SettingsPrimitives";
+import { Card, HowThisWorks, SetInAdvancedButton, Switch } from "./SettingsPrimitives";
 import { KeepAwakeOffer } from "./KeepAwakeOffer";
 import { LanPairing } from "./LanPairing";
 import { ReplaceOldDevice } from "./ReplaceOldDevice";
@@ -60,6 +62,8 @@ export const TURN_ON_LABEL = "Turn on";
 export const SIGN_IN_CARD_TITLE = "Sign in on another device";
 /** The line under the switch while it is on (also in the phone's picture). */
 export const TURN_ON_SUBTITLE = "On. Scan the code below with the Murage app on your phone.";
+/** The line under the switch while it is off, as Advanced and a standalone mount show it. */
+export const TURN_ON_OFF_SUBTITLE_ADVANCED = "Lets your phone, a tablet or another computer open Murage. Turn it on and a code appears.";
 
 type TurnOnBridge = Pick<CompanionBridge, "state" | "start" | "remoteAccess">;
 type TurnOffBridge = Pick<CompanionBridge, "stop" | "remoteAccess">;
@@ -218,7 +222,11 @@ export function webUiSteps(source: {
  * anybody can act on, and the reason always exists — Tailscale missing,
  * signed out, no certificates on the tailnet, or somebody else already on
  * 443. */
-export function remoteAccessSummary(remote: CompanionRemoteAccess, doorAddress: string | null): string {
+export function remoteAccessSummary(remote: CompanionRemoteAccess, doorAddress: string | null, mode: SettingsMode = "advanced"): string {
+  if (mode === "simple") {
+    const parts = remoteAccessSummaryParts(remote, doorAddress, mode);
+    return parts.lead + parts.value + parts.tail;
+  }
   if (remote.on) {
     return `On. Any device signed into your tailnet can open ${remote.url ?? doorAddress ?? "this computer"}.`;
   }
@@ -231,6 +239,48 @@ export function remoteAccessSummary(remote: CompanionRemoteAccess, doorAddress: 
     "Off. Murage is reachable at a plain HTTP address inside your tailnet. Turning this on puts your "
     + "tailnet's own HTTPS certificate in front, so the link has no port to type and works on any browser."
   );
+}
+
+/** SIMPLE-COPY 3 and 9 B4: the same sentence in three pieces, so an address inside it can be its own marked span
+ *  (`lead + value + tail` is the string `remoteAccessSummary` returns). Only the Simple "on" branch has a value. */
+export function remoteAccessSummaryParts(remote: CompanionRemoteAccess, doorAddress: string | null, mode: SettingsMode = "advanced"): { lead: string; value: string; tail: string } {
+  if (mode !== "simple") return { lead: remoteAccessSummary(remote, doorAddress, "advanced"), value: "", tail: "" };
+  if (remote.on) return { lead: "On. Your devices on Tailscale can open ", value: remote.url ?? doorAddress ?? "this computer", tail: "." };
+  const whole = (lead: string) => ({ lead, value: "", tail: "" });
+  if (remote.reason === "no-certificates") return whole("Off. Tailscale needs secure links turned on first. The steps are above.");
+  if (remote.problem) return whole("Remote access could not turn on. Details are in Advanced.");
+  if (remote.available === false) return whole("Tailscale is not on this computer yet. Install it to use remote access.");
+  return whole("Off. Turn on for a secure link your phone app can use.");
+}
+
+/** SIMPLE-COPY 3 and A2: the Simple page's remote problem line and remote-on note (Advanced shows `remote.problem` and the long note). */
+export const REMOTE_PROBLEM_SIMPLE = "Remote access could not turn on. Details are in Advanced.";
+export const REMOTE_ON_NOTE_SIMPLE = "Remote access is on until you turn it off. It never opens Murage to the public internet.";
+
+/** B1 and R1: the phone app connects over the secure link, or over Wi-Fi pairing when the door really listens on the
+ *  local network (`lanPairing.mode`, never the saved switch `lanPairing.on`, which stays true under an operator bind). */
+export function phoneAppReady(state: CompanionState | null | undefined, remote: CompanionRemoteAccess): boolean {
+  return remote.on === true || state?.lanPairing?.mode === "lan";
+}
+
+/** The line under the Turn on switch. With a `mode` it applies in both modes (a correctness fix, no jargon); with none
+ *  the component keeps today's subtitle. First match wins. */
+export function turnOnSubtitle(input: { enabled: boolean; doorAddress: string | null; remote: CompanionRemoteAccess; lanOn: boolean }, mode: SettingsMode = "advanced"): string {
+  const { enabled, doorAddress, remote, lanOn } = input;
+  if (!enabled) return mode === "simple" ? "Open Murage on your phone, tablet or another computer." : TURN_ON_OFF_SUBTITLE_ADVANCED;
+  if (remote.on === true || lanOn) return TURN_ON_SUBTITLE;
+  if (!doorAddress) return "On. Starting, waiting for an address.";
+  if (remote.reason === "no-certificates") return "On. A browser can sign in now. The phone app needs a secure link: steps below.";
+  if (remote.available === false) return "On. To add your phone, pair over Wi-Fi under Sign in on another device.";
+  return "On. A browser can sign in now. For the phone app, turn on Allow remote access below.";
+}
+
+/** The Simple status line, replacing the three-step strip. */
+export function simpleStatusLine(steps: readonly WebUiStep[]): string {
+  if (steps[0]?.state !== "done") return "Off. Turn on to pair a device.";
+  if (steps[1]?.state !== "done") return "Starting. Waiting for an address.";
+  if (steps[2]?.state !== "done") return "On. A browser on your devices can open it now.";
+  return "On, with a secure link for your devices.";
 }
 
 function CopyButton({ value, label }: { value: string; label: string }) {
@@ -252,21 +302,36 @@ function CopyButton({ value, label }: { value: string; label: string }) {
  * The primary button repeats the action rather than saying OK: a dialog whose
  * confirm button is "OK" makes the reader reconstruct what they are agreeing
  * to from the title they have already scrolled past. */
+/** SIMPLE-COPY 3 and A2: the Simple dialog's title (by which switch asked) and its two lines. */
+export const CONFIRM_SIMPLE_TITLE: Record<"both" | "remote", string> = { both: "Let your devices open Murage?", remote: "Turn on remote access?" };
+export const CONFIRM_SIMPLE_LINES = [
+  "Only your own devices that sign in with a code can use it, never the public internet.",
+  "It stays on until you turn it off, even after a restart.",
+] as const;
+
 export function ConfirmRemoteAccess({
   onCancel,
   onConfirm,
   busy,
+  mode,
+  from = "both",
 }: {
   onCancel: () => void;
   onConfirm: () => void;
   busy: boolean;
+  mode?: SettingsMode;
+  from?: "both" | "remote";
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const layer = useFocusTrap(dialogRef, true, { name: "confirm-remote-access", kind: "dialog", onEscape: () => { if (!busy) onCancel(); } });
+  const simple = mode === "simple";
+  const title = simple ? CONFIRM_SIMPLE_TITLE[from] : "Serve Murage on your tailnet?";
   return <LayerSurface handle={layer}><div className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/40 p-4">
-      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Serve Murage on your tailnet" className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-2rem)] w-full max-w-[440px] rounded-2xl bg-card shadow-xl`}>
-        <BoxHead className="px-5 pt-5"><h3 className="text-[16px] font-semibold text-ink">Serve Murage on your tailnet?</h3></BoxHead>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={simple ? title : "Serve Murage on your tailnet"} className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-2rem)] w-full max-w-[440px] rounded-2xl bg-card shadow-xl`}>
+        <BoxHead className="px-5 pt-5"><h3 className="text-[16px] font-semibold text-ink">{title}</h3></BoxHead>
         <BoxBody className="px-5">
+        {simple && CONFIRM_SIMPLE_LINES.map((line) => <p key={line} className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{line}</p>)}
+        {!simple && <>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">
           This turns on the part of Murage that answers your other devices, and asks Tailscale to
           serve it on your tailnet. If Tailscale is not on this computer, the first half still works
@@ -282,6 +347,7 @@ export function ConfirmRemoteAccess({
           which is tailnet-only, never Funnel. Traffic stays encrypted end to end. It stays on until you
           turn it off, including after a restart.
         </p>
+        </>}
         </BoxBody>
         <BoxFoot className="px-5 pb-5 pt-5">
           <button
@@ -296,7 +362,7 @@ export function ConfirmRemoteAccess({
             disabled={busy}
             className="rounded-lg bg-accent px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-40"
           >
-            {busy ? "Turning on…" : "Serve on my tailnet"}
+            {busy ? "Turning on…" : simple ? "Turn on" : "Serve on my tailnet"}
           </button>
         </BoxFoot>
       </div>
@@ -399,6 +465,26 @@ function StepStrip({ steps }: { steps: WebUiStep[] }) {
   );
 }
 
+/** SIMPLE-COPY 3.1 and A2: the Phone page's How this works, in plain words (a pure component, so tests render every line).
+ *  The keep-awake sentence is the full `KEEP_AWAKE_DETAIL`, moved here word for word from the card. */
+export const PHONE_HOW_THIS_WORKS_LINES = [
+  "Turning this on lets your own devices open Murage from this computer. Murage shows a code, and a device that scans or types it signs in.",
+  "Your devices reach Murage through Tailscale, an app that links your own devices privately, or over the same Wi-Fi if you turn that on. Nothing is put on the public internet.",
+  "Without Tailscale, a phone on the same Wi-Fi can pair instead. Wi-Fi pairing is not encrypted, so Murage asks first.",
+  "Allow remote access gives your devices a secure link with nothing extra to type. The Murage phone app needs it. It stays on until you turn it off, even after a restart.",
+  `Keep this computer awake: ${KEEP_AWAKE_DETAIL}`,
+  "Revoke a device under Paired devices to end its sessions at once.",
+] as const;
+
+/** `moved` is the Simple-only sentences that left the card for this explanation, word for word (SIMPLE-COPY 10.2). */
+export function PhoneHowThisWorks({ moved = [] }: { moved?: readonly string[] } = {}) {
+  return <>{PHONE_HOW_THIS_WORKS_LINES.map((line) => <p key={line}>{line}</p>)}{moved.map((line) => <p key={line}>{line}</p>)}</>;
+}
+
+/** The Simple card-2 line (B1): what a scan can do depends on whether the phone app can connect. */
+export const QR_LINE_SIMPLE_READY = "Scan with your phone's camera or the Murage app.";
+export const QR_LINE_SIMPLE_NOT_READY = "Scan with your phone's camera, or type the code in a browser.";
+
 /** The sentence naming the Tailscale account the phone has to use, or null
  * when the sidecar could not read it, in which case nothing extra is shown. */
 export function tailscaleAccountLine(state: Pick<CompanionState, "tailnetLogin"> | null): string | null {
@@ -406,7 +492,7 @@ export function tailscaleAccountLine(state: Pick<CompanionState, "tailnetLogin">
   return login ? `On your phone, sign in to Tailscale as ${login}.` : null;
 }
 
-function QrLogin({ c }: { c: PhoneSetupController }) {
+function QrLogin({ c, mode }: { c: PhoneSetupController; mode?: SettingsMode }) {
   const link = c.browserLink;
   const pairing = c.state?.pairing ?? null;
   const account = tailscaleAccountLine(c.state);
@@ -416,12 +502,18 @@ function QrLogin({ c }: { c: PhoneSetupController }) {
   return (
     <div>
       <div className="text-[13px] text-ink">Scan it, or type the code</div>
+      {mode === "simple" ? (
+        <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+          {phoneAppReady(c.state, c.remoteAccess) ? QR_LINE_SIMPLE_READY : QR_LINE_SIMPLE_NOT_READY}
+        </p>
+      ) : (
       <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
         Scan it with the Murage app on your phone, or with your phone's camera, and Murage opens
         signed in. A tablet or another laptop can scan it with its camera and use its browser, and a
         computer with no camera types the code instead. Either way that device has to be signed into
         the same tailnet as this one.
       </p>
+      )}
       {account && <p className="mt-1.5 text-[12px] leading-relaxed text-ink">{account}</p>}
       {link && pairing ? (
         <div className="mt-3 flex flex-col items-start gap-3 sm:flex-row">
@@ -435,7 +527,7 @@ function QrLogin({ c }: { c: PhoneSetupController }) {
             <div className="mt-1 font-mono text-[22px] tracking-[0.25em] text-ink">{pairing.code}</div>
             <div className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
               {typed.lead}
-              {typed.url && <span className="font-mono text-ink">{typed.url}</span>}
+              {typed.url && <span data-copy-value="address" className="font-mono text-ink">{typed.url}</span>}
               {typed.tail}
             </div>
             <div className="mt-3 flex items-center gap-1.5">
@@ -540,7 +632,10 @@ export function ShareAskRow({
   );
 }
 
-export function CompanionSection({ profileEmail = "" }: { profileEmail?: string }) {
+export function CompanionSection({ profileEmail = "", mode }: { profileEmail?: string; mode?: SettingsMode }) {
+  // SIMPLE-COPY 3 and A11: with no `mode` this renders exactly as it did before; `simple` is the plain page and
+  // `advanced` keeps today's text (plus How this works, open).
+  const simple = mode === "simple";
   const desktop = useDesktopSurface();
   const c = usePhoneSetupController(profileEmail);
   const state = c.state;
@@ -597,7 +692,8 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   const doorAddress = doorAddressLabel(c.browserDoor);
   const doorUrl = companionDoorUrl(c.browserDoor);
   const steps = webUiSteps({ state, remoteAccess: remote, doorAddress });
-  const httpsHelp = tailnetHttpsHelp(remote);
+  const summaryParts = remoteAccessSummaryParts(remote, doorAddress, "simple");
+  const httpsHelp = tailnetHttpsHelp(remote, mode);
   const pairedCount = state.devices.length;
   const accountActionError = companionAccountActionError(c.account, c.accountError);
   const connected = new Set(state.connectedDeviceIds ?? []);
@@ -610,6 +706,8 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
       {confirming && (
         <ConfirmRemoteAccess
           busy={c.busy}
+          mode={mode}
+          from={confirming}
           onCancel={() => setConfirming(null)}
           onConfirm={() => {
             const both = confirming === "both";
@@ -624,6 +722,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
         />
       )}
 
+      {!simple && (
       <div>
         <h2 className="text-[19px] font-semibold text-ink">{COMPANION_PAGE_TITLE}</h2>
         <p className="mt-1 max-w-[560px] text-[13px] leading-relaxed text-ink-secondary">
@@ -631,15 +730,18 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
           another city, or a browser tab next to this one. Over your own tailnet, never the internet.
         </p>
       </div>
+      )}
 
       <Card>
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">
             <div className="text-[13px] text-ink">{TURN_ON_LABEL}</div>
             <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-              {state.enabled
-                ? TURN_ON_SUBTITLE
-                : "Lets your phone, a tablet or another computer open Murage. Turn it on and a code appears."}
+              {mode
+                ? turnOnSubtitle({ enabled: state.enabled, doorAddress, remote, lanOn: state.lanPairing?.mode === "lan" }, mode)
+                : state.enabled
+                  ? TURN_ON_SUBTITLE
+                  : TURN_ON_OFF_SUBTITLE_ADVANCED}
             </div>
           </div>
           <Switch
@@ -659,12 +761,15 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
         </div>
 
         {state.enabled && (httpsHelp ? (
-          <TailnetHttpsHelpCard help={httpsHelp} className="mt-4" />
+          <TailnetHttpsHelpCard help={httpsHelp} className="mt-4" hideAfter={mode === "simple"} />
         ) : (
           !remote.on && remote.problem && (
             <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-hairline/40 px-3 py-2.5">
               <AlertTriangle size={15} className="mt-0.5 shrink-0 text-ink-secondary" />
-              <div className="text-[11.5px] leading-relaxed text-ink-secondary">{remote.problem}</div>
+              <div className="text-[11.5px] leading-relaxed text-ink-secondary">
+                {simple ? REMOTE_PROBLEM_SIMPLE : remote.problem}
+                {simple && <> <SetInAdvancedButton anchor="companion-heading" /></>}
+              </div>
             </div>
           )
         ))}
@@ -672,24 +777,41 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
         {(c.error || state.error) && (
           <div className="mt-3 text-[12px] text-danger">{c.error ?? state.error}</div>
         )}
+
+        {mode && (
+          <HowThisWorks id="phone-how-this-works" mode={mode}>
+            <PhoneHowThisWorks moved={mode === "simple" ? [...(state.enabled && httpsHelp ? [httpsHelp.after] : []), ...(remote.on ? [REMOTE_ON_NOTE_SIMPLE] : [])] : []} />
+          </HowThisWorks>
+        )}
       </Card>
 
       {state.enabled && (
         <Card title={SIGN_IN_CARD_TITLE}>
-          <QrLogin c={c} />
+          <QrLogin c={c} mode={mode} />
           {accountActionError && <div className="mt-3 text-[12px] text-danger">{accountActionError}</div>}
         </Card>
       )}
 
       <Card title="Status">
-        <StepStrip steps={steps} />
+        {simple ? (
+          <div role="status" className="text-[13px] text-ink">{simpleStatusLine(steps)}</div>
+        ) : (
+          <StepStrip steps={steps} />
+        )}
 
         <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
           <div className="min-w-0">
             <div className="text-[13px] text-ink">Allow remote access</div>
             <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-              {remoteAccessSummary(remote, doorAddress)}
+              {simple ? (
+                <>
+                  {summaryParts.lead}
+                  {summaryParts.value && (summaryParts.value === "this computer" ? summaryParts.value : <span data-copy-value="address" className="font-mono text-ink">{summaryParts.value}</span>)}
+                  {summaryParts.tail}
+                </>
+              ) : remoteAccessSummary(remote, doorAddress)}
             </div>
+            {!simple && (
             <a
               href="https://tailscale.com/kb/1312/serve"
               target="_blank"
@@ -698,6 +820,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
             >
               View guide
             </a>
+            )}
           </div>
           <Switch
             checked={remote.on}
@@ -713,36 +836,41 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
         {state.enabled && (
           <div className="mt-4 border-t border-hairline/30 pt-4">
             <div className="text-[11px] font-medium uppercase tracking-wide text-ink-secondary">
-              Access URL
+              Murage address
             </div>
             {doorUrl ? (
               <div className="mt-1.5 flex items-center gap-2">
                 <a
                   href={doorUrl}
+                  data-copy-value="address"
                   target="_blank"
                   rel="noreferrer"
                   className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-warning hover:underline"
                 >
                   {doorUrl}
                 </a>
-                <CopyButton value={doorUrl} label="Copy access URL" />
+                <CopyButton value={doorUrl} label="Copy address" />
               </div>
             ) : (
               <div className="mt-1.5 text-[12px] text-ink-secondary">
-                No address yet; the door is starting, or Tailscale is not up on this computer.
+                No address yet. Murage is starting, or Tailscale is not running on this computer.
               </div>
             )}
           </div>
         )}
 
-        {remote.on && (
+        {remote.on && !simple && (
           <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5">
             <ShieldCheck size={15} className="mt-0.5 shrink-0 text-warning" />
             <div className="text-[11.5px] leading-relaxed text-ink-secondary">
+              {simple ? REMOTE_ON_NOTE_SIMPLE : (
+              <>
               Remote access is on. Any device signed into your tailnet can open{" "}
-              <span className="font-mono text-ink">{remote.url ?? doorUrl}</span> and, with a code from
+              <span data-copy-value="address" className="font-mono text-ink">{remote.url ?? doorUrl}</span> and, with a code from
               above, sign in. Nothing is exposed to the public internet, and it stays on until you turn
               it off, including after a restart.
+              </>
+              )}
             </div>
           </div>
         )}
@@ -786,9 +914,9 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                       disabled={c.busy}
                       onClick={() => setRevoking(device.id)}
                       aria-label={`Revoke ${device.name}`}
-                      className="shrink-0 rounded px-2 py-1.5 text-[11.5px] text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-40"
+                      className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded px-2 py-1.5 text-[11.5px] text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-40"
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={14} aria-hidden="true" />Revoke
                     </button>
                   )}
                 </div>
@@ -842,11 +970,12 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
             ))}
           </ul>
         )}
-        {pairedCount > 0 && <KeepAwakeOffer c={c} className="mt-3 border-t border-hairline/30 pt-3" />}
+        {pairedCount > 0 && <KeepAwakeOffer c={c} mode={mode} className="mt-3 border-t border-hairline/30 pt-3" />}
       </Card>
 
-      <PhonePreviewSwitches onAnswer={onOfferAnswer} />
+      <PhonePreviewSwitches onAnswer={onOfferAnswer} mode={mode} />
 
+      {!simple && (
       <Card title="Recent activity">
         <div className="-mt-2 mb-3 flex items-center justify-between gap-3">
           <span className="text-[11.5px] text-ink-secondary">
@@ -873,6 +1002,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
           </ul>
         )}
       </Card>
+      )}
     </div>
   );
 }

@@ -65,6 +65,8 @@ describe("STATIC_CODEX_MODELS", () => {
   it("names gpt-6.1-sol, the verified Codex CLI model, in the offline fallback", () => {
     expect(STATIC_CODEX_MODELS.options.map(option => option.id)).toContain("gpt-6.1-sol");
     expect(STATIC_CODEX_MODELS.options.map(option => option.id)).toContain("gpt-6-sol");
+    // MAIN RULING 1114-MODELS-FRESH: Terra is published for Codex; live model/list still wins.
+    expect(STATIC_CODEX_MODELS.options).toContainEqual({ id: "gpt-6.1-terra", label: "GPT-6.1 Terra" });
   });
 });
 
