@@ -44,6 +44,7 @@ async function boot(withKey: boolean, found: "grok" | "claude" | null = "grok", 
   };
   if (!options.home) { options.configure?.(config, home); writeFileSync(join(home, ".murage", "config.json"), JSON.stringify(config)); }
   const world: World = { base, home, headers: {}, stderr: "", child: spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

@@ -1,3 +1,4 @@
+import * as meteredFs from "./counted-fs-promises.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SABLE-B r8 design 5.6 "A failed grant fails closed" (tests 25, 38, 47, 51, 52, 53, 54, 55). The fake extension below models the
 // runtime's own rules (runtime.mjs, d2933fab0): a bind or command carries the server's generation and a stale one is refused; a bind
@@ -20,6 +21,15 @@ const O = 'https://other.example';
 // service persist). A test that injects at the save's await (a failing save, or an owner action landing while the save waits) runs where
 // that await exists. On Windows the save yields no turn, so nothing can land inside it (ci-try 42075953617 windows 7/12: the hook never fired).
 const POSIX_SAVE = process.platform !== 'win32';
+// Observes the Windows private writer without changing it: every call is recorded, then delegated to the real implementation.
+const windowsWrites = vi.hoisted(() => [] as string[]);
+vi.mock('../electron/browser-extension-windows.mjs', async importOriginal => {
+  const real = await importOriginal<typeof import('../electron/browser-extension-windows.mjs')>();
+  return { ...real, writePrivateWindowsJson: (file: string, value: unknown, options?: unknown) => {
+    windowsWrites.push(String(file));
+    return (real.writePrivateWindowsJson as (f: string, v: unknown, o?: unknown) => void)(file, value, options);
+  } };
+});
 /** Waits (bounded, 3 s) until `ready()` holds. Throws if it never does, so a slow runner fails with a reason, never a wrong order. */
 const until = async (ready: () => boolean, what: string) => {
   const started = Date.now();
@@ -36,6 +46,18 @@ type Reply = { result: unknown } | { error: string };
  * throw (a broker-level rejection), or return any reply. */
 type Handler = (command: BrowserExtensionCommand, apply: () => Reply) => Promise<Reply> | Reply;
 const hold = () => { let release!: () => void; let arrive!: () => void; const released = new Promise<void>(resolve => { release = resolve; }); const arrived = new Promise<void>(resolve => { arrive = resolve; }); return { released, arrived, release, arrive }; };
+
+/** The service's own reconcilePersistence seam: once armed, holds exactly the next reconciliation after its real save completed
+ * (so on Windows the synchronous writer has already run). Disarms itself on arrival, so every later save is untouched. */
+const reconcileHold = () => {
+  const gate = hold(); let armed = false; let hits = 0;
+  return {
+    arm: () => { armed = true; },
+    hits: () => hits,
+    release: gate.release,
+    reconcilePersistence: async (saved: Promise<unknown>) => { await saved; if (!armed) return; armed = false; hits++; gate.arrive(); await gate.released; },
+  };
+};
 
 async function fixture(extra: Record<string, unknown> = {}) {
   const { root, directory } = await privateTestDirectory(path.resolve('.failclosed-')); cleanup.push(root);
@@ -94,7 +116,9 @@ async function fixture(extra: Record<string, unknown> = {}) {
     if (b.state !== 'active' || !b.ready) return { error: 'binding_inactive' };
     if (command.operation === 'cdp') {
       const { method, params: p } = params as { method: string; params: Record<string, unknown> }; let value: any = {};
+      if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1, url: b.tabs[0].url }] };
       if (method === 'Page.getFrameTree') value = { frameTree: { frame: { id: 'frame', loaderId: 'L' } } };
+      if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
       if (method === 'Page.createIsolatedWorld') value = { executionContextId: 7 };
       if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
       if (method === 'DOM.describeNode') value = { node: { backendNodeId: 12 } };
@@ -412,8 +436,8 @@ describe('SABLE-B test 47: the Pause outcomes (NEW)', () => {
   });
   it.runIf(POSIX_SAVE)('(f) the Pause is answered but the reconcile of its answer throws (the save fails): outcome paused, no drop', async () => {
     const f = await fixture(); await f.start(); failBindAfterInstall(f);
-    const real = fs.writeFile.bind(fs); let threw = false;
-    f.on('pause', async (_command, apply) => { vi.spyOn(fs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) { threw = true; throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); } return (real as any)(file, ...rest); }); return apply(); });
+    const real = meteredFs.writeFile; let threw = false;
+    f.on('pause', async (_command, apply) => { vi.spyOn(meteredFs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) { threw = true; throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); } return (real as any)(file, ...rest); }); return apply(); });
     expect(await f.openD()).toMatch(FAILED);
     vi.restoreAllMocks();
     expect(threw).toBe(true);                                  // the save really failed (the hook point exists)
@@ -423,8 +447,8 @@ describe('SABLE-B test 47: the Pause outcomes (NEW)', () => {
 });
 
 describe('SABLE-B test 51: offline and reconnect (FAILS on base)', () => {
-  const offlineFailure = async () => {
-    const f = await fixture(); await f.start();
+  const offlineFailure = async (extra: Record<string, unknown> = {}) => {
+    const f = await fixture(extra); await f.start();
     failBindAfterInstall(f, 'host_lost_uncertain', () => { f.disconnect(); });
     expect(await f.openD()).toMatch(FAILED);
     return f;
@@ -501,11 +525,41 @@ describe('SABLE-B test 51: offline and reconnect (FAILS on base)', () => {
     expect(resendOps.filter(op => op === 'pause')).toEqual([]);
     expect(f.fake().state).toBe('active');
   });
+  // SABLE-B-WIN-RACE-W1: the race on every platform. The hold sits after the reconcile's real save, so on Windows the synchronous writer
+  // has run before the owner's Resume lands. Nothing here is gated on the platform.
+  it("SABLE-B-WIN-RACE-W1: the owner resumes while resend's reconcile is held after its save: no Pause, no extra bind; the resumed handler alone binds and clears", async () => {
+    const race = reconcileHold();
+    const f = await offlineFailure({ reconcilePersistence: race.reconcilePersistence });
+    const stateFile = path.join(f.directory, 'state.json');
+    const adopted = () => f.service.status().bindings.find(item => item.bindingId === f.id)?.generation === f.fake().generation;
+    let readAt = 0; let writesAtArm = 0;
+    f.on('status', async (_command, apply) => { const reply = apply(); readAt = f.fake().generation; writesAtArm = windowsWrites.length; race.arm(); return reply; });
+    const from = f.log.length;
+    f.reconnect();
+    try {
+      await until(() => race.hits() === 1, "resend's reconcile is held");
+      const writes = windowsWrites.slice(writesAtArm).filter(file => path.resolve(file) === path.resolve(stateFile)).length;
+      if (process.platform === 'win32') expect(writes).toBeGreaterThanOrEqual(1); else expect(writes).toBe(0);   // Windows: the synchronous writer ran before the hold
+      expect(f.ops(from).filter(op => op === 'pause' || op === 'bind')).toEqual([]);   // the old operation is still pending
+      f.panel(f.id, 'resume', { emit: false }); f.lostResumed(f.id);
+      await until(adopted, 'the owner resume is adopted');
+      expect(f.fake().generation).toBe(readAt + 1);
+      expect(f.ops(from).filter(op => op === 'pause')).toEqual([]);
+    } finally { race.release(); }
+    await f.settle();
+    expect(race.hits()).toBe(1);
+    expect(f.ops(from).filter(op => op === 'pause')).toEqual([]);
+    expect(f.binds(from)).toHaveLength(1);   // the resumed handler's bind only
+    expect(f.binds(from)[0]).not.toContain(D);
+    expect(f.service.siteOwed(f.id)).toBeUndefined();
+    expect(f.fake()).toMatchObject({ state: 'active', ready: true, generation: readAt + 1 });
+    expect(f.service.status().bindings.find(item => item.bindingId === f.id)?.generation).toBe(readAt + 1);
+  });
 });
 
 describe('SABLE-B test 52: Continue (FAILS on base)', () => {
-  const dropped = async () => {
-    const f = await fixture(); await f.start(); failBindAfterInstall(f);
+  const dropped = async (extra: Record<string, unknown> = {}) => {
+    const f = await fixture(extra); await f.start(); failBindAfterInstall(f);
     f.on('pause', async () => { throw Error('deadline_exceeded_uncertain'); });
     expect(await f.openD()).toMatch(FAILED);
     f.setConnected(true); // the extension reconnected; its hello steps are exercised in test 51
@@ -596,6 +650,36 @@ describe('SABLE-B test 52: Continue (FAILS on base)', () => {
     expect(once).toBe(false);                                  // the Resume landed inside the reconcile's save
     expect(f.ops(from).filter(op => op === 'pause')).toEqual([]);
     expect(f.fake().state).toBe('active');
+  });
+  // SABLE-B-WIN-RACE-W2: as W1, for the app's Continue.
+  it("SABLE-B-WIN-RACE-W2: the owner resumes in the panel while app Continue's reconcile is held after its save: Continue sends no Pause, bind or resume", async () => {
+    const race = reconcileHold();
+    const f = await dropped({ reconcilePersistence: race.reconcilePersistence });
+    const stateFile = path.join(f.directory, 'state.json');
+    const adopted = () => f.service.status().bindings.find(item => item.bindingId === f.id)?.generation === f.fake().generation;
+    let readAt = 0; let writesAtArm = 0;
+    f.on('status', async (_command, apply) => { const reply = apply(); readAt = f.fake().generation; writesAtArm = windowsWrites.length; race.arm(); return reply; });
+    const from = f.log.length;
+    const call = f.service.continueHandoff(f.id).catch(() => undefined);
+    let boundary = 0;
+    try {
+      await until(() => race.hits() === 1, "Continue's reconcile is held");
+      const writes = windowsWrites.slice(writesAtArm).filter(file => path.resolve(file) === path.resolve(stateFile)).length;
+      if (process.platform === 'win32') expect(writes).toBeGreaterThanOrEqual(1); else expect(writes).toBe(0);   // Windows: the synchronous writer ran before the hold
+      expect(f.ops(from).filter(op => op === 'pause' || op === 'bind' || op === 'resume')).toEqual([]);   // the old operation is still pending
+      f.panel(f.id, 'resume', { emit: false }); f.lostResumed(f.id);
+      await until(adopted, 'the owner resume is adopted');
+      expect(f.fake().generation).toBe(readAt + 1);
+      boundary = f.log.length;
+      expect(f.ops(from).filter(op => op === 'pause')).toEqual([]);
+    } finally { race.release(); }
+    await call; await f.settle();
+    expect(race.hits()).toBe(1);
+    expect(f.ops(from).filter(op => op === 'pause')).toEqual([]);   // the original no-Pause assertion, over the whole race
+    expect(f.ops(boundary).filter(op => op === 'resume')).toEqual([]);   // nothing from Continue's stale branch after the adopted boundary
+    expect(f.fake()).toMatchObject({ state: 'active', ready: true, generation: readAt + 1 });
+    expect(f.service.status().bindings.find(item => item.bindingId === f.id)?.generation).toBe(readAt + 1);
+    expect(f.fake().approved).not.toContain(D);
   });
   it('fixer r1 #5 (FAILS on base, tsc): the service broker must have drop (5.7); a broker without it does not type-check', () => {
     type ServiceBroker = Parameters<typeof createBrowserExtensionService>[0]['broker'];

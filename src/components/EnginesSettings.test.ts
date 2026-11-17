@@ -255,7 +255,8 @@ describe("the engine command lines", () => {
   it("draw inline without a page host, with Set CLI and Reset out of the engine rows", () => {
     store.instances = [{ ...instance("codex", "codex", "Codex"), cli: "/opt/codex" } as InstanceInfo];
     const markup = renderToStaticMarkup(createElement(EnginesSettings));
-    expect(markup).toContain('id="engine-command-lines-heading"');
+    // The card's anchor is the page's (settings/pages/ModelsPage.tsx); the component no longer carries it on a second element.
+    expect(markup).not.toContain('id="engine-command-lines-heading"');
     expect(markup).toContain("Engine command lines");
     expect(markup.match(/Choose location…/g)).toHaveLength(1);
     const hosted = renderToStaticMarkup(createElement(AdvancedHost, null, createElement(EnginesSettings)));

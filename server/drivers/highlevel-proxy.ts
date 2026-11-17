@@ -1,3 +1,4 @@
+import "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -10,6 +11,7 @@ import type { Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { createLineSplitter, writeMcpLine } from "../mcp-bridge.ts";
 import { turnSecret, turnSecretWired } from "../turn-credential.ts";
+import { collectProxyUpstream, proxyTransportLost } from "../proxy-turn-release.ts";
 
 export const HIGHLEVEL_MCP_ROUTE = "/api/internal/highlevel/mcp";
 const RESPONSE_MAX = 4 * 1024 * 1024;
@@ -19,17 +21,10 @@ const UNAVAILABLE = "HighLevel is not available in this conversation.";
 function post(url: URL, token: string, body: string, signal: AbortSignal): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = httpRequest(url, { method: "POST", signal, agent: false, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      res.on("data", (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > RESPONSE_MAX) { req.destroy(new Error("too large")); return; }
-        chunks.push(chunk);
-      });
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
-      res.on("error", reject);
+      void collectProxyUpstream("highlevel", res, RESPONSE_MAX).then(body => resolve({ status: res.statusCode ?? 0, body: body.toString() }), reject);
+      res.on("error", error => { proxyTransportLost("highlevel"); reject(error); });
     });
-    req.on("error", reject);
+    req.on("error", error => { proxyTransportLost("highlevel"); reject(error); });
     req.end(body);
   });
 }
@@ -47,14 +42,15 @@ export async function runHighLevelProxy(env: NodeJS.ProcessEnv = process.env, io
       const response = await post(url, turnSecret("MURAGE_CONTROL_TOKEN", env), JSON.stringify({ jsonrpc: "2.0", id: rpc.id, method: rpc.method, ...(rpc.params === undefined ? {} : { params: rpc.params }) }), withdrawn.signal);
       const parsed = JSON.parse(response.body) as { jsonrpc?: unknown; result?: unknown; error?: unknown };
       if (response.status === 200 && parsed && parsed.jsonrpc === "2.0" && ("result" in parsed || "error" in parsed)) reply = { ...parsed, id: rpc.id };
-    } catch { /* answered below */ }
+      if (!reply) proxyTransportLost("highlevel");
+    } catch { proxyTransportLost("highlevel"); }
     finally { if (withdrawable.get(key(rpc.id)) === withdrawn) withdrawable.delete(key(rpc.id)); }
     if (withdrawn.signal.aborted) return;
     // A refused or broken answer is a tool error for a call and a JSON-RPC error otherwise; it never claims success.
     reply ??= rpc.method === "tools/call"
       ? { jsonrpc: "2.0", id: rpc.id, result: { isError: true, content: [{ type: "text", text: UNAVAILABLE }] } }
       : { jsonrpc: "2.0", id: rpc.id, error: { code: -32001, message: UNAVAILABLE } };
-    await writeMcpLine(io.stdout, JSON.stringify(reply));
+    await writeMcpLine(io.stdout, JSON.stringify(reply), "highlevel");
   };
   let queue = Promise.resolve();
   const splitter = createLineSplitter((line) => {

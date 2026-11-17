@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
+    "build": "node ../../scripts/typecheck-budget.mjs mobile && vite build",
+    "typecheck": "node ../../scripts/typecheck-budget.mjs mobile",
     "test": "vitest run",
     "sync": "node scripts/sync-native.mjs"
   },

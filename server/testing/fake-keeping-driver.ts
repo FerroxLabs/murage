@@ -11,6 +11,8 @@
 //                    built and before its session is reported, and waits for `<dir>/go`, so a test can land a revoke at that point.
 //   FAKE_KEEP_REPORT_ONCE  "1": the session is reported only when it starts; turns that continue it report nothing (as an engine that
 //                    resumes an idle process silently does).
+//   FAKE_KEEP_RESTORED directory: a thread with a file `<dir>/<threadId>` starts with a native session already open, as an engine that
+//                    restored its sessions from disk after a restart holds one the harness never saw reported (hasSession is true).
 // Each turn replies "Kept reply".
 import { appendFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -49,6 +51,12 @@ export function makeKeepingDriver(): AnyProviderDriver {
       };
       const sessions = new Map<string, { id: string; context: string[] }>();
       const active = new Map<string, { turnId: string; interrupted: boolean }>();
+      const restoredDir = input.environment.FAKE_KEEP_RESTORED;
+      const restore = (threadId: string) => {
+        if (!restoredDir || !existsSync(join(restoredDir, threadId))) return;
+        rmSync(join(restoredDir, threadId), { force: true });
+        if (!sessions.has(threadId)) sessions.set(threadId, { id: `keep-restored-${threadId.slice(0, 8)}`, context: [] });
+      };
       return {
         instanceId: input.instanceId,
         driverKind: KEEPING_DRIVER_KIND,
@@ -60,6 +68,7 @@ export function makeKeepingDriver(): AnyProviderDriver {
           provider: KEEPING_DRIVER_KIND,
           capabilities: { sessionModelSwitch: "unsupported" },
           sendTurn: async (turn) => {
+            restore(turn.threadId);
             const turnId = `keep-turn-${++counter}`;
             if (turn.sessionReset) sessions.delete(turn.threadId);
             const entry = { turnId, interrupted: false };
@@ -100,9 +109,9 @@ export function makeKeepingDriver(): AnyProviderDriver {
             active.delete(threadId);
             emit({ type: "turn.completed", ok: false, stopReason: "interrupted", threadId, turnId: entry.turnId });
           },
-          resetSession: async (threadId) => { sessions.delete(threadId); note({ threadId, reset: true }); },
+          resetSession: async (threadId) => { restore(threadId); sessions.delete(threadId); note({ threadId, reset: true }); },
           respondToRequest: async () => "unavailable" as const,
-          hasSession: (threadId) => sessions.has(threadId),
+          hasSession: (threadId) => { restore(threadId); return sessions.has(threadId); },
           stopAll: async () => { active.clear(); },
           onEvent: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
         },

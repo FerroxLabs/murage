@@ -51,7 +51,8 @@ function world() {
   return { roster, db, owner, scopes, sources, candidate, act, row };
 }
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { memoryAccess } from "./policy.ts";
+
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { readableMemoryRecord } from "./readable.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 const uid = () => randomUUID();

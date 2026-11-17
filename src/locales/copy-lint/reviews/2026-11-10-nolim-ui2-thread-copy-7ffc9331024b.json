@@ -1,0 +1,295 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-sonnet-nolim-ui2-cli",
+  "date": "2026-11-10",
+  "base": "04fd5b1d7",
+  "scope": "NOLIM 1019 Rev 3.3 Approve all thread copy, No limits Rev3 F3 stale copy",
+  "strings": {
+    "en:noLimits.v1.openclaw": {
+      "text": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is.",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is.",
+      "verdict": "pass"
+    },
+    "en:noLimits.v1.windows": {
+      "text": "No limits works the same in bash, zsh, PowerShell and cmd, and Murage checks the commands in all of them for a wipe of your disk or home folder.",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd, and Murage checks the commands in all of them for a wipe of your disk or home folder.",
+      "verdict": "pass"
+    },
+    "en:approveAll.reason.orphaned": {
+      "text": "has to be answered on its own",
+      "en": "has to be answered on its own",
+      "verdict": "pass"
+    },
+    "en:approveAll.eachOwn": {
+      "text": "These need you to press Allow, one at a time.",
+      "en": "These need you to press Allow, one at a time.",
+      "verdict": "pass"
+    },
+    "en:approveAll.result.ownAllow.one": {
+      "text": "{rest} waits for you to press Allow.",
+      "en": "{rest} waits for you to press Allow.",
+      "verdict": "pass"
+    },
+    "en:approveAll.result.ownAllow.other": {
+      "text": "{rest} wait for you to press Allow.",
+      "en": "{rest} wait for you to press Allow.",
+      "verdict": "pass"
+    },
+    "en:approveAll.result.more": {
+      "text": "Press Approve all for the rest.",
+      "en": "Press Approve all for the rest.",
+      "verdict": "pass"
+    },
+    "de:noLimits.v1.openclaw": {
+      "text": "Dieser Bot läuft auf OpenClaw, das Befehle ausführt, ohne Murage vorher zu fragen. Auf der Stufe Keine Grenzen bleibt das so.",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is.",
+      "verdict": "pass"
+    },
+    "de:noLimits.v1.windows": {
+      "text": "Keine Grenzen funktioniert in bash, zsh, PowerShell und cmd gleich, und Murage prüft die Befehle in allen darauf, ob sie deine Festplatte oder deinen Home-Ordner löschen würden.",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd, and Murage checks the commands in all of them for a wipe of your disk or home folder.",
+      "verdict": "pass"
+    },
+    "de:approveAll.reason.orphaned": {
+      "text": "muss einzeln beantwortet werden",
+      "en": "has to be answered on its own",
+      "verdict": "pass"
+    },
+    "de:approveAll.eachOwn": {
+      "text": "Bei diesen musst du selbst auf Erlauben tippen, eine nach der anderen.",
+      "en": "These need you to press Allow, one at a time.",
+      "verdict": "pass"
+    },
+    "de:approveAll.result.ownAllow.one": {
+      "text": "{rest} wartet darauf, dass du auf Erlauben tippst.",
+      "en": "{rest} waits for you to press Allow.",
+      "verdict": "pass"
+    },
+    "de:approveAll.result.ownAllow.other": {
+      "text": "{rest} warten darauf, dass du auf Erlauben tippst.",
+      "en": "{rest} wait for you to press Allow.",
+      "verdict": "pass"
+    },
+    "de:approveAll.result.more": {
+      "text": "Tippe für den Rest noch einmal auf Alle erlauben.",
+      "en": "Press Approve all for the rest.",
+      "verdict": "pass"
+    },
+    "es:noLimits.v1.openclaw": {
+      "text": "Este bot funciona con OpenClaw, que ejecuta comandos sin preguntar antes a Murage. En Sin límites sigue así.",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is.",
+      "verdict": "pass"
+    },
+    "es:noLimits.v1.windows": {
+      "text": "Sin límites funciona igual en bash, zsh, PowerShell y cmd, y Murage revisa los comandos de todos ellos por si borran tu disco o tu carpeta personal.",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd, and Murage checks the commands in all of them for a wipe of your disk or home folder.",
+      "verdict": "pass"
+    },
+    "es:approveAll.reason.orphaned": {
+      "text": "hay que responderla por separado",
+      "en": "has to be answered on its own",
+      "verdict": "pass"
+    },
+    "es:approveAll.eachOwn": {
+      "text": "En cada una de estas tienes que pulsar Permitir, una por una.",
+      "en": "These need you to press Allow, one at a time.",
+      "verdict": "pass"
+    },
+    "es:approveAll.result.ownAllow.one": {
+      "text": "{rest} espera a que pulses Permitir.",
+      "en": "{rest} waits for you to press Allow.",
+      "verdict": "pass"
+    },
+    "es:approveAll.result.ownAllow.other": {
+      "text": "{rest} esperan a que pulses Permitir.",
+      "en": "{rest} wait for you to press Allow.",
+      "verdict": "pass"
+    },
+    "es:approveAll.result.more": {
+      "text": "Pulsa Aprobar todo para el resto.",
+      "en": "Press Approve all for the rest.",
+      "verdict": "pass"
+    },
+    "fr:noLimits.v1.openclaw": {
+      "text": "Ce bot fonctionne avec OpenClaw, qui exécute les commandes sans demander d'abord à Murage. En Sans limites, cela reste ainsi.",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is.",
+      "verdict": "pass"
+    },
+    "fr:noLimits.v1.windows": {
+      "text": "Sans limites fonctionne de la même façon dans bash, zsh, PowerShell et cmd, et Murage vérifie les commandes dans chacun de ces environnements pour voir si elles effaceraient ton disque ou ton dossier personnel.",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd, and Murage checks the commands in all of them for a wipe of your disk or home folder.",
+      "verdict": "pass"
+    },
+    "fr:approveAll.reason.orphaned": {
+      "text": "doit être traitée à part",
+      "en": "has to be answered on its own",
+      "verdict": "pass"
+    },
+    "fr:approveAll.eachOwn": {
+      "text": "Pour celles-ci, tu dois appuyer toi-même sur Autoriser, une par une.",
+      "en": "These need you to press Allow, one at a time.",
+      "verdict": "pass"
+    },
+    "fr:approveAll.result.ownAllow.one": {
+      "text": "{rest} attend que tu appuies sur Autoriser.",
+      "en": "{rest} waits for you to press Allow.",
+      "verdict": "pass"
+    },
+    "fr:approveAll.result.ownAllow.other": {
+      "text": "{rest} attendent que tu appuies sur Autoriser.",
+      "en": "{rest} wait for you to press Allow.",
+      "verdict": "pass"
+    },
+    "fr:approveAll.result.more": {
+      "text": "Appuie sur Tout approuver pour le reste.",
+      "en": "Press Approve all for the rest.",
+      "verdict": "pass"
+    },
+    "hi:noLimits.v1.openclaw": {
+      "text": "यह बॉट OpenClaw पर चलता है, जो Murage से पहले पूछे बिना कमांड चलाता है। कोई सीमा नहीं स्तर पर यह वैसा ही रहता है।",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is.",
+      "verdict": "pass"
+    },
+    "hi:noLimits.v1.windows": {
+      "text": "“कोई सीमा नहीं” bash, zsh, PowerShell और cmd में एक जैसा काम करता है, और Murage इन सभी में कमांड जाँचता है कि वे आपकी डिस्क या होम फ़ोल्डर तो नहीं मिटा देंगे।",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd, and Murage checks the commands in all of them for a wipe of your disk or home folder.",
+      "verdict": "pass"
+    },
+    "hi:approveAll.reason.orphaned": {
+      "text": "इसका जवाब अलग से देना होगा",
+      "en": "has to be answered on its own",
+      "verdict": "pass"
+    },
+    "hi:approveAll.eachOwn": {
+      "text": "इनमें हर एक पर “अनुमति दें” खुद दबाना होगा, एक-एक करके।",
+      "en": "These need you to press Allow, one at a time.",
+      "verdict": "pass"
+    },
+    "hi:approveAll.result.ownAllow.one": {
+      "text": "{rest} में “अनुमति दें” दबाना बाकी है।",
+      "en": "{rest} waits for you to press Allow.",
+      "verdict": "pass"
+    },
+    "hi:approveAll.result.ownAllow.other": {
+      "text": "{rest} में “अनुमति दें” दबाना बाकी है।",
+      "en": "{rest} wait for you to press Allow.",
+      "verdict": "pass"
+    },
+    "hi:approveAll.result.more": {
+      "text": "बाकी के लिए “सभी को मंज़ूरी दें” दबाओ।",
+      "en": "Press Approve all for the rest.",
+      "verdict": "pass"
+    },
+    "ja:noLimits.v1.openclaw": {
+      "text": "このボットは OpenClaw で動いており、OpenClaw は Murage に確認せずにコマンドを実行します。制限なしでもそのままです。",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is.",
+      "verdict": "pass"
+    },
+    "ja:noLimits.v1.windows": {
+      "text": "制限なしは bash、zsh、PowerShell、cmd のどれでも同じように動き、Murage はそのすべてのコマンドが、ディスクやホームフォルダーを消去しないか確認します。",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd, and Murage checks the commands in all of them for a wipe of your disk or home folder.",
+      "verdict": "pass"
+    },
+    "ja:approveAll.reason.orphaned": {
+      "text": "個別に回答する必要があります",
+      "en": "has to be answered on its own",
+      "verdict": "pass"
+    },
+    "ja:approveAll.eachOwn": {
+      "text": "これらは、1件ずつ自分で「許可」を押す必要があります。",
+      "en": "These need you to press Allow, one at a time.",
+      "verdict": "pass"
+    },
+    "ja:approveAll.result.ownAllow.one": {
+      "text": "{rest}件は、あなたが「許可」を押すのを待っています。",
+      "en": "{rest} waits for you to press Allow.",
+      "verdict": "pass"
+    },
+    "ja:approveAll.result.ownAllow.other": {
+      "text": "{rest}件は、あなたが「許可」を押すのを待っています。",
+      "en": "{rest} wait for you to press Allow.",
+      "verdict": "pass"
+    },
+    "ja:approveAll.result.more": {
+      "text": "残りはすべて承認を押してください。",
+      "en": "Press Approve all for the rest.",
+      "verdict": "pass"
+    },
+    "pt-br:noLimits.v1.openclaw": {
+      "text": "Este bot roda no OpenClaw, que executa comandos sem perguntar antes ao Murage. Em Sem limites isso continua assim.",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is.",
+      "verdict": "pass"
+    },
+    "pt-br:noLimits.v1.windows": {
+      "text": "Sem limites funciona igual no bash, zsh, PowerShell e cmd, e o Murage verifica os comandos de todos eles para ver se apagariam seu disco ou sua pasta pessoal.",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd, and Murage checks the commands in all of them for a wipe of your disk or home folder.",
+      "verdict": "pass"
+    },
+    "pt-br:approveAll.reason.orphaned": {
+      "text": "precisa ser respondido individualmente",
+      "en": "has to be answered on its own",
+      "verdict": "pass"
+    },
+    "pt-br:approveAll.eachOwn": {
+      "text": "Nestes, você precisa tocar em Permitir, um de cada vez.",
+      "en": "These need you to press Allow, one at a time.",
+      "verdict": "pass"
+    },
+    "pt-br:approveAll.result.ownAllow.one": {
+      "text": "{rest} aguarda você tocar em Permitir.",
+      "en": "{rest} waits for you to press Allow.",
+      "verdict": "pass"
+    },
+    "pt-br:approveAll.result.ownAllow.other": {
+      "text": "{rest} aguardam você tocar em Permitir.",
+      "en": "{rest} wait for you to press Allow.",
+      "verdict": "pass"
+    },
+    "pt-br:approveAll.result.more": {
+      "text": "Toque em Aprovar tudo para o resto.",
+      "en": "Press Approve all for the rest.",
+      "verdict": "pass"
+    },
+    "zh:noLimits.v1.openclaw": {
+      "text": "此机器人运行在 OpenClaw 上，OpenClaw 执行命令前不会先询问 Murage。在无限制下保持不变。",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is.",
+      "verdict": "pass"
+    },
+    "zh:noLimits.v1.windows": {
+      "text": "无限制在 bash、zsh、PowerShell 和 cmd 中的工作方式相同，Murage 会检查所有这些 shell 中的命令是否会清空你的磁盘或主文件夹。",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd, and Murage checks the commands in all of them for a wipe of your disk or home folder.",
+      "verdict": "pass"
+    },
+    "zh:approveAll.reason.orphaned": {
+      "text": "需要单独回答",
+      "en": "has to be answered on its own",
+      "verdict": "pass"
+    },
+    "zh:approveAll.eachOwn": {
+      "text": "这些需要你亲自逐个点击“允许”。",
+      "en": "These need you to press Allow, one at a time.",
+      "verdict": "pass"
+    },
+    "zh:approveAll.result.ownAllow.one": {
+      "text": "{rest} 项在等你点击“允许”。",
+      "en": "{rest} waits for you to press Allow.",
+      "verdict": "pass"
+    },
+    "zh:approveAll.result.ownAllow.other": {
+      "text": "{rest} 项在等你点击“允许”。",
+      "en": "{rest} wait for you to press Allow.",
+      "verdict": "pass"
+    },
+    "zh:approveAll.result.more": {
+      "text": "点击“全部批准”处理剩余项。",
+      "en": "Press Approve all for the rest.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

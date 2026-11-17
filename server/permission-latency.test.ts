@@ -28,16 +28,17 @@ const call = (tool: string, input: Record<string, unknown>) => ({ toolCall: { na
 afterEach(() => vi.restoreAllMocks());
 
 describe("an automatic permission answer", () => {
+  // MAIN RULING 2026-11-13 wipe-only: an automatic No limits answer requires an authenticated owner turn.
   it("is decided in the same tick with no network, for every connected-app tool and every level that answers it", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => { throw new Error("a permission decision reached the network"); });
     const started = performance.now();
     for (let round = 0; round < 2_000; round++) {
       for (const [tool, summary, input] of tools) {
-        const result = routineTurnApproval({ bot: unlimited, tool, summary, context: { stopLine: null, call: call(tool, input) } });
+        const result = routineTurnApproval({ bot: unlimited, tool, summary, context: { fullAccessOrigin: "owner", stopLine: null, call: call(tool, input) } });
         expect(result.verdict).not.toBeInstanceOf(Promise);
         expect(result.verdict.approve).toBeTruthy();
         expect(result.verdict.source).toBe("no-limits");
-        expect(routineTurnApproval({ bot: full, tool, summary, context: { stopLine: null, call: call(tool, input) } }).verdict.source).toBe("full-access");
+        expect(routineTurnApproval({ bot: full, tool, summary, context: { fullAccessOrigin: "owner", stopLine: null, call: call(tool, input) } }).verdict.source).toBe("full-access");
       }
     }
     const perDecisionMs = (performance.now() - started) / (2_000 * tools.length * 2);
@@ -46,11 +47,12 @@ describe("an automatic permission answer", () => {
     expect(perDecisionMs).toBeLessThan(1);
   });
 
+  // MAIN RULING 2026-11-13 wipe-only: the proven owner can send without a stop-line card.
   it("No limits lets a message to someone new go; Auto still asks", () => {
     const message = { kind: "message" as const, place: "ada@example.com", what: "Send a message to someone new: ada@example.com" };
     const send = call(tools[1]![0], { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", account: "a", arguments: { recipient_email: "ada@example.com" } }] });
-    expect(routineTurnApproval({ bot: unlimited, tool: tools[1]![0], summary: "send", context: { stopLine: message as never, call: send } }).verdict.source).toBe("no-limits");
-    expect(routineTurnApproval({ bot: auto, tool: tools[1]![0], summary: "send", context: { stopLine: message as never, call: send } }).verdict.approve).toBeFalsy();
+    expect(routineTurnApproval({ bot: unlimited, tool: tools[1]![0], summary: "send", context: { fullAccessOrigin: "owner", stopLine: message as never, call: send } }).verdict.source).toBe("no-limits");
+    expect(routineTurnApproval({ bot: auto, tool: tools[1]![0], summary: "send", context: { fullAccessOrigin: "owner", stopLine: message as never, call: send } }).verdict.approve).toBeFalsy();
   });
 
   it("an execute call whose actions cannot be read is held, even in No limits", () => {
@@ -63,16 +65,27 @@ describe("an automatic permission answer", () => {
     // The server's request.opened handler (index.ts): the rating is a database
     // write, so it must sit on the card paths, never ahead of the answer.
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8");
-    const start = source.indexOf('case "request.opened": {');
-    const handler = source.slice(start, source.indexOf("const notifyHuman = () =>", start));
-    const answer = handler.indexOf('respondToRequest(event.threadId, requestId, { behavior: "allow" })');
+    const start = source.indexOf('async function handleDecisionRequest(');
+    const handler = source.slice(start, source.indexOf('function ', start + 'async function '.length));
     expect(start).toBeGreaterThan(0);
-    expect(answer).toBeGreaterThan(0);
-    const direct = [...handler.matchAll(/pushStore\.rateRisk\(/g)].map(match => match.index!);
-    expect(direct).toHaveLength(1); // inside ratePermissionRisk only
-    const calls = [...handler.matchAll(/ratePermissionRisk\(\);/g)].map(match => match.index!);
-    expect(calls.length).toBe(2);
-    // one in the fallback after a failed answer, one on the card path after the automatic branch
-    expect(calls.every(index => index > answer)).toBe(true);
+    const decision = handler.indexOf('const outcome = decide(handle,');
+    const card = handler.indexOf("if (outcome.kind === 'card' || outcome.kind === 'question')");
+    const presentation = handler.indexOf('await presentApproval(');
+    const automatic = handler.indexOf('await deliverRequest(handle)');
+    expect(decision).toBeGreaterThan(0);
+    expect(card).toBeGreaterThan(decision);
+    expect(presentation).toBeGreaterThan(card);
+    expect(automatic).toBeGreaterThan(presentation);
+    expect(handler).not.toContain('pushStore.rateRisk(');
+    const builder = source.slice(source.indexOf('function decisionEngineApprovalAction('), start);
+    expect(builder.match(/pushStore\.rateRisk\(/g)).toHaveLength(1);
+    const core = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "decision/implementation.ts"), "utf8");
+    const build = core.indexOf('engineBuilder(');
+    expect(build).toBeGreaterThan(0);
+    // Presentation alone builds the action/risk stamp; an automatic decision does not invoke it.
+    const allocation = core.lastIndexOf('function approval(', build);
+    expect(allocation).toBeGreaterThan(0);
+    expect(build).toBeLessThan(core.indexOf('\nexport ', allocation + 1));
+
   });
 });

@@ -8,13 +8,18 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import { PHONE_CAPABILITIES, type PhoneCapability } from "../../shared/phone-jobs-contract";
 import { PHONE_APP_VALUES, type PhoneApps, type PhoneReport } from "../../shared/phone-apps";
 import { PHONE_CARD_COPY, PHONE_COPY } from "../../shared/phone-copy";
+import { t } from "@/lib/i18n";
 import { driverMountsPhoneJobs } from "../../server/phone-jobs-engines";
 
 export interface PairedPhone { id: string; name: string; phoneJobsReady?: boolean }
-export interface PhoneRegistrationView { deviceId: string; name: string; capabilities: PhoneReport }
+/**
+ * `deviceIdOptIn` is the server's answer to whether this phone's latest ask mint opted in to its device id: true or false when the host recorded a mint,
+ * "unknown" when it has no record (a jobs-only phone, or one that minted before the host kept a record). An older host leaves the field out.
+ */
+export interface PhoneRegistrationView { deviceId: string; name: string; capabilities: PhoneReport; platform?: "ios" | "android"; deviceIdOptIn?: boolean | "unknown" }
 
 export type PhoneDeviceRow =
-  | { id: string; name: string; state: "registered"; reports: string[] }
+  | { id: string; name: string; state: "registered"; reports: string[]; repair?: true; check?: true }
   | { id: string; name: string; state: "passcode" }
   | { id: string; name: string; state: "update-app" };
 
@@ -34,7 +39,11 @@ export function mergePhones(paired: PairedPhone[], registrations: PhoneRegistrat
   const seen = new Set<string>();
   for (const reg of registrations) {
     seen.add(reg.deviceId);
-    rows.push({ id: reg.deviceId, name: reg.name, state: "registered", reports: reportedNames(reg.capabilities) });
+    // Only an iPhone is told to pair again: it is the app that pins its device id at pairing. Android never opts in, so re-pairing would not change its row.
+    const repair = reg.platform === "ios" && reg.deviceIdOptIn === false;
+    // An iPhone the host has no record for gets neutral guidance (it may be fine already), never the pair-again line.
+    const check = reg.platform === "ios" && reg.deviceIdOptIn === "unknown";
+    rows.push({ id: reg.deviceId, name: reg.name, state: "registered", reports: reportedNames(reg.capabilities), ...(repair ? { repair: true as const } : {}), ...(check ? { check: true as const } : {}) });
   }
   for (const phone of paired) {
     if (seen.has(phone.id)) continue;
@@ -69,8 +78,8 @@ const DEVICE_LINE = {
   "update-app": PHONE_COPY.oldApp,
 } as const;
 
-export function PhoneAccessView({ mode, grant, rows, busy, error, onChange }: {
-  mode: PhoneCardMode; grant: PhoneApps; rows: PhoneDeviceRow[]; busy: boolean; error: string | null;
+export function PhoneAccessView({ mode, grant, rows, busy, error, onChange, botName }: {
+  mode: PhoneCardMode; grant: PhoneApps; rows: PhoneDeviceRow[]; busy: boolean; error: string | null; botName: string;
   onChange: (capability: PhoneCapability, value: string) => void;
 }) {
   if (mode === "hidden") return null;
@@ -97,6 +106,8 @@ export function PhoneAccessView({ mode, grant, rows, busy, error, onChange }: {
         {rows.map((row) => <li key={row.id} className="rounded-lg border border-hairline/40 p-3">
           <p className="font-medium text-ink">{row.name}</p>
           <p className="mt-1">{row.state === "registered" ? `${PHONE_CARD_COPY.reports}: ${row.reports.length ? row.reports.join(", ") : PHONE_CARD_COPY.reportsNothing}` : DEVICE_LINE[row.state]}</p>
+          {row.state === "registered" && row.repair === true && <p className="mt-1" data-testid="phone-repair-hint">{t("phone.repairHint", { bot: botName })}</p>}
+          {row.state === "registered" && row.check === true && <p className="mt-1" data-testid="phone-check-hint">{t("phone.checkHint", { bot: botName })}</p>}
         </li>)}
       </ul>}
       <p>{PHONE_CARD_COPY.activityNote}</p>
@@ -113,7 +124,7 @@ const pairedPhones = async (): Promise<PairedPhone[]> => {
   } catch { return []; }
 };
 
-export function PhoneAccessCard({ bot }: { bot: Pick<Bot, "id" | "phoneApps" | "modelSelection"> }) {
+export function PhoneAccessCard({ bot }: { bot: Pick<Bot, "id" | "name" | "phoneApps" | "modelSelection"> }) {
   const desktop = useDesktopSurface();
   const { state } = useStore();
   const cloud = isCloudOrigin();
@@ -161,5 +172,5 @@ export function PhoneAccessCard({ bot }: { bot: Pick<Bot, "id" | "phoneApps" | "
       .catch(() => { setGrant(previous); setError(PHONE_CARD_COPY.saveFailed); })
       .finally(() => setBusy(false));
   };
-  return <PhoneAccessView mode={phoneCardMode({ cloud, desktop, offered, engineMounts, flag })} grant={grant} rows={rows} busy={busy} error={error} onChange={change} />;
+  return <PhoneAccessView mode={phoneCardMode({ cloud, desktop, offered, engineMounts, flag })} grant={grant} rows={rows} busy={busy} error={error} onChange={change} botName={bot.name} />;
 }

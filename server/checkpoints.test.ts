@@ -1,3 +1,4 @@
+import { denyFixtureRead } from "./testing/platform-fixtures.ts";
 // checkpoints.ts contract, exercised against REAL git in mkdtemp folders:
 // snapshots are commits in a shadow repo (idempotent when nothing changed),
 // restore moves the work tree back without moving HEAD (so a restore can be
@@ -5,7 +6,7 @@
 // user's own git repo in the folder is never touched, and dangerous folders
 // (home) are refused outright.
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, parse, resolve, sep } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
@@ -17,6 +18,8 @@ import { removeTempDir } from "./testing/cleanup.ts";
 // is evaluated (same pattern as attachments.test.ts).
 const DATA_ROOT = mkdtempSync(join(tmpdir(), "murage-checkpoints-"));
 process.env.MURAGE_DATA_DIR = join(DATA_ROOT, "data");
+const EMPTY_GIT_CONFIG = join(DATA_ROOT, "gitconfig-empty");
+writeFileSync(EMPTY_GIT_CONFIG, "");
 
 const { checkpointsEnabled, listCheckpoints, refusalReason, restore, snapshot } = await import(
   "./checkpoints.ts"
@@ -38,12 +41,13 @@ function workspace() {
 /** The user's own git, as the user would run it — no shadow env involved. */
 function userGit(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, {
+    windowsHide: true,
     cwd,
     encoding: "utf8",
     env: {
       ...process.env,
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_CONFIG_GLOBAL: EMPTY_GIT_CONFIG,
+      GIT_CONFIG_SYSTEM: EMPTY_GIT_CONFIG,
       GIT_AUTHOR_NAME: "User",
       GIT_AUTHOR_EMAIL: "user@example.com",
       GIT_COMMITTER_NAME: "User",
@@ -152,7 +156,7 @@ describe("restore", () => {
     expect(existsSync(join(cwd, "run.log"))).toBe(true);
   });
 
-  it.skipIf(process.platform === "win32")("refuses to restore when the safety checkpoint misses a path", async () => {
+  it("refuses to restore when the safety checkpoint misses a path", async () => {
     const { bot, cwd } = workspace();
     writeFileSync(join(cwd, "a.txt"), "one");
     const checkpoint = await snapshot(bot, cwd, "turn 1");
@@ -162,7 +166,8 @@ describe("restore", () => {
     // clean can delete the path it missed.
     const locked = join(cwd, "locked.txt");
     writeFileSync(locked, "unreadable");
-    chmodSync(locked, 0o000);
+    const restoreRead = denyFixtureRead(locked);
+    try {
     writeFileSync(join(cwd, "a.txt"), "two");
 
     const result = await restore(bot, cwd, checkpoint!);
@@ -171,7 +176,11 @@ describe("restore", () => {
       error: "restore stopped because some current files could not be added to the checkpoint taken before a restore",
     });
     expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("two");
+    } finally { restoreRead(); }
+    // Windows may deny metadata reads with the read ACE too. Inspect the
+    // preserved file after removing that ACE, including its original bytes.
     expect(existsSync(locked)).toBe(true);
+    expect(readFileSync(locked, "utf8")).toBe("unreadable");
   });
 
   it("refuses garbage hashes and the empty base marker", async () => {

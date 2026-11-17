@@ -71,6 +71,8 @@ interface CardExecutorDeps {
   open(): boolean;
   context(request: RoomRequest): ProjectContext | undefined;
   usable(request: RoomRequest): boolean;
+  /** A staged assignee waits without consuming admission or cancelling its durable request. */
+  ready?(request: RoomRequest): boolean;
   desk(request: RoomRequest): string;
   authorize?(request: RoomRequest, threadId: string): ReturnType<typeof authorizeWork>;
   writerRoot(request: RoomRequest): WriterRoot | undefined;
@@ -251,6 +253,7 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
           completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: "This card run is no longer available." }, deps.hooks);
           cancelBackoff(request.id); deps.changed(request.groupId); continue;
         }
+        if (deps.ready?.(request) === false) continue;
         // F3 start guard (CANCEL-TREE-104 D4): a card continuation wake whose card run ended is cancelled, never started (fresh read, one transaction)
         if (closeQueuedIfAskerEnded(db, request.id, deps.now(), deps.hooks)) { cancelBackoff(request.id); deps.changed(request.groupId); continue; }
         if (retry && retry.at > deps.now()) { schedule(retry.at); continue; }
@@ -390,13 +393,14 @@ export function steerDelivery(answer: boolean | SteerDelivery): SteerDelivery {
 
 /** "uncertain": the engine may still take it, so the caller records it once and never queues a copy.
  * `beforeWrite` is the submission fence, run by the driver right before its write. */
-export async function steerBusyDesk(adapter: { capabilities: { queueing?: boolean }; steer?: (threadId: string, text: string, beforeWrite?: () => void, interjectionId?: string) => Promise<boolean | SteerDelivery> } | undefined, threadId: string, prompt: BuiltPrompt, allowed: boolean, beforeWrite?: () => void, interjectionId?: string, maxWaitMs: number = STEER_READY_WAIT_MS, onLate?: (delivery: SteerDelivery) => void, engineFence: EngineFence = { reader: { audience: null } }): Promise<"steer" | "queue" | "uncertain"> {
+export async function steerBusyDesk(adapter: { capabilities: { queueing?: boolean }; steer?: (threadId: string, text: string, beforeWrite?: () => void, interjectionId?: string) => Promise<boolean | SteerDelivery> } | undefined, threadId: string, prompt: BuiltPrompt, allowed: boolean, beforeWrite?: () => void, interjectionId?: string, maxWaitMs: number = STEER_READY_WAIT_MS, onLate?: (delivery: SteerDelivery) => void, engineFence?: EngineFence): Promise<"steer" | "queue" | "uncertain"> {
   if (!allowed || !adapter || cardSteeringMode(adapter) !== "steer") return "queue";
   // steer() carries text only, so a picture folded into a live turn reaches
   // the engine as its `<attached-image path>` tag and nothing else (the bot
   // answers "only its file path"). A message with a picture waits in the
   // queue and runs as its own turn, where the image goes in as an image.
   if (splitTranscriptAttachments(prompt.text).images.length) return "queue";
+  if (!engineFence) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
   // The wait is bounded. Past it the line is queued (a visible chip, run next turn) and the
   // submission fence is closed, so a driver that gets ready later writes nothing: the text
   // can never run twice. Once the fence has passed the engine may already have the text, so
@@ -411,7 +415,10 @@ export async function steerBusyDesk(adapter: { capabilities: { queueing?: boolea
   const expired = new Promise<"expired">((resolve) => { timer = setTimeout(() => resolve("expired"), maxWaitMs); });
   try {
     // the engine input is a BuiltPrompt: steerBuilt runs the send fence (memory/dispatch.ts assertSendFence) before `fence`, right before the write
-    const engineAnswer = steerBuilt(adapter, threadId, prompt, engineFence, fence, interjectionId).catch(() => false as const);
+    const engineAnswer = steerBuilt(adapter, threadId, prompt, engineFence, fence, interjectionId).catch(error => {
+      if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+      return false as const;
+    });
     const answered = await Promise.race([engineAnswer, expired]);
     if (answered === "expired") {
       if ((phase as string) === "fenced") {

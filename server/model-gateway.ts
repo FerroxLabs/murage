@@ -1,3 +1,5 @@
+import { maskVendorLast, tracked, runStages, replaceTracked, type CarryStage } from "../shared/basic-auth-mask.ts";
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -20,6 +22,13 @@
 //  - Tokens never appear in a response, an error or a log line.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
+import { once } from "node:events";
+import { consumingHttpWriter, declareNoStoredResponse, denyConsumingHttp, emitConsumingTurnResponse, preflightConsumingResponse, registerConsumingDescriptor, refuseConsumingTurn, type ConsumingTurnBinding } from "./consuming-turn-response.ts";
+import { gatewayTurnBinding } from "./model-gateway-release.ts";
+import { checkedOpenTurns } from "./memory/lineage-write.ts";
+import { readConsumingUpstream, UpstreamAccounting } from "./memory/upstream-reader.ts";
+import { LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
+import { providerDispatcher } from "./provider-dispatcher.ts";
 import { CHATGPT_IDENTITY_HEADERS, SIGNIN_PRESETS, signInProviderForConnection } from "../electron/model-signin-presets.mjs";
 import type { ProviderCatalog, SignInPreset } from "../shared/provider-connections.ts";
 import { type ModelSignIns, needsSignInLine, planLimitLine } from "./model-signin.ts";
@@ -31,6 +40,12 @@ const MAX_BODY = 64 * 1024 * 1024;
 const MAX_ERROR_BODY = 64 * 1024;
 const DEFAULT_PAUSE_MS = 15 * 60 * 1000;
 const PINNED_HOSTS: Record<SignInPreset, string> = { chatgpt: "chatgpt.com", supergrok: "api.x.ai" };
+const gatewayDescriptors = Object.freeze({
+  headers: registerConsumingDescriptor("gateway:headers", "headers"),
+  body: registerConsumingDescriptor("gateway:json-error-limit-done", "body"),
+  chunk: registerConsumingDescriptor("gateway:sse", "chunk"),
+  request: registerConsumingDescriptor("gateway:upstream-request", "request"),
+});
 
 export interface ModelGatewayDeps {
   signIns: ModelSignIns;
@@ -74,15 +89,29 @@ async function readJson(req: IncomingMessage): Promise<Json | null> {
     if (size > MAX_BODY) return null;
     chunks.push(chunk as Buffer);
   }
-  try { const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")); return record(parsed) ? parsed : null; }
+  try { const parsed = registerBusyloopPayloadSite("read", JSON.parse(Buffer.concat(chunks).toString("utf8"))); return record(parsed) ? parsed : null; }
   catch { return null; }
 }
 
 /** Remove anything token shaped before a vendor message reaches an engine. */
-export function redact(textValue: string, secrets: string[]): string {
-  let out = textValue;
-  for (const secret of secrets) if (secret) out = out.split(secret).join("[redacted]");
-  return out.replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]").replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}/g, "[redacted]");
+export function gatewaySecretStages(secrets:readonly string[]):CarryStage[] {
+  return [
+    ...secrets.filter(Boolean).map(secret=>tracked((text,edits)=>{
+      const parts:string[]=[];let pos=0;
+      for(let at=text.indexOf(secret);at>=0;at=text.indexOf(secret,pos)){
+        parts.push(text.slice(pos,at),"[redacted]");
+        edits?.({start:at,end:at+secret.length,length:"[redacted]".length});
+        pos=at+secret.length;
+      }
+      parts.push(text.slice(pos));return parts.join("");
+    })),
+    tracked((text,edits)=>replaceTracked(text,/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,()=>"Bearer [redacted]",edits)),
+    tracked((text,edits)=>replaceTracked(text,/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}/g,()=>"[redacted]",edits)),
+  ];
+}
+export const baseRedact=(text:string,secrets:string[])=>runStages(text,gatewaySecretStages(secrets));
+export function redact(textValue:string,secrets:string[]):string {
+  return maskVendorLast(textValue,gatewaySecretStages(secrets),()=>"[redacted]");
 }
 
 /** When a plan limit resets, from the vendor body or Retry-After. */
@@ -130,11 +159,45 @@ function upstreamHeaders(provider: SignInPreset, token: { accessToken: string; a
 export async function handleModelGateway(req: IncomingMessage, res: ServerResponse, path: string, deps: ModelGatewayDeps): Promise<boolean> {
   if (!path.startsWith(MODEL_GATEWAY_PREFIX)) return false;
   const match = ROUTE.exec(path);
+  const binding = match ? gatewayTurnBinding(match[1]!, req.headers.authorization) : undefined;
+  // Explicit catalog probe: carries no retained context and accepts no request body.
+  if (!binding && match?.[2] === "models" && req.method === "GET") return handleGatewayRequest(req, res, path, deps);
+  if (!binding) {
+    // An unknown key is an authentication failure. A valid catalog credential
+    // still cannot run inference without the admitted turn's own credential.
+    if (match && !deps.signIns.verifyGatewayKey(match[1]!, req.headers.authorization)) {
+      sendError(res, 401, "This model gateway key is not valid. Start the turn again.", "invalid_api_key");
+      return true;
+    }
+    res.writeHead(409, { "content-type": "text/plain", "cache-control": "no-store" }).end(LEDGER_REFUSAL_LINE);
+    return true;
+  }
+  const controller = new AbortController();
+  try {
+    const writer = consumingHttpWriter(res, binding, gatewayDescriptors);
+    // Provider output and gateway protocol replies introduce no stored Murage
+    // sources. The bound turn's retained sources are checked at every write.
+    declareNoStoredResponse(writer, 200);
+    return await handleGatewayRequest(req, writer, path, deps, binding, controller);
+  } catch {
+    // Seal before cancelling or writing terminal control; never translate a fence failure
+    // into a vendor error, partial JSON success or a successful SSE terminator.
+    try { refuseConsumingTurn(binding); } catch { /* terminal control below */ }
+    controller.abort();
+    denyConsumingHttp(res, binding);
+    return true;
+  }
+}
+
+async function handleGatewayRequest(req: IncomingMessage, res: ServerResponse, path: string, deps: ModelGatewayDeps,
+  binding?: ConsumingTurnBinding, upstreamController?: AbortController): Promise<boolean> {
+  if (!path.startsWith(MODEL_GATEWAY_PREFIX)) return false;
+  const match = ROUTE.exec(path);
   if (!match) { sendError(res, 404, "No such model gateway route.", "not_found"); return true; }
   if (!isLoopback(req.socket.remoteAddress)) { sendError(res, 403, "The model gateway answers this computer only.", "forbidden"); return true; }
   const [, id, route] = match as unknown as [string, string, "responses" | "chat/completions" | "models"];
   const provider = signInProviderForConnection(id);
-  if (!provider || !deps.signIns.has(id) || !deps.signIns.verifyGatewayKey(id, req.headers.authorization)) {
+  if (!provider || !deps.signIns.has(id) || (!binding && !deps.signIns.verifyGatewayKey(id, req.headers.authorization))) {
     sendError(res, 401, "This model gateway key is not valid. Start the turn again.", "invalid_api_key");
     return true;
   }
@@ -160,13 +223,28 @@ export async function handleModelGateway(req: IncomingMessage, res: ServerRespon
     else ({ request: upstreamBody, wantStream } = normalizeResponsesBody(body));
   } else { upstreamBody = body; wantStream = body.stream === true; }
 
-  const controller = new AbortController();
+  if (!binding) throw new Error("MEMORY_CONTEXT_REVOKED");
+  const controller = upstreamController!;
+  const accounting = (mode: "sse" | "collection", collect = false) => new UpstreamAccounting(
+    checkedOpenTurns(binding.turn).map(open => open.budget!), mode, verdict => refuseConsumingTurn(binding, verdict), collect);
+  const pipe = (response: Response, write: (chunk: Uint8Array) => void | Promise<void>, collect = false) =>
+    readConsumingUpstream(response, accounting(provider === "chatgpt" || response.headers.get("content-type")?.includes("text/event-stream") ? "sse" : "collection", collect), async chunk => {
+      await write(chunk);
+      if (res.writableNeedDrain) await once(res, "drain", { signal: controller.signal });
+    });
   res.once("close", () => { if (!res.writableFinished) controller.abort(); });
   const fetcher = deps.fetch ?? fetch;
   const call = async (token: { accessToken: string; accountId?: string }) => {
     const url = upstreamUrl(provider, route);
     if (new URL(url).hostname !== PINNED_HOSTS[provider]) throw new Error("upstream host is not pinned");
-    return fetcher(url, { method: "POST", headers: upstreamHeaders(provider, token, provider === "chatgpt" || wantStream), body: JSON.stringify(upstreamBody), signal: controller.signal, redirect: "error" });
+    const serialized = JSON.stringify(upstreamBody);
+    const transport = providerDispatcher(url, (wire, write) => emitConsumingTurnResponse(binding, gatewayDescriptors.request,
+      { bytes: Buffer.byteLength(wire), refs: [], write }));
+    try {
+      preflightConsumingResponse(binding, gatewayDescriptors.request, Buffer.byteLength(serialized));
+      return await fetcher(fluxRouteFor(url).requestUrl, { method: "POST", headers: upstreamHeaders(provider, token, provider === "chatgpt" || wantStream), body: serialized, signal: controller.signal, redirect: "error", dispatcher: transport } as RequestInit);
+    }
+    finally { void transport.close().catch(() => {}); }
   };
 
   // 401 is kept for a bad gateway key. A plan token problem is a 403 with
@@ -193,17 +271,16 @@ export async function handleModelGateway(req: IncomingMessage, res: ServerRespon
         if (next) { token = next; upstream = await call(next); }
       }
     }
-  } catch {
-    if (controller.signal.aborted) { res.end(); return true; }
-    sendError(res, 502, `Could not reach the ${provider === "chatgpt" ? "ChatGPT" : "xAI"} service. Check the connection and try again.`, "upstream_unreachable");
-    return true;
+  } catch (error) {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+    refuseConsumingTurn(binding, { state: "checking", reason: "lookup-error" });
   }
   const secrets = [token.accessToken, token.accountId ?? ""];
 
   if (!upstream.ok) {
-    const raw = await readLimited(upstream);
+    const raw = await readLimited(upstream, accounting("collection"));
     let parsed: unknown = null;
-    try { parsed = JSON.parse(raw); } catch { parsed = null; }
+    try { parsed = registerBusyloopPayloadSite("read", JSON.parse(raw)); } catch { parsed = null; }
     if (upstream.status === 429) {
       if (isPlanLimit(provider, parsed)) {
         const until = limitResetsAt(parsed, upstream.headers.get("retry-after"), now) ?? now + DEFAULT_PAUSE_MS;
@@ -263,7 +340,10 @@ export async function handleModelGateway(req: IncomingMessage, res: ServerRespon
         if (!started && !real.length) { buffered.push(...pieces); return; }
         for (const piece of [...buffered, ...pieces]) write(piece);
         buffered = [];
-      } catch (error) { failed = redact(error instanceof Error ? error.message : "The model service ended the answer with an error.", secrets); }
+      } catch (error) {
+        if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+        failed = redact(error instanceof Error ? error.message : "The model service ended the answer with an error.", secrets);
+      }
     });
     const decoder = new TextDecoder();
     await pipe(upstream, chunk => parser.push(decoder.decode(chunk, { stream: true })));
@@ -279,42 +359,25 @@ export async function handleModelGateway(req: IncomingMessage, res: ServerRespon
   const events: Json[] = [];
   const parser = createSseParser(event => { events.push(event); });
   const decoder = new TextDecoder();
-  await pipe(upstream, chunk => parser.push(decoder.decode(chunk, { stream: true })));
+  await pipe(upstream, chunk => parser.push(decoder.decode(chunk, { stream: true })), true);
   parser.end();
   try {
     const response = collectResponse(events);
     sendJson(res, 200, chat ? responseToChatCompletion(response, chat.model, chatId, created) : response);
   } catch (error) {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
     sendError(res, 502, redact(error instanceof UpstreamStreamError ? error.message : "The model service ended the answer with an error.", secrets), "upstream_error");
   }
   return true;
 }
 
-async function readLimited(response: Response): Promise<string> {
-  if (!response.body) return "";
-  const reader = response.body.getReader();
+async function readLimited(response: Response, accounting: UpstreamAccounting): Promise<string> {
   const chunks: Uint8Array[] = [];
   let size = 0;
-  try {
-    for (;;) {
-      const next = await reader.read();
-      if (next.done) break;
-      size += next.value.length;
-      if (size > MAX_ERROR_BODY) { await reader.cancel(); break; }
-      chunks.push(next.value);
-    }
-  } catch { /* partial is fine for an error message */ }
+  await readConsumingUpstream(response, accounting, chunk => {
+    size += chunk.byteLength;
+    if (size > MAX_ERROR_BODY) accounting.refuse({ state: "checking", reason: "retained-budget" });
+    chunks.push(chunk);
+  });
   return Buffer.concat(chunks).toString("utf8");
-}
-
-async function pipe(response: Response, write: (chunk: Uint8Array) => void): Promise<void> {
-  if (!response.body) return;
-  const reader = response.body.getReader();
-  try {
-    for (;;) {
-      const next = await reader.read();
-      if (next.done) break;
-      write(next.value);
-    }
-  } catch { /* the caller hung up or the vendor dropped; the stream just ends */ }
 }

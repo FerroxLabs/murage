@@ -1,0 +1,13 @@
+PASS witness: TimeoutSeconds 60; prelaunch CIM delayed beyond 150 seconds
+PASS running wrapper ended, job empty, unregistered, absence read back in order
+PASS transient unregister failures retried
+PASS five bounded tries; persistent wrapper FAIL names exact path and removal command
+PASS nonempty job fails before unregister
+PASS preexisting prefixed task untouched
+PASS unprefixed task untouched
+PASS end plus five job timeouts and backoff stay within 60 seconds
+PASS Scheduler RPC bounded in owned helper including proof budget
+PASS absence requires successful full root task enumeration
+PASS no Scheduler process starts after cleanup budget expires
+PASS schtasks operation over 30 seconds receives owned helper deadline
+PASS native timeout propagates failure through owned helper

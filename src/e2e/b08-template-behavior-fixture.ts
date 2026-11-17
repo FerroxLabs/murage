@@ -659,9 +659,10 @@ export function prepareReadOnlyTaskWorkspace(options: {
   const materialize = (expectedBundle?: string): string => {
     const program = `
       import assert from "node:assert/strict";
-      import { readFileSync, existsSync } from "node:fs";
+      import { readFileSync, existsSync, writeSync } from "node:fs";
       import { join } from "node:path";
       import { pathToFileURL } from "node:url";
+      console.log("readonly fixture: preparing native metadata");
       const args = JSON.parse(process.argv[1]);
       const load = name => import(pathToFileURL(join(args.repoRoot, "server", name)).href);
       const { DATA_DIR } = await load("config.ts");
@@ -686,14 +687,14 @@ export function prepareReadOnlyTaskWorkspace(options: {
       migrateSkillDiscoveryToTasks(bot.id, true);
       preparePinnedProcedures(bot.id, task.threadId, pin, false, context);
       preparePinnedProcedures(bot.id, task.threadId, pin, true, context);
-      process.stdout.write(JSON.stringify({ bundleId: pin.bundleId }));
+      writeSync(3, JSON.stringify({ bundleId: pin.bundleId }));
     `;
     const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", program, JSON.stringify({ ...options, dataDir, home, expectedBundle })], {
       cwd: repoRoot, env: { HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: dataDir, PATH: dirname(process.execPath) },
-      encoding: "utf8", timeout: 20_000, maxBuffer: 64 * 1024,
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe", "pipe"], timeout: 20_000, maxBuffer: 64 * 1024,
     });
     if (result.status !== 0) throw new Error(`readonly native metadata preparation failed: ${result.error?.message ?? result.stderr}`);
-    const bundleId = JSON.parse(result.stdout).bundleId;
+    const bundleId = JSON.parse(result.output[3] ?? "").bundleId;
     if (typeof bundleId !== "string" || !/^[a-f0-9]{64}$/.test(bundleId)) throw new Error("missing readonly procedure identity");
     return bundleId;
   };

@@ -1,14 +1,37 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import { registeredChannelQuestions, answerRegisteredChannelQuestion } from "./channels/registered-questions.ts";
 import { normalizeTelegramUpdate } from "./telegram-update.ts";
 import { isQuestionCard, questionsForCard } from "../shared/questions.ts";
 import { stripTypeScriptTypes } from "node:module";
+import { mkdirSync } from "node:fs";
+import { DATA_DIR } from "./config.ts";
+import { database } from "./database.ts";
+import { openFixtureApproval } from "./testing/approval-card.ts";
+import { Store } from "./store.ts";
+const fixtureRecords:string[]=[];
+afterEach(()=>{for(const id of fixtureRecords.splice(0)){
+  const db=database();db.prepare('DELETE FROM messages WHERE thread_id=? AND id IN (SELECT chat_message_id FROM approval_records WHERE id=?)').run('thread',id);
+  db.prepare('DELETE FROM approval_records WHERE id=?').run(id);
+}});
+import { inertBot } from "./store.ts";
 // The actual channelApprovalActions expression from index.ts, types stripped.
 // It now resolves the verified channel human and acts only for the workspace
 // owner's task projection of the bot (owner-link gate), so those lookups are
 // injected; "owner" is the only binding that resolves to the owner.
 function channelApprovalActions(store: object, askMessageByRequest: Map<string, string>, answerRequest: unknown, questionReply: unknown, binding: () => string | undefined) {
+  // Real channel managers accept only offers joined to a persisted decision.
+  // Seed that identity while preserving every existing routing assertion.
+  mkdirSync(DATA_DIR,{recursive:true});
+  for(const message of (store as any).openRequestCardRows('thread')){
+    if(message.card.tool&&!message.card.approvalId){
+      const row=openFixtureApproval(database(),'thread',{...message,kind:'options',role:'bot'});
+      new Store().appendMessage('thread',row,row.id);
+      fixtureRecords.push(row.card.approvalId);
+      Object.assign(message,row);
+    }
+  }
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const declaration = source.indexOf("const channelApprovalActions:");
   const start = source.indexOf("= (targetBotId,bindingId) =>", declaration);
@@ -20,8 +43,8 @@ function channelApprovalActions(store: object, askMessageByRequest: Map<string, 
   const channelHumanIsOwner = (id: string | undefined) => id === "owner";
   // audienceTask (execution-audience.ts) replaced humanTask here: the owner's task projection of the bot.
   const audienceTask = (_store: unknown, _botId: string, principal: typeof owner) => principal === owner ? { threadId: "thread" } : null;
-  return new Function("store", "askMessageByRequest", "createHash", "redactSecretsInText", "answerRequest", "isQuestionCard", "questionsForCard", "questionReply", "channelHumanIsOwner", "audienceTask", "resolveHumanBinding", `return ${expression}("bot", arguments[11]);`)(
-    store, askMessageByRequest, createHash, (text: string) => text, answerRequest, isQuestionCard, questionsForCard, questionReply, channelHumanIsOwner, audienceTask, resolveHumanBinding, binding);
+  return new Function("store", "askMessageByRequest", "createHash", "redactSecretsInText", "answerRequest", "isQuestionCard", "questionsForCard", "questionReply", "channelHumanIsOwner", "audienceTask", "resolveHumanBinding", "binding", "inertBot", "registeredChannelQuestions", "answerRegisteredChannelQuestion", `return ${expression}("bot", binding);`)(
+    store, askMessageByRequest, createHash, (text: string) => text, answerRequest, isQuestionCard, questionsForCard, questionReply, channelHumanIsOwner, audienceTask, resolveHumanBinding, binding, inertBot, registeredChannelQuestions, answerRegisteredChannelQuestion);
 }
 it("actual root approval actions bind live card, instance and thread and resolve only once", async () => {
   const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
@@ -82,7 +105,7 @@ it("actual root approval actions publish a question with its questions and answe
   expect(await actions.resolve(offered, "allow")).toBe(false);
   expect(answerRequest).not.toHaveBeenCalled();
   expect(await actions.answer(offered, { behavior: "answer", answers: [{ id: "q1", selected: ["Detailed"] }] })).toEqual({ ok: true });
-  expect(questionReply).toHaveBeenCalledExactlyOnceWith("thread", "request", { behavior: "answer", answers: [{ id: "q1", selected: ["Detailed"] }] }, false);
+  expect(questionReply).toHaveBeenCalledExactlyOnceWith("thread", "request", { behavior: "answer", answers: [{ id: "q1", selected: ["Detailed"] }] }, false, true);
   expect(answerRequest).toHaveBeenCalledExactlyOnceWith("thread", "claude", "request", "answer", "Detailed", { id: "bot", name: "Ember" }, [{ id: "q1", selected: ["Detailed"] }]);
   // settled: the fingerprint no longer matches, so a second answer is refused
   expect(await actions.answer(offered, { behavior: "skip" })).toEqual({ ok: false, error: "This question is no longer open." });
@@ -150,4 +173,24 @@ it("Telegram offers only Deny for a computer-control card, and the Deny tap answ
   await telegram.answer({ updateId: 4, kind: "callback", callbackId: "c", senderId: "7", chatId: "7", messageId: 19, data: buttons[0]!.data } as never, owner, () => true, signal);
   expect(answerRequest).toHaveBeenCalledTimes(1);
   expect(answerRequest.mock.calls[0]).toContain("deny");
+});
+
+it("registered native question cards reach Telegram with durable identity and keep their card answer path", async () => {
+  const { TelegramApprovals } = await import("./telegram-approvals.ts");
+  const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
+  const questions = [{ id: "q", question: "Which format?", options: [{ label: "Summary" }, { label: "Detailed" }], multiSelect: false, allowOther: false }];
+  const message = { id: "card", card: { requestId: "request", tool: "AskUserQuestion", subtitle: "Which format?", questions, options: ["Summary", "Detailed"], answered: undefined as string | undefined } };
+  const store = { bot: () => bot, workspaceChief: () => bot, openRequestCardRows: () => [message], messageById: (_t: string, id: string) => id === message.id ? message : undefined, projectBotForTask: () => bot };
+  const answerRequest = vi.fn(async () => { message.card.answered = "answer"; return "answered"; });
+  const questionReply = vi.fn((_thread: string, _request: string, body: any) => ({ kind: "deliver", behavior: "answer", message: "Detailed", answers: body.answers }));
+  const actions = channelApprovalActions(store, new Map([["thread:request", "card"]]), answerRequest, questionReply, () => "owner");
+  const offered = actions.pending()[0];
+  expect(offered).toMatchObject({ approvalId: expect.any(String), requestRef: "request", actionHash: expect.any(String), questions });
+  const sendMessage = vi.fn(async () => ({ chatId: "7", messageId: 19 }));
+  const manager = new TelegramApprovals(actions, { sendMessage, answerCallbackQuery: vi.fn(async () => {}) });
+  await manager.publish({ senderId: "7", chatId: "7" }, () => true, new AbortController().signal);
+  expect(sendMessage).toHaveBeenCalledOnce();
+  expect(await actions.answer(offered, { behavior: "answer", answers: [{ id: "q", selected: ["Detailed"] }] })).toEqual({ ok: true });
+  expect(questionReply).toHaveBeenCalledOnce();
+  expect(answerRequest).toHaveBeenCalledOnce();
 });

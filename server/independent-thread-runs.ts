@@ -49,6 +49,7 @@ export type DirectThreadRun<T> = Readonly<TurnOwner & {
    * thread reads as working, a cancel stops it as any run, and the rebuilt turn takes the run over at its admission (admit takeOver). */
   phase: "setup" | "dispatching" | "running" | "stopping" | "settling" | "rebuilding";
   providerTurnId?: string;
+  isolated: boolean;
 }>;
 /** Who a waiting turn is waiting for: a holder of an overlapping claim, or an
  * earlier waiter whose overlapping set is served first. */
@@ -68,13 +69,10 @@ type ResourceWaiter = {
   shown?: string;
 };
 
-/** A turn may go on WITHOUT some of what it asked for instead of waiting for
- * it: `resources` names what it can do without, and `holderYields` says
- * whether a holder is one worth not waiting behind. The built-in browser is
- * the case (D4): a routine that holds the bot's browser profile while it
- * waits for the person's approval, possibly for hours, must not block every
- * other conversation with that bot. The turn that goes on never claims the
- * browser, so two turns still never drive the same profile at once. */
+/** Optional resources a caller may elect to omit rather than queue for.
+ * Ordinary browser owner waits do not use this policy: BrowserTurnExecution
+ * fences and drains the waiting driver, then releases its execution claims
+ * so siblings can acquire the browser instead of running without it. */
 export type ResourceYield = Readonly<{ resources: ReadonlySet<string>; holderYields: (holder: TurnOwner) => boolean }>;
 
 function yieldsTo(policy: ResourceYield, blockers: readonly ResourceBlocker[]): boolean {
@@ -86,8 +84,17 @@ function yieldsTo(policy: ResourceYield, blockers: readonly ResourceBlocker[]): 
  * retires dispatch authority immediately; resource and capacity leases remain
  * until the caller confirms provider teardown/final screen settlement. */
 export class IndependentThreadRuns<T> {
+  private readonly changeListeners = new Set<() => void>();
+  /** Resource releases and run retirement wake short-lived execution waits.
+   * Subscribers must unsubscribe when settled; they never reserve resources. */
+  subscribeChanges(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
+  private changed(): void { for (const listener of [...this.changeListeners]) listener(); }
   private readonly runs = new Map<string, DirectThreadRun<T>>();
   private readonly resources = new TurnResources();
+  private readonly releaseWatches = new Map<string, Set<() => void>>();
   /** FIFO. A waiter never holds a claim, so waiting cannot deadlock. */
   private readonly waiters: ResourceWaiter[] = [];
   private pumping = false;
@@ -111,14 +118,17 @@ export class IndependentThreadRuns<T> {
    * thread slot instead of refusing; the caller must `awaitSlot` before any
    * setup. A direct send counts every admitted run, so it never overtakes a
    * queued one. */
-  admit(botId: string, threadId: string, snapshot: T, resources: readonly string[] = [], options: { queueForSlot?: boolean; ownerFirst?: boolean; takeOver?: string } = {}): DirectThreadRun<T> {
+  admit(botId: string, threadId: string, snapshot: T, resources: readonly string[] = [], options: { queueForSlot?: boolean; ownerFirst?: boolean; isolated?: boolean; takeOver?: string } = {}): DirectThreadRun<T> {
     // A rebuild takes over the run its refused turn kept (holdForRebuild) in this one call: the thread is never free in between, so
     // nothing is told it was released. Only that generation, still rebuilding, can be taken over.
     let takenOver: string | undefined;
     if (options.takeOver !== undefined) {
       const held = this.runs.get(threadId);
       if (!held || held.generation !== options.takeOver || held.phase !== "rebuilding") throw new DirectRebuildCancelled();
+      options = { ...options, isolated: held.isolated };
       takenOver = held.botId;
+      // Takeover can reach freed() on failure, but never wakes the replaced generation's watch.
+      this.releaseWatches.delete(held.generation);
       this.drop(held);
     }
     try {
@@ -133,7 +143,7 @@ export class IndependentThreadRuns<T> {
     }
   }
 
-  private admitFree(botId: string, threadId: string, snapshot: T, resources: readonly string[], options: { queueForSlot?: boolean; ownerFirst?: boolean }): DirectThreadRun<T> {
+  private admitFree(botId: string, threadId: string, snapshot: T, resources: readonly string[], options: { queueForSlot?: boolean; ownerFirst?: boolean; isolated?: boolean }): DirectThreadRun<T> {
     if (this.runs.has(threadId)) throw conflict("thread_busy", "This thread is already running or stopping.");
     const running = this.forBot(botId);
     let needsSlot = running.length >= MAX_CONCURRENT_BOT_THREADS;
@@ -151,7 +161,7 @@ export class IndependentThreadRuns<T> {
     const copied = structuredClone(snapshot);
     const owner = { threadId, generation: randomUUID() };
     if (!this.resources.claimAll(resources, owner)) throw conflict("resource_busy", "Another thread is using this browser, computer or working folder.");
-    const run: DirectThreadRun<T> = Object.freeze({ ...owner, botId, snapshot: copied, phase: "setup" });
+    const run: DirectThreadRun<T> = Object.freeze({ ...owner, botId, snapshot: copied, isolated: options.isolated === true, phase: "setup" });
     this.runs.set(threadId, run);
     this.stamp(owner);
     if (needsSlot) this.slotless.add(owner.generation);
@@ -316,6 +326,7 @@ export class IndependentThreadRuns<T> {
     const run = this.runs.get(owner.threadId);
     if (!run || !this.current(owner)) return false;
     this.runs.set(owner.threadId, Object.freeze({ ...run, phase: "stopping" }));
+    this.fireReleaseWatches(owner.generation);
     this.pump();
     return true;
   }
@@ -327,11 +338,37 @@ export class IndependentThreadRuns<T> {
     // (dispatch authority retired) until its provider teardown is confirmed. A held rebuild has no provider turn to settle.
     if (run.phase === "rebuilding") return false;
     if (run.phase !== "stopping") this.runs.set(owner.threadId, Object.freeze({ ...run, phase: "settling" }));
+    this.changed();
     return true;
   }
 
   /** Told the conversation whose run was just released, and its bot (the shared queue wakes the teams waiting on that conversation, and on the bot's slot). */
   onReleased?: (threadId: string, botId: string | undefined, generation: string) => void;
+
+  /** Watch this generation's first release or cancellation, independently of onReleased.
+   * A stopped or retired generation cannot register again; takeover only removes its watches. */
+  watch(owner: TurnOwner, cb: () => void): () => void {
+    if (!this.current(owner) || this.runs.get(owner.threadId)?.phase === "stopping") return () => {};
+    let watches = this.releaseWatches.get(owner.generation);
+    if (!watches) { watches = new Set(); this.releaseWatches.set(owner.generation, watches); }
+    const listener = () => cb();
+    watches.add(listener);
+    return () => {
+      watches.delete(listener);
+      if (!watches.size && this.releaseWatches.get(owner.generation) === watches) this.releaseWatches.delete(owner.generation);
+    };
+  }
+
+  private fireReleaseWatches(generation: string): void {
+    const watches = this.releaseWatches.get(generation);
+    this.releaseWatches.delete(generation);
+    if (!watches) return;
+    // Delete before invoking: a callback can synchronously cancel or release again.
+    for (const listener of watches) {
+      watches.delete(listener);
+      try { listener(); } catch { /* a listener never keeps a run from being released */ }
+    }
+  }
 
   /** Only after teardown/final capture is confirmed. Late cleanup is harmless. */
   release(owner: TurnOwner): boolean {
@@ -355,6 +392,7 @@ export class IndependentThreadRuns<T> {
 
   private freed(threadId: string, botId: string | undefined, generation: string): void {
     try { this.onReleased?.(threadId, botId, generation); } catch { /* a listener never keeps a run from being released */ }
+    this.fireReleaseWatches(generation);
     this.pump();
   }
 
@@ -453,6 +491,7 @@ export class IndependentThreadRuns<T> {
     try {
       do { this.pumpAgain = false; this.pumpOnce(); } while (this.pumpAgain);
     } finally { this.pumping = false; }
+    this.changed();
   }
 
   private pumpOnce(): void {
@@ -518,12 +557,12 @@ function conflict(code: string, message: string) { return Object.assign(new Erro
 
 /** Old clients may omit a target only while there is exactly one direct task.
  * Always validate supplied targets; never redirect an explicit wrong target. */
-export function requireDirectThreadTarget(taskIds: readonly string[], requested: unknown): string {
+export function requireDirectThreadTarget(taskIds: readonly string[] | { length: number; sole: string | undefined; has(id: string): boolean }, requested: unknown): string {
   if (requested === undefined) {
     if (taskIds.length !== 1) throw conflict("thread_required", "Choose a thread explicitly. Update this client to use independent threads.");
-    return taskIds[0];
+    return Array.isArray(taskIds) ? taskIds[0] : (taskIds as {sole:string}).sole;
   }
   if (typeof requested !== "string" || !/^[\w-]+$/.test(requested)) throw Object.assign(new Error("threadId must be a task id"), { status: 400 });
-  if (!taskIds.includes(requested)) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
+  if (!(Array.isArray(taskIds) ? taskIds.includes(requested) : (taskIds as {has(id:string):boolean}).has(requested))) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
   return requested;
 }

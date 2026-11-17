@@ -1,3 +1,4 @@
+import { withClaudeFixtureCwd } from "../testing/claude-s2-wire-receipt.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -18,14 +19,24 @@ import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { invalidateCliVersions } from "../cli-version-cache.ts";
 import { resetClaudeVersionGate } from "./claude-guards.ts";
-import { ClaudeDriver, claudeDraftOnlyFacts } from "./claude.ts";
+import { ClaudeDriver, claudeDraftOnlyFacts, resetClaudeMcpReadinessForTests } from "./claude.ts";
+import { fixtureMountTurn, bindFixtureAdapter } from "../testing/mcp-admission-fixture.ts";
+import { claudeMountConfiguration } from "../testing/claude-mount-configuration.ts";
 
 vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
+
+// Explicit receipt injection for the scripted executable's identity I/O
+// edge; native qualification and environment handling remain production code.
+vi.mock("./claude-s2-qualification.ts", async original => {
+  const actual = await original<typeof import("./claude-s2-qualification.ts")>();
+  const { withClaudeWireReceipt } = await import("../testing/claude-s2-wire-receipt.ts");
+  return withClaudeWireReceipt(actual);
+});
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
 // DRAFT-ONLY-ALLOWLIST-104 section 6, written out so the test runs its real assertions on a tree without it.
 const OWNER_LINE = "This bot writes drafts for you to review and send, and it drafts on Claude or a connected chat model. Choose one of those in this bot's settings and it picks up from here.";
-const CONNECTOR = { command: process.execPath, args: ["/tmp/connector-proxy.js"], env: { MURAGE_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" } };
+const CONNECTOR = { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" } };
 const EVERY_MOUNT = {
   composio: CONNECTOR,
   agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: { MURAGE_COMMS_TOKEN: "a".repeat(48) } },
@@ -42,6 +53,8 @@ let scratch: string;
 let config: string;
 const create = async (environment: Record<string, string> = {}) => {
   instance = await ClaudeDriver.create({ instanceId: "claude-draft", displayName: "Claude", environment: { CLAUDE_CONFIG_DIR: config, ...environment }, enabled: true, config: { cli: FAKE_CLI, permissionMode: "default" } });
+  withClaudeFixtureCwd(instance.adapter);
+  bindFixtureAdapter(instance.adapter);
   recorder = recordEvents(instance.adapter);
 };
 const dumpOf = (file: string) => JSON.parse(readFileSync(file, "utf8")) as { argv: string[]; env: Record<string, string | undefined>; mcpConfig: { mcpServers: Record<string, unknown> }; cwd: string; cwdEntries: string[]; systemPrompt?: string };
@@ -52,6 +65,9 @@ const refusedWithLine = async (threadId: string) => {
 };
 
 beforeEach(() => {
+  // Each scripted CLI case has its own capability facts. A prior case's
+  // unsupported mcp_status must not bypass this case's pre-prompt hold.
+  resetClaudeMcpReadinessForTests();
   ensureDirs();
   chmodSync(FAKE_CLI, 0o755);
   scratch = mkdtempSync(join(tmpdir(), "murage-claude-draft-"));
@@ -64,6 +80,7 @@ afterEach(async () => {
   instance = undefined;
   for (const name of ENV) delete process.env[name];
   resetClaudeVersionGate();
+  resetClaudeMcpReadinessForTests();
   invalidateCliVersions();
   await removeTempDir(scratch);
 });
@@ -72,13 +89,26 @@ describe("a draft-only turn on Claude", () => {
   it("launches with no built-in tool, only the connected-app relay, no broker, no extra folder and an empty private folder", async () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    await create();
+    await create({ FAKE_CLAUDE_MCP_STATUS: "error" }); // this CLI cannot report MCP status, so the mounted turn settles single-use (S1)
     const workspace = join(scratch, "workspace");
     mkdirSync(join(workspace, ".claude"), { recursive: true });
     writeFileSync(join(workspace, ".claude", "settings.json"), JSON.stringify({ hooks: { PreToolUse: [] } }));
-    await instance!.adapter.sendTurn({ threadId: "t-draft", text: "draft a reply to ticket 812", cwd: workspace, addDirs: [scratch], routeAsks: true, askLevel: true, draftOnly: true, integrations: EVERY_MOUNT });
-    const done = await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-draft");
+    // A3f S1 (LASTRESORT-A3F-S1-1018.md:53 H5; 7C-TRIAGE-RULING.md row (a), MurageMain ruling 2, 2026-11-08): a draft-only turn
+    // whose mounts hold a dispatcher admission is a mounted turn. It launches through the server relay with the connected-app
+    // mount only (claude.ts cuts draft-only integrations to composio), and it settles as mounted-single-use.
+    // the connected-app mount is a live idle MCP stand-in, so the relay's expected mount connects and the turn can finish
+    const liveConnector = { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: "b1", MURAGE_CONNECTORS_TOKEN: "tok-draft" } };
+    const mounted = { threadId: "t-draft", text: "draft a reply to ticket 812", cwd: workspace, addDirs: [scratch], routeAsks: true as const, askLevel: true as const, draftOnly: true as const, integrations: { ...(EVERY_MOUNT as object), composio: liveConnector } as never };
+    const closes: string[] = [];
+    const info = vi.spyOn(console, "info").mockImplementation((line: unknown) => { closes.push(String(line)); });
+    let done: unknown;
+    try {
+      await instance!.adapter.sendTurn(fixtureMountTurn(mounted));
+      done = await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-draft");
+      for (let waited = 0; !closes.some((line) => line.includes("claude close thread=t-draft reason=mounted-single-use")) && waited < 8_000; waited += 25) await new Promise((resolve) => setTimeout(resolve, 25));
+    } finally { info.mockRestore(); }
     expect(done).toMatchObject({ ok: true });
+    expect(closes.filter((line) => line.includes("claude close thread=t-draft"))).toEqual(["claude close thread=t-draft reason=mounted-single-use"]);
     const seen = dumpOf(dump);
     const tools = seen.argv.indexOf("--tools");
     expect(tools, seen.argv.join(" ")).toBeGreaterThan(-1);
@@ -87,12 +117,27 @@ describe("a draft-only turn on Claude", () => {
     expect(seen.argv).not.toContain("--permission-prompt-tool");
     expect(seen.argv).not.toContain("--add-dir");
     expect(Object.keys(seen.mcpConfig.mcpServers)).toEqual(["murage_connectors"]);
-    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1]).toBe("mcp__murage_connectors");
-    expect(JSON.parse(readFileSync(seen.argv[seen.argv.indexOf("--settings") + 1]!, "utf8")).disableAllHooks).toBe(true);
-    expect(seen.env.ENABLE_CLAUDEAI_MCP_SERVERS).toBe("false");
-    expect(seen.cwd).not.toBe(workspace);
-    expect(seen.cwd.startsWith(join(DATA_DIR, "draft-only-cwd"))).toBe(true);
-    expect(seen.cwdEntries).toEqual([]);
+    // the relay ticket: the mount is the relay shim for the connected apps, and the ticket reaches it through the turn's credential file
+    const relayed = seen.mcpConfig.mcpServers.murage_connectors as { args: string[]; env: Record<string, string> };
+    expect(relayed.args.slice(-2)).toEqual(["--server", "murage_connectors"]);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d1 / 2d85ffc39c: retain the shim behind its owned-I/O receipt launcher.
+    expect(relayed.args[0]).toMatch(/io-proxy-launcher\.ts$/);
+    expect(relayed.args[1]).toMatch(/cli-mount-shim\.ts$/);
+    expect(relayed.env).toMatchObject({ MURAGE_CRED_SERVER: "murage_connectors" });
+    expect(relayed.env.MURAGE_CRED_FILE).toBeTruthy();
+    // claude.ts:3799 hands the launch the connected-app mount alone; the helper rebuilds the claim from that same cut turn
+    const configuration = claudeMountConfiguration({ ...mounted, integrations: { composio: liveConnector } as never, addDirs: undefined });
+    expect(Object.keys(configuration.mcpConfig.mcpServers)).toEqual(["murage_connectors"]);
+    expect(configuration.argv[configuration.argv.indexOf("--allowedTools") + 1]).toBe("mcp__murage_connectors");
+    // control: the same draft-only launch with no connected apps. The mounted turn's process, with its settings file, left at settle (single use).
+    await instance!.adapter.sendTurn({ ...mounted, threadId: "t-draft-ctl", integrations: undefined });
+    await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-draft-ctl");
+    const ctl = dumpOf(dump);
+    expect(JSON.parse(readFileSync(ctl.argv[ctl.argv.indexOf("--settings") + 1]!, "utf8")).disableAllHooks).toBe(true);
+    expect(ctl.env.ENABLE_CLAUDEAI_MCP_SERVERS).toBe("false");
+    expect(ctl.cwd).not.toBe(workspace);
+    expect(ctl.cwd.startsWith(join(DATA_DIR, "draft-only-cwd"))).toBe(true);
+    expect(ctl.cwdEntries).toEqual([]);
   }, 30_000);
 
   it("with no connected apps, the strict MCP config is empty", async () => {
@@ -140,9 +185,20 @@ describe("a draft-only turn on Claude", () => {
     process.env.FAKE_CLAUDE_LAUNCH_WRITE = join(config, "settings.json");
     process.env.FAKE_CLAUDE_LAUNCH_WRITE_TEXT = JSON.stringify({ apiKeyHelper: "/usr/local/bin/print-key" });
     await create();
-    // larger than any pipe buffer, so the pre-accept launch's write is refused and the driver relaunches (claude.test.ts U-17)
-    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-relaunch", text: "x".repeat(4 * 1024 * 1024), routeAsks: true, askLevel: true, draftOnly: true });
+    // A required MCP mount keeps the prompt behind readiness. The scripted
+    // first CLI exits before it can report readiness, proving zero prompt
+    // bytes; an in-flight large write is uncertain and must never relaunch.
+    // The helper still appears after the first launch, and the retry must
+    // re-read it and refuse before starting another process.
+    // This case deliberately owns a connected-app mount, so obtain the same
+    // real per-turn transport admission as the mounted draft control above.
+    // Its actual local MCP peer stays alive while the scripted CLI exits
+    // before readiness and any prompt write; transport failure must not race
+    // and seal the turn before the launch-policy retry under test.
+    const liveConnector = { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: "b1", MURAGE_CONNECTORS_TOKEN: "tok-draft" } };
+    await instance!.adapter.sendTurn(fixtureMountTurn({ cwd: fixtureBotFolder(), threadId: "t-relaunch", text: "x".repeat(4 * 1024 * 1024), routeAsks: true, askLevel: true, draftOnly: true, integrations: { composio: liveConnector } }));
     await refusedWithLine("t-relaunch");
+    expect(recorder.events.filter((event) => event.type === "turn.retrying")).toHaveLength(1);
     expect(readFileSync(join(scratch, "launches"), "utf8")).toBe("1");
   }, 30_000);
 

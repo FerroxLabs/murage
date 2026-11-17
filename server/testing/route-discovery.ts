@@ -608,8 +608,16 @@ export function discoverRoutes(rootDir = ROOT): DiscoveredRoute[] {
   const root = dispatcher(index);
   const routes = new Map<string, DiscoveredRoute>();
   collect(root, index, root, routes, rootDir);
-  for (const module of delegatedModules(root, index)) {
+  // Authentication adapters can delegate again to the handler that owns the
+  // routes. Follow those calls too, once per module, including cycles.
+  const visited = new Set([index.fileName]);
+  const pending = delegatedModules(root, index);
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    const module = pending[cursor]!;
+    if (visited.has(module)) continue;
+    visited.add(module);
     const sf = sourceFile(module);
+    pending.push(...delegatedModules(sf, sf).filter(file => !visited.has(file)));
     // Each module's own routes first, every method its branches test
     // (house-rules.ts answers GET in one if and PUT in the next)...
     const own = new Map<string, DiscoveredRoute>();

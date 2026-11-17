@@ -515,7 +515,8 @@ describe("F31: the Cursor picker lists every model the ACP session offers (upstr
     ]);
     expect(catalog?.default).toBe("auto");
     const ids = catalog!.options.map((option) => option.id);
-    expect(ids).toEqual(["auto", "composer-2.5", "gpt-5.3-codex", "grok-4.7", "opus-5.5-thinking"]);
+    // MAIN RULING 1114-MODELS-FRESH: published Grok 4.7 is now a built-in row before the older Codex row.
+    expect(ids).toEqual(["auto", "composer-2.5", "grok-4.7", "gpt-5.3-codex", "opus-5.5-thinking"]);
     // A built-in entry the session does not offer is not listed.
     expect(ids).not.toContain("claude-sonnet-5-thinking-high");
     expect(catalog!.options.find((option) => option.id === "opus-5.5-thinking")?.label).toBe("Opus 5.5 Thinking");

@@ -6,6 +6,7 @@
 // tap-to-answer card (answerAsSend, the asking turn's id) with no adapter ask, and the answer is the owner's next
 // message: queued while Codex works (it cannot be steered) and run once when it settles. Stop expires the card; its
 // late answer becomes a message. A turn the owner is not attending gets no card.
+import { fixtureDisplayApi } from "./testing/display-fixture.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,14 +27,14 @@ let child: ChildProcess;
 let home: string;
 let output = "";
 
-const request = async (method: string, path: string, body?: unknown, proven = true): Promise<{ status: number; body: any }> => {
+const request = fixtureDisplayApi(() => join(home, ".murage", "messages.db"), async (method: string, path: string, body?: unknown, proven = true): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...(proven ? desktopHeaders : {}), ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json() };
-};
+});
 const messages = async (threadId: string) => (await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
 const questionCards = async (threadId: string) => (await messages(threadId)).filter((m) => m.card?.questions?.length);
 const userLines = async (threadId: string, words: string) => (await messages(threadId)).filter((m) => m.role === "user" && String(m.text ?? "").includes(words));
@@ -77,6 +78,7 @@ posixOnly("Codex asks while it keeps working (QW Q3, 173)", () => {
       },
     }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

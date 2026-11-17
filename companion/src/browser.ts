@@ -37,7 +37,7 @@ import { AskForwards, handlePhoneAsk, handlePhoneBearer, handlePhoneBootstrap, i
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
 import { createHarnessCall, createHarnessStream, handlePushBearer, handlePushSession, isPushSessionRoute, pushBearerExempt, pushBearerScope, readLimited } from "./push-door.ts";
-import { approvalDeviceHeaders, hasLaunchCredential, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isImageUpload, isInboxRoute, isPresenceRoute, doorForwardHeaders, isRoutineWrite, callSourceHeaders, isCallSourceRoute, isStreamTicket, browserProofHeaders, isScriptAccessRoute, needsLaunchProof } from "./routes.ts";
+import { approvalDeviceHeaders, hasLaunchCredential, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isImageUpload, isInboxRoute, isPresenceRoute, doorForwardHeaders, isRoutineWrite, callSourceHeaders, isCallSourceRoute, isStreamTicket, browserProofHeaders, chatsReaderHeaders, isScriptAccessRoute, needsLaunchProof } from "./routes.ts";
 import { CALL_CHANNEL_UPGRADE, STREAM_UPGRADE_PATH, forwardStreamUpgrade, redactedRequest, rejectUpgrade } from "./stream-upgrade.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 import { compressBuffer, compressStream, isCompressible, MIN_COMPRESS_BYTES, negotiateEncoding, type Encoding } from "./encoding.ts";
@@ -80,7 +80,7 @@ export interface BrowserDeviceStore {
   resolveSession(
     value: string | undefined,
   ): {
-    device: { id: string; name: string; cloudDesktopAccess: boolean; scriptAccess?: boolean };
+    device: { id: string; name: string; cloudDesktopAccess: boolean; scriptAccess?: boolean; demo?: boolean };
     session: { expiresAt: number };
     sessionId: string;
   } | null;
@@ -317,6 +317,14 @@ export function expectedOrigin(req: IncomingMessage, identity: BoundIdentity): s
   return `${identity.scheme}://${authority}`;
 }
 
+function diagnosticOrigin(value: string | undefined, strict = false): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.origin !== "null" && (!strict || value === url.origin) ? url.origin : null;
+  } catch { return null; }
+}
+
 /** The origin and cross-site gate, in order, as a refusal or null.
  *
  * Exported so a test can state each rule on its own. The measurements this
@@ -344,10 +352,10 @@ export function originGate(
     console.error("[door-refused]", JSON.stringify({
       why: verdict.error,
       method: req.method,
-      url: (req.url ?? "").split("#")[0],
+      url: (req.url ?? "").split(/[?#]/)[0],
       host: h.host,
-      origin: h.origin ?? null,
-      referer: h.referer ?? null,
+      origin: diagnosticOrigin(h.origin, true),
+      referer: diagnosticOrigin(h.referer),
       secFetchSite: h["sec-fetch-site"] ?? null,
       secFetchMode: h["sec-fetch-mode"] ?? null,
       secFetchDest: h["sec-fetch-dest"] ?? null,
@@ -1579,6 +1587,33 @@ export function countsAgainstSignIn(reason: string | undefined): boolean {
   return reason !== "full" && reason !== "save-failed" && reason !== "unavailable";
 }
 
+/** Per-session budgets survive cookie rotation, and are discarded when that session ends. */
+export function createChatsReadLimiter() {
+  const sessions = new Map<string, { lists: number[]; tokens: number; at: number }>();
+  let active = 0;
+  return {
+    forget(sessionId: string) { sessions.delete(sessionId); },
+    take(sessionId: string, search: boolean, now = Date.now()): { retryAfter: number } | { release(): void } {
+      if (active >= 4) return { retryAfter: 1 };
+      let bucket = sessions.get(sessionId);
+      if (!bucket) { bucket = { lists: [], tokens: 30, at: now }; sessions.set(sessionId, bucket); }
+      bucket.tokens = Math.min(30, bucket.tokens + Math.max(0, now - bucket.at) / 1000);
+      bucket.at = now;
+      bucket.lists = bucket.lists.filter(at => at > now - 60_000);
+      if (search) {
+        if (bucket.tokens < 1) return { retryAfter: Math.ceil(1 - bucket.tokens) };
+        bucket.tokens--;
+      } else {
+        if (bucket.lists.length >= 60) return { retryAfter: Math.max(1, Math.ceil((bucket.lists[0] + 60_000 - now) / 1000)) };
+        bucket.lists.push(now);
+      }
+      active++;
+      let released = false;
+      return { release() { if (!released) { released = true; active--; } } };
+    },
+  };
+}
+
 /**
  * The browser-facing handler.
  *
@@ -1597,9 +1632,10 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
   // deliberate restart of the desktop app clears.
   const signIn = options.signInLimiter ?? createSignInLimiter();
   const pairedSessions = createPairedSessions();
+  const chatsReads = createChatsReadLimiter();
   // A revoked or signed-out device keeps no replayable session.
   options.devices.onDeviceRemoved?.((deviceId) => pairedSessions.forgetDevice(deviceId));
-  options.devices.onSessionEnded?.(({ deviceId }) => pairedSessions.forgetDevice(deviceId));
+  options.devices.onSessionEnded?.(({ deviceId, sessionId }) => { pairedSessions.forgetDevice(deviceId); chatsReads.forget(sessionId); });
   const pushDoor = { devices: options.devices, harness: createHarnessCall(options.harnessPort), companionToken: options.companionToken, revoked: options.pushRevoked };
   // A 413 closes the connection: the rest of an oversized upload is not
   // worth draining on a kept-alive socket.
@@ -1655,7 +1691,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     const path = (req.url ?? "/").split("?")[0];
     const method = req.method ?? "GET";
 
-    const gate = originGate(req, identity);
+    const gate = originGate(redactedRequest(req), identity);
     if (gate) return sendJson(res, gate.status, { error: gate.error });
 
     // ── phone jobs bootstrap (plan S3) ───────────────────────────────────
@@ -2011,6 +2047,8 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       path,
       method,
       authenticated: Boolean(device),
+      chatsReader: Boolean(device) && device?.demo !== true,
+      search: new URL(req.url ?? "/", "http://door.invalid").search,
       // This handler is the browser door and only ever that.
       surface: "browser",
     });
@@ -2079,7 +2117,14 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     // renewal script in. Never the other way round.
     const encoding = negotiateEncoding(req.headers["accept-encoding"]);
 
+    const chatsRead = method === "GET" && (path === "/api/chats" || path === "/api/search");
     const forward = (body: Buffer | null): void => {
+      const permit = chatsRead && resolved ? chatsReads.take(resolved.sessionId, path === "/api/search") : null;
+      if (permit && "retryAfter" in permit) {
+        res.setHeader("retry-after", String(permit.retryAfter));
+        return sendJson(res, 429, { error: `Too many searches. Try again in ${permit.retryAfter} seconds.`, retryAfter: permit.retryAfter });
+      }
+      const release = () => permit?.release();
       const staticType = method === "GET" ? staticContentType(path) : null;
       const upstream = httpRequest(
         {
@@ -2094,6 +2139,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             // Inbox, a call's routes and an image upload, already refused
             // above without one.
             ...browserProofHeaders(method, path, options.companionToken),
+            ...(device?.demo !== true ? chatsReaderHeaders(method, path, options.companionToken) : {}),
             // Not owner proof: tells the harness this came through the door (audit C5).
             ...doorForwardHeaders(options.companionToken),
             ...callSourceHeaders(method, path, req.headers["x-murage-call-id"]),
@@ -2107,6 +2153,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
         },
         (harness) => {
           stopClocks();
+          harness.once("close", release);
           const contentType = String(harness.headers["content-type"] ?? "");
 
           if (staticType) return relayStatic(harness, res, staticType, path, encoding);
@@ -2148,6 +2195,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           });
           harness.on("error", () => res.destroy());
           harness.on("end", () => {
+            // Revoke/sign-out/expiry fence the answer, including a response already in flight.
+            // Renewal preserves the record and therefore preserves this permission.
+            if (chatsRead && resolved && options.devices.sessionDeadline(resolved.sessionId) === null) {
+              return sendJson(res, 401, { error: "sign in", signIn: "/enter" });
+            }
             const raw = Buffer.concat(chunks).toString("utf8");
             let parsed: unknown;
             try {
@@ -2199,6 +2251,10 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       // finishes at once, so for it this is the old single deadline.
       let timedOut: "harness" | "upload" | null = null;
       let headersDeadline: ReturnType<typeof setTimeout> | undefined;
+      // A disconnected reader cancels its forward; release when that
+      // upstream request closes, so abandoned responses cannot evade the cap.
+      if (chatsRead) res.once("close", () => upstream.destroy());
+      upstream.once("close", release);
       let idle: ReturnType<typeof setTimeout> | undefined;
       const stopClocks = () => {
         clearTimeout(headersDeadline);

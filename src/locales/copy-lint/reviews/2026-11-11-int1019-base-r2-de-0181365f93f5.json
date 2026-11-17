@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "int1019 base backlog round 2 (Sonnet fixes)",
+  "date": "2026-11-11",
+  "base": "9955459fc",
+  "scope": "int1019-base-backlog-r2-de",
+  "strings": {
+    "de:gatewayBusy.repeated.title": {
+      "text": "{engine} lehnt diese Anfrage immer wieder ab. Deine Nachricht bleibt gespeichert.",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "fail",
+      "note": "Der nächste Schritt fehlt. Fix: {engine} lehnt diese Anfrage immer wieder ab. Deine Nachricht bleibt gespeichert. Versuche es erneut oder verwende eine andere KI."
+    },
+    "de:gatewayBusy.tryAgain": {
+      "text": "Erneut versuchen",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "de:gatewayBusy.useAnotherAI": {
+      "text": "Andere KI verwenden",
+      "en": "Use another AI",
+      "verdict": "pass"
+    },
+    "de:gatewayBusy.getHelp": {
+      "text": "Hilfe erhalten",
+      "en": "Get help",
+      "verdict": "pass"
+    },
+    "de:engine.toolLimit.notice": {
+      "text": "Einige Werkzeuge wurden für diese Anfrage ausgelassen: Diese KI akzeptiert höchstens {limit} Werkzeuge.",
+      "en": "Some tools were left out for this request: this AI accepts at most {limit} tools.",
+      "verdict": "pass"
+    },
+    "de:engine.toolLimit.catalogUnknown": {
+      "text": "Murage konnte die Werkzeugliste dieser KI nicht bestätigen. Die Nachricht wurde nicht gesendet, weil die Anzahl der erlaubten Werkzeuge nicht geprüft werden konnte.",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "fail",
+      "note": "Die Aufforderung zur Auswahl einer anderen KI fehlt. Fix: Murage konnte die Werkzeugliste dieser KI nicht bestätigen. Deine Nachricht wurde nicht gesendet, weil Murage nicht prüfen konnte, wie viele Werkzeuge diese KI akzeptiert. Wähle eine andere KI und versuche es erneut."
+    },
+    "de:engine.toolLimit.catalogChanged": {
+      "text": "Die Werkzeugliste hat sich geändert, während Murage deine Anfrage vorbereitet hat. Murage konnte die Liste nicht in das Werkzeuglimit dieser KI einpassen. Wähle eine andere KI und versuche es erneut.",
+      "en": "The tool list changed while Murage was preparing your request. Murage could not fit the list within this AI's tool limit. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "de:engine.submission.afterSubmission": {
+      "text": "Die ursprüngliche Nachricht wurde gesendet. Murage konnte sie nicht erneut senden, weil die Prüfungen vor dem Senden nicht bestanden wurden. Die Nachricht wurde nicht automatisch erneut gesendet.",
+      "en": "Your original message was sent. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "fail",
+      "note": "Die Aufforderung zur Prüfung des Gesprächs fehlt. Fix: Deine ursprüngliche Nachricht wurde gesendet. Murage konnte sie nicht erneut senden, weil die Prüfungen vor dem Senden nicht bestanden wurden. Die Nachricht wurde nicht automatisch erneut gesendet. Schau im Gespräch nach, bevor du es erneut versuchst."
+    },
+    "de:engine.submission.afterSubmissionUncertain": {
+      "text": "Das Senden der vorherigen Nachricht könnte bereits begonnen haben. Murage konnte sie nicht erneut senden, weil die Prüfungen vor dem Senden nicht bestanden wurden. Die Nachricht wurde nicht automatisch erneut gesendet.",
+      "en": "Murage may have started sending your earlier message. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "fail",
+      "note": "Die Aufforderung zur Prüfung des Gesprächs fehlt. Fix: Murage hat möglicherweise bereits begonnen, deine vorherige Nachricht zu senden. Murage konnte sie nicht erneut senden, weil die Prüfungen vor dem Senden nicht bestanden wurden. Die Nachricht wurde nicht automatisch erneut gesendet. Schau im Gespräch nach, bevor du es erneut versuchst."
+    },
+    "de:acp.defaultThinking": {
+      "text": "Standardeinstellung der KI",
+      "en": "AI's default setting",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.notes.sub": {
+      "text": "Füge deine Notizen ein. Ich suche die nächsten Schritte heraus und stelle die an den Anfang, die ein Datum haben oder auf die jemand wartet.",
+      "en": "Paste in your notes. I pick out the next steps and put those with a date or someone waiting for them first.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

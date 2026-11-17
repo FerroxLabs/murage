@@ -10,6 +10,7 @@
 //   3. The terminal takes no keystrokes. The only thing ever typed is the Claude sign-in code, through a masked input.
 //   4. Main re-checks the host before shell.openExternal, so this file is a convenience, not the boundary.
 import type { ILink, ILinkProvider, Terminal } from "@xterm/xterm";
+import { checkedGoogleLink } from "../../shared/agy-oauth-link.mjs";
 
 /**
  * Hosts the vendor CLIs print sign-in links for: exact match, https only. Evidence: the URLs the CLIs printed in the
@@ -18,7 +19,7 @@ import type { ILink, ILinkProvider, Terminal } from "@xterm/xterm";
  * sign-in hosts claude.ai and platform.claude.com. electron/cloud-home-engine-login.mjs holds the same list; a test
  * keeps them equal.
  */
-export const ENGINE_LOGIN_AUTH_HOSTS: readonly string[] = Object.freeze(["accounts.x.ai", "auth.openai.com", "claude.ai", "claude.com", "platform.claude.com", "www.kimi.ai"]);
+export const ENGINE_LOGIN_AUTH_HOSTS: readonly string[] = Object.freeze(["accounts.google.com", "accounts.x.ai", "auth.openai.com", "claude.ai", "claude.com", "platform.claude.com", "www.kimi.ai"]);
 
 const MAX_LINK = 2048;
 
@@ -28,9 +29,14 @@ export function checkAuthUrl(value: unknown, hosts: readonly string[] = ENGINE_L
   let url: URL;
   try { url = new URL(value); } catch { return null; }
   if (url.protocol !== "https:" || url.username || url.password || url.port !== "") return null;
-  return hosts.includes(url.hostname) ? url.href : null;
+  if (!hosts.includes(url.hostname)) return null;
+  // Google's host is shared by every Google sign-in, so a link there opens only when it is exactly Antigravity's own (client, redirect, PKCE).
+  if (url.hostname === "accounts.google.com") return checkedGoogleLink(url.href) === null ? null : url.href;
+  return url.href;
 }
 
+export const LINK_ENDED = "That sign-in has ended. Start it again.";
+export const LINK_STARTING = "The sign-in is still starting. Try again in a moment.";
 export const LINK_REFUSED = "That link isn't a sign-in page for this engine, so it was not opened.";
 
 // ── terminal guards ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -138,9 +144,9 @@ export interface EngineLoginBridge {
   onData(listener: (payload: { id: string; data: Uint8Array }) => void): () => void;
   onClosed(listener: (payload: { id: string; reason: string }) => void): () => void;
 }
-export type EngineLoginEngine = "codex" | "claudeAgent" | "grokAgent" | "kimiAgent" | "opencodeGo";
-/** Engines whose sign-in belongs to one bot (server/cloud-home/engine-login.ts BOT_LOGIN_ENGINES). Claude's is engine-wide. */
-export const BOT_LOGIN_ENGINES: readonly EngineLoginEngine[] = Object.freeze(["codex", "grokAgent", "kimiAgent", "opencodeGo"]);
+export type EngineLoginEngine = "codex" | "claudeAgent" | "antigravityAgent" | "grokAgent" | "kimiAgent" | "opencodeGo";
+/** Engines whose sign-in belongs to one bot (server/cloud-home/engine-login.ts BOT_LOGIN_ENGINES). Claude's is home-wide; it names a bot only for that bot's own sign-in. */
+export const BOT_LOGIN_ENGINES: readonly EngineLoginEngine[] = Object.freeze(["codex", "antigravityAgent", "grokAgent", "kimiAgent", "opencodeGo"]);
 /** Same words as server/cloud-home/copy.ts (engineLoginBotRequired). */
 export const BOT_REQUIRED_COPY = "Choose which bot to sign this engine in for.";
 /** Whether this start would be refused for a missing bot: every per-bot sign-in names its bot. */
@@ -200,7 +206,10 @@ export function startEngineLoginSession({ bridge, request, write, onState }: {
   return {
     /** An allow-listed link opens in the default browser through main; anything else is refused here and again in main. */
     async openLink(url: string): Promise<boolean> {
-      if (id === null || finished || !checkAuthUrl(url)) { onState({ phase: finished ? "closed" : id === null ? "connecting" : "open", notice: LINK_REFUSED }); return false; }
+      // Three different reasons, three different sentences: a link that is fine must never be called "not a sign-in page".
+      if (finished) { onState({ phase: "closed", notice: LINK_ENDED }); return false; }
+      if (id === null) { onState({ phase: "connecting", notice: LINK_STARTING }); return false; }
+      if (!checkAuthUrl(url)) { onState({ phase: "open", notice: LINK_REFUSED }); return false; }
       const result = await bridge.openLink({ id, url });
       if (!result.ok) onState({ phase: "open", notice: result.message });
       return result.ok;
@@ -221,3 +230,7 @@ export function startEngineLoginSession({ bridge, request, write, onState }: {
     },
   };
 }
+
+/** Antigravity's confirmation, shown before any relay opens: which bot; a re-sign-in says it replaces the current one. The home is never named (its host is a random string and the UI has no friendly name for it). */
+export const agySignInConfirmCopy = (bot: string, replaces: boolean): string =>
+  `Sign ${bot} in to Antigravity on this Cloud home.${replaces ? " This replaces the current sign-in." : ""}`;

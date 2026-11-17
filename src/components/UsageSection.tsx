@@ -9,13 +9,16 @@ import { BotAvatar } from "./Avatar";
 import { ActionButton } from "./ActionButton";
 import { Card } from "./SettingsPrimitives";
 import { PlanUsageCard } from "./PlanUsageCard";
+import { Anchor } from "./SettingsAnchor";
 import { t } from "@/lib/i18n";
+import type { LocaleKey } from "@/locales";
 import { useAction } from "@/lib/use-action";
 import { learningConnectionLabel } from "@/lib/memory-learning";
 import { LEARNING_LIMIT_ANCHOR, ceilingPercent, readLine, writtenLine } from "@/lib/learning-limit";
 import { formatTokens, monthCountingStart, monthUsageRows, usageCsv } from "@/lib/usage";
 import { monthRoutineUsage } from "@/lib/usage-routines";
 import { SpendLimitCard } from "./SpendLimitCard";
+import { useDesktopSurface } from "@/lib/use-surface";
 
 export { usageCsv };
 import type { LearningCeilingStatus } from "../../shared/memory-learning-contract";
@@ -58,31 +61,14 @@ export function monthCacheNote(rows: ReadonlyArray<MonthTokens>): { cached: numb
 const detail = (input: number, output: number, cached?: number) =>
   `${formatTokens(input)} in${typeof cached === "number" ? ` (${formatTokens(Math.min(cached, input))} cached)` : ""} \u00b7 ${formatTokens(output)} out`;
 
-export function UsageSection() {
-  const { state, dispatch } = useStore();
+/** This month by bot (usage.by-bot): replies and tokens per bot, with the CSV export. */
+export function UsageByBotCard() {
+  const { state } = useStore();
   const shown = state.bots.filter((b) => !b.hidden);
   const rows = monthUsageRows(shown);
-  const byRoutine = monthRoutineUsage(shown);
   const total = rows.reduce((sum, r) => ({ replies: sum.replies + r.replies, tokens: sum.tokens + r.tokens }), { replies: 0, tokens: 0 });
   const countingFrom = monthCountingStart(rows);
   const cacheNote = monthCacheNote(rows);
-
-  // The learning ceiling, read once when the page opens. A door without the memory page (a phone or a browser) simply has none.
-  const [ceiling, setCeiling] = useState<LearningCeilingStatus | null>(null);
-  const [connection, setConnection] = useState<string>("");
-  useEffect(() => {
-    const controller = new AbortController();
-    api("/api/memory/status", { signal: controller.signal })
-      .then((status) => {
-        const learning = (status as { learning?: { ceiling?: LearningCeilingStatus; connection?: { label?: string; source?: string } } } | null)?.learning;
-        if (controller.signal.aborted || !learning?.ceiling) return;
-        setCeiling(learning.ceiling);
-        setConnection(learning.connection?.source && learning.connection.source !== "none" ? learningConnectionLabel(learning.connection.label ?? "") : "");
-      })
-      .catch(() => { /* no memory page on this door: the learning card is left out */ });
-    return () => controller.abort();
-  }, []);
-
   const exportCsv = useAction(
     async () => {
       const csv = usageCsv(rows.map((row) => ({ name: row.bot.name, replies: row.replies, tokens: row.tokens })));
@@ -102,9 +88,6 @@ export function UsageSection() {
   );
 
   return (
-    <>
-      <SpendLimitCard />
-      <PlanUsageCard />
       <Card title={t("settings.l6.usage.byBot")} subtitle={t("settings.l6.usage.byBotHint")}>
         {rows.length === 0 ? (
           <div className="text-[13px] text-ink-secondary">{t("settings.l6.usage.empty")}</div>
@@ -148,6 +131,18 @@ export function UsageSection() {
           </div>
         )}
       </Card>
+  );
+}
+
+/** This month by routine: a plain line when no routine ran this month (the card is never left out). */
+export function UsageByRoutineCard() {
+  const { state } = useStore();
+  const shown = state.bots.filter((b) => !b.hidden);
+  const rows = monthUsageRows(shown);
+  const byRoutine = monthRoutineUsage(shown);
+  return (
+    <>
+      {!byRoutine && <Card title={t("settings.l6.usage.byRoutine")}><p className="text-[13px] text-ink-secondary">{t("settings.usage.noRoutine")}</p></Card>}
       {byRoutine && (
         <Card title={t("settings.l6.usage.byRoutine")}>
           <div className="flex flex-col" data-usage-by-routine="">
@@ -168,30 +163,91 @@ export function UsageSection() {
           </div>
         </Card>
       )}
+    </>
+  );
+}
+
+/** Memory learning this month (usage.learning): distinguish a pending read, a failed read and an unavailable surface. */
+export function UsageLearningCard() {
+  const { dispatch } = useStore();
+  const desktop = useDesktopSurface();
+  const [ceiling, setCeiling] = useState<LearningCeilingStatus | null>(null);
+  const [connection, setConnection] = useState<string>("");
+  const [readState, setReadState] = useState<"loading" | "ready" | "failed" | "unavailable">("loading");
+  const [checkedAt, setCheckedAt] = useState<number | null>(null);
+  const [readVersion, setReadVersion] = useState(0);
+  const refresh = () => { setReadState("loading"); setReadVersion((version) => version + 1); };
+  useEffect(() => {
+    if (desktop === undefined) return;
+    const controller = new AbortController();
+    api(desktop ? "/api/memory/status" : "/api/memory/learning-usage", { signal: controller.signal })
+      .then((status) => {
+        const learning = (status as { learning?: { ceiling?: LearningCeilingStatus; connection?: { label?: string; source?: string } } } | null)?.learning;
+        if (controller.signal.aborted) return;
+        setCeiling(learning?.ceiling ?? null);
+        setConnection(learning?.connection?.source && learning.connection.source !== "none" ? learningConnectionLabel(learning.connection.label ?? "") : "");
+        setCheckedAt(learning?.ceiling ? Date.now() : null);
+        setReadState(learning?.ceiling ? "ready" : "unavailable");
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        const status = (cause as { status?: number } | null)?.status;
+        if (status === 403 || status === 404 || status === 410) {
+          setCeiling(null);
+          setConnection("");
+          setCheckedAt(null);
+          setReadState("unavailable");
+        } else {
+          // A failed refresh leaves the last successful snapshot and its timestamp visible.
+          setReadState("failed");
+        }
+      });
+    return () => controller.abort();
+  }, [readVersion, desktop]);
+
+  return (
+    <Card title={t("settings.l6.usage.learningTitle")}>
+      {readState === "loading" && <p role="status" className="text-[13px] text-ink-secondary">{t("memoryPage.loading")}</p>}
+      {readState === "failed" && <div role="alert" className="space-y-1 text-[13px] text-ink-secondary">
+        <p>{t("settings.usage.learningLoadFailed" as LocaleKey)}</p>
+        {ceiling && checkedAt !== null && <p>{t("settings.usage.learningStale" as LocaleKey, { time: new Date(checkedAt).toLocaleString() })}</p>}
+      </div>}
+      {readState === "unavailable" && <p className="text-[13px] text-ink-secondary">{t("settings.usage.learningUnavailable" as LocaleKey)}</p>}
       {ceiling && (
-        <div id="usage-learning-heading" tabIndex={-1} className="outline-none">
-          <Card title={t("settings.l6.usage.learningTitle")}>
-            <div className="flex flex-col gap-3">
-              <LimitBar label={readLine(ceiling)} used={ceiling.inputUsed} limit={ceiling.input} />
-              <LimitBar label={writtenLine(ceiling)} used={ceiling.outputUsed} limit={ceiling.output} />
-              {ceiling.paused && <div className="text-[13px] text-ink">{t("settings.l6.usage.paused")}</div>}
-              <div className="text-[13px] leading-relaxed text-ink-secondary">
-                {connection ? `${t("settings.l6.usage.runsOn", { connection })} ` : ""}{t("settings.l6.usage.guard")}
-              </div>
-              <div>
-                <button
-                  type="button"
-                  className="text-[13px] text-accent underline hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
-                  data-setting-control="usage-learning-heading"
-                  onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "memory", anchor: LEARNING_LIMIT_ANCHOR })}
-                >
-                  {t("settings.l6.usage.changeLimit")}
-                </button>
-              </div>
-            </div>
-          </Card>
+        <div className="flex flex-col gap-3">
+          <LimitBar label={readLine(ceiling)} used={ceiling.inputUsed} limit={ceiling.input} />
+          <LimitBar label={writtenLine(ceiling)} used={ceiling.outputUsed} limit={ceiling.output} />
+          {ceiling.paused && <div className="text-[13px] text-ink">{t("settings.l6.usage.paused")}</div>}
+          <div className="text-[13px] leading-relaxed text-ink-secondary">
+            {connection ? `${t("settings.l6.usage.runsOn", { connection })} ` : ""}{t("settings.l6.usage.guard")}
+          </div>
+          {desktop === true && <div>
+            <button
+              type="button"
+              className="text-[13px] text-accent underline hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+              data-setting-control="usage-learning-heading"
+              onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage", anchor: LEARNING_LIMIT_ANCHOR })}
+            >
+              {t("settings.l6.usage.changeLimit")}
+            </button>
+          </div>}
         </div>
       )}
+      {readState !== "unavailable" && <button type="button" className={`${button} mt-3 min-h-11`} disabled={readState === "loading"} onClick={refresh}>
+        {t(readState === "failed" ? "providerError.retry" : "memoryPage.refresh")}
+      </button>}
+    </Card>
+  );
+}
+
+export function UsageSection() {
+  return (
+    <>
+      <SpendLimitCard />
+      <PlanUsageCard />
+      <UsageByBotCard />
+      <UsageByRoutineCard />
+      <Anchor id="usage-learning-heading"><UsageLearningCard /></Anchor>
     </>
   );
 }

@@ -34,3 +34,19 @@ export declare function acquireDataDirLeaseForProcess(
   dataDir: string,
   environment?: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ): OwnedDataDirLease | DelegatedDataDirLease;
+
+export declare function dataDirIdentity(canonical: string, platform?: NodeJS.Platform): string;
+export declare function bootSession(): string | null;
+export declare function uptimeMs(): number | null;
+export declare function linuxProcStat(pid: number): [string, string] | null;
+export declare function processIsAlive(pid: number): boolean;
+export declare function probeProcessStartSync(pid: number): string | null;
+
+export declare function currentDataDirLeaseEpoch(dataDir: string): string | null;
+
+export declare function validProcessStart(value: unknown, platform?: NodeJS.Platform): boolean;
+export declare function localHost(): string;
+export declare function sameMachine(record: {host:string;boot?:string|null}, host?:string, boot?:string|null): boolean;
+export declare function validBoot(value:unknown): boolean;
+export declare function validUptime(value:unknown): boolean;
+export declare function provedOwnerReboot(owner: {boot?:string|null;uptime?:number|null}, boot?:string|null, uptimeValue?:number|null): boolean;

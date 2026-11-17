@@ -1,0 +1,11 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -1666,7 +1666,7 @@
+   const bytes = new Uint8Array(await response.arrayBuffer());
+   if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("Connected-app response exceeded 20 MB");
+   assertCurrent();
+-  if (broker && response.ok) await observeAppAnswer(cfg, payload, bytes, options.noRetry === true);
++  /* mutant: discard tool failure health observation */
+   if (cacheKey && cachePolicy && response.status === 200) rememberToolResponse(cacheKey, cachePolicy.ttlMs, response.headers.get("content-type"), bytes);
+   if (forwarded) rememberTransportSession(forwarded, identity);
+   const nextSession = response.headers.get("mcp-session-id") ?? undefined;

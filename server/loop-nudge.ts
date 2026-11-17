@@ -13,6 +13,7 @@
 // (no input). ACP (fuigo, grok, opencode): the identity + rawInput.command or the canonical rawInput. pi: toolName + args.
 import { createHash } from "node:crypto";
 import type { RuntimeEvent } from "./contracts.ts";
+import type { EngineFence } from "./drivers/engine-input.ts";
 import { buildPrompt, noneRef, promptPart } from "./memory/prompt-parts.ts";
 import { STEER_READY_WAIT_MS, cardSteeringMode, steerBusyDesk } from "./project-card-executor.ts";
 import { redactSecretsInText } from "./redact.ts";
@@ -35,8 +36,14 @@ export interface LoopNudgeDeps {
   waitingOnHuman(threadId: string): boolean;
   /** The thread's direct run is being stopped (directRuns phase "stopping"). */
   stopping(threadId: string): boolean;
+  /** PROVISIONAL INTERFACE: read the current run's isolation/generation at
+   * admission and again at the actual write. A1 owns durable run isolation. */
+  isolated?(threadId: string): boolean;
+  generation?(threadId: string): string | undefined;
   /** The thread's bot engine adapter; undefined for a room or an unknown thread. */
   adapter(threadId: string): SteerAdapter;
+  /** Capture the exact event's consuming turn before queueing the note. */
+  fence(threadId: string, providerTurnId: string | undefined): EngineFence | undefined;
   /** Record the activity row (LOOP_NUDGE_ROW) once the engine took the note. */
   record(threadId: string): void;
   log?(line: string): void;
@@ -129,14 +136,23 @@ export function createLoopNudge(deps: LoopNudgeDeps) {
     if (!deps.watching(threadId)) return undefined;
     const adapter = deps.adapter(threadId);
     if (!adapter || cardSteeringMode(adapter) !== "steer") return undefined;
-    if (deps.waitingOnHuman(threadId) || deps.stopping(threadId)) return undefined;
+    if (deps.waitingOnHuman(threadId) || deps.stopping(threadId) || deps.isolated?.(threadId)) return undefined;
+    const engineFence = deps.fence(threadId, per.turnId);
+    if (!engineFence) return undefined;
+    const generation = deps.generation?.(threadId);
     // reserved before the first await: bus subscribers are not awaited, and Fuigo awaits its echo
     streak.noted = true;
     per.notes++;
-    const onLate = (late: string) => { if (late === "delivered") delivered(threadId, digest); };
-    return steerBusyDesk(adapter, threadId, buildPrompt(undefined, [promptPart(LOOP_NUDGE_NOTE, [noneRef("murage")])]), true, undefined,
-      undefined, deps.waitMs ?? STEER_READY_WAIT_MS, onLate)
-      .then(outcome => { if (outcome === "steer") delivered(threadId, digest); })
+    const stillCurrent = () => threads.get(threadId) === per
+      && deps.generation?.(threadId) === generation && deps.watching(threadId)
+      && !deps.stopping(threadId) && !deps.isolated?.(threadId);
+    const beforeWrite = () => {
+      if (!stillCurrent() || deps.waitingOnHuman(threadId)) throw new Error("LOOP_NUDGE_TARGET_CHANGED");
+    };
+    const onLate = (late: string) => { if (late === "delivered" && stillCurrent()) delivered(threadId, digest); };
+    return steerBusyDesk(adapter, threadId, buildPrompt(undefined, [promptPart(LOOP_NUDGE_NOTE, [noneRef("murage")])]), true, beforeWrite,
+      undefined, deps.waitMs ?? STEER_READY_WAIT_MS, onLate, engineFence)
+      .then(outcome => { if (outcome === "steer" && stillCurrent()) delivered(threadId, digest); })
       .catch(() => { /* a refused note is dropped: never queued, never retried */ });
   }
 

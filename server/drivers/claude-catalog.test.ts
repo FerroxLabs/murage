@@ -26,10 +26,20 @@ describe("readClaudeModelCatalog", () => {
 
   it("returns the official models when settings are missing", () => {
     expect(readClaudeModelCatalog({ HOME: join(tmpdir(), "murage-claude-missing-home") })).toEqual(STATIC_CLAUDE_MODELS);
-    expect(STATIC_CLAUDE_MODELS.options.slice(0, 2)).toEqual([
-      { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
-      { id: "claude-fable-5", label: "Claude Fable 5" },
+    // MAIN RULING 1114-MODELS-FRESH: published Fable 5.2 leads; all Fable rows have 1M context.
+    expect(STATIC_CLAUDE_MODELS.options.slice(0, 3)).toEqual([
+      { id: "claude-fable-5-2", label: "Claude Fable 5.2", contextWindow: 1_000_000 },
+      { id: "claude-fable-5-1", label: "Claude Fable 5.1", contextWindow: 1_000_000 },
+      { id: "claude-fable-5", label: "Claude Fable 5", contextWindow: 1_000_000 },
     ]);
+  });
+
+  it("leads Fable with the newest catalog version and labels every row", () => {
+    const fables = STATIC_CLAUDE_MODELS.options.filter(row => /^claude-fable-/.test(row.id));
+    const newest = [...fables].sort((a, b) => b.id.localeCompare(a.id, "en", { numeric: true }))[0];
+    expect(fables[0]?.id).toBe("claude-fable-5-2");
+    expect(fables[0]).toBe(newest);
+    for (const row of STATIC_CLAUDE_MODELS.options) expect(row.label.trim().length, row.id).toBeGreaterThan(0);
   });
 
   it("gives the 5.5 models their 1M context window and defaults to Sonnet 5.5", () => {

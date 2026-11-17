@@ -1,0 +1,85 @@
+✖ reviewer Desktop snapshot native helper exceeds 300 seconds (3.410388ms)
+✖ reviewer scanner witness lowercase-js (89.379949ms)
+✖ reviewer scanner witness taskkill-test (68.254074ms)
+✖ reviewer scanner witness cim-terminate (73.071897ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 0
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 360.470259
+
+✖ failing tests:
+
+test at .test-tmp/cfix4-winscen/reviewer-red.mjs:2:1
+✖ reviewer Desktop snapshot native helper exceeds 300 seconds (3.410388ms)
+  AssertionError [ERR_ASSERTION]: reviewer witness: timeout must terminate the owned job, never the child directly
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///work/.test-tmp/cfix4-winscen/reviewer-red.mjs:7:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at .test-tmp/cfix4-winscen/reviewer-red.mjs:9:187
+✖ reviewer scanner witness lowercase-js (89.379949ms)
+  AssertionError [ERR_ASSERTION]: unsafe source evades the original scanner: child.kill();
+      at TestContext.<anonymous> (file:///work/.test-tmp/cfix4-winscen/reviewer-red.mjs:11:141)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 0,
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at .test-tmp/cfix4-winscen/reviewer-red.mjs:9:187
+✖ reviewer scanner witness taskkill-test (68.254074ms)
+  AssertionError [ERR_ASSERTION]: unsafe source evades the original scanner: taskkill.exe /PID 123 /F
+      at TestContext.<anonymous> (file:///work/.test-tmp/cfix4-winscen/reviewer-red.mjs:11:141)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 0,
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at .test-tmp/cfix4-winscen/reviewer-red.mjs:9:187
+✖ reviewer scanner witness cim-terminate (73.071897ms)
+  AssertionError [ERR_ASSERTION]: unsafe source evades the original scanner: Invoke-CimMethod -InputObject $process -MethodName Terminate
+      at TestContext.<anonymous> (file:///work/.test-tmp/cfix4-winscen/reviewer-red.mjs:11:141)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 0,
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }

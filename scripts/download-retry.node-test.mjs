@@ -1,6 +1,7 @@
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fetchPinned, fetchWithRetry, isRetryableStatus, mirrorUrlFor } from "./download-retry.mjs";
@@ -38,7 +39,7 @@ test("age staging: a wrong archive is still rejected after a successful retry do
   try {
     await assert.rejects(stageBackupAge({ root: path.resolve(new URL("../", import.meta.url).pathname), target: "linux-x64" }), /BACKUP_AGE_(ARCHIVE_MISMATCH|DOWNLOAD_FAILED)/);
     assert.equal(calls, 3); // 504, then wrong bytes from upstream and from the mirror
-  } finally { globalThis.fetch = real; globalThis.setTimeout = realSetTimeout; rmSync(root, { recursive: true, force: true }); }
+  } finally { globalThis.fetch = real; globalThis.setTimeout = realSetTimeout; safeWipeSync(root); }
 });
 test("CUA linux: retries 504 then fails closed on exhaustion; 404 is immediate; bad bytes still mismatch", async () => {
   const mk = () => mkdtempSync(path.join(tmpdir(), "retry-cua-"));
@@ -49,7 +50,7 @@ test("CUA linux: retries 504 then fails closed on exhaustion; 404 is immediate; 
   await assert.rejects(stageLinuxCua(opts(async () => { c++; return res(404); }, r2)), /HTTP 404/); assert.equal(c, 2);
   let r3 = mk(); c = 0;
   await assert.rejects(stageLinuxCua(opts(async () => (++c === 1 ? res(503) : res(200, "wrong bytes")), r3)), /size does not match|checksum mismatch/); assert.equal(c, 2);
-  for (const d of [r1, r2, r3]) rmSync(d, { recursive: true, force: true });
+  for (const d of [r1, r2, r3]) safeWipeSync(d);
 });
 
 test("a body that drops mid-download is retried and no partial bytes escape", async () => {
@@ -102,7 +103,7 @@ test("CUA linux: falls back to the mirror and still rejects tampered bytes", asy
   const fetchImpl = async u => { seen.push(u); return u.includes("build-mirror") ? res(200, "tampered") : res(504); };
   await assert.rejects(stageLinuxCua({ rootDirectory: root, platform: "linux", arch: "x64", fetchImpl, downloadAttempts: 2, downloadRetryDelayMs: 1, sleep: async () => {} }), /size does not match|checksum mismatch/);
   assert.equal(seen.length, 3); assert.ok(seen[2].includes("build-mirror-1/cua-driver-rs-0.19.3-linux-x86_64-binary.tar.gz"));
-  rmSync(root, { recursive: true, force: true });
+  safeWipeSync(root);
 });
 
 // Cache-first pinned downloads (cache, then upstream, then mirror; every source verified).
@@ -117,7 +118,7 @@ test("pinned download: a verified cache entry is used with no network", async ()
     const fetchImpl = async () => { throw new Error("network must not be touched"); };
     const response = await fetchPinned("https://example.com/t.tgz", {}, { ...quiet, fetchImpl, sha256: pinOf("good"), env: cacheEnv(dir) });
     assert.equal(await response.text(), "good");
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { safeWipeSync(dir); }
 });
 test("pinned download: a poisoned cache entry is discarded, then fetched and re-cached", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "dl-cache-"));
@@ -127,7 +128,7 @@ test("pinned download: a poisoned cache entry is discarded, then fetched and re-
     const response = await fetchPinned("https://example.com/t.tgz", {}, { ...quiet, fetchImpl, sha256: pinOf("good"), env: cacheEnv(dir) });
     assert.equal(await response.text(), "good");
     assert.equal(readFileSync(path.join(dir, pinOf("good")), "utf8"), "good");
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { safeWipeSync(dir); }
 });
 test("pinned download: upstream 504s fall to the mirror; a wrong body is never returned or cached", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "dl-cache-"));
@@ -141,7 +142,7 @@ test("pinned download: upstream 504s fall to the mirror; a wrong body is never r
     const wrong = await fetchPinned("https://example.com/u.tgz", {}, { ...quiet, fetchImpl: async () => res(200, "bad"), attempts: 1, sha256: pinOf("good2"), env: cacheEnv(other) });
     assert.equal(wrong.ok, false);
     assert.equal(existsSync(path.join(other, pinOf("good2"))), false);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { safeWipeSync(dir); }
 });
 test("pinned download: the token goes to github.com only and a rejected token retries anonymously", async () => {
   const seen = [];

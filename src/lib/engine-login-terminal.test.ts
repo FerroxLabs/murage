@@ -73,7 +73,7 @@ describe("the vendor auth-host allow-list", () => {
   });
   it("is the same list in the renderer and in main", () => {
     expect([...ENGINE_LOGIN_AUTH_HOSTS]).toEqual([...MAIN_HOSTS]);
-    expect([...ENGINE_LOGIN_AUTH_HOSTS]).toEqual(["accounts.x.ai", "auth.openai.com", "claude.ai", "claude.com", "platform.claude.com", "www.kimi.ai"]);
+    expect([...ENGINE_LOGIN_AUTH_HOSTS]).toEqual(["accounts.google.com", "accounts.x.ai", "auth.openai.com", "claude.ai", "claude.com", "platform.claude.com", "www.kimi.ai"]);
   });
   it("refuses everything else, and agrees with main on every refusal", () => {
     for (const bad of ["https://evil.example/", "http://claude.ai/", "https://claude.ai.evil.example/", "https://evilclaude.ai/", "https://user@claude.ai/", "https://claude.ai:444/",
@@ -194,5 +194,17 @@ describe("the session", () => {
     session.stop();
     await tick();
     expect(f.bridge.stop).toHaveBeenCalledWith({ id: "s1" });
+  });
+});
+const AGY_GOOD = "https://accounts.google.com/o/oauth2/v2/auth?client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=openid&code_challenge=" + "A".repeat(43) + "&code_challenge_method=S256&state=xyz";
+describe("Antigravity's Google link (AGY-ON-CLOUD 5)", () => {
+  it("opens agy's own link on accounts.google.com, in the renderer and in main", () => {
+    expect(checkAuthUrl(AGY_GOOD)).toBe(AGY_GOOD);
+    expect(mainCheck(AGY_GOOD)).toBe(AGY_GOOD);
+  });
+  it("refuses the same host with another client, no PKCE, a duplicated redirect or an http scheme, and main agrees", () => {
+    const bad = [AGY_GOOD.replace("1071006060591", "999"), AGY_GOOD.replace("&code_challenge_method=S256", ""), AGY_GOOD + "&redirect_uri=https%3A%2F%2Fevil.example%2F",
+      AGY_GOOD.replace("https://", "http://"), AGY_GOOD.replace("code_challenge=" + "A".repeat(43), "code_challenge=abc"), "https://accounts.google.com/signin/v2/identifier"];
+    for (const url of bad) { expect(checkAuthUrl(url)).toBeNull(); expect(mainCheck(url)).toBeNull(); }
   });
 });

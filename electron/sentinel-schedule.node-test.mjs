@@ -3,7 +3,7 @@
 // machine, update and rollback, and removal scope. Needs `pnpm build:server` (the real descriptor writer and guards
 // come from dist-server/health/host-boundary.js).
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -17,7 +17,12 @@ import {
 import { SENTINEL_TRAMPOLINE_FLAG } from "./sentinel-trampoline.mjs";
 
 const POSIX_ONLY = process.platform === "win32" && "owner uid and mode checks are POSIX-only";
-const boundary = await import(pathToFileURL(path.join(import.meta.dirname, "..", "dist-server", "health", "host-boundary.js")).href);
+// Keep bundle failures on each registered test so the gate sees the full
+// failing count even if the packaged boundary is missing or cannot load.
+let boundary;
+beforeEach(async () => {
+  boundary = await import(pathToFileURL(path.join(import.meta.dirname, "..", "dist-server", "health", "host-boundary.js")).href);
+});
 const ID = "0123456789abcdef0123456789abcdef";
 const OTHER = "fedcba9876543210fedcba9876543210";
 const roots = [];
@@ -347,6 +352,16 @@ const reconcile = (fx, provider, extra = {}) => reconcileSentinelRegistration({
   entrySource: fx.entrySource, provider, boundary, probe: async () => boundary.EXIT.notProven, now: () => 1_000, ...extra,
 });
 
+test("S5 site 25 rebuilds the installation descriptor and registration after the data root moves", { skip: POSIX_ONLY }, async () => {
+  const fx=installation(),provider=fakeProvider();
+  assert.equal((await reconcile(fx,provider)).state,"registered");
+  const next=path.join(fx.base,"moved-data");mkdirSync(next,{mode:0o700});
+  assert.equal((await reconcile(fx,provider,{installationRoot:next})).state,"registered");
+  const descriptor=boundary.loadDescriptor(fx.descriptorPath,{platform:"linux"}).value;
+  assert.equal(descriptor.installationRoot,next);assert.equal(descriptor.inputRoot,path.join(next,"health"));
+  assert.deepEqual(provider.installs,[1,2]);
+});
+
 test("first install: unregistered -> staged -> registered, with a staged owner-only entry and descriptor revision 1", { skip: POSIX_ONLY }, async () => {
   const fx = installation();
   const provider = fakeProvider();
@@ -492,4 +507,22 @@ test("no previous identity: past the deadline the registration needs attention, 
   const result = await proveSentinelRegistration({ platform: "linux", outputRoot: fx.outputRoot, provider: fakeProvider(), boundary: proofBoundary({ state: "registered", heartbeatAt: null }), now: () => 1_001 + PROOF_DEADLINE_MS });
   assert.equal(result.state, "registration-needed");
   assert.equal(readRegistrationRecord(fx.outputRoot, { platform: "linux" }).reason, "no-heartbeat");
+});
+
+test('Windows gate prefixes the production task and joins the job through the GUI bridge',()=>{
+ const keys=['MURAGE_GATE_RUN_PREFIX','MURAGE_GATE_TASK_HELPER','MURAGE_GATE_JOB_NAME'];
+ const saved=keys.map(k=>process.env[k]);
+ try {
+  const prefix=`MurageCI-${'a'.repeat(32)}-`;
+  process.env.MURAGE_GATE_RUN_PREFIX=prefix;
+  process.env.MURAGE_GATE_TASK_HELPER='C:\\murage-ci\\results\\h1\\task-bridge.exe';
+  process.env.MURAGE_GATE_JOB_NAME=`Local\\${prefix}`;
+  assert.equal(sentinelNames(ID).task,`\\FerroxLabs\\Murage\\Sentinel\\${prefix}${ID}`);
+  const input=descriptorFor({platform:'win32',exe:'C:\\murage-ci\\app\\Murage.exe',entry:'C:\\murage-ci\\scan.js'});
+  const invocation=sentinelInvocation({platform:'win32',...input});
+  assert.equal(invocation.executable,process.env.MURAGE_GATE_TASK_HELPER);
+  assert.deepEqual(invocation.args.slice(0,3),[process.env.MURAGE_GATE_JOB_NAME,input.descriptor.executable.path,SENTINEL_TRAMPOLINE_FLAG]);
+  process.env.MURAGE_GATE_JOB_NAME='unowned';
+  assert.throws(()=>sentinelNames(ID));
+ }finally{keys.forEach((k,i)=>{if(saved[i]===undefined)delete process.env[k];else process.env[k]=saved[i];});}
 });
