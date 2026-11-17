@@ -30,7 +30,8 @@ function namedWindowsLoginEnabled(value,name,executable,args){
   return item.scope==="user"&&item.enabled===true&&windowsExecutableIdentity(item.path)===windowsExecutableIdentity(executable)&&item.args.length===args.length&&item.args.every((arg,index)=>arg===args[index]);
 }
 
-export function createBackgroundLogin({platform,app,installed,primaryProfile,profileDir,userDataDir,executable,autostartDir}){
+const linuxEntry=(executable,args,marker)=>["[Desktop Entry]","Type=Application","Name=Murage",`Exec=${[executable,...args].map(desktopExecArgument).join(" ")}`,"Terminal=false","Hidden=false",marker,""].join("\n");
+export function createBackgroundLogin({platform,app,installed,primaryProfile,profileDir,userDataDir,executable,autostartDir,previousProfileDirs=[]}){
   const identity=createHash("sha256").update(profileDir??"unavailable").digest("hex").slice(0,16);
   const args=[LOGIN_FLAG,"--murage-data-dir",profileDir??"","--murage-user-data",userDataDir];
   const windowsName=`Murage-${identity}`;
@@ -66,7 +67,32 @@ export function createBackgroundLogin({platform,app,installed,primaryProfile,pro
     // (login_item_settings_converter.cc), so macOS trusts SMAppService status alone.
     return {supported:true,openAtLogin:value.openAtLogin===true,wasOpenedAtLogin:value.wasOpenedAtLogin===true,requiresApproval:value.status==="requires-approval"};
   };
-  return {read,
+  const api={read,
+    async reconcile(){
+      if(!installed||!profileDir||!Array.isArray(previousProfileDirs))return;
+      for(const previous of previousProfileDirs.slice(0,4)){
+        if(typeof previous!=="string"||!isAbsolute(previous)||previous===profileDir)continue;
+        const oldId=createHash("sha256").update(previous).digest("hex").slice(0,16),oldArgs=[LOGIN_FLAG,"--murage-data-dir",previous,"--murage-user-data",userDataDir];
+        if(platform==="linux"&&autostartDir){
+          const prior=join(autostartDir,`murage-${oldId}.desktop`);
+          let stat;try{stat=lstatSync(prior);}catch(error){if(error.code==="ENOENT")continue;throw error;}
+          if(!stat.isFile()||stat.isSymbolicLink()||stat.size>32768||stat.uid!==process.getuid?.()||(stat.mode&0o022))throw Error("The previous sign-in entry changed. Review startup settings.");
+          const text=readFileSync(prior,"utf8"),expected=linuxEntry(executable,oldArgs,`X-Murage-Profile=${oldId}`);
+          if(text!==expected)throw Error("The previous sign-in entry changed. Review startup settings.");
+          // An explicit current entry wins. Only a still-enabled, unchanged previous entry carries its setting.
+          if(!existsSync(file)){await api.write(true);if(!read().openAtLogin)throw Error("Sign-in startup could not be updated.");}
+          if(readFileSync(prior,"utf8")!==text)throw Error("The previous sign-in entry changed. Review startup settings.");
+          unlinkSync(prior);
+        }else if(platform==="win32"){
+          const value=app.getLoginItemSettings(windowsReadOptions);
+          if(!namedWindowsLoginEnabled(value,`Murage-${oldId}`,executable,oldArgs))continue;
+          // An explicit current entry wins, including a disabled entry or a command this process does not own.
+          const currentExists=value.launchItems.some(item=>item.name===windowsName);
+          if(!currentExists){await api.write(true);if(!read().openAtLogin)throw Error("Sign-in startup could not be updated.");}
+          app.setLoginItemSettings({openAtLogin:false,path:executable,args:["--",...oldArgs],name:`Murage-${oldId}`,enabled:false});
+        }
+      }
+    },
     async write(enabled){
       if(typeof enabled!=="boolean")throw new Error("Sign-in startup must be on or off.");
       const state=read();if(!state.supported)throw new Error(state.reason);
@@ -74,7 +100,7 @@ export function createBackgroundLogin({platform,app,installed,primaryProfile,pro
         const current=linuxText();
         if(!enabled){if(current!==null)unlinkSync(file);return;}
         mkdirSync(autostartDir,{recursive:true,mode:0o700});
-        const text=["[Desktop Entry]","Type=Application","Name=Murage",`Exec=${[executable,...args].map(desktopExecArgument).join(" ")}`,"Terminal=false","Hidden=false",marker,""].join("\n");
+        const text=linuxEntry(executable,args,marker);
         const temporary=`${file}.${process.pid}.tmp`;
         writeFileSync(temporary,text,{mode:0o600,flag:"wx"});
         try{renameSync(temporary,file);}catch(error){unlinkSync(temporary);throw error;}
@@ -82,4 +108,5 @@ export function createBackgroundLogin({platform,app,installed,primaryProfile,pro
     },
     launchedAtLogin:()=>{if(process.argv.includes(LOGIN_FLAG))return true;try{return read().wasOpenedAtLogin===true;}catch{return false;}},
   };
+  return api;
 }

@@ -3,7 +3,7 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +57,7 @@ const FIXTURES = {
 
 async function open(page: import("@playwright/test").Page, answer: unknown, path = "/__health") {
   await page.addInitScript(() => {
+    localStorage.setItem("help.seen.chat.level-chip", "1");
     Object.defineProperty(window, "muragebox", { configurable: true, value: { platform: "darwin", desktopSurfaceSecret: "fake-proof" } });
     Object.defineProperty(window, "EventSource", { configurable: true, value: class { onopen: unknown; onerror: unknown; onmessage: unknown; close() {} } });
   });

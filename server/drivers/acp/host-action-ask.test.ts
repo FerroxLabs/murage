@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
-import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { recordAdmittedEvents, type EventRecorder } from "../../testing/admitted-events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { resolveCall, type GrantCall } from "../../../shared/app-action-grant.ts";
 import { autoVerdict, type AutoApprover } from "../../auto-approve.ts";
@@ -37,6 +37,7 @@ const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "test
 
 const SUPPORT: AcpSupport = {
   driverKind: "hostAskTest",
+  fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
   displayName: "Host Ask Test",
   models: { default: "m", options: [{ id: "m", label: "M" }] },
   defaultCli: "fake",
@@ -50,7 +51,7 @@ const SUPPORT: AcpSupport = {
 const ServiceAsks = createAcpDriver({ ...SUPPORT, hostComputerAskedByMurage: true });
 const EngineAsks = createAcpDriver(SUPPORT);
 
-const HOST = { localComputer: { command: process.execPath, args: ["/fake/cua-driver.js"], env: {}, platform: "linux" as const, scope: "local-computer" as const } };
+const HOST = { localComputer: { command: process.execPath, args: [fileURLToPath(new URL("../../testing/fake-c11-mcp.mjs", import.meta.url))], env: { FIXTURE_TOOLS: JSON.stringify(["click", "type_text", "drag", "get_desktop_state"]) }, platform: "linux" as const, scope: "local-computer" as const } };
 
 const ASK: AutoApprover = { autoApprove: false };
 const AUTO: AutoApprover = { autoApprove: true };
@@ -87,8 +88,8 @@ describe("Murage's computer service asks for an engine that runs the computer mo
   const running = async (driver: typeof ServiceAsks, threadId: string) => {
     process.env.FAKE_ACP_MODE = "permission";
     process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify({ toolCallId: "tc-shell", kind: "execute", title: "ls", rawInput: { command: "ls" } });
-    instance = await driver.create({ instanceId: "host-ask", displayName: "Host Ask", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
-    recorder = recordEvents(instance.adapter);
+    instance = await driver.create({ instanceId: "host-ask", displayName: "Host Ask", environment: { FAKE_ACP_MCP_CONNECT: "1" }, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
+    recorder = recordAdmittedEvents(instance.adapter);
     await instance.adapter.sendTurn({ threadId, text: "go", cwd: scratch, integrations: HOST } as any);
     return (await recorder.until((e) => e.type === "request.opened" && (e as any).tool === "shell")) as any;
   };
@@ -121,6 +122,20 @@ describe("Murage's computer service asks for an engine that runs the computer mo
     await recorder!.until((e) => e.type === "turn.completed");
     // the turn is gone: nothing can be asked, and the service then has no turn to act for either
     expect(await instance!.adapter.askHostAction!("t-host-ask", { name: "click" })).toBeNull();
+  }, 30000);
+
+  it("BLOCK1 host action confirms the explicit in-process answer receipt", async () => {
+    const shell = await running(ServiceAsks, "t-host-receipt");
+    const action = instance!.adapter.askHostAction!("t-host-receipt", { name: "click", arguments: { x: 1, y: 2 } });
+    const opened = await recorder!.until(e => e.type === "request.opened" && e.tool === "mcp__computer__click");
+    const receipt = instance!.adapter.respondToRequest("t-host-receipt", String(opened.requestId), { behavior: "allow" }, { answerId: "host-answer" });
+    expect(await action).toBe("allow");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      expect(await Promise.race([receipt, new Promise(resolve => { timer = setTimeout(() => resolve("missing in-process receipt"), 500); })])).toEqual({ state: "accepted" });
+    } finally { clearTimeout(timer); }
+    await instance!.adapter.respondToRequest("t-host-receipt", shell.requestId, { behavior: "deny" });
+    await recorder!.until(e => e.type === "turn.completed");
   }, 30000);
 
   it("asks nothing for an engine that asks for the computer itself (one card, never two)", async () => {

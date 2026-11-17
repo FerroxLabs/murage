@@ -5,18 +5,21 @@
 // skipped and Murage's relay hook in front of every tool, so commands and Murage's tools work and the stop line
 // still holds. Ask is unchanged. A relay that cannot be set up keeps accept-edits; an agy that did not load the hook
 // gets no prompt at all.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {driverOwnerDecisionFixture} from '../testing/driver-decision-fixture.ts';
+import { fixtureMountTurn } from '../testing/mcp-admission-fixture.ts';
+import * as procs from '../procs.ts';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, lstatSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR, ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { classifyAsk, type StopHit } from "../stop-line.ts";
 import { stopLineRealpath } from "../stop-line-state.ts";
 import { removeTempDir, removeTempDirSync } from "../testing/cleanup.ts";
-import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { recordMountedFixtureEvents as recordEvents, type EventRecorder } from "../testing/admitted-events.ts";
 import * as antigravity from "./antigravity.ts";
 import { ANTIGRAVITY_HOOK_NOT_LOADED, ANTIGRAVITY_HOOK_SKIPPED, AntigravityDriver } from "./antigravity.ts";
 import * as relayModule from "./antigravity-relay.ts";
@@ -39,6 +42,7 @@ describe("Antigravity at Auto and Full access: Murage's relay hook", () => {
   let home = "";
   let dump = "";
   /** What the test's broker decided for each relayed ask, by the stop line exactly as the server reads it. */
+  let releaseDecision=()=>{};
   let decided: Array<{ tool: string; hit: StopHit | null }> = [];
 
   beforeEach(() => {
@@ -56,12 +60,14 @@ describe("Antigravity at Auto and Full access: Murage's relay hook", () => {
   });
   afterEach(async () => {
     recorder?.stop();
+    releaseDecision();
     await instance?.dispose();
     instance = undefined;
     for (const name of FAKE_ENV) delete process.env[name];
     await removeTempDir(scratch);
   });
 
+  // PRODUCT CHANGE Tier F §1: legacy-byte fixtures explicitly opt into open; bound relay cases are in tier-f-antigravity.test.ts.
   /** The instance's environment is read when it is created, so the turn's tool steps are set first. */
   const create = async (calls: Array<{ name: string; args: Record<string, unknown> }> = []) => {
     process.env.FAKE_AGY_TOOL_CALLS = JSON.stringify(calls);
@@ -70,6 +76,7 @@ describe("Antigravity at Auto and Full access: Murage's relay hook", () => {
       config: { cli: FAKE_AGY, fullAuto: true },
     });
     recorder = recordEvents(instance.adapter);
+    releaseDecision=driverOwnerDecisionFixture(instance.adapter,work);
     // The broker's stop line (server/index.ts stopLineFor reads the same fields): a hit is refused, anything else allowed.
     instance.adapter.onEvent((e) => {
       if (e.type !== "request.opened") return;
@@ -81,7 +88,12 @@ describe("Antigravity at Auto and Full access: Murage's relay hook", () => {
     });
   };
   const turn = async (level: Pick<SendTurnInput, "routeAsks" | "stopLine" | "askLevel">, extra: Partial<SendTurnInput> = {}) => {
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-agy-auto", text: "do the work", cwd: work, ...level, ...extra });
+    const input = { releaseBinding: null as never, threadId: "t-agy-auto", text: "do the work", cwd: work, ...level, ...extra };
+    // Mounted positives need dispatcher admission; native-only controls retain
+    // their explicit non-consuming input, including missing-binding negatives.
+    const admitted = extra.integrations && Object.keys(extra.integrations).length && !("releaseBinding" in extra)
+      ? fixtureMountTurn({ ...input, releaseBinding: undefined }) : input;
+    const { turnId } = await instance!.adapter.sendTurn(admitted);
     const done = await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     const steps = recorder!.events.filter((e): e is Extract<RuntimeEvent, { type: "item.completed" }> => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool");
     return {
@@ -93,18 +105,113 @@ describe("Antigravity at Auto and Full access: Murage's relay hook", () => {
     };
   };
 
+  it("T-R3-AGY-ABSENT-BINDING-IS-UNBOUND", async () => {
+    process.env.FAKE_AGY_MCP_DUMP = join(scratch, "mcp.json");
+    await create([call("view_file", { AbsolutePath: join(work, "a.txt") })]);
+    // MAIN RULING 2026-11-14 the external admission fence wins: this
+    // unbound native Ask control requests no consuming MCP mount.
+    // Mirror the null-binding Ask control, without the helper's explicit null.
+    const sent = await instance!.adapter.sendTurn({ threadId: "t-agy-absent", text: "do the work", cwd: work,
+      routeAsks: true, askLevel: true,
+      integrations: {} });
+    expect(await recorder!.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv).toContain("accept-edits");
+    expect(seen.argv).not.toContain("--dangerously-skip-permissions");
+    expect(seen.argv).not.toContain("--log-file");
+    expect(recorder!.events.filter(e => e.type === "request.opened")).toEqual([]);
+    expect(readFileSync(join(scratch, "mcp.json"), "utf8")).toBe("null");
+  });
+
   it("Ask is unchanged: accept-edits, the Ask hook, no relay, no Murage tools", async () => {
     process.env.FAKE_AGY_HOME_DUMP = join(scratch, "home.json");
     process.env.FAKE_AGY_MCP_DUMP = join(scratch, "mcp.json");
     await create([call("view_file", { AbsolutePath: join(work, "a.txt") })]);
     const r = await turn({ routeAsks: true, askLevel: true }, {
-      integrations: { custom: { notes: { command: process.execPath, args: [], env: {} } } } as never,
+      integrations: {},
     });
     expect(r.seen.argv).toContain("accept-edits");
     expect(r.seen.argv).not.toContain("--dangerously-skip-permissions");
     expect(r.seen.argv).not.toContain("--log-file");
     expect(r.opened).toEqual([]);
     expect(readFileSync(join(scratch, "mcp.json"), "utf8")).toBe("null");
+  });
+
+  it("P1 managed Ask relays the exact native call and delivers the owner's one-off answer", async () => {
+    await create([call("run_command", { CommandLine: "printf approved > managed-ask.txt" })]);
+    const r = await turn({ routeAsks: true, askLevel: true }, { permissionNow: () => ({ routeAsks: true, askLevel: true }) });
+    expect(r.opened).toHaveLength(1);
+    expect(r.opened[0].toolCall?.input).toEqual({ command: "printf approved > managed-ask.txt", cwdExplicit: false });
+    expect(r.done).toMatchObject({ ok: true });
+    expect(readFileSync(join(work, "managed-ask.txt"), "utf8")).toBe("approved");
+    expect(recorder!.events).toContainEqual(expect.objectContaining({ type: "request.resolved", behavior: "allow" }));
+  });
+
+  it("SFX-BLOCK1 bound managed Ask refuses relay failure before launch or prompt", async () => {
+    await create();
+    const open = vi.spyOn(relayModule, "openAntigravityRelay").mockRejectedValue(new Error("fixture relay unavailable"));
+    const launch = vi.spyOn(procs, "spawnCli");
+    const admissionNotLaunched = vi.fn();
+    const input = fixtureMountTurn({ threadId: "bound-managed-ask", cwd: work, text: "private consuming prompt",
+      routeAsks: true, askLevel: true, permissionNow: () => ({ routeAsks: true, askLevel: true }), admissionNotLaunched });
+    const write = vi.fn();
+    const fencedWrite: NonNullable<SendTurnInput["fencedWrite"]> = (operation, validate, bytes) => {
+      write();
+      return input.fencedWrite!(operation, validate, bytes);
+    };
+    try {
+      const error = await instance!.adapter.sendTurn({ ...input, fencedWrite }).then(() => undefined, error => error);
+      expect.soft(open).toHaveBeenCalledOnce();
+      expect.soft(launch).not.toHaveBeenCalled();
+      expect.soft(write).not.toHaveBeenCalled();
+      // The fake records the permitted version probe too. It must never see
+      // a turn launch or a prompt when relay admission is refused.
+      const seen = existsSync(dump) ? JSON.parse(readFileSync(dump, "utf8")) : undefined;
+      expect.soft(seen?.prompt).toBeUndefined();
+      if (seen) expect.soft(seen.argv).toEqual(["--version"]);
+      expect.soft(admissionNotLaunched).toHaveBeenCalledOnce();
+      expect.soft(error).toMatchObject({ code: "MEMORY_CONTEXT_REVOKED" });
+      expect(recorder!.events.filter(e => e.type === "turn.started" || e.type === "request.opened")).toEqual([]);
+    } finally { open.mockRestore(); launch.mockRestore(); }
+  });
+
+  it("N1 No limits retries relay setup before a checked native command", async () => {
+    const open = vi.spyOn(relayModule, "openAntigravityRelay").mockRejectedValueOnce(new Error("fixture unavailable"));
+    try {
+      await create([call("run_command", { CommandLine: "echo retried > retried.txt" })]);
+      const r = await turn({ stopLine: true }, { noLimits: true });
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(r.done).toMatchObject({ ok: true });
+      expect(r.opened).toHaveLength(1);
+      expect(readFileSync(join(work, "retried.txt"), "utf8").trim()).toBe("retried");
+      expect(r.notices).toEqual([]);
+    } finally { open.mockRestore(); }
+  });
+
+  it.each(["setup", "unloaded", "foreign"])("N1 No limits runs after %s and reports whether the native wipe relay is available", async failure => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const open = failure === "setup" ? vi.spyOn(relayModule, "openAntigravityRelay").mockRejectedValue(new Error("fixture unavailable")) : undefined;
+    if (failure === "unloaded") process.env.FAKE_AGY_HOOKS_IGNORED = "1";
+    if (failure === "foreign") {
+      mkdirSync(join(work, ".agents"));
+      writeFileSync(join(work, ".agents", "hooks.json"), JSON.stringify({ foreign: { enabled: true } }));
+    }
+    try {
+      await create([call("run_command", { CommandLine: "echo full > full.txt" })]);
+      const r = await turn({ stopLine: true }, { noLimits: true });
+      expect(r.done).toMatchObject({ ok: true });
+      expect(r.seen.argv).toContain("--dangerously-skip-permissions");
+      expect(readFileSync(join(work, "full.txt"), "utf8").trim()).toBe("full");
+      // Workspace hooks are now preserved alongside Murage's hook. Prove the
+      // command actually reached the decision host instead of treating that
+      // supported case as missing wipe coverage.
+      const unavailable=failure!=="foreign";
+      expect(r.notices.filter(line => line?.includes("wipe check could not be connected"))).toHaveLength(unavailable?1:0);
+      expect(warn.mock.calls.filter(([line]) => String(line).includes("wipe check is unavailable"))).toHaveLength(unavailable?1:0);
+      expect(r.opened).toHaveLength(failure==="setup"?0:1);
+      if(failure!=="setup")expect(r.opened[0]!.toolCall?.input).toMatchObject({command:"echo full > full.txt"});
+      if (open) expect(open).toHaveBeenCalledTimes(2);
+    } finally { open?.mockRestore(); warn.mockRestore(); }
   });
 
   for (const [label, level] of [["Auto", { routeAsks: true as const }], ["Full access", { stopLine: true as const }]] as const) {
@@ -148,20 +255,128 @@ describe("Antigravity at Auto and Full access: Murage's relay hook", () => {
     });
   }
 
+  it("N1 No limits setup failure retries once and launches with a coverage notice", async () => {
+    const open = vi.spyOn(relayModule, "openAntigravityRelay").mockRejectedValue(new Error("fixture socket unavailable"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await create([]);
+      const sent = await instance!.adapter.sendTurn({ threadId: "n1-setup", text: "fixture", cwd: work, noLimits: true, stopLine: true });
+      expect(await recorder!.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(readFileSync(dump, "utf8")).argv).toContain("--dangerously-skip-permissions");
+      expect(recorder!.events.filter(e=>e.type=== "item.started"&&e.toolKind==="notice"&&e.title?.includes("wipe check could not be connected"))).toHaveLength(1);
+      expect(warn.mock.calls.some(([line]) => String(line).includes("wipe check is unavailable"))).toBe(true);
+    } finally { open.mockRestore(); warn.mockRestore(); }
+  });
+
+  it("N1 No limits unloaded relay still sends the prompt with a coverage notice", async () => {
+    process.env.FAKE_AGY_HOOKS_IGNORED = "1";
+    const open = vi.spyOn(relayModule, "openAntigravityRelay");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await create([call("run_command", { CommandLine: "echo unchecked > f.txt" })]);
+      const r = await turn({ stopLine: true }, { noLimits: true });
+      expect(r.done).toMatchObject({ ok: true });
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(r.seen.prompt).toBeDefined();
+      expect(existsSync(join(work, "f.txt"))).toBe(true);
+      expect(r.notices.filter(line=>line?.includes("wipe check could not be connected"))).toHaveLength(1);
+      expect(warn.mock.calls.some(([line]) => String(line).includes("wipe check is unavailable"))).toBe(true);
+    } finally { open.mockRestore(); warn.mockRestore(); }
+  });
+
+  it("R2 unloaded relay sends the prompt, then setup failure retries and frees the conversation", async () => {
+    process.env.FAKE_AGY_HOOKS_IGNORED = "1";
+    const realOpen = relayModule.openAntigravityRelay;
+    const open = vi.spyOn(relayModule, "openAntigravityRelay").mockImplementationOnce(realOpen)
+      .mockRejectedValueOnce(new Error("fixture retry setup failed"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await create([]);
+      const r = await turn({ stopLine: true }, { noLimits: true });
+      // MAIN RULING 2026-11-13 R2-AGY: an unloaded No limits relay cannot refuse the prompt; an unavailable wipe check cards the tool call when needed.
+      expect(r.done).toMatchObject({ ok: true });
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(r.seen.prompt).toBeDefined();
+      expect(r.notices.filter(line => line?.includes("wipe check could not be connected"))).toHaveLength(1);
+      // A later send is admitted; its setup failure still retries once and discloses missing coverage.
+      open.mockRejectedValue(new Error("fixture still unavailable"));
+      const next = await instance!.adapter.sendTurn({ threadId: "t-agy-auto", text: "retry", cwd: work, stopLine: true, noLimits: true });
+      expect(await recorder!.until(e => e.type === "turn.completed" && e.turnId === next.turnId)).toMatchObject({ ok: true });
+      expect(open).toHaveBeenCalledTimes(3); // one unloaded attempt, then both failed setup attempts on the next send
+      expect(JSON.parse(readFileSync(dump, "utf8")).prompt).toContain("retry");
+      expect(recorder!.events.filter(e => e.type === "item.started" && e.turnId === next.turnId && e.toolKind === "notice" && e.title?.includes("wipe check could not be connected"))).toHaveLength(1);
+    } finally { open.mockRestore(); warn.mockRestore(); }
+  });
+
+  it("N1 No limits setup retry succeeds and tools still reach the relay", async () => {
+    const open = vi.spyOn(relayModule, "openAntigravityRelay").mockRejectedValueOnce(new Error("fixture transient listen failure"));
+    try {
+      await create([call("run_command", { CommandLine: "echo checked > f.txt" })]);
+      const r = await turn({ stopLine: true }, { noLimits: true });
+      expect(r.done).toMatchObject({ ok: true });
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(r.opened).toHaveLength(1);
+      expect(readFileSync(join(work, "f.txt"), "utf8").trim()).toBe("checked");
+      expect(r.notices).toEqual([]);
+    } finally { open.mockRestore(); }
+  });
+
   it("a relay that cannot be set up keeps accept-edits with no Murage tools", async () => {
-    const relayRoot = join(DATA_DIR, "native", "antigravity-relay");
-    removeTempDirSync(relayRoot);
-    mkdirSync(dirname(relayRoot), { recursive: true });
-    writeFileSync(relayRoot, "not a folder");
+    // A socket/listen failure can fall back; a repairable folder is now
+    // restored by the canonical writer and no longer simulates this failure.
+    const open = vi.spyOn(relayModule, 'openAntigravityRelay').mockRejectedValueOnce(new Error('fixture socket unavailable'));
     process.env.FAKE_AGY_MCP_DUMP = join(scratch, "mcp.json");
     try {
       await create([]);
       const r = await turn({ routeAsks: true }, { integrations: { custom: { notes: { command: process.execPath, args: [], env: {} } } } as never });
+      expect(open).toHaveBeenCalledOnce();
       expect(r.seen.argv).toContain("accept-edits");
       expect(r.seen.argv).not.toContain("--dangerously-skip-permissions");
       expect(readFileSync(join(scratch, "mcp.json"), "utf8")).toBe("null");
+    } finally { open.mockRestore(); }
+  });
+
+  it("a repairable relay folder obstruction is preserved and restored before a checked tool runs", async () => {
+    const relayRoot = join(DATA_DIR, "native", "antigravity-relay");
+    removeTempDirSync(relayRoot);
+    mkdirSync(dirname(relayRoot), { recursive: true });
+    writeFileSync(relayRoot, "not a folder");
+    try {
+      await create([call("run_command", { CommandLine: "echo repaired > restored.txt" })]);
+      const r = await turn({ routeAsks: true });
+      expect(r.done).toMatchObject({ ok: true });
+      expect(r.seen.argv).toContain("--dangerously-skip-permissions");
+      expect(statSync(relayRoot).isDirectory()).toBe(true);
+      const moved = readdirSync(dirname(relayRoot)).filter(name => name.startsWith('.murage-moved-antigravity-relay-'));
+      expect(moved).toHaveLength(1);
+      expect(readFileSync(join(dirname(relayRoot), moved[0]), 'utf8')).toBe('not a folder');
+      expect(r.opened).toHaveLength(1); expect(r.okSteps).toBe(1);
+      expect(readFileSync(join(work, 'restored.txt'), 'utf8').trim()).toBe('repaired');
+    } finally { removeTempDirSync(relayRoot); }
+  });
+
+  it("restores an obstructed relay folder before launch and preserves the obstruction", async () => {
+    const relayRoot = join(DATA_DIR, "native", "antigravity-relay");
+    removeTempDirSync(relayRoot);
+    mkdirSync(dirname(relayRoot), { recursive: true });
+    writeFileSync(relayRoot, "owner obstruction");
+    const before = new Set(readdirSync(dirname(relayRoot)));
+    let moved: string | undefined;
+    try {
+      await create([call("run_command", { CommandLine: "echo restored > restored.txt" })]);
+      const r = await turn({ routeAsks: true });
+      expect(r.done).toMatchObject({ ok: true });
+      expect(r.seen.argv).toContain("--dangerously-skip-permissions");
+      expect(r.opened).toHaveLength(1);
+      expect(readFileSync(join(work, "restored.txt"), "utf8").trim()).toBe("restored");
+      expect(lstatSync(relayRoot).isDirectory()).toBe(true);
+      moved = readdirSync(dirname(relayRoot)).find(name => !before.has(name) && name.startsWith(".murage-moved-"));
+      expect(moved).toBeTruthy();
+      expect(readFileSync(join(dirname(relayRoot), moved!), "utf8")).toBe("owner obstruction");
     } finally {
-      rmSync(relayRoot, { force: true });
+      removeTempDirSync(relayRoot);
+      if (moved) rmSync(join(dirname(relayRoot), moved));
     }
   });
 
@@ -296,6 +511,19 @@ describe("Antigravity at Auto and Full access: Murage's relay hook", () => {
     expect(existsSync(join(work, "f.txt"))).toBe(false);
     expect(ask.notices).toEqual([ASK_STOP_NOTE]);
     expect(ask.seen.prompt?.startsWith(ASK_STOP_PROMPT)).toBe(true);
+  });
+
+  it("E3 No limits keeps write and exec with workspace hooks", async () => {
+    const file = join(work, ".agents", "hooks.json");
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, "{}");
+    await create([call("run_command", { CommandLine: "echo x > f.txt" })]);
+    const r = await turn({ stopLine: true }, { noLimits: true });
+    expect(r.seen.argv).toContain("--dangerously-skip-permissions");
+    expect(r.seen.argv).not.toContain("accept-edits");
+    expect(r.done).toMatchObject({ ok: true });
+    expect(existsSync(join(work, "f.txt"))).toBe(true);
+    expect(r.seen.prompt).not.toContain("You can read files and plan");
   });
 
   // item 7: "loaded 1 named hooks from 1 hooks.json file(s)" from the wrong file is not Murage's hook

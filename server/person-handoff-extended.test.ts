@@ -22,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -38,6 +39,7 @@ describe("SL-E EXTENDED: a linked person's hand-offs on the Slack fixture (real 
   let child: ChildProcess;
   let home = "";
   let gateFile = "";
+  let gatedPromptDump = "";
   let promptDump = "";
   let stderr = "";
   const traces: Array<{ op: string; text?: string; eventId?: string }> = [];
@@ -81,8 +83,9 @@ describe("SL-E EXTENDED: a linked person's hand-offs on the Slack fixture (real 
     const env: NodeJS.ProcessEnv = { HOME: home, USERPROFILE: home, MURAGE_PORT: String(PORT), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET };
     if (process.env.PATH) env.PATH = process.env.PATH;
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, ["--import", pathToFileURL(join(SERVER_DIR, "testing", "slack-sdk-preload.mjs")).href, join(SERVER_DIR, "index.ts")],
-      { cwd: join(SERVER_DIR, ".."), env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    // Carry the fake-engine override and native test dependency into this fixture child.
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", pathToFileURL(join(SERVER_DIR, "testing", "slack-sdk-preload.mjs")).href, join(SERVER_DIR, "index.ts")],
+      { windowsHide: true, cwd: join(SERVER_DIR, ".."), env: { ...env, ...powerBlockTestEnv() }, stdio: ["ignore", "pipe", "pipe", "ipc"] });
     child.stderr!.on("data", c => (stderr += c));
     child.stdout!.on("data", () => undefined);
     child.on("message", value => { if ((value as any)?.kind === "slack-fixture") traces.push(value as any); });
@@ -255,6 +258,7 @@ describe("SL-E EXTENDED: a linked person's hand-offs on the Slack fixture (real 
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-sle-extended-"));
     gateFile = join(home, "gate");
+    gatedPromptDump = join(home, "gated-prompt.json");
     promptDump = join(home, "chief-prompt.json");
     mkdirSync(join(home, ".murage"), { recursive: true });
     const fake = (environment: Record<string, string>) => ({ driver: "grokAgent", environment: { ...GROK_MCP_READY, ...environment }, config: { cli: FAKE_CLI, fullAuto: true } });
@@ -264,7 +268,7 @@ describe("SL-E EXTENDED: a linked person's hand-offs on the Slack fixture (real 
       toChainA: fake({ FAKE_ACP_MODE: "delegate-peer", FAKE_ACP_DELEGATE_TO: "ChainA", FAKE_ACP_PROMPT_DUMP: promptDump }),
       chainA: fake({ FAKE_ACP_MODE: "delegate-peer", FAKE_ACP_DELEGATE_TO: "ChainB" }),
       helper: fake({ FAKE_ACP_MODE: "happy" }),
-      gated: fake({ FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: gateFile }),
+      gated: fake({ FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: gateFile, FAKE_ACP_PROMPT_DUMP: gatedPromptDump }),
       toSeedB: fake({ FAKE_ACP_MODE: "delegate-peer", FAKE_ACP_DELEGATE_TO: "SeedB" }),
       toGrantB: fake({ FAKE_ACP_MODE: "delegate-peer", FAKE_ACP_DELEGATE_TO: "GrantB" }),
       toShareB: fake({ FAKE_ACP_MODE: "delegate-peer", FAKE_ACP_DELEGATE_TO: "ShareB" }),
@@ -394,6 +398,13 @@ describe("SL-E EXTENDED: a linked person's hand-offs on the Slack fixture (real 
     const before = new Set(personThreads().flatMap(({ t }) => rowsOf(t).map(m => m.id)));
     event("Ev-x-relink", "x-relink: please pick this up");
     await waitUntil(() => busy(gated.id), 60_000, "the gated teammate never started");
+    // MAIN RULING INT-CONFLICT-DEFAULT: detached setup owns busy before any
+    // provider write. Relink this in-flight case only after the fake has the
+    // actual delegated prompt, preserving the separate admission boundary.
+    await waitUntil(() => {
+      try { return readFileSync(gatedPromptDump, "utf8").includes(RELINK_TASK); }
+      catch { return false; }
+    }, 60_000, "the gated teammate never received its delegated prompt");
     const binding = (await api("POST", "/api/memory/action", { action: "humans" })).body.bindings?.[0];
     expect((await api("POST", "/api/memory/action", { action: "human-link", bindingId: binding.id, expectedRevision: binding.revision, as: "person" })).status).toBe(200);
     writeFileSync(gateFile, "go");

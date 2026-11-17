@@ -1,0 +1,29 @@
+
+ RUN  v4.1.12 /work
+
+ ✓ server/connector-reconnect-r2-workflow.test.ts (1 test) 34044ms
+   ✓ R2 scheduled Gmail work preflights an ACTIVE lapse and fails visibly even when the engine reports success  34038ms
+ ✓ server/connected-app-health.test.ts (27 tests) 543ms
+stderr | server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: project-key HTTP 401 is an outage, never a user reconnect
+connected apps: unreachable (tool call): HTTP 401 token rejected
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 401 with ACTIVE status raises reconnect
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 403 with ACTIVE status raises reconnect
+connected apps: gmail needs reconnecting: HTTP 403
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: a JSON error inside MCP content is still an upstream preflight failure
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r2.test.ts (25 tests) 240ms
+ ✓ server/connector-health-store.test.ts (6 tests) 40ms
+
+ Test Files  4 passed (4)
+      Tests  59 passed (59)
+   Start at  04:08:14
+   Duration  47.80s (transform 7.96s, setup 11.10s, import 1.27s, tests 34.87s, environment 0ms)
+

@@ -18,7 +18,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: await response.json() as any };
 };
 
-describe.skipIf(process.platform === "win32")("queued words restored at start", () => {
+describe("queued words restored at start", () => {
   beforeAll(async () => {
     fixture = await launchVerificationServer(process.env);
     const secret = (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;

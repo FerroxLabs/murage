@@ -12,7 +12,7 @@ final class PushExtensionTests: XCTestCase {
     var info: [AnyHashable: Any] {
         ["aps": [:], "murage": ["bindingId": binding, "eventRef": String(repeating: "9", count: 64), "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": String(repeating: "b", count: 32)]]
     }
-    func bound() -> PushLedger { var l = PushLedger(); l.bind(binding, origin: "https://mac.tailnet123.ts.net"); return l }
+    func bound() -> PushLedger { var l = PushLedger(); l.bind(binding, origin: "https://mac.tail000000.ts.net"); return l }
 
     func testRewritesWithTheDetailAndCarriesTheTarget() async {
         var asked: URL?
@@ -21,7 +21,7 @@ final class PushExtensionTests: XCTestCase {
             XCTAssertEqual(token, "murage_pd_x")
             return (200, ["title": "Lena needs approval", "body": "Lena wants to delete 3 files", "target": ["threadId": "t1", "requestId": "req-1"]])
         }
-        XCTAssertEqual(asked?.absoluteString, "https://mac.tailnet123.ts.net/api/mobile/push/" + String(repeating: "9", count: 64))
+        XCTAssertEqual(asked?.absoluteString, "https://mac.tail000000.ts.net/api/mobile/push/" + String(repeating: "9", count: 64))
         XCTAssertEqual(out, PushRewrite(title: "Lena needs approval", body: "Lena wants to delete 3 files", badge: 2, target: PushTarget(threadId: "t1", messageId: nil, requestId: "req-1")))
     }
 
@@ -54,7 +54,7 @@ final class PushExtensionTests: XCTestCase {
 
     func testAnUnknownBindingIsGenericAndNotFetched() async {
         var l = PushLedger()
-        l.bind("0a6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", origin: "https://mac.tailnet123.ts.net")
+        l.bind("0a6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", origin: "https://mac.tail000000.ts.net")
         let out = await PushExtension.rewrite(userInfo: info, ledger: Memory(l), detailToken: { _ in "t" }) { _, _ in XCTFail("fetched"); return (nil, nil) }
         XCTAssertEqual(out, PushRewrite(title: "Murage", body: "Your attention is needed.", badge: 0, target: nil))
     }
@@ -171,7 +171,7 @@ final class PushExtensionTests: XCTestCase {
     // MARK: the URL builder (defence in depth)
 
     func testTheDetailURLNeedsSixtyFourLowerCaseHex() {
-        let origin = "https://mac.tailnet123.ts.net"
+        let origin = "https://mac.tail000000.ts.net"
         XCTAssertEqual(PushExtension.detailURL(origin: origin, eventRef: String(repeating: "a", count: 64))?.absoluteString,
                        origin + "/api/mobile/push/" + String(repeating: "a", count: 64))
         for bad in [String(repeating: "A", count: 64), String(repeating: "a", count: 63), String(repeating: "a", count: 65),
@@ -183,17 +183,17 @@ final class PushExtensionTests: XCTestCase {
 
     func testTheDetailURLNeedsAWorkspaceOrigin() {
         let ref = String(repeating: "9", count: 64)
-        XCTAssertEqual(PushExtension.detailURL(origin: "https://mac.tailnet123.ts.net:8444", eventRef: ref)?.absoluteString,
-                       "https://mac.tailnet123.ts.net:8444/api/mobile/push/" + ref)
-        for bad in ["http://mac.tailnet123.ts.net", "https://user@mac.tailnet123.ts.net", "https://100.64.0.1",
-                    "https://mac.tailnet123.ts.net/path", "https://mac.tailnet123.ts.net?x", "https://mac.tailnet123.ts.net#x",
-                    "https://MAC.tailnet123.ts.net", "https://mac.tailnet123.ts.net:443", "ftp://mac.tailnet123.ts.net", ""] {
+        XCTAssertEqual(PushExtension.detailURL(origin: "https://mac.tail000000.ts.net:8444", eventRef: ref)?.absoluteString,
+                       "https://mac.tail000000.ts.net:8444/api/mobile/push/" + ref)
+        for bad in ["http://mac.tail000000.ts.net", "https://user@mac.tail000000.ts.net", "https://100.64.0.1",
+                    "https://mac.tail000000.ts.net/path", "https://mac.tail000000.ts.net?x", "https://mac.tail000000.ts.net#x",
+                    "https://MAC.tail000000.ts.net", "https://mac.tail000000.ts.net:443", "ftp://mac.tail000000.ts.net", ""] {
             XCTAssertNil(PushExtension.detailURL(origin: bad, eventRef: ref), bad)
         }
     }
 
     func testAnOriginThatIsNotHTTPSIsGenericAndNotFetched() async {
-        for origin in ["http://mac.tailnet123.ts.net", "https://evil.example/steal?x="] {
+        for origin in ["http://mac.tail000000.ts.net", "https://evil.example/steal?x="] {
             var l = PushLedger()
             l.bind(binding, origin: origin)
             let out = await PushExtension.rewrite(userInfo: info, ledger: Memory(l), detailToken: { _ in "t" }) { _, _ in XCTFail("fetched"); return (nil, nil) }
@@ -209,7 +209,7 @@ final class PushExtensionTests: XCTestCase {
         let out = await through(session)
         XCTAssertEqual(out, generic)
         XCTAssertEqual(Stub.requests, 1)
-        XCTAssertEqual(Stub.seen?.url?.host, "mac.tailnet123.ts.net")
+        XCTAssertEqual(Stub.seen?.url?.host, "mac.tail000000.ts.net")
     }
 
     func testABodyOverTheCapIsGeneric() async {

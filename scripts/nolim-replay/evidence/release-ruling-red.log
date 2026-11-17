@@ -1,0 +1,54 @@
+it-remote: nolim-gate on murage-vt2 (load here 49)
+✖ public release checker requires 257 rows and three real-wipe controls (8.67322ms)
+✖ public checker rejects refusals and holds even with zero cards (2.990595ms)
+✔ a shape witness cannot turn unavailable original release rows into a pass (3.752112ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 1
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 83.423377
+
+✖ failing tests:
+
+test at scripts/nolim-replay/release-ruling.node-test.mjs:13:1
+✖ public release checker requires 257 rows and three real-wipe controls (8.67322ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  'FAIL' !== 'PASS'
+  
+      at TestContext.<anonymous> (file:///work/scripts/nolim-replay/release-ruling.node-test.mjs:14:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'FAIL',
+    expected: 'PASS',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at scripts/nolim-replay/release-ruling.node-test.mjs:18:1
+✖ public checker rejects refusals and holds even with zero cards (2.990595ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  'PASS' !== 'FAIL'
+  
+      at TestContext.<anonymous> (file:///work/scripts/nolim-replay/release-ruling.node-test.mjs:20:70)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'PASS',
+    expected: 'FAIL',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

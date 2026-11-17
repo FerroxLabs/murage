@@ -102,10 +102,10 @@ describe("section 3: Approve all names the count it will answer", () => {
   it("the label is the count; under 2 there is no button at all, so never 'Approve 0'", () => {
     expect(en["approveAll.button"]).toBe("Approve all {n}");
     const component = read("../components/ApproveAll.tsx");
-    expect(component).toContain('if (n < 2 && (step.at === "idle" || step.at === "caution")) return null;');
-    expect(component).toContain('t("approveAll.button", { n })');
+    expect(component).toContain('if (!counts.visible && (step.at === "idle" || step.at === "caution")) return null;');
+    expect(component).toContain('t("approveAll.button", { n: counts.ok })');
     expect(component).not.toContain("approveAll.sheet.stays");
-    expect(read("../components/Inbox.tsx")).toContain("<ApproveAllButton ready={approveAllReady} listed={approveAllListed} screen={approveAllScreen} refreshes={refreshes}");
+    expect(read("../components/Inbox.tsx")).toContain("<ApproveAllButton ready={approveAllReady} listed={approveAllListed} counts={approveAllDisplayed} screen={approveAllScreen} refreshes={refreshes}");
   });
   it("a press binds to the rows on screen: the ones the preview lists, else 'changed', else 'none'", () => {
     const card = (id: string) => ({ threadId: `t-${id}`, requestId: `r-${id}`, messageId: `m-${id}`, kindLine: "command" as const, digest: "", card: {} });

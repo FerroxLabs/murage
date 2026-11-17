@@ -53,7 +53,7 @@ describe.skipIf(!ON)("v13 round trip on a real data copy", () => {
     if (STEP === "down") {
       const t1 = performance.now();
       let status = "ok";
-      try { downgradeInstallationMemorySchema(DATA_DIR, 12); } catch (error) { status = codeOf(error); }
+      try { await downgradeInstallationMemorySchema(DATA_DIR, 12); } catch (error) { status = codeOf(error); }
       out({ k: "downgrade", to: 12, ms: Math.round(performance.now() - t1), status });
       report("after-downgrade", file, validateMemorySchema);
       expect(status).toBe("ok");

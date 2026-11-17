@@ -20,6 +20,10 @@ import { roomShare } from "./room-shares.ts";
 import type { Message } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { stopWalMaintenance } from "./wal-maintenance.ts";
+import { settleTestHandles } from "./test-handle-registry.ts";
+import { withLegacyFixtureDb } from "./testing/approval-card.ts";
+import { discardInboxProjection, fillInboxProjection, initializeInbox, isInboxProjectionObject } from "./inbox.ts";
+import { initializeDelegationPacks } from "./delegation-pack/schema.ts";
 
 type Row = { type: string; name: string; tbl_name: string; sql: string | null };
 const fresh102 = (JSON.parse(readFileSync(join(import.meta.dirname, "testing", "schema-1.0.2-fresh.json"), "utf8")) as { objects: Row[] }).objects;
@@ -52,12 +56,33 @@ async function file103(indexes: "eager" | "all") {
   for (const index of OPTIONAL_INDEXES) if ((indexes === "all" || index.eager) && table.get(index.table)) db.exec(index.sql);
   closeDatabase();
   await stopWalMaintenance();
+  // The search-index worker also owns this file. Join every fixture handle
+  // before opening the independent schema reader; closing WAL alone races it.
+  await settleTestHandles(DATA_DIR);
 }
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
-afterEach(() => { closeDatabase(); });
+beforeEach(async () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+afterEach(async () => { closeDatabase(); });
 
-it("the fixture is a fresh 1.0.2 install: the branch, line and card indexes and the eager memory indexes are there, no 1.0.3 object is", () => {
+it.each([10, 12, 13] as const)("T-SCHEMA-DOWNGRADE: removes delegation packs at target %s; mutant omits the removal step", async target => {
+  const db = database();
+  initializeDelegationPacks(db);
+  db.exec("INSERT INTO delegation_packs(id,delegation_id,source_thread_id,source_bot_id,target_bot_id,refs,cut_at,created_at) VALUES('pack','job','source','sable','ember','[]',1,1)");
+  db.exec("INSERT INTO highlevel_thread_marks(thread_id,marked_at) VALUES('source',1)");
+  closeDatabase();
+  await stopWalMaintenance();
+  const file = join(DATA_DIR, "messages.db");
+  expect(schemaOf(file).filter(row => row.tbl_name === "delegation_packs").map(row => row.name)).toEqual(expect.arrayContaining(["delegation_packs", "delegation_packs_source", "delegation_packs_destination"]));
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, target)).toMatchObject({ status: "downgraded", to: target });
+  expect(schemaOf(file).filter(row => row.tbl_name === "delegation_packs")).toEqual([]);
+  expect(schemaOf(file).filter(row => row.tbl_name === "highlevel_thread_marks")).toEqual([]);
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, target)).toMatchObject({ to: target });
+  expect(schemaOf(file).filter(row => row.tbl_name === "delegation_packs")).toEqual([]);
+  expect(schemaOf(file).filter(row => row.tbl_name === "highlevel_thread_marks")).toEqual([]);
+  expect(database().prepare("SELECT COUNT(*) AS n FROM delegation_packs").get()).toEqual({ n: 0 });
+});
+
+it("the fixture is a fresh 1.0.2 install: the branch, line and card indexes and the eager memory indexes are there, no 1.0.3 object is", async () => {
   const names = new Set(fresh102.map(key));
   for (const name of ["table:seg", "table:line", "table:open_card", "table:keyed_card", "table:thread_key", "table:transcript_index_state", "index:seg_attach", "index:keyed_card_family", "index:memory_records_canon", "index:memory_details_identity", "index:memory_records_waiting_review"]) expect(names.has(name), name).toBe(true);
   for (const name of ["index:messages_thread_seq", "index:messages_id", "table:memory_revoke_fold", "table:memory_record_keys", "table:memory_session_incarnation"]) expect(names.has(name), name).toBe(false);
@@ -82,22 +107,24 @@ it.each(["held", "posting", "pending", "sharing"].flatMap(state => [10, 12].map(
   await stopWalMaintenance();
   const file = join(DATA_DIR, "messages.db");
   const before = readFileSync(file);
-  expect(() => downgradeInstallationMemorySchema(DATA_DIR, 1)).toThrow(expect.objectContaining({
+  await expect(downgradeInstallationMemorySchema(DATA_DIR, 1)).rejects.toThrow(expect.objectContaining({
     code: MEMORY_DOWNGRADE_GO_THROUGH_102, message: MEMORY_DOWNGRADE_GO_THROUGH_102_LINE,
   }));
   expect(readFileSync(file)).toEqual(before);
   if (state === "held" || state === "posting") {
     for (const oldTarget of [false, true]) {
-      expect(() => downgradeInstallationMemorySchema(DATA_DIR, oldTarget ? 1 : target, oldTarget ? { testOnlyBefore102: true } : {})).toThrow(expect.objectContaining({
+      await expect(downgradeInstallationMemorySchema(DATA_DIR, oldTarget ? 1 : target, oldTarget ? { testOnlyBefore102: true } : {})).rejects.toThrow(expect.objectContaining({
         code: DOWNGRADE_WORK_PENDING, message: "You have 1 post from a bot still waiting for your answer. Post or decline it, then try again.",
       }));
       expect(readFileSync(file)).toEqual(before);
     }
-    expect(readFileSync(new URL("../electron/main.mjs", import.meta.url), "utf8")).toContain('DOWNGRADE_WORK_PENDING: "Some messages, bot posts or other work are still waiting.');
+    expect(readFileSync(new URL("../electron/main.mjs", import.meta.url), "utf8")).toContain("DOWNGRADE_WORK_PENDING: downgradeWorkPendingMessage(language)");
+    const { downgradeWorkPendingMessage } = await import("../electron/prepare-work-pending.mjs");
+    expect(downgradeWorkPendingMessage("en")).toBe("Murage can't go back to the earlier version while messages or a restore are pending. Finish or cancel the pending restore first, then send or cancel any waiting messages and try again.");
     const finished = new DatabaseSync(file);
     try { finished.exec("UPDATE venue_posts SET state='declined'"); } finally { finished.close(); }
   }
-  expect(downgradeInstallationMemorySchema(DATA_DIR, target)).toMatchObject({ status: "downgraded", to: target });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, target)).toMatchObject({ status: "downgraded", to: target });
   expect(schemaOf(file).filter(row => row.tbl_name === "venue_posts" || row.tbl_name === "room_shares")).toEqual([]);
 });
 
@@ -105,10 +132,10 @@ it("memory-downgrade --to 10 leaves sqlite_master exactly a fresh 1.0.2 install'
   await file103("eager");
   // the owner-pin index is made at every open from 1.0.15 (MEM-PIN-INDEX-BOOT): it is 1.0.2's own idle-built index, kept with 1.0.2's text
   const kept = { missing: [], extra: ["index:memory_records_pinned"], differ: [] };
-  expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
   expect(against102(schemaOf(join(DATA_DIR, "messages.db")))).toEqual(kept);
   // a second run changes nothing
-  expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
   expect(against102(schemaOf(join(DATA_DIR, "messages.db")))).toEqual(kept);
 });
 
@@ -116,7 +143,7 @@ it("keeps the indexes 1.0.2 builds when idle, and the fill places of the derived
   await file103("all");
   const db = new DatabaseSync(join(DATA_DIR, "messages.db"));
   try { db.exec("INSERT OR REPLACE INTO transcript_index_state(name, done, cursor, skipped) VALUES ('open_card', 1, 7, 0), ('search_fts', 1, 7, 0), ('seq', 1, 7, 0)"); } finally { db.close(); }
-  expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
   // the only objects beyond a fresh install are 1.0.2's own idle-built indexes
   expect(against102(schemaOf(join(DATA_DIR, "messages.db")))).toEqual({ missing: [], extra: IDLE_BUILT_BY_102.map(name => `index:${name}`).sort(), differ: [] });
   const after = new DatabaseSync(join(DATA_DIR, "messages.db"), { readOnly: true });
@@ -126,7 +153,7 @@ it("keeps the indexes 1.0.2 builds when idle, and the fill places of the derived
   } finally { after.close(); }
 });
 
-it("room downgrade holds the writer lock before inspecting pending deliveries", () => {
+it("room downgrade holds the writer lock before inspecting pending deliveries", async () => {
   const file = join(DATA_DIR, "room-lock.db");
   const db = new DatabaseSync(file), peer = new DatabaseSync(file);
   try {
@@ -151,7 +178,7 @@ it("room downgrade holds the writer lock before inspecting pending deliveries", 
   } finally { db.close(); peer.close(); }
 });
 
-it("room downgrade stays inside its caller's transaction and rolls back with it", () => {
+it("room downgrade stays inside its caller's transaction and rolls back with it", async () => {
   const db = new DatabaseSync(":memory:");
   try {
     db.exec("CREATE TABLE venue_posts(state TEXT); INSERT INTO venue_posts VALUES('declined'); BEGIN IMMEDIATE");
@@ -170,6 +197,7 @@ it("room downgrade stays inside its caller's transaction and rolls back with it"
 /** A Post in… post in the given state, as venue-post-held.ts writes it. */
 function venuePost(id: string, state: string) {
   const db = new DatabaseSync(join(DATA_DIR, "messages.db"));
+  db.exec("PRAGMA busy_timeout=5000");
   try {
     db.prepare("INSERT INTO venue_posts (id,bot_id,thread_id,origin,request_message_id,request_hash,venue_id,target_thread_id,text,stable_id,lineage,state,created_at,updated_at) VALUES (?,'b','t','bot','m','h','v','tt','the whole post the owner has not answered',?,'[]',?,1,1)").run(id, `s-${id}`, state);
   } finally { db.close(); }
@@ -181,7 +209,7 @@ for (const state of ["held", "posting"]) {
     venuePost("p1", state);
     const before = schemaOf(join(DATA_DIR, "messages.db")).map(key).sort();
     let thrown: unknown;
-    try { downgradeInstallationMemorySchema(DATA_DIR, 10); } catch (error) { thrown = error; }
+    try { await downgradeInstallationMemorySchema(DATA_DIR, 10); } catch (error) { thrown = error; }
     expect(thrown).toMatchObject({ code: "DOWNGRADE_WORK_PENDING", message: "You have 1 post from a bot still waiting for your answer. Post or decline it, then try again." });
     expect(schemaOf(join(DATA_DIR, "messages.db")).map(key).sort()).toEqual(before);
     const check = new DatabaseSync(join(DATA_DIR, "messages.db"), { readOnly: true });
@@ -197,7 +225,7 @@ it("a 'shared' room share goes with the table, and after a re-upgrade the room l
   database().prepare("INSERT INTO room_shares (id,bot_id,room_id,room_thread_id,origin_thread_id,query,excerpts,excerpts_hash,nonce,status,stable_id,created_at,expires_at) VALUES ('r1','dax','room','rt','ot','q','[]','h','n','shared','line',1,9999999999999)").run();
   closeDatabase();
   await stopWalMaintenance();
-  expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
   expect(new Set(schemaOf(join(DATA_DIR, "messages.db")).map(row => row.name)).has("room_shares")).toBe(false);
   // the 1.0.18 start again: the table is made empty, and the share row is not there to be read
   const db = database();
@@ -215,7 +243,60 @@ it("goes back once every Post in… post is answered, and an open room-share dra
   venuePost("p2", "declined");
   const db = new DatabaseSync(join(DATA_DIR, "messages.db"));
   try { db.prepare("INSERT INTO room_shares (id,bot_id,room_id,room_thread_id,origin_thread_id,query,excerpts,excerpts_hash,nonce,status,stable_id,created_at,expires_at) VALUES ('r1','b','room','rt','ot','q','[]','h','n','pending','s',1,9999999999999)").run(); } finally { db.close(); }
-  expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
   const names = new Set(schemaOf(join(DATA_DIR, "messages.db")).map(row => row.name));
   for (const name of ["venue_posts", "venue_posts_open", "room_shares", "room_shares_status"]) expect(names.has(name), name).toBe(false);
+});
+
+
+it("target 6 refuses durable send custody before changing its schema or stamp", async () => {
+  const db = database();
+  db.exec(`INSERT INTO send_attempts(attempt_id,owner_id,bot_id,thread_id,send_id,fingerprint,isolated,queue_only,phase,delivery,replay_policy,revision,binding_epoch,terminal_outcome,terminal_at,cleanup_owed,created_at,updated_at)
+    VALUES('held-attempt','fixture-owner','fixture-bot','fixture-thread','fixture-send','fixture-hash',0,0,'terminal','not_submitted','exclude',1,0,'failed',1,0,1,1)`);
+  closeDatabase(); await stopWalMaintenance();
+  const file = join(DATA_DIR, "messages.db"), before = schemaOf(file);
+  await expect(downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true })).rejects.toThrow(expect.objectContaining({ code: DOWNGRADE_WORK_PENDING }));
+  expect(schemaOf(file)).toEqual(before);
+  const after = new DatabaseSync(file);
+  try {
+    expect(after.prepare("SELECT attempt_id,delivery FROM send_attempts").all()).toEqual([{ attempt_id: 'held-attempt', delivery: 'not_submitted' }]);
+    expect(after.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: 13 });
+  } finally { after.close(); }
+});
+
+it.each([false, true].flatMap(cleaned => [10, 12, 13].map(target => ({ cleaned, target: target as 10 | 12 | 13 }))))("v5 upgrade then downgrade to $target restores v4 before legacy open (retired cleanup=$cleaned), preserving messages and snoozes", async ({ cleaned, target }) => {
+  const db = database();
+  discardInboxProjection(db);
+  const projection = fresh102.filter(isInboxProjectionObject);
+  for (const type of ["table", "index", "trigger"]) for (const row of projection) if (row.type === type && row.sql) db.exec(row.sql);
+  db.exec("INSERT INTO inbox_projection_state(name,done,cursor) VALUES('layout',1,4),('inbox',1,0)");
+  const message = { id: "kept", at: 100, role: "bot", kind: "options", text: "Preserved text", card: { requestId: "kept", tool: "request_user_input", question: "Pick?", options: ["One", "Two"] } };
+  withLegacyFixtureDb(db, legacy => legacy.prepare("INSERT INTO messages(thread_id,id,at,role,kind,json) VALUES('thread','kept',100,'bot','options',?)").run(JSON.stringify(message)));
+  const sourceKey = db.prepare("SELECT source_key FROM inbox_items WHERE message_id='kept'").get()!.source_key;
+  db.prepare("INSERT INTO inbox_item_state(source_key,snoozed_until) VALUES(?,999999)").run(sourceKey);
+  initializeInbox(db);
+  fillInboxProjection(db);
+  expect(db.prepare("SELECT cursor FROM inbox_projection_state WHERE name='layout'").get()).toEqual({ cursor: 5 });
+  if (cleaned) for (const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'retired4_%'").all()) db.exec(`DROP TABLE ${row.name}`);
+  else expect(db.prepare("SELECT 1 FROM retired4_inbox_items").get()).toBeDefined();
+  closeDatabase(); await stopWalMaintenance(); await settleTestHandles(DATA_DIR);
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, target)).toMatchObject({ status: "downgraded", to: target });
+  const legacy = new DatabaseSync(join(DATA_DIR, "messages.db"));
+  try {
+    // Historical opens use IF NOT EXISTS: collisions must already be gone at success.
+    expect(legacy.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'retired%'").all()).toEqual([]);
+    const actual = (legacy.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master").all() as Row[]).filter(isInboxProjectionObject);
+    expect(actual.map(key).sort()).toEqual(projection.map(key).sort());
+    for (const row of projection) expect(text(actual.find(value => key(value) === key(row))!), row.name).toBe(text(row));
+    for (const type of ["table", "index", "trigger"]) for (const row of projection) if (row.type === type && row.sql) legacy.exec(row.sql.replace(/^CREATE (TABLE|INDEX|TRIGGER) /, "CREATE $1 IF NOT EXISTS "));
+    expect(legacy.prepare("SELECT json FROM messages WHERE id='kept'").get()).toEqual({ json: JSON.stringify(message) });
+    expect(legacy.prepare("SELECT source_key,snoozed_until FROM inbox_item_state").all()).toEqual([{ source_key: sourceKey, snoozed_until: 999999 }]);
+    expect(legacy.prepare("SELECT message_id,snoozed_until,title FROM inbox_items INDEXED BY inbox_items_v_all_4").all()).toEqual([{ message_id: "kept", snoozed_until: 999999, title: "Approval requested" }]);
+    const pending = { id: "native-question", at: 200, role: "bot", kind: "options", card: { requestId: "native", tool: "request_user_input", question: "Pick?", options: ["One", "Two"] } };
+    legacy.prepare("INSERT INTO messages(thread_id,id,at,role,kind,json) VALUES('thread',?,200,'bot','options',?)").run(pending.id, JSON.stringify(pending));
+    expect(legacy.prepare("SELECT kind_segment,title FROM inbox_items WHERE message_id=?").get(pending.id)).toEqual({ kind_segment: "approval", title: "Approval requested" });
+    pending.card.options = ["Three", "Four"];
+    legacy.prepare("UPDATE messages SET json=? WHERE id=?").run(JSON.stringify(pending), pending.id);
+    expect(legacy.prepare("SELECT kind_segment,title FROM inbox_items WHERE message_id=?").get(pending.id)).toEqual({ kind_segment: "approval", title: "Approval requested" });
+  } finally { legacy.close(); }
 });

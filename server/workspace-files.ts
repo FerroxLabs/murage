@@ -19,10 +19,8 @@
 //    and never followed; ancestors are re-checked after every directory read.
 // Discovery is not authorship: entries carry no producer, run or author.
 import { createHash, randomUUID } from "node:crypto";
-import {
-  closeSync, constants, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync, openSync, opendirSync, readFileSync, readSync, realpathSync,
-  renameSync, unlinkSync, writeSync, type Stats,
-} from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync, openSync, opendirSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, type Stats } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";

@@ -43,6 +43,8 @@ export function scanSource(file: string, source: string): Finding[] {
   const emptyBlock = (block: ts.Block) => block.statements.length === 0 && source.slice(block.getStart(sf) + 1, block.end - 1).trim() === "";
   let hasBusyState = false;
   const refs: ts.VariableDeclaration[] = [];
+  const stateNames = new Set<string>();
+  const busyAliases: ts.Expression[] = [];
 
   const visit = (node: ts.Node, inOnClick: boolean) => {
     // 1. swallowed catches
@@ -60,15 +62,23 @@ export function scanSource(file: string, source: string): Finding[] {
     // 3. ref-only busy flags
     if (ts.isVariableDeclaration(node)) {
       const init = node.initializer;
+      if (ts.isIdentifier(node.name) && BUSY_STATE.test(node.name.text) && init) busyAliases.push(init);
       if (ts.isIdentifier(node.name) && init && ts.isCallExpression(init) && /^(?:React\.)?useRef$/.test(init.expression.getText(sf)) && init.arguments.length === 1 && init.arguments[0].kind === ts.SyntaxKind.FalseKeyword && BUSY_NAME.test(node.name.text)) refs.push(node);
       if (ts.isArrayBindingPattern(node.name) && init && ts.isCallExpression(init) && /^(?:React\.)?useState$/.test(init.expression.getText(sf))) {
         const first = node.name.elements[0];
-        if (first && ts.isBindingElement(first) && ts.isIdentifier(first.name) && BUSY_STATE.test(first.name.text)) hasBusyState = true;
+        if (first && ts.isBindingElement(first) && ts.isIdentifier(first.name)) {
+          stateNames.add(first.name.text);
+          if (BUSY_STATE.test(first.name.text)) hasBusyState = true;
+        }
       }
     }
     ts.forEachChild(node, child => visit(child, inOnClick));
   };
   visit(sf, false);
+  // MAIN RULING INT-CONFLICT-DEFAULT d99d2625800 / 1754cd05ab9: a busy alias of React view state re-renders too.
+  const readsState = (node: ts.Node): boolean =>
+    ts.isIdentifier(node) && stateNames.has(node.text) || Boolean(ts.forEachChild(node, child => readsState(child) || undefined));
+  hasBusyState ||= busyAliases.some(readsState);
   if (!hasBusyState) for (const ref of refs) add("ref-only-busy", ref);
   return out.sort((a, b) => a.line - b.line);
 }
@@ -87,9 +97,10 @@ export const ALLOWED: Allowed[] = [
   { file: "CallView.tsx", swallowed: 2, reason: "Audit Low (Resume call): releasing the microphone while a call ends; nothing the person can act on." },
   { file: "CommandPalette.tsx", swallowed: 1, reason: "Lazy import of the settings search index; the palette still works without it. Audit Low (CommandPalette.tsx:139) covers the pending cue." },
   { file: "ComputerPanel.tsx", swallowed: 5, voidOnClick: 1, reason: "The live-desktop keepalive heartbeat (not a user action; the next beat retries, and a lost one only lets the idle timer run). Audit Low (ComputerPanel.tsx:1396, Hand back closes the viewer whatever release returned) and Medium (:1526): control release and viewer close while leaving the screen; the visible Stopping/Stopped cue is the open Medium row." },
-  { file: "ConfirmDelete.tsx", swallowed: 1, reason: BACKGROUND },
+  // MAIN RULING INT-CONFLICT-DEFAULT d99d2625800 / 2542ea3407: ConfirmDelete now has no swallowed catches.
   { file: "EngineManagement.tsx", swallowed: 1, voidOnClick: 5, reason: "Audit Low (EngineManagement.tsx:61): buttons only disable, no Installing label or progress. The refresh catch follows a result that is already shown." },
-  { file: "EnginesSettings.tsx", swallowed: 2, reason: "Refresh after a save that already reported its result; a failed refresh keeps the last list." },
+  // MAIN RULING INT-CONFLICT-DEFAULT d99d2625800 / 2542ea3407: lower the allowance to the remaining background catch.
+  { file: "EnginesSettings.tsx", swallowed: 1, reason: "Refresh after a save that already reported its result; a failed refresh keeps the last list." },
   { file: "FirstRunFluxCard.tsx", voidOnClick: 1, reason: "Audit Medium (FirstRunFluxCard.tsx:357): opening the browser to get a key has no 'could not open, copy the link' line yet." },
   { file: "FirstRunJobsCard.tsx", swallowed: 2, reason: "Audit Medium (FirstRunJobsCard.tsx:941,1074): browser open and job start follow-ups; the 'could not open' line is the open Medium row." },
   { file: "FirstRunPhoneCard.tsx", voidOnClick: 1, reason: "Audit Medium (FirstRunPhoneCard.tsx:239): Download Tailscale opens the browser with no failure line yet." },
@@ -164,6 +175,9 @@ describe("the scanner", () => {
     expect(rules("function C() { const mounted = useRef(false), inFlight = useRef(false); return null; }")).toEqual(["ref-only-busy"]);
     expect(rules("function C() { const gate = useRef(false); const [busy, setBusy] = useState(false); return null; }")).toEqual([]);
     expect(rules("function C() { const el = useRef(null); const mounted = useRef(false); return null; }")).toEqual([]);
+    expect(rules('function C() { const inFlight = useRef(false); const [view, setView] = useState({ phase: "loading" }); const busy = view.phase === "loading"; return null; }')).toEqual([]);
+    expect(rules('function C() { const inFlight = useRef(false); const busy = inFlight.current; return null; }')).toEqual(["ref-only-busy"]);
+    expect(rules('function C() { const inFlight = useRef(false); const [view] = useState({}); const busy = false; return null; }')).toEqual(["ref-only-busy"]);
   });
 });
 

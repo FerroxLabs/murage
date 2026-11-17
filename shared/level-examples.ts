@@ -62,9 +62,9 @@ export const OWNER_ROWS: readonly OwnerExampleRow[] = [
  *  - "lower-of-ceiling": runs at the lower of the routine's ceiling and this level (asks at Ask, goes ahead above)
  *  - "asks-unless-routine-grant": asks at every level unless allowed for the routine (never for a payment)
  *  - "goes-ahead-with-option": goes ahead only with "Also skip approvals for my messages" on, otherwise asks */
-export type OtherCell = "asks" | "lower-of-ceiling" | "asks-unless-routine-grant" | "goes-ahead-with-option";
+export type OtherCell = "goes-ahead" | "asks" | "lower-of-ceiling" | "asks-unless-routine-grant" | "goes-ahead-with-option";
 
-export type OtherRowId = "routine" | "owner-channel" | "other-channel-or-webhook";
+export type OtherRowId = "routine" | "owner-channel" | "other-channel-or-webhook" | "guest-channel";
 
 export interface OtherExampleRow {
   id: OtherRowId;
@@ -80,14 +80,15 @@ export interface OtherExampleRow {
 const every = (cell: OtherCell): Record<LevelId, OtherCell> => ({ ask: cell, auto: cell, full: cell, unlimited: cell });
 
 export const OTHER_ROWS: readonly OtherExampleRow[] = [
-  { id: "routine", ordinary: every("lower-of-ceiling"), stopLine: every("asks-unless-routine-grant"), notes: ["never-for-payment"] },
+  { id: "routine", ordinary: every("lower-of-ceiling"), stopLine: { ...every("asks-unless-routine-grant"), unlimited: "lower-of-ceiling" }, notes: ["never-for-payment"] },
   {
     id: "owner-channel",
     ordinary: { ask: "asks", auto: "asks", full: "goes-ahead-with-option", unlimited: "goes-ahead-with-option" },
     stopLine: { ask: "asks", auto: "asks", full: "asks", unlimited: "goes-ahead-with-option" },
     notes: [],
   },
-  { id: "other-channel-or-webhook", ordinary: every("asks"), stopLine: every("asks"), notes: ["reads-and-own-folder-go"] },
+  { id: "other-channel-or-webhook", ordinary: { ...every("asks"), unlimited: "goes-ahead" }, stopLine: { ...every("asks"), unlimited: "goes-ahead" }, notes: ["reads-and-own-folder-go"] },
+  { id: "guest-channel", ordinary: every("asks"), stopLine: every("asks"), notes: ["reads-and-own-folder-go"] },
 ];
 
 /** 3.2: the whole table the level menu renders, below the four rows. */

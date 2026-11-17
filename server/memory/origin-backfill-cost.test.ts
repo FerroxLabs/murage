@@ -45,3 +45,21 @@ it("a row that already has an origin is not bound again and no payload is select
   const bound = database().prepare("SELECT id FROM memory_scope_bindings WHERE subject_type='source-origin' ORDER BY id").all().map(row => String(row.id));
   expect(bound).toEqual(["source-origin:s000", "source-origin:s002"]);
 });
+
+
+it("P33 repeatedly resolves only selected source threads through the indexed callback", () => {
+  seed(8);
+  const selected: string[] = [];
+  const lookup = (threadId: string) => { selected.push(threadId); return new Set(["schedule"]); };
+  expect(backfillMemoryOrigins(database(), lookup, 2).done).toBe(false);
+  expect(selected).toEqual(["chat", "chat"]);
+  expect(backfillMemoryOrigins(database(), lookup, 2).done).toBe(false);
+  expect(selected).toHaveLength(4);
+  expect(database().prepare("SELECT COUNT(*) AS n FROM memory_scope_bindings WHERE subject_type='source-origin'").get()!.n).toBe(4);
+});
+
+it("P33 callback preserves mixed and app source skips", () => {
+  seed(3);
+  expect(backfillMemoryOrigins(database(), () => new Set(["schedule", "channel"])).done).toBe(true);
+  expect(database().prepare("SELECT COUNT(*) AS n FROM memory_scope_bindings WHERE subject_type='source-origin'").get()!.n).toBe(0);
+});

@@ -1,3 +1,4 @@
+import { admittedFixtureInstance } from "../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -57,7 +58,7 @@ describe("V5 ask hold while the event loop stalls (fake CLI)", () => {
 
   /** The ask is read and held, the item is written to the pipe, and the loop blocks for `stallMs` around that write. */
   const run = async (threadId: string, stallMs: number, from: "timer" | "immediate" | "io" = "io") => {
-    instance = await ClaudeDriver.create({ instanceId: "claude-v5-stall", displayName: "Claude V5 stall", environment: {}, enabled: true, config: { cli: FAKE_CLI, permissionMode: "acceptEdits" } });
+    instance = await admittedFixtureInstance(ClaudeDriver.create({ instanceId: "claude-v5-stall", displayName: "Claude V5 stall", environment: {}, enabled: true, config: { cli: FAKE_CLI, permissionMode: "acceptEdits" } }));
     recorder = recordEvents(instance.adapter);
     await instance.adapter.sendTurn({ threadId, text: HOLD, cwd: scratch });
     await recorder.until((e) => e.type === "session.started");
@@ -94,7 +95,7 @@ describe("V5 ask hold while the event loop stalls (fake CLI)", () => {
   const hold = async (threadId: string, opts: { touch: boolean; delayMs?: number; slices?: number; sliceMs?: number }) => {
     if (opts.delayMs !== undefined) process.env.FAKE_CLAUDE_ITEM_DELAY_MS = String(opts.delayMs);
     const info = vi.spyOn(console, "info");
-    instance = await ClaudeDriver.create({ instanceId: "claude-v5-stall", displayName: "Claude V5 stall", environment: {}, enabled: true, config: { cli: FAKE_CLI, permissionMode: "acceptEdits" } });
+    instance = await admittedFixtureInstance(ClaudeDriver.create({ instanceId: "claude-v5-stall", displayName: "Claude V5 stall", environment: {}, enabled: true, config: { cli: FAKE_CLI, permissionMode: "acceptEdits" } }));
     recorder = recordEvents(instance.adapter);
     await instance.adapter.sendTurn({ threadId, text: HOLD, cwd: scratch });
     await recorder.until((e) => e.type === "session.started");

@@ -371,10 +371,12 @@ describe("a failed write", () => {
       if (String(args[0]) === join(DATA_DIR, "bots.json")) throw new Error("fixture write failure");
       return original(...args);
     });
-    const change = levelChange({ bot, patch: { ...permissionLevelPatch("auto") }, routines: () => [], candidates: () => [] });
+    const change = levelChange({ bot, patch: { ...permissionLevelPatch("auto"), permissionExplicit: true }, routines: () => [], candidates: () => [] });
     expect(change.action).toBe("write");
     if (change.action !== "write") return;
-    expect(commitLevelChange(store, bot.id, change, { preserveTaskSettings: true })).toBe("failed");
+    let result: ReturnType<typeof commitLevelChange>;
+    expect(() => { result = commitLevelChange(store, bot.id, change, { preserveTaskSettings: true }); }).not.toThrow();
+    expect(result!).toBe("failed");
     expect(JSON.stringify(bot)).toBe(before);
     expect(store.revision).toBe(revision);
     expect(changes).toEqual([]);

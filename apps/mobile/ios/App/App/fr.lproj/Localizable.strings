@@ -13,3 +13,12 @@
 "Ask a bot" = "Demander à un bot";
 "Open my chat" = "Ouvrir mon chat";
 "From" = "Depuis";
+"Send to %@ as you" = "Envoyer à %@ en ton nom";
+"Send this to %@ as you?" = "Envoyer ceci à %@ en ton nom ?";
+"Confirm in Murage" = "Confirmer dans Murage";
+"Sent to %@ without your recent chat." = "Envoyé à %@ sans ton chat récent.";
+"Sent to %@." = "Envoyé à %@.";
+"Sent to %@ without your recent chat (it waited too long)." = "Envoyé à %@ sans ton chat récent (l'attente a été trop longue).";
+"Sent to %@. Pair this phone again to include your recent chat." = "Envoyé à %@. Associe de nouveau ce téléphone pour inclure ton chat récent.";
+"Pair this phone again so %@ can see your recent chat when you send from it." = "Associez à nouveau ce téléphone pour que %@ puisse voir votre conversation récente quand vous envoyez depuis celui-ci.";
+"Couldn't reach your computer. Check it's on and try again." = "Impossible de joindre ton ordinateur. Vérifie qu'il est allumé et réessaie.";

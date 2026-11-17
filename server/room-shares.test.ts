@@ -1,8 +1,9 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // CROSS-CHAT-READ-1019 T50-T57, T60 (T58 paired DM is its own 1.0.19 lane; T59 is the real-engine run on a data copy).
+import { serviceQueueFixture } from './testing/service-queue-fixture.ts';
 import { mkdirSync, readFileSync } from "node:fs";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import { setExecutionStore } from "./execution-audience.ts";
@@ -13,9 +14,9 @@ import { captureMessage } from "./memory/capture.ts";
 import { setMemoryCaptureRoster } from "./memory/capture-scope.ts";
 import { ensureScope, reconcileMemoryRoster } from "./memory/policy.ts";
 import { setMemoryMode } from "./memory/repository.ts";
-import { askOwnerToShare, shareAskRowText, shareSources, declineRoomShare, dropRoomShares, recoverRoomShares, roomShare, shareCard, shareDigest, shareMounts, shareRoomExcerpts,
+import { askOwnerToShare as askOwnerToShareProduct, installRoomShareApprovalDelivery, shareAskRowText, shareSources, declineRoomShare, dropRoomShares, recoverRoomShares, roomShare, shareCard, shareDigest, shareMounts, shareRoomExcerpts,
   SHARE_ASKED_LINE, SHARE_DRAFTS, SHARE_TTL_MS, SHARE_UNAVAILABLE, type ShareDeps } from "./room-shares.ts";
-import { dropUnprovenShare, type BotRecord, type GroupRecord, type Message, type MessageOrigin, type Store } from "./store.ts";
+import { Store, dropUnprovenShare, type BotRecord, type GroupRecord, type Message, type MessageOrigin } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { routePolicy } from "./route-policy.ts";
 
@@ -23,6 +24,7 @@ const NOW = 1_790_000_000_000;
 const TOKEN = "ZEBRA-CANARY-71";
 let roster: { bots: BotRecord[]; groups: GroupRecord[] };
 let serial = 0;
+let producer: ReturnType<typeof serviceQueueFixture>;
 const written: { threadId: string; line: Omit<Message, "id" | "at">; refs: unknown }[] = [];
 const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 const proxy = readFileSync(new URL("./drivers/agents-proxy.ts", import.meta.url), "utf8");
@@ -41,12 +43,18 @@ const deps: ShareDeps = {
   },
 };
 const run = <T,>(operation: () => T) => transaction(() => operation());
+function askOwnerToShare(...[db, roster, input, now]: Parameters<typeof askOwnerToShareProduct>) {
+ if(now!==undefined)vi.setSystemTime(now);
+ producer.queue(installRoomShareApprovalDelivery(db, () => roster, deps, run));
+ return askOwnerToShareProduct(db, roster, {...input,authority:producer.authorityFor(input.threadId,input.botId)}, now);
+}
 function ask(query = "zebra canary", threadId = "room", botId = "dax", now = NOW) {
   const result = askOwnerToShare(database(), roster, { botId, threadId, query, from: "both" }, now);
   if (!result.ok || !result.share?.excerpts.length) throw new Error(`no draft: ${JSON.stringify(result)}`);
   return result;
 }
 function release(id: string, origin: MessageOrigin = "desktop", override: Record<string, unknown> = {}, now = NOW) {
+  vi.setSystemTime(now);
   const share = roomShare(database(), id)!;
   return shareRoomExcerpts(database(), roster, deps, { id, origin, nonce: share.nonce, digest: shareDigest(share), keep: share.excerpts.map(e => e.messageId), ...override }, run, now);
 }
@@ -61,8 +69,10 @@ function exclude(...threads: string[]) {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(NOW);
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   serial = 0; written.length = 0;
+  producer = serviceQueueFixture(new Store(() => ({instanceId:'fixture',model:'fixture'})));
   roster = {
     bots: [
       { id: "dax", name: "Dax", threadId: "direct", section: "Ops", tasks: [
@@ -80,7 +90,7 @@ beforeEach(() => {
   say("direct", `the ${TOKEN} plan is zebra canary`);
   say("direct", "nothing to see");
 });
-afterEach(() => { setExecutionStore(undefined as never); closeDatabase(); });
+afterEach(() => { vi.useRealTimers();setExecutionStore(undefined as never); closeDatabase(); });
 
 it("T50 listed on the room thread, a room task and the bot's desk; not with a person, archived, pair, memory-off or a non-member", () => {
   expect(shareMounts(database(), roster, "dax", "room")?.id).toBe("venue");
@@ -95,7 +105,7 @@ it("T50 listed on the room thread, a room task and the bot's desk; not with a pe
   person("room-task"); expect(shareMounts(database(), roster, "dax", "room-task")).toBeNull();
   // index.ts: the room turn and the desk/direct turn mount it from the predicate; the proxy lists it only on that env
   expect(index).toMatch(/roomShareListed = roomOwnerAudience && Boolean\(shareMounts\(database\(\)/);
-  expect(index).toMatch(/venuePostListed && venuePost \? venuePost\.request\.postTo : null,\s*Boolean\(shareMounts\(database\(\)/);
+  expect(index).toMatch(/venuePostListed && venuePost \? venuePost\.request\.postTo : null,\s*!pairedVenue && Boolean\(shareMounts\(database\(\)/);
   expect(index).toContain('MURAGE_ROOM_SHARE: "1"');
   expect(proxy).toContain('process.env.MURAGE_ROOM_SHARE === "1"');
 });
@@ -265,4 +275,28 @@ it("MurageMain cut (R4): Share queues NO automatic bot reply; the bot reads the 
   const en = JSON.parse(readFileSync(new URL("../src/locales/en.json", import.meta.url), "utf8")) as Record<string, string>;
   expect(en["roomShare.shared"]).toBe("Shared. {name} will use it in its next reply.");
   expect(card).toMatch(/t\("roomShare\.shared", \{ name: card\.botName \}\)/);
+});
+
+it("a supplied share clock does not freeze later registered queue deliveries", () => {
+  const first=ask().share!,later=ask().share!;
+  let clock=NOW;
+  const queue=installRoomShareApprovalDelivery(database(),()=>roster,deps,run,()=>clock);
+  expect(release(first.id)).toMatchObject({ok:true,status:"shared"});
+  clock+=SHARE_TTL_MS+1;
+  const item=queue.pendingApprovals().find(item=>item.ref===later.id)!;
+  expect(queue.answerNow(item.approvalId,{behavior:"allow",updatedInput:{origin:"desktop",nonce:later.nonce,digest:shareDigest(later),keep:later.excerpts.map(e=>e.messageId)}}).state).toBe("failed");
+  expect(roomShare(database(),later.id)!.status).toBe("unavailable");
+  expect(written).toHaveLength(1);
+});
+
+it("a share answer does not retain its roster for later queued releases", () => {
+  const first=ask().share!,later=ask().share!;
+  const queue=installRoomShareApprovalDelivery(database(),()=>roster,deps,run,()=>NOW);
+  expect(release(first.id)).toMatchObject({ok:true,status:"shared"});
+  roster={...roster,groups:roster.groups.map(group=>({...group,memberIds:group.memberIds.filter(id=>id!=="dax")}))};
+  const item=queue.pendingApprovals().find(item=>item.ref===later.id)!;
+  const answer=queue.answerNow(item.approvalId,{behavior:"allow",updatedInput:{origin:"desktop",nonce:later.nonce,digest:shareDigest(later),keep:later.excerpts.map(e=>e.messageId)}});
+  expect(answer.state).toBe("accepted");
+  expect(roomShare(database(),later.id)!.status).toBe("unavailable");
+  expect(written).toHaveLength(1);
 });

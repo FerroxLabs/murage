@@ -231,3 +231,20 @@ it("the call budget stop in en, de, es, pt-br and hi says another call can be st
     expect(value, code + ": must say another call can be started").toMatch(startsAgain[code]);
   }
 });
+
+// Settings and picker words (1.0.19): English, on the Settings and picker-dialog chunks (SettingsCopy.lazy.test.ts).
+describe("English Settings pack", () => {
+  const dir = join(LOCALES_DIR, "en-settings");
+  const files = readdirSync(dir).filter((file) => file.endsWith(".json")).sort();
+
+  it("is the settings and picker files, holding no key the English pack, the UX fragments or help already have", async () => {
+    expect(files).toEqual(["picker.json", "settings.json"]);
+    const { en } = await import("./index");
+    const help = JSON.parse(readFileSync(join(LOCALES_DIR, "en-help/screens.json"), "utf8")) as Record<string, string>;
+    for (const file of files) {
+      const pack = JSON.parse(readFileSync(join(dir, file), "utf8")) as Record<string, string>;
+      expect(Object.keys(pack).filter((key) => typeof pack[key] !== "string" || Object.hasOwn(en, key) || Object.hasOwn(help, key)), file).toEqual([]);
+      expect(Object.entries(pack).filter(([, value]) => DASH.test(value) || SAFE.test(value)).map(([key]) => key), file).toEqual([]);
+    }
+  });
+});

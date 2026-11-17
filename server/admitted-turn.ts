@@ -51,6 +51,9 @@ export type AdmittedTurnState = {
 };
 
 export type GiveBackSteps = {
+  /** PROVISIONAL INTERFACE: I supplies the captured batch terminalizer. It must
+   * commit first or throw; false means stale ownership, so no cleanup is allowed. */
+  commitTerminal?: (error: unknown) => boolean | void;
   /** This run still owns the thread. */
   current: () => boolean;
   /** Some run (a newer turn) holds the thread now. */
@@ -68,6 +71,10 @@ export type GiveBackSteps = {
  * keep stays kept; a newer turn's run and busy mark are never touched. */
 export function giveBackAdmitted(state: AdmittedTurnState, phase: AdmittedPhase, error: unknown, steps: GiveBackSteps, log: (line: string) => void = (line) => console.error(line)): void {
   const run = (name: string, step: () => void) => { try { step(); } catch (stepError) { log(`[turn] give-back step ${name} failed: ${describe(stepError)}`); } };
+  if (steps.commitTerminal) {
+    try { if (steps.commitTerminal(error) === false) return; }
+    catch (commitError) { log(`[turn] receipt settlement pending: ${describe(commitError)}`); return; }
+  }
   run("endMarks", steps.endMarks);
   if (state.keepThread) return;
   let current = false, held = true;
@@ -81,4 +88,69 @@ export function giveBackAdmitted(state: AdmittedTurnState, phase: AdmittedPhase,
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** PROVISIONAL INTERFACE: I supplies generation-scoped effect receivers and the
+ * existing explanation lookup/writer. All six terminal paths use this object;
+ * receipt failure is retried without keeping an open transaction or releasing. */
+export function createAttemptTerminalizer(
+  store: import("./send-attempt-state.ts").SendAttemptStore,
+  bindings: readonly import("./send-attempt-state.ts").BindingKey[],
+  hooks: {
+    current: () => boolean;
+    seal: () => void;
+    requestStop: () => void;
+    explanationExists: (attemptId: string) => boolean;
+    explain: (receipt: import("./send-attempt-state.ts").AttemptSnapshot, key: string) => void;
+    effect: (effect: import("./send-attempt-state.ts").CleanupEffect) => boolean | void;
+  },
+) {
+  let pending: { outcome: import("./send-attempt-state.ts").TerminalOutcome; delivery: import("./send-attempt-state.ts").AttemptDelivery } | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let failures = 0;
+  let stopped = false;
+  const retry = () => {
+    if (timer || stopped) return;
+    timer = setTimeout(() => { timer = undefined; attempt(); }, Math.min(5_000, 1_000 * 2 ** failures++));
+    timer.unref?.();
+  };
+  const attempt = (): boolean => {
+    if (!pending || stopped) return false;
+    if (!hooks.current()) { stopped = true; return false; }
+    try {
+      // Reload evidence revisions only; immutable captured bindings/fences are
+      // passed unchanged, so a rebuild can never adopt an old callback.
+      store.settleBatch(bindings.map(key => ({ key, revision: store.byId(key.attemptId)?.revision ?? -1 })), pending.outcome, pending.delivery);
+      const first = bindings[0];
+      if (!first) { stopped = true; return true; }
+      const complete = store.flushEffects(first.threadId, first.generation, effect => {
+        if (!hooks.current()) return false;
+        if (effect.kind === "publication") {
+          for (const key of bindings) {
+            const receipt = store.byId(key.attemptId)!;
+            if ((receipt.terminalOutcome === "failed" || receipt.terminalOutcome === "refused") && !hooks.explanationExists(receipt.attemptId)) hooks.explain(receipt, `${receipt.attemptId}:${receipt.revision}`);
+          }
+        }
+        // current is checked again after the explanation writer, which may
+        // synchronously change ownership; no stale release/idle/drain follows.
+        if (!hooks.current()) return false;
+        return hooks.effect(effect);
+      });
+      if (!complete) { retry(); return false; }
+      stopped = true; return true;
+    } catch (error) {
+      if ((error as { code?: string }).code === "stale_action") { stopped = true; return false; }
+      hooks.seal();
+      try { hooks.requestStop(); } catch { /* durable ownership remains */ }
+      retry(); return false;
+    }
+  };
+  return {
+    settle(outcome: import("./send-attempt-state.ts").TerminalOutcome, delivery: import("./send-attempt-state.ts").AttemptDelivery): boolean {
+      if (!pending) pending = { outcome, delivery }; // first terminal intent wins
+      return attempt();
+    },
+    retry: attempt,
+    dispose() { stopped = true; if (timer) clearTimeout(timer); },
+  };
 }

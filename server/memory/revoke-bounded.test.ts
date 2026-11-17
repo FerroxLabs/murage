@@ -1,3 +1,7 @@
+// MAIN RULING RULINGS-1019-RECALL-1116 R7-1c / AP-5; exact transferred oracle.
+import { MemoryDispatchReceipt } from './dispatch.ts';
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { startLiveSession } from './testing/live-session-fixture.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -11,11 +15,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { buildMemoryBundle } from "./bundle.ts";
-import { bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, prepareMemoryDisclosure } from "./disclosures.ts";
+import { continuationMemoryRevoked } from "./disclosures.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 import { migrateMemorySchema } from "./schema.ts";
@@ -26,10 +31,11 @@ import { revocationIndexReady } from "./revocation.ts";
 import type { MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { stampFreshSession } from "./testing/writetime-fixture.ts";
-import { removeTempDirSync } from "../testing/cleanup.ts";
+import { removeTempDir } from "../testing/cleanup.ts";
 import { settleTestHandles } from "../test-handle-registry.ts";
 import { REVOKE_PACE, REVOKE_PACE_COMMIT, REVOKE_WRITE_BUDGET, resetRevokeWriteBudget } from "./revoke-budget.ts";
-import { storeAnchorMessage } from "./testing/anchor-message.ts";
+import * as revokeBudget from "./revoke-budget.ts";
+import { storeLiveAnchor as storeAnchorMessage } from "./testing/live-session-fixture.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -46,7 +52,7 @@ const BUDGET = REVOKE_WRITE_BUDGET.bytesPerMinute;
 const PACE0 = REVOKE_PACE.bytesPerMinute, ROWS0 = REVOKE_PACE_COMMIT.rows;
 beforeEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = Number.POSITIVE_INFINITY; REVOKE_PACE.bytesPerMinute = Number.POSITIVE_INFINITY; REVOKE_PACE_COMMIT.rows = 1_000_000; resetRevokeWriteBudget(); });
 afterEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = BUDGET; REVOKE_PACE.bytesPerMinute = PACE0; REVOKE_PACE_COMMIT.rows = ROWS0; resetRevokeWriteBudget(); });
-afterEach(() => { stopMemoryRevocation(); vi.restoreAllMocks(); for (const db of dbs.splice(0)) db.close(); });
+afterEach(async () => { stopMemoryRevocation(); vi.restoreAllMocks(); for (const db of dbs.splice(0)) db.close(); await settleTestHandles(DATA_DIR); });
 /** Runs every job row of `db` to completion through the runner. */
 async function drain(db: DatabaseSync | (() => DatabaseSync)) { wakeMemoryRevocation(typeof db === "function" ? db : () => db, { pauseMs: 1 }); await memoryRevocationIdle(); }
 const jobRows = (db: DatabaseSync) => Number(db.prepare("SELECT count(*) AS n FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='memory-revocation'").get()!.n);
@@ -149,9 +155,35 @@ it("the index build retries a lock error and any other error with backoff until 
   expect(ready).toHaveBeenCalledTimes(1);
 });
 
+it("slow commits do not shrink cheap revocation batches, but still earn the full idle pause", async () => {
+  const db = open();
+  // Reviewed implementation 678f762a85 has not completed its lane gates. Use
+  // its deterministic storage-cost regression against this integration base.
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const exec = db.exec.bind(db);
+  vi.spyOn(db, "exec").mockImplementation(sql => {
+    const result = exec(sql);
+    if (sql === "COMMIT") now += 12;
+    return result;
+  });
+  const rows: number[] = [];
+  vi.spyOn(revokeBudget, "budgetedMarkerSlice").mockImplementation((_db, limit) => {
+    rows.push(limit); now += 1;
+    return rows.length <= 6;
+  });
+  await drain(db);
+  expect(rows.slice(0, 6), "ORACLE:slow-commit-batch-growth").toEqual([64, 128, 256, 512, 1024, 2048]);
+  expect(memoryRevocationStats.maxWorkMs, "ORACLE:row-work-clock").toBe(1);
+  expect(memoryRevocationStats.maxSliceMs, "ORACLE:whole-slice-clock").toBe(13);
+  expect(memoryRevocationStats.pauseMs, "ORACLE:full-storage-idle-pause").toBeGreaterThanOrEqual(6 * 13 * 3);
+});
+
 // ---- the live path: a file database through database() ----
 const empty: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+// 5d5a791f19 starts a second worker at open. Do not reuse the old file's
+// paths until every registered handle has actually stopped.
+beforeEach(async () => { await removeTempDir(DATA_DIR, { strict: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 
 const BULK = `INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,token_count,state,created_at)
   WITH RECURSIVE n(i) AS (SELECT ?1 UNION ALL SELECT i+1 FROM n WHERE i<?2)
@@ -213,10 +245,9 @@ it("with the index not ready a forget returns at once and a reader treats the re
   const a = access();
   const bundle = await buildMemoryBundle("anything", a, empty, { allowance: LineageAllowance.tool() });
   expect(bundle.recordVersions.map(r => r.id)).toEqual(["shown"]);
-  prepareMemoryDisclosure(bundle, a, "claude");
-  bindMemoryDisclosureSession(bundle.bundleId, "session-1");
-  stampFreshSession(database(), "private", "claude", "session-1"); // stamped as a 1.0.3 fresh start leaves it (S6 rule 26)
-  deliverMemoryDisclosure(bundle.bundleId, a);
+  const receipt = new MemoryDispatchReceipt(bundle,a,'claude');
+  const confirmation = startLiveSession(a,'claude','session-1');
+  receipt.sessionStarted('session-1',true,confirmation); receipt.accepted();
   db.prepare(BULK).run(0, 99_999);
   db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); // the bulk fixture's own checkpoint is not a revocation slice
   db.exec("UPDATE memory_revocation_index_build SET ready=0,cursor=NULL,done=0,finished_at=NULL");
@@ -429,10 +460,9 @@ it("the next turn after a forget resets a long session from two seeks, without j
   db.prepare("INSERT INTO memory_evidence VALUES('shown',1,'source-shown',1,0,?)").run(Buffer.byteLength("The owner keeps backups on Fridays"));
   const a = access();
   const bundle = await buildMemoryBundle("anything", a, empty, { allowance: LineageAllowance.tool() });
-  prepareMemoryDisclosure(bundle, a, "claude");
-  bindMemoryDisclosureSession(bundle.bundleId, "session-1");
-  stampFreshSession(database(), "private", "claude", "session-1"); // stamped as a 1.0.3 fresh start leaves it (S6 rule 26)
-  deliverMemoryDisclosure(bundle.bundleId, a);
+  const receipt = new MemoryDispatchReceipt(bundle,a,'claude');
+  const confirmation = startLiveSession(a,'claude','session-1');
+  receipt.sessionStarted('session-1',true,confirmation); receipt.accepted();
   const meta = db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;
   // a long session: 20k more receipts under the same epoch, each citing the record shown
   db.prepare(`INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,token_count,state,created_at)
@@ -445,7 +475,7 @@ it("the next turn after a forget resets a long session from two seeks, without j
   const t0 = performance.now();
   expect(continuationMemoryRevoked(LineageAllowance.tool(), "private", "claude", "session-1", access(), why)).toBe(true);
   expect(performance.now() - t0).toBeLessThan(20);
-  expect(why.reason).toMatch(/^memory-changed \((deletion-epoch|receipt-already-revoked)\)$/);
+  expect(why.reason).toMatch(/^writetime-session-forgotten$/);
   expect(revoked() - before).toBeLessThanOrEqual(1);
 }, 300_000);
 

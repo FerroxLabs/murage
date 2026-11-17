@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Approve all on Needs you and Approvals (APPROVE-ALL-1016 rev 3; APPROVALS-SIMPLE-1018 sections 3 and 3b). The button
 // shows only where the server's owner-app check says so (the desktop app or the owner's phone app, never a browser),
-// and only when 2 or more rows ON SCREEN carry the server's `bulk: "ok"` stamp; its label is that count.
+// and whenever 2 or more approval rows wait (NOLIM-1019 N3); its label counts the rows ON SCREEN carrying the server's
+// `bulk: "ok"` stamp, and a list with none of them shows it disabled ("N need a look").
 //
 // Desktop: no sheet. The rows above the button are the list. A press reads the preview and applies exactly the
 // displayed ok rows the preview also lists; if they differ nothing is applied ("The list changed."). Phone: the sheet
@@ -12,11 +13,12 @@
 // closes, and a preview still loading is dropped. An apply in flight keeps its lock; its result line stays only while
 // the list just loses rows it was pressed over. Nothing here decides eligibility.
 import { useEffect, useRef, useState } from "react";
-import { api, useStoreIfAny } from "@/state/store";
+import { api, requestFailedSentence, useStoreIfAny } from "@/state/store";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import { BotAvatar } from "./Avatar";
-import { applyApproveAll, batchReason, boundToScreen, cardDetail, groupByBot, listToken, previewBody, previewGate, resultLine, resultSurvives, tickedCards, type ApplyResult, type ApproveAllPreview, type ApproveAllSurface, type EligibleCard, type PreviewScreen } from "@/lib/approve-all";
+import { approveAllCounts, approveAllLabel } from "../../shared/approve-all-counts";
+import { applyApproveAll, applyRefusalMeansChanged, batchReason, boundToScreen, cardDetail, groupByBot, judgeThreadWindow, listToken, noEligibleOutcome, previewBody, previewGate, requestIdOfKey, resultLine, resultSurvives, threadAsPreview, threadPreviewBody, threadResultNotes, threadWindows, tickedCards, type ApplyResult, type ApproveAllPreview, type ApproveAllSurface, type EligibleCard, type PreviewScreen, type ThreadPreview } from "@/lib/approve-all";
 import { lowerFirst } from "@/lib/approval-row";
 import { localizeOutsideNote } from "@/lib/outside-note";
 
@@ -77,7 +79,7 @@ type Step =
   | { at: "saving"; n: number }
   | { at: "previewing"; n: number }
   | { at: "applying"; n: number }
-  | { at: "sheet"; preview: ApproveAllPreview; cards: EligibleCard[]; press: PressSnapshot }
+  | { at: "sheet"; preview: ApproveAllPreview; cards: EligibleCard[]; press: PressSnapshot; notes?: string }
   | { at: "note"; line: string }
   | { at: "result"; line: string; pressed: readonly string[] };
 
@@ -94,8 +96,16 @@ export function stepAfterListChange(step: { at: string; pressed?: readonly strin
 /** The kind under a line on the phone sheet, the same words as a row's grey line. */
 const kindWords = (kind: string) => t(`ux.l2b.door.kind.${["command", "edit", "app"].includes(kind) ? kind : "other"}` as LocaleKey);
 
-export function ApproveAllButton({ ready, listed, screen, refreshes, onApplied, onChanged }: {
-  /** the rows on screen the server stamped ok, as `threadId\0messageId`: the count, and exactly what a press answers */
+export function ApproveAllButton({ ready, listed, threadId, counts: displayedCounts, scope = "screen", screen, refreshes, onApplied, onChanged }: {
+  /** NOLIM-1019 N3: the Inbox's own tally of the approvals on screen (shown) and the ones the server stamped ok */
+  counts?: ReturnType<typeof approveAllCounts>;
+  /** "screen" (Inbox, Needs you): a press answers exactly the ok rows on screen. "thread" (the chat, Rev 3.3, which cannot
+   *  tell which cards go in bulk): a press asks the server for a preview of this thread's shown cards, in windows, and
+   *  answers the ones it lists as eligible; the rest stay for their own Allow. */
+  scope?: "screen" | "thread";
+  /** scope "thread": the chat's thread */
+  threadId?: string;
+  /** the rows on screen the server stamped ok, as `threadId\0messageId` (scope "thread": every shown card as `chatRequestKey`): the count, and exactly what a press answers */
   ready: readonly string[];
   /** every request row on screen, the same keys: its set is the list's generation token (3b) */
   listed: readonly string[];
@@ -103,9 +113,9 @@ export function ApproveAllButton({ ready, listed, screen, refreshes, onApplied, 
   screen?: PreviewScreen;
   /** the page's Refresh presses: each closes anything open and reads the surface again */
   refreshes: number;
-  onApplied: () => void;
+  onApplied?: () => void;
   /** the list moved under a press: read it again */
-  onChanged: () => void;
+  onChanged?: () => void;
 }) {
   const token = listToken(listed);
   const [surface, setDismissed] = useApproveAllSurface(`${refreshes}|${token}`);
@@ -149,14 +159,22 @@ export function ApproveAllButton({ ready, listed, screen, refreshes, onApplied, 
     setStep({ at: "idle" });
   }, [token, refreshes]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const n = ready.length;
+  // NOLIM-1019 N3: two waiting approvals show the button, whether or not any can go in bulk (the 11-06 gate counted only
+  // `bulk: ok` rows, so a list of held cards hid it). Under 2 there is no button. The chat does not know which cards are
+  // eligible, so its label carries no count; the Inbox's says what the press would approve and what needs a look.
+  const chat = scope === "thread" && threadId !== undefined;
+  const counts = chat ? { visible: listed.length >= 2, disabled: false, ok: listed.length, rest: 0 }
+    : displayedCounts ?? approveAllCounts(listed.map(key => ({ kind: "request", bulk: ready.includes(key) ? "ok" : "held" })));
+  const label = chat ? t("approveAll.buttonAll")
+    : counts.rest === 0 ? t("approveAll.button", { n: counts.ok })
+    : approveAllLabel(counts, { approve: ok => t("approveAll.approveCount", { ok }), look: rest => t("approveAll.needLook", { rest }) });
   if (!surface.show) return null;
-  // Never "Approve 0" or "Approve all 1": under 2 there is no button and nothing to open.
-  if (n < 2 && (step.at === "idle" || step.at === "caution")) return null;
+  if (!counts.visible && (step.at === "idle" || step.at === "caution")) return null;
 
-  const closeWith = (line: string) => { setStep({ at: "note", line }); onChanged(); };
-  /** Apply the bound cards. Every post (and the phone's one signed retry) first checks the list has not moved. */
-  const apply = async (preview: ApproveAllPreview, cards: EligibleCard[], press: PressSnapshot, names: string[]) => {
+  const closeWith = (line: string) => { setStep({ at: "note", line }); onChanged?.(); };
+  /** Apply the bound cards. Every post (and the phone's one signed retry) first checks the list has not moved. `notes` is
+   *  what a chat press adds under the result line (the cards that wait for their own Allow, a press-again nudge). */
+  const apply = async (preview: ApproveAllPreview, cards: EligibleCard[], press: PressSnapshot, names: string[], notes = "") => {
     if (!stillPressed(press, live.current)) { if (live.current.mounted) closeWith(t("approveAll.changed")); return; }
     if (!gate.sign()) return;
     const pressed = [...live.current.listed];
@@ -170,24 +188,60 @@ export function ApproveAllButton({ ready, listed, screen, refreshes, onApplied, 
           return api("/api/inbox/approve-all/apply", { method: "POST", body: JSON.stringify(body) }) as Promise<{ approved: number; results: ApplyResult[] }>;
         },
         preview, cards, batchReason(cards.length, names));
-      onApplied();
+      onApplied?.();
       if (!live.current.mounted) return;
       // The result line shows only over the list it was pressed over: not after a Refresh, and not once a row the
       // press never saw arrived (Astra r2 High). Otherwise the list simply re-reads, with nothing stale on it.
       const sameGen = live.current.gen.split("|")[0] === press.gen.split("|")[0] && resultSurvives(pressed, live.current.listed);
       if (!sameGen) { setStep({ at: "idle" }); return; }
       const threadBot = new Map(preview.eligible.map((card) => [card.threadId, card.botId]));
-      setStep({ at: "result", line: resultLine(done.results, (threadId) => botName(threadBot.get(threadId))), pressed });
+      const line = resultLine(done.results, (resultThread) => botName(threadBot.get(resultThread)));
+      setStep({ at: "result", line: notes ? `${line} ${notes}` : line, pressed });
     } catch (e) {
       if (!live.current.mounted) return;
       const code = (e as { code?: string })?.code;
-      if (code === "changed") { closeWith(t("approveAll.changed")); return; }
+      // "changed" only when the list moved or the server refused the batch as no longer matching (Rev 3.3 U4 e)
+      if (code === "changed" || applyRefusalMeansChanged(e)) { closeWith(t("approveAll.changed")); return; }
       const message = e instanceof Error ? e.message : String(e);
       if (message && code !== "cancelled") setError(message);
       setStep({ at: "idle" });
     } finally {
       gate.done();
     }
+  };
+
+  // The chat press (Rev 3.3 U4/V3): the thread preview of the shown cards, in windows of THREAD_WINDOW, until one window has
+  // eligible cards. Per window, after the await: the press snapshot first (the list moved: "changed"), then the check of
+  // the preview against what was asked (a protocol error is the failed-preview line, never "changed"), then the next
+  // window. Windows without eligible cards are read only; a batch exists only for the window that has some.
+  const runThread = async (press: PressSnapshot, ticket: number) => {
+    const asked = threadWindows(press.ready.map((key) => requestIdOfKey(threadId!, key)).filter((id): id is string => id !== null));
+    let excluded = 0;
+    let closed = 0;
+    for (let at = 0; at < asked.length; at += 1) {
+      let preview: ThreadPreview;
+      try {
+        preview = await api("/api/inbox/approve-all/preview", { method: "POST", body: threadPreviewBody(threadId!, asked[at]!) }) as ThreadPreview;
+      } catch (e) {
+        if (!gate.accepts(ticket) || !live.current.mounted || interaction.current !== press.id) return;
+        setError(e instanceof Error ? e.message : String(e));
+        setStep({ at: "idle" });
+        return;
+      }
+      if (!gate.accepts(ticket) || !live.current.mounted) return;
+      if (interaction.current !== press.id) return;
+      const bound = judgeThreadWindow(stillPressed(press, live.current), preview, threadId!, asked[at]!.map((id) => `${threadId!}\u0000${id}`));
+      if (bound.at === "changed") { closeWith(t("approveAll.changed")); return; }
+      if (bound.at === "protocol") { setError(requestFailedSentence(502)); setStep({ at: "idle" }); return; }
+      if (bound.at === "empty") { excluded += bound.excluded; closed += bound.closed; continue; }
+      const windowsRemain = at < asked.length - 1;
+      const asPreview = threadAsPreview(preview, windowsRemain);
+      const notes = threadResultNotes(excluded + bound.excluded, bound.later > 0 || windowsRemain);
+      if (surface.app === "phone") { setStep({ at: "sheet", preview: asPreview, cards: bound.cards, press, notes }); return; }
+      await apply(asPreview, bound.cards, press, [...new Set(bound.cards.map((card) => botName(card.botId)))], notes);
+      return;
+    }
+    closeWith(noEligibleOutcome({ excluded, closed }) === "eachOwn" ? t("approveAll.eachOwn") : t("approveAll.none"));
   };
 
   // Single flight (review H2): a second press while a preview loads does nothing, and a preview (or its failure) that
@@ -199,6 +253,7 @@ export function ApproveAllButton({ ready, listed, screen, refreshes, onApplied, 
     if (ticket === null) return;
     setError(null);
     setStep({ at: "previewing", n: press.ready.length });
+    if (chat) { await runThread(press, ticket); return; }
     let preview: ApproveAllPreview;
     try {
       preview = await api("/api/inbox/approve-all/preview", { method: "POST", body: previewBody(press.screen) }) as ApproveAllPreview;
@@ -243,14 +298,14 @@ export function ApproveAllButton({ ready, listed, screen, refreshes, onApplied, 
 
   return <div className="mt-3">
     {/* "The list changed" is never a dead end (Astra): the note keeps an enabled Approve all */}
-    {(step.at === "idle" || step.at === "note") && n >= 2 && <button type="button" data-approve-all className={`${button} bg-accent text-accent-ink`} onClick={press}>{t("approveAll.button", { n })}</button>}
+    {(step.at === "idle" || step.at === "note" || step.at === "result") && counts.visible && <button type="button" data-approve-all className={`${button} bg-accent text-accent-ink`} disabled={counts.disabled} onClick={press}>{label}</button>}
     {(step.at === "applying" || step.at === "previewing" || step.at === "saving") && <button type="button" data-approve-all className={`${button} bg-accent text-accent-ink`} disabled aria-busy="true">{t("approveAll.busy", { n: step.n })}</button>}
     {error && <p role="alert" className="mt-2 text-[13px] text-danger">{error}</p>}
     {step.at === "caution" && <Caution onReview={cancel} onContinue={(dontShow) => void gotIt(dontShow)} />}
     {step.at === "sheet" && <ApproveAllSheet preview={step.preview} cards={step.cards} botName={botName} botOf={botOf} busy={gate.signing} onCancel={cancel} onApprove={(cards, names) => {
       // the phone checks the press's snapshot before it signs, and the post wrapper checks it again before the retry
       if (!stillPressed(step.press, live.current)) { closeWith(t("approveAll.changed")); return; }
-      void apply(step.preview, cards, step.press, names);
+      void apply(step.preview, cards, step.press, names, step.notes ?? "");
     }} />}
     {(step.at === "result" || step.at === "note") && <p role="status" data-approve-all-line className="mt-1 text-[13px] text-ink">{step.line}</p>}
   </div>;

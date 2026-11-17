@@ -1,0 +1,5 @@
+PASS assertion wrappers: 6/6 passing assertions count exactly once; 6/6 failing assertions throw without counting
+Wrapped scenario assertion call sites: {"assert":17,"assert.equal":21,"assert.match":7}
+Direct nodeAssert uses: [{"line":5,"call":"nodeAssert","text":"nodeAssert(...args)"},{"line":6,"call":"nodeAssert.equal","text":"nodeAssert.equal(...args)"},{"line":7,"call":"nodeAssert.match","text":"nodeAssert.match(...args)"},{"line":122,"call":"nodeAssert","text":"nodeAssert(passed>0)"}]
+Line 122 is the pre-existing group-accounting invariant; retained by the approved patch, excluded from scenario assertion counts. Lines 5-7 implement the wrappers. No other direct assertion use remains.
+PASS patched driver has zero JavaScript scanner findings

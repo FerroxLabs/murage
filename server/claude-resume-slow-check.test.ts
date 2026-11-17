@@ -12,9 +12,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
+import { prepareFixtureRecall } from "./testing/recall-ready-fixture.ts";
+import { memoryVerificationMeter } from "./testing/memory-verification-fixture.ts";
+// MAIN RULING INT-CONFLICT-DEFAULT: resume metadata is the generation-fenced
+// checkpoint plus task sidecars, the same durable projection the server boots.
+// Producer owner: recall-scope-c; fixture consumer owner: c4-misc-a2.
+import { readBotRecords } from "./bot-turn-state.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
+// MAIN RULING INT-CONFLICT-DEFAULT: retained mounted sessions use the exact
+// reviewed scripted S2 receipt; native BG admission and every resume check stay live.
+const RETAINED_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "claude-retained-session-preload.mjs")).href;
 const PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "slow-lineage-preload.mjs")).href;
 const DESKTOP_SECRET = "d".repeat(64);
 const DESKTOP_HEADERS = { "x-murage-surface": "desktop", "x-murage-surface-secret": DESKTOP_SECRET } as const;
@@ -44,9 +54,12 @@ describe("a chat's native session across a restart on a slow machine", () => {
 
   const start = async () => {
     stderr = "";
-    child = spawn(process.execPath, ["--import", PRELOAD, join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", pathToFileURL(join(SERVER_DIR, "testing", "idle-load-preload.mjs")).href, "--import", RETAINED_PRELOAD, "--import", pathToFileURL(join(SERVER_DIR, "testing", "recall-ready-preload.mjs")).href, "--import", PRELOAD, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
+        ...powerBlockTestEnv(),
+        MURAGE_ENGINE_EXCLUSION_PATH: memoryVerificationMeter(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
@@ -60,6 +73,9 @@ describe("a chat's native session across a restart on a slow machine", () => {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    // MAIN RULING INT-CONFLICT-DEFAULT: inspect both runtime diagnostic
+    // streams; keep the original exact no-continuation-reset assertion.
+    child.stdout!.on("data", (chunk) => (stderr += chunk));
     child.stderr!.on("data", (chunk) => (stderr += chunk));
     const deadline = Date.now() + 30_000;
     for (;;) {
@@ -74,16 +90,18 @@ describe("a chat's native session across a restart on a slow machine", () => {
     child = undefined;
   };
 
-  const botsFile = () => join(home, ".murage", "bots.json");
   const taskOf = (bot: BotView): TaskRow | undefined =>
-    (JSON.parse(readFileSync(botsFile(), "utf8")) as BotRow[]).find((row) => row.id === bot.id)?.tasks?.find((task) => task.threadId === bot.threadId);
+    (readBotRecords(join(home, ".murage")) as BotRow[]).find((row) => row.id === bot.id)?.tasks?.find((task) => task.threadId === bot.threadId);
 
   const turn = async (bot: BotView, text: string): Promise<{ argv: string[]; prompt: string }> => {
+    await prepareFixtureRecall(join(home, ".murage"), bot.id, bot.threadId);
     rmSync(dump, { force: true });
     expect((await request("POST", `/api/bots/${bot.id}/messages`, { text })).status).toBe(202);
     await expect.poll(() => existsSync(dump), { timeout: 20_000 }).toBe(true);
     await expect.poll(async () => (await request("GET", "/api/bots?messages=0")).body.bots.find((b: BotView) => b.id === bot.id)?.busy, { timeout: 20_000 }).toBe(false);
     const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; prompt: unknown };
+    if (text === "second message" && !seen.argv.includes("--resume"))
+      console.info("fixture-resume refusal", stderr.split("\n").filter(line => line.includes("memory continuation reset")).join("\n"));
     return { argv: seen.argv, prompt: JSON.stringify(seen.prompt) };
   };
 
@@ -128,7 +146,7 @@ describe("a chat's native session across a restart on a slow machine", () => {
 
     const first = await turn(bot, "remember the word HERON-ONE");
     const cursor = first.argv[first.argv.indexOf("--session-id") + 1]!;
-    await expect.poll(() => taskOf(bot)?.resumeCursors?.claude, { timeout: 10_000 }).toBe(cursor);
+    await expect.poll(() => taskOf(bot)?.resumeCursors?.claude, { timeout: 10_000, message: `the fake turn must save its native cursor; stderr: ${stderr.slice(-5000)}` }).toBe(cursor);
 
     await stop();
     await start();
@@ -137,7 +155,7 @@ describe("a chat's native session across a restart on a slow machine", () => {
     // the slow read really happened on this turn's check
     expect(existsSync(flag)).toBe(false);
     expect(stderr).not.toContain("memory continuation reset");
-    expect(resumed.argv[resumed.argv.indexOf("--resume") + 1]).toBe(cursor);
+    expect(resumed.argv[resumed.argv.indexOf("--resume") + 1], stderr.slice(-20000)).toBe(cursor);
     expect(resumed.prompt).not.toContain(REPLAY_MARK);
   }, 120_000);
 
@@ -151,12 +169,12 @@ describe("a chat's native session across a restart on a slow machine", () => {
     const first = await turn(bot, "remember the word EGRET-ONE");
     expect(first.prompt).toContain("did not finish loading");
     const cursor = first.argv[first.argv.indexOf("--session-id") + 1]!;
-    await expect.poll(() => taskOf(bot)?.resumeCursors?.["claude-slow-tools"], { timeout: 10_000 }).toBe(cursor);
+    await expect.poll(() => taskOf(bot)?.resumeCursors?.["claude-slow-tools"], { timeout: 10_000, message: `the fake turn must save its native cursor; stderr: ${stderr.slice(-5000)}` }).toBe(cursor);
 
     await stop();
     await start();
     const resumed = await turn(bot, "second message");
-    expect(resumed.argv[resumed.argv.indexOf("--resume") + 1]).toBe(cursor);
+    expect(resumed.argv[resumed.argv.indexOf("--resume") + 1], stderr.slice(-20000)).toBe(cursor);
     expect(resumed.prompt).not.toContain(REPLAY_MARK);
   }, 120_000);
 });

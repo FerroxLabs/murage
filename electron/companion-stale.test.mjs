@@ -54,7 +54,7 @@ async function sidecarStandIn(port, token, { stubborn = false } = {}) {
       if (ok && q.method === "POST" && q.url === "/recovery/stop") { send(202, { stopping: true }); if (!${stubborn}) setTimeout(() => process.exit(0), 50); return; }
       send(403, { error: "forbidden" });
     }).listen(${port}, "127.0.0.1", () => process.stdout.write("up\\n"));`;
-  const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "ignore"] });
+  const child = spawn(process.execPath, ["-e", script], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
   children.push(child);
   await new Promise((resolve, reject) => {
     child.stdout.once("data", resolve);
@@ -65,7 +65,7 @@ async function sidecarStandIn(port, token, { stubborn = false } = {}) {
 
 /** An unrelated long-lived process, standing in for a recycled pid. */
 function stranger() {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" });
   children.push(child);
   return child;
 }

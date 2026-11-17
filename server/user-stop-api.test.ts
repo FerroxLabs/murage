@@ -13,6 +13,8 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { fixtureRequested } from "./testing/fixture-request.ts";
+import { fencePageText } from "./browser-untrusted.ts";
 
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
@@ -93,6 +95,20 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await fixture?.close();
+});
+
+it("fixture controls read the current request before appended packs, never markers in lent or replayed rows", () => {
+  const source = readFileSync(new URL("./testing/fake-claude-cli.ts", import.meta.url), "utf8");
+  // MAIN RULING INT-CONFLICT-DEFAULT 064a3cf805 -> a6850509bb: the fake imports its shared request parser; retain its real consumer and every request/pack control.
+  expect(source).toContain('import { fixtureRequested } from "./fixture-request.ts";');
+  expect(source).toContain('fixtureRequested(promptText(prompt), "__fixture_hold_authority__")');
+  const requested = fixtureRequested;
+  const marker = "__fixture_hold_authority__";
+  const packs = Array.from({ length: 3 }, () => fencePageText(JSON.stringify({ rows: [{ text: marker }] }), { origin: "source", kind: "delegation-context" })).join("\n\n");
+  expect(requested(`${marker} current request\n\n${packs}`, marker)).toBe(true);
+  expect(requested(`${marker} earlier request\nordinary current request\n\n${packs}`, marker)).toBe(false);
+  expect(requested(`ordinary current request\n\n${packs}`, marker)).toBe(false);
+  expect(requested(`${marker} current room request\n\n(Reply to the conversation above as Ember.)\n\n${packs}`, marker)).toBe(true);
 });
 
 it("Stop on a direct Claude turn leaves the normal stopped state, not an error card", async () => {

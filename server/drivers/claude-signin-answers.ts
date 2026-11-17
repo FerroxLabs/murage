@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -14,7 +15,8 @@
 // One owner-only JSON file in the data folder (0600 in a 0700 folder), replaced by write-then-rename, at most MAX entries (the
 // oldest answer goes first).
 import { createHmac, randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { chmodSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 
 export const CLAUDE_SIGNIN_ANSWERS_FILE = "claude-signin-answers.json";
@@ -47,7 +49,7 @@ export class ClaudeSigninAnswers {
     this.salt = "";
     this.answers = [];
     try {
-      const parsed = JSON.parse(readFileSync(file, "utf8")) as { salt?: unknown; answers?: unknown };
+      const parsed = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(file, "utf8"))) as { salt?: unknown; answers?: unknown };
       if (typeof parsed.salt === "string" && HEX64.test(parsed.salt)) this.salt = parsed.salt;
       if (this.salt && Array.isArray(parsed.answers)) {
         this.answers = parsed.answers.filter((a): a is StoredAnswer => !!a && typeof a === "object"

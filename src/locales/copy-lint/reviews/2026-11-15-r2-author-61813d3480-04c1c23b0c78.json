@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "61813d34805ae35a14b48d9b45b4e0fdf385a392",
+  "date": "2026-11-15",
+  "base": "7ed777368bf7c1c63db51363c159e19e14df7825",
+  "scope": "1115-COPY-LEDGER-REVIEW: retained accepted verdicts, corrected last-changing locale-line author",
+  "strings": {
+    "en:ux.l1.level.other.other-channel-or-webhook": {
+      "text": "Trigger link from another app (webhook)",
+      "en": "Trigger link from another app (webhook)",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "en:ux.l1.level.other.guest-channel": {
+      "text": "Other people's channel messages",
+      "en": "Other people's channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "en:ux.l1.level.termsNote": {
+      "text": "No limits terms changed. Review the current terms.",
+      "en": "No limits terms changed. Review the current terms.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "de:ux.l1.level.other.other-channel-or-webhook": {
+      "text": "Auslöser von einer anderen App (Webhook)",
+      "en": "Trigger link from another app (webhook)",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "de:ux.l1.level.other.guest-channel": {
+      "text": "Kanalnachrichten anderer Personen",
+      "en": "Other people's channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "de:ux.l1.level.termsNote": {
+      "text": "Die Bedingungen für Ohne Limits haben sich geändert. Prüfe die aktuellen Bedingungen.",
+      "en": "No limits terms changed. Review the current terms.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "es:ux.l1.level.other.other-channel-or-webhook": {
+      "text": "Activador de otra aplicación (webhook)",
+      "en": "Trigger link from another app (webhook)",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "es:ux.l1.level.other.guest-channel": {
+      "text": "Mensajes de otras personas desde canales",
+      "en": "Other people's channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "es:ux.l1.level.termsNote": {
+      "text": "Las condiciones de Sin límites cambiaron. Revisa las condiciones actuales.",
+      "en": "No limits terms changed. Review the current terms.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "fr:ux.l1.level.other.other-channel-or-webhook": {
+      "text": "Déclencheur d’une autre application (webhook)",
+      "en": "Trigger link from another app (webhook)",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "fr:ux.l1.level.other.guest-channel": {
+      "text": "Messages d’autres personnes depuis les canaux",
+      "en": "Other people's channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "fr:ux.l1.level.termsNote": {
+      "text": "Les conditions de Sans limites ont changé. Consulte les conditions actuelles.",
+      "en": "No limits terms changed. Review the current terms.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "hi:ux.l1.level.other.other-channel-or-webhook": {
+      "text": "दूसरे ऐप से ट्रिगर (वेबहुक)",
+      "en": "Trigger link from another app (webhook)",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "hi:ux.l1.level.other.guest-channel": {
+      "text": "चैनलों से दूसरे लोगों के संदेश",
+      "en": "Other people's channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "hi:ux.l1.level.termsNote": {
+      "text": "बिना सीमा की शर्तें बदली हैं। मौजूदा शर्तें देखें।",
+      "en": "No limits terms changed. Review the current terms.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "ja:ux.l1.level.other.other-channel-or-webhook": {
+      "text": "別のアプリからのトリガー（Webhook）",
+      "en": "Trigger link from another app (webhook)",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "ja:ux.l1.level.other.guest-channel": {
+      "text": "チャネルからの他の人のメッセージ",
+      "en": "Other people's channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "ja:ux.l1.level.termsNote": {
+      "text": "無制限の利用条件が変わりました。現在の条件を確認してください。",
+      "en": "No limits terms changed. Review the current terms.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "pt-br:ux.l1.level.other.other-channel-or-webhook": {
+      "text": "Gatilho de outro aplicativo (webhook)",
+      "en": "Trigger link from another app (webhook)",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "pt-br:ux.l1.level.other.guest-channel": {
+      "text": "Mensagens de outras pessoas nos canais",
+      "en": "Other people's channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "pt-br:ux.l1.level.termsNote": {
+      "text": "Os termos de Sem limites mudaram. Revise os termos atuais.",
+      "en": "No limits terms changed. Review the current terms.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "zh:ux.l1.level.other.other-channel-or-webhook": {
+      "text": "其他应用的触发器（Webhook）",
+      "en": "Trigger link from another app (webhook)",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "zh:ux.l1.level.other.guest-channel": {
+      "text": "其他人的频道消息",
+      "en": "Other people's channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "zh:ux.l1.level.termsNote": {
+      "text": "无限制的条款已更新。请查看当前条款。",
+      "en": "No limits terms changed. Review the current terms.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    }
+  },
+  "files": {}
+}

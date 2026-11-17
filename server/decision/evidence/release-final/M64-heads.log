@@ -1,0 +1,33 @@
+COMMAND node_modules/.bin/vitest run server/decision/budget.test.ts -t "content heads share"
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/budget.test.ts (7 tests | 1 failed | 6 skipped) 35ms
+   ↓ A12a M64 50MB content hashes stably without an unbounded clone; depth/key bounds
+   ↓ R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives
+   ↓ A12a prune walks settled index in batches of 500
+   ↓ M64 projection never calls structuredClone before enforcing bounds
+   ↓ M36 one cumulative reader budget covers outer scripts and all nested executables
+   ↓ A12a UTF-8 byte bounds apply to content heads, values and oversized keys
+   × A12a content heads share the same one MB registration budget 30ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  07:36:54
+   Duration  8.56s (transform 6.67s, setup 7.95s, import 410ms, tests 35ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/budget.test.ts > A12a content heads share the same one MB registration budget
+AssertionError: expected 1572864 to be less than or equal to 1000000
+ ❯ server/decision/budget.test.ts:29:16
+     27|  const source=Object.fromEntries(Array.from({length:24},(_,i)=>['body'…
+     28|  const projection=boundedProjection(source);const heads=Object.values(…
+     29|  expect(heads).toBeLessThanOrEqual(1_000_000);
+       |                ^
+     30| });
+     31|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

@@ -156,6 +156,22 @@ it("restore admission waits for a stopped writer's release and then holds the fo
   expect(owners()).toEqual(["restore:1"]);
 });
 
+it("a confirmed close releases the stopped writer's folder lease and admits a restore at once", async () => {
+  const { cwd, leases, owners } = fixture();
+  leases.acquire("thread", "generation", cwd);
+  leases.markDispatched("generation");
+  expect(leases.bind("thread", "generation", "turn")).toBe(true);
+  leases.markStopRequested("generation");
+  // Unconfirmed: the lease stays and a restore still reports the folder as closing.
+  await expect(leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 20 })).resolves.toEqual({ ok: false, reason: "still-closing" });
+  expect(owners()).toEqual(["generation"]);
+  // Confirmed close: the lease goes now, without waiting for a terminal event.
+  expect(leases.releaseClosed("generation")).toBe(true);
+  expect(owners()).toEqual([]);
+  await expect(leases.acquireRestoreWhenStopped("restore:2", cwd, { timeoutMs: 20 })).resolves.toMatchObject({ ok: true });
+  expect(leases.releaseClosed("generation")).toBe(false);
+});
+
 it("restore admission refuses a live writer at once and never waits on it", async () => {
   const { cwd, leases, owners } = fixture();
   leases.acquire("thread", "generation", cwd);

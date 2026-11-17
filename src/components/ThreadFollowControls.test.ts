@@ -10,7 +10,7 @@ import type { Message } from "@/state/store";
 import { scheduleAt } from "@/lib/routine-calendar";
 import { pendingApprovals } from "./PendingApproval";
 import { PermissionModeMenu } from "./PermissionModeMenu";
-import { isLimitOfferCard, limitWaitLabel, ownModelChats, ownModelLine } from "./ThreadFollowControls";
+import { isLimitOfferCard, LimitOfferCard, limitChoiceSettled, limitWaitLabel, ownModelChats, ownModelLine } from "./ThreadFollowControls";
 
 const limitCard = (answered?: string): Message => ({
   id: "m1", role: "bot", kind: "options", text: "", ts: 0,
@@ -51,4 +51,26 @@ describe("routine limit waits", () => {
   it("a limit reset routine is not moved by dragging its marker", () => {
     expect(scheduleAt({ type: "limit_reset", engineKey: "engine:claude" }, 0, 1000)).toEqual({ type: "limit_reset", engineKey: "engine:claude" });
   });
+});
+
+// Application recovery preserves the terminal approval while offering its same choice again.
+it("keeps an accepted limit choice usable until its application completes", () => {
+  const message = limitCard("Answered");
+  expect(limitChoiceSettled(message)).toBe(true);
+  message.limitApplication = { optionIndex: 0, nextTime: true, routines: false };
+  expect(limitChoiceSettled(message)).toBe(false);
+  delete message.limitApplication;
+  expect(limitChoiceSettled(message)).toBe(true);
+});
+
+it("renders only the accepted retry choice with its saved flags", () => {
+  const message = limitCard("Answered");
+  const closed = renderToStaticMarkup(createElement(LimitOfferCard, { threadId: "thread", message }));
+  expect(closed).not.toContain("<button");
+  message.limitApplication = { optionIndex: 0, nextTime: true, routines: true };
+  const pending = renderToStaticMarkup(createElement(LimitOfferCard, { threadId: "thread", message }));
+  expect(pending.match(/<button/g)).toHaveLength(1);
+  expect(pending).toContain("Codex (your plan)");
+  expect(pending).toContain('checked=""');
+  expect(pending).toContain('disabled=""');
 });

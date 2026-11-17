@@ -1,0 +1,37 @@
+COMMAND node_modules/.bin/vitest run server/decision/records-crash.test.ts -t M55
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/records-crash.test.ts > A4c M55 answer/answerId/pending survive crash before acceptance; restart never claims execution
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/records-crash.test.ts (4 tests | 1 failed | 3 skipped) 413ms
+   ↓ A4a M53 queue-first crash, tx rollback, committed restart yield exactly one usable row
+   ↓ A4a M53 record and row roll back together when messageRewrite drops the row
+   × A4c M55 answer/answerId/pending survive crash before acceptance; restart never claims execution 409ms
+   ↓ recovery refuses a missing queue adapter instead of reporting success
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  06:33:47
+   Duration  5.33s (transform 3.88s, setup 4.52s, import 263ms, tests 413ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/records-crash.test.ts > A4c M55 answer/answerId/pending survive crash before acceptance; restart never claims execution
+AssertionError: expected null to be truthy
+
+- Expected:
+true
+
++ Received:
+null
+
+ ❯ server/decision/records-crash.test.ts:25:100
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
