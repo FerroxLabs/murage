@@ -183,12 +183,14 @@ test("failed acquisition retains location for diagnostics without granting owner
   assert.deepEqual(result, { desktopDataDir: "/canonical/data", desktopDataOwner: null });
 });
 test("actual snapshot supervisor owns only the capture clone and restores its validated archive", async () => {
+  // MAIN RULING c27f55e312: main passes spawnInherited to capture, preserving
+  // the Windows child-process boundary; provide that dependency in this fixture.
   const events = [], app = new EventEmitter(), window = new EventEmitter(); app.getPath = () => "/desktop";
   const captureDirectory = path.join("/desktop", "recovery-capture-fixture");
   const plan = { id: "fixture", dataDirectory: "/desktop/new/data" };
   const scope = { canCaptureSeparateInstallation: () => true, app, recoveryWindow: window, AbortController, fs: { existsSync: () => false }, path,
     desktopRequestedDataDir: "/foreign/original", desktopDataDir: "/foreign/original", planSeparateInstallation: () => plan,
-    dataDirLeasePaths: () => ({ leasePath: "/foreign/.murage-data-owner-source.lease" }), process: { resourcesPath: "/resources", env: { PATH: "/runtime", SECRET: "excluded" } }, spawn() {},
+    dataDirLeasePaths: () => ({ leasePath: "/foreign/.murage-data-owner-source.lease" }), process: { resourcesPath: "/resources", env: { PATH: "/runtime", SECRET: "excluded" } }, spawnInherited() {},
     captureRecoveryCopy: async options => { assert.equal(options.source, "/foreign/original"); assert.equal(options.env.SECRET, undefined); assert.equal(await options.confirm({ destination: options.destination }), true); events.push("capture"); return { directory: options.destination }; },
     acquireDataDirLease: value => { assert.equal(value, captureDirectory); events.push("lease-clone"); return { release: () => events.push("release-clone") }; },
     runDesktopRecovery: async (operation, parameters, authority) => { assert.equal(operation, "backup"); assert.equal(authority.dataDirectory, captureDirectory); assert.equal(parameters.output, `${captureDirectory}.zip`); events.push("archive"); return { sha256: "a".repeat(64) }; },
@@ -313,7 +315,7 @@ test('F3 failed resumed prelaunch cleanup leaves explicit Return available',asyn
 
 test('F3 normal admission failure never claims launched requester authority',async()=>{
  const {prepareBackedUpInstall}=await import('./preupgrade-continuation.mjs');let options;
- const scope={process:{platform:'linux',env:{}},returnAuthority:createReturnAuthority(),backupScheduleHost:null,prepareBackedUpInstall,startUpdater:value=>{options=value;return {};},prepareUpdaterRestart:async()=>{throw Error('activity unavailable');}};
+ const scope={process:{platform:'linux',env:{}},Notification:class {},notificationAuthorization:{},powerMonitor:{},returnAuthority:createReturnAuthority(),backupScheduleHost:null,prepareBackedUpInstall,startUpdater:value=>{options=value;return {};},prepareUpdaterRestart:async()=>{throw Error('activity unavailable');}};
  const run=new Function(...Object.keys(scope),'let desktopUpdater,updateRequester=false;'+between('function ensureDesktopUpdater(','async function readBackupActivity(')+';ensureDesktopUpdater(false);return ()=>updateRequester;')(...Object.values(scope));
  await assert.rejects(options.beforeInstall({}),/activity unavailable/);assert.equal(run(),false);
 });

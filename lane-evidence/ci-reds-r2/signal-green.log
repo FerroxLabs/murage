@@ -1,0 +1,961 @@
+
+ RUN  v4.1.12 /work
+
+ ✓ server/channels/signal/service.test.ts (67 tests | 2 skipped) 43497ms
+   ✓ T-STUCK: 250 journaled notes drain in order; 20 review records plus 190 notes use admissionCapacity (mutant: pending count)  21794ms
+   ✓ T-RESEND: root commit faults preserve one recoverable reply across overflow and restart (mutant: settle then admit)  860ms
+   ✓ T-UNLINK-CRASH: each durable boundary recovers without a child; pre-barrier failure performs no cleanup  331ms
+   ✓ T-BACKPRESSURE: 50 waiting fsyncs pause reads; disk failure retains the row, timeout blocks without killing the child  2157ms
+   ✓ T-CONTRACT: B7 typechecks against the frozen dependencies  13451ms
+ ✓ server/channels/signal/process-host.test.ts (50 tests | 1 skipped) 15900ms
+     ✓ B5 compiles against frozen B0 ProcessHost  13025ms
+ ✓ server/channels/signal/storage.test.ts (67 tests | 10 skipped) 218ms
+ ❯ server/channels/signal/transport.test.ts (51 tests | 2 failed) 3865ms
+     × T-SPAWN-TOKEN: real host confirms every chunk with the originating token (mutant: drop spawnToken) 14ms
+     × T-SPAWN-TOKEN: delayed send cannot adopt a replacement child's token (mutant: refresh token after await) 4ms
+     ✓ T-SPAWN-TOKEN: remaining chunks retain the first child's token (mutant: refresh token per chunk) 34ms
+     ✓ T-HOOK-ID: reservations distinguish delivery, purpose and attempt, stable across restart (mutant: key by text) 20ms
+     ✓ T-A8: every reservation and written marker is durable before write; restart never repeats (mutant: persist after send) 16ms
+     ✓ T-A8: returned timestamps persist without S1-TS and expire at seven days (mutant: memory-only echoes) 16ms
+     ✓ T-ERRORS: timeout after write is uncertain (mutant: retry after submission) 42ms
+     ✓ T-ERRORS: offline after write is uncertain (mutant: retry after submission) 31ms
+     ✓ T-ERRORS: broken-pipe after write is uncertain (mutant: retry after submission) 30ms
+     ✓ T-ERRORS: invalid-frame after write is uncertain (mutant: retry after submission) 41ms
+     ✓ T-ERRORS: offline before write retries with a new persisted attempt across restart (mutant: mark written before readiness) 84ms
+     ✓ T-SEND-SCHEMA: invalid or unreserved input rejects before any write (mutant: trust caller timestamps) 18ms
+     ✓ T-ERRORS: FAILURE success result cannot confirm (mutant: trust any result) 18ms
+     ✓ T-ERRORS: foreign success result cannot confirm (mutant: trust any result) 20ms
+     ✓ T-ERRORS: empty success result cannot confirm (mutant: trust any result) 15ms
+     ✓ T-ERRORS: mixed success result cannot confirm (mutant: trust any result) 13ms
+     ✓ T-ERRORS: timestamp success result cannot confirm (mutant: trust any result) 13ms
+     ✓ T-RL / T-RL-DEADLINE: null proof never retries across drains and restart, retains reply and cooldown (mutant: retry -5) 39ms
+     ✓ T-RL-DEADLINE: invalid delay undefined defaults to 60 (mutant: omit cooldown) 13ms
+     ✓ T-RL-DEADLINE: invalid delay -1 defaults to 60 (mutant: omit cooldown) 11ms
+     ✓ T-RL-DEADLINE: invalid delay 17 defaults to 60 (mutant: omit cooldown) 12ms
+     ✓ T-RL-DEADLINE: invalid delay NaN defaults to 60 (mutant: omit cooldown) 12ms
+     ✓ T-RL-DEADLINE: invalid delay Infinity defaults to 60 (mutant: omit cooldown) 11ms
+     ✓ T-RL-DEADLINE: invalid delay 1.7976931348623157e+308 defaults to 60 (mutant: omit cooldown) 14ms
+     ✓ T-RL-PIN: live-version closes the corrected proof gate (mutant: trust pin or ignore results) 11ms
+     ✓ T-RL-PIN: pin-version closes the corrected proof gate (mutant: trust pin or ignore results) 11ms
+     ✓ T-RL-PIN: two closes the corrected proof gate (mutant: trust pin or ignore results) 11ms
+     ✓ T-RL-PIN: success closes the corrected proof gate (mutant: trust pin or ignore results) 15ms
+     ✓ T-RL-PIN: foreign closes the corrected proof gate (mutant: trust pin or ignore results) 15ms
+     ✓ T-RL-PIN: old-shape closes the corrected proof gate (mutant: trust pin or ignore results) 14ms
+     ✓ T-RL-PIN: extra closes the corrected proof gate (mutant: trust pin or ignore results) 15ms
+     ✓ T-RL-PIN: no-citation closes the corrected proof gate (mutant: trust pin or ignore results) 13ms
+     ✓ T-RL-PIN: proved owner-only rate limit retries once after its deadline (mutant: bypass retryAfter) 51ms
+     ✓ T-RL-PARTIAL / T-ERRORS: chunk two rate-limit is never retried (mutant: retry whole reply) 21ms
+     ✓ T-RL-PARTIAL / T-ERRORS: chunk two offline is never retried (mutant: retry whole reply) 24ms
+     ✓ T-RL-PARTIAL / T-ERRORS: chunk two invalid-request is never retried (mutant: retry whole reply) 23ms
+     ✓ T-REDACT: cancellation at the delayed host boundary prevents the next chunk (mutant: fence only before request) 20ms
+     ✓ T-REDACT: generation is checked at every write (mutant: use stale readiness) 12ms
+     ✓ T-REDACT: spawn-token is checked at every write (mutant: use stale readiness) 11ms
+     ✓ T-REDACT: current is checked at every write (mutant: use stale readiness) 10ms
+     ✓ T-REDACT: abort is checked at every write (mutant: use stale readiness) 11ms
+     ✓ T-FORMAT: full output is formatted before the ledger cuts (mutant: format after ledger) 57ms
+     ✓ T-FORMAT: full output is formatted before the ledger cuts (mutant: format after ledger) 61ms
+     ✓ T-FORMAT: full output is formatted before the ledger cuts (mutant: format after ledger) 64ms
+     ✓ T-WRAP-SIZE: actual wrapped 6,000 accepted, 6,001 and expanded sentinels refused (mutant: body length only) 2ms
+     ✓ T-FORMAT: Unicode at the six-chunk boundary remains complete text (mutant: split surrogate pairs) 124ms
+     ✓ T-A8: before-commit disk failure stops writes and requires reopening (mutant: send without durable progress) 25ms
+     ✓ T-A8: after-commit disk failure stops writes and requires reopening (mutant: send without durable progress) 18ms
+     ✓ T-NOTICE-ONCE: a lost notice answer is not repeated after restart; reply gets a separate entry (mutant: retry notices) 58ms
+     ✓ T-ERRORS: corrupt outbox fails closed and preserves bytes (mutant: reset damaged progress) 9ms
+     ✓ T-HOOK-ID contract: B6 compiles against frozen B0 and B1 (mutant: omit cancellation fence)  2613ms
+ ❯ server/no-powershell-spawn.test.ts (18 tests | 10 failed) 7951ms
+     ✓ reads the shipped vendored bundles too (electron/vendor) 3ms
+     × every shipped line naming PowerShell as a program is on the allowlist by its fingerprint 10ms
+     × no additional direct PowerShell launch sites beyond the reviewed exceptions; the fixed probe uses execCli 1ms
+     × every allowlist entry is current and carries a written reason 1ms
+     ✓ user_terminal is exactly one line: the Open terminal fallback's PowerShell program 1ms
+     ✓ no open spawn is left: Murage starts no PowerShell by itself (1.0.3, no deferral) 0ms
+     ✓ no PowerShell script ships with the server 5ms
+     ✓ the replaced paths hold no PowerShell string any more 1ms
+     ✓ the command environment exception uses one fixed script and rejects unpinned forms 1ms
+       ✓ only the three security reads authorized by MAIN r2 have exact source and call pins 14ms
+       × a new PowerShell spawn inside an already-listed file fails, as an unlisted line and as a launch 1147ms
+       × a launch fails even when its line was put on the names-only list 1153ms
+       ✓ a launch written over several lines, a shell option and a launch in the vendored code all fail 0ms
+       × the real user_terminal launch passes, and is the only launch 1123ms
+       × a launch through a constant that names PowerShell fails (spawn(WINDOWS_FALLBACK_SHELL, ...)) 1114ms
+       × a launch through cmd / start / conhost / wt arguments that include PowerShell fails 1111ms
+       × a second copy of the user_terminal launch, anywhere, and any change to its arguments fail 1151ms
+       × the user_terminal exception does not cover the same text in another file 1114ms
+ ✓ server/channels/signal/park-fs.test.ts (21 tests) 134ms
+ ✓ server/channels/signal/park-replacement.test.ts (15 tests) 2270ms
+ ✓ server/channels/signal/types.test.ts (35 tests) 529ms
+ ✓ server/channels/signal/evidence-integration.test.ts (26 tests) 22562ms
+   ✓ T-EVIDENCE-SINGLE-OWNER: r1.1 I1 forbids the legacy commit token in the Signal tree  308ms
+ ✓ server/channels/signal/park-archive.test.ts (3 tests) 548ms
+ ✓ server/channels/signal/adapters.test.ts (4 tests) 209ms
+stdout | server/channels/signal/park-authority.test.ts > Signal authority flush retries a concurrent checkpoint and still requires the real durable checkpoint
+[memory] index build before listen name=memory_evidence_source_version ms=2
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[memory] index build before listen name=memory_revoke_jobs_state_kind_phase ms=2
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=67 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=0 wal=6 freelist=0
+
+stderr | server/channels/signal/park-authority.test.ts > RED34 real people and routine stores revoke active authority and cancel running/queued work before fresh record; RED36 replay survives store reversal
+memory receipts revoked scope=global cause=human-principal count=0
+
+stderr | server/channels/signal/park-authority.test.ts > RED34 real people and routine stores revoke active authority and cancel running/queued work before fresh record; RED36 replay survives store reversal
+memory receipts revoked scope=global cause=human-principal count=0
+
+stderr | server/channels/signal/park-authority.test.ts > RED34 real people and routine stores revoke active authority and cancel running/queued work before fresh record; RED36 replay survives store reversal
+memory receipts revoked scope=global cause=human-principal count=0
+
+stderr | server/channels/signal/park-authority.test.ts > RED34 real people and routine stores revoke active authority and cancel running/queued work before fresh record; RED36 replay survives store reversal
+memory receipts revoked scope=global cause=human-principal count=0
+
+ ✓ server/channels/signal/park-authority.test.ts (3 tests) 7318ms
+   ✓ Signal authority flush retries a concurrent checkpoint and still requires the real durable checkpoint  718ms
+   ✓ Signal authority flush refuses a persistent checkpoint hold instead of claiming durable revocation  5632ms
+   ✓ RED34 real people and routine stores revoke active authority and cancel running/queued work before fresh record; RED36 replay survives store reversal  958ms
+ ✓ server/channels/signal/park-discovery.test.ts (20 tests) 687ms
+   ✓ RED32 incomplete Linux discovery cap refuses  357ms
+stdout | server/channels/signal/park-review.test.ts > AFIX H2 completed Keep both permits downgrade 10, linked=false, retaining replay history
+[memory] index build before listen name=memory_evidence_source_version ms=1
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[memory] index build before listen name=memory_revoke_jobs_state_kind_phase ms=1
+[sqlite] storage file=0 wal=6 freelist=0
+
+stdout | server/channels/signal/park-review.test.ts > AFIX H2 completed Keep both permits downgrade 13, linked=false, retaining replay history
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=61 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ✓ server/channels/signal/park-review.test.ts (15 tests) 36575ms
+   ✓ AFIX H2 completed Keep both permits downgrade 10, linked=false, retaining replay history  4269ms
+   ✓ AFIX H2 completed Keep both permits downgrade 10, linked=true, retaining replay history  4210ms
+   ✓ AFIX H2 completed Keep both permits downgrade 13, linked=false, retaining replay history  4207ms
+   ✓ AFIX H2 completed Keep both permits downgrade 13, linked=true, retaining replay history  4062ms
+   ✓ AFIX H2 downgrade refuses people authority without forgetting replay or moving live files  3807ms
+   ✓ AFIX H2 downgrade refuses queued authority without forgetting replay or moving live files  3723ms
+   ✓ AFIX H2 downgrade refuses running authority without forgetting replay or moving live files  3818ms
+   ✓ AFIX H2 downgrade refuses budget authority without forgetting replay or moving live files  3748ms
+   ✓ AFIX H2 downgrade refuses pending authority without forgetting replay or moving live files  649ms
+   ✓ AFIX M1 early discovery refusal preserves permanent authority replay obligation  678ms
+   ✓ AFIX M1 early fence refusal preserves permanent authority replay obligation  623ms
+   ✓ AFIX M1 early barrier refusal preserves permanent authority replay obligation  705ms
+   ✓ AFIX M2 startup replay retains durability typed hold and scheduler fence  720ms
+   ✓ AFIX M2 startup replay retains busy typed hold and scheduler fence  595ms
+   ✓ AFIX M2 startup replay retains adoption typed hold and scheduler fence  756ms
+ ✓ server/channels/signal/park-state.test.ts (78 tests) 8626ms
+   ✓ RED14 generation selection sameId=true, reverse=true  306ms
+ ✓ server/channels/signal/park-downgrade-authority.test.ts (8 tests) 1570ms
+   ✓ R3 RED journal beyond spread and run-count limits refuses instead of silently skipping  730ms
+   ✓ R3 RUN journal above call-stack spread limit but within count limit parks correctly  624ms
+ ✓ server/channels/signal/g0-scrub.test.ts (4 tests) 972ms
+   ✓ T-SCRUB-ADVERSARIAL: unknown keys/values and unrestricted safe fields never publish  634ms
+ ✓ server/channels/signal/park.test.ts (10 tests) 1374ms
+ ✓ server/channels/signal/park-fence.test.ts (29 tests) 185ms
+ ✓ server/channels/signal/rpc.test.ts (25 tests) 26ms
+stdout | server/channels/signal/park-downgrade.test.ts > RUN RED27 real downgrade target 10 parks both components before restoration
+[memory] index build before listen name=memory_evidence_source_version ms=3
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[memory] index build before listen name=memory_revoke_jobs_state_kind_phase ms=2
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=69 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=0 wal=6 freelist=0
+
+ ✓ server/channels/signal/park-downgrade.test.ts (6 tests) 2423ms
+   ✓ RUN RED27 real downgrade target 10 parks both components before restoration  1304ms
+   ✓ RUN RED27 real downgrade target 13 parks both components before restoration  1090ms
+ ✓ server/channels/signal/access.test.ts (20 tests) 24ms
+ ✓ server/channels/signal/runtime-pin.schema.test.ts (22 tests) 23ms
+ ✓ server/channels/signal/park-safety.test.ts (20 tests) 1124ms
+ ✓ server/channels/signal/park-preflight.test.ts (6 tests) 62ms
+ ✓ server/channels/signal/unlink.test.ts (9 tests) 251ms
+ ✓ server/powershell-json-array.test.ts (2 tests) 291ms
+ ✓ server/channels/signal/park-writer.test.ts (9 tests) 244ms
+stdout | server/channels/signal/park-feature-baseline.test.ts > FEATURE exact-start RED target 10: physical auth custody
+[memory] index build before listen name=memory_evidence_source_version ms=1
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[memory] index build before listen name=memory_revoke_jobs_state_kind_phase ms=1
+[sqlite] storage file=0 wal=6 freelist=0
+
+stdout | server/channels/signal/park-feature-baseline.test.ts > FEATURE exact-start RED target 13: physical auth custody
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=51 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ✓ server/channels/signal/park-feature-baseline.test.ts (6 tests) 5107ms
+   ✓ FEATURE exact-start RED target 10: physical auth custody  918ms
+   ✓ FEATURE exact-start RED target 10: physical channel custody  934ms
+   ✓ FEATURE exact-start RED target 10: physical connector custody  871ms
+   ✓ FEATURE exact-start RED target 13: physical auth custody  790ms
+   ✓ FEATURE exact-start RED target 13: physical channel custody  763ms
+   ✓ FEATURE exact-start RED target 13: physical connector custody  828ms
+ ✓ server/channels/signal/wipe.test.ts (2 tests) 24ms
+ ✓ server/channels/signal/runtime-signatures.test.ts (3 tests) 11ms
+ ✓ server/channels/signal/park-atomic.test.ts (27 tests) 58ms
+ ✓ server/channels/signal/signal-off-startup.test.ts (1 test) 11ms
+ ✓ server/channels/signal/park-copy-inventory.test.ts (1 test) 6ms
+ ✓ server/channels/signal/park-parser.test.ts (3 tests) 11ms
+ ✓ server/channels/signal/park-frozen.test.ts (3 tests) 8ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 12 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/no-powershell-spawn.test.ts > no app-spawned PowerShell > every shipped line naming PowerShell as a program is on the allowlist by its fingerprint
+AssertionError: not allowlisted: remove it or add its fingerprint with a reason: expected [ { …(4) }, { …(4) }, { …(4) }, …(73) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "file": "server/auto-approve.ts",
++     "fingerprint": "2817aa8684237a84",
++     "line": 964,
++     "text": "const shell = isPowerShellTool(tool) || call?.commandShell === \"pwsh\" ? \"pwsh\" : undefined;",
++   },
++   {
++     "file": "server/auto-approve.ts",
++     "fingerprint": "a042a0042aa167ce",
++     "line": 1688,
++     "text": "const gateTexts = [keyText, rawDequotedText(keyText, pinShell === \"pwsh\").text, ...(dequoted ? [dequoted.text] : [])];",
++   },
++   {
++     "file": "server/decision/action.ts",
++     "fingerprint": "8c177ded4cb2ea76",
++     "line": 46,
++     "text": "const lang=code?(/node|javascript/.test(name)?'js':'py'):/powershell|pwsh/.test(name)?'pwsh':'sh';",
++   },
++   {
++     "file": "server/decision/action.ts",
++     "fingerprint": "8c177ded4cb2ea76",
++     "line": 96,
++     "text": "const lang=code?(/node|javascript/.test(name)?'js':'py'):/powershell|pwsh/.test(name)?'pwsh':'sh';",
++   },
++   {
++     "file": "server/decision/action.ts",
++     "fingerprint": "f1cbfbf195caf6c4",
++     "line": 101,
++     "text": "const wipe=noLimitsWipe(text,{...context,cwd,lang,shell:lang==='pwsh'?'pwsh':undefined,unread:engine?.toolInputTruncated===true,unseen:{sessionEdits}});",
++   },
++   {
++     "file": "server/decision/action.ts",
++     "fingerprint": "4ce8ad6db15972b5",
++     "line": 108,
++     "text": "if(lang==='sh'||lang==='pwsh'){",
++   },
++   {
++     "file": "server/decision/action.ts",
++     "fingerprint": "f77ab09aadfe9a01",
++     "line": 109,
++     "text": "const dialect=lang==='pwsh'?'pwsh':looksLikePowerShell(text)==='cmd'||/^\\s*(?:mklink|fsutil)\\b/i.test(text)?'cmd':'sh';",
++   },
++   {
++     "file": "server/decision/implementation.ts",
++     "fingerprint": "be3ae98b634f68c3",
++     "line": 166,
++     "text": ":{tool:operation.dialect==='pwsh'?'powershell':operation.dialect==='cmd'?'shell':'Bash',input:{command:operation.text,cwd:operation.cwd}};",
++   },
++   {
++     "file": "server/decision/types.ts",
++     "fingerprint": "a32fe295a00c147a",
++     "line": 79,
++     "text": "readonly executables: readonly { readonly lang: 'sh' | 'py' | 'js' | 'pwsh'; readonly text: string; readonly cwd?: string; readonly from: 'command' | 'code' | '",
++   },
++   {
++     "file": "server/drivers/claude-tool-names.ts",
++     "fingerprint": "1fbceba0da103228",
++     "line": 5,
++     "text": "export const CLAUDE_NATIVE_SHELL_TOOLS = Object.freeze({ bash: 'Bash', powershell: 'PowerShell' } as const);",
++   },
++   {
++     "file": "server/drivers/claude.ts",
++     "fingerprint": "4fa8482d79682756",
++     "line": 1775,
++     "text": "const modeTool = (mode: ClaudeShellMode): \"Bash\" | \"PowerShell\" => (mode.kind === \"murage-exec\" ? CLAUDE_NATIVE_SHELL_TOOLS.bash : CLAUDE_NATIVE_SHELL_TOOLS.pow",
++   },
++   {
++     "file": "server/highlevel/engine-policy.ts",
++     "fingerprint": "b1e1bed2890ff281",
++     "line": 51,
++     "text": "(event.toolEngine === 'pi' && ['bash','powershell','edit','write','read','grep','find','ls'].includes(name)))) {",
++   },
++   {
++     "file": "server/no-limits-code.ts",
++     "fingerprint": "aa7d0197154a90b2",
++     "line": 147,
++     "text": "export function readExecutable(lang:'sh'|'py'|'js'|'pwsh',source:string,budget=new ReaderBudget(),depth=0): {classes:CodeClass[];targets:Array<{path:string;op:'",
++   },
++   {
++     "file": "server/no-limits-code.ts",
++     "fingerprint": "59dac0a077e5c741",
++     "line": 148,
++     "text": "const classes:CodeClass[]=[],targets:Array<{path:string;op:'read'|'write'|'delete'}>=[],work:Payload[]=[[lang==='pwsh'?'sh':lang,(lang==='pwsh'?powerShellSource",
++   },
++   {
++     "file": "server/no-limits-code.ts",
++     "fingerprint": "892ae04870e77cf3",
++     "line": 169,
++     "text": "export function readExecutableOwnerNl(lang:'sh'|'py'|'js'|'pwsh',source:string,budget?:ReaderBudget,depth=0,cwd?:string): {classes:CodeClass[];targets:Array<{pa",
++   },
++   {
++     "file": "server/no-limits-code.ts",
++     "fingerprint": "aa12e96288831a79",
++     "line": 171,
++     "text": "const work:Payload[]=[[lang==='pwsh'?'sh':lang,source,depth,'root',cwd]];",
++   },
++   {
++     "file": "server/no-limits-code.ts",
++     "fingerprint": "66070ad51a3f5969",
++     "line": 180,
++     "text": "const read=readShellExecOwnerNl(text,d,nested,classes,location,lang==='pwsh'?'pwsh':'posix');",
++   },
++   {
++     "file": "server/no-limits-collect.ts",
++     "fingerprint": "8e4d64ce38e676ed",
++     "line": 9,
++     "text": "export type CollectorDialect = 'posix' | 'cmd' | 'pwsh';",
++   },
++   {
++     "file": "server/no-limits-collect.ts",
++     "fingerprint": "db0aaa17bfcd4ddd",
++     "line": 277,
++     "text": "const body=literalText(args[at+1]!);if(body!==undefined)nested(body,scope,id+'/windows',name==='cmd'?'cmd':'pwsh');",
++   },
++   {
++     "file": "server/no-limits-collect.ts",
++     "fingerprint": "3f6cd18b68081b68",
++     "line": 345,
++     "text": "function windows(body:string,scope:CollectorScope,id:string,dialect:'cmd'|'pwsh') {",
++   },
++   {
++     "file": "server/no-limits-collect.ts",
++     "fingerprint": "37a47437aaeb9f2d",
++     "line": 358,
++     "text": "const dialect=options.dialect??(inferred==='pwsh'||inferred==='cmd'?inferred:/^\\s*(?:mklink|fsutil)\\b/i.test(text)?'cmd':'posix');",
++   },
++   {
++     "file": "server/no-limits-collect.ts",
++     "fingerprint": "629d1a23b660564c",
++     "line": 359,
++     "text": "if(inferred==='both'&&options.dialect!=='cmd'&&options.dialect!=='pwsh'){",
++   },
++   {
++     "file": "server/no-limits-collect.ts",
++     "fingerprint": "37408fd9a09a80f6",
++     "line": 362,
++     "text": "for(const variant of ['cmd','pwsh'] as const)nested(text,child(root,`root/${variant}`,'nested'),'root',variant,'nested',true);",
++   },
++   {
++     "file": "server/no-limits-cwd-suffix.ts",
++     "fingerprint": "e72806f254634a1a",
++     "line": 27,
++     "text": "export function protectedCwdSuffix(raw:string,dialect:'posix'|'pwsh'='posix'):ProtectedCwdSuffix|undefined {",
++   },
++   {
++     "file": "server/no-limits-cwd-suffix.ts",
++     "fingerprint": "16ca450b9b343a33",
++     "line": 28,
++     "text": "const value=(dialect==='pwsh'?raw.replaceAll('\\\\','/'):raw).replace(/^(?:\\.\\/)+/,'');",
++   },
++   {
++     "file": "server/no-limits-cwd-suffix.ts",
++     "fingerprint": "b2b6fec890c8cf1c",
++     "line": 31,
++     "text": "const flags=dialect==='pwsh'||row.caseInsensitive?'i':'';",
++   },
++   {
++     "file": "server/no-limits-cwd.ts",
++     "fingerprint": "0e9ac1517bcede77",
++     "line": 154,
++     "text": "if (record.dialect === 'pwsh' && /^-(?:literalpath|path|passthru)$/i.test(value)) return false;",
++   },
++   {
++     "file": "server/no-limits-fs.ts",
++     "fingerprint": "51d67b74abd6939a",
++     "line": 12,
++     "text": "export type Dialect = 'sh' | 'pwsh' | 'cmd';",
++   },
++   {
++     "file": "server/no-limits-fs.ts",
++     "fingerprint": "6ceeb509aced0711",
++     "line": 233,
++     "text": "const suffix = protectedCwdSuffix(raw, context.windows ? 'pwsh' : 'posix');",
++   },
++   {
++     "file": "server/no-limits-inspection.ts",
++     "fingerprint": "64dde8f7aa8cfbca",
++     "line": 27,
++     "text": "if(body.lang==='sh'||body.lang==='cmd'||body.lang==='pwsh'){",
++   },
++   {
++     "file": "server/no-limits-operation.ts",
++     "fingerprint": "e532dda4683d604b",
++     "line": 101,
++     "text": "const dialect=place.dialect??event?.commandShell??(/^(?:pwsh|powershell)$/i.test(tool)?'pwsh':/^cmd$/i.test(tool)?'cmd':'sh');",
++   },
++   {
++     "file": "server/no-limits-producers.ts",
++     "fingerprint": "b7816e1b76323055",
++     "line": 95,
++     "text": "export function collectProducer(id: string, input: SimpleCommand, context: FsContext, walk: WalkContext, dialect: 'posix' | 'cmd' | 'pwsh' = 'posix'): AliasOper",
++   },
++   {
++     "file": "server/no-limits-producers.ts",
++     "fingerprint": "518da31dc35958bb",
++     "line": 100,
++     "text": "const roles = ownerCommandRoles(command, dialect === 'pwsh' ? 'pwsh' : 'posix');",
++   },
++   {
++     "file": "server/no-limits-producers.ts",
++     "fingerprint": "b2b680131a723c11",
++     "line": 118,
++     "text": "const windowsMove = ['move', 'ren', 'rename', 'move-item', 'mi', 'rename-item', 'rni'].includes(program) || dialect === 'pwsh' && program === 'mv';",
++   },
++   {
++     "file": "server/no-limits-protected.ts",
++     "fingerprint": "011f318349bee696",
++     "line": 29,
++     "text": "function inspectProtectedText(text:string,context?:AutoContext,shell?:'pwsh') {",
++   },
++   {
++     "file": "server/no-limits-protected.ts",
++     "fingerprint": "f5372227f937c434",
++     "line": 30,
++     "text": "const dialect=shell==='pwsh'?'pwsh':looksLikePowerShell(text)==='cmd'||/^\\s*(?:mklink|fsutil)\\b/i.test(text)?'cmd':'sh';",
++   },
++   {
++     "file": "server/no-limits-protected.ts",
++     "fingerprint": "46d1a8ceb7bbaa84",
++     "line": 36,
++     "text": "export function structuredProtectedWrite(text:string,context?:AutoContext,shell?:'pwsh'):AlwaysAskHit|null {",
++   },
++   {
++     "file": "server/no-limits-protected.ts",
++     "fingerprint": "24fb831ba9bafcd5",
++     "line": 81,
++     "text": "export function noLimitsProtectedWrite(text: string, context?: AutoContext, shell?: 'pwsh', gates = false, realTargetsOnly = false): AlwaysAskHit | null {",
++   },
++   {
++     "file": "server/no-limits-protected.ts",
++     "fingerprint": "746a384ef21f9747",
++     "line": 285,
++     "text": "if(cwd===undefined && protectedCwdSuffix(value,dialect==='pwsh'?'pwsh':'posix'))found??={rule:'protected-path',classification:'deny',reason:'protected-path',wha",
++   },
++   {
++     "file": "server/no-limits-protected.ts",
++     "fingerprint": "a4dd6625882a1f07",
++     "line": 334,
++     "text": "}, dialect==='pwsh'?'pwsh':'posix',context?.unseen?.fs?.realpath ?? realpathSync.native);",
++   },
++   {
++     "file": "server/no-limits-protected.ts",
++     "fingerprint": "852630e1eb893bfb",
++     "line": 338,
++     "text": "if (dialect === 'pwsh') {",
++   },
++   {
++     "file": "server/no-limits-role-adapter.ts",
++     "fingerprint": "216f9ddfaf630959",
++     "line": 64,
++     "text": "export function ownerRoleArguments(command: SimpleCommand, dialect: 'posix' | 'pwsh' = 'posix'): Array<string | undefined> {",
++   },
++   {
++     "file": "server/no-limits-role-adapter.ts",
++     "fingerprint": "e330a5adf3d1e01f",
++     "line": 72,
++     "text": "export const ownerCommandRoles = (command: SimpleCommand, dialect: 'posix' | 'pwsh' = 'posix') =>",
++   },
++   {
++     "file": "server/no-limits-shell.ts",
++     "fingerprint": "2422b9f77457d217",
++     "line": 329,
++     "text": "if(['cmd','powershell','pwsh'].includes(name))for(let k=0;k<args.length-1;k++)if((name==='cmd'?['/c','/k']:['-c','-command']).includes(args[k].toLowerCase())){n",
++   },
++   {
++     "file": "server/no-limits-shell.ts",
++     "fingerprint": "df19052b6b150c92",
++     "line": 368,
++     "text": "function cwdMachine(cwd:string|Cwds|ShellCwdCandidate[]|undefined,dialect:'posix'|'pwsh',realpath:(path:string)=>string,bound?:ReturnType<typeof newContext>['bo",
++   },
++   {
++     "file": "server/no-limits-shell.ts",
++     "fingerprint": "3c7eaf67436811fe",
++     "line": 454,
++     "text": "export function forEachOwnerSegment(source:string,cwd:string|Cwds|ShellCwdCandidate[]|undefined,visit:(row:OwnerSegmentContext)=>void,dialect:'posix'|'pwsh'='po",
++   },
++   {
++     "file": "server/no-limits-shell.ts",
++     "fingerprint": "3926be1e5e9bafef",
++     "line": 502,
++     "text": "export function segmentContexts(result:SegmentResult,cwd?:string|Cwds,dialect:'posix'|'pwsh'='posix'){",
++   },
++   {
++     "file": "server/no-limits-shell.ts",
++     "fingerprint": "42271b915665e7c1",
++     "line": 510,
++     "text": "export function pathTargetsOwnerNl(words:Array<string|undefined>,cwd?:string,candidates?:Candidate[][],dialect:'posix'|'pwsh'='posix'):OwnerShellTarget[]{",
++   },
++   {
++     "file": "server/no-limits-shell.ts",
++     "fingerprint": "c06c7bba057ba038",
++     "line": 526,
++     "text": "function inspectOwnerShell(source:string,depth:number,nested:Payload[],classes:CodeClass[],cwd?:string,dialect:'posix'|'pwsh'='posix'):OwnerShellTarget[]{",
++   },
++   {
++     "file": "server/no-limits-shell.ts",
++     "fingerprint": "37ecaf4a0f210171",
++     "line": 560,
++     "text": "export function readShellExecOwnerNl(source:string,depth:number,nested:Payload[],collected:CodeClass[]=[],cwd?:string,dialect:'posix'|'pwsh'='posix'):[CodeClass",
++   },
++   {
++     "file": "server/no-limits-taint.ts",
++     "fingerprint": "99a155d883f27cde",
++     "line": 129,
++     "text": "const roles=ownerCommandRoles(command,record.dialect==='pwsh'?'pwsh':'posix');",
++   },
++   {
++     "file": "server/no-limits-wipe-scripts.ts",
++     "fingerprint": "dc61c36035d33406",
++     "line": 27,
++     "text": "export function* writtenScriptTexts(commands:Iterable<Command>,options:{cwd?:string;project?:string;files?:ReadonlySet<string>}):Generator<{text:string;lang:'sh",
++   },
++   {
++     "file": "server/no-limits-wipe-scripts.ts",
++     "fingerprint": "718b34809ed50e53",
++     "line": 31,
++     "text": "let file:string|undefined,lang:'sh'|'py'|'js'|'pwsh'='sh';",
++   },
++   {
++     "file": "server/no-limits-wipe-scripts.ts",
++     "fingerprint": "1f8c26e94defe643",
++     "line": 33,
++     "text": "lang=/^python/.test(program)?'py':program==='node'?'js':/^(pwsh|powershell)$/.test(program)?'pwsh':'sh';",
++   },
++   {
++     "file": "server/no-limits-wipe-scripts.ts",
++     "fingerprint": "cd7da18386ae7cf7",
++     "line": 58,
++     "text": "if(!/^(?:bash|sh|zsh|dash|python[23]?|node|pwsh|powershell|ruby|perl)$/.test(program))lang=/\\.py$/i.test(file)?'py':/\\.[cm]?js$/i.test(file)?'js':/\\.ps1$/i.test",
++   },
++   {
++     "file": "server/no-limits-wipe.ts",
++     "fingerprint": "ab9708441aca76c4",
++     "line": 30,
++     "text": "if(!['pwsh','powershell'].includes(program)&&/^[-+][^-]*[oOR]/.test(word)||['--rcfile','--init-file','--features','--debug','-T'].includes(word))at++;",
++   },
++   {
++     "file": "server/no-limits-wipe.ts",
++     "fingerprint": "96ce753a468feaf2",
++     "line": 215,
++     "text": "export function noLimitsWipe(text: string, options: {cwd?:string;workFolder?:string;project?:string;home?:string;shell?:'pwsh';lang?:'sh'|'py'|'js'|'pwsh';unrea",
++   },
++   {
++     "file": "server/no-limits-wipe.ts",
++     "fingerprint": "81d3156b501caecb",
++     "line": 240,
++     "text": "try{read=readExecutableOwnerNl(options.lang??(options.shell?'pwsh':'sh'),options.lang==='py'||options.lang==='js'?text:shellArgumentRead(text),undefined,0,optio",
++   },
++   {
++     "file": "server/no-limits-wipe.ts",
++     "fingerprint": "7313c4196d21a7a5",
++     "line": 267,
++     "text": "const wipe=noLimitsWipe(script.text,{...options,cwd:script.cwd,workFolder:options.workFolder??options.cwd,lang:script.lang,shell:script.lang==='pwsh'?'pwsh':und",
++   },
++   {
++     "file": "server/shell/pwsh.ts",
++     "fingerprint": "daba03550fc575a6",
++     "line": 67,
++     "text": "export function collectWindowsSyntax(text: string, dialect: 'cmd' | 'pwsh', sink: {",
++   },
++   {
++     "file": "server/shell/pwsh.ts",
++     "fingerprint": "fe49a06e1b794523",
++     "line": 70,
++     "text": "nested(text: string, syntaxId: string, dialect: 'cmd' | 'pwsh' | 'posix'): void;",
++   },
++   {
++     "file": "server/shell/pwsh.ts",
++     "fingerprint": "ee66a792f7a40994",
++     "line": 78,
++     "text": "const assignment = dialect === 'pwsh' ? assignmentOf(words) : undefined;",
++   },
++   {
++     "file": "server/shell/pwsh.ts",
++     "fingerprint": "02509e40c4d94fcc",
++     "line": 84,
++     "text": "sink.command(dialect==='pwsh' ? aliases[name] ?? name : name,args,id,stdin);",
++   },
++   {
++     "file": "server/shell/pwsh.ts",
++     "fingerprint": "b23935b67001c3ff",
++     "line": 88,
++     "text": "if(body!==undefined)sink.nested(body,id+'/executor',name==='cmd'?'cmd':/^(sh|bash)$/.test(name)?'posix':'pwsh');",
++   },
++   {
++     "file": "server/shell/pwsh.ts",
++     "fingerprint": "41725342c4ed0258",
++     "line": 91,
++     "text": "if(dialect==='pwsh'){",
++   },
++   {
++     "file": "server/shell/pwsh.ts",
++     "fingerprint": "df50d4ea4454b4d3",
++     "line": 93,
++     "text": "for(const [i,body]of parsed.nested.entries())sink.nested(body,`block${i}`,'pwsh');",
++   },
++   {
++     "file": "server/shell/pwsh.ts",
++     "fingerprint": "d6b194733f72c40a",
++     "line": 986,
++     "text": "if (runner === \"launcher\" && dialect === \"pwsh\" && ctx.windowsBash && literalBash && /^bash(?:\\.exe)?$/i.test(name)",
++   },
++   {
++     "file": "server/shell/roles.ts",
++     "fingerprint": "17a1e7c739225539",
++     "line": 36,
++     "text": "const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'pwsh', 'powershell', 'cmd']);",
++   },
++   {
++     "file": "server/shell/roles.ts",
++     "fingerprint": "3bba969fc8d9acb4",
++     "line": 41,
++     "text": "export function commandRoles(words: ReadonlyArray<string | undefined>, dialect: 'posix' | 'pwsh' = 'posix',sourceWords?:ReadonlyArray<SegWord>): CommandRoles {",
++   },
++   {
++     "file": "server/shell/roles.ts",
++     "fingerprint": "8269b09cd92e2a89",
++     "line": 95,
++     "text": "const parsed = getopt(args, { permute:false, flags: allFlags.replaceAll('c', ''), valued: 'c', singleDashLong: name === 'pwsh' || name === 'powershell', long: {",
++   },
++   {
++     "file": "server/shell/roles.ts",
++     "fingerprint": "acd3cae229425424",
++     "line": 119,
++     "text": "let mode: 'all' | 'last' | 'copy' | 'move' | 'link' | 'sed' | 'perl' | 'permissions' | 'rsync' | 'compress' | 'pwsh' | 'find' | 'read' = 'read';",
++   },
++   {
++     "file": "server/shell/roles.ts",
++     "fingerprint": "3db2d70ad6f97e5c",
++     "line": 143,
++     "text": "const pwshProgram = /^(?:set-content|sc|add-content|ac|out-file|new-item|ni|remove-item|ri|del|erase|rd|move-item|move|mi|copy-item|copy|cpi|rename-item|rni)$/.",
++   },
++   {
++     "file": "server/shell/roles.ts",
++     "fingerprint": "36e99b9335766cc7",
++     "line": 145,
++     "text": "mode = 'pwsh'; spec = { singleDashLong: true, long: { ...longs('Path LiteralPath FilePath PSPath Destination NewName Value Encoding ItemType Name Filter Include",
++   },
++   {
++     "file": "server/shell/roles.ts",
++     "fingerprint": "13020f88a2e268dd",
++     "line": 205,
++     "text": "if (mode === 'pwsh') {",
++   },
++   {
++     "file": "server/shell/segments.ts",
++     "fingerprint": "081e954b241c6072",
++     "line": 27,
++     "text": "dialect?: 'posix' | 'pwsh'; maxDepth?: number;",
++   },
++   {
++     "file": "server/shell/segments.ts",
++     "fingerprint": "d9d3cef5c9e71192",
++     "line": 48,
++     "text": "const pwsh = opts.dialect === 'pwsh';",
++   },
++ ]
+
+ ❯ server/no-powershell-spawn.test.ts:203:96
+    201|   });
+    202|   it("every shipped line naming PowerShell as a program is on the allo…
+    203|     expect(result.unlisted, "not allowlisted: remove it or add its fin…
+       |                                                                                                ^
+    204|   });
+    205|   it("no additional direct PowerShell launch sites beyond the reviewed…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/12]⎯
+
+ FAIL  server/no-powershell-spawn.test.ts > no app-spawned PowerShell > no additional direct PowerShell launch sites beyond the reviewed exceptions; the fixed probe uses execCli
+AssertionError: a PowerShell launch: expected [ { …(4) }, { …(4) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "file": "server/decision/action.ts",
++     "fingerprint": "f1cbfbf195caf6c4",
++     "line": 101,
++     "text": "const wipe=noLimitsWipe(text,{...context,cwd,lang,shell:lang==='pwsh'?'pwsh':undefined,unread:engine?.toolInputTruncated===true,unseen:{sessionEdits}});",
++   },
++   {
++     "file": "server/no-limits-wipe.ts",
++     "fingerprint": "7313c4196d21a7a5",
++     "line": 267,
++     "text": "const wipe=noLimitsWipe(script.text,{...options,cwd:script.cwd,workFolder:options.workFolder??options.cwd,lang:script.lang,shell:script.lang==='pwsh'?'pwsh':und",
++   },
++ ]
+
+ ❯ server/no-powershell-spawn.test.ts:206:61
+    204|   });
+    205|   it("no additional direct PowerShell launch sites beyond the reviewed…
+    206|     expect(result.forbiddenLaunches, "a PowerShell launch").toEqual([]…
+       |                                                             ^
+    207|   });
+    208|   it("every allowlist entry is current and carries a written reason", …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/12]⎯
+
+ FAIL  server/no-powershell-spawn.test.ts > no app-spawned PowerShell > every allowlist entry is current and carries a written reason
+AssertionError: stale fingerprints: expected [ …(6) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "server/always-ask.ts 8dfc401ff8a1c466",
++   "server/auto-approve.ts 3542a1ee4d026956",
++   "server/drivers/claude.ts d72924dab298f88c",
++   "server/drivers/claude.ts d82f002d5d3e1ebe",
++   "server/drivers/claude.ts fff8d4827d9e7359",
++   "server/shell/pwsh.ts 961700bbd755d969",
++ ]
+
+ ❯ server/no-powershell-spawn.test.ts:209:48
+    207|   });
+    208|   it("every allowlist entry is current and carries a written reason", …
+    209|     expect(result.stale, "stale fingerprints").toEqual([]);
+       |                                                ^
+    210|     for (const [file, entry] of [...Object.entries(list.names_only), .…
+    211|       expect(entry.reason.trim().length, file).toBeGreaterThan(40);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/12]⎯
+
+ FAIL  server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a new PowerShell spawn inside an already-listed file fails, as an unlisted line and as a launch
+AssertionError: expected [ 'server/auto-approve.ts', …(76) ] to deeply equal [ 'server/index.ts' ]
+
+- Expected
++ Received
+
+  [
++   "server/auto-approve.ts",
++   "server/auto-approve.ts",
++   "server/decision/action.ts",
++   "server/decision/action.ts",
++   "server/decision/action.ts",
++   "server/decision/action.ts",
++   "server/decision/action.ts",
++   "server/decision/implementation.ts",
++   "server/decision/types.ts",
++   "server/drivers/claude-tool-names.ts",
++   "server/drivers/claude.ts",
++   "server/highlevel/engine-policy.ts",
+    "server/index.ts",
++   "server/no-limits-code.ts",
++   "server/no-limits-code.ts",
++   "server/no-limits-code.ts",
++   "server/no-limits-code.ts",
++   "server/no-limits-code.ts",
++   "server/no-limits-collect.ts",
++   "server/no-limits-collect.ts",
++   "server/no-limits-collect.ts",
++   "server/no-limits-collect.ts",
++   "server/no-limits-collect.ts",
++   "server/no-limits-collect.ts",
++   "server/no-limits-cwd-suffix.ts",
++   "server/no-limits-cwd-suffix.ts",
++   "server/no-limits-cwd-suffix.ts",
++   "server/no-limits-cwd.ts",
++   "server/no-limits-fs.ts",
++   "server/no-limits-fs.ts",
++   "server/no-limits-inspection.ts",
++   "server/no-limits-operation.ts",
++   "server/no-limits-producers.ts",
++   "server/no-limits-producers.ts",
++   "server/no-limits-producers.ts",
++   "server/no-limits-protected.ts",
++   "server/no-limits-protected.ts",
++   "server/no-limits-protected.ts",
++   "server/no-limits-protected.ts",
++   "server/no-limits-protected.ts",
++   "server/no-limits-protected.ts",
++   "server/no-limits-protected.ts",
++   "server/no-limits-role-adapter.ts",
++   "server/no-limits-role-adapter.ts",
++   "server/no-limits-shell.ts",
++   "server/no-limits-shell.ts",
++   "server/no-limits-shell.ts",
++   "server/no-limits-shell.ts",
++   "server/no-limits-shell.ts",
++   "server/no-limits-shell.ts",
++   "server/no-limits-shell.ts",
++   "server/no-limits-taint.ts",
++   "server/no-limits-wipe-scripts.ts",
++   "server/no-limits-wipe-scripts.ts",
++   "server/no-limits-wipe-scripts.ts",
++   "server/no-limits-wipe-scripts.ts",
++   "server/no-limits-wipe.ts",
++   "server/no-limits-wipe.ts",
++   "server/no-limits-wipe.ts",
++   "server/no-limits-wipe.ts",
++   "server/shell/pwsh.ts",
++   "server/shell/pwsh.ts",
++   "server/shell/pwsh.ts",
++   "server/shell/pwsh.ts",
++   "server/shell/pwsh.ts",
++   "server/shell/pwsh.ts",
++   "server/shell/pwsh.ts",
++   "server/shell/pwsh.ts",
++   "server/shell/roles.ts",
++   "server/shell/roles.ts",
++   "server/shell/roles.ts",
++   "server/shell/roles.ts",
++   "server/shell/roles.ts",
++   "server/shell/roles.ts",
++   "server/shell/roles.ts",
++   "server/shell/segments.ts",
++   "server/shell/segments.ts",
+  ]
+
+ ❯ server/no-powershell-spawn.test.ts:286:59
+    284|     it("a new PowerShell spawn inside an already-listed file fails, as…
+    285|       const found = scanForPowerShell({ ...shipped, "server/index.ts":…
+    286|       expect(found.unlisted.map(finding => finding.file)).toEqual(["se…
+       |                                                           ^
+    287|       expect(found.forbiddenLaunches.map(finding => finding.text)).toE…
+    288|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/12]⎯
+
+ FAIL  server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a launch fails even when its line was put on the names-only list
+AssertionError: expected [ …(3) ] to deeply equal [ Array(1) ]
+
+- Expected
++ Received
+
+  [
++   "const wipe=noLimitsWipe(text,{...context,cwd,lang,shell:lang==='pwsh'?'pwsh':undefined,unread:engine?.toolInputTruncated===true,unseen:{sessionEdits}});",
+    "execFile(powershell(env), [\"-NoProfile\", \"-EncodedCommand\", script]);",
++   "const wipe=noLimitsWipe(script.text,{...options,cwd:script.cwd,workFolder:options.workFolder??options.cwd,lang:script.lang,shell:script.lang==='pwsh'?'pwsh':und",
+  ]
+
+ ❯ server/no-powershell-spawn.test.ts:293:68
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/12]⎯
+
+ FAIL  server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > the real user_terminal launch passes, and is the only launch
+AssertionError: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "server/decision/action.ts:const wipe=noLimitsWipe(text,{...context,cwd,lang,shell:lang==='pwsh'?'pwsh':undefined,unread:engine?.toolInputTruncated===true,unseen:{sessionEdits}});",
++   "server/no-limits-wipe.ts:const wipe=noLimitsWipe(script.text,{...options,cwd:script.cwd,workFolder:options.workFolder??options.cwd,lang:script.lang,shell:script.lang==='pwsh'?'pwsh':und",
++ ]
+
+ ❯ server/no-powershell-spawn.test.ts:310:24
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/12]⎯
+
+ FAIL  server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a launch through a constant that names PowerShell fails (spawn(WINDOWS_FALLBACK_SHELL, ...))
+AssertionError: expected [ …(3) ] to deeply equal [ Array(1) ]
+
+- Expected
++ Received
+
+  [
++   "server/decision/action.ts:const wipe=noLimitsWipe(text,{...context,cwd,lang,shell:lang==='pwsh'?'pwsh':undefined,unread:engine?.toolInputTruncated===true,unseen:{sessionEdits}});",
++   "server/no-limits-wipe.ts:const wipe=noLimitsWipe(script.text,{...options,cwd:script.cwd,workFolder:options.workFolder??options.cwd,lang:script.lang,shell:script.lang==='pwsh'?'pwsh':und",
+    "server/c1.ts:spawn(WINDOWS_FALLBACK_SHELL, [\"-NoExit\"]);",
+  ]
+
+ ❯ server/no-powershell-spawn.test.ts:313:162
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/12]⎯
+
+ FAIL  server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a launch through cmd / start / conhost / wt arguments that include PowerShell fails
+AssertionError: spawn("cmd.exe", ["/c", "start", "powershell"]);: expected [ …(3) ] to have a length of 1 but got 3
+
+- Expected
++ Received
+
+- 1
++ 3
+
+ ❯ server/no-powershell-spawn.test.ts:330:74
+    328|         'const shell = "powershell.exe";\nspawn("cmd", [\n  "/c",\n  "…
+    329|         'out.push(["cmd.exe", ["/c", `start "" "${WINDOWS_FALLBACK_SHE…
+    330|       ].entries()) expect(scan({ [`server/h${index}.ts`]: code }), cod…
+       |                                                                          ^
+    331|     });
+    332|     it("a second copy of the user_terminal launch, anywhere, and any c…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/12]⎯
+
+ FAIL  server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a second copy of the user_terminal launch, anywhere, and any change to its arguments fail
+AssertionError: expected [ …(3) ] to have a length of 1 but got 3
+
+- Expected
++ Received
+
+- 1
++ 3
+
+ ❯ server/no-powershell-spawn.test.ts:333:124
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/12]⎯
+
+ FAIL  server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > the user_terminal exception does not cover the same text in another file
+AssertionError: expected [ …(3) ] to have a length of 1 but got 3
+
+- Expected
++ Received
+
+- 1
++ 3
+
+ ❯ server/no-powershell-spawn.test.ts:341:259
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/12]⎯
+
+ FAIL  server/channels/signal/transport.test.ts > Signal transport isolated fixtures > T-SPAWN-TOKEN: real host confirms every chunk with the originating token (mutant: drop spawnToken)
+Error: kept-check
+ ❯ SignalProcessHost.open server/channels/signal/process-host.ts:260:13
+    258|       if (!["offline", "timeout", "broken-pipe"].includes(reason)) thi…
+    259|       if (this.current?.epoch === epoch) { this.terminate(this.current…
+    260|       throw new HostError(reason,preservation);
+       |             ^
+    261|     }
+    262|   }
+ ❯ SignalProcessHost.spawn server/channels/signal/process-host.ts:162:5
+ ❯ realHostFixture server/channels/signal/transport.test.ts:119:3
+ ❯ server/channels/signal/transport.test.ts:126:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/12]⎯
+
+ FAIL  server/channels/signal/transport.test.ts > Signal transport isolated fixtures > T-SPAWN-TOKEN: delayed send cannot adopt a replacement child's token (mutant: refresh token after await)
+Error: kept-check
+ ❯ SignalProcessHost.open server/channels/signal/process-host.ts:260:13
+    258|       if (!["offline", "timeout", "broken-pipe"].includes(reason)) thi…
+    259|       if (this.current?.epoch === epoch) { this.terminate(this.current…
+    260|       throw new HostError(reason,preservation);
+       |             ^
+    261|     }
+    262|   }
+ ❯ SignalProcessHost.spawn server/channels/signal/process-host.ts:162:5
+ ❯ realHostFixture server/channels/signal/transport.test.ts:119:3
+ ❯ server/channels/signal/transport.test.ts:133:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/12]⎯
+
+
+ Test Files  2 failed | 34 passed (36)
+      Tests  12 failed | 664 passed | 13 skipped (689)
+   Start at  16:18:12
+   Duration  218.65s (transform 10.84s, setup 43.36s, import 5.77s, tests 164.70s, environment 3ms)
+

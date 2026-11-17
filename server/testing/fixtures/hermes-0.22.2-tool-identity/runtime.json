@@ -1,0 +1,21 @@
+{
+  "version_stdout": "Hermes Agent v0.22.2 (2026.9.24) \u00b7 upstream d923a5eb\nInstall directory: /hermes\nInstall method: unknown\nPython: 3.14.10\nOpenAI SDK: 2.24.0\n",
+  "version_stderr": "",
+  "python_version": "3.14.10 (main, Nov  5 2026, 09:38:43) [GCC 12.2.0]",
+  "python_sha256": "18e5076d335579021f66100894222c763322c2a84c8eb78ad572e099b37de56f",
+  "cli_entry_sha256": "88a7fc166d3bfaac082d44bbfc36c93b53c50f7508ca96e32206dc3f1edfaa82",
+  "interfaces": [
+    "lo"
+  ],
+  "environment": {
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "HOME": "/tmp/s0-home",
+    "HERMES_HOME": "/tmp/s0-home/hermes",
+    "PYTHONPATH": "/deps:/hermes",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "NO_COLOR": "1",
+    "HERMES_ACCEPT_HOOKS": "1",
+    "XAI_API_KEY": "s0-dummy-xai-not-a-credential",
+    "XAI_BASE_URL": "http://127.0.0.1:18080/v1"
+  }
+}

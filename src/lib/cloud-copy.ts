@@ -6,7 +6,7 @@ export const cloudCopy = {
   claudeFluxOnHome: "On your Cloud, Claude models on Flux run through Fuigo.",
   /** The Cloud window's banner (B3 WP4). Plain: what is wrong, and what happens to changes. */
   homeUnreachable: "Your Cloud home isn't reachable",
-  homeUnreachableDetail: "Changes you make now are not saved, and nothing is kept to send later. Try again when it's back.",
+  homeUnreachableDetail: "Settings changes won't save until it's back. Anything you type in chat is kept.",
   switchComputer: "This computer",
   switchCloudHome: "Cloud home",
   pairTitle: "Connect to your Cloud home",

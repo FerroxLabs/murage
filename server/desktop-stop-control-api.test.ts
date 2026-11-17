@@ -33,8 +33,17 @@ const promptReachedEngine = async (text: string) => {
     .toBe(true);
 };
 /** A bot left on Auto — the default, and on macOS the host desktop. */
-const createAutoBot = async (name: string) =>
-  (await api("POST", "/api/bots", { name, modelSelection: { instanceId: "verification", model } })).body.bot;
+// A new bot starts on "this computer" since a9e405c19 (computer.defaultForNewBots, CONTRACTS-B 2); `computer: null` puts it back on Auto,
+// the case this suite is about.
+const createAutoBot = async (name: string) => {
+  const bot = (await api("POST", "/api/bots", { name, modelSelection: { instanceId: "verification", model } })).body.bot;
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: null })).status).toBe(200);
+  // Auto is the persisted bot with no `computer` (the PATCH drops the key): read the bot back from the server instead of asserting a value built here.
+  const persisted = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id);
+  expect(persisted).toBeDefined();
+  expect(persisted.computer).toBeUndefined();
+  return persisted;
+};
 
 const holdATurn = async (bot: any, text: string) => {
   rmSync(fixture.fixtureDumpPath, { force: true });

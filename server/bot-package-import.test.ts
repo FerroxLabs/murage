@@ -8,9 +8,115 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createBotPackageEntry } from "./bot-package-manifest.ts";
 import { importBotPackageArchive, importBotPackageContents, previewBotPackageContents, previewBotPackageImport, type BotPackageAtomicCommitInput } from "./bot-package-import.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { RoutineManager } from "./routines.ts";
+import { applyRoutinePermissionMode, botPermissionMode, effectiveRoutinePermissionMode } from "./routine-permissions.ts";
+import { autoVerdict } from "./auto-approve.ts";
+import { writeFileSync } from "node:fs";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
+
+// MAIN RULING 2026-11-13 wipe-only: importing no choice cannot invent an explicit lower ceiling.
+it("imported routine inherits No limits after enable and reload while an owner-selected Ask survives", async () => {
+  const f = await fixture();
+  const profile = { autoApprove: false, fullAccess: false, noLimits: false };
+  const file = join(f.root, "routines.json");
+  const options = { file, botMode: () => botPermissionMode(profile), botState: () => "ready" as const,
+    createTask: () => { throw new Error("No scheduled turn in this fixture"); },
+    startTurn: async () => { throw new Error("No scheduled turn in this fixture"); } };
+  let manager = new RoutineManager(options);
+  await importBotPackageArchive({ ...f.options, atomicCommit: ({ prepared }) => {
+    const batch = manager.preparePackageAddition(prepared.routines);
+    writeFileSync(file, batch.bytes);
+    batch.publish();
+  } });
+  const imported = manager.listRoutines()[0]!;
+  expect(imported).toMatchObject({ enabled: false, nextRunAt: null });
+  expect(imported).not.toHaveProperty("permissionMode");
+  expect(effectiveRoutinePermissionMode(imported, profile)).toBe("ask");
+  // MAIN RULING 1116-ROUTINES Q2: omission resolves to Ask until an owner chooses.
+  manager.update(imported.id, { permissionMode: "inherit" });
+  manager.update(imported.id, { enabled: true });
+  Object.assign(profile, { autoApprove: true, fullAccess: true, noLimits: true });
+  manager = new RoutineManager(options);
+  const inherited = manager.listRoutines()[0]!;
+  expect(inherited.enabled).toBe(true);
+  expect(inherited.permissionExplicit).not.toBe(true);
+  const mode = effectiveRoutinePermissionMode(inherited, profile);
+  expect(mode).toBe("unlimited");
+  expect(autoVerdict(applyRoutinePermissionMode(profile, mode), "Bash", "echo routine", { automated: true, routineLevel: true }))
+    .toMatchObject({ source: "no-limits", approve: expect.any(String) });
+  manager.update(imported.id, { permissionMode: "ask" });
+  const explicit = new RoutineManager(options).listRoutines()[0]!;
+  expect(explicit.permissionExplicit).toBe(true);
+  expect(effectiveRoutinePermissionMode(explicit, profile)).toBe("ask");
+  expect(autoVerdict(applyRoutinePermissionMode(profile, "ask"), "Bash", "echo routine", { automated: true, routineLevel: true }))
+    .toMatchObject({ approve: null, source: "no-grant" });
+});
+// Both install-time No limits and a later owner level change use the same
+// inherited record. No package-supplied grant or origin is installed.
+it.each([false, true])("package routine inherits on first enable and reload (No limits at import: %s)", async atImport => {
+  const f = await fixture();
+  const profile = { autoApprove: atImport, fullAccess: atImport, noLimits: atImport };
+  const file = join(f.root, "routines.json");
+  const options = { file, botMode: () => botPermissionMode(profile), botState: () => "ready" as const,
+    createTask: () => { throw new Error("No scheduled turn in this fixture"); },
+    startTurn: async () => { throw new Error("No scheduled turn in this fixture"); } };
+  let manager = new RoutineManager(options);
+  await importBotPackageArchive({ ...f.options, atomicCommit: ({ prepared }) => {
+    const batch = manager.preparePackageAddition(prepared.routines);
+    writeFileSync(file, batch.bytes); batch.publish();
+  } });
+  const id = manager.listRoutines()[0]!.id;
+  expect(manager.listRoutines()[0]).toMatchObject({ enabled: false, nextRunAt: null });
+  Object.assign(profile, { autoApprove: true, fullAccess: true, noLimits: true });
+  expect(effectiveRoutinePermissionMode(manager.listRoutines()[0]!, profile)).toBe("ask");
+  manager.update(id, { permissionMode: "inherit" });
+  manager.update(id, { enabled: true });
+  for (const reload of [false, true]) {
+    if (reload) manager = new RoutineManager(options);
+    const routine = manager.listRoutines()[0]!;
+    expect(routine.permissionExplicit).not.toBe(true);
+    const mode = effectiveRoutinePermissionMode(routine, profile);
+    expect(mode).toBe("unlimited");
+    const actor = applyRoutinePermissionMode(profile, mode);
+    expect(autoVerdict(actor, "Bash", "echo routine", { automated: true, routineLevel: true }))
+      .toMatchObject({ source: "no-limits", approve: expect.any(String) });
+    expect(autoVerdict(actor, "Bash", "rm -rf ~", { automated: true, routineLevel: true, commandText: "rm -rf ~" }).approve).toBeNull();
+    // An imported routine cannot turn another person's request into owner work.
+    for (const noLimitsOrigin of ["guest", "other-human", "unproven"] as const) {
+      expect(autoVerdict(actor, "Bash", "echo routine", { automated: true, routineLevel: true, noLimitsOrigin }).approve).toBeNull();
+    }
+    expect(autoVerdict(actor, "Bash", "echo routine", { automated: true, routineLevel: true, fullAccessOrigin: "other" }).approve).toBeNull();
+  }
+  manager.update(id, { permissionMode: "ask" });
+  const explicit = new RoutineManager(options).listRoutines()[0]!;
+  expect(explicit.permissionExplicit).toBe(true);
+  expect(effectiveRoutinePermissionMode(explicit, profile)).toBe("ask");
+});
+
+it("package routine imported into an Ask home gains no No limits on enable or reload", async () => {
+  const f = await fixture();
+  const profile = { autoApprove: false, fullAccess: false, noLimits: false };
+  const file = join(f.root, "routines.json");
+  const options = { file, botMode: () => botPermissionMode(profile), botState: () => "ready" as const,
+    createTask: () => { throw new Error("No scheduled turn in this fixture"); },
+    startTurn: async () => { throw new Error("No scheduled turn in this fixture"); } };
+  let manager = new RoutineManager(options);
+  await importBotPackageArchive({ ...f.options, atomicCommit: ({ prepared }) => {
+    const batch = manager.preparePackageAddition(prepared.routines);
+    writeFileSync(file, batch.bytes); batch.publish();
+  } });
+  manager.update(manager.listRoutines()[0]!.id, { enabled: true });
+  for (const reload of [false, true]) {
+    if (reload) manager = new RoutineManager(options);
+    const mode = effectiveRoutinePermissionMode(manager.listRoutines()[0]!, profile);
+    expect(mode).toBe("ask");
+    expect(autoVerdict(applyRoutinePermissionMode(profile, mode), "Bash", "echo routine", { automated: true, routineLevel: true }))
+      .toMatchObject({ source: "no-grant", approve: null });
+  }
+});
+
 async function fixture(instructions = "Use evidence and report uncertainty.") {
   const root = mkdtempSync(join(tmpdir(), "murage-package-import-")); roots.push(root);
   const payloads = new Map([
@@ -60,6 +166,8 @@ it("routes in-memory contents through the same inert preparation, staging and at
     preparedImport = prepared;
     expect(prepared.bots[0]).toMatchObject({ name: "Scout 2", chiefOfStaff: false, computer: "off", autoApprove: false, browser: false });
     expect(prepared.routines[0]).toMatchObject({ enabled: false, nextRunAt: null });
+    expect(prepared.routines[0], "S9 imported routines inherit the owner level").not.toHaveProperty("permissionMode");
+    expect(prepared.routines[0]).not.toHaveProperty("permissionExplicit");
     expect(JSON.parse(readFileSync(join(stagingDirectory, "skill-state", prepared.bots[0].id, "skills.json"), "utf8")).research.enabled).toBe(false);
     expect(prepared.baseline).toBeTruthy();
   });
@@ -214,4 +322,19 @@ it("bot email (section 7): emailIntent was-on is kept as an offer only; email st
   await importBotPackageContents({ ...f.options, contents: { manifest: f.manifest, payloads: contents.payloads }, expectedArchiveSha256: plain.archiveSha256, expectedReviewHash: plain.reviewHash,
     atomicCommit: ({ prepared }: BotPackageAtomicCommitInput) => { plainBot = prepared.bots[0]; } });
   expect(plainBot?.installedPackage && "emailIntent" in plainBot.installedPackage).toBe(false);
+});
+
+// A live routine-level projection supplies the legacy routine provenance only
+// when no stored origin contradicts it. Raw level flags alone prove nothing.
+it("legacy routine-level context inherits No limits without a duplicate stored origin", () => {
+  const actor = applyRoutinePermissionMode({ autoApprove: true, fullAccess: true, noLimits: true }, "unlimited");
+  expect(autoVerdict(actor, "Bash", "echo routine", { automated: true, routineLevel: true }))
+    .toMatchObject({ source: "no-limits", approve: expect.any(String) });
+  for (const context of [
+    {}, { automated: true }, { routineLevel: true, unattended: true },
+    { routineLevel: true, channelOwner: true },
+    { routineLevel: true, fullAccessOrigin: "other" as const },
+    { routineLevel: true, noLimitsOrigin: "guest" as const },
+    { routineLevel: true, noLimitsOrigin: "unproven" as const },
+  ]) expect(autoVerdict(actor, "Bash", "echo routine", context).approve).toBeNull();
 });

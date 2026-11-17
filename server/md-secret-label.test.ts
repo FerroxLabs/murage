@@ -3,7 +3,7 @@
 // except the guard rows 22 and 24, which pass on both. f(f(x)) = f(x) on every
 // row. The stream rows (14-18) live in drivers/native-md-stream.test.ts and the
 // electron rows (12, 13, 19 electron) in electron/diagnostics.test.mjs.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import * as redact from "./redact.ts";
@@ -98,9 +98,8 @@ describe("REDACT-MD-SINKS extent A on the server sink", () => {
   });
 });
 
-// Row 24 (guard): the user-visible rule is byte-for-byte the base's. The
-// fixture is the base output of this corpus, written once from b47ece583 with
-// RDS_WRITE_BASE=1 on the build host; head and base must both reproduce it.
+// Row 24: versioned original-input/base/final evidence. Never regenerate
+// expected output from the current redactor or use a base output as input.
 const CORPUS = [
   ...ROWS.map(([, input]) => input),
   "the token: leave this prose alone", "const token = await getToken();", "use a **strong password** here",
@@ -109,12 +108,36 @@ const CORPUS = [
 ];
 const FIXTURE = join(import.meta.dirname, "testing", "md-secret-label-user-text.base.json");
 
+type GoldenRow = { id: string; sourceIndex?: number; input: string; base: string; final: string; rule: string };
+const GOLDEN = JSON.parse(readFileSync(FIXTURE, "utf8")) as { version: number; baseCommit: string; rows: GoldenRow[] };
 describe("REDACT-MD-SINKS user-visible text", () => {
-  it("row 24 (guard) redactSecretsInText equals the base output byte for byte", () => {
-    const now = CORPUS.map((input) => redact.redactSecretsInText(input));
-    if (process.env.RDS_WRITE_BASE === "1") writeFileSync(FIXTURE, JSON.stringify(now, null, 1) + "\n");
-    expect(existsSync(FIXTURE)).toBe(true);
-    expect(now).toEqual(JSON.parse(readFileSync(FIXTURE, "utf8")));
+  it("golden.move-equality", () => {
+    expect(GOLDEN.version).toBe(2);
+    expect(GOLDEN.baseCommit).toBe("c12aaad9341e8f87126a193f35b5c2768f0aa66f");
+    const original = GOLDEN.rows.filter(row => row.sourceIndex !== undefined);
+    expect(original.map(row => row.sourceIndex)).toEqual(Array.from({ length: 49 }, (_, i) => i + 1));
+    expect(original.map(row => row.input)).toEqual(CORPUS);
+    expect(new Set(GOLDEN.rows.map(row => row.id)).size).toBe(64);
+    for (const row of original) {
+      expect(row.id).toBe(`K-24-${String(row.sourceIndex).padStart(2, "0")}`);
+      // Preserved legacy pipeline proves the archived base output too.
+      expect(redact.TEXT_RULES.reduce((text, [, rule]) => rule(text), row.input)).toBe(row.base);
+    }
+  });
+  it.each(GOLDEN.rows)("row 24 explicit base/final $id ($rule)", row => {
+    expect(redact.redactSecretsInText(row.input)).toBe(row.final);
+  });
+  // This slice is built against the frozen base in parallel with Wave 1.
+  // The combined tree runs this gate automatically; an isolated slice cannot certify
+  // the collector-first activation gate from absent implementation files.
+  it.runIf(process.env.L5A_INTEGRATION === "1" || existsSync(new URL("harness/audience-collector.ts", import.meta.url)))("collector-before-user-text", async () => {
+    expect(existsSync(new URL("harness/audience-collector.ts", import.meta.url))).toBe(true);
+    const bus = readFileSync(new URL("harness/bus.ts", import.meta.url), "utf8");
+    const harness = readFileSync(new URL("index.ts", import.meta.url), "utf8");
+    expect(bus).toContain("subscribeAudience");
+    expect(bus).toContain("subscribeExecution");
+    expect(harness).not.toMatch(/bus\.subscribe\(/);
+    expect(harness).toContain("admitNewTurn");
   });
 });
 
@@ -161,5 +184,60 @@ describe("md-secret-label: clean text passes, a wrapped label masks the rest", (
   it("a new line starts a fresh line state, so clean text after a finished line is not masked", () => {
     const st = createLabelStream();
     expect(scanLabelDelta(st, "ordinary line\nclean text")).toBe(-1);
+  });
+});
+
+
+import { exactAllowKeyFor } from "./auto-approve.ts";
+import { readDoneWhen, doneWhenBriefLine } from "./done-when.ts";
+
+describe("redact-md-caller-contract", () => {
+  it("redact-md-caller-contract.plain-colon", () => {
+    for (const [input, output] of [
+      ["token: x", "token: «redacted 1 chars»"], ["my_token: x", "my_token: «redacted 1 chars»"],
+      ["password:\thunter2 \t", "password:\t«redacted 7 chars» \t"],
+      ["password: hunter2\nordinary", "password: «redacted 7 chars»\nordinary"],
+      ["notoken: x", "notoken: x"], ["password=short", "password=short"],
+      ["password: hunter2 and more", "password: hunter2 and more"], ["password:", "password:"],
+      ["password: x\ry", "password: x\ry"],
+    ]) expect(redact.redactSecretsInText(input!), input).toBe(output);
+  });
+  it("redact-md-caller-contract.numeric-password", () => {
+    for (const name of ["password", "secret", "authorization"]) expect(redact.redactSecretsInText(`${name}: 1234`)).toBe(`${name}: «redacted 4 chars»`);
+  });
+  it("redact-md-caller-contract.count-label", () => {
+    expect(redact.redactSecretsInText("tokens: 1200")).toBe("tokens: 1200");
+    expect(redact.redactSecretsInText("token: 1200")).toBe("token: «redacted 4 chars»");
+    expect(redact.redactSecretsInText("auth_tokens: 1200")).toBe("auth_tokens: «redacted 4 chars»");
+    expect(redact.redactSecretsInText("auth tokens: 1200")).toBe("auth tokens: «redacted 4 chars»");
+  });
+  it("redact-md-caller-contract.fixed-types", () => {
+    for (const type of ["string", "number", "boolean", "null", "object", "array", "undefined", "unknown", "any", "void", "never", "token"]) {
+      // An exemption never cancels pre-existing KEY_VALUE protection (undefined).
+      const input = `token: ${type}`;
+      const legacy = redact.TEXT_RULES.reduce((text, [, rule]) => rule(text), input);
+      expect(redact.redactSecretsInText(input)).toBe(legacy);
+    }
+    expect(redact.redactSecretsInText("token: String")).toBe("token: «redacted 6 chars»");
+  });
+  it("caller.exact-grant-refusal", () => {
+    const exact = { engine: "codex", cwd: "/work/project", command: "printf hello" };
+    expect(exactAllowKeyFor("Bash", "prints hello", exact)).toBeDefined();
+    expect(exactAllowKeyFor("Bash", "**password**: hunter2", exact)).toBeUndefined();
+  });
+  it("caller.done-when-drop", () => {
+    for (const input of ["**password**: hunter2", "password: 1234", "token:x"]) expect(readDoneWhen(input)).toEqual({ ok: true });
+  });
+  it("caller.done-when-restored", () => {
+    expect(doneWhenBriefLine("**password**: hunter2")).toBe("");
+    expect(doneWhenBriefLine("tests pass")).toBe("\n\n[Done when: tests pass]");
+  });
+  it("redact-md-caller-contract.caller-baselines", () => {
+    for (const input of ["tests pass", "the token: leave this prose alone", "tokens: 1200", "token: token"]) {
+      expect(redact.redactSecretsInText(input)).toBe(input);
+      expect(readDoneWhen(input)).toEqual({ ok: true, value: input });
+    }
+    expect(sink("`token`: string")).not.toContain("string");
+    expect(sink("my_token: x")).toBe("my_token: x");
   });
 });

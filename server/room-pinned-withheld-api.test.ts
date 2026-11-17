@@ -13,8 +13,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { VerificationServer } from "../scripts/control-murage.ts";
+import { launchMemoryVerificationServer as launchVerificationServer } from "./testing/memory-verification-fixture.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const FAKE_PI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-pi-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -29,11 +31,13 @@ const prompts = (): string[] => {
   const file = join(fixture.info.dataDir, "pi-dump.jsonl");
   return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(row => row.prompt).map(row => String(row.message)) : [];
 };
-const PIN_NOTE = "Bots were not given a pinned note: it uses a reply they no longer see. Unpin it in Memory, then pin a newer one if you still want it.";
+const PIN_NOTE = "Bots were not given a pinned note because its supporting replies could not be used or fully checked. Unpin it in Memory, then pin a newer one if you still want it.";
 
 posixOnly("a pinned room note resting on a withheld reply", () => {
   beforeAll(async () => {
-    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
+      await import(${JSON.stringify(new URL("./testing/idle-load-preload.mjs",import.meta.url).href)});
+      await import(${JSON.stringify(new URL("./testing/fake-engine-env-preload.mjs",import.meta.url).href)});
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       cfg.instances.piDump={driver:'piAgent',displayName:'Recording pi fixture',config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true},
@@ -45,7 +49,7 @@ posixOnly("a pinned room note resting on a withheld reply", () => {
   }, 30000);
   afterAll(async () => { await fixture?.close(); });
 
-  it("is not handed to bots, Murage says so once, and later replies stay visible", async () => {
+  it("is not handed to bots, Murage says so on each affected reply, and later replies stay visible", async () => {
     expect((await api("GET", "/api/memory/status")).body.mode).toBe("active");
     const models = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "piDump").models.options;
     const bot = async (name: string) => {
@@ -65,9 +69,14 @@ posixOnly("a pinned room note resting on a withheld reply", () => {
       const pendingJobs = () => Number((db.prepare("SELECT count(*) AS n FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE s.thread_id=? AND j.status NOT IN ('complete','cancelled','failed')").get(room.threadId) as { n: number }).n);
       const repliesBy = async (botId: string) => (await messages(room.threadId)).filter(message => message.role === "bot" && message.kind === "text" && message.text && message.from?.botId === botId);
       const send = async (text: string) => {
+        const remaining = 60_000 - Date.now() % 60_000;
+        if (remaining <= 10_000) await new Promise(resolve => setTimeout(resolve, remaining + 1));
         expect((await api("POST", `/api/groups/${room.id}/messages`, { text })).status).toBe(202);
         await expect.poll(idle, { timeout: 20000 }).toBe(true);
-        await expect.poll(() => pendingJobs(), { timeout: 20000 }).toBe(0);
+        await expect.poll(() => pendingJobs(), { timeout: 20000 }).toBe(0).catch(error => {
+          console.error('fixture pending jobs='+JSON.stringify(db.prepare("SELECT stage,status,error,retry_at FROM memory_jobs WHERE status NOT IN ('complete','cancelled','failed')").all()));
+          console.error(readFileSync(fixture.info.logPath,'utf8').slice(-16000));throw error;
+        });
       };
       // The room's notes: the checkpoint built from this room's messages,
       // whichever scope the room's captures go to.
@@ -96,6 +105,10 @@ posixOnly("a pinned room note resting on a withheld reply", () => {
       for (let round = 1; round <= 8 && !found; round++) {
         await send(`question ${round} about the garden`);
         await expect.poll(async () => (await repliesBy(alpha.id)).length, { timeout: 15000 }).toBe(round);
+        // The rolling checkpoint is written by a background job that can trail the reply on a slower machine: wait (read-only, bounded)
+        // until it quotes this round's exact reply before looking for a candidate. A timeout fails the test here, with this message.
+        const latest = (await repliesBy(alpha.id)).at(-1)!.text;
+        await vi.waitFor(() => expect(checkpoint()?.text ?? "", `round ${round}: checkpoint never quoted the latest reply`).toContain(latest), { timeout: 15000, interval: 100 });
         found = await candidate();
       }
       expect(found).toBeDefined();
@@ -129,7 +142,7 @@ posixOnly("a pinned room note resting on a withheld reply", () => {
 
       // Bravo's turn next: Alpha's fourth reply is not withheld, and Bravo
       // reads it; the pinned note is still not handed over, and the notice
-      // is not repeated.
+      // repeats on the affected reply (design v2 PIN-7).
       const beforeFifth = prompts().length;
       await send("@Bravo what do you make of Alpha's last answer?");
       await expect.poll(async () => (await repliesBy(bravo.id)).length, { timeout: 15000 }).toBe(1);
@@ -140,7 +153,8 @@ posixOnly("a pinned room note resting on a withheld reply", () => {
       const shown = await messages(room.threadId);
       expect(shown.find(message => message.id === fourthReply.id).withheldFromBots).toBeUndefined();
       expect(shown.find(message => message.role === "bot" && message.from?.botId === bravo.id && message.kind === "text").withheldFromBots).toBeUndefined();
-      expect(await noticeCount()).toBe(1);
+      // Design v2 PIN-7 strengthens delivery: the later affected reply has its own notice.
+      expect(await noticeCount()).toBe(2);
       expect(JSON.stringify(shown)).not.toMatch(/MEMORY_/);
     } finally { db.close(); }
   }, 240000);

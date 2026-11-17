@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { steerWithQuoteLineage } from "./steer-lineage.ts";
+import { fixtureEngineFence } from "./testing/mcp-admission-fixture.ts";
 
 function recordingEngine() {
   const sent: unknown[] = [];
@@ -15,7 +16,7 @@ function recordingEngine() {
     capabilities: { queueing: true },
     steer: async (_thread: string, text: unknown, beforeWrite?: () => void) => { beforeWrite?.(); sent.push(text); return true; },
   };
-  return { adapter, sent };
+  return { adapter, sent, turn: fixtureEngineFence("t").retained };
 }
 
 const NOW = " It is now Thursday 5 November 2026, 3:04 pm (15:04) in the owner's time zone, Europe/London (UTC+0).";
@@ -24,7 +25,7 @@ describe("a steer carries the time it was sent", () => {
   it("puts the now line on top of the owner's words", async () => {
     const engine = recordingEngine();
     expect(await steerWithQuoteLineage(engine.adapter, "t", "and use the side door", true, {
-      holds: () => true, steerId: "s-now", lineage: undefined, now: NOW,
+      holds: () => true, steerId: "s-now", lineage: undefined, now: NOW, turn: engine.turn,
     })).toBe("steer");
     const text = JSON.stringify(engine.sent);
     expect(text).toContain("It is now Thursday 5 November 2026, 3:04 pm");
@@ -33,7 +34,7 @@ describe("a steer carries the time it was sent", () => {
 
   it("leaves the words alone when no line is given", async () => {
     const engine = recordingEngine();
-    await steerWithQuoteLineage(engine.adapter, "t", "and use the side door", true, { holds: () => true, steerId: "s-bare", lineage: undefined });
+    await steerWithQuoteLineage(engine.adapter, "t", "and use the side door", true, { holds: () => true, steerId: "s-bare", lineage: undefined, turn: engine.turn });
     expect(JSON.stringify(engine.sent)).not.toContain("It is now");
   });
 

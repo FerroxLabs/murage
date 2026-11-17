@@ -1,3 +1,4 @@
+import { openFixtureApproval } from '../testing/approval-card.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -81,7 +82,7 @@ it("S1: the open-card index is bounded by rows scanned, not cards found: a spars
   const insert = live.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t',?,?,'bot','text','x',?)");
   live.exec("BEGIN");
   for (let i = 0; i < 5000; i++) insert.run(`r${i}`, i, JSON.stringify({ id: `r${i}`, kind: "text", parentId: null }));
-  live.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','card',9999,'bot','options','x',?)").run(JSON.stringify(openOptions("card", "req-1")));
+  live.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','card',9999,'bot','options','x',?)").run(JSON.stringify(openFixtureApproval(live, "t", openOptions("card", "req-1"))));
   live.exec("COMMIT");
   let chunks = 0;
   const cursors: number[] = [];
@@ -97,7 +98,7 @@ it("S1 (fast upgrade): a used data dir opens without scanning its history for ca
   live.exec("BEGIN");
   const insert = live.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t',?,?,'bot','text','x',?)");
   for (let i = 0; i < 3500; i++) insert.run(`r${i}`, i, JSON.stringify({ id: `r${i}`, kind: "text", parentId: null }));
-  live.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','card',9999,'bot','options','x',?)").run(JSON.stringify(openOptions("card", "req-1")));
+  live.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','card',9999,'bot','options','x',?)").run(JSON.stringify(openFixtureApproval(live, "t", openOptions("card", "req-1"))));
   live.exec("DELETE FROM open_card; DELETE FROM transcript_index_state");
   live.exec("COMMIT");
   closeDatabase(); calls.length = 0;

@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
-import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { recordAdmittedEvents, type EventRecorder } from "../testing/admitted-events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { ClaudeDriver, CLAUDE_ASK_ITEM_WAIT_MS, claudeLaneShortcutSkip, claudeToolKey, permissionSocketPath, setClaudeLaneHooks, type ClaudeLaneState } from "./claude.ts";
 
@@ -60,7 +60,7 @@ describe("V5 Claude ask order (fake CLI)", () => {
 
   const create = async () => {
     instance = await ClaudeDriver.create({ instanceId: "claude-v5", displayName: "Claude V5", environment: {}, enabled: true, config: { cli: FAKE_CLI, permissionMode: "acceptEdits" } });
-    recorder = recordEvents(instance.adapter);
+    recorder = recordAdmittedEvents(instance.adapter);
   };
   const ask = async (threadId: string, id: string, tool: string, input: Record<string, unknown>) => {
     await instance.adapter.sendTurn({ threadId, text: HOLD, cwd: scratch });

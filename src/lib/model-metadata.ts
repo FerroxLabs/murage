@@ -125,6 +125,7 @@ export function preloadModelMetadata(load: () => Promise<{ default: string }> = 
 // module's only other import is a `type`, so nothing server-side follows it
 // into the renderer bundle.
 import { fluxModelId, isFluxPickerModel } from "../../server/flux-routing.ts";
+import { orderModels, withoutNewestMark, type OrderedModel } from "../../shared/model-order.ts";
 import { resolveModelLabel } from "../../shared/model-label.ts";
 import type { ProviderModel } from "../../shared/provider-connections.ts";
 
@@ -470,7 +471,7 @@ export function fillModelMetadata<T extends FillableModelRow>(
   };
   return {
     ...row,
-    label: resolveModelLabel(id, { catalogLabel: row.label, metadataName: metadata.name }),
+    label: resolveModelLabel(id, { catalogLabel: row.label, metadataName: withoutNewestMark(metadata.name) }),
     ...(row.contextWindow === undefined && metadata.contextWindow !== undefined ? { contextWindow: metadata.contextWindow } : {}),
     ...(pricing === undefined ? {} : { pricing }),
     ...(capabilities.vision === undefined && capabilities.tools === undefined && capabilities.reasoning === undefined
@@ -483,4 +484,17 @@ export function fillModelMetadata<T extends FillableModelRow>(
           },
         }),
   };
+}
+
+
+// Cache enrichment and ordering by catalog identity, never by messages or history.
+const orderedMetadata = new WeakMap<readonly FillableModelRow[], Map<string, { ready: boolean; rows: unknown }>>();
+export function orderedModelMetadata<T extends FillableModelRow & { id: string }>(rows: readonly T[], hint?: string): OrderedModel<T>[] {
+  let hints = orderedMetadata.get(rows);
+  if (!hints) { hints = new Map(); orderedMetadata.set(rows, hints); }
+  const key = hint ?? "", ready = modelMetadataReady(), cached = hints.get(key);
+  if (cached?.ready === ready) return cached.rows as OrderedModel<T>[];
+  const result = orderModels(rows.map(row => fillModelMetadata(row, row.id, hint)));
+  hints.set(key, { ready, rows: result });
+  return result;
 }

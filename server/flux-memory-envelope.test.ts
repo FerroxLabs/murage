@@ -160,37 +160,34 @@ describe("wire: openai-chat behind the memory adapter", () => {
     return { request, prompt, metadata: (request.body.metadata ?? {}) as { flux_memory?: { mode: string; fallback_recall?: { text: string; sha256: string } } } };
   };
 
-  it("default-on with a key: envelope sent, no local injection, exactly one block (in the fallback)", async () => {
+  // FLUX-OFF-HEADERS-104 round 2: Flux reads no {mode, fallback_recall} envelope (it strips it and skips memory for the request), so
+  // openai-chat no longer declares fluxEnvelope. Murage's own recall rides in the prompt, and Flux Memory capture runs after the turn.
+  it("default-on with a key: no envelope, Murage's recall in the prompt, exactly one block", async () => {
     answerHeaders = { "x-flux-memory": "fallback", "x-flux-memory-reason": "flux-store-slow" };
     const recall = block([item(1), item(2)]);
-    const { metadata, prompt } = await turn(recall, fluxRoute);
-    const envelope = metadata.flux_memory!;
-    expect(envelope.mode).toBe("on");
-    expect(envelope.fallback_recall!.text).toBe(recall);
-    expect(envelope.fallback_recall!.sha256).toBe(sha(recall));
-    expect(countBlocks(prompt)).toBe(0);
-    expect(countBlocks(envelope.fallback_recall!.text)).toBe(1);
-    expect(fluxMemoryReportFor("t-flux-env")).toMatchObject({ source: "fallback", reason: "flux-store-slow", bundleId: "b1" });
+    const { request, metadata, prompt } = await turn(recall, fluxRoute);
+    expect(metadata.flux_memory).toBeUndefined();
+    expect(request.body.metadata).toBeUndefined();
+    expect(countBlocks(prompt)).toBe(1);
+    expect(prompt).toContain("fact number 2");
   });
 
-  it("flux source is recorded", async () => {
+  it("no envelope, so no Flux memory report is recorded for the turn", async () => {
     answerHeaders = { "x-flux-memory": "flux" };
     await turn(block([item(1)]), fluxRoute, "t-flux-src");
-    expect(fluxMemoryReportFor("t-flux-src")).toMatchObject({ source: "flux" });
+    expect(fluxMemoryReportFor("t-flux-src")).toBeUndefined();
   });
 
-  it("oversized recall: cut to 8,192 bytes at an item boundary", async () => {
+  it("oversized recall: delivered locally, never sent as metadata", async () => {
     const items = Array.from({ length: 300 }, (_, i) => item(i + 1, `${"w".repeat(50)} ${i}`));
     const { metadata, prompt } = await turn(block(items), fluxRoute, "t-big");
-    const fallback = metadata.flux_memory!.fallback_recall!;
-    expect(Buffer.byteLength(fallback.text, "utf8")).toBeLessThanOrEqual(FLUX_FALLBACK_MAX_BYTES);
-    expect(fallback.sha256).toBe(sha(fallback.text));
-    expect(countBlocks(prompt)).toBe(0);
+    expect(metadata.flux_memory).toBeUndefined();
+    expect(countBlocks(prompt)).toBe(1);
   });
 
-  it("empty recall: mode on without fallback_recall, nothing injected", async () => {
+  it("empty recall: no envelope, nothing injected", async () => {
     const { metadata, prompt } = await turn("", fluxRoute, "t-empty");
-    expect(metadata.flux_memory).toEqual({ mode: "on" });
+    expect(metadata.flux_memory).toBeUndefined();
     expect(countBlocks(prompt)).toBe(0);
   });
 
@@ -203,9 +200,9 @@ describe("wire: openai-chat behind the memory adapter", () => {
     expect(countBlocks(prompt)).toBe(1);
   });
 
-  it("external on (the default with a key): the owner's turn sends no off headers", async () => {
+  it("external on (the default with a key): the owner's turn says capture off (explicit-only) and sends no inject off", async () => {
     const { request } = await turn(block([item(1)]), fluxRoute, "t-on-headers");
-    expect(request.headers.get("x-flux-memory-capture")).toBeNull();
+    expect(request.headers.get("x-flux-memory-capture")).toBe("off");
     expect(request.headers.get("x-flux-memory-inject")).toBeNull();
   });
 

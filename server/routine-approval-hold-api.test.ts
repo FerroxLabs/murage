@@ -11,7 +11,8 @@
 //     later carries the turn on.
 //
 // HEADLESS ONLY: a throwaway temp HOME and a probed port, clear of 8799.
-import { spawn, type ChildProcess } from "node:child_process";
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -32,6 +33,10 @@ let home: string;
 let stderr = "";
 
 const request = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+  if (path.endsWith('/respond') && body && typeof body === 'object') {
+    const answer = body as { requestId?: unknown; behavior?: unknown };
+    if (typeof answer.requestId === 'string' && /^[pq]\./.test(answer.requestId) && (answer.behavior === 'allow' || answer.behavior === 'deny')) body = { requestHandle: answer.requestId, action: answer.behavior };
+  }
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...desktopHeaders, ...(body ? { "content-type": "application/json" } : {}) },
@@ -39,7 +44,7 @@ const request = async (method: string, path: string, body?: unknown): Promise<{ 
   });
   return { status: res.status, body: await res.json().catch(() => null) };
 };
-const threadMessages = async (threadId: string) => ((await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[];
+const threadMessages = async (threadId: string) => (((await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[]).map(message => message.card?.requestHandle ? { ...message, card: { ...message.card, requestId: message.card.requestHandle } } : message);
 const cardFor = async (threadId: string) =>
   (await threadMessages(threadId)).find((m) => m.kind === "options" && m.card?.requestId) ?? null;
 const runState = async (id: string) => (await request("GET", "/api/routines")).body.runs.find((run: any) => run.id === id);
@@ -65,8 +70,9 @@ async function makeBot(name: string) {
 let serverPort = 0;
 async function startServer() {
   child = spawn(process.execPath, ["--import", pathToFileURL(join(home, "fake-engine-setup.mjs")).href, join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
-    env: {
+    env: { ...fixturePlatformEnv(),
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
       HOME: home,
       USERPROFILE: home,
@@ -75,7 +81,7 @@ async function startServer() {
       MURAGE_WEBHOOK_PORT: String(serverPort + 1),
       MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   child.stderr!.on("data", (c) => (stderr += c));
   const deadline = Date.now() + 20_000;
@@ -92,7 +98,7 @@ async function startServer() {
 
 const errorRows = (messages: any[]) => messages.filter((m) => m.kind === "activity" && String(m.tool?.name ?? "").startsWith("error:"));
 
-describe.skipIf(process.platform === "win32")("an unanswered approval in a routine run", () => {
+describe("an unanswered approval in a routine run", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1], 18_899, 200);
     base = `http://127.0.0.1:${port}`;
@@ -107,7 +113,7 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
       instances: {
         asker: {
           driver: "grokAgent",
-          environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: "printf 'tick 13:25' >> notes/log.md" },
+          environment: { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: "printf 'tick 13:25' >> notes/log.md" },
           config: { cli: FAKE_CLI, fullAuto: false },
         },
       },
@@ -117,7 +123,7 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
   }, 40_000);
 
   afterAll(async () => {
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeTempDir(home);
   });
 
@@ -222,4 +228,70 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
     expect(note?.tool?.name).toBe("Couldn't deliver that answer. The request is no longer open, so the action was not run.");
     expect(note?.routineRunAgain).toBeUndefined();
   }, 90_000);
+
+  it("a late answer is refused every time but the note is written once", async () => {
+    const bot = await makeBot("Twice");
+    expect((await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "log the time" })).status).toBe(202);
+    const card = await poll(() => cardFor(bot.threadId), 20_000);
+    await waitForExit(child, { signal: "SIGKILL" });
+    await startServer();
+    const noteRows = async () => (await threadMessages(bot.threadId)).filter((m) => /no longer open/.test(String(m.tool?.name)));
+    const first = await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card!.card.requestId, behavior: "allow" });
+    expect(first.status).toBe(409);
+    await poll(async () => ((await noteRows()).length ? true : null), 10_000);
+    const second = await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card!.card.requestId, behavior: "allow" });
+    expect(second.status).toBe(409);
+    await sleep(500);
+    expect(await noteRows()).toHaveLength(1);
+    expect((await cardFor(bot.threadId))?.card?.answered).not.toBe("allow");
+  }, 90_000);
+
+  it("a settled card older than the newest 5000 rows still gets its note once", async () => {
+    const bot = await makeBot("Old");
+    expect((await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "log the time" })).status).toBe(202);
+    const card = await poll(() => cardFor(bot.threadId), 20_000);
+    expect(card, `no card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+    await waitForExit(child, { signal: "SIGKILL" });
+    await startServer();
+    const handle = card!.card.requestId as string;
+    // the note sits far back once the thread is buried: page back through the whole thread
+    const noteRows = async () => {
+      const found: any[] = [];
+      let before = "";
+      for (let page = 0; page < 80; page += 1) {
+        const response = await request("GET", `/api/threads/${bot.threadId}/messages?limit=100${before}`);
+        expect(response.status).toBe(200);
+        const read = response.body;
+        found.push(...read.messages.filter((m: any) => /no longer open/.test(String(m.tool?.name))));
+        if (!read.hasMore || !read.messages.length) break;
+        before = `&before=${read.messages[0].id}`;
+      }
+      return found;
+    };
+    expect((await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: handle, behavior: "allow" })).status).toBe(409);
+    expect(await poll(async () => ((await noteRows()).length ? true : null), 10_000)).toBe(true);
+    await waitForExit(child, { signal: "SIGKILL" });
+    // bury the settled card under more rows than any bounded scan reads, while the server is down
+    // a short-lived process on the same data dir, as the server itself would open it
+    const burial = [
+      `import { Store } from ${JSON.stringify(pathToFileURL(join(SERVER_DIR, "store.ts")).href)};`,
+      `import { closeDatabase, database } from ${JSON.stringify(pathToFileURL(join(SERVER_DIR, "database.ts")).href)};`,
+      "const store = new Store();",
+      "const fold = () => database().exec('PRAGMA wal_checkpoint(TRUNCATE)');",
+      "fold();",
+      `for (let n = 0; n < 5100; n += 1) { store.appendMessage(${JSON.stringify(bot.threadId)}, { role: "bot", kind: "text", text: "filler " + n }); if (n % 250 === 249) fold(); }`,
+      "closeDatabase();",
+    ].join("\n");
+    const buried = spawnSync(process.execPath, ["--import", pathToFileURL(join(home, "fake-engine-setup.mjs")).href, "--input-type=module", "-e", burial], {
+      cwd: join(SERVER_DIR, ".."), encoding: "utf8", timeout: 100_000,
+      env: { ...fixturePlatformEnv(), ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, NODE_ENV: "test" },
+    });
+    expect(buried.status, buried.stderr.slice(-1500)).toBe(0);
+    await startServer();
+    expect(JSON.stringify((await request("GET", `/api/threads/${bot.threadId}/messages?limit=5`)).body.messages)).toContain("filler 5099");
+    // the owner answers the old settled card again (a second tab): refused, and no second note
+    expect((await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: handle, behavior: "allow" })).status).toBe(409);
+    await sleep(500);
+    expect(await noteRows()).toHaveLength(1);
+  }, 120_000);
 });

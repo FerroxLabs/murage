@@ -1,3 +1,8 @@
+import { startImageMcpCall } from "./testing/image-mcp-call.ts";
+import { spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
+import { once } from "node:events";
+import { terminalProxyRefusal } from "./proxy-turn-release.ts";
+import { LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
 // API smoke test: boots the real harness server (node server/index.ts)
 // against a throwaway home directory and exercises the HTTP surface the
 // app depends on. The config pins a local fake engine and inert shadow
@@ -12,7 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { APP_CLOSE_REQUEST_TYPE } from "./graceful-shutdown.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
@@ -28,11 +33,34 @@ import { redactSecretsInText } from "./redact.ts";
 // own new prompt block read "checking" (pending) behind those revokes whenever the earlier tests' marker writes had filled the minute,
 // so "saves prompt blocks" passed or failed with the runner's speed. Set before the harness module starts the child.
 vi.hoisted(() => { process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET = "1"; });
-import { BASE, phoneApi, DESKTOP_HEADERS, DESKTOP_SECRET, desktopTicketed, FIXTURE_ENGINE_OVERRIDES, PORT, ROOT, SERVER_DIR, STATE_ONLY_SELECTION, api, deferredCheckpointDirectories, desktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, readJsonFileWhenReady, RUN_START_WAIT_MS, startInternalFixtureTurn, statusWithHeaders, stderr, stopFixtureTurn, uploadAvatar, waitForIsolatedServer } from "./testing/index-harness.ts";
+import { BASE, phoneApi, DESKTOP_HEADERS, DESKTOP_SECRET, desktopTicketed, FIXTURE_ENGINE_OVERRIDES, PORT, ROOT, SERVER_DIR, STATE_ONLY_SELECTION, api as imageWireApi, desktopApi as imageWireDesktopApi, indexDisplayApis, deferredCheckpointDirectories, expectStoppedTestServerCleanly, fakeClaudeDump, fixtureTurnDiagnostics, home, readJsonFileWhenReady, RUN_START_WAIT_MS, startInternalFixtureTurn, statusWithHeaders, stderr, stopFixtureTurn, uploadAvatar, waitForIsolatedServer } from "./testing/index-harness.ts";
+const { api, desktopApi } = indexDisplayApis();
+// Image cards expose host-issued image controls through trustedRowMetadata.
+// Their original wire assertions must not use the native-request display adapter.
 import { removeTempDirSync } from "./testing/cleanup.ts";
-
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { PROVIDER_STOP_UNCONFIRMED_LINE } from "./direct-late-close.ts";
+// A Stop that reaches a turn before its engine child exists is not a close-confirmed stop (setup Stop, claude.ts rememberStopProof):
+// the server answers 409 provider_stop_unconfirmed and keeps the thread's lease. A test that wants the confirmed 200 waits for the launch first.
+const awaitEngineLaunch = async (botId: string, threadId: string) => {
+  try {
+    await expect.poll(() => {
+      try {
+        const servers = withTurnSecrets(JSON.parse(readFileSync(fakeClaudeDump, "utf8")) as { mcpConfig?: { mcpServers?: Record<string, { env?: Record<string, string> }> } | null }).mcpConfig?.mcpServers;
+        return servers?.agents?.env?.MURAGE_BOT_ID ?? servers?.murage_connectors?.env?.MURAGE_BOT_ID;
+      } catch { return undefined; }
+    }, { timeout: 15_000 }).toBe(botId);
+  } catch (error) {
+    throw new Error(`${fixtureTurnDiagnostics(botId, threadId)}\n\ncaused by: ${error instanceof Error ? error.message : String(error)}`);
+  }
+};
 
 describe("harness HTTP API", () => {
+  beforeAll(async () => {
+    // Exercise the API and tool authority independently of optional cold recall.
+    // Active, cold and missing-view recall retain their dedicated release gates.
+    expect((await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
+  });
   it("P20 refuses checkpoint restoration while another bot owns the same canonical project folder", async () => {
     // Match the lease's native canonical path from the outset. In particular,
     // a Windows TEMP short-name spelling is not the canonical-folder fixture.
@@ -102,7 +130,7 @@ describe("harness HTTP API", () => {
     const env: NodeJS.ProcessEnv = { NODE_ENV: "test", TMPDIR: tmpdir(), HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted", ...(announces ? { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" } : { MURAGE_ACP_MCP_READY_MS: "1500" }), PATH: process.env.PATH };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     // The IPC channel asks the server to close the way the desktop does: on Windows a signal is TerminateProcess and nothing is flushed.
-    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(fakeEngineSetup).href, join(SERVER_DIR, "index.ts")], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(fakeEngineSetup).href, join(SERVER_DIR, "index.ts")], { windowsHide: true, cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
     let isolatedStderr = "", isolatedStdout = "";
     isolatedChild.stderr!.on("data", chunk => { isolatedStderr += chunk; });
     // The desktop writes both streams into server.log.
@@ -571,7 +599,10 @@ describe("harness HTTP API", () => {
       expect(afterDirect.messages.find((message: { id: string }) => message.id === direct.body.message.id))
         .toEqual(direct.body.message);
 
-      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+      await awaitEngineLaunch(bot.id, bot.threadId);
+      const stopped = await api("POST", `/api/bots/${bot.id}/interrupt`);
+      expect(stopped.status).toBe(200);
+      expect(stopped.body).toEqual({ ok: true });
       await expect.poll(async () => {
         const state = (await api("GET", "/api/bots?messages=0")).body;
         return state.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.busy;
@@ -602,6 +633,92 @@ describe("harness HTTP API", () => {
         .toEqual(channel.body.message);
     } finally {
       if (room) await desktopApi("DELETE", `/api/groups/${room.id}`);
+      await api("POST", `/api/bots/${bot.id}/interrupt`).catch(() => undefined);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("answers a Stop that lands before the engine child exists with 409 provider_stop_unconfirmed, keeps the run and never launches the engine", async () => {
+    const created = await desktopApi("POST", "/api/bots", {
+      modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    });
+    expect(created.status).toBe(201);
+    const bot = created.body.bot;
+    // The setup window is held at the engine fixture's own `--version` answer: the driver probes it before any launch and caches the
+    // answer by the executable's identity (path, mtime, size), so rewriting the fixture forces one fresh probe for the next turn.
+    const cli = join(home, "fixture-claude.mjs"), original = readFileSync(cli, "utf8");
+    const gate = join(home, "setup-stop-gate"), probes = join(home, "setup-stop-probes"), launches = join(home, "setup-stop-launches");
+    for (const file of [gate, probes, launches]) rmSync(file, { force: true });
+    const [shebang, ...rest] = original.split("\n");
+    writeFileSync(cli, [shebang,
+      `{ const fs = await import("node:fs");`,
+      `  if (process.argv.includes("--version")) { fs.appendFileSync(${JSON.stringify(probes)}, "probe\\n"); while (!fs.existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 20)); }`,
+      `  else fs.appendFileSync(${JSON.stringify(launches)}, "launch\\n"); }`,
+      ...rest].join("\n"));
+    try {
+      const request = { text: "stopped during setup", sendId: "setup-stop-send-0001" };
+      const busy = async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.busy;
+      const unconfirmedChips = async () => ((await api("GET", `/api/threads/${bot.threadId}/messages?limit=50`)).body.messages as Array<{ kind: string; tool?: { name: string; ok: boolean } }>)
+        .filter(message => message.kind === "activity" && message.tool?.name === PROVIDER_STOP_UNCONFIRMED_LINE).map(message => message.tool);
+      rmSync(fakeClaudeDump, { force: true });
+      const sent = await desktopApi("POST", `/api/bots/${bot.id}/messages`, request);
+      expect(sent.status).toBe(202);
+      expect(sent.body).toMatchObject({ ok: true, threadId: bot.threadId, message: { role: "user", text: request.text, sendId: request.sendId } });
+      // The turn is now held inside its setup: the version probe is waiting and no engine child exists.
+      await expect.poll(() => existsSync(probes), { timeout: 15_000 }).toBe(true);
+      expect(existsSync(launches)).toBe(false);
+      expect(await busy()).toBe(true);
+
+      const stopped = await api("POST", `/api/bots/${bot.id}/interrupt`);
+      expect(stopped.status).toBe(409);
+      expect(stopped.body).toEqual({
+        error: "The engine has not confirmed that it stopped. This thread keeps its working folder until the engine exits; restart Murage if it stays stuck.",
+        code: "provider_stop_unconfirmed",
+      });
+      // The unconfirmed Stop keeps the run: the bot stays busy, the attempt is still the live one (a retry answers with the accepted
+      // message, never a stopped receipt), and the conversation carries the unconfirmed chip exactly once.
+      expect(await busy()).toBe(true);
+      const heldRetry = await desktopApi("POST", `/api/bots/${bot.id}/messages`, request);
+      expect(heldRetry.status).toBe(202);
+      expect(heldRetry.body).toEqual({ ...sent.body, newestSeq: expect.any(Number) });
+      expect(await unconfirmedChips()).toEqual([{ name: PROVIDER_STOP_UNCONFIRMED_LINE, ok: false }]);
+      // Letting the probe answer does not launch the stopped turn and does not release the run either.
+      writeFileSync(gate, "");
+      for (let check = 0; check < 4; check++) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        expect(await busy()).toBe(true);
+      }
+      expect(existsSync(launches)).toBe(false);
+      expect(existsSync(fakeClaudeDump)).toBe(false);
+
+      // A second Stop finds no setup left to wait for: it answers 200 and releases the run as stopped.
+      const stoppedAgain = await api("POST", `/api/bots/${bot.id}/interrupt`);
+      expect(stoppedAgain.status).toBe(200);
+      expect(stoppedAgain.body).toEqual({ ok: true });
+      await expect.poll(busy, { timeout: 5_000 }).toBe(false);
+      const releasedRetry = await desktopApi("POST", `/api/bots/${bot.id}/messages`, request);
+      expect(releasedRetry.status).toBe(202);
+      expect(releasedRetry.body).toEqual({
+        ok: false,
+        existing: true,
+        threadId: bot.threadId,
+        receipt: { state: "stopped", attemptId: expect.any(String), receiptRevision: expect.any(Number) },
+        newestSeq: expect.any(Number),
+      });
+      expect(await unconfirmedChips()).toEqual([{ name: PROVIDER_STOP_UNCONFIRMED_LINE, ok: false }]);
+      // One probe, no launch, one stored user row: the stopped setup never reached the engine and the retries stored nothing.
+      expect(readFileSync(probes, "utf8")).toBe("probe\n");
+      expect(existsSync(launches)).toBe(false);
+      expect(existsSync(fakeClaudeDump)).toBe(false);
+      const store = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+      try {
+        expect(store.prepare("SELECT COUNT(*) AS n FROM messages WHERE thread_id = ? AND role = 'user' AND json LIKE ?")
+          .get(bot.threadId, `%"sendId":"${request.sendId}"%`)).toEqual({ n: 1 });
+      } finally { store.close(); }
+    } finally {
+      writeFileSync(gate, "");
+      writeFileSync(cli, original);
       await api("POST", `/api/bots/${bot.id}/interrupt`).catch(() => undefined);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
@@ -655,7 +772,9 @@ describe("harness HTTP API", () => {
       expect(accepted.messages.some((message: { text?: string }) => message.text === "invalid identity must not land"))
         .toBe(false);
 
-      await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: originalThreadId });
+      await awaitEngineLaunch(bot.id, originalThreadId);
+      const stopped = await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: originalThreadId });
+      expect(stopped.status).toBe(200);
       await expect.poll(async () => {
         const state = (await api("GET", "/api/bots?messages=0")).body.bots.find(
           (candidate: { id: string }) => candidate.id === bot.id,
@@ -669,8 +788,22 @@ describe("harness HTTP API", () => {
 
       const inactiveRetry = await desktopApi("POST", `/api/bots/${bot.id}/messages`, request);
       expect(inactiveRetry.status).toBe(202);
-      expect(inactiveRetry.body).toEqual({ ...first.body, newestSeq: expect.any(Number) });
+      // The attempt ended as stopped, so its retry answers with the attempt's receipt (ok:false, existing:true) and never the
+      // message again; a still-live attempt (the duplicate above) answers with the accepted message.
+      expect(inactiveRetry.body).toEqual({
+        ok: false,
+        existing: true,
+        threadId: originalThreadId,
+        receipt: { state: "stopped", attemptId: expect.any(String), receiptRevision: expect.any(Number) },
+        newestSeq: expect.any(Number),
+      });
       expect(inactiveRetry.body.newestSeq).toBeGreaterThanOrEqual(first.body.newestSeq);
+      // The original thread is no longer the bot's active one, so count its stored user rows for this sendId directly.
+      const store = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+      try {
+        expect(store.prepare("SELECT COUNT(*) AS n FROM messages WHERE thread_id = ? AND role = 'user' AND json LIKE ?")
+          .get(originalThreadId, `%"sendId":"${sendId}"%`)).toEqual({ n: 1 });
+      } finally { store.close(); }
       const current = (await api("GET", "/api/bots?messages=0")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
       );
@@ -1201,23 +1334,23 @@ describe("harness HTTP API", () => {
 
   it("distinguishes persistent agents capability revocation from transport loss and recovers on a fresh turn", async () => {
     const bot = (await desktopApi("POST", "/api/bots", { name: "MCP lifecycle fixture" })).body.bot;
-    const clients: ReturnType<typeof persistentAgentsClient>[] = [];
+    const clients: Awaited<ReturnType<typeof persistentAgentsClient>>[] = [];
     // Own the port throughout the negative control: reject connections without
     // routing any metadata request to a provider or another local service.
     const unavailable = createServer();
     unavailable.on("connection", socket => socket.destroy());
     await new Promise<void>(resolve => unavailable.listen(0, "127.0.0.1", resolve));
     const connect = async (env: Record<string, string>) => {
-      const client = persistentAgentsClient(env); clients.push(client);
+      const client = await persistentAgentsClient(env); clients.push(client);
       await client.initialize(); return client;
     };
-    const localMethodsWork = async (client: ReturnType<typeof persistentAgentsClient>) => {
+    const localMethodsWork = async (client: Awaited<ReturnType<typeof persistentAgentsClient>>) => {
       expect(await client.request("ping")).toEqual({});
       const catalog = await client.request("tools/list");
       expect(catalog.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining(["list_bots", "list_image_models"]));
       expect(client.child.exitCode).toBeNull(); expect(client.child.signalCode).toBeNull();
     };
-    const metadataWorks = async (client: ReturnType<typeof persistentAgentsClient>) => {
+    const metadataWorks = async (client: Awaited<ReturnType<typeof persistentAgentsClient>>) => {
       for (const tool of ["list_bots", "list_image_models"] as const) {
         const result = await client.call(tool);
         expect(result.isError).toBe(false);
@@ -1235,10 +1368,17 @@ describe("harness HTTP API", () => {
         .find((entry: { id: string }) => entry.id === bot.id)?.busy, { timeout: 5_000 }).toBe(false);
       for (const path of ["/api/internal/agents", "/api/internal/image-models"]) {
         const response = await fetch(BASE + path, { headers: first.headers });
-        expect(response.status).toBe(401); expect(await response.json()).toEqual({ error: "unauthorized" });
+        // MAIN RULING NEW3-G2-AUTH-FIRST: comms authenticates before every
+        // lookup. Other retired capabilities retain the 7C P3 owner refusal.
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: path === "/api/internal/agents"
+          ? "internal authentication required" : "internal turn owner is unavailable" });
       }
       for (const tool of ["list_bots", "list_image_models"] as const) {
-        expect(await original.call(tool)).toEqual({ isError: true, content: [{ type: "text", text: "unauthorized" }] });
+        // MAIN RULING NEW3-G2-AUTH-FIRST / 7C P3: retain each route's
+        // fixed authentication refusal through the real MCP proxy as well.
+        expect(await original.call(tool)).toEqual({ isError: true, content: [{ type: "text", text: tool === "list_bots"
+          ? "internal authentication required" : "internal turn owner is unavailable" }] });
       }
       await localMethodsWork(original); expect(original.child.pid).toBe(originalPid);
       const second = await startInternalFixtureTurn(bot.id);
@@ -1247,14 +1387,17 @@ describe("harness HTTP API", () => {
       await localMethodsWork(fresh); await metadataWorks(fresh);
       // A new authority does not reauthorize the old, still-running proxy.
       expect((await original.call("list_bots")).isError).toBe(true);
-      const disconnected = await connect({ ...second.env,
-        MURAGE_HARNESS_URL: `http://127.0.0.1:${(unavailable.address() as { port: number }).port}` });
       for (const tool of ["list_bots", "list_image_models"] as const) {
-        const result = await disconnected.call(tool);
-        expect(result.isError).toBe(true);
-        expect(result.content?.[0]?.text).toMatch(/^MURAGE_AGENTS_UNAVAILABLE:/);
+        const disconnected = await connect({ ...second.env,
+          MURAGE_HARNESS_URL: `http://127.0.0.1:${(unavailable.address() as { port: number }).port}` });
+        const closed = once(disconnected.child, "close");
+        // MAIN RULING INT-CONFLICT-DEFAULT: transport loss seals the bound
+        // consuming ingress; the retired local error fallback cannot escape.
+        await expect(disconnected.call(tool)).rejects.toThrow("fixture proxy closed");
+        await closed;
+        expect(disconnected.terminal()).toEqual(terminalProxyRefusal(null));
+        expect(disconnected.state()).toMatchObject({ sealed: true, refusals: 1 });
       }
-      await localMethodsWork(disconnected);
     } finally {
       await Promise.all(clients.map(client => client.close()));
       await new Promise<void>((resolve, reject) => unavailable.close(error => error ? reject(error) : resolve()));
@@ -1264,22 +1407,18 @@ describe("harness HTTP API", () => {
   }, 30_000);
 
   it("routes approved image MCP requests into owned artifacts without exposing keys or crossing conversations", async () => {
+    // Image cards deliberately expose host-issued image-* controls through
+    // trustedRowMetadata.hostRequestId. They are not private engine ids for
+    // the generic native-approval evidence adapter to reconstruct.
+    const api = imageWireApi, desktopApi = imageWireDesktopApi;
     const bot = (await desktopApi("POST", "/api/bots", { name: "Image fixture" })).body.bot;
     const receipt = join(home, "image-fixture-calls.json"); rmSync(receipt, { force: true });
-    const imageCall = (env: Record<string,string>, args: Record<string,unknown>) => {
-      const proxy = spawn(process.execPath, [join(SERVER_DIR,"drivers","agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio:["pipe","pipe","pipe"] });
-      let stdout="", stderr="";
-      const result = new Promise<any>((resolve,reject)=>{
-        const timer=setTimeout(()=>{proxy.kill();reject(new Error("Image MCP timed out: "+stderr));},15000);
-        proxy.stderr.on("data",chunk=>{stderr+=chunk;});
-        proxy.stdout.on("data",chunk=>{stdout+=chunk;for(const line of stdout.split("\n")){try{const value=JSON.parse(line);if(value.id===42){clearTimeout(timer);proxy.stdin.end();resolve(value.result);return;}}catch{}}});
-        proxy.on("error",reject);
-      });
-      proxy.stdin.write(JSON.stringify({jsonrpc:"2.0",id:42,method:"tools/call",params:{name:"generate_image",arguments:args}})+"\n");
-      return {proxy,result};
+    const imageCall = async (env: Record<string,string>, args: Record<string,unknown>) => {
+      const proxy = await spawnBoundProxy("agents", process.execPath, [join(SERVER_DIR,"drivers","agents-proxy.ts")], { windowsHide: true, env: { PATH: process.env.PATH, ...env }, stdio:["pipe","pipe","pipe"] });
+      return startImageMcpCall(proxy, "generate_image", args);
     };
     const pendingCard = async () => { let card:any; await expect.poll(async()=>{const state=(await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id);card=state.messages.find((m:any)=>m.card?.tool==="generate_image"&&!m.card.answered);return Boolean(card);}).toBe(true);return card; };
-    const proxies: ReturnType<typeof imageCall>["proxy"][]=[];
+    const proxies: ChildProcess[]=[];
     let stream: Awaited<ReturnType<typeof openSse>> | undefined;
     try {
       expect((await api("GET","/api/images/settings")).status).toBe(404);
@@ -1291,9 +1430,9 @@ describe("harness HTTP API", () => {
       // 0.1.54: an image card is an approval like any other — it buzzes the
       // owner, flips the task to "waiting for you", and waits for an answer.
       stream=await openSse(`${BASE}/api/events`);await stream.until(frame=>frame.kind==="hello");
-      const denied=imageCall(turn.env,{request_id:"deny",prompt:"Synthetic image fixture"});proxies.push(denied.proxy);
+      const denied=await imageCall(turn.env,{request_id:"deny",prompt:"Synthetic image fixture"});proxies.push(denied.proxy);
       let card=await pendingCard();expect(existsSync(receipt)).toBe(false);
-      const buzz=await stream.until(frame=>frame.kind==="notify"&&frame.notification?.requestId===card.card.requestId,10_000);
+      const buzz=await stream.until(frame=>frame.kind==="notify"&&frame.notification?.messageId===card.id,10_000);
       expect(buzz.notification).toMatchObject({kind:"approval",botId:bot.id,threadId:bot.threadId,messageId:card.id});
       expect(buzz.notification.body).toContain("gpt-image-2");
       await expect.poll(async()=>(await api("GET","/api/bots?messages=0")).body.bots.find((b:any)=>b.id===bot.id).activity).toBe("waiting-on-you");
@@ -1305,24 +1444,33 @@ describe("harness HTTP API", () => {
       expect(repeated.status).toBe(200);expect(repeated.body.outcome).toBe("rejected");
       expect((await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id).messages.some((m:any)=>String(m.tool?.name??"").startsWith("Couldn't deliver"))).toBe(false);
       const deniedCard=(await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id).messages.find((m:any)=>m.id===card.id);
-      expect(deniedCard.card).toMatchObject({answered:"deny",dismissed:false});
+      // MAIN RULING INT-CONFLICT-DEFAULT: the reviewed image queue closes
+      // its card with the generic terminal spelling. Prove the durable owner
+      // deny was accepted, rather than treating dismissal as delivery.
+      expect(deniedCard.card).toMatchObject({answered:"Denied",dismissed:true});
+      const decisions = new DatabaseSync(join(home,".murage","messages.db"), { readOnly: true });
+      try {
+        const decision = decisions.prepare("SELECT state,delivery,answer FROM approval_records WHERE chat_message_id=?").get(card.id)!;
+        expect(decision).toMatchObject({state:"answered",delivery:"accepted"});
+        expect(JSON.parse(String(decision.answer))).toMatchObject({behavior:"deny"});
+      } finally { decisions.close(); }
       await expect.poll(async()=>(await api("GET","/api/bots?messages=0")).body.bots.find((b:any)=>b.id===bot.id).activity).not.toBe("waiting-on-you");
       await stopFixtureTurn(bot.id,turn);
       turn=await startInternalFixtureTurn(bot.id);
       const args={request_id:"generate",prompt:"Synthetic image fixture",connection_id:"openai",model:"gpt-image-2"};
-      const generated=imageCall(turn.env,args);proxies.push(generated.proxy);card=await pendingCard();
+      const generated=await imageCall(turn.env,args);proxies.push(generated.proxy);card=await pendingCard();
       expect(card.card.subtitle).toContain("gpt-image-2");expect(existsSync(receipt)).toBe(false);
       expect((await desktopApi("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"})).status).toBe(200);
       const result=await generated.result;expect(result.isError).not.toBe(true);
       const payload=JSON.parse(result.content[0].text);expect(payload.metadata.model).toBe("gpt-image-2");expect(existsSync(payload.artifact.path)).toBe(true);
       expect(payload.artifact.path).toContain(join("workspaces",bot.id,"generated-images"));
       expect(JSON.stringify(payload)).not.toContain("fixture-image-key");expect(JSON.parse(readFileSync(receipt,"utf8"))).toMatchObject({calls:1,model:"gpt-image-2",n:1,references:0});
-      const repeat=imageCall(turn.env,args);proxies.push(repeat.proxy);expect(JSON.parse((await repeat.result).content[0].text).artifact.id).toBe(payload.artifact.id);
+      const repeat=await imageCall(turn.env,args);proxies.push(repeat.proxy);expect(JSON.parse((await repeat.result).content[0].text).artifact.id).toBe(payload.artifact.id);
       expect(JSON.parse(readFileSync(receipt,"utf8")).calls).toBe(1);
       await stopFixtureTurn(bot.id,turn);
       expect((await fetch(`${BASE}/api/internal/image-models`,{headers:turn.headers})).status).toBe(401);
       turn=await startInternalFixtureTurn(bot.id);
-      const edit=imageCall(turn.env,{request_id:"edit",prompt:"Edit the synthetic fixture",operation:"edit",reference_ids:[payload.artifact.referenceId]});proxies.push(edit.proxy);
+      const edit=await imageCall(turn.env,{request_id:"edit",prompt:"Edit the synthetic fixture",operation:"edit",reference_ids:[payload.artifact.referenceId]});proxies.push(edit.proxy);
       card=await pendingCard();expect(card.card.title).toBe("Approve image edit");
       await desktopApi("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"});
       expect((await edit.result).isError).not.toBe(true);expect(JSON.parse(readFileSync(receipt,"utf8"))).toMatchObject({calls:2,references:1});
@@ -1334,25 +1482,21 @@ describe("harness HTTP API", () => {
   }, 40000);
 
   it("routes approved xAI and OpenRouter reference edits to their own origins with exact source bytes and a pinned endpoint", async () => {
+    const api = imageWireApi, desktopApi = imageWireDesktopApi;
     const bot = (await desktopApi("POST", "/api/bots", { name: "Image provider fixture" })).body.bot;
     const receipt = join(home, "image-fixture-calls.json"); rmSync(receipt, { force: true });
     const lastCall = () => JSON.parse(readFileSync(receipt, "utf8"));
     const sha256 = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
     const proxies: ReturnType<typeof spawn>[] = [];
-    const imageCall = (env: Record<string,string>, args: Record<string,unknown>) => {
-      const proxy = spawn(process.execPath, [join(SERVER_DIR,"drivers","agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio:["pipe","pipe","pipe"] });
+    const imageCall = async (env: Record<string,string>, args: Record<string,unknown>) => {
+      const proxy = await spawnBoundProxy("agents", process.execPath, [join(SERVER_DIR,"drivers","agents-proxy.ts")], { windowsHide: true, env: { PATH: process.env.PATH, ...env }, stdio:["pipe","pipe","pipe"] });
       proxies.push(proxy);
-      let stdout="", stderr="";
-      const result = new Promise<any>((resolve,reject)=>{
-        const timer=setTimeout(()=>{proxy.kill();reject(new Error("Image MCP timed out: "+stderr));},15000);
-        proxy.stderr.on("data",chunk=>{stderr+=chunk;});
-        proxy.stdout.on("data",chunk=>{stdout+=chunk;for(const line of stdout.split("\n")){try{const value=JSON.parse(line);if(value.id===42){clearTimeout(timer);proxy.stdin.end();resolve(value.result);return;}}catch{}}});
-        proxy.on("error",reject);
-      });
-      proxy.stdin.write(JSON.stringify({jsonrpc:"2.0",id:42,method:"tools/call",params:{name:"generate_image",arguments:args}})+"\n");
-      return result;
+      return startImageMcpCall(proxy, "generate_image", args);
     };
-    const approved = async (pending: Promise<any>) => {
+    const approved = async (starting: ReturnType<typeof imageCall>) => {
+      // The card wait begins after the actual MCP initialize response.
+      // An async return of the result itself made that wait include CLI startup.
+      const { result: pending } = await starting;
       let card:any;
       await expect.poll(async()=>{const state=(await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id);card=state.messages.find((m:any)=>m.card?.tool==="generate_image"&&!m.card.answered);return Boolean(card);}).toBe(true);
       expect((await desktopApi("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"})).status).toBe(200);
@@ -1393,7 +1537,7 @@ describe("harness HTTP API", () => {
         providerRouting:{only:["openai"],allow_fallbacks:false},singleImageField:false,multiImageField:false,redirect:"error"});
       expect(openRouterEdit.payload.metadata).toMatchObject({provider:"openrouter",operation:"edit",referenceCount:2,endpointTag:"openai",upstreamProvider:"openai"});
       // The endpoint identity is kept in the stored operation result: a duplicate returns it without a second POST.
-      const repeated = JSON.parse((await imageCall(turn.env,openRouterArgs)).content[0].text);
+      const repeated = JSON.parse((await (await imageCall(turn.env,openRouterArgs)).result).content[0].text);
       expect(repeated.artifact.id).toBe(openRouterEdit.payload.artifact.id);expect(repeated.metadata.endpointTag).toBe("openai");expect(lastCall().calls).toBe(firstCall+2);
       expect(JSON.stringify([source,xaiEdit,openRouterEdit,repeated])).not.toMatch(/fixture-image-key/);
     } finally {
@@ -1407,25 +1551,15 @@ describe("harness HTTP API", () => {
   // one reference flow. A failed source prepares nothing and bills nothing;
   // the edited result lands in Files.
   it("edits from uploaded, generated and workspace reference images with exact bytes and nothing prepared on failure", async () => {
+    const api = imageWireApi, desktopApi = imageWireDesktopApi;
     const bot = (await desktopApi("POST", "/api/bots", { name: "Reference fixture" })).body.bot;
     const receipt = join(home, "image-fixture-calls.json");
     const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
     const proxies: ChildProcess[] = [];
-    const mcp = (env: Record<string, string>, name: string, args: Record<string, unknown>) => {
-      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+    const mcp = async (env: Record<string, string>, name: string, args: Record<string, unknown>) => {
+      const proxy = await spawnBoundProxy("agents", process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { windowsHide: true, env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
       proxies.push(proxy);
-      let stdout = "", stderr = "";
-      const result = new Promise<any>((resolve, reject) => {
-        const timer = setTimeout(() => { proxy.kill(); reject(new Error(`${name} timed out: ${stderr}`)); }, 15_000);
-        proxy.stderr.on("data", chunk => { stderr += chunk; });
-        proxy.stdout.on("data", chunk => {
-          stdout += chunk;
-          for (const line of stdout.split("\n")) { try { const value = JSON.parse(line); if (value.id === 42) { clearTimeout(timer); proxy.stdin.end(); resolve(value.result); return; } } catch {} }
-        });
-        proxy.on("error", reject);
-      });
-      proxy.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name, arguments: args } }) + "\n");
-      return result;
+      return startImageMcpCall(proxy, name, args);
     };
     const messages = async () => (await api("GET", "/api/bots?messages=100")).body.bots.find((item: { id: string }) => item.id === bot.id).messages as any[];
     const pendingCard = async () => { let card: any; await expect.poll(async () => { card = (await messages()).find(m => m.card?.tool === "generate_image" && !m.card.answered); return Boolean(card); }).toBe(true); return card; };
@@ -1436,7 +1570,7 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("POST", "/api/images/settings", { enabled: true, connectionId: "openai", model: "gpt-image-2" })).status).toBe(200);
       // A previously generated image of this conversation.
       let turn = await startInternalFixtureTurn(bot.id);
-      const source = mcp(turn.env, "generate_image", { request_id: "seed-source", prompt: "Synthetic source", connection_id: "openai", model: "gpt-image-2" });
+      const { result: source } = await mcp(turn.env, "generate_image", { request_id: "seed-source", prompt: "Synthetic source", connection_id: "openai", model: "gpt-image-2" });
       let card = await pendingCard();
       expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
       const generated = JSON.parse((await source).content[0].text).artifact;
@@ -1458,11 +1592,11 @@ describe("harness HTTP API", () => {
       const before = { calls: calls(), messages: (await messages()).length };
 
       // One missing source prepares nothing, asks for no approval and bills nothing.
-      const failed = await mcp(turn.env, "resolve_image_reference", { sources: [{ attachment_id: uploadId }, { relative_path: "refs/absent.png" }] });
+      const failed = await (await mcp(turn.env, "resolve_image_reference", { sources: [{ attachment_id: uploadId }, { relative_path: "refs/absent.png" }] })).result;
       expect(failed.isError).toBe(true); expect(failed.content[0].text).toContain("No reference image was prepared");
       expect((await messages()).length).toBe(before.messages); expect(calls()).toBe(before.calls);
 
-      const resolved = await mcp(turn.env, "resolve_image_reference", { sources: [{ attachment_id: uploadId }, { attachment_id: generated.referenceId }, { relative_path: "refs/layout.png" }] });
+      const resolved = await (await mcp(turn.env, "resolve_image_reference", { sources: [{ attachment_id: uploadId }, { attachment_id: generated.referenceId }, { relative_path: "refs/layout.png" }] })).result;
       expect(resolved.isError, resolved.content?.[0]?.text).not.toBe(true);
       const references = JSON.parse(resolved.content[0].text).references as Array<{ id: string; sha256: string; source: string }>;
       expect(references.map(ref => ref.sha256)).toEqual([sha256(uploadBytes), sha256(readFileSync(generated.path)), sha256(workspaceBytes)]);
@@ -1474,7 +1608,7 @@ describe("harness HTTP API", () => {
 
       // The edit names its reference count before approval; the provider then
       // receives the three original byte sequences, and the result is in Files.
-      const edit = mcp(turn.env, "generate_image", { request_id: "seed-edit", prompt: "Combine the references", operation: "edit", reference_ids: references.map(ref => ref.id) });
+      const { result: edit } = await mcp(turn.env, "generate_image", { request_id: "seed-edit", prompt: "Combine the references", operation: "edit", reference_ids: references.map(ref => ref.id) });
       card = await pendingCard();
       expect(card.card.title).toBe("Approve image edit"); expect(card.card.subtitle).toContain("One image from 3 reference images");
       expect(calls()).toBe(before.calls);
@@ -1526,23 +1660,13 @@ describe("harness HTTP API", () => {
   }, 40_000);
 
   it("saves prompt blocks and reference packs for a bot and generates from them", async () => {
+    const api = imageWireApi, desktopApi = imageWireDesktopApi;
     const bot = (await api("POST", "/api/bots", { name: "Library fixture" })).body.bot;
     const proxies: ChildProcess[] = [];
-    const mcp = (env: Record<string, string>, name: string, args: Record<string, unknown>) => {
-      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+    const mcp = async (env: Record<string, string>, name: string, args: Record<string, unknown>) => {
+      const proxy = await spawnBoundProxy("agents", process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { windowsHide: true, env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
       proxies.push(proxy);
-      let stdout = "", stderr = "";
-      const result = new Promise<any>((resolve, reject) => {
-        const timer = setTimeout(() => { proxy.kill(); reject(new Error(`${name} timed out: ${stderr}`)); }, 15_000);
-        proxy.stderr.on("data", chunk => { stderr += chunk; });
-        proxy.stdout.on("data", chunk => {
-          stdout += chunk;
-          for (const line of stdout.split("\n")) { try { const value = JSON.parse(line); if (value.id === 42) { clearTimeout(timer); proxy.stdin.end(); resolve(value.result); return; } } catch {} }
-        });
-        proxy.on("error", reject);
-      });
-      proxy.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name, arguments: args } }) + "\n");
-      return result;
+      return startImageMcpCall(proxy, name, args);
     };
     const messages = async () => (await api("GET", "/api/bots?messages=100")).body.bots.find((item: { id: string }) => item.id === bot.id).messages as any[];
     const pendingCard = async () => { let card: any; await expect.poll(async () => { card = (await messages()).find(m => m.card?.tool === "generate_image" && !m.card.answered); return Boolean(card); }).toBe(true); return card; };
@@ -1551,11 +1675,11 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("PATCH", "/api/config?secretStorage=external", { imageGen: { key: "fixture-image-key" } })).status).toBe(200);
       expect((await desktopApi("POST", "/api/images/settings", { enabled: true, connectionId: "openai", model: "gpt-image-2" })).status).toBe(200);
       let turn = await startInternalFixtureTurn(bot.id);
-      const saved = JSON.parse((await mcp(turn.env, "save_prompt_block", { name: "brand-lock", text: lock })).content[0].text);
+      const saved = JSON.parse((await (await mcp(turn.env, "save_prompt_block", { name: "brand-lock", text: lock })).result).content[0].text);
       expect(saved).toMatchObject({ name: "brand-lock", version: 1, chars: lock.length, scope: "bot" });
-      const listed = JSON.parse((await mcp(turn.env, "list_prompt_blocks", {})).content[0].text);
+      const listed = JSON.parse((await (await mcp(turn.env, "list_prompt_blocks", {})).result).content[0].text);
       expect(listed.blocks).toEqual([expect.objectContaining({ name: "brand-lock", version: 1, preview: lock })]);
-      const generated = mcp(turn.env, "generate_image", { request_id: "from-block", prompt_blocks: ["brand-lock"], connection_id: "openai", model: "gpt-image-2" });
+      const { result: generated } = await mcp(turn.env, "generate_image", { request_id: "from-block", prompt_blocks: ["brand-lock"], connection_id: "openai", model: "gpt-image-2" });
       const card = await pendingCard();
       expect(card.card.subtitle).toContain(`Prompt: ${lock.length} characters: brand-lock v1.`);
       expect(card.card.held).toBe(lock);
@@ -1564,13 +1688,13 @@ describe("harness HTTP API", () => {
       const payload = JSON.parse(result.content[0].text);
       expect(payload.metadata).toMatchObject({ promptChars: lock.length, promptBlocks: [{ name: "brand-lock", version: 1, scope: "bot" }] });
       expect(result.content[0].text).not.toContain("red fox");
-      const pack = JSON.parse((await mcp(turn.env, "save_reference_pack", { name: "hero-refs", reference_ids: [payload.artifact.referenceId] })).content[0].text);
+      const pack = JSON.parse((await (await mcp(turn.env, "save_reference_pack", { name: "hero-refs", reference_ids: [payload.artifact.referenceId] })).result).content[0].text);
       expect(pack).toMatchObject({ name: "hero-refs", version: 1, count: 1, scope: "bot" });
-      const missing = await mcp(turn.env, "get_prompt_block", { name: "not-saved" });
+      const missing = await (await mcp(turn.env, "get_prompt_block", { name: "not-saved" })).result;
       expect(missing.isError).toBe(true);
       await stopFixtureTurn(bot.id, turn);
       turn = await startInternalFixtureTurn(bot.id);
-      const edit = mcp(turn.env, "generate_image", { request_id: "from-pack", prompt: "Same mascot, waving.", reference_pack: "hero-refs", connection_id: "openai", model: "gpt-image-2" });
+      const { result: edit } = await mcp(turn.env, "generate_image", { request_id: "from-pack", prompt: "Same mascot, waving.", reference_pack: "hero-refs", connection_id: "openai", model: "gpt-image-2" });
       const editCard = await pendingCard();
       expect(editCard.card.title).toBe("Approve image edit");
       expect(editCard.card.subtitle).toContain("References: 1 from pack hero-refs v1 + 0 attached = 1 of 16.");
@@ -1680,24 +1804,14 @@ describe("harness HTTP API", () => {
   // R3-T4: an approved generated image enters Files exactly once; repeating
   // the request returns the same saved result with no provider call.
   it("saves an approved generated image to Files once and repeats the request without provider work", async () => {
+    const api = imageWireApi, desktopApi = imageWireDesktopApi;
     const bot = (await desktopApi("POST", "/api/bots", { name: "Image Files fixture" })).body.bot;
     const receipt = join(home, "image-fixture-calls.json");
     const proxies: ChildProcess[] = [];
-    const imageCall = (env: Record<string, string>, args: Record<string, unknown>) => {
-      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+    const imageCall = async (env: Record<string, string>, args: Record<string, unknown>) => {
+      const proxy = await spawnBoundProxy("agents", process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { windowsHide: true, env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
       proxies.push(proxy);
-      let stdout = "", stderr = "";
-      const result = new Promise<any>((resolve, reject) => {
-        const timer = setTimeout(() => { proxy.kill(); reject(new Error("Image MCP timed out: " + stderr)); }, 15_000);
-        proxy.stderr.on("data", chunk => { stderr += chunk; });
-        proxy.stdout.on("data", chunk => {
-          stdout += chunk;
-          for (const line of stdout.split("\n")) { try { const value = JSON.parse(line); if (value.id === 42) { clearTimeout(timer); proxy.stdin.end(); resolve(value.result); return; } } catch {} }
-        });
-        proxy.on("error", reject);
-      });
-      proxy.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name: "generate_image", arguments: args } }) + "\n");
-      return result;
+      return startImageMcpCall(proxy, "generate_image", args);
     };
     const messages = async () => (await api("GET", "/api/bots?messages=100")).body.bots.find((item: { id: string }) => item.id === bot.id).messages;
     try {
@@ -1705,7 +1819,7 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("POST", "/api/images/settings", { enabled: true, connectionId: "openai", model: "gpt-image-2" })).status).toBe(200);
       const turn = await startInternalFixtureTurn(bot.id);
       const args = { request_id: "files-once", prompt: "Synthetic Files image", connection_id: "openai", model: "gpt-image-2" };
-      const first = imageCall(turn.env, args);
+      const { result: first } = await imageCall(turn.env, args);
       let card: any;
       await expect.poll(async () => { card = (await messages()).find((message: any) => message.card?.tool === "generate_image" && !message.card.answered); return Boolean(card); }).toBe(true);
       expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
@@ -1720,7 +1834,7 @@ describe("harness HTTP API", () => {
         threadId: bot.threadId, sourceConversationAvailable: true, relativePath: payload.artifact.path.split(/[\\/]/).at(-1) });
       expect((await desktopApi("GET", `/api/artifacts?botId=${bot.id}&kind=image`)).body.items.map((item: { id: string }) => item.id)).toEqual([payload.artifact.artifactId]);
       expect((await desktopApi("GET", `/api/artifacts/${payload.artifact.artifactId}/preview`)).body.content).toBe(`data:image/png;base64,${png.toString("base64")}`);
-      const repeat = JSON.parse((await imageCall(turn.env, args)).content[0].text);
+      const repeat = JSON.parse((await (await imageCall(turn.env, args)).result).content[0].text);
       expect(repeat.artifact).toEqual(payload.artifact);
       expect(JSON.parse(readFileSync(receipt, "utf8")).calls).toBe(calls);
       expect((await messages()).filter((message: { attachments?: unknown[] }) => message.attachments?.length)).toHaveLength(1);
@@ -1741,7 +1855,10 @@ describe("harness HTTP API", () => {
       const search = (headers: Record<string, string> = turn.headers, requestBody = body) => fetch(`${BASE}/api/internal/web-search`, {
         method: "POST", headers, body: JSON.stringify(requestBody),
       });
-      expect((await search({ "content-type": "application/json" })).status).toBe(401);
+      // MAIN RULING INT-CONFLICT-DEFAULT: an unbound caller receives only
+      // the stricter fixed context-free refusal, never a consuming result.
+      const unbound = await search({ "content-type": "application/json" });
+      expect(unbound.status).toBe(409); expect(await unbound.text()).toBe(LEDGER_REFUSAL_LINE);
       await desktopApi("PATCH", "/api/config", { webSearch: { provider: "off" } });
       expect((await search()).status).toBe(409);
       expect(existsSync(requestFile)).toBe(false);
@@ -1885,7 +2002,13 @@ describe("harness HTTP API", () => {
     const scoped = await desktopApi("GET", `/api/search?q=${encodeURIComponent(needle)}&threadId=${bot.threadId}`);
     expect(scoped.status).toBe(200);
     expect(scoped.body.hits.every((candidate: { threadId: string }) => candidate.threadId === bot.threadId)).toBe(true);
-    expect((await api("GET", "/api/search?q=hello&threadId=missing-thread")).status).toBe(404);
+    // COMPANION-CHATS-1019 A4: only the desktop may learn that a thread is
+    // missing. The door gets the same empty answer for missing and hidden
+    // threads, so this assertion must exercise the desktop's authority.
+    expect((await desktopApi("GET", "/api/search?q=hello&threadId=missing-thread")).status).toBe(404);
+    const missing = await api("GET", "/api/search?q=hello&threadId=missing-thread");
+    expect(missing.status).toBe(200);
+    expect(missing.body).toEqual({ hits: [] });
 
     const markdown = await fetch(`${BASE}/api/threads/${bot.threadId}/export`);
     expect(markdown.status).toBe(200);

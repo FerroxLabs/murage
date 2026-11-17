@@ -18,7 +18,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -94,6 +94,9 @@ const card = (page: Page, name: string) => dialog(page).locator(`[data-whats-new
 const CARDS = PAGE ? whatsNewCards(PAGE) : (["hero"] as const);
 // What each shortcut asks the store for, through the real host (runWhatsNewAction).
 const DISPATCHED: Partial<Record<WhatsNewAction, unknown[]>> = {
+  // MAIN RULING 1114-NOTES-1019: the Skills hero opens Skills; older Library shortcuts still open Teams.
+  library: [{ type: "showTeamLibrary", view: "teams" }],
+  skills: [{ type: "showTeamLibrary", view: "skills" }],
   allChats: [{ type: "showAllChats" }],
   draftOnly: [{ type: "showTeamLibrary", view: "bots" }],
   venues: [{ type: "showTeamMap" }],

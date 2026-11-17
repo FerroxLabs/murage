@@ -132,7 +132,7 @@ async function recoveryDir() {
   const stateDir = path.join(outer, 'state'); await makePrivateTestSubdirectory(stateDir); return stateDir;
 }
 async function childBroker(stateDir: string) {
-  const child = fork(new URL('./testing/browser-extension-broker-child.ts', import.meta.url), [stateDir], { execArgv: ['--experimental-strip-types'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  const child = fork(new URL('./testing/browser-extension-broker-child.ts', import.meta.url), [stateDir], { windowsHide: true, execArgv: ['--experimental-strip-types'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   cleanup.push(async () => { if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; } });
   const result = await new Promise<{ready?:boolean; code?:string}>((resolve, reject) => {
     const timer = setTimeout(() => reject(Error('child_start_timeout')), 10000);

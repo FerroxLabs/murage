@@ -1,7 +1,7 @@
 // Exercise the actual bundled offline CLI with no node_modules in reach.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,9 @@ import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const scratch = mkdtempSync(join(tmpdir(), "murage-packaged-recovery-"));
 try {
+  // Stage the complete shipped runtime, as smoke-packaged-server does: the
+  // CLI also reads murage-exec and imports shared child-process siblings.
+  cpSync(process.env.MURAGE_SMOKE_DIST ?? join(root, "dist-server"), scratch, { recursive: true });
   const entry = join(scratch, "installation-recovery.mjs");
   copyFileSync(join(process.env.MURAGE_SMOKE_DIST ?? join(root, "dist-server"), "installation-recovery.js"), entry);
   const workerEntry = join(scratch, "installation-recovery-worker.mjs");

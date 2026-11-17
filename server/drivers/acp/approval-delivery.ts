@@ -1,5 +1,8 @@
+import { registerBusyloopRequestSite, fluxRouteFor } from "../../../shared/flux-route.ts";
 import type { Writable } from "node:stream";
-import type { RuntimeEvent, RuntimeEventListener } from "../../contracts.ts";
+import type { RuntimeEvent, RuntimeEventListener, SendTurnInput } from "../../contracts.ts";
+import { engineJsonLine, emitEngineWire } from "../engine-wire.ts";
+import { releaseNativeAnswer } from "../engine-input.ts";
 
 export type ApprovalDeliveryFailure = { ok: false; reason: string; terminal: boolean };
 export type ApprovalDeliveryResult = { ok: true } | ApprovalDeliveryFailure;
@@ -37,7 +40,7 @@ export class ApprovalNoLongerOpenError extends Error {
 }
 
 /** A false write() return means backpressure, not failure. Only its callback confirms delivery. */
-export function writeAcpResponse(stream: Writable | null | undefined, obj: unknown, done: ApprovalWriteCallback): void {
+export function writeAcpResponse(stream: Writable | null | undefined, obj: unknown, done: ApprovalWriteCallback, requestUrl?: string, binding: SendTurnInput["releaseBinding"] | null = null, beforeWrite?: () => void, release?: <T>(wire: string, write: () => T) => T): void {
   if (!stream || stream.destroyed || stream.writableEnded || !stream.writable) {
     done(Object.assign(new Error("Engine input is closed"), { code: "ERR_STREAM_DESTROYED" }), false);
     return;
@@ -48,8 +51,14 @@ export function writeAcpResponse(stream: Writable | null | undefined, obj: unkno
     reported = true;
     done(error, accepted);
   };
-  try { stream.write(JSON.stringify(obj) + "\n", error => report(error, true)); }
-  catch (error) { report(error instanceof Error ? error : new Error("Write failed"), false); }
+  let entered = false;
+  try {
+    const wire = engineJsonLine(obj, beforeWrite);
+    const write = () => { entered = true; return registerBusyloopRequestSite(fluxRouteFor(requestUrl), stream.write(wire, error => report(error, true))); };
+    if (release) release(wire, write);
+    else if (beforeWrite) emitEngineWire(beforeWrite, wire, write);
+    else releaseNativeAnswer(binding, "acp:approval", wire, write);
+  } catch (error) { report(error instanceof Error ? error : new Error("Write failed"), entered); }
 }
 
 /** At most 3 writes, 500ms each, with 150/300ms backoff (1950ms total).

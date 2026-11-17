@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { WorkspaceScopeRef, FileRevision } from '../../shared/workspace-files';
-import { LocalImageController, type LocalImageState, type LocalImageView } from '@/lib/local-image-controller';
+import { LocalImageController, watchLocalImageVisibility, type LocalImageState, type LocalImageView } from '@/lib/local-image-controller';
 import { api } from '@/state/store';
 import { t } from '@/lib/i18n';
 import { ImageLightbox, type ImageMediaItem } from './ImageMedia';
@@ -12,9 +12,8 @@ export function LocalImage({ candidate, scope, alt }: { candidate: string; scope
   useEffect(() => {
     const request = candidate.startsWith('/') || /^[A-Za-z]:[\\/]/.test(candidate) ? { scope, absolutePath: candidate } : { scope, relativePath: candidate };
     const current = new LocalImageController(request, api, () => setView({ ...current.view })); controller.current = current; setView({ ...current.view });
-    let observer: IntersectionObserver | undefined;
-    if (typeof IntersectionObserver !== 'undefined' && root.current) { observer = new IntersectionObserver(entries => { for (const entry of entries) current.visibility(entry.isIntersecting); }, { rootMargin: '100% 0px' }); observer.observe(root.current); }
-    return () => { observer?.disconnect(); current.dispose(); controller.current = null; };
+    const stopWatching = watchLocalImageVisibility(root.current, current, window);
+    return () => { stopWatching(); current.dispose(); controller.current = null; };
   }, [candidate, scope.botId, scope.threadId]);
   const ready = view.ready, asset = ready?.asset;
   const item: ImageMediaItem | undefined = ready && asset ? { id: `workspace:${asset.id}:${asset.revision}`, src: ready.url, name: asset.name, alt, source: 'workspace', download: !!asset.capabilities.download, ...(asset.capabilities.imageReference ? { reference: { threadId: scope.threadId, botId: scope.botId, source: { kind: 'workspace', relativePath: ready.relativePath, revision: asset.revision! as FileRevision } } } : {}) } : undefined;

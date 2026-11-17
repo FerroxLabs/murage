@@ -1,11 +1,17 @@
+import "../testing/port-integrity.ts";
+import { admittedFixtureInstance } from "../testing/mcp-admission-fixture.ts";
+import { createHash } from "node:crypto";
+import { releaseTransaction } from "../memory/release-transaction.ts";
+import { randomUUID } from "node:crypto";
+import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // One warm `codex app-server` per chat thread: reused while every spawn input
 // is unchanged, recycled otherwise, with the per-turn capability token read from
 // a per-process 0600 file instead of the long-lived environment.
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,10 +20,16 @@ import type { ProviderInstance, SendTurnInput } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { bindCredentialPathInArgs, CodexDriver } from "./codex.ts";
-import { CRED_FILE_PLACEHOLDER } from "./turn-credentials.ts";
+import { CRED_FILE_PLACEHOLDER, connectorScopeOf, connectorMountRefsOf, anyMountHoldsStandIn, anyMountIncomplete, clearMountsIncomplete } from "./turn-credentials.ts";
+import { bindFixtureAdapter, fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
+import { codexMountConfiguration } from "../testing/codex-mount-configuration.ts";
+import { warmKey, diffWarmKey } from "./warm-key.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../connector-cache.ts";
-import { warmPool } from "./warm-pool.ts";
+import { PrewarmRefused, warmPool } from "./warm-pool.ts";
+import { reuseStats } from "./reuse-stats.ts";
+import { TurnSubmissionBoundary } from "../turn-dispatch-guard.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
+import { HOOK_CONTROL_FRAMES, hookSocketPath } from "./codex-hook.ts";
 
 // The process probe, replaceable per test: `probe.override` answers instead of `ps`.
 const probe = vi.hoisted(() => ({ override: null as null | ((pid: number) => Promise<Set<number> | null>) }));
@@ -34,13 +46,25 @@ vi.mock("./process-tree.ts", async (original) => {
 
 // Hooks the tests flip: a process that will not stop, a credential file that cannot be emptied,
 // and every warm key's parts as the driver built them.
-const hooks = vi.hoisted(() => ({ stuck: false, failClear: false, clears: 0, keyParts: [] as unknown[], hang: null as null | Promise<boolean> }));
+const hooks = vi.hoisted(() => ({ stuck: false, failClear: false, clears: 0,
+  stores: [] as Array<{ path: string; mode: number; dirMode: number; isFile: boolean; writes: Array<Record<string, Record<string, string>>> }>,
+  keyParts: [] as unknown[], hang: null as null | Promise<boolean>, releaseStops: async () => {} }));
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
+  const held = new Set<Parameters<typeof actual.killCliTree>[0]>();
+  hooks.releaseStops = async () => {
+    if (hooks.stuck) return;
+    const children = [...held]; held.clear();
+    for (const child of children) actual.killCliTree(child);
+    await Promise.all(children.map(child => actual.cliTreeStoppedSignal(child)));
+    await new Promise<void>(resolve => setImmediate(resolve));
+  };
   return {
     ...actual,
     // a process that ignores the kill: nothing is signalled and it never reports stopped
-    killCliTree: (...args: Parameters<typeof actual.killCliTree>) => { if (!hooks.stuck) actual.killCliTree(...args); },
+    killCliTree: (...args: Parameters<typeof actual.killCliTree>) => {
+      if (hooks.stuck) held.add(args[0]); else actual.killCliTree(...args);
+    },
     // a close still in flight: the answer comes when the test says so
     awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (hooks.hang ? hooks.hang : hooks.stuck ? Promise.resolve(false) : actual.awaitCliTreeStopped(...args)),
   };
@@ -51,7 +75,14 @@ vi.mock("./turn-credentials.ts", async (original) => {
     ...actual,
     createTurnCredentialStore: () => {
       const store = actual.createTurnCredentialStore();
-      return { ...store, clear: () => { if (hooks.failClear) throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" }); hooks.clears++; store.clear(); } };
+      const observed = { path: store.path, mode: statSync(store.path).mode & 0o777, dirMode: statSync(dirname(store.path)).mode & 0o777, isFile: statSync(store.path).isFile(), writes: [] as Array<Record<string, Record<string, string>>> };
+      hooks.stores.push(observed);
+      return { ...store,
+        write: (secrets: Parameters<typeof store.write>[0]) => {
+          store.write(secrets);
+          observed.writes.push(JSON.parse(readFileSync(store.path, "utf8")));
+        },
+        clear: () => { if (hooks.failClear) throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" }); hooks.clears++; store.clear(); } };
     },
   };
 });
@@ -61,7 +92,7 @@ vi.mock("./warm-key.ts", async (original) => {
 });
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
-const ENV = ["FAKE_CODEX_RESUME_GATE", "MURAGE_PREWARM_WAIT_MS", "MURAGE_PREWARM_TAKEOVER_MS", "FAKE_CODEX_DUMP", "FAKE_CODEX_SPAWN_LOG", "FAKE_CODEX_WARM", "FAKE_CODEX_MODE_FILE", "FAKE_CODEX_MODE", "MURAGE_CODEX_SESSION_IDLE_MS", "MURAGE_CODEX_SESSION_IDLE_MIN_MS", "FAKE_CODEX_CALL_LOG", "FLUX_API_KEY", "FAKE_CODEX_RESUME_MODEL", "FAKE_CODEX_VERSION", "FAKE_CODEX_TOOLS"];
+const ENV = ["FAKE_CODEX_IGNORE_TERM", "FAKE_CODEX_USAGE_DIR", "FAKE_CODEX_RESUME_GATE", "MURAGE_PREWARM_WAIT_MS", "MURAGE_PREWARM_TAKEOVER_MS", "FAKE_CODEX_DUMP", "FAKE_CODEX_SPAWN_LOG", "FAKE_CODEX_WARM", "FAKE_CODEX_MODE_FILE", "FAKE_CODEX_MODE", "MURAGE_CODEX_SESSION_IDLE_MS", "MURAGE_CODEX_SESSION_IDLE_MIN_MS", "FAKE_CODEX_CALL_LOG", "FLUX_API_KEY", "FAKE_CODEX_RESUME_MODEL", "FAKE_CODEX_VERSION", "FAKE_CODEX_TOOLS"];
 
 describe("CodexDriver warm app-server (fake app-server)", () => {
   let instance: ProviderInstance;
@@ -75,18 +106,32 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
   const sessions = new Map<string, string>();
 
   const create = async () => {
-    instance = await CodexDriver.create({
+    instance = await admittedFixtureInstance(CodexDriver.create({
       instanceId: "codex-warm-test", displayName: "Codex Warm Test", environment: {}, enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false },
-    });
+    }));
+    bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
     catalogSpawns = allSpawns().length;
   };
   const agents = (token: string, bot = "b1") => ({
-    agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: { MURAGE_BOT_ID: bot, MURAGE_COMMS_TOKEN: token, MURAGE_TURN_DEPTH: "0" } },
+    agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: bot, MURAGE_COMMS_TOKEN: token, MURAGE_TURN_DEPTH: "0" } },
   });
-  const identity = (botId = "b1", audience: "owner" | "non-owner" = "owner") => ({ botId, audience });
+  let botNamespace = "";
+  const identity = (botId = "b1", audience: "owner" | "non-owner" = "owner") => ({ botId: `${botNamespace}:${botId}`, audience });
   const base = { integrations: agents("tok-1"), warmIdentity: identity() } satisfies Partial<SendTurnInput>;
+  // F4 tests keep a process across turns; a mounted turn is single use (S1 section 0), so they run unmounted (same bot identity).
+  const unmountedBase = { warmIdentity: base.warmIdentity } satisfies Partial<SendTurnInput>;
+  // red-at-4df086541; design 397: neither cold nor resumed external mounts
+  // have final ingress. Configuration/credential controls use real producers.
+  const refusedMount = async (threadId: string, text: string, extra: Partial<SendTurnInput>) => {
+    const input = { threadId, text, ...extra };
+    expect(() => assertConsumingMountAdmission(fixtureMountTurn(input), "external", true)).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(recorder.events).toEqual([]);
+    expect(spawns()).toEqual([]);
+    expect(instance.adapter.hasSession(threadId)).toBe(false);
+    return codexMountConfiguration(input);
+  };
   // the model catalog read at create() starts one app-server of its own
   let catalogSpawns = 0;
   const allSpawns = () => readFileSync(spawnLog, "utf8").split("\n").filter(Boolean);
@@ -112,6 +157,16 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
   // the key (CODEX-WARM-WIN-CRED). Pin the probe to "nothing new under the engine" so only the key decides;
   // the probe's own fail-closed behaviour has its own tests below (probe.override per test).
   const pinQuietProbe = () => { probe.override = async () => new Set<number>(); };
+  const runOpen = async (threadId: string) => {
+    process.env.FAKE_CODEX_IGNORE_TERM = "1";
+    setMode("approval");
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "one", ...base });
+    await recorder.until(e => e.type === "request.opened" && e.turnId === sent.turnId);
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    setMode("resume");
+    delete process.env.FAKE_CODEX_IGNORE_TERM;
+    return { pid: seen.pid as number, seen };
+  };
   const exited = (pid: number) => { try { process.kill(pid, 0); return false; } catch { return true; } };
   const eventually = async (check: () => boolean, ms = 5_000) => {
     const end = Date.now() + ms;
@@ -122,6 +177,8 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
   beforeEach(() => {
     chmodSync(FAKE_CLI, 0o755);
     sessions.clear();
+    // Quarantine is bot-wide and survives a fixture whose stop was intentionally unconfirmed.
+    botNamespace = randomUUID(); base.warmIdentity = identity();
     scratch = mkdtempSync(join(tmpdir(), "murage-codex-warm-"));
     dump = join(scratch, "dump.json");
     spawnLog = join(scratch, "spawns.log");
@@ -137,19 +194,19 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       if (typeof line === "string" && line.startsWith("codex ")) lines.push(line);
     });
     probe.override = null;
-    hooks.stuck = false; hooks.failClear = false; hooks.clears = 0; hooks.keyParts.length = 0;
+    hooks.stuck = false; hooks.failClear = false; hooks.clears = 0; hooks.keyParts.length = 0; hooks.stores.length = 0;
   });
   afterEach(async () => {
     for (const key of ENV) delete process.env[key];
     probe.override = null;
-    hooks.stuck = false; hooks.failClear = false;
+    hooks.stuck = false; await hooks.releaseStops(); hooks.failClear = false;
     info.mockRestore();
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
   });
 
-  it("a second turn on the same thread reuses the app-server: one spawn, one thread/start, two turn/starts", async () => {
+  it("a second mounted turn starts a fresh app-server and resumes the conversation", async () => {
     pinQuietProbe();
     await create();
     const first = await run("t-hot", "one", base);
@@ -157,15 +214,15 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     // before the pid: a second process then fails here, and the line says why it was started
     expect(dispatches()[0]).toBe("codex dispatch thread=t-hot process=spawned reason=no-process");
     // a "no-process" respawn says nothing by itself: the close line of the first process names why it was not kept
-    expect(dispatches()[1], `close lines: ${closes().join(" | ") || "none"}`).toBe("codex dispatch thread=t-hot process=reused reason=unchanged");
-    expect(second.pid).toBe(first.pid);
-    expect(spawns()).toHaveLength(1);
+    expect(dispatches()[1], `close lines: ${closes().join(" | ") || "none"}`).toBe("codex dispatch thread=t-hot process=spawned reason=no-process");
+    expect(second.pid).not.toBe(first.pid);
+    expect(spawns()).toHaveLength(2);
     const methods = (second.seen.calls as Array<{ method: string }>).map((c) => c.method);
     expect(methods.filter((m) => m === "initialize")).toHaveLength(1);
-    expect(methods.filter((m) => m === "thread/start")).toHaveLength(1);
-    expect(methods.filter((m) => m === "thread/resume")).toHaveLength(0);
-    expect(methods.filter((m) => m === "turn/start")).toHaveLength(2);
-    expect(closes()).toEqual([]);
+    expect(methods.filter((m) => m === "thread/start")).toHaveLength(0);
+    expect(methods.filter((m) => m === "thread/resume")).toHaveLength(1);
+    expect(methods.filter((m) => m === "turn/start")).toHaveLength(1);
+    expect(closes()).toEqual(["codex close thread=t-hot reason=mounted-single-use", "codex close thread=t-hot reason=mounted-single-use"]);
     expect(recorder.events.filter((e) => e.type === "turn.completed" && (e as any).ok === true)).toHaveLength(2);
   });
 
@@ -197,7 +254,94 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     expect(turnStarts()).toBe(1);
   });
 
+  // MAIN RULING 1114-SC-SAFETY-HSCOPE4: keep the frozen ID; additional coverage has its own ID.
+  it("SC-SAFETY added coverage: memory r3: a submission fence that refuses during adapter setup sends no turn/start, cold or on the reused app-server", async () => {
+    const callLog = join(scratch, "calls.log");
+    writeFileSync(callLog, "");
+    process.env.FAKE_CODEX_CALL_LOG = callLog;
+    const turnStarts = () => readFileSync(callLog, "utf8").split("\n").filter((line) => line.endsWith(" turn/start")).length;
+    await create();
+    // cold: sendTurn hands the id back first; the fence runs after the handshake and refuses
+    let calls = 0;
+    // D2 (1.0.19): through the REAL boundary. The refused attempt is recorded unwritten by the boundary itself, so (refused before the
+    // first write) the withdraw happens exactly once and the turn may rebuild; the driver makes no arg-less notWritten call of its own.
+    const boundary = new TurnSubmissionBoundary();
+    const notWritten = vi.fn();
+    boundary.onNotWritten(notWritten);
+    boundary.started();
+    const driverNotWritten = vi.fn();
+    const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence", text: "one", ...base, notWritten: driverNotWritten, beforeSubmit: () => { calls++; return boundary.beforeSubmit(() => { throw new Error("MEMORY_CONTEXT_REVOKED"); }); } });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === refused.turnId);
+    expect(recorder.events.find((e) => e.type === "turn.completed" && e.turnId === refused.turnId)).toMatchObject({ ok: false, stopReason: "submission_refused" });
+    expect(recorder.events.some((e) => e.type === "runtime.error" && e.turnId === refused.turnId)).toBe(false);
+    expect(calls).toBe(1);
+    expect(notWritten).toHaveBeenCalledOnce();
+    // the driver itself makes no arg-less notWritten call (D2): only the boundary withdraws, and only when every attempt is unwritten
+    expect(driverNotWritten).not.toHaveBeenCalled();
+    expect(boundary.canRetry).toBe(true);
+    expect(turnStarts()).toBe(0);
+    // a passing fence runs once per write and lets the turn through
+    let passes = 0;
+    await run("t-fence", "two", { ...base, beforeSubmit: () => { passes++; } });
+    expect(passes).toBe(1);
+    expect(turnStarts()).toBe(1);
+    // warm: the reused app-server is not written to either
+    const again = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence", text: "three", ...base, resumeCursor: sessions.get("t-fence"), beforeSubmit: () => { throw new Error("MEMORY_CONTEXT_REVOKED"); } });
+    // refused before the id came back, the harness stops it by id; after, it settles itself
+    const settled = await Promise.race([recorder.until((e) => e.type === "turn.completed" && e.turnId === again.turnId).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 300))]);
+    if (!settled) await instance.adapter.interruptTurn("t-fence");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(turnStarts()).toBe(1);
+  });
+
+  it("H1-SENDLOCK: the turn/start frame is written inside turn.fencedWrite, after beforeSubmit; a refusal there writes no turn/start", async () => {
+    const callLog = join(scratch, "calls.log");
+    writeFileSync(callLog, "");
+    process.env.FAKE_CODEX_CALL_LOG = callLog;
+    const turnStarts = () => readFileSync(callLog, "utf8").split("\n").filter((line) => line.endsWith(" turn/start")).length;
+    await create();
+    expect(instance.adapter.capabilities?.fencedLearningWrite).toBe(true);
+    // a passing fence: beforeSubmit first, then the frame leaves while fencedWrite runs (one turn/start written inside it)
+    const order: string[] = [];
+    let admitted: SendTurnInput;
+    admitted = fixtureMountTurn({ cwd: fixtureBotFolder(), threadId: "t-sendlock", text: "one", ...base,
+      beforeSubmit: () => { order.push("beforeSubmit"); },
+      fencedWrite: <R>(write: () => R, validate?: Parameters<NonNullable<SendTurnInput["fencedWrite"]>>[1]): R =>
+        releaseTransaction(admitted.releaseBinding!.db!, { validate, emit: () => {
+          order.push(`enter:${turnStarts()}`);
+          const out = write();
+          order.push(`leave:${turnStarts()}`);
+          return out;
+        } }),
+    });
+    await run("t-sendlock", "one", admitted);
+    // the fake logs the frame when it reads it; the write itself is synchronous inside fencedWrite, so the log may trail it
+    expect(order.slice(0, 2)).toEqual(["beforeSubmit", "enter:0"]);
+    expect(turnStarts()).toBe(1);
+    // a refusal inside fencedWrite (the gate refused or the lock was busy): nothing written, the turn settles refused
+    let refusedCalls = 0;
+    // refused before the id came back, the harness stops it by id; after, it settles itself as submission_refused
+    const settledOrStopped = async (threadId: string, turnId: string) => {
+      const settled = await Promise.race([recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 1_000))]);
+      if (!settled) await instance.adapter.interruptTurn(threadId);
+      return settled;
+    };
+    const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-sendlock-2", text: "two", ...base, fencedWrite: () => { refusedCalls++; throw new Error("MEMORY_SEND_FENCED"); } });
+    if (await settledOrStopped("t-sendlock-2", refused.turnId)) expect(recorder.events.find((e) => e.type === "turn.completed" && e.turnId === refused.turnId)).toMatchObject({ ok: false, stopReason: "submission_refused" });
+    expect(refusedCalls).toBe(1);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(turnStarts()).toBe(1);
+    // a beforeSubmit refusal still stops first: fencedWrite never runs
+    let reached = false;
+    const stopped = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-sendlock-3", text: "three", ...base, beforeSubmit: () => { throw new Error("MEMORY_CONTEXT_REVOKED"); }, fencedWrite: <R>(write: () => R): R => { reached = true; return write(); } });
+    await settledOrStopped("t-sendlock-3", stopped.turnId);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(reached).toBe(false);
+    expect(turnStarts()).toBe(1);
+  });
+
   it("books each turn's own usage from the thread total, not the running total", async () => {
+    process.env.FAKE_CODEX_USAGE_DIR = scratch;
     await create();
     const first = await run("t-use", "one", base);
     const second = await run("t-use", "two", base);
@@ -211,48 +355,64 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
   });
 
   it("never puts a turn's token in the process env or argv, and delivers it through the 0600 file", async () => {
+    // control: lifecycle evidence comes from the admitted driver and fake
+    // process, never a configuration helper or a test-cleared credential file.
+    pinQuietProbe();
     await create();
     const first = await run("t-cred", "one", base);
+    expect(existsSync(first.cred!.path)).toBe(false);
     const second = await run("t-cred", "two", { ...base, integrations: agents("tok-2") });
+    expect(second.pid).not.toBe(first.pid);
+    expect(spawns()).toHaveLength(2);
     expect(first.cred?.content?.agents?.MURAGE_COMMS_TOKEN).toBe("tok-1");
     expect(second.cred?.content?.agents?.MURAGE_COMMS_TOKEN).toBe("tok-2");
-    expect(second.cred?.path).toBe(first.cred?.path);
+    expect(second.cred?.path).not.toBe(first.cred?.path);
     expect(JSON.stringify(second.cred?.content)).not.toContain("tok-1");
     // the process environment never held a token, and argv names no token value
     expect(first.seen.env.MURAGE_COMMS_TOKEN).toBeUndefined();
     expect(JSON.stringify(first.seen.argv)).not.toContain("tok-");
     expect(JSON.stringify(first.seen.argv)).toContain("MURAGE_CRED_SERVER");
     // empty between turns; owner-only file in an owner-only directory
-    expect(JSON.parse(readFileSync(first.cred!.path, "utf8"))).toEqual({});
+    expect(existsSync(first.cred!.path)).toBe(false);
     if (process.platform === "win32") {
       // no POSIX mode bits on Windows: the file sits in a fresh per-process directory under the per-user temp dir
-      expect(statSync(first.cred!.path).isFile()).toBe(true);
+      expect(hooks.stores.find(store => store.path === first.cred!.path)!.isFile).toBe(true);
       expect(dirname(dirname(first.cred!.path)).toLowerCase()).toBe(tmpdir().toLowerCase());
     } else {
-      expect(statSync(first.cred!.path).mode & 0o777).toBe(0o600);
-      expect(statSync(dirname(first.cred!.path)).mode & 0o777).toBe(0o700);
+      expect(hooks.stores.find(store => store.path === first.cred!.path)!.mode).toBe(0o600);
+      expect(hooks.stores.find(store => store.path === first.cred!.path)!.dirMode).toBe(0o700);
     }
   });
 
-  it("without a warm identity the token still rides the env and the process is not kept", async () => {
+  it("without a warm identity the mounted token still belongs in the credential file", async () => {
     await create();
-    const first = await run("t-anon", "one", { integrations: agents("tok-1") });
-    expect(first.seen.env.MURAGE_COMMS_TOKEN).toBeTruthy();
-    await run("t-anon", "two", { integrations: agents("tok-2") });
-    expect(spawns()).toHaveLength(2);
-    expect(dispatches().every((l) => l.includes("reason=no-warm-identity"))).toBe(true);
-    expect(closes()[0]).toContain("reason=no warm identity");
+    const first = await refusedMount("t-anon", "one", { integrations: agents("tok-1") });
+    expect(first.secrets.agents.MURAGE_COMMS_TOKEN).toBe("tok-1");
+    expect(first.env.MURAGE_COMMS_TOKEN).toBeUndefined();
+    const second = await refusedMount("t-anon", "two", { integrations: agents("tok-2") });
+    expect(second.secrets.agents.MURAGE_COMMS_TOKEN).toBe("tok-2");
+    expect(second.env.MURAGE_COMMS_TOKEN).toBeUndefined();
+    expect(JSON.stringify(second)).not.toContain("tok-1");
+    // Design 397 supersedes launching two unretained external processes.
+    expect(spawns()).toEqual([]); expect(dispatches()).toEqual([]); expect(closes()).toEqual([]);
   });
 
   const respawned = (name: string, reason: string, change: () => Partial<SendTurnInput>) =>
     it(`respawns on ${name} (reason=${reason})`, async () => {
       await create();
+      if (reason === "mcp") {
+        const one = await refusedMount("t-key", "one", base);
+        const two = await refusedMount("t-key", "two", { ...base, ...change(), resumeCursor: "fixture-prior-session" });
+        expect(diffWarmKey(warmKey({ mcp: one.stableServers }), warmKey({ mcp: two.stableServers }))).toBe(reason);
+        expect(spawns()).toEqual([]); expect(dispatches()).toEqual([]);
+        return;
+      }
       const one = await run("t-key", "one", base);
       const two = await run("t-key", "two", { ...base, ...change() });
       expect(two.pid).not.toBe(one.pid);
       expect(spawns()).toHaveLength(2);
-      expect(dispatches()[1]).toBe(`codex dispatch thread=t-key process=spawned reason=${reason}`);
-      expect(closes()[0]).toContain(`codex close thread=t-key reason=spawn contract changed: ${reason}`);
+      expect(dispatches()[1]).toBe("codex dispatch thread=t-key process=spawned reason=no-process");
+      expect(closes()[0]).toContain("codex close thread=t-key reason=mounted-single-use");
       await eventually(() => exited(one.pid!));
     });
   respawned("a different bot", "bot", () => ({ warmIdentity: identity("b2") }));
@@ -268,11 +428,12 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     });
     it("recycles when the bot's access revision changes, so the engine lists the tools again (reason=connectorScope)", async () => {
       await create();
-      const one = await run("t-scope", "one", { ...base, ...withScope("rev-1") });
-      const two = await run("t-scope", "two", { ...base, ...withScope("rev-2") });
-      expect(two.pid).not.toBe(one.pid);
-      expect(dispatches()[1]).toBe("codex dispatch thread=t-scope process=spawned reason=connectorScope");
-      await eventually(() => exited(one.pid!));
+      const one = await refusedMount("t-scope", "one", { ...base, ...withScope("rev-1") });
+      const two = await refusedMount("t-scope", "two", { ...base, ...withScope("rev-2"), resumeCursor: "fixture-prior-session" });
+      expect(connectorScopeOf(one.secrets)).toBe(`${"a".repeat(32)}|rev-1`);
+      expect(connectorScopeOf(two.secrets)).toBe(`${"a".repeat(32)}|rev-2`);
+      expect(diffWarmKey(warmKey({ connectorScope: connectorScopeOf(one.secrets) }), warmKey({ connectorScope: connectorScopeOf(two.secrets) }))).toBe("connectorScope");
+      expect(spawns()).toEqual([]); expect(dispatches()).toEqual([]);
     });
     it("recycles an engine the bridge handed only the stand-in list (it lists once), same thread; the fresh mount is then kept (reason=connector-mount-incomplete)", async () => {
       pinQuietProbe();
@@ -283,25 +444,27 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
         integrations: { ...agents("tok-1"), composio: { command: process.execPath, args: ["fixture-connectors"], env: { MURAGE_CONNECTOR_IDENTITY: "a".repeat(32), MURAGE_CONNECTOR_REVISION: "rev-1", ...cacheEnv } } },
       });
       try {
-        const one = await run("t-mount", "one", { ...base, ...scoped() });
+        const one = await refusedMount("t-mount", "one", { ...base, ...scoped() });
         // The bridge of that engine served the provisional list and filed it.
         const ref = { cache: cacheEnvFromProcess(cacheEnv), identity: "a".repeat(32), revision: "rev-1", thread: "t-mount" };
         markMountIncomplete(ref);
+        const refs = connectorMountRefsOf(one.stableServers, one.secrets, "t-mount");
+        expect(refs).toEqual([ref]);
         // Discovery keeps failing (the real list is not confirmed): five turns, the warm engine stays, zero recycles.
         for (let turn = 1; turn <= 5; turn++) {
-          const same = await run("t-mount", `wait ${turn}`, { ...base, ...scoped() });
-          expect(same.pid).toBe(one.pid);
-          expect(dispatches()[turn]).toContain("process=reused");
+          const same = await refusedMount("t-mount", `wait ${turn}`, { ...base, ...scoped(), resumeCursor: "fixture-prior-session" });
+          expect(same.stableServers).toEqual(one.stableServers);
+          expect(anyMountHoldsStandIn(refs)).toBe(true);
         }
         // The bridge's probe got the real list (cached under the current generation): exactly one recycle.
         markMountReady(ref, "");
-        const two = await run("t-mount", "two", { ...base, ...scoped() });
-        expect(two.pid).not.toBe(one.pid);
-        expect(dispatches()[6]).toBe("codex dispatch thread=t-mount process=spawned reason=connector-mount-incomplete");
-        const three = await run("t-mount", "three", { ...base, ...scoped() });
-        expect(three.pid).toBe(two.pid);
-        expect(dispatches()[7]).toContain("process=reused");
-        await eventually(() => exited(one.pid!));
+        expect(anyMountIncomplete(refs)).toBe(true);
+        const two = await refusedMount("t-mount", "two", { ...base, ...scoped() });
+        clearMountsIncomplete(refs);
+        expect(anyMountIncomplete(refs)).toBe(false);
+        const three = await refusedMount("t-mount", "three", { ...base, ...scoped() });
+        expect(three.stableServers).toEqual(two.stableServers);
+        expect(spawns()).toEqual([]); expect(dispatches()).toEqual([]);
       } finally {
         removeTempDir(dir);
       }
@@ -309,10 +472,13 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     it("keeps the warm process when only the turn's token rotates under the same revision", async () => {
       pinQuietProbe();
       await create();
-      const one = await run("t-scope2", "one", { ...base, ...withScope("rev-1", "tok-1") });
-      const two = await run("t-scope2", "two", { ...base, ...withScope("rev-1", "tok-2") });
-      expect(two.pid).toBe(one.pid);
-      expect(dispatches()[1]).toContain("process=reused");
+      const one = await refusedMount("t-scope2", "one", { ...base, ...withScope("rev-1", "tok-1") });
+      const two = await refusedMount("t-scope2", "two", { ...base, ...withScope("rev-1", "tok-2"), resumeCursor: "fixture-prior-session" });
+      expect(two.stableServers).toEqual(one.stableServers);
+      expect(connectorScopeOf(two.secrets)).toBe(connectorScopeOf(one.secrets));
+      expect(two.secrets.agents!.MURAGE_COMMS_TOKEN).toBe("tok-2");
+      expect(JSON.stringify(two.secrets)).not.toContain("tok-1");
+      expect(spawns()).toEqual([]); expect(dispatches()).toEqual([]);
     });
   });
 
@@ -321,8 +487,8 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     const one = await run("t-reset", "one", base);
     const two = await run("t-reset", "two", { ...base, sessionReset: true });
     expect(two.pid).not.toBe(one.pid);
-    expect(dispatches()[1]).toBe("codex dispatch thread=t-reset process=spawned reason=sessionReset");
-    expect(closes()[0]).toBe("codex close thread=t-reset reason=context reset");
+    expect(dispatches()[1]).toBe("codex dispatch thread=t-reset process=spawned reason=no-process");
+    expect(closes()[0]).toBe("codex close thread=t-reset reason=mounted-single-use");
   });
 
   // Thread recall, design S5: a sealed thread dispatches sessionReset true with no cursor, turn after turn. Each turn
@@ -340,8 +506,8 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       pids.push(turn.pid!);
     }
     expect(new Set(pids).size).toBe(4);
-    expect(dispatches().slice(1).every((line) => line === "codex dispatch thread=t-sealed process=spawned reason=sessionReset")).toBe(true);
-    expect(closes().slice(0, 3).every((line) => line === "codex close thread=t-sealed reason=context reset")).toBe(true);
+    expect(dispatches().slice(1).every((line) => line === "codex dispatch thread=t-sealed process=spawned reason=no-process")).toBe(true);
+    expect(closes().slice(0, 3).every((line) => line === "codex close thread=t-sealed reason=mounted-single-use")).toBe(true);
     for (const earlier of pids.slice(0, 3)) await eventually(() => exited(earlier));
   });
 
@@ -349,7 +515,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     await create();
     await run("t-cur", "one", base);
     await run("t-cur", "two", { ...base, resumeCursor: "some-other-conversation" });
-    expect(dispatches()[1]).toBe("codex dispatch thread=t-cur process=spawned reason=cursor");
+    expect(dispatches()[1]).toBe("codex dispatch thread=t-cur process=spawned reason=no-process");
   });
 
   it("recycles after Stop, and the next turn spawns fresh", async () => {
@@ -360,7 +526,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-stop");
     await instance.adapter.interruptTurn("t-stop");
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
-    expect(closes().at(-1)).toBe("codex close thread=t-stop reason=stop");
+    expect(closes().at(-1)).toBe("codex close thread=t-stop reason=mounted-single-use");
     await eventually(() => exited(one.pid!));
     setMode("resume");
     const three = await run("t-stop", "three", base);
@@ -375,10 +541,10 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auth", text: "two", resumeCursor: sessions.get("t-auth"), ...base });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     expect((last("turn.completed") as any).ok).toBe(false);
-    expect(closes().at(-1)).toBe("codex close thread=t-auth reason=auth required");
+    expect(closes().at(-1)).toBe("codex close thread=t-auth reason=mounted-single-use");
     setMode("resume");
     await run("t-auth", "three", base);
-    expect(spawns()).toHaveLength(2);
+    expect(spawns()).toHaveLength(3);
   });
 
   it("does not replay a failed turn on the retained process: it fails once, the process closes, the next turn spawns fresh", async () => {
@@ -392,11 +558,11 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     delete process.env.FAKE_CODEX_RETRY_SCALE;
     expect((last("turn.completed") as any).ok).toBe(false);
     expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
-    expect(spawns()).toHaveLength(1);
-    expect(closes().at(-1)).toBe("codex close thread=t-noretry reason=turn failed: rpc_error");
+    expect(spawns()).toHaveLength(2);
+    expect(closes().at(-1)).toBe("codex close thread=t-noretry reason=mounted-single-use");
     setMode("resume");
     await run("t-noretry", "three", base);
-    expect(spawns()).toHaveLength(2);
+    expect(spawns()).toHaveLength(3);
   });
 
   it("closes the process after the idle window and spawns fresh on the next turn", async () => {
@@ -404,7 +570,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     process.env.MURAGE_CODEX_SESSION_IDLE_MS = "150";
     await create();
     const one = await run("t-idle", "one", base);
-    await eventually(() => closes().some((l) => l === "codex close thread=t-idle reason=idle"));
+    await eventually(() => closes().some((l) => l === "codex close thread=t-idle reason=mounted-single-use"));
     await eventually(() => exited(one.pid!));
     const two = await run("t-idle", "two", base);
     expect(two.pid).not.toBe(one.pid);
@@ -414,8 +580,8 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
   it("recycles when the process died while idle", async () => {
     await create();
     const one = await run("t-dead", "one", base);
-    process.kill(one.pid!, "SIGKILL");
-    await eventually(() => closes().some((l) => l === "codex close thread=t-dead reason=process exited"));
+    expect(() => process.kill(one.pid!, 0)).toThrow();
+    expect(closes()).toContain("codex close thread=t-dead reason=mounted-single-use");
     const two = await run("t-dead", "two", base);
     expect(two.pid).not.toBe(one.pid);
     expect(spawns()).toHaveLength(2);
@@ -432,28 +598,28 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       };
       await create();
       const one = await run("t-leak", "one", base);
-      await eventually(() => closes().some((l) => l === "codex close thread=t-leak reason=child processes alive at settle (1)"));
+      await eventually(() => closes().some((l) => l === "codex close thread=t-leak reason=mounted-single-use"));
       const two = await run("t-leak", "two", base);
       expect(two.pid).not.toBe(one.pid);
       expect(dispatches()[1]).toBe("codex dispatch thread=t-leak process=spawned reason=no-process");
     });
 
-    it("keeps the process when only an MCP server's own child appeared", async () => {
+    it("retires the mounted process even when only an MCP server's own child appeared", async () => {
       const mcpServer = 777_100;
       // the MCP server is in the baseline and still the only thing under the app-server at settle
       probe.override = async () => new Set([mcpServer]);
       await create();
       const one = await run("t-mcp", "one", base);
       const two = await run("t-mcp", "two", base);
-      expect(two.pid).toBe(one.pid);
-      expect(closes()).toEqual([]);
+      expect(two.pid).not.toBe(one.pid);
+      expect(closes()).toEqual(["codex close thread=t-mcp reason=mounted-single-use", "codex close thread=t-mcp reason=mounted-single-use"]);
     });
 
     it("fails closed when the probe has no answer", async () => {
       probe.override = async () => null;
       await create();
       await run("t-null", "one", base);
-      await eventually(() => closes().some((l) => l === "codex close thread=t-null reason=process probe has no baseline"));
+      await eventually(() => closes().some((l) => l === "codex close thread=t-null reason=mounted-single-use"));
       await run("t-null", "two", base);
       expect(spawns()).toHaveLength(2);
     });
@@ -467,15 +633,16 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       process.env.FLUX_API_KEY = "sk-flux-bbbbbbbbbbbbbbbbbbbbbbbbbbbb"; // secret-scan: fixture
       const two = await run("t-flux", "two", { ...base, model: "flux::flux-auto" });
       expect(two.pid).not.toBe(one.pid);
-      expect(dispatches()[1]).toBe("codex dispatch thread=t-flux process=spawned reason=env");
+      expect(dispatches()[1]).toBe("codex dispatch thread=t-flux process=spawned reason=no-process");
     });
 
     it("2. a credential file that cannot be emptied settles the turn and closes the process", async () => {
       hooks.failClear = true;
       await create();
       const one = await run("t-clear", "one", base);
+      expect(one.cred?.content?.agents?.MURAGE_COMMS_TOKEN).toBe("tok-1");
       expect(one.completed.ok).toBe(true);
-      expect(closes().at(-1)).toBe("codex close thread=t-clear reason=credential clear failed");
+      expect(closes().at(-1)).toBe("codex close thread=t-clear reason=mounted-single-use");
       await eventually(() => exited(one.pid!));
       hooks.failClear = false;
       const two = await run("t-clear", "two", base);
@@ -485,8 +652,9 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     it("3. keeps no plaintext secret in the warm key's parts", async () => {
       await create();
       const local = { command: process.execPath, args: ["--token=sekret-arg"], env: { BOX_TOKEN_X: "sekret-env", CUSTOM_CRED: "sekret-custom" } };
-      await run("t-parts", "one", { ...base, integrations: { ...agents("tok-1"), localComputer: local as never } });
-      expect(hooks.keyParts.length).toBeGreaterThan(0);
+      await refusedMount("t-parts", "one", { ...base, integrations: { ...agents("tok-1"), localComputer: local as never } });
+      // No external spawn contract is constructed at all (design 397).
+      expect(hooks.keyParts).toEqual([]);
       const dumped = JSON.stringify(hooks.keyParts);
       for (const secret of ["sekret-arg", "sekret-env", "sekret-custom", "tok-1"]) expect(dumped).not.toContain(secret);
     });
@@ -513,7 +681,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       await create();
       setMode("late-approval");
       const one = await run("t-late", "one", base);
-      await eventually(() => closes().some((l) => l === "codex close thread=t-late reason=permission ask while idle"));
+      await eventually(() => closes().some((l) => l === "codex close thread=t-late reason=mounted-single-use"));
       setMode("resume");
       const two = await run("t-late", "two", base);
       expect(two.pid).not.toBe(one.pid);
@@ -531,6 +699,9 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
         return new Set([pid + 1]);
       };
       await create();
+      // S1:10: retained settle probes exist only for mount-free turns.
+      const send = instance.adapter.sendTurn.bind(instance.adapter);
+      instance.adapter.sendTurn = input => send({ ...input, integrations: undefined });
       await run("t-slot", "one", base);
       const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slot", text: "two", resumeCursor: sessions.get("t-slot"), ...base });
       await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slot", text: "three", ...base })).rejects.toThrow(/already running/);
@@ -555,6 +726,9 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
         return new Set([pid + 1]);
       };
       await create();
+      // S1:10: retained settle probes exist only for mount-free turns.
+      const send = instance.adapter.sendTurn.bind(instance.adapter);
+      instance.adapter.sendTurn = input => send({ ...input, integrations: undefined });
       await run("t-slot-quit", "one", base);
       const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slot-quit", text: "two", resumeCursor: sessions.get("t-slot-quit"), ...base });
       await instance.adapter.interruptTurn("t-slot-quit");
@@ -571,11 +745,12 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
 
     it("7. a process that will not stop stays owned: Stop and dispose report it until it is gone", async () => {
       await create();
-      await run("t-stuck", "one", base);
+      await runOpen("t-stuck");
       hooks.stuck = true;
       await expect(instance.adapter.interruptTurn("t-stuck")).rejects.toThrow(/still pending/);
+      expect(recorder.events.filter(e => e.threadId === "t-stuck" && e.type === "request.resolved")).toEqual([expect.objectContaining({ behavior: "deny", source: "system" })]);
       await expect(instance.dispose()).rejects.toThrow(/still pending/);
-      hooks.stuck = false;
+      hooks.stuck = false; await hooks.releaseStops();
       await instance.dispose();
     });
 
@@ -583,7 +758,8 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       await create();
       // fullAuto would accept whatever reached the next turn's handler
       await instance.dispose();
-      instance = await CodexDriver.create({ instanceId: "codex-warm-test", displayName: "Codex Warm Test", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
+      instance = await admittedFixtureInstance(CodexDriver.create({ instanceId: "codex-warm-test", displayName: "Codex Warm Test", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } }));
+      bindFixtureAdapter(instance.adapter);
       recorder = recordEvents(instance.adapter);
       catalogSpawns = allSpawns().length;
       setMode("split-approval");
@@ -591,7 +767,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       setMode("resume");
       const two = await run("t-split", "two", base);
       await new Promise((r) => setTimeout(r, 600));
-      expect(closes()).toContain("codex close thread=t-split reason=partial frame at settle");
+      expect(closes()).toContain("codex close thread=t-split reason=mounted-single-use");
       expect(two.pid).not.toBe(one.pid);
       expect(spawns()).toHaveLength(2);
       expect(recorder.events.filter((e) => e.type === "request.opened")).toEqual([]);
@@ -599,12 +775,12 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
 
     it("10. a second Stop on a process that survived the first reports failure until it is gone", async () => {
       await create();
-      const one = await run("t-stop2", "one", base);
+      const one = await runOpen("t-stop2");
       hooks.stuck = true;
       await expect(instance.adapter.interruptTurn("t-stop2")).rejects.toThrow(/still pending/);
       await expect(instance.adapter.interruptTurn("t-stop2")).rejects.toThrow(/still pending/);
       expect(exited(one.pid!)).toBe(false);
-      hooks.stuck = false;
+      hooks.stuck = false; await hooks.releaseStops();
       await instance.adapter.interruptTurn("t-stop2");
       await eventually(() => exited(one.pid!));
     });
@@ -626,7 +802,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       await new Promise((r) => setTimeout(r, 500));
       expect(readFileSync(callLog, "utf8")).not.toContain("turn/start");
       expect(recorder.events.some((e) => e.type === "turn.completed" && e.turnId === sent.turnId && (e as any).stopReason === "completed")).toBe(false);
-      hooks.stuck = false;
+      hooks.stuck = false; await hooks.releaseStops();
     });
 
     it("8. binds a Windows credential path so its backslashes survive in the generated config", () => {
@@ -704,10 +880,11 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     const gated = async () => {
       resetIsolationCache();
       process.env.FAKE_CODEX_VERSION = "codex-cli 0.150.0";
-      instance = await CodexDriver.create({
+      instance = await admittedFixtureInstance(CodexDriver.create({
         instanceId: "codex-warm-gated", displayName: "Codex Warm Test", environment: { CODEX_HOME: ownerHome }, enabled: true,
         config: { cli: FAKE_CLI, fullAuto: false },
-      });
+      }));
+      bindFixtureAdapter(instance.adapter);
       recorder = recordEvents(instance.adapter);
       catalogSpawns = allSpawns().length;
       // the fake plays one shell call through the hook on every gated turn: its card is allowed
@@ -733,10 +910,10 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       resetIsolationCache();
     });
 
-    it("F13 + F14: each conversation's process has its own file; a reused turn rewrites only its own; a close removes it", async () => {
+    it("F13 + F14: each conversation's process has its own file; a reused turn keeps its authenticated bytes; a close removes it", async () => {
       await gated();
       // a first conversation names the scope; closing it removes its process's file
-      const w = await run("t-env-0", "one", { ...base, cwd: scratch });
+      const w = await run("t-env-0", "one", { ...unmountedBase, cwd: scratch });
       const envW = envOf(w);
       const home = dirname(envW);
       expect(home).toBe(join(w.seen.env.CODEX_HOME, "hook-env"));
@@ -746,23 +923,27 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       holdThreads.add("t-env-a");
       try {
         // A is busy on an open card: its process and its file are live
-        const a = await instance.adapter.sendTurn({ threadId: "t-env-a", text: "one", ...base, cwd: scratch });
+        const a = await instance.adapter.sendTurn({ threadId: "t-env-a", text: "one", ...unmountedBase, cwd: scratch });
         const card: any = await recorder.until((e: any) => e.type === "request.opened" && e.turnId === a.turnId);
         const filesNow = () => readdirSync(home).filter((f) => f.endsWith(".env"));
         expect(filesNow()).toHaveLength(1);
         const envA = join(home, filesNow()[0]!);
         const tokenA = readFileSync(envA, "utf8");
         // B's two turns on one kept process
-        const b1 = await run("t-env-b", "one", { ...base, cwd: scratch });
+        const b1 = await run("t-env-b", "one", { ...unmountedBase, cwd: scratch });
         const envB = envOf(b1);
         expect(envB).not.toBe(envA);
         expect(dirname(envB)).toBe(home);
         const tokenB = readFileSync(envB, "utf8");
-        const b2 = await run("t-env-b", "two", { ...base, cwd: scratch });
+        expect(tokenB).not.toBe(tokenA); // distinct children still have distinct credentials
+        const b2 = await run("t-env-b", "two", { ...unmountedBase, cwd: scratch });
         expect(lines.join(" | ")).toContain("thread=t-env-b process=reused");
         expect(b2.pid).toBe(b1.pid);
         expect(envOf(b2)).toBe(envB);
-        expect(readFileSync(envB, "utf8")).not.toBe(tokenB);
+        // Rev 8: the env hash and token are fixed for one child lifetime.
+        expect(readFileSync(envB, "utf8")).toBe(tokenB);
+        expect(tokenB).not.toBe(tokenA);
+        expect(createHash("sha256").update(tokenB).digest("hex")).toBe(b2.seen.env.MURAGE_CODEX_HOOK_ENV_SHA256);
         // A's file was never touched by B's turns
         expect(readFileSync(envA, "utf8")).toBe(tokenA);
         holdThreads.delete("t-env-a");
@@ -776,19 +957,33 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       }
     });
 
+    // Pins the mounted contract the F4 cases above no longer exercise (they run unmounted): a MOUNTED turn is single use (S1 section 0).
+    it("F13 mounted: a second mounted turn starts a new process, and the hook env file of the first is removed, never reused", async () => {
+      await gated();
+      const m1 = await run("t-env-m", "one", { ...base, cwd: scratch });
+      const envM1 = envOf(m1);
+      await eventually(() => !existsSync(envM1));
+      const m2 = await run("t-env-m", "two", { ...base, cwd: scratch });
+      expect(lines.join(" | ")).not.toContain("thread=t-env-m process=reused");
+      expect(m2.pid).toBeTruthy();
+      expect(m2.pid).not.toBe(m1.pid);
+      expect(envOf(m2)).not.toBe(envM1);
+    });
+
     it("F19: a close whose kill is not confirmed keeps the file and the conversation owned; a hook whose file was swept is blocked", async () => {
       await gated();
-      const a1 = await run("t-env-stuck", "one", { ...base, cwd: scratch });
+      const a1 = await run("t-env-stuck", "one", { ...unmountedBase, cwd: scratch });
       const envA = envOf(a1);
       hooks.stuck = true;
       await expect(instance.adapter.interruptTurn("t-env-stuck")).rejects.toThrow(/still pending/);
       expect(existsSync(envA)).toBe(true);
-      await expect(instance.adapter.sendTurn({ threadId: "t-env-stuck", text: "again", ...base, cwd: scratch })).rejects.toThrow(/has not closed yet/);
+      await expect(instance.adapter.sendTurn({ threadId: "t-env-stuck", text: "again", ...unmountedBase, cwd: scratch })).rejects.toThrow(/has not closed yet/);
       hooks.stuck = false;
       await instance.adapter.interruptTurn("t-env-stuck");
       await eventually(() => !existsSync(envA));
       // a leftover engine of an earlier Murage run finds no file: its hook blocks, it is never handed another process's socket
       const blocked = spawnSync(process.execPath, [join(a1.seen.env.CODEX_HOME, "murage-hook.mjs")], {
+        windowsHide: true,
         input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_use_id: "x" }),
         env: { ...process.env, MURAGE_CODEX_HOOK_ENV: envA },
       });
@@ -798,18 +993,76 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       expect(String(blocked.stderr)).toContain("Murage blocked this call");
     });
 
+  // MAIN RULING 1114-SC-SAFETY-HSCOPE4: keep the frozen ID; additional coverage has its own ID.
+  it("SC-SAFETY added coverage: F19: a close whose kill is not confirmed keeps the file and the conversation owned; a hook whose file was swept is blocked", async () => {
+      await gated();
+      const a1 = await run("t-env-stuck", "one", { ...unmountedBase, cwd: scratch });
+      const envA = envOf(a1);
+      hooks.stuck = true;
+      await expect(instance.adapter.interruptTurn("t-env-stuck")).rejects.toThrow(/still pending/);
+      expect(existsSync(envA)).toBe(true);
+      await expect(instance.adapter.sendTurn({ threadId: "t-env-stuck", text: "again", ...unmountedBase, cwd: scratch })).rejects.toThrow(/has not closed yet/);
+      hooks.stuck = false;
+      await instance.adapter.interruptTurn("t-env-stuck");
+      await eventually(() => !existsSync(envA));
+      // The current bound hook finds the swept file and emits only the exact
+      // fixed refusal frame. Filesystem details must not reach the model.
+      const boundBlocked = spawnSync(process.execPath, [join(a1.seen.env.CODEX_HOME, "murage-hook.mjs")], {
+        windowsHide: true,
+        input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_use_id: "x" }),
+        env: { ...process.env, MURAGE_CODEX_HOOK_ENV: envA },
+      });
+      expect(boundBlocked.status).toBe(0);
+      expect(boundBlocked.stdout.toString()).toBe(HOOK_CONTROL_FRAMES["deny.unchecked"]);
+      expect(boundBlocked.stderr.toString()).toBe("Murage blocked this call\n");
+      expect(boundBlocked.stdout.toString() + boundBlocked.stderr.toString()).not.toContain("ENOENT");
+      expect(existsSync(envA)).toBe(false);
+
+      // An earlier Murage run used the real unbound hook archived from 7c9ce6fe
+      // (source blob a6338e8b575b284b406db3d51345e10a25433ddb). Its diagnostics
+      // belong to that older contract. The legacy env remains readable while
+      // its socket is gone; the current swept-env case above remains separate.
+      // The archived script is copied unchanged, never rewritten for this test.
+      const legacyHome = join(scratch, "legacy-hook");
+      mkdirSync(join(legacyHome, "hook-env"), { recursive: true, mode: 0o700 });
+      const legacyBytes = readFileSync(new URL("../testing/fixtures/codex-hook-legacy-7c9ce6fe.mjs", import.meta.url));
+      expect(createHash("sha256").update(legacyBytes).digest("hex")).toBe("fdb23c85d18cdd4dd371bfc1265d134477ed77b19360d13131009cc4421d12bc");
+      const legacyScript = join(legacyHome, "murage-hook.mjs");
+      writeFileSync(legacyScript, legacyBytes, { mode: 0o600 });
+      const legacySocket = hookSocketPath(), legacyEnv = join(legacyHome, "hook-env", "retired.env");
+      expect(existsSync(legacySocket)).toBe(false);
+      const legacyEnvBytes = `SOCKET=${legacySocket}\nTOKEN=fixture\n`;
+      writeFileSync(legacyEnv, legacyEnvBytes, { mode: 0o600 });
+      const blocked = spawnSync(process.execPath, [legacyScript], {
+        windowsHide: true,
+        input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_use_id: "x" }),
+        env: { ...process.env, MURAGE_CODEX_HOOK_ENV: legacyEnv, MURAGE_CODEX_HOOK_ENV_SHA256: createHash("sha256").update(legacyEnvBytes).digest("hex") },
+      });
+      // PreToolUse refusals print a deny with exit 0 so Codex reads the decision on every shell.
+      expect(blocked.status).toBe(0);
+      expect(JSON.parse(String(blocked.stdout)).hookSpecificOutput).toMatchObject({ hookEventName: "PreToolUse", permissionDecision: "deny" });
+      expect(JSON.parse(blocked.stdout.toString())).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: expect.stringMatching(/^Murage blocked this call: .*ENOENT/),
+        },
+      });
+      expect(String(blocked.stderr)).toContain("Murage blocked this call");
+    });
+
     it("F21: a second Codex instance on the same scope sweeps at its start and keeps the first instance's live file; the first's hooks keep working", async () => {
       await gated();
       const x = instance;
       const xRecorder = recorder;
-      const x1 = await run("t-env-x", "one", { ...base, cwd: scratch });
+      const x1 = await run("t-env-x", "one", { ...unmountedBase, cwd: scratch });
       const envX = envOf(x1);
       const home = x1.seen.env.CODEX_HOME as string;
       const dead = join(home, "hook-env", "999999-0dead.env");
       writeFileSync(dead, "SOCKET=x\nTOKEN=y\n");
       // the second instance: its own driver start, the same bot scope
       await gated();
-      const y1 = await run("t-env-y", "one", { ...base, cwd: scratch });
+      const y1 = await run("t-env-y", "one", { ...unmountedBase, cwd: scratch });
       expect(y1.seen.env.CODEX_HOME).toBe(home);
       expect(existsSync(dead)).toBe(false);
       expect(existsSync(envX)).toBe(true);
@@ -819,7 +1072,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       // back on the first instance: its retained process's hook still reaches its own turn (an in-project edit is allowed by the hook)
       instance = x;
       recorder = xRecorder;
-      const x2 = await run("t-env-x", "two", { ...base, cwd: scratch });
+      const x2 = await run("t-env-x", "two", { ...unmountedBase, cwd: scratch });
       expect(x2.pid).toBe(x1.pid);
       expect(x2.completed).toMatchObject({ ok: true });
       expect(x2.seen.hookLog.at(-1)).toMatchObject({ id: "i1", verdict: "allow" });
@@ -838,7 +1091,7 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
   let catalogSpawns = 0;
   const sessions = new Map<string, string>();
   const base = {
-    integrations: { agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok-1", MURAGE_TURN_DEPTH: "0" } } },
+    integrations: { agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok-1", MURAGE_TURN_DEPTH: "0" } } },
     warmIdentity: { botId: "b1", audience: "owner" as const },
   } satisfies Partial<SendTurnInput>;
   const spawns = () => readFileSync(spawnLog, "utf8").split("\n").filter(Boolean).slice(catalogSpawns);
@@ -858,12 +1111,13 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
   const goCold = async (threadId: string) => {
     await run(threadId, "one", base);
     await eventually(() => warmPool.idleCount() === 0);
-    await eventually(() => lines.some((l) => l.startsWith(`codex close thread=${threadId} reason=activity window`)));
+    await eventually(() => lines.some((l) => l.startsWith(`codex close thread=${threadId} reason=mounted-single-use`)));
   };
 
   beforeEach(() => {
     chmodSync(FAKE_CLI, 0o755);
     sessions.clear();
+    base.warmIdentity.botId = randomUUID();
     scratch = mkdtempSync(join(tmpdir(), "murage-codex-prewarm-"));
     spawnLog = join(scratch, "spawns.log");
     writeFileSync(spawnLog, "");
@@ -876,175 +1130,180 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
     lines = [];
     info = vi.spyOn(console, "info").mockImplementation((line: unknown) => { if (typeof line === "string" && line.startsWith("codex ")) lines.push(line); });
     probe.override = null;
-    hooks.stuck = false; hooks.failClear = false; hooks.clears = 0; hooks.keyParts.length = 0;
+    hooks.stuck = false; hooks.failClear = false; hooks.clears = 0; hooks.keyParts.length = 0; hooks.stores.length = 0;
   });
   afterEach(async () => {
     for (const key of [...ENV, "MURAGE_WARM_ACTIVITY_WINDOW_MS"]) delete process.env[key];
+    hooks.stuck = false; await hooks.releaseStops();
     info.mockRestore();
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
   });
   const create = async () => {
-    instance = await CodexDriver.create({
+    instance = await admittedFixtureInstance(CodexDriver.create({
       instanceId: "codex-prewarm-test", displayName: "Codex Prewarm Test", environment: {}, enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false },
-    });
+    }));
+    bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
     catalogSpawns = readFileSync(spawnLog, "utf8").split("\n").filter(Boolean).length;
   };
 
-  it("starts a cold app-server once, parks it held, and releases it when no send follows", async () => {
+  it("mounted prewarm starts no app-server, emits nothing and leaves no idle slot", async () => {
     await create();
     await goCold("t-pw-release");
-    expect(spawns()).toHaveLength(1);
     const before = recorder.events.length;
-    expect(await instance.adapter.prewarm!("t-pw-release")).toBe(true);
-    expect(spawns()).toHaveLength(2);
-    expect(recorder.events.length).toBe(before); // a warm announces nothing
-    expect(warmPool.idleCount()).toBe(1);
-    expect(await instance.adapter.prewarm!("t-pw-release")).toBe(false); // live: nothing to start
-    expect(spawns()).toHaveLength(2);
-    await new Promise((r) => setTimeout(r, 400));
+    expect(await instance.adapter.prewarm!("t-pw-release")).toBe(false);
+    expect(await instance.adapter.prewarm!("t-pw-release")).toBe(false);
+    expect(spawns()).toHaveLength(1);
+    expect(recorder.events).toHaveLength(before);
     await warmPool.tick();
     expect(warmPool.idleCount()).toBe(0);
-    await eventually(() => lines.filter((l) => l.startsWith("codex close thread=t-pw-release reason=activity window")).length === 2);
+    expect(lines.filter(l => l.startsWith("codex close thread=t-pw-release reason=mounted-single-use"))).toHaveLength(1);
   });
 
-  it("holdIdle (a deleted conversation is being removed from the engine's files) closes the parked app-server, warms nothing while held, and allows it again after", async () => {
-    await create();
-    await goCold("t-pw-hold");
-    expect(await instance.adapter.prewarm!("t-pw-hold")).toBe(true);
-    const hold = await instance.adapter.holdIdle!();
-    expect(hold.confirmed).toBe(true);
-    await eventually(() => lines.some((l) => l.startsWith("codex close thread=t-pw-hold reason=deletion-hold")));
-    expect(await instance.adapter.prewarm!("t-pw-hold")).toBe(false);
-    hold.release();
-    expect(await instance.adapter.prewarm!("t-pw-hold")).toBe(true);
-  });
-
-  it("holdIdle waits for a close that is already in flight (the engine left `retained` but may still be writing): confirmed only if that process really stopped", async () => {
-    for (const stopped of [true, false]) {
+  it.each(["ordinary", "confirmation pending", "unconfirmed stop", "spawn race"])(
+    "mounted prewarm is refused before holdIdle with %s", async fault => {
       await create();
-      await goCold(`t-hold-flight-${stopped}`);
-      expect(await instance.adapter.prewarm!(`t-hold-flight-${stopped}`)).toBe(true);
-      let answer!: (value: boolean) => void;
-      hooks.hang = new Promise<boolean>((resolve) => { answer = resolve; });
-      const stopping = instance.adapter.interruptTurn(`t-hold-flight-${stopped}`).catch(() => "pending"); // closes the parked app-server; it is no longer retained, its close is in flight
-      let settled = false;
-      const holding = instance.adapter.holdIdle!().then((hold) => { settled = true; return hold; });
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      expect(settled, "the hold waits for the close in flight").toBe(false);
-      answer(stopped);
-      const hold = await holding;
-      expect(hold.confirmed, stopped ? "the process stopped" : "the process did not stop: it stays owned and the files stay alone").toBe(stopped);
-      hooks.hang = null;
-      hooks.stuck = false;
-      hold.release();
-      await stopping;
-    }
-  });
+      await goCold("t-pw-hold");
+      const held = Number(spawns().at(-1));
+      expect(exitedPid(held)).toBe(true);
+      if (fault === "confirmation pending") hooks.hang = new Promise<boolean>(() => {});
+      if (fault === "unconfirmed stop") hooks.stuck = true;
+      try {
+        const warming = instance.adapter.prewarm!("t-pw-hold");
+        const hold = await instance.adapter.holdIdle!();
+        try {
+          expect(await warming).toBe(false);
+          expect(hold.confirmed).toBe(true); // no prewarm child exists to hold
+          expect(await instance.adapter.prewarm!("t-pw-hold")).toBe(false);
+        } finally { hold.release(); }
+        expect(await instance.adapter.prewarm!("t-pw-hold")).toBe(false);
+        expect(spawns()).toHaveLength(1);
+        expect(warmPool.idleCount()).toBe(0);
+      } finally { hooks.hang = null; hooks.stuck = false; }
+    });
 
-  it("a process that would not stop earlier keeps the hold unconfirmed until it does", async () => {
-    await create();
-    await goCold("t-hold-stuck");
-    expect(await instance.adapter.prewarm!("t-hold-stuck")).toBe(true);
-    hooks.stuck = true;
-    await instance.adapter.interruptTurn("t-hold-stuck").catch(() => undefined); // closed, but never reported stopped: it is in the stuck registry
-    const refused = await instance.adapter.holdIdle!();
-    expect(refused.confirmed).toBe(false);
-    refused.release();
-    hooks.stuck = false;
-    const allowed = await instance.adapter.holdIdle!();
-    expect(allowed.confirmed).toBe(true);
-    allowed.release();
-  });
-
-  it("a prewarm that is already starting meets the hold at its spawn: no app-server is started, and the hold is confirmed", async () => {
-    await create();
-    await goCold("t-pw-hold-race");
-    const before = spawns().length;
-    const warming = instance.adapter.prewarm!("t-pw-hold-race"); // admitted: nothing is held yet
-    const hold = await instance.adapter.holdIdle!();
-    expect(await warming).toBe(false);
-    expect(hold.confirmed).toBe(true);
-    expect(spawns()).toHaveLength(before);
-    expect(warmPool.idleCount()).toBe(0);
-    hold.release();
-    expect(await instance.adapter.prewarm!("t-pw-hold-race")).toBe(true);
-  });
-
-  it("prewarm then send reuses the app-server: no second spawn", async () => {
+  it("refused mounted prewarm then send starts a second app-server", async () => {
     await create();
     await goCold("t-pw-reuse");
     // goCold needed the short window; now the parked engine must outlive the send. The pool
     // judges the window when its size probe answers, and a real Windows listing (~0.5 s)
     // outlasts 250 ms, so the engine would be let go as idle first (reason=no-process).
     process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000";
-    expect(await instance.adapter.prewarm!("t-pw-reuse")).toBe(true);
+    expect(await instance.adapter.prewarm!("t-pw-reuse")).toBe(false);
     await run("t-pw-reuse", "two", base);
     expect(spawns()).toHaveLength(2);
-    expect(dispatches().at(-1)).toContain("process=reused reason=unchanged");
+    expect(dispatches().at(-1)).toContain("process=spawned reason=no-process");
   });
 
-  it("prewarm then a changed warm key recycles the process instead of reusing it", async () => {
+  it("a changed key after refused mounted prewarm still takes the cold path", async () => {
     await create();
     await goCold("t-pw-key");
     // goCold needed the short window; now the parked engine must outlive the send. The pool
     // judges the window when its size probe answers, and a real Windows listing (~0.5 s)
     // outlasts 250 ms, so the engine would be let go as idle first (reason=no-process).
     process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000";
-    expect(await instance.adapter.prewarm!("t-pw-key")).toBe(true);
+    expect(await instance.adapter.prewarm!("t-pw-key")).toBe(false);
     await run("t-pw-key", "two", { ...base, routeAsks: true });
-    expect(spawns()).toHaveLength(3);
-    expect(dispatches().at(-1)).toContain("process=spawned reason=routeAsks");
+    expect(spawns()).toHaveLength(2);
+    expect(dispatches().at(-1)).toContain("process=spawned reason=no-process");
   });
 
-  it("a prewarmed app-server's credential file is emptied before it idles, as after a settled turn", async () => {
+  it("mounted intent-prewarm creates no new credentials or process (S1)", async () => {
     await create();
     await goCold("t-pw-cred");
     const before = hooks.clears;
-    expect(await instance.adapter.prewarm!("t-pw-cred")).toBe(true);
-    expect(hooks.clears).toBe(before + 1);
+    expect(await instance.adapter.prewarm!("t-pw-cred")).toBe(false);
+    expect(hooks.clears).toBe(before);
+    // The counted clear must belong to a real, populated driver store. A
+    // mount-free prewarm cannot satisfy this disk/lifecycle evidence.
+    expect(hooks.stores.length).toBe(1);
+    const store = hooks.stores.at(-1)!;
+    expect(store.writes.some(secrets => secrets.agents?.MURAGE_COMMS_TOKEN === "tok-1")).toBe(true);
+    expect(existsSync(store.path)).toBe(false);
+    expect(warmPool.idleCount()).toBe(0);
   });
 
-  it("a prewarm whose credential file cannot be emptied closes the process instead of parking it", async () => {
+  it("mounted prewarm never reaches credential clear, even when clear would fail (S1)", async () => {
     await create();
     await goCold("t-pw-cred-fail");
     hooks.failClear = true;
     expect(await instance.adapter.prewarm!("t-pw-cred-fail")).toBe(false);
+    expect(hooks.stores.length).toBe(1);
+    expect(hooks.stores.at(-1)!.writes.some(secrets => secrets.agents?.MURAGE_COMMS_TOKEN === "tok-1")).toBe(true);
     expect(warmPool.idleCount()).toBe(0);
-    await eventually(() => lines.some((l) => l.startsWith("codex close thread=t-pw-cred-fail reason=credential clear failed")));
+    expect(lines.some((l) => l.startsWith("codex prewarm thread=t-pw-cred-fail"))).toBe(false);
   });
 
-  it("a send that outwaits a slow prewarm takes over: the prewarm is cancelled and its slot freed, never 'already running'", async () => {
+  it.each(["slow resume", "failed takeover", "unconfirmed clear"])(
+    "mounted prewarm never enters %s and the next admitted turn starts cold", async fault => {
+      await create();
+      await goCold("t-pw-fault");
+      const first = Number(spawns().at(-1));
+      const gate = join(scratch, "resume-gate");
+      process.env.FAKE_CODEX_RESUME_GATE = gate;
+      process.env.MURAGE_PREWARM_WAIT_MS = "50";
+      process.env.MURAGE_PREWARM_TAKEOVER_MS = "400";
+      hooks.stuck = fault !== "slow resume";
+      hooks.failClear = fault === "unconfirmed clear";
+      try {
+        expect(await instance.adapter.prewarm!("t-pw-fault")).toBe(false);
+        expect(spawns()).toHaveLength(1);
+        expect(exitedPid(first)).toBe(true);
+        expect(hooks.stores).toHaveLength(1);
+        expect(warmPool.idleCount()).toBe(0);
+      } finally {
+        hooks.stuck = false; hooks.failClear = false;
+        delete process.env.MURAGE_PREWARM_TAKEOVER_MS;
+        writeFileSync(gate, "open");
+      }
+      const next = await run("t-pw-fault", "two", base);
+      expect(next.turnId).toBeTruthy();
+      expect(spawns()).toHaveLength(2);
+      expect(Number(spawns().at(-1))).not.toBe(first);
+      expect(dispatches().at(-1)).toContain("process=spawned reason=no-process");
+    });
+
+  // RULED (MurageMain, s21): a mounted prewarm is refused before any spawn (codex.ts mountedTurn gate), so the takeover path
+  // (codex.ts prewarm takeover) is reachable only by an UNMOUNTED prewarm, e.g. a bot with no integrations. The tip assertions
+  // for that path are restored here on an unmounted turn, unchanged apart from the base and the close reason of an unmounted goCold.
+  const unmounted = { warmIdentity: base.warmIdentity } satisfies Partial<SendTurnInput>;
+  const goColdUnmounted = async (threadId: string) => {
+    await run(threadId, "one", unmounted);
+    await eventually(() => warmPool.idleCount() === 0);
+    await eventually(() => lines.some((l) => l.startsWith(`codex close thread=${threadId} reason=activity window`)));
+  };
+
+  it("unmounted: a send that outwaits a slow prewarm takes over: the prewarm is cancelled and its slot freed, never already running", async () => {
     await create();
-    await goCold("t-pw-slow");
+    await goColdUnmounted("t-pw-slow");
     const gate = join(scratch, "resume-gate");
     process.env.FAKE_CODEX_RESUME_GATE = gate;
     process.env.MURAGE_PREWARM_WAIT_MS = "100";
     const warming = instance.adapter.prewarm!("t-pw-slow");
     await eventually(() => spawns().length === 2);
-    await new Promise((r) => setTimeout(r, 200)); // past the send's wait; the warm's start is still held
-    setTimeout(() => writeFileSync(gate, "open"), 500); // the real send's own app-server may start once the warm is gone
-    const sent = await run("t-pw-slow", "two", base);
+    await new Promise((r) => setTimeout(r, 200));
+    setTimeout(() => writeFileSync(gate, "open"), 500);
+    const sent = await run("t-pw-slow", "two", unmounted);
     expect(sent.turnId).toBeTruthy();
     await warming;
   });
 
-  it("a takeover that cannot end the prewarm fails the send clearly within its bound, never 'already running'", async () => {
+  it("unmounted: a takeover that cannot end the prewarm fails the send clearly within its bound, never already running", async () => {
     await create();
-    await goCold("t-pw-stuck");
+    await goColdUnmounted("t-pw-stuck");
     process.env.FAKE_CODEX_RESUME_GATE = join(scratch, "never-opens");
     process.env.MURAGE_PREWARM_WAIT_MS = "50";
     process.env.MURAGE_PREWARM_TAKEOVER_MS = "400";
     const warming = instance.adapter.prewarm!("t-pw-stuck");
     await eventually(() => spawns().length === 2);
-    hooks.stuck = true; // the warm's app-server ignores every kill
+    hooks.stuck = true;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const t0 = Date.now();
-      const error = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pw-stuck", text: "two", ...base }).then(() => null, (e: Error) => e);
+      const error = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pw-stuck", text: "two", ...unmounted }).then(() => null, (e: Error) => e);
       expect(error?.message).toMatch(/did not stop in time/);
       expect(error?.message).not.toMatch(/already running/);
       expect(Date.now() - t0).toBeLessThan(3_000);
@@ -1058,13 +1317,19 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
     await warming;
   });
 
+  // RULED (MurageMain, s21): the tip test "a prewarm whose close is unconfirmed stays owned in the stuck registry" (held pid alive,
+  // send rejects /has not closed yet/, interruptTurn rejects /still pending/, spawns 2 then 3) is retired together with the dead
+  // codex.ts branch it covered (prewarm credential-clear failure). An unmounted prewarm has no credential store to fail clearing.
+
   it("a prewarm whose close is unconfirmed stays owned in the stuck registry: the next send is refused until it is gone", async () => {
     await create();
-    await goCold("t-pw-unclosed");
-    hooks.failClear = true;
+    await goColdUnmounted("t-pw-unclosed");
+    // D5: exercise real retained-process ownership through the stop I/O edge.
+    await instance.adapter.prewarm!("t-pw-unclosed");
     hooks.stuck = true; // and its app-server will not stop
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
+      await expect(instance.adapter.interruptTurn("t-pw-unclosed")).rejects.toThrow(/still pending/);
       expect(await instance.adapter.prewarm!("t-pw-unclosed")).toBe(false);
       const held = Number(spawns().at(-1));
       expect(exitedPid(held)).toBe(false);
@@ -1082,6 +1347,33 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
       warn.mockRestore();
       hooks.stuck = false; hooks.failClear = false;
     }
+  });
+
+  it("the fence runs at the spawn with the cursor the launch resumes; a pass starts the engine", async () => {
+    await create();
+    // S1 admits intent prewarm only without mounted integrations. Keep its
+    // real fence/spawn path alive while the process-table probe completes.
+    await goColdUnmounted("t-pw-fence");
+    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000";
+    const fence = vi.fn();
+    expect(await instance.adapter.prewarm!("t-pw-fence", { fence })).toBe(true);
+    expect(fence.mock.calls).toEqual([[sessions.get("t-pw-fence")]]);
+  });
+
+  it("a fence refusal spawns nothing, answers false and ends the spare lost fence:<reason>", async () => {
+    await create();
+    await goColdUnmounted("t-pw-refused");
+    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000";
+    const before = spawns().length;
+    const lost = () => reuseStats.snapshot().spares.lost["fence:cursor-moved"] ?? 0;
+    const was = lost();
+    const events = recorder.events.length;
+    expect(await instance.adapter.prewarm!("t-pw-refused", { fence: () => { throw new PrewarmRefused("cursor-moved"); } })).toBe(false);
+    expect(spawns()).toHaveLength(before);
+    expect(lost()).toBe(was + 1);
+    expect(recorder.events.length).toBe(events); // nobody is told
+    expect(instance.adapter.hasSession("t-pw-refused")).toBe(false);
+    expect(await instance.adapter.prewarm!("t-pw-refused")).toBe(true); // nothing stays held
   });
 
   it("with no remembered args prewarm is a no-op, and a routine turn leaves nothing to warm", async () => {

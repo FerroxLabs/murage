@@ -15,6 +15,7 @@
 // Thu 5 Nov (1.0.14 last merge): the copy lane folds every fragment into
 // en.json and deletes this folder, so the frozen build has one catalogue.
 import d24 from "./d24.json";
+import cloud from "./cloud.json";
 import l1 from "./l1.json";
 import l2a from "./l2a.json";
 import l2b from "./l2b.json";
@@ -39,7 +40,7 @@ import lfb from "./lfb.json";
 import lgate from "./lgate.json";
 
 /** Each lane's fragment by lane id (the file name and the key prefix `ux.<lane>.`). */
-export const enUxFragments = { d24, l1, l2a, l2b, l2c, l3a, l3b, l4a, l4b, l4c, l5a, l5b, l6a, l6b, l6c, l7, l8, lcopya, lcopyb, lcopyc, lcopyd, lfb, lgate } as const;
+export const enUxFragments = { cloud, d24, l1, l2a, l2b, l2c, l3a, l3b, l4a, l4b, l4c, l5a, l5b, l6a, l6b, l6c, l7, l8, lcopya, lcopyb, lcopyc, lcopyd, lfb, lgate } as const;
 
 type Fragments = typeof enUxFragments;
 type UnionToIntersection<U> = (U extends unknown ? (value: U) => void : never) extends (value: infer I) => void ? I : never;

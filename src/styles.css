@@ -577,35 +577,73 @@ select optgroup {
   color: var(--color-ink);
 }
 
-/* Chromium honours EITHER the standard properties OR the ::-webkit-scrollbar
- * pseudo-elements, never both: the moment an element sets `scrollbar-width`,
- * every webkit rule below is dropped and you get the default light scrollbar
- * on a dark panel. So the standard pair is declared here too, and the two
- * paths are kept in sync. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-scrollbar) transparent;
+/* A 4px pill inside a 10px grab area, shared by every scroller. thin-scroll
+ * names the same treatment for components without setting their overflow.
+ * Chromium ignores the pseudo-elements when standard scrollbar properties
+ * are set, so those properties live only in the non-WebKit fallback. */
+/* Styled bars follow the PRIMARY pointer: a touch laptop (fine primary, coarse
+ * secondary) keeps them, a phone or tablet (coarse primary) does not. On a touch screen the browser's own overlay bars
+ * (thin, fade out, take no layout width) are right. */
+@media (hover: hover) and (pointer: fine) {
+  @supports not selector(::-webkit-scrollbar) {
+    *,
+    .thin-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: var(--color-scrollbar) transparent;
+    }
+    *:hover,
+    .thin-scroll:hover {
+      scrollbar-color: color-mix(in srgb, var(--color-scrollbar), white 15%) transparent;
+    }
+  }
+  ::-webkit-scrollbar,
+  .thin-scroll::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track,
+  .thin-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb,
+  .thin-scroll::-webkit-scrollbar-thumb {
+    background: var(--color-scrollbar);
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+    min-height: 36px;
+    min-width: 36px;
+  }
+  :hover::-webkit-scrollbar-thumb,
+  .thin-scroll:hover::-webkit-scrollbar-thumb {
+    /* Mix into a variable so colour fallbacks don't reset background-clip. */
+    --scrollbar-thumb-fill: color-mix(in srgb, var(--color-scrollbar), white 15%);
+    background: var(--scrollbar-thumb-fill);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover,
+  .thin-scroll::-webkit-scrollbar-thumb:hover {
+    --scrollbar-thumb-fill: color-mix(in srgb, var(--color-scrollbar), white 30%);
+    background: var(--scrollbar-thumb-fill);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-corner,
+  .thin-scroll::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-button,
+  .thin-scroll::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
 }
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-scrollbar);
-  border-radius: 4px;
-}
-/* the thumb was inert — it never acknowledged the pointer */
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-raised-hover);
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-corner {
-  background: transparent;
+/* A row that scrolls sideways on purpose (the Today status chips) shows no bar. */
+@media (max-width: 767.98px) {
+  @supports not selector(::-webkit-scrollbar) {
+    .no-scrollbar-phone { scrollbar-width: none; }
+  }
+  .no-scrollbar-phone::-webkit-scrollbar { display: none; }
 }
 
 @keyframes panel-in {
@@ -1490,6 +1528,21 @@ body:has([data-testid="workspace-pane"]:not([hidden])):not(:has(.fixed.inset-0:n
   line-height: 16px;
 }
 
+/* THE WELCOME (src/components/FirstRunWelcome.tsx, MurageLockup.tsx): the screen fades in over 300 ms and Ember pops
+   up from behind the mark with one soft overshoot (0.1 to 0.6 s). Nothing loops. */
+@keyframes first-run-welcome-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes murage-lockup-pop {
+  from { transform: scale(0) translateY(20%); opacity: 0; }
+  30% { opacity: 1; }
+  to { transform: none; opacity: 1; }
+}
+.murage-lockup-ember span,
+.murage-lockup-ember svg { display: block; width: 100%; height: 100%; }
+.first-run-welcome-start:focus-visible { outline: 1px solid rgba(255, 107, 53, 0.55); outline-offset: 3px; }
+
 /* ─────────────────────────────────────────────────────────────────────────
    REDUCED MOTION: the one block. Every rule that honours
    prefers-reduced-motion lives here, at the end of the file, so it wins
@@ -1500,6 +1553,8 @@ body:has([data-testid="workspace-pane"]:not([hidden])):not(:has(.fixed.inset-0:n
    ───────────────────────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   .whats-new-card { animation: none; }
+  .first-run-welcome,
+  .murage-lockup-ember { animation: none !important; }
   .announce-in { animation: none; }
   .animate-caret, .animate-msg-in, .animate-shimmer { animation: none; }
   .animate-status-pulse { animation: none; opacity: 0.6; }

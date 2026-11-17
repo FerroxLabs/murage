@@ -37,7 +37,7 @@ function setup(o: { voice?: boolean; running?: { turnId: string; botId: string }
   const runtime = createBotCallsRuntime({
     db: () => db, outbox, card: () => {}, hint: () => {},
     world: { quietHours: () => false, voiceReady: () => voice, ringingDevice: () => true, factValid: () => true, calendar: async () => "free" },
-    threadRunning: () => false, senderOf: () => null, startOutbox: () => {}, now: () => now,
+    threadRunning: () => false, senderOf: () => null, turnEndedAt: () => null, startOutbox: () => {}, now: () => now,
   });
   const deps: CallsRouteDeps = {
     db: () => db, runtime, tickets: createCallTickets(), caller: () => "desktop", visible: (id) => id === "t1",

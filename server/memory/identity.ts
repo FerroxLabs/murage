@@ -10,7 +10,7 @@ import type { MemoryBundle } from "../../shared/memory.ts";
 import { applyRecordTombstone } from "./restore.ts";
 import { revokeRecordDisclosures, revokeAllDisclosures } from "./revocation.ts";
 import { inheritEdge } from "./revoke-commit.ts";
-import { insertMemoryRecord } from "./record-write.ts";
+import { insertMemoryRecord, safeMemoryRecordText } from "./record-write.ts";
 import { assertOwnerPinsFit, ownerPinUse } from "./bundle.ts";
 
 const key = z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/);
@@ -85,6 +85,7 @@ export function writeBotIdentity(ticket:object,input:IdentityWrite,roster:Memory
   if(input.kind==="continuity-brief"&&input.key!=="core")throw new Error("MEMORY_IDENTITY_CORE_KEY_REQUIRED");
   if(input.kind==="character-canon"&&input.basis!=="fiction")throw new Error("MEMORY_IDENTITY_FICTION_REQUIRED");
   if(input.kind==="reveal-state"?!input.canon||input.revealed===undefined:input.canon!==undefined||input.revealed!==undefined)throw new Error("MEMORY_IDENTITY_REVEAL_INVALID");
+  const safeText = redactSecretsInText(input.text);
   const scopeId=privateScope(ticket,input.botId,roster);
   // Reveals are indexed by canonical fact and audience, not a caller-selected
   // event key: repeated reports update one durable state across tasks/models.
@@ -109,12 +110,12 @@ export function writeBotIdentity(ticket:object,input:IdentityWrite,roster:Memory
     if(ownerRow&&previous){
       const prior=db.prepare("SELECT entities,confidence_basis FROM memory_record_details WHERE record_id=? AND record_version=?").get(id,Number(previous.version));
       if(pipTierOf(prior?.confidence_basis)==="observed"||String(prior?.entities).includes('"gen:')){
-        if(previous.text===input.text)return {id,version:Number(previous.version),scopeId,kind:input.kind,text:String(previous.text),basis:input.basis,audience:input.audience};
+        if(previous.text===safeText)return {id,version:Number(previous.version),scopeId,kind:input.kind,text:String(previous.text),basis:input.basis,audience:input.audience};
         let generation=1;try{generation=Number(String(JSON.parse(String(prior!.entities)).find((e:unknown)=>typeof e==="string"&&e.startsWith("gen:"))??"gen:1").slice(4))||1;}catch{}
         lived={generation};
       }
     }
-    const text=redactSecretsInText(input.kind==="reveal-state"?JSON.stringify({canonId:input.canon!.id,audience:input.audience,revealed:input.revealed,note:input.text}):input.text);
+    const text=input.kind==="reveal-state"?JSON.stringify({canonId:input.canon!.id,audience:input.audience,revealed:input.revealed,note:safeText}):safeText;
     // A pinned row keeps its pin on the new version (a character canon or reveal state is pinnable): measured below (1.0.4).
     const pinUse=previous?.owner_pinned===1?ownerPinUse(db,scopeId,roster):undefined;
     if(previous)db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=?").run(now,id,input.expectedVersion);
@@ -165,7 +166,7 @@ export function readBotIdentity(ticket:object,botId:string,roster:MemoryRoster,c
     WHERE r.scope_id=? AND d.partition='identity' AND r.state='active' AND r.id>?
     AND NOT EXISTS(SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=r.id AND (t.revision IS NULL OR t.revision=r.version))
     ORDER BY r.id LIMIT 51`).all(scope,cursor);
-  return {records:rows.slice(0,50),...(rows.length>50?{nextCursor:String(rows[49].id)}:{})};
+  return {records:rows.slice(0,50).map((row):typeof row=>({...row,text:safeMemoryRecordText(String(row.kind),String(row.text))})),...(rows.length>50?{nextCursor:String(rows[49].id)}:{})};
 }
 
 /** Owner delete of one continuity row (PIP A3): one record tombstone for the
@@ -224,7 +225,7 @@ export function readContinuity(ticket:object,botId:string,roster:MemoryRoster) {
       // Lived rows carry the owner's confirmation (tier), their generation and whether counter evidence is disputing them.
       const observed=pipTierOf(row.basis)==="observed";let generation=0;
       if(observed)try{generation=Number(String(JSON.parse(String(row.entities)).find((e:unknown)=>typeof e==="string"&&e.startsWith("gen:"))??"gen:1").slice(4))||1;}catch{}
-      return {id:String(row.id),version:Number(row.version),kind:String(row.kind),key,text:String(row.text),editedAt:Number(row.editedAt),...observed?{tier:"observed" as const,generation,disputed:row.claimStatus==="disputed"}:{}};}),
+      return {id:String(row.id),version:Number(row.version),kind:String(row.kind),key,text:safeMemoryRecordText(String(row.kind),String(row.text)),editedAt:Number(row.editedAt),...observed?{tier:"observed" as const,generation,disputed:row.claimStatus==="disputed"}:{}};}),
     limits:{perKind:PIP_ACTIVE_CAP,bytes:4096,briefBytes:768},
     coverage:readContinuityCoverage(botId),
   };

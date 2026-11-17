@@ -76,8 +76,7 @@ describe("first run copy: the house rules", () => {
   });
 
   it("never states a model count", () => {
-    // "500+ apps" is the one figure this flow is allowed, and it is about
-    // apps. A figure attached to models is the claim that was rejected.
+    // A live app count may name apps. A figure attached to models is the claim that was rejected.
     for (const { path, text } of everything) {
       for (const match of text.matchAll(/(\d[\d,]*)\s*\+/g)) {
         const tail = text.slice(match.index + match[0].length, match.index + match[0].length + 12);
@@ -182,7 +181,8 @@ describe("first run copy: the things the flow promises", () => {
     // come after the routing and apps claims rather than in front of them.
     expect(order).toEqual(["routing", "apps", "pictures", "dictation"]);
     const apps = flux.features.find((row) => row.id === "apps")!;
-    expect(apps.title).toContain("500+ apps");
+    // MAIN RULING 2026-11-14 copy-consist: use count-free copy until the catalog loads.
+    expect(apps.title).toContain("Connected apps");
     for (const named of ["Gmail", "Slack", "Notion", "GitHub"]) expect(apps.body).toContain(named);
     expect(flux.features.some((row) => /all the latest/i.test(row.body))).toBe(true);
     expect(flux.recommendation.toLowerCase()).toContain("recommended");
@@ -657,7 +657,8 @@ describe("first run copy: the 1.0.12 lines (UX-FIRSTRUN-SCALE-1012 §1)", () => 
 
   it("offers four Flux rows, routing first, and names the apps by example", () => {
     const rows = FIRST_RUN_COPY.flux.key.features.map((row) => row.title);
-    expect(rows).toEqual(["Smart routing", "500+ apps", "Pictures", "Talk instead of type"]);
+    // MAIN RULING 2026-11-14 copy-consist: use count-free copy until the catalog loads.
+    expect(rows).toEqual(["Smart routing", "Connected apps", "Pictures", "Talk instead of type"]);
     expect(FIRST_RUN_COPY.flux.key.features[1].body).toMatch(/Gmail, Slack, Notion, GitHub/);
     expect(FIRST_RUN_COPY.flux.key.submit).toBe("Connect Flux Router");
   });

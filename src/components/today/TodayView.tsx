@@ -56,6 +56,7 @@ import { OpenBotListButton } from "@/components/OpenBotListButton";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 import { useTodayView } from "./use-today-view";
 import { TodayViewSwitch } from "./TodayViewSwitch";
+import { PendingJobsLine } from "./PendingJobsLine";
 
 // Detailed only: out of the first paint.
 const SpendCardChunk = retryableLazy(() => import("./SpendCard").then((module) => ({ default: module.SpendCard })));
@@ -316,6 +317,7 @@ export function TodayView({ needs, health, firstRun, chiefBotId, remote }: Today
       </BoxHead>
       <BoxBody>
       <div className="mx-auto w-full max-w-5xl px-4 pb-6 md:px-8">
+        {model.firstRun && <PendingJobsLine />}
         {model.firstRun ? (
           <div className="mt-5">
             <LazyBoundary inline onRetry={FirstRunTodayCard.retry}><Suspense fallback={null}><FirstRunTodayCard.Component chiefBotId={chief} remote={remote} onContinueSetup={() => { if (chief) nav.openChat(chief); }} /></Suspense></LazyBoundary>
@@ -329,6 +331,7 @@ export function TodayView({ needs, health, firstRun, chiefBotId, remote }: Today
                 <TellChiefBox chief={tellBot} onOpenChat={nav.openChat} />
               </div>
             )}
+            <PendingJobsLine />
             {detailedBlocks ? (
               // Detailed (2b). Phone, top to bottom: Needs you, cost, Your day, routines line, Working now, Done today.
               // Desktop rows: Needs you (all) | Your day, cost | routines line, Working now | Done today (detailed).

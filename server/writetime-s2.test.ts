@@ -32,12 +32,12 @@ async function load() {
   const mods = await Promise.all([import("./database.ts"), import("./internal-capabilities.ts"), import("./message-db.ts"), import("./memory/authority.ts"),
     import("./memory/bring-in.ts"), import("./memory/capture.ts"), import("./memory/capture-scope.ts"), import("./memory/deny-read.ts"), import("./memory/policy.ts"),
     import("./memory/prompt-parts.ts"), import("./memory/repository.ts"), import("./project-memory-tools.ts"), import("./project-tool-routing.ts"),
-    import("./project-settings.ts"), import("./room-transcript.ts"), import("./working-context.ts"), import("./drivers/engine-input.ts"), import("./skills.ts"), import("./memory/procedure-review.ts"), import("./execution-audience.ts")]);
+    import("./project-settings.ts"), import("./room-transcript.ts"), import("./working-context.ts"), import("./drivers/engine-input.ts"), import("./skills.ts"), import("./memory/procedure-review.ts"), import("./execution-audience.ts"), import("./testing/recall-access-fixture.ts")]);
   return Object.assign({}, fake, ...mods) as typeof fake & typeof import("./database.ts") & typeof import("./internal-capabilities.ts") & typeof import("./message-db.ts")
     & typeof import("./memory/authority.ts") & typeof import("./memory/bring-in.ts") & typeof import("./memory/capture.ts") & typeof import("./memory/capture-scope.ts")
     & typeof import("./memory/deny-read.ts") & typeof import("./memory/policy.ts") & typeof import("./memory/prompt-parts.ts") & typeof import("./memory/repository.ts")
     & typeof import("./project-memory-tools.ts") & typeof import("./project-tool-routing.ts") & typeof import("./project-settings.ts") & typeof import("./room-transcript.ts")
-    & typeof import("./working-context.ts") & typeof import("./drivers/engine-input.ts") & typeof import("./skills.ts") & typeof import("./memory/procedure-review.ts") & typeof import("./execution-audience.ts");
+    & typeof import("./working-context.ts") & typeof import("./drivers/engine-input.ts") & typeof import("./skills.ts") & typeof import("./memory/procedure-review.ts") & typeof import("./execution-audience.ts") & typeof import("./testing/recall-access-fixture.ts");
 }
 let M: Awaited<ReturnType<typeof load>>;
 beforeAll(async () => { M = await load(); }, 120_000);
@@ -111,7 +111,7 @@ describe("hole 1: project read_messages records the lines it shows on the runnin
 function access(botId: string, thread: string) {
   const registry = new M.InternalCapabilities(); registry.begin(botId, thread, "g");
   const token = registry.mint({ botId, threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false });
-  return M.memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
+  return M.fixtureMemoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
 }
 function ownerFact(thread: string, text: string, key: string) {
   say(thread, text, { id: key, role: "user", from: undefined });

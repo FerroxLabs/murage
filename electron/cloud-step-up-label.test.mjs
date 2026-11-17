@@ -12,6 +12,8 @@ import { STEP_UP_EN } from "./step-up-locale.mjs";
 
 // One concrete request per step-up / credential entry in server/route-policy.ts (and a few the gate escalates by shape).
 const SAMPLES = [
+  ["PUT", "/api/highlevel/other"], ["POST", "/api/restore-job/start"], ["POST", "/api/permissions/no-limits"],
+  ["POST", "/api/claude-code-import"], ["POST", "/api/move-in/grok"],
   ["POST", "/api/cloud/model-signins/chatgpt/start"], ["POST", "/api/cloud/model-signins/supergrok/attempts/abc123/cancel"], ["DELETE", "/api/cloud/model-signins/chatgpt"],
   ["POST", "/api/cloud/own-server"], ["POST", "/api/data-dir/confirm-root"], ["POST", "/api/cloud/pairing"], ["POST", "/api/cloud/devices/d1"],
   ["POST", "/api/bots/b1/computer/join"], ["GET", "/api/mcp-grants"], ["POST", "/api/mcp-grants"], ["DELETE", "/api/mcp-grants/g1"], ["POST", "/api/routines/r1/run"],
@@ -22,7 +24,7 @@ const SAMPLES = [
   ["PATCH", "/api/bots/b1/sharing"], ["POST", "/api/bots/b1/sharing/skills"], ["POST", "/api/bots/b1/sharing/copy"],
   ["POST", "/api/flux-connection"], ["POST", "/api/provider-connections"], ["POST", "/api/local-models"], ["POST", "/api/claude-accounts"],
   ["POST", "/api/memory/x"], ["PATCH", "/api/config"], ["PUT", "/api/config"], ["POST", "/api/skills/import"],
-  ["POST", "/api/teams/import"], ["POST", "/api/team-library/github"], ["POST", "/api/team-library/grok"], ["POST", "/api/packages/import"], ["POST", "/api/starter-profiles"],
+  ["POST", "/api/teams/import"], ["POST", "/api/team-library/github"], ["POST", "/api/team-library/grok"], ["POST", "/api/move-in/grok"], ["POST", "/api/packages/import"], ["POST", "/api/starter-profiles"],
   ["POST", "/api/telegram/pair"], ["POST", "/api/slack/revoke"], ["POST", "/api/whatsapp/link"], ["POST", "/api/cli-test"],
   ["POST", "/api/engine-management/codex"], ["PATCH", "/api/instances/i1"], ["POST", "/api/instances/i1/claude-update"], ["POST", "/api/hermes/profiles/import"],
   ["POST", "/api/mcp/servers"], ["POST", "/api/mcp/inspect"], ["POST", "/api/folder-trust"], ["POST", "/api/local-computer"],
@@ -34,7 +36,7 @@ const SAMPLES = [
   ["POST", "/api/bots/b1/secret-cards/s1/provided"], ["POST", "/api/bots/b1/connector-cards/c1/authorize"], ["POST", "/api/bots/b1/mcp-sign-in-cards/m1/resume"],
   ["POST", "/api/publish/netlify/check"], ["POST", "/api/bots/b1/published-sites/s1/take-down"],
   ["POST", "/api/bots/b1/computer/provision"], ["POST", "/api/bots/b1/local-computer/run"],
-  ["GET", "/api/engine-login/codex"],
+  ["GET", "/api/engine-login/codex"], ["GET", "/api/engine-login/antigravityAgent"], ["POST", "/api/bots/b1/engine-signin/code"],
   ["DELETE", "/api/bots/b1"], ["DELETE", "/api/groups/g1"], ["PATCH", "/api/groups/g1"], ["PATCH", "/api/bots/b1"], ["POST", "/api/bots"], ["PATCH", "/api/bots/b1/profile"],
   ["POST", "/api/move/commit"], ["POST", "/api/lend/scopes"],
   // 1.0.4 step-up routes (SL-K/SL-I chat permissions and limit backup, MCP-118-175 enable cards, SL-H attachment remove).
@@ -63,6 +65,9 @@ const SAMPLES = [
   ["PUT", "/api/highlevel/bots/b1/access"], ["DELETE", "/api/highlevel/connections/hl_abcd1234"], ["PATCH", "/api/highlevel/other"],
   // 1.0.18 CROSS-CHAT-READ: the owner's Share / Don't share on a share card, and the composer's ask for a room.
   ["POST", "/api/room-shares/s1/share"], ["POST", "/api/room-shares/s1/decline"], ["POST", "/api/groups/g1/room-shares"],
+  ["GET", "/api/connector-incidents/0f8fad5b-d9cb-469f-a165-70867728950e"],
+  ["POST", "/api/connector-incidents/0f8fad5b-d9cb-469f-a165-70867728950e"],
+  ["GET", "/api/signal/status"], ["POST", "/api/signal/link/start"],
 ];
 
 describe("every step-up route has a human label", () => {
@@ -76,7 +81,7 @@ describe("every step-up route has a human label", () => {
     expect(sensitive.length).toBeGreaterThan(40);
     const hit = new Set(SAMPLES.map(([method, path]) => routePolicy(method, path)).filter(Boolean));
     const uncovered = sensitive.filter((entry) => !hit.has(entry)).map((entry) => `${JSON.stringify(entry.methods)} ${String(entry.path)}`);
-    expect(uncovered, "add a SAMPLES row and a STEP_UP_LABELS entry for each").toEqual([]);
+    expect(uncovered, `add a SAMPLES row and a STEP_UP_LABELS entry for each: ${uncovered.join("; ")}`).toEqual([]);
   });
 
   it("the gate really asks for step-up on the sampled step-up and credential routes, so the labels are for requests that happen", () => {
@@ -108,6 +113,19 @@ describe("every step-up route has a human label", () => {
     const described = describeStepUp({ method: "POST", path: "/api/highlevel/token/check", body: { token: "pit-SECRET-1", locationId: "loc1" } });
     expect(JSON.stringify(described)).not.toContain("SECRET-1");
     expect(JSON.stringify(described)).not.toContain("loc1");
+  });
+
+  it("Signal and app reconnection confirmations name the action without showing body values", () => {
+    for (const [path, label] of [
+      ["/api/signal/link/start", "Change the Signal connection"],
+      ["/api/connector-incidents/0f8fad5b-d9cb-469f-a165-70867728950e", "Connect an app"],
+    ]) {
+      const described = describeStepUp({ method: "POST", path, body: { accountId: "PRIVATE-ACCOUNT", alias: "PRIVATE-ALIAS" } });
+      expect(described.known).toBe(true);
+      expect(described.label).toBe(label);
+      expect(described.lines).toEqual([]);
+      expect(described.message).not.toMatch(/PRIVATE/);
+    }
   });
 
   it("no two table entries disagree about a sample (first match wins, and it is the intended one)", () => {

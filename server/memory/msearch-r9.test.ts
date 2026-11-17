@@ -4,23 +4,24 @@
 // Msearch review round 9 (lanes/msearch-review/r9/REPORT.md). Fails on 64b86c997.
 //  P2  checkpoint starvation: the acknowledgement timeout started before the open scans drained, and checkpointing was refused
 //      afterwards, so scans arriving every 400 ms (each lasting to its deadline) kept the log from ever being truncated.
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
-import { MemoryIndex, walBytes, type IndexedMemory } from "./index.ts";
+import { walBytes, type IndexedMemory } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPageSliced, resetScanAdmission, setWalCheckpointRequester, setWalDrainThreshold } from "./index-reader.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
 const entry = (id: string): IndexedMemory => ({ id, version: 1, scopeId: "s", text: "harbour lantern notes for the Friday review", deleted: false });
-function world() {
+async function world() {
   closeMemoryIndexReader();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  const index = new MemoryIndex(INDEX_PATH());
+  const index = await openTestIndex(INDEX_PATH());
   index.prepareModel("model");
-  index.upsert(Array.from({ length: 6000 }, (_, n) => entry(`d-${String(n).padStart(4, "0")}`)));
+  await put(index, Array.from({ length: 6000 }, (_, n) => entry(`d-${String(n).padStart(4, "0")}`)));
   return index;
 }
 beforeEach(() => { resetScanAdmission(); closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
@@ -31,11 +32,11 @@ const heldScan = (n: number, deadlineAt: number) => lexicalPageSliced(`harbour h
 
 describe("P2: continuous overlapping scans cannot starve the checkpoint", () => {
   it("scans every 400 ms, each held to a 2.5 s deadline, with the log over the threshold: the request is sent and acknowledged within a bound", async () => {
-    const index = world();
+    const index = await world();
     expect(walBytes(INDEX_PATH())).toBeGreaterThan(1);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const requests: number[] = [];
-    setWalCheckpointRequester(async () => { requests.push(Date.now()); return index.checkpointNow(); });
+    setWalCheckpointRequester(async () => { requests.push(Date.now()); return (await index.sealAndTruncate()).truncated; });
     setWalDrainThreshold(Number.MAX_SAFE_INTEGER);
     const pages: Array<Promise<{ partial?: boolean } | null>> = [];
     let n = 0, overAt = -1;
@@ -52,7 +53,7 @@ describe("P2: continuous overlapping scans cannot starve the checkpoint", () => 
   }, 60_000);
 
   it("a missing acknowledgement reopens admission after GATE_MAX_MS from the send, and the request is retried after the back-off", async () => {
-    const index = world();
+    const index = await world();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const requests: number[] = [];
     setWalCheckpointRequester(() => { requests.push(Date.now()); return new Promise<boolean>(() => { /* never answers */ }); });
@@ -66,7 +67,7 @@ describe("P2: continuous overlapping scans cannot starve the checkpoint", () => 
   }, 60_000);
 
   it("below the threshold, concurrent scans all answer in full and no request is made", async () => {
-    const index = world();
+    const index = await world();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const requests: number[] = [];
     setWalCheckpointRequester(async () => { requests.push(Date.now()); return true; });

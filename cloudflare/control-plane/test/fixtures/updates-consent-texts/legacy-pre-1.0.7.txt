@@ -1,0 +1,5 @@
+# cloud monorepo 97c585eae (package.json 1.0.6; the same block on every release commit 0.1.59 4148d515d to 1.0.6) src/lib/first-run-copy.ts:203-206; shown words heading + a newline + lead; the app SENT no words (body { email, name? })
+      heading: "First, who am I working for?",
+      lead:
+        "I am your chief of staff. Your name is what I call you. Your email is how Murage tells you when "
+        + "there is something new it can do.",

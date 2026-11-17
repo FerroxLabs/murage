@@ -1,3 +1,6 @@
+// control: retain the isolated turn and mount admission used by server dispatch.
+import { CliMountRelay } from "../cli-mount-relay.ts";
+import { bindFixtureAdapter } from "../../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { murageToolList } from "../../testing/murage-tool-list.ts";
 // Copyright 2026 Ferrox Labs
@@ -15,7 +18,7 @@ import { HermesAgentDriver } from "./hermes.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { DroidAgentDriver } from "./droid.ts";
 import { CursorAgentDriver } from "./cursor.ts";
-import { CustomAcpDriver } from "./custom.ts";
+import { CustomAcpDriver, customAcpSupport } from "./custom.ts";
 import { createOpenCodeDriver } from "./opencode-go.ts";
 import { recordEvents } from "../../testing/events.ts";
 import { ROOM_TOOLS_LINE, goalWakePrompt, projectCardPrompt } from "../../project-prompt.ts";
@@ -24,10 +27,8 @@ import { TURN_PROMPTS } from "../../bot-shapes.ts";
 import { murageTool } from "../../murage-tool-surface.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
 
-// The fixture mounts here are not real MCP servers, so they never write the
-// marker an engine without a readiness signal is waited for (core.ts
-// mcpListedWait). That wait has its own tests (mcp-listed-wait.test.ts); here
-// its cap is short so each cold turn does not sit out the full 5 s.
+// Keep the short readiness cap; the fake engine now announces readiness only
+// after every real fixture peer has answered its catalog request.
 process.env.MURAGE_ACP_MCP_LISTED_MS ??= "200";
 
 beforeEach(() => {
@@ -45,17 +46,32 @@ it.each(drivers)("$driverKind resolves references against the real session mount
   const dump = join(dir, "spawn.json"), prompt = join(dir, "prompt.json");
   const instance = await driver.create({ instanceId: "pf-surface", displayName: "PF fixture", enabled: true,
     config: driver.decodeConfig({ cli, fullAuto: true }), environment: {
-      HOME: dir, USERPROFILE: dir, FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump, FAKE_ACP_PROMPT_DUMP: prompt,
-      FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: driver === GrokAgentDriver ? "_x.ai/mcp_initialized" : "_fuigo/mcp_initialized", FAKE_ACP_MODELS: "fixture-model", CURSOR_API_KEY: "fixture-only", XAI_API_KEY: "fixture-only", FUIGO_API_KEY: "sk-flux-fixture-only", OPENCODE_API_KEY: "fixture-only", FACTORY_API_KEY: "fixture-only",
+      HOME: dir, USERPROFILE: dir, FAKE_ACP_MODE: "happy", FAKE_ACP_MCP_LIST: "all:ready", FAKE_ACP_MCP_CONNECT: "1", FAKE_ACP_DUMP: dump, FAKE_ACP_PROMPT_DUMP: prompt,
+      FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_AFTER_LIST: "1", FAKE_ACP_MCP_READY_METHOD: driver === GrokAgentDriver ? "_x.ai/mcp_initialized" : "_fuigo/mcp_initialized", FAKE_ACP_MODELS: "fixture-model", CURSOR_API_KEY: "fixture-only", XAI_API_KEY: "fixture-only", FUIGO_API_KEY: "sk-flux-fixture-only", OPENCODE_API_KEY: "fixture-only", FACTORY_API_KEY: "fixture-only",
     } });
+  bindFixtureAdapter(instance.adapter);
   const recorder = recordEvents(instance.adapter);
+  const relays: CliMountRelay[] = [];
+  const createRelay = CliMountRelay.create;
+  const observeRelay = vi.spyOn(CliMountRelay, "create").mockImplementation(async (...args) => {
+    const relay = await createRelay(...args); relays.push(relay); return relay;
+  });
   try {
     for (const [index, text] of [ROOM_TOOLS_LINE + goalWakePrompt(true, { action: "start", title: "Ship", hasCriteria: false }), ROOM_TOOLS_LINE, TURN_PROMPTS.sectionPeers, chiefOfStaffSystemPrompt("chief", [{id:"chief",name:"Chief",chiefOfStaff:true,section:"Work"},{id:"worker",name:"Worker",section:"Work"}], true), projectCardPrompt(true,{ask:"Work on card 1: Draft",brief:"Ship"}) + ROOM_TOOLS_LINE].entries()) {
       const threadId = `pf-${index}`;
       await instance.adapter.sendTurn({ threadId, text: text + murageTool("memory_search") + `\nOpen it with ${murageTool("agent_browser_open", "browser")}.`, cwd: dir,
-        integrations: { agents: { command: process.execPath, args: ["fixture-agents"], env: {} }, memory: { command: process.execPath, args: ["fixture-memory"], env: {} }, browser:{command:process.execPath,args:["fixture-browser"],env:{}},localComputer:{command:process.execPath,args:["fixture-computer"],env:{}},custom:{notes:{command:process.execPath,args:["fixture-notes"],env:{}}} } });
+        integrations: { agents: { command: process.execPath, args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-agents"], env: {} }, memory: { command: process.execPath, args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-memory"], env: {} }, browser:{command:process.execPath,args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-browser"],env:{}},localComputer:{command:process.execPath,args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-computer"],env:{}},custom:{notes:{command:process.execPath,args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-notes"],env:{}}} } });
       await recorder.until(event => event.threadId === threadId && event.type === "turn.completed", 15000);
-      const mounted = JSON.parse(readFileSync(dump + ".mcp.json", "utf8")) as Array<{ name: string; args: string[] }>;
+      const sessionMounts = JSON.parse(readFileSync(dump + ".mcp.json", "utf8")) as Array<{ name: string; args: string[] }>;
+      // Native sessions receive shims. Observe the actual server-owned child
+      // behind each matching name to inspect the original command's markers.
+      const relay = relays.at(-1)!;
+      const mounted = sessionMounts.map(server => {
+        expect(server.args[0]).toMatch(/cli-mount-shim/);
+        const child = relay.mounts.get(server.name)?.child;
+        expect(child).toBeDefined();
+        return { ...server, args: child!.spawnargs.slice(1) };
+      });
       const mounts = { agents: mounted.find(server => server.args.includes("fixture-agents"))?.name, memory: mounted.find(server => server.args.includes("fixture-memory"))?.name };
       expect(mounts.agents).toBeTruthy(); expect(mounts.memory).toBeTruthy();
       const shown = JSON.stringify(JSON.parse(readFileSync(prompt, "utf8")));
@@ -78,8 +94,13 @@ it.each(drivers)("$driverKind resolves references against the real session mount
         expect(shown).not.toMatch(/use (ask_bot|delegate_bot)\b/);
       }
     }
-  } finally { recorder.stop(); await instance.dispose(); removeTempDirSync(dir); }
+  } finally { observeRelay.mockRestore(); recorder.stop(); await instance.dispose(); removeTempDirSync(dir); }
 }, 60000);
 
 // Adapter turns in this suite use an isolated durable store.
 useOutsideStoreFixture();
+
+// The scripted ACP has no external model host.
+let restoreFixtureHost: (() => void) | undefined;
+beforeEach(() => { const spy = vi.spyOn(customAcpSupport, "fluxReach").mockReturnValue("elsewhere"); restoreFixtureHost = () => spy.mockRestore(); });
+afterEach(() => restoreFixtureHost?.());

@@ -12,8 +12,9 @@ import {runInstallationRecoveryWorker} from './installation-recovery-runner.mjs'
 import {createServerChildLifecycle} from './server-child-lifecycle.mjs';
 import {captureFailureDiagnostic} from './backup-schedule-host.mjs';
 import {backupAgePinForTarget} from '../shared/backup-age-pins.mjs';
+import {backupNativeFixture} from './backup-native-fixture.mjs';
 const diagnostic=(operation='encrypt',predicate='app-verify')=>({operation,predicate,exitCode:null,timedOut:true,signal:'SIGTERM',errorCode:'ETIMEDOUT',elapsedMs:10001});
-const bytes=readFileSync(process.env.MURAGE_BACKUP_TEST_AGE_FILE??new URL('../dist-native/backup-age/arm64/age',import.meta.url));
+const bytes=readFileSync(backupNativeFixture('age'));
 function fixture(work){
  const root=realpathSync(mkdtempSync(path.join(tmpdir(),'murage-age-diagnostic-'))),app=path.join(root,'Murage.app'),file=path.join(app,'Contents/Resources/backup-tools/arm64/age'),exe=path.join(app,'Contents/MacOS/Murage');mkdirSync(path.dirname(file),{recursive:true});mkdirSync(path.dirname(exe),{recursive:true});writeFileSync(file,bytes);writeFileSync(exe,'test executable, never run');
  try{return work({root,app,file,exe});}finally{safeWipeSync(root);}

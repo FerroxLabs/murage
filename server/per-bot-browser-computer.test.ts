@@ -1,3 +1,4 @@
+import { confirmedBrowserFields } from "./testing/browser-choice.ts";
 // Per-bot BROWSER and COMPUTER, driven end to end.
 //
 // The existing browser-*/computer-* suites are unit-level: they prove a
@@ -176,6 +177,11 @@ let model: string;
 let headers: Record<string, string> = {};
 
 const api = async (method: string, path: string, body?: unknown) => {
+  if(method==='PATCH' && /^\/api\/bots\/[^/]+$/.test(path) && body && typeof body==='object' && ['useMyChrome','browserTransport','browserProfile'].some(k=>k in (body as Record<string,unknown>)) && (!('useMyChrome' in body)||typeof body.useMyChrome==='boolean')) {
+    const confirmed = await confirmedBrowserFields(fixture.info.url, headers, path, body);
+    const { baseRevision, ...legacy } = confirmed; body = legacy;
+  }
+
   const response = await fetch(fixture.info.url + path, {
     method, headers: { ...headers, "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -288,10 +294,11 @@ it("pins the fixture to its own port and never the owner's live app", () => {
 
 it("gives an explicitly-off bot no computer, and hands an unassigned bot this Mac", async () => {
   const off = await makeBot("Computer off", "verification", { computer: "off", browser: false });
-  const auto = await makeBot("Computer auto", "second", { browser: false });
+  const auto = await makeBot("Computer auto", "second", { computer: null, browser: false });
   try {
     expect((await state(off.id)).computer).toBe("off");
-    // Auto is the absence of a choice, not a choice — nothing is stored.
+    // Auto is the absence of a choice, not a choice — nothing is stored. A new bot starts on "this computer" since a9e405c19
+    // (computer.defaultForNewBots, CONTRACTS-B 2), so makeBot sends `computer: null` to put this one back on Auto.
     expect((await state(auto.id)).computer).toBeUndefined();
 
     const offTurn = await startTurn(off, "assignment-off", false);

@@ -2,7 +2,7 @@ import XCTest
 @testable import MurageShellCore
 
 final class SaveRequestTests: XCTestCase {
-    let saved = WorkspaceOrigin(string: "https://mac.tailnet123.ts.net")!
+    let saved = WorkspaceOrigin(string: "https://mac.tail000000.ts.net")!
 
     func testSharedSaveCases() throws {
         let channel = try XCTUnwrap(Fixtures.json("channel.json") as? [String: Any])
@@ -82,14 +82,14 @@ final class SaveRequestTests: XCTestCase {
     }
 
     func testURLFilenamesAreMadeSafe() throws {
-        let parsed = try SaveRequest.parse(["kind": "url", "url": "https://mac.tailnet123.ts.net/x", "filename": "../../etc/passwd"], origin: saved).get()
-        XCTAssertEqual(parsed, .url(URL(string: "https://mac.tailnet123.ts.net/x")!, filename: "passwd"))
+        let parsed = try SaveRequest.parse(["kind": "url", "url": "https://mac.tail000000.ts.net/x", "filename": "../../etc/passwd"], origin: saved).get()
+        XCTAssertEqual(parsed, .url(URL(string: "https://mac.tail000000.ts.net/x")!, filename: "passwd"))
     }
 
     /// The page leaves `|{}^` raw in a query (WHATWG); the saved origin still
     /// downloads it.
     func testSameOriginURLWithRawQueryCharactersIsAccepted() throws {
-        let parsed = try SaveRequest.parse(["kind": "url", "url": "https://mac.tailnet123.ts.net/x?a|b&c={d}^e", "filename": "x.md"], origin: saved).get()
+        let parsed = try SaveRequest.parse(["kind": "url", "url": "https://mac.tail000000.ts.net/x?a|b&c={d}^e", "filename": "x.md"], origin: saved).get()
         guard case .url(let url, _) = parsed else { return XCTFail("\(parsed)") }
         XCTAssertTrue(saved.contains(url))
     }
