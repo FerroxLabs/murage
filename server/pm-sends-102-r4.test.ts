@@ -38,9 +38,10 @@ describe("1 a restore holds every retryable send", () => {
     expect(held.restoreGen).toBeTruthy();
     const retry = store.accept({ ...input });
     expect(retry.kind).toBe("existing");
-    expect(store.accept({ ...input, resend: true, restoreGen: "stale" }).kind).toBe("existing");
+    expect(store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: "stale" }).kind).toBe("existing");
     expect(store.bySendId("t1", "s1")!.status).toBe("refused");
-    const press = store.accept({ ...input, resend: true, restoreGen: held.restoreGen! });
+    // A distinct owner press carries its action identity as well as the restore token.
+    const press = store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: held.restoreGen! });
     expect(press.kind).toBe("new");
     expect(press.row.restoreHeld).toBe(false);
   });
@@ -56,8 +57,8 @@ describe("1 a restore holds every retryable send", () => {
     neutralizeRestoredSends(db);
     const second = store.bySendId("t1", "s1")!;
     expect(second.restoreGen).not.toBe(held.restoreGen);
-    expect(store.accept({ ...input, resend: true, restoreGen: held.restoreGen! }).kind).toBe("existing");
-    expect(store.accept({ ...input, resend: true, restoreGen: second.restoreGen! }).kind).toBe("new");
+    expect(store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: held.restoreGen! }).kind).toBe("existing");
+    expect(store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: second.restoreGen! }).kind).toBe("new");
   });
 
   it("a terminal room-request refusal row (made with a queue id) is held too", () => {

@@ -22,6 +22,7 @@ import { postTokenForm } from "./flow.mjs";
 
 const SKEW_MS = 5 * 60 * 1000;
 const RETRY_MS = 60 * 1000;
+const IDLE_PROBE_MS = 5 * 60 * 1000;
 const MIN_TIMER_MS = 30 * 1000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
 const REACTIVE_COOLDOWN_MS = 30 * 1000;
@@ -69,8 +70,9 @@ export function createRefresher(ctx) {
 
   function schedule(name) {
     const oauth = current(name)?.oauth;
-    if (!oauth?.refreshToken || typeof oauth.expiresAt !== "number") { cancelTimer(name); return; }
-    later(name, oauth.expiresAt - SKEW_MS - now());
+    if (!oauth?.accessToken && !oauth?.refreshToken) { cancelTimer(name); return; }
+    if (typeof oauth.expiresAt !== "number") { later(name, IDLE_PROBE_MS); return; }
+    later(name, oauth.expiresAt - (oauth.refreshToken ? SKEW_MS : 0) - now());
   }
 
   function saveUnsavedLater(name) {
@@ -102,12 +104,20 @@ export function createRefresher(ctx) {
         unsaved.delete(name);
         cancelTimer(name);
         const kept = await ctx.update(name, (saved) => saved?.oauth?.refreshToken === oauth.refreshToken && saved?.oauth?.accessToken === oauth.accessToken
-          ? { ...saved, oauth: clientOnly(saved.oauth), savedAt: now() }
+          ? { ...saved, oauth: clientOnly(saved.oauth), needsReconnect: true, savedAt: Math.max(now(), (saved.savedAt ?? 0) + 1) }
           : undefined);
         if (kept) await ctx.push(name);
         return false;
       };
-      if (!oauth.refreshToken) return markDead();
+      if (!oauth.refreshToken) {
+        if (!reactive && typeof oauth.expiresAt !== "number") {
+          const status = await ctx.probe?.(name, doc);
+          if (status === 401) return markDead();
+          later(name, IDLE_PROBE_MS); return false;
+        }
+        if (!reactive && typeof oauth.expiresAt === "number" && oauth.expiresAt > now()) { schedule(name); return false; }
+        return markDead();
+      }
       const result = await postTokenForm({
         tokenEndpoint: oauth.tokenEndpoint, local: oauth.local, request: ctx.request, now,
         form: {
@@ -121,9 +131,10 @@ export function createRefresher(ctx) {
         if (result.failure === "client") {
           unsaved.delete(name);
           cancelTimer(name);
-          await ctx.update(name, (saved) => saved?.oauth?.refreshToken === oauth.refreshToken && saved?.oauth?.clientId === oauth.clientId
-            ? { ...saved, oauth: withoutClient(saved.oauth), savedAt: now() }
+          const kept = await ctx.update(name, (saved) => saved?.oauth?.refreshToken === oauth.refreshToken && saved?.oauth?.clientId === oauth.clientId
+            ? { ...saved, oauth: withoutClient(saved.oauth), needsReconnect: true, savedAt: Math.max(now(), (saved.savedAt ?? 0) + 1) }
             : undefined);
+          if (kept) await ctx.push(name);
           return false;
         }
         later(name, RETRY_MS);
@@ -171,8 +182,8 @@ export function createRefresher(ctx) {
     /** Refresh now when the token is expired or close to it, else schedule. */
     resume(name, at = now()) {
       const oauth = current(name)?.oauth;
-      if (!oauth?.refreshToken) return;
-      if (typeof oauth.expiresAt === "number" && oauth.expiresAt - SKEW_MS <= at) void refresh(name);
+      if (!oauth?.accessToken && !oauth?.refreshToken) return;
+      if (typeof oauth.expiresAt === "number" && oauth.expiresAt - (oauth.refreshToken ? SKEW_MS : 0) <= at) void refresh(name);
       else schedule(name);
     },
     /** Wait for a refresh in flight (sign out and remove must not race one). */

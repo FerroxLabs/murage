@@ -205,29 +205,41 @@ export function dispatchedCall(name: string, args: unknown): DispatchedCall {
  * it names. Taken from the call as it is dispatched; a call whose structure is
  * not recognised also contributes everything it carries, nested or not, so
  * nothing it names is missed. */
-export function connectedAppRequirements(args: unknown, name = ""): ConnectedAppRequirement[] {
+export interface NormalizedCallRow extends ConnectedAppRequirement { index: number }
+export function normalizedCallRows(name: string, args: unknown): { rows: NormalizedCallRow[]; complete: boolean } {
   const call = dispatchedCall(name, args);
-  const bodies: Json[] = [];
+  const entry = (tool: string, body: Json, index: number): NormalizedCallRow => ({ index, tool, ...(typeof body.account === "string" ? { account: body.account } : {}) });
+  if (call.wellFormed && call.target) {
+    if (call.target === "COMPOSIO_MULTI_EXECUTE_TOOL") return { rows: call.rows.map((row, index) => entry(slugOf(row)!, row, index)), complete: true };
+    if (call.target && !/^COMPOSIO_/.test(call.target) && !WRAPPER_TOOLS.has(call.target)) return { rows: [entry(call.target, call.body ?? {}, 0)], complete: true };
+    return { rows: [], complete: true };
+  }
   const outer = object(args);
-  if (call.wellFormed) { if (call.body) bodies.push(call.body); }
-  else {
-    if (outer) bodies.push(outer);
-    for (const key of WRAPPER_INPUT_KEYS) { const nested = object(outer?.[key]); if (nested) bodies.push(nested); }
-    if (call.body && !bodies.includes(call.body)) bodies.push(call.body);
+  const bodies: Json[] = outer ? [outer] : [];
+  for (const key of WRAPPER_INPUT_KEYS) { const nested = object(outer?.[key]); if (nested) bodies.push(nested); }
+  if (call.body && !bodies.includes(call.body)) bodies.push(call.body);
+  const rows: NormalizedCallRow[] = [];
+  for (const body of bodies) for (const value of Array.isArray(body.tools) ? body.tools : [body]) {
+    const row = object(value), tool = slugOf(value);
+    if (row && tool) rows.push(entry(tool, row, rows.length));
   }
-  const out: ConnectedAppRequirement[] = [];
-  for (const body of bodies) {
-    const rows = Array.isArray(body.tools) ? body.tools : [body];
-    for (const row of rows) {
-      const item = object(row);
-      const tool = item?.tool_slug ?? item?.toolSlug ?? item?.slug;
-      if (typeof tool !== "string") continue;
-      const account = item?.account;
-      const entry: ConnectedAppRequirement = typeof account === "string" ? { tool, account } : { tool };
-      if (!out.some((seen) => seen.tool === entry.tool && seen.account === entry.account)) out.push(entry);
-    }
+  return { rows, complete: false };
+}
+
+export function connectedAppRequirements(args: unknown, name = ""): ConnectedAppRequirement[] {
+  const requirements: ConnectedAppRequirement[] = [];
+  for (const { tool, account } of normalizedCallRows(name, args).rows) {
+    if (!requirements.some(row => row.tool === tool && row.account === account)) requirements.push({ tool, ...(account === undefined ? {} : { account }) });
   }
-  return out;
+  return requirements;
+}
+
+/** Explicit IDs/aliases may name a removed account retained by its incident.
+ * An unqualified call is certain only with exactly one current account. */
+export function accountsForRow<T extends { id: string; alias?: string }>(inventory: readonly T[], retained: readonly T[], row: ConnectedAppRequirement): T[] {
+  if (row.account === undefined) return inventory.length === 1 ? [inventory[0]!] : [];
+  const all = new Map([...retained, ...inventory].map(account => [account.id, account]));
+  return [...all.values()].filter(account => account.id === row.account || account.alias === row.account);
 }
 
 /** What an action used, and whether that list is the whole truth. A call whose

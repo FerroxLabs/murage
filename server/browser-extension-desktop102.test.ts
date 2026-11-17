@@ -1,7 +1,9 @@
+import { serviceQueueFixture } from "./testing/service-queue-fixture.ts";
+import { flushApprovalPresentation } from "./testing/channel-approval-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // 1.0.2 desktop-side fixes for Murage for Chrome (found in the real 1.0.0 side panel audit): the name and colour the
 // panel draws, the card heading, the access names, how long a card waits, and what the bot is told when a call fails.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { botColorHex, EMBER_COLOR_HEX } from "../shared/ember-colors.ts";
 import { HUMAN_DECISION_MS, BROWSER_EXTENSION_CALL_TIMEOUT_MS } from "../shared/browser-extension-protocol.ts";
 import { browserActionCardTitle, BrowserExtensionApprovals, type BrowserExtensionApprovalRequest } from "./browser-extension-approvals.ts";
@@ -44,13 +46,16 @@ describe("D3: the action card heading", () => {
       expect(title).not.toMatch(/agent_browser|browser extension action|—|\bsafe|unsafe|Composio/i);
     }
   });
-  it("the card carries the heading it was given", () => {
+  it("the card carries the heading it was given", async () => {
     const messages: { card?: { title?: string } }[] = [];
     const store = { bots: [], groups: [], messagesFor: () => messages, messageById: () => undefined, openRequestCardRows: () => [], appendMessage: (_t: string, m: { card?: { title?: string } }) => { messages.push(m); return { id: "m1", ...m }; }, patchMessage: () => true };
-    const approvals = new BrowserExtensionApprovals({ store, broadcast() {} } as never);
+    const serviceFixture = serviceQueueFixture(store);
+    const approvals = new BrowserExtensionApprovals({ store, broadcast() {}, authorityFor: serviceFixture.authorityFor } as never);
+    serviceFixture.queue(approvals.approvalQueue());
     const input = { bot: { id: "bot", name: "Ember", color: "orange" }, threadId: "t", bindingId: "b", generation: 1, digest: "a".repeat(64), summary: "click", waitMs: 1 } as BrowserExtensionApprovalRequest;
     void approvals.ask({ ...input, title: "Ember wants to click on example.com" });
     void approvals.ask({ ...input, digest: "b".repeat(64) });
+    await flushApprovalPresentation();
     expect(messages[0].card?.title).toBe("Ember wants to click on example.com");
     expect(messages[1].card?.title).toBe("Ember needs your approval");
   });
@@ -83,4 +88,30 @@ describe("D5: how long a card waits, and what the bot reads when a call fails", 
     expect(EXTENSION_CALL_FAILED_TEXT).toContain("card waiting");
     expect(EXTENSION_CALL_FAILED_TEXT).toContain("connected");
   });
+});
+
+import { Store } from "./store.ts";
+import { DATA_DIR } from "./config.ts";
+import { join } from "node:path";
+import { serviceDecisionFixture } from "./testing/service-decision-fixture.ts";
+
+it('retires a live Allow even when browser reacquisition outlasts the decision deadline', async () => {
+  const store = new Store(); const bot = store.createBot({}, { seedMessages: false });
+  const authority = serviceDecisionFixture(store, { botId: bot.id, threadId: bot.threadId, generation: 'inline-deadline-fixture' });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const resume = vi.fn(() => gate);
+  const approvals = new BrowserExtensionApprovals({ store, broadcast() {}, authorityFor: () => authority, onBrowserOwnerWait: () => resume }, { file: join(DATA_DIR, 'inline-deadline-fixture.json') });
+  const binding = { generation: 1, documentEpoch: 'page:1', targetDigest: 'a'.repeat(64), submissionDigest: 'b'.repeat(64), payloadDigest: 'c'.repeat(64), actionDigest: 'd'.repeat(64) };
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    const pending = approvals.ask({ bot, threadId: bot.threadId, bindingId: 'inline-deadline-binding', generation: 1, digest: binding.actionDigest, summary: 'Reviewed action', binding, kind: 'action', waitMs: 1000 });
+    await vi.waitFor(() => expect(store.messagesFor(bot.threadId)).toHaveLength(1));
+    expect(approvals.resolve(bot.threadId, store.messagesFor(bot.threadId)[0].card!.requestId!, 'allow')).toBe(true);
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(1500);
+    release();
+    expect(await pending).toBe('allow');
+    expect(approvals.consume({ bindingId: 'inline-deadline-binding', kind: 'action', binding })).toBe(false);
+  } finally { release(); vi.useRealTimers(); }
 });

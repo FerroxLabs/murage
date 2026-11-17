@@ -17,8 +17,10 @@ import { assertMemoryBundle, buildMemoryBundle } from "./bundle.ts";
 import { authorityStamp, bumpAuthorityHard } from "./authority-epoch.ts";
 import { MemoryDispatchReceipt } from "./dispatch.ts";
 import { LineageAllowance, setLineageTimeBudgetForTest } from "./lineage-allowance.ts";
-import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
-import { catchUpRecentMemory } from "./recent.ts";
+import { reconcileMemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
+
+import { fixtureCatchUpRecentMemory as catchUpRecentMemory } from "../testing/recall-access-fixture.ts";
 import { WritetimeFixture } from "./testing/writetime-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 

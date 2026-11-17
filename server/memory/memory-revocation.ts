@@ -18,13 +18,14 @@
 //   refs        a records revocation (archive, correct ...): every receipt citing an affected record or source, per id
 //   bindings    evaluation and review bindings that copied ended evidence, paged by binding id
 //   learning    what was learned from the material (evolution-forgetting.ts purgeLearningStep)
-//   all         a deleted bot: every receipt made before the commit's epoch, paged by bundle id
+//   all         legacy global cleanup (bot deletions now retain only their scoped receipt work)
 //   done        the job's own target rows, deleted in pages
 // Ids live in memory_revocation_targets (job, kind, id, rev), paged by key: the job row (memory_scope_bindings, subject
 // 'system'/'memory-revocation') carries only the phase and a scalar cursor, so it stays under 1 KB and resumes after a restart
 // or any error; only completion removes it. When no job row waits, the runner fills the two late lookup tables instead.
 import { syncThreadSummary, bumpChatsGen } from "../thread-summary.ts";
 import { holdForgottenSources } from "../turn-source-holds.ts";
+import { accountedPrepare, accountedDatabase, chargeReleaseStatement, chargeReleaseWork } from "./release-budget.ts";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { lockedError } from "./revocation-index.ts";
@@ -36,7 +37,7 @@ import { reconcilePipStances } from "./pip-stance.ts";
 import { beginRevokeMeasure, budgetedMarkerSlice, chargeRevokeRows, endRevokeMeasure, revokePaceNeed, revokePaceRows, revokePaceWaitMs, revokeSliceNeed, revokeWriteWaitMs } from "./revoke-budget.ts";
 import { enqueueReceipts, markerSlice, markerWorkPending, releaseHold, totalChanges } from "./revoke-marker.ts";
 import { setFlipWake } from "./receipt-outputs.ts";
-import { setSendFenceDeps } from "./send-fence.ts";
+import { setSendFenceDeps } from "./send-fence-deps.ts";
 import { MARKER_SLICE_ROWS } from "./lineage-types.ts";
 import { recordCounter } from "../health/counters.ts";
 import { noteRevocationJobCreated, noteRevocationJobEnded, noteRevocationQueueEmpty } from "../health/pending-revocations.ts";
@@ -48,7 +49,7 @@ function st(db: DatabaseSync, sql: string): StatementSync {
   let held = statements.get(db);
   if (!held) statements.set(db, held = new Map());
   let statement = held.get(sql);
-  if (!statement) { statement = db.prepare(sql); if (held.size < 512) held.set(sql, statement); }
+  if (!statement) { statement = accountedPrepare(db, sql); if (held.size < 512) held.set(sql, statement); }
   return statement;
 }
 
@@ -558,6 +559,7 @@ function affect(db: DatabaseSync, job: RevocationJob, id: string, version: numbe
   // (indexed by record; the events naming it as their prior go in the learning phase's rowid windows: evolution-forgetting.ts)
   if (hasTable(db, "memory_learning_events")) st(db, "DELETE FROM memory_learning_events WHERE record_id=? AND record_version=?").run(id, version);
   addTarget(db, job, "r", id);
+  addTarget(db, job, "terms", id, version);
   // what was derived from it goes too; a record deleted before (by an earlier forget) had its descendants handled then
   if (prior.state !== "deleted") addTarget(db, job, "p", id, version);
 }
@@ -788,9 +790,11 @@ function recordsScanStep(db: DatabaseSync, job: RevocationJob, budget: Budget): 
   return hi >= c.end;
 }
 
-// ---- all: every receipt made before the commit's epoch ends (a deleted bot), a page of bundle ids at a time; the policy
+// ---- all: legacy global receipt cleanup, a page of bundle ids at a time; the policy
 // revision moved in the commit, so readers already refuse them, and a receipt made since (a later epoch) is not touched
 function allStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boolean {
+  // Older bot jobs already walked scope -> expand -> receipts. Keep that scoped result on restart as well.
+  if (job.cause === "bot-deletion") return true;
   const c = (job.c ??= { after: null }) as { after: string | null };
   const n = chunk(budget);
   return bundlePage(db, c, n, (after, end) => Number(st(db, "UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked' AND deletion_epoch<?3 AND bundle_id>?1 AND bundle_id<=?2").run(after, end, Number(job.epoch ?? 0)).changes), job, budget);
@@ -801,6 +805,18 @@ function doneStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boolean
   // the first page in key order, then a primary-key range delete up to its last key (the page is what is left at the front)
   const n = chunk(budget);
   const page = st(db, "SELECT kind,id,rev FROM memory_revocation_targets WHERE job_id=? ORDER BY kind,id,rev LIMIT ?").all(job.id, n);
+  // Recall consumer owner: c3-memory-side; derived projection producer: recall-scope.
+  // A retained or revoked view is still deletion debt. Drain its words before dropping
+  // the durable record target; ordinary view upkeep cannot admit a revoked generation.
+  if (hasTable(db, "memory_recall_view_terms")) for (const target of page) {
+    if (target.kind !== "terms") continue;
+    const removed = Number(st(db, `DELETE FROM memory_recall_view_terms
+      WHERE (record_id,version,view_id,generation,term,sequence) IN (
+        SELECT record_id,version,view_id,generation,term,sequence FROM memory_recall_view_terms
+        WHERE record_id=? AND version=? ORDER BY view_id,generation,term,sequence LIMIT ?)`)
+      .run(target.id, target.rev, n).changes);
+    if (removed) { spend(budget, page.length + removed); return false; }
+  }
   spend(budget, page.length);
   if (!page.length) return true;
   const last = page[page.length - 1]!;
@@ -838,7 +854,7 @@ function rewalkDeletions(db: DatabaseSync, named: Partial<RevocationJob> | null)
   const scopes = [...new Set(list(named.scopes).filter(id => denied("scope", id)) as string[])];
   if (scopes.length) {
     const job = forgetJob({ epoch, scopes, cause: "bot-deletion" });
-    job.phases.unshift("scope"); job.phases.splice(job.phases.indexOf("done"), 0, "all");
+    job.phases.unshift("scope");
     createRevocationJob(db, job);
   }
 }
@@ -1023,7 +1039,7 @@ async function tick(): Promise<void> {
       if (live) memoryRevocationStats.markerYields++;
     }
     const budget = (options.sliceMs ?? REVOCATION_SLICE_MS) * (live && marker ? REVOCATION_LIVE_SLICE_FRACTION : 1), t0 = performance.now();
-    let more = false, budgetWait = false;
+    let more = false, budgetWait = false, workMs = 0;
     // a background runner: the write lock is taken within the background budget, never the handle's 1 s wait (a busy start retries)
     beginBackground(db, "revocation-job");
     // the runner's own transaction: what its commit writes to the WAL is measured into the budget's cost estimate (revoke-budget.ts S2)
@@ -1055,7 +1071,8 @@ async function tick(): Promise<void> {
           } finally { chargeRevokeRows(db, totalChanges(db) - before); }
         }
       }
-      memoryRevocationStats.maxWorkMs = Math.max(memoryRevocationStats.maxWorkMs, performance.now() - t0);
+      workMs = performance.now() - t0;
+      memoryRevocationStats.maxWorkMs = Math.max(memoryRevocationStats.maxWorkMs, workMs);
       db.exec("COMMIT");
       // measured right after its COMMIT, before anything else runs on this thread: for the pace always (whatever it held), and into C and
       // admission only when it held the marker's slice and nothing else (a job step or a late build ran otherwise)
@@ -1067,7 +1084,10 @@ async function tick(): Promise<void> {
     if (budgetWait) { memoryRevocationStats.budgetWaits++; schedule(Math.max(1, revokeWriteWaitMs(revokeSliceNeed(db)))); return; }
     memoryRevocationStats.slices++; memoryRevocationStats.workMs += ms;
     memoryRevocationStats.maxSliceMs = Math.max(memoryRevocationStats.maxSliceMs, ms);
-    rowsPerSlice = nextRevocationRows(rowsPerSlice, ms, budget); backoff = options.retryMs ?? LOCK_RETRY_MS;
+    // Size row work against its deadline. Shrinking rows cannot reduce fixed
+    // commit/checkpoint costs; it only multiplies those costs on slow storage.
+    // The pause below still includes all storage time, preserving duty cycle.
+    rowsPerSlice = nextRevocationRows(rowsPerSlice, workMs, budget); backoff = options.retryMs ?? LOCK_RETRY_MS;
     if (live) { if (!marker) memoryRevocationStats.busyPauses++; schedule(options.busyPauseMs ?? REVOCATION_BUSY_PAUSE_MS); }
     else schedule(Math.max(options.pauseMs ?? REVOCATION_MIN_PAUSE_MS, Math.ceil(ms * REVOCATION_PAUSE_FACTOR)));
   } catch (error) {
@@ -1132,17 +1152,26 @@ export const SEND_FENCE_DRAIN = { rows: 2048, ms: 40 };
  * runner yields to a live owner turn, so without this the owner's next turn would be refused for a revoke nobody walks while it waits.
  * Bounded (a large revoke is left to the runner); never inside a caller's transaction. True while marker work is left. */
 export function drainRevokeMarkerBounded(db: DatabaseSync, budget: { rows: number; ms: number } = SEND_FENCE_DRAIN, options: { background?: boolean } = {}): boolean {
+  chargeReleaseWork();
   if (db.isTransaction) return markerWorkPending(db);
   const deadline = performance.now() + budget.ms;
   let rows = budget.rows;
   while (rows > 0 && performance.now() < deadline) {
     revokePaceNeed(db); // the drain's outstanding copies are settled outside its transaction first: its own copy (revoke-budget.ts r3.6c)
     // the upgrade's slices take the background budget; the send fence (an owner's send is waiting) keeps the handle's owner wait
+    chargeReleaseStatement();
+    // Reserve both transaction exits before BEGIN. Cleanup cannot need a new
+    // reservation after a failed row/check has sealed the generation.
+    chargeReleaseStatement();
+    chargeReleaseStatement();
     if (options.background) beginBackground(db, "revoke-marker"); else db.exec("BEGIN IMMEDIATE");
     const measure = beginRevokeMeasure(db); // this drain's own transaction: its commit is measured into the cost estimate (revoke-budget.ts S2)
     let moved: boolean | "budget";
     // inside the marker's write budget (revoke-budget.ts): a minute with no room left walks nothing more here; the runner carries on later
-    try { moved = budgetedMarkerSlice(db, Math.min(rows, MARKER_SLICE_ROWS), Math.max(1, deadline - performance.now()), lateBuildStep); db.exec("COMMIT"); endRevokeMeasure(db, measure); }
+    try {
+      moved = budgetedMarkerSlice(accountedDatabase(db), Math.min(rows, MARKER_SLICE_ROWS), Math.max(1, deadline - performance.now()), lateBuildStep);
+      db.exec("COMMIT"); endRevokeMeasure(db, measure);
+    }
     catch (error) {
       if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* rolled back */ } }
       endRevokeMeasure(db, measure, false, false);
@@ -1154,26 +1183,44 @@ export function drainRevokeMarkerBounded(db: DatabaseSync, budget: { rows: numbe
   }
   return markerWorkPending(db);
 }
-setSendFenceDeps({ drain: db => { drainRevokeMarkerBounded(db); } });
+
 /** How long a turn the send fence refused for a revoke still being walked waits for the marker before it rebuilds its prompt once. */
 export const REDISPATCH_SETTLE_MS = 5_000;
 /** Before a refused turn rebuilds its prompt: walks the revoke marker in bounded slices, yielding between them, until nothing is pending or
  * `maxMs` passed (the runner yields to the owner's live turn, so without this the rebuilt prompt would meet the same window). True when
  * the marker is done. Each slice is SEND_FENCE_DRAIN-bounded: the event loop keeps serving. */
 export async function settleRevokesForTurn(db: DatabaseSync, maxMs = REDISPATCH_SETTLE_MS): Promise<boolean> {
-  const deadline = performance.now() + maxMs;
-  for (;;) {
-    let pending: boolean;
-    try { pending = db.isTransaction ? true : drainRevokeMarkerBounded(db); } catch { return false; }
-    if (!pending) return true;
-    if (performance.now() >= deadline) return false;
-    // a minute whose write budget is spent walks nothing until it has room: wait for that (or the deadline) instead of spinning
-    const wait = revokeWriteWaitMs(revokeSliceNeed(db));
-    // room that comes only after the deadline (the idle pace, IO-IDLE-DRAIN-1018 r3.5: one commit's room a minute) is not waited for: the
-    // refused turn rebuilds now and its prompt reads "checking" (the accepted cost), instead of every such turn stalling the whole window
-    if (wait > deadline - performance.now()) return false;
-    if (wait > 0) await new Promise<void>(resolve => { setTimeout(resolve, Math.max(1, wait)).unref?.(); });
-    else await new Promise<void>(resolve => setImmediate(resolve));
+  const started = performance.now();
+  const deadline = started + maxMs;
+  // Count bounded drain attempts, including a throwing attempt, excluding transaction-only loop iterations.
+  // Cleared/budget/error describe their existing exits; in-tx refines only a deadline reached inside a caller's transaction.
+  let slices = 0;
+  let outcome: "cleared" | "deadline" | "budget" | "error" | "in-tx" = "error";
+  try {
+    for (;;) {
+      let pending: boolean;
+      let inTx = false;
+      try {
+        inTx = db.isTransaction;
+        pending = inTx ? true : (slices++, drainRevokeMarkerBounded(db));
+      } catch { return false; }
+      if (!pending) { outcome = "cleared"; return true; }
+      if (performance.now() >= deadline) { outcome = inTx ? "in-tx" : "deadline"; return false; }
+      // a minute whose write budget is spent walks nothing until it has room: wait for that (or the deadline) instead of spinning
+      const wait = revokeWriteWaitMs(revokeSliceNeed(db));
+      // room that comes only after the deadline is not waited for: the refused turn rebuilds now, as before
+      if (wait > deadline - performance.now()) { outcome = "budget"; return false; }
+      if (wait > 0) await new Promise<void>(resolve => { setTimeout(resolve, Math.max(1, wait)).unref?.(); });
+      else await new Promise<void>(resolve => setImmediate(resolve));
+    }
+  } finally {
+    // Diagnostics must never alter a return or mask an exception. -1 means the count could not be read; activeJobs does not count flips/folds.
+    try {
+      const ms = Math.max(0, Math.round(performance.now() - started));
+      let activeJobs = -1;
+      try { activeJobs = (db.prepare("SELECT count(*) AS activeJobs FROM (SELECT 1 FROM memory_revoke_jobs WHERE state IN ('active','undoing') LIMIT 1001)").get() as { activeJobs: number }).activeJobs; } catch { /* diagnostic only */ }
+      console.warn(`[memory] settle outcome=${outcome} ms=${ms} slices=${slices} activeJobs=${activeJobs > 1000 ? ">1000" : activeJobs}`);
+    } catch { /* diagnostic only */ }
   }
 }
 /** Wakes the runner if this process started it, once the caller's synchronous transaction is over (a microtask runs after it):
@@ -1197,3 +1244,5 @@ export function resetMemoryRevocationStats(): void { for (const key of Object.ke
 
 // a receipt any path turns 'revoked' wakes the runner, which commits it as a receipt root (receipt-outputs.ts)
 setFlipWake(wakeIfStarted);
+
+setSendFenceDeps({ drain: db => { drainRevokeMarkerBounded(db); } });

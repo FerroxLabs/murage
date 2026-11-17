@@ -33,7 +33,12 @@ const CHILD_PAGER = `function() {
   return function(offset, count) { return page(root, offset, count); };
 }`;
 
-export async function inspectClosedRoots(send: Send, world: () => Promise<number>, presenceHost: () => Promise<number | undefined>): Promise<boolean> {
+// <object> and <embed> can hold a page too; the sanitised tree of an old extension does not say which, so one without a contentDocument is doubt.
+const FRAME_NODES = new Set(["IFRAME", "FRAME", "OBJECT", "EMBED"]);
+
+/** `outOfProcessFrames`: BRLOCK19 fallback for an extension that cannot list frames. An iframe or frame the browser gives no
+ * contentDocument for (after one direct look at that node) lives in another process, and the page locks. */
+export async function inspectClosedRoots(send: Send, world: () => Promise<number>, presenceHost: () => Promise<number | undefined>, options: { outOfProcessFrames?: boolean } = {}): Promise<boolean> {
   const group = `murage-dom-inspection-${randomUUID()}`;
   let hasObjects = false, presenceRead = false, realHost: number | undefined;
   // Depth limits also cover long text descendants. Size rejection narrows the piece, never the verdict.
@@ -117,6 +122,13 @@ export async function inspectClosedRoots(send: Send, world: () => Promise<number
         node = await describe("DOM.describeNode", { backendNodeId: node.backendNodeId });
       }
       incomplete(node);
+      if (options.outOfProcessFrames && node.nodeType === 1 && FRAME_NODES.has(String(node.nodeName ?? "").toUpperCase()) && !node.contentDocument) {
+        if (!Number.isSafeInteger(node.backendNodeId)) return true;
+        const looked = await describe("DOM.describeNode", { backendNodeId: node.backendNodeId });
+        if (!looked?.contentDocument) return true;
+        node = looked;
+        incomplete(node);
+      }
       if (Number.isSafeInteger(node.backendNodeId)) {
         if (seen.has(node.backendNodeId)) throw Error("The page changed during DOM inspection.");
         seen.add(node.backendNodeId);

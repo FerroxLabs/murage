@@ -1,3 +1,6 @@
+import "../../shared/win-hide-child-process.mjs";
+import {exitWithChildIoReceipt} from "../io-child-receipts.ts";
+import { sendProxyFrame, proxyFetch, proxyTransportLost } from "../proxy-turn-release.ts";
 // dweb MCP proxy — spawned as an MCP server inside a bot's agent process.
 // Exposes dweb's HTTP API (the local Murage network daemon) as tools an
 // agent can call to inspect the network and run model requests:
@@ -59,19 +62,32 @@ const TOOLS = [
 ];
 
 type Json = Record<string, unknown>;
-const send = (msg: Json) => process.stdout.write(JSON.stringify(msg) + "\n");
+const send = (msg: Json) => sendProxyFrame("dweb", msg);
 const ok = (id: unknown, result: unknown) => send({ jsonrpc: "2.0", id, result });
 const rpcErr = (id: unknown, code: number, message: string) => send({ jsonrpc: "2.0", id, error: { code, message } });
 const textResult = (id: unknown, text: string, isError = false) =>
   ok(id, { content: [{ type: "text", text }], isError });
 
-async function api(path: string, init?: RequestInit): Promise<Json> {
-  const res = await fetch(DWEB + path, {
+export async function api(path: string, init?: RequestInit): Promise<Json> {
+  const res = await proxyFetch("dweb", DWEB + path, {
     signal: AbortSignal.timeout(30_000),
     ...init,
     headers: { "content-type": "application/json", ...init?.headers },
   });
-  const body = (await res.json().catch(() => ({}))) as Json;
+  let body: Json;
+  try {
+    // R4-FLAG ruling: no decode fallback. A parse failure reaches the seal
+    // below (A3c); a refusal is rethrown unchanged (D4, design line 399).
+    const decoded: unknown = await res.json();
+    if (res.status >= 500 || !decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new Error("invalid upstream response");
+    body = decoded as Json;
+  } catch (error) {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+    // LASTRESORT §12.1, line 399: malformed/failed upstream delivery seals
+    // before the caller's local tool-error formatting can emit a fallback.
+    proxyTransportLost("dweb");
+    throw error;
+  }
   if (!res.ok) throw new Error(String(body.error ?? `HTTP ${res.status}`));
   return body;
 }
@@ -193,4 +209,4 @@ rl.on("line", (line) => {
     if (msg.id !== undefined) rpcErr(msg.id, -32603, (e as Error).message);
   });
 });
-rl.on("close", () => process.exit(0));
+rl.on("close", () => void exitWithChildIoReceipt(0));

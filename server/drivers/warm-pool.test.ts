@@ -298,11 +298,12 @@ describe("activity-scaled warm pool", () => {
   });
 
   it("remembered spawn inputs drop the message, attachments and callbacks, are bounded, and live in memory only", () => {
-    const kept = spawnInputsOf({ threadId: "t", text: "secret words", cwd: "/w", images: [{ mimeType: "image/png", data: "AAAA" }], onToolSurface: () => {}, beforeSubmit: () => {}, prewarm: true } as never);
+    const kept = spawnInputsOf({ threadId: "t", text: "secret words", cwd: "/w", images: [{ mimeType: "image/png", data: "AAAA" }], onToolSurface: () => {}, beforeSubmit: () => {}, prepareSubmit: () => {}, notWritten: () => {}, attemptWritten: () => {}, attemptUncertain: () => {}, attemptNotWritten: () => {}, attemptSettled: () => {}, prewarm: true } as never);
     expect(kept).toMatchObject({ threadId: "t", cwd: "/w", text: "" });
     expect(kept.images).toBeUndefined();
     expect(kept.onToolSurface).toBeUndefined();
     expect(kept.beforeSubmit).toBeUndefined();
+    for (const callback of [kept.prepareSubmit, kept.notWritten, kept.attemptWritten, kept.attemptUncertain, kept.attemptNotWritten, kept.attemptSettled]) expect(callback).toBeUndefined();
     expect(kept.prewarm).toBeUndefined();
     const memory = createTurnMemory<{ n: number; cursor?: string }>(2);
     memory.remember("a", { n: 1 }); memory.remember("b", { n: 2 }); memory.remember("c", { n: 3 });
@@ -383,8 +384,11 @@ describe("activity-scaled warm pool", () => {
     const start = source.indexOf("// Warm on intent: the owner focused");
     expect(start).toBeGreaterThan(-1);
     const route = source.slice(start, source.indexOf("viewer-close", start));
-    expect(route).toContain("warmPool.warmIntent(threadId)");
+    expect(route).toContain('warmThread(bot, threadId, "intent")');
     expect(route).not.toContain("noteUserActivity");
+    const warm = source.slice(source.indexOf("function warmThread("), source.indexOf("K2 step 2: the failover ended"));
+    expect(warm).toContain("warmPool.warmIntent(threadId)");
+    expect(warm).not.toContain("noteUserActivity");
   });
 
   it("settled follows the start itself, past any bounded wait", async () => {

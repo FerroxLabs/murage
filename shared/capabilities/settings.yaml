@@ -1,0 +1,75 @@
+# Capability records: Settings and how Murage reaches you. Schema and rules: scripts/build-capability-db.mjs.
+schema: 1
+entries:
+  - id: settings.search-chief-fallback
+    name: Search Settings in your own words
+    status: can
+    questions:
+      - How do I find a setting?
+      - Can I search Settings?
+      - What if Settings search finds nothing?
+      - Can my Chief of Staff help me find a setting?
+    answer: >
+      Yes. Settings has one search over its pages, each bot's rows and Approve all. When nothing matches,
+      Murage offers to ask your Chief of Staff with the words you typed, or to open the help.
+    limits: >
+      The Chief of Staff row appears only once you have a bot to ask. Leaving Settings for the chat asks
+      first if you have unsaved changes.
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - 'file:src/components/SettingsSearchResults.tsx#data-settings-ask-chief'
+      - 'file:src/components/SettingsSearchResults.tsx#export function SettingsNoResults'
+    verified: 1.0.19
+    since: 1.0.19
+    internal: 1.0.19 "Settings, all in one place". Copy keys ux.l3a.empty.* (en.json). Verified against SettingsNoResults, which dispatches askYourBot with the typed query.
+
+  - id: settings.notification-chooser
+    name: Choose how Murage reaches you
+    status: can
+    questions:
+      - How do I choose how Murage notifies me?
+      - Can I turn off notifications or badges?
+      - Where do I set job receipts and the bot bubble?
+      - Does Murage show only notification options my computer supports?
+    answer: >
+      Yes. A chooser asks how you would like to be notified when a bot needs you or finishes a job: notifications,
+      job receipts, badges, the bot bubble, the edge dock and a shortcut. It lists what your computer supports and
+      you can change any choice later in Settings.
+    limits: >
+      Every option except the menu bar pill is listed; one your computer cannot do is shown with the reason. The
+      pill is offered on a Mac only. Some choices are set in Settings instead. The chooser is in the desktop app.
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - 'file:src/components/NotifyChooser.tsx#notifyChooser.title'
+      - 'file:src/components/NotifyChooser.tsx#notifyChooser.notHere'
+      - 'file:src/components/FirstRunCard.tsx#<FirstRunNotifyCard settled={settled} />'
+    verified: 1.0.19
+    since: 1.0.19
+    internal: 1.0.19 "Pick how Murage reaches you". The exact set of rows per operating system comes from the chooser rows at run time (NotifyChooser.tsx); this entry names the set from the release notes and was not enumerated per OS.
+
+  - id: settings.review-and-approve-all
+    name: Review a bot instruction change and Approve all
+    status: can
+    questions:
+      - Can I read a change to a bot's instructions before allowing it?
+      - What does Approve all do?
+      - Is a waiting bot review kept after a restart?
+    answer: >
+      Yes. At Ask, a proposed change to a bot's instructions opens as a review you can read before you
+      allow it, and Allow applies that one change. A waiting review stays on the bot. Approve all counts the
+      approval requests in your view and answers them together, and each answer stays with its chat.
+    limits: >
+      Approve all is in the desktop app and the owner's phone app, never a browser, and it covers only
+      requests the app marks as fit to answer together; the rest show as needing a look.
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - 'file:src/components/BotReviewSheet.tsx#aria-label="Bot review"'
+      - 'file:server/store.ts#pendingRevision?: import'
+      - 'file:src/components/ApproveAll.tsx#approveAllLabel'
+    verified: 1.0.19
+    since: 1.0.19
+    internal: 1.0.19 "Review the whole change". Restart persistence rests on pendingRevision living on the stored bot record (store.ts); a restart test was not run for this entry. Approve all eligibility is the server's bulk stamp (shared/approve-all-counts.ts).
+retired: []

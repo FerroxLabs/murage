@@ -80,6 +80,16 @@ it("keeps browser re-enabling behind the desktop browser bridge", () => {
   expect(fixture.api).not.toHaveBeenCalled();
 });
 
+it("shows the built-in browser off, and disabled, when the desktop app is not here (default-on config)", () => {
+  vi.stubGlobal("window", {});
+  fixture.config = {};
+  const html = renderToStaticMarkup(createElement(WorkspaceFeatureRow, { feature: "browser" }));
+  expect(html).toContain("Needs the Murage desktop app.");
+  expect(html).toContain('aria-checked="false"');
+  expect(fixture.control!.checked).toBe(false);
+  expect(fixture.control!.disabled).toBe(true);
+});
+
 it("waits for the saved switches before the row can save", () => {
   fixture.config = null;
   for (const feature of ["browser", "skillRecorder"] as const) {

@@ -1,3 +1,4 @@
+import { upstreamOwnerFixture } from "./testing/upstream-owner-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -151,7 +152,7 @@ describe("createSseReader (review L7: idle timeout and per-event cap)", () => {
     const events: Array<{ event: string; data: string }> = [];
     let failure: unknown;
     try {
-      for await (const event of createSseReader(Readable.from(chunks), options)) events.push(event);
+      for await (const event of upstreamOwnerFixture().run("sse-reader", () => createSseReader(Readable.from(chunks), options))) events.push(event);
     } catch (error) {
       failure = error;
     }
@@ -175,7 +176,7 @@ describe("createSseReader (review L7: idle timeout and per-event cap)", () => {
     const slow = (async function* () { yield "data: one\n\n"; await new Promise((resolve) => setTimeout(resolve, 400)); yield "data: two\n\n"; })();
     const events: string[] = [];
     let failure: unknown;
-    try { for await (const event of createSseReader(slow, { idleMs: 80, maxEventBytes: 1024 })) events.push(event.data); } catch (error) { failure = error; }
+    try { for await (const event of upstreamOwnerFixture().run("sse-reader", () => createSseReader(slow, { idleMs: 80, maxEventBytes: 1024 }))) events.push(event.data); } catch (error) { failure = error; }
     expect(events).toEqual(["one"]);
     expect(failure).toMatchObject({ code: "idle-timeout" });
   });

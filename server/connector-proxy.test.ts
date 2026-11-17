@@ -1,22 +1,29 @@
+import { boundProxyState, boundProxyTerminal, spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
 import { createServer, type RequestListener, type Server } from "node:http";
 import { once } from "node:events";
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import { afterEach, describe, expect, it } from "vitest";
 import { bumpGeneration } from "./connector-cache.ts";
 import { Store } from "./store.ts";
 import { assertConnectedAppCall, reviewBotAccess } from "./bot-access.ts";
-import { LEGACY_DAILY_LIMIT } from "../shared/connected-app-calls.ts";
+import { connectedAppTimeoutText, LEGACY_DAILY_LIMIT } from "../shared/connected-app-calls.ts";
 import { exposedToolName, LEGACY_NAMES_ENV } from "../shared/connected-app-names.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const ENTRY = join(dirname(fileURLToPath(import.meta.url)), "connector-proxy.ts");
 let child: ChildProcessWithoutNullStreams | null = null;
 let server: Server | null = null;
+const frameReaders = new WeakMap<readline.Interface, AsyncIterator<string>>();
+
+// A fixture handshake is a real RPC acknowledgement; bare {} is malformed
+// and seals the consuming transport before the catalogue scenario can run.
+const emptyMcpReply = (message: Record<string, any>) => message.id === undefined
+  ? "" : JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} });
 
 async function listen(handler: RequestListener) {
   server = createServer(handler);
@@ -27,24 +34,79 @@ async function listen(handler: RequestListener) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-function start(env: Record<string, string>) {
+async function start(env: Record<string, string>) {
   // Each bridge gets its own remembered-list folder unless a test names one.
   const toolsCache = env.MURAGE_CONNECTOR_TOOLS_CACHE_DIR ?? mkdtempSync(join(tmpdir(), "murage-proxy-cache-"));
-  child = spawn(process.execPath, ["--experimental-strip-types", ENTRY], {
+  child = await spawnBoundProxy("connectors", process.execPath, ["--experimental-strip-types", ENTRY], {
+    windowsHide: true,
     // Windows trusts a cache folder only when the harness verified its ACL; the test folders are private temp ones.
     env: { ...process.env, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: toolsCache, ...(process.platform === "win32" ? { MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" } : {}), ...env },
     stdio: ["pipe", "pipe", "pipe"],
   });
-  return readline.createInterface({ input: child.stdout });
+  const lines = readline.createInterface({ input: child.stdout });
+  // Subscribe before any request: frames remain queued between engine reads.
+  frameReaders.set(lines, lines[Symbol.asyncIterator]());
+  return lines;
 }
 
-function nextJson(lines: readline.Interface) {
-  return new Promise<Record<string, any>>((resolve, reject) => {
-    lines.once("line", (line) => {
-      try { resolve(JSON.parse(line)); } catch (error) { reject(error); }
-    });
-  });
+async function nextJson(lines: readline.Interface): Promise<Record<string, any>> {
+  const reader = frameReaders.get(lines);
+  if (!reader) throw new Error("Proxy frame reader was not initialized");
+  const next = await reader.next();
+  if (next.done) throw new Error("Proxy closed before an application frame");
+  return JSON.parse(next.value);
 }
+
+/** MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8:
+ * raw transport failure seals this mount; only its authenticated supervisor may
+ * deliver the fixed terminal refusal. No ordinary fallback/error frame escapes. */
+async function terminalRefusal(lines: readline.Interface, onRefusal?: () => void): Promise<Record<string, any>> {
+  const current = child!;
+  const closed = once(current, "close");
+  const reader = frameReaders.get(lines)!;
+  const frames: string[] = [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.all([
+        closed,
+        waitUntil(() => Boolean(boundProxyTerminal(current)), "authenticated terminal receipt", 10_000)
+          .then(() => { onRefusal?.(); }),
+        (async () => { for (;;) { const next = await reader.next(); if (next.done) break; frames.push(next.value); } })(),
+      ]),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("terminal refusal did not close the mount")), 10_000); }),
+    ]);
+  } finally { if (timer) clearTimeout(timer); }
+  expect(frames).toEqual([]);
+  expect(boundProxyState(current)).toMatchObject({ sealed: true, refusals: 1 });
+  const terminal = boundProxyTerminal(current) as Record<string, any>;
+  expect(terminal).toEqual({ jsonrpc: "2.0", id: null, error: {
+    code: -32099, message: "I stopped this turn because some of its context is no longer available.",
+    data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true },
+  } });
+  // A still-closing upstream may outlive the terminal receipt. The fixture's
+  // exact one-second supervisor guard then terminates this already sealed child.
+  expect(current.exitCode === 1 || current.signalCode === "SIGTERM").toBe(true);
+  return terminal;
+}
+
+// MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8:
+// Positive availability controls use a live, valid provisional RPC catalogue.
+// Raw stalls, HTTP failures and malformed RPCs have separate terminal controls.
+const pendingCatalogue = (id: unknown) => ({ jsonrpc: "2.0", id, result: {
+  tools: [{ name: "PENDING_FIXTURE", inputSchema: { type: "object" } }],
+  _meta: { "murage/provisional": true, "murage/provisional-bundled": true },
+} });
+
+const pendingUpstream: RequestListener = (request, response) => {
+  let body = "";
+  request.on("data", chunk => { body += chunk; });
+  request.on("end", () => {
+    const message = JSON.parse(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(message.method === "tools/list" ? JSON.stringify(pendingCatalogue(message.id)) : emptyMcpReply(message));
+  });
+};
 
 async function waitUntil(condition: () => boolean, description: string, timeout = 8_000) {
   await expect.poll(condition, { timeout, interval: 20, message: `Timed out waiting for ${description}` }).toBe(true);
@@ -53,11 +115,29 @@ async function waitUntil(condition: () => boolean, description: string, timeout 
 afterEach(async () => {
   child?.kill("SIGKILL");
   child = null;
+  server?.closeAllConnections();
   if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
   server = null;
 });
 
 describe("connector MCP bridge", () => {
+  it("buffers received application frames until the engine reads them", async () => {
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: "" });
+    let delivered = 0;
+    const received = new Promise<void>(resolve => lines.on("line", () => { if (++delivered === 2) resolve(); }));
+    for (const id of [901, 902]) child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method: "initialize" })}\n`);
+    await received;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const replies = await Promise.race([
+        (async () => [await nextJson(lines), await nextJson(lines)])(),
+        new Promise<never>((_, reject) => { deadline = setTimeout(() => reject(new Error("reader missed received application frames")), 1_000); }),
+      ]);
+      expect(replies.map(reply => reply.id)).toEqual([901, 902]);
+      expect(replies.every(reply => reply.result?.capabilities.tools.listChanged === true)).toBe(true);
+    } finally { if (deadline) clearTimeout(deadline); }
+  });
+
   it("forwards the RMCP envelope through restricted authorization without admitting writes or other accounts", async () => {
     const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
     const bot = store.createBot({ name: "RMCP metadata fixture" });
@@ -85,7 +165,7 @@ describe("connector MCP bridge", () => {
         }
       });
     });
-    const lines = start({
+    const lines = await start({
       MURAGE_CONNECTOR_UPSTREAM_URL: upstream,
       MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer fixture-metadata" }),
     });
@@ -121,7 +201,7 @@ describe("connector MCP bridge", () => {
         response.end("{}");
       });
     });
-    const lines = start({ MURAGE_HARNESS_URL: harness, MURAGE_CONNECTORS_TOKEN: "fixture-secret" });
+    const lines = await start({ MURAGE_HARNESS_URL: harness, MURAGE_CONNECTORS_TOKEN: "fixture-secret" });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: {
       name: "COMPOSIO_MANAGE_CONNECTIONS", arguments: { toolkits: [
         { toolkit: " GMAIL ", alias: " Personal " }, { name: "gmail", account: "Work", action: "connect" },
@@ -145,7 +225,7 @@ describe("connector MCP bridge", () => {
         response.end("{}");
       });
     });
-    const lines = start({
+    const lines = await start({
       MURAGE_HARNESS_URL: harness,
       MURAGE_COMMS_TOKEN: "different-agents-capability",
       MURAGE_CONNECTORS_TOKEN: "bridge-secret",
@@ -166,8 +246,36 @@ describe("connector MCP bridge", () => {
     expect(received.body.resumeKey).toMatch(/^[\w-]{8,100}$/);
   });
 
+  it("reads live connection posture after a level change in the same child", async () => {
+    let unlimited = true;
+    const requests: any[] = [];
+    const harness = await listen((request, response) => {
+      let raw = "";
+      request.on("data", chunk => { raw += chunk; });
+      request.on("end", () => {
+        expect(request.headers.authorization).toBe("Bearer live-policy");
+        requests.push(JSON.parse(raw));
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(unlimited ? { pending: false, message: "Live No limits disconnected line" } : { pending: true }));
+      });
+    });
+    const lines = await start({ MURAGE_HARNESS_URL: harness, MURAGE_CONNECTORS_TOKEN: "live-policy", MURAGE_CONNECTORS_NO_LIMITS: "1" });
+    const call = async (id: number, name: string) => {
+      const reply = nextJson(lines);
+      child!.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: { toolkits: ["GMAIL"] } } }) + "\n");
+      return (await reply).result.content[0].text;
+    };
+    expect(await call(1, "COMPOSIO_WAIT_FOR_CONNECTIONS")).toBe("Live No limits disconnected line");
+    unlimited = false;
+    expect(await call(2, "COMPOSIO_WAIT_FOR_CONNECTIONS")).toContain("will continue the task automatically");
+    expect(await call(3, "COMPOSIO_MANAGE_CONNECTIONS")).toContain("secure connection card");
+    unlimited = true;
+    expect(await call(4, "COMPOSIO_MANAGE_CONNECTIONS")).toBe("Live No limits disconnected line");
+    expect(requests.map(r => r.statusOnly)).toEqual([true, true, false, false]);
+  });
+
   it("answers initialize locally so a missing or failing upstream cannot fail the MCP handshake", async () => {
-    const lines = start({});
+    const lines = await start({});
     child!.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
@@ -197,7 +305,7 @@ describe("connector MCP bridge", () => {
       // Deliberately never respond. The engine still gets its local
       // capability result at once: the upstream session opens behind it.
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream });
     const replied = nextJson(lines);
     const asked = Date.now();
     child!.stdin.write(`${JSON.stringify({
@@ -241,7 +349,7 @@ describe("connector MCP bridge", () => {
         if (upstreamBody.method === "notifications/initialized") sawInitialized();
       });
     });
-    const lines = start({
+    const lines = await start({
       MURAGE_CONNECTOR_UPSTREAM_URL: upstream,
       MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer upstream-secret" }),
     });
@@ -275,7 +383,7 @@ describe("connector MCP bridge", () => {
         result: { tools: [{ name: "COMPOSIO_SEARCH_TOOLS", inputSchema: { type: "object" } }] },
       }));
     });
-    const lines = start({
+    const lines = await start({
       MURAGE_CONNECTOR_UPSTREAM_URL: upstream,
       MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer upstream-secret" }),
     });
@@ -290,14 +398,10 @@ describe("connector MCP bridge", () => {
   });
 
   it("returns a JSON-RPC error, not a tools result, when a non-call relay fails", async () => {
-    const lines = start({});
+    const lines = await start({});
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} })}\n`);
-    const reply = await nextJson(lines);
-    expect(reply).toEqual({
-      jsonrpc: "2.0",
-      id: 3,
-      error: { code: -32000, message: "connected apps are unavailable" },
-    });
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: unavailable mount is terminal.
+    await terminalRefusal(lines);
   });
 
   // The three ways this bridge used to fail in silence. Each was found by
@@ -316,7 +420,7 @@ describe("connector MCP bridge", () => {
         used: 251,
       }));
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" })}\n`);
     const reply = await nextJson(lines);
     expect(JSON.stringify(reply)).toContain("daily_call_ceiling");
@@ -332,12 +436,10 @@ describe("connector MCP bridge", () => {
       response.writeHead(200, { "content-type": "application/json" });
       response.end("");
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 11, method: "tools/list" })}\n`);
-    const reply = await nextJson(lines);
-    expect(reply.id).toBe(11);
-    // Never hangs, and never an empty mount: the first list answers with the fallback tools.
-    expect(reply.result.tools.map((t: { name: string }) => t.name)).toContain("APPS_REMOTE_WORKBENCH");
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: preserve the raw failure and require terminal refusal.
+    await terminalRefusal(lines);
   });
 
   it("refuses to answer one request with another request's frame", async () => {
@@ -348,11 +450,10 @@ describe("connector MCP bridge", () => {
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end(`data: ${JSON.stringify({ jsonrpc: "2.0", id: 999, result: { tools: [] } })}\n\n`);
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 12, method: "tools/list" })}\n`);
-    const reply = await nextJson(lines);
-    expect(reply.id, "answered id 12 with id 999's frame").toBe(12);
-    expect(reply.result.tools.map((t: { name: string }) => t.name)).toContain("APPS_REMOTE_WORKBENCH"); // the stranger's empty list is not the answer
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: preserve the raw failure and require terminal refusal.
+    await terminalRefusal(lines);
   });
 
   it("opens a new upstream session and retries once when the old one is gone", async () => {
@@ -381,7 +482,7 @@ describe("connector MCP bridge", () => {
         response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "done" }] } }));
       });
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } })}\n`);
     await nextJson(lines);
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "COMPOSIO_SEARCH_TOOLS", arguments: {} } })}\n`);
@@ -409,12 +510,12 @@ describe("connector MCP bridge", () => {
         response.end("{}");
       });
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
     await nextJson(lines);
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "X", arguments: {} } })}\n`);
-    const reply = await nextJson(lines);
-    expect(reply.id).toBe(2);
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: preserve the raw failure and require terminal refusal.
+    await terminalRefusal(lines);
     expect(calls).toBe(2);
   });
 
@@ -424,21 +525,16 @@ describe("connector MCP bridge", () => {
     const hung: Array<() => void> = [];
     const waits: string[] = [];
     const upstream = await listen((request, response) => { waits.push(String(request.headers["x-murage-wait-ms"])); request.resume(); hung.push(() => response.destroy()); });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream, MURAGE_CONNECTOR_ACTION_TIMEOUT_MS: "400", MURAGE_CONNECTOR_LOOKUP_TIMEOUT_MS: "200", MURAGE_CONNECTOR_GRACE_MS: "100" });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream, MURAGE_CONNECTOR_ACTION_TIMEOUT_MS: "400", MURAGE_CONNECTOR_LOOKUP_TIMEOUT_MS: "200", MURAGE_CONNECTOR_GRACE_MS: "100" });
     const started = Date.now();
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/call", params: {
       name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS", arguments: { max_results: 5 } }] },
     } })}\n`);
-    const reply = await nextJson(lines);
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: an aborted transport cannot publish a repeatable action result.
+    await terminalRefusal(lines);
     const waited = Date.now() - started;
     for (const end of hung) end();
-    expect(reply.id).toBe(9);
-    expect(reply.result.isError).toBeUndefined();
-    const text: string = reply.result.content[0].text;
-    expect(text).toContain("Gmail: fetch emails");
-    expect(text).toMatch(/still running/);
-    expect(text).toMatch(/Do not run it again/);
-    expect(text).not.toMatch(/composio|safe|\u2014/i);
+    expect(waits).toHaveLength(1); // no automatic action retry
     // The server is told how long it may hold the bot: the bound, less the grace.
     expect(Number(waits[0])).toBeGreaterThan(200);
     expect(Number(waits[0])).toBeLessThanOrEqual(400);
@@ -449,15 +545,49 @@ describe("connector MCP bridge", () => {
   it("gives a lookup the shorter bound, and a retry hint instead of the action warning", async () => {
     const hung: Array<() => void> = [];
     const upstream = await listen((request, response) => { request.resume(); hung.push(() => response.destroy()); });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream, MURAGE_CONNECTOR_ACTION_TIMEOUT_MS: "5000", MURAGE_CONNECTOR_LOOKUP_TIMEOUT_MS: "200" });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream, MURAGE_CONNECTOR_ACTION_TIMEOUT_MS: "5000", MURAGE_CONNECTOR_LOOKUP_TIMEOUT_MS: "200" });
     const started = Date.now();
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "COMPOSIO_GET_TOOL_SCHEMAS", arguments: { tool_slugs: ["GMAIL_FETCH_EMAILS"] } } })}\n`);
-    const reply = await nextJson(lines);
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: timeout seals the transport before any lookup hint.
+    await terminalRefusal(lines);
     for (const end of hung) end();
     expect(Date.now() - started).toBeLessThan(3_000);
-    expect(reply.result.isError).toBe(true);
-    expect(reply.result.content[0].text).toMatch(/^The connected app lookup did not answer within/);
-    expect(reply.result.content[0].text).toMatch(/Try it once more/);
+  });
+
+  it.each(["action", "lookup"] as const)("preserves a live service's bounded %s reply without retrying it", async kind => {
+    const name = kind === "action" ? "COMPOSIO_MULTI_EXECUTE_TOOL" : "COMPOSIO_GET_TOOL_SCHEMAS";
+    const args = kind === "action" ? { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS", arguments: { max_results: 5 } }] }
+      : { tool_slugs: ["GMAIL_FETCH_EMAILS"] };
+    const calls: string[] = [];
+    const url = await namedUpstream(id => ({ jsonrpc: "2.0", id, result: {
+      content: [{ type: "text", text: connectedAppTimeoutText(name, args, 200) }],
+      ...(kind === "lookup" ? { isError: true } : {}),
+    } }), calls);
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url });
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 90, method: "tools/call", params: { name, arguments: args } })}\n`);
+    const reply = await nextJson(lines);
+    expect(reply.id).toBe(90);
+    expect(calls).toEqual([name]);
+    const text: string = reply.result.content[0].text;
+    if (kind === "action") {
+      expect(reply.result.isError).toBeUndefined();
+      expect(text).toContain("Gmail: fetch emails");
+      expect(text).toMatch(/still running/);
+      expect(text).toMatch(/Do not run it again/);
+      expect(text).not.toMatch(/composio|safe|\u2014/i);
+    } else {
+      expect(reply.result.isError).toBe(true);
+      expect(text).toMatch(/^The connected app lookup did not answer within/);
+      expect(text).toMatch(/Try it once more/);
+    }
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+
+  it("a raw stalled catalogue transport retires the mount without fallback frames", async () => {
+    const url = await listen(request => { request.resume(); });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_LIST_MS: "400" });
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 91, method: "tools/list" })}\n`);
+    await terminalRefusal(lines);
   });
 
   it("still relays an action that answers inside its bound", async () => {
@@ -469,7 +599,7 @@ describe("connector MCP bridge", () => {
         response.end(JSON.stringify({ jsonrpc: "2.0", id: JSON.parse(body).id, result: { content: [{ type: "text", text: "3 emails" }] } }));
       }, 100));
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream, MURAGE_CONNECTOR_ACTION_TIMEOUT_MS: "2000" });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream, MURAGE_CONNECTOR_ACTION_TIMEOUT_MS: "2000" });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [] } } })}\n`);
     const reply = await nextJson(lines);
     expect(reply.result.content[0].text).toBe("3 emails");
@@ -498,7 +628,7 @@ describe("connector MCP bridge", () => {
   it("a session an earlier release started is listed its older tool names too, and a call by one runs unchanged", async () => {
     const calls: string[] = [];
     const upstream = await namedUpstream((id) => ({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "found 2" }] } }), calls);
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream, [LEGACY_NAMES_ENV]: "1" });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream, [LEGACY_NAMES_ENV]: "1" });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
     const list = await nextJson(lines);
     const names = list.result.tools.map((tool: { name: string }) => tool.name);
@@ -515,7 +645,7 @@ describe("connector MCP bridge", () => {
 
   it("a session started now is never listed an older tool name", async () => {
     const upstream = await namedUpstream((id) => ({ jsonrpc: "2.0", id, result: {} }), []);
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
     const list = await nextJson(lines);
     expect(list.result.tools.map((tool: { name: string }) => tool.name)).toContain("APPS_SEARCH_TOOLS");
@@ -525,7 +655,7 @@ describe("connector MCP bridge", () => {
   it("hands an action's result to the engine exactly as the app sent it", async () => {
     const data = "Saved COMPOSIO_API_KEY to /tmp/COMPOSIO_RESULT.json for the Composio team";
     const upstream = await namedUpstream((id) => ({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: data }] } }), []);
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "APPS_MULTI_EXECUTE_TOOL", arguments: { tools: [] } } })}\n`);
     const reply = await nextJson(lines);
     expect(reply.result.content[0].text).toBe(data);
@@ -533,7 +663,7 @@ describe("connector MCP bridge", () => {
 
   it("says the service's own error without its name", async () => {
     const upstream = await namedUpstream((id) => ({ jsonrpc: "2.0", id, error: { code: -32001, message: "Composio authentication failed", data: { detail: "Composio key rejected" } } }), []);
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: upstream });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "APPS_SEARCH_TOOLS", arguments: {} } })}\n`);
     const reply = await nextJson(lines);
     expect(reply.id).toBe(5);
@@ -562,17 +692,16 @@ describe("connector MCP bridge", () => {
         }, 150);
       });
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness, MURAGE_CONNECTOR_LOOKUP_TIMEOUT_MS: "600" });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness, MURAGE_CONNECTOR_LOOKUP_TIMEOUT_MS: "600" });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
     await nextJson(lines);
     const started = Date.now();
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "COMPOSIO_SEARCH_TOOLS", arguments: {} } })}\n`);
-    const reply = await nextJson(lines);
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: the same absolute deadline ends in terminal refusal.
+    await terminalRefusal(lines);
     const waited = Date.now() - started;
     for (const end of hung) end();
-    expect(reply.id).toBe(2);
-    expect(reply.result.isError).toBe(true);
-    expect(reply.result.content[0].text).toMatch(/^The connected app lookup did not answer within 1 seconds/);
+    expect(initializes).toBe(2);
     // One 600 ms deadline for the call, the reopen and the retry together
     // (it used to be up to 15 s for the reopen, then a fresh full bound).
     expect(waited).toBeLessThan(2_000);
@@ -588,7 +717,7 @@ describe("connector MCP bridge", () => {
         response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: [{ name: "COMPOSIO_SEARCH_TOOLS", inputSchema: { type: "object" } }] } }));
       });
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" })}\n`);
     const reply = await nextJson(lines);
     const names = reply.result.tools.map((tool: { name: string }) => tool.name);
@@ -605,24 +734,34 @@ describe("connector MCP bridge", () => {
 
     const listReq = (id: number) => `${JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" })}\n`;
     const realTools = (label: string) => [{ name: `REAL_${label}`, description: "d", inputSchema: { type: "object", properties: {} } }];
-    /** An upstream that answers tools/list with `tools` after `delayMs` (never, when null). */
-    const upstream = (tools: unknown, delayMs: number | null) => listen((request, response) => {
-      let body = "";
-      request.on("data", (chunk) => { body += chunk; });
-      request.on("end", () => {
-        const message = JSON.parse(body);
-        if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end("{}"); return; }
-        if (delayMs === null) return; // stalls until the test ends
-        setTimeout(() => {
+    /** A live service with a pending catalogue; a raw stalled transport is tested separately. */
+    const upstream = (tools: unknown, delayMs: number | null) => {
+      let readyAt: number | undefined;
+      return listen((request, response) => {
+        let body = "";
+        request.on("data", chunk => { body += chunk; });
+        request.on("end", () => {
+          const message = JSON.parse(body);
           response.writeHead(200, { "content-type": "application/json" });
-          response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools } }));
-        }, delayMs);
+          if (message.method !== "tools/list") { response.end(emptyMcpReply(message)); return; }
+          if (delayMs !== null && delayMs <= 1_000) {
+            setTimeout(() => response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools } })), delayMs);
+            return;
+          }
+          readyAt ??= Date.now() + (delayMs ?? Infinity);
+          if (delayMs !== null && String(message.id).startsWith("murage-tools-bg-")) {
+            setTimeout(() => response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools } })), Math.max(0, readyAt - Date.now()));
+            return;
+          }
+          response.end(JSON.stringify(Date.now() < readyAt ? pendingCatalogue(message.id)
+            : { jsonrpc: "2.0", id: message.id, result: { tools } }));
+        });
       });
-    });
+    };
 
     it("an upstream that stalls (90 s) still yields a mounted server with the bundled tools in under 10 s, with a one-line notice, and a call says plainly that apps are still loading", async () => {
       const url = await upstream(realTools("A"), null);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: cacheDir(), MURAGE_BOT_ID: "bot-a" });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: cacheDir(), MURAGE_BOT_ID: "bot-a" });
       const began = Date.now();
       child!.stdin.write(listReq(1));
       const reply = await nextJson(lines);
@@ -663,7 +802,7 @@ describe("connector MCP bridge", () => {
     it("serves the remembered list at once next session, then tells the engine when the fresh list differs", async () => {
       const dir = cacheDir();
       const fast = await upstream(realTools("OLD"), 0);
-      let lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
+      let lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
       child!.stdin.write(listReq(1));
       expect((await nextJson(lines)).result.tools[0].name).toBe("REAL_OLD");
       child!.kill("SIGKILL");
@@ -676,7 +815,7 @@ describe("connector MCP bridge", () => {
           setTimeout(() => response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools("NEW") } })), 800);
         });
       });
-      lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
+      lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
       const began = Date.now();
       child!.stdin.write(listReq(2));
       const first = await nextJson(lines);
@@ -691,13 +830,13 @@ describe("connector MCP bridge", () => {
     it("files the list under the harness identity, not the rotating turn token", async () => {
       const dir = cacheDir();
       const a = await upstream(realTools("ACCOUNT_A"), 0);
-      let lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: a, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTORS_TOKEN: "turn-token-1", MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer turn-token-1" }), ...scopeEnv(ID_A) });
+      let lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: a, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTORS_TOKEN: "turn-token-1", MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer turn-token-1" }), ...scopeEnv(ID_A) });
       child!.stdin.write(listReq(1));
       expect(names(await nextJson(lines))).toEqual(["REAL_ACCOUNT_A"]);
       child!.kill("SIGKILL");
       // A new turn: a new token, the same account and bot. The upstream stalls; the remembered list answers.
-      await restartAs(a, () => {});
-      lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: a, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTORS_TOKEN: "turn-token-2", MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer turn-token-2" }), ...scopeEnv(ID_A) });
+      await restartAs(a, pendingUpstream);
+      lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: a, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTORS_TOKEN: "turn-token-2", MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer turn-token-2" }), ...scopeEnv(ID_A) });
       const began = Date.now();
       child!.stdin.write(listReq(2));
       expect(names(await nextJson(lines))).toEqual(["REAL_ACCOUNT_A"]);
@@ -707,13 +846,13 @@ describe("connector MCP bridge", () => {
     it("never serves one account's, one bot's or an older access revision's list to another", async () => {
       const dir = cacheDir();
       const a = await upstream(realTools("ACCOUNT_A"), 0);
-      const first = start({ MURAGE_CONNECTOR_UPSTREAM_URL: a, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A, "rev-1") });
+      const first = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: a, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A, "rev-1") });
       child!.stdin.write(listReq(1));
       await nextJson(first);
       child!.kill("SIGKILL");
-      await restartAs(a, () => {});
+      await restartAs(a, pendingUpstream);
       for (const scope of [scopeEnv(ID_B, "rev-1"), scopeEnv(ID_A, "rev-2")]) {
-        const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: a, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scope });
+        const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: a, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scope });
         child!.stdin.write(listReq(2));
         const other = await nextJson(lines);
         expect(names(other)).toContain("APPS_SEARCH_TOOLS");
@@ -735,9 +874,14 @@ describe("connector MCP bridge", () => {
         request.on("data", (chunk) => { body += chunk; });
         request.on("end", () => {
           const message = JSON.parse(body);
-          if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end("{}"); return; }
+          if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end(emptyMcpReply(message)); return; }
           closed.push(once(response, "close"));
           lists += 1;
+          if (lists === 1) {
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "fixture catalogue pending" } }));
+            return;
+          }
           for (const waiter of waiters.splice(0)) { if (lists >= waiter.count) waiter.resolve(); else waiters.push(waiter); }
           void gate.then(() => {
             if (response.destroyed) return; // the bridge gave up on this one (its deadline passed)
@@ -762,7 +906,7 @@ describe("connector MCP bridge", () => {
       const writeCreds = (revision: string) => writeFileSync(credFile, JSON.stringify({ composio: { MURAGE_CONNECTOR_IDENTITY: ID_A, MURAGE_CONNECTOR_REVISION: revision } }));
       writeCreds("rev-1");
       const held = await gatedUpstream(realTools("STALE"));
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: held.url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: held.url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
       child!.stdin.write(listReq(1));
       expect(names(await nextJson(lines))).toContain("APPS_SEARCH_TOOLS"); // the initial list
       // The bridge reads the scope for its background refresh just AFTER it sends the initial list, so the
@@ -783,7 +927,7 @@ describe("connector MCP bridge", () => {
       const temp = cacheDir();
       const fast = await upstream(realTools("ACCOUNT_A"), 0);
       // No folder supplied: nothing is written anywhere, shared temp included.
-      let lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: "", TMPDIR: temp, TMP: temp, TEMP: temp, ...scopeEnv(ID_A) });
+      let lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: "", TMPDIR: temp, TMP: temp, TEMP: temp, ...scopeEnv(ID_A) });
       child!.stdin.write(listReq(1));
       expect(names(await nextJson(lines))).toEqual(["REAL_ACCOUNT_A"]);
       child!.kill("SIGKILL");
@@ -793,7 +937,7 @@ describe("connector MCP bridge", () => {
         const target = cacheDir();
         const link = join(cacheDir(), "link");
         symlinkSync(target, link);
-        lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: link, ...scopeEnv(ID_A) });
+        lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: link, ...scopeEnv(ID_A) });
         child!.stdin.write(listReq(2));
         expect(names(await nextJson(lines))).toEqual(["REAL_ACCOUNT_A"]);
         child!.kill("SIGKILL");
@@ -803,15 +947,15 @@ describe("connector MCP bridge", () => {
         const secret = join(cacheDir(), "planted.json");
         writeFileSync(secret, JSON.stringify({ revision: "rev-1", tools: [{ name: "PLANTED", description: "d", inputSchema: { type: "object" } }] }));
         symlinkSync(secret, join(dir, `${ID_A}.json`));
-        await restartAs(fast, () => {});
-        lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
+        await restartAs(fast, pendingUpstream);
+        lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
         child!.stdin.write(listReq(3));
         expect(names(await nextJson(lines))).not.toContain("PLANTED");
         child!.kill("SIGKILL");
         // A group- or world-accessible folder is tightened to owner-only before use.
         const loose = cacheDir();
         chmodSync(loose, 0o777);
-        lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: loose, ...scopeEnv(ID_B) });
+        lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: loose, ...scopeEnv(ID_B) });
         child!.stdin.write(listReq(4));
         await nextJson(lines);
         await new Promise((resolve) => setTimeout(resolve, 300));
@@ -826,7 +970,7 @@ describe("connector MCP bridge", () => {
       writeFileSync(stale, "{}");
       utimesSync(stale, old, old);
       const fast = await upstream(realTools("ACCOUNT_A"), 0);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: fast, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
       child!.stdin.write(listReq(1));
       await nextJson(lines);
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -851,21 +995,22 @@ describe("connector MCP bridge", () => {
           // the retried list never answers
         });
       });
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1500" });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1500" });
       child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
       await nextJson(lines);
       await new Promise((resolve) => setTimeout(resolve, 300)); // the background session is open
       const began = Date.now();
       child!.stdin.write(listReq(2));
-      const reply = await nextJson(lines);
-      expect(Date.now() - began).toBeLessThan(2_000);
-      expect(names(reply)).toContain("APPS_SEARCH_TOOLS");
+      // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: recovery timeout seals the mount within its one deadline.
+      let refusedAfter = Infinity;
+      await terminalRefusal(lines, () => { refusedAfter = Date.now() - began; });
+      expect(refusedAfter).toBeLessThan(2_000);
     }, 30_000);
 
     it("a restricted bot is first shown only the list the harness supplied, never the unrestricted tools", async () => {
       const approved = [{ name: "COMPOSIO_MULTI_EXECUTE_TOOL", description: "approved only", inputSchema: { type: "object", properties: { account: { enum: ["ca_fixture_owned"] } } } }];
       const url = await upstream(realTools("UNAPPROVED"), null);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_INITIAL_GENERATION: "initial", MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(approved), MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000" });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_INITIAL_GENERATION: "initial", MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(approved), MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000" });
       const began = Date.now();
       child!.stdin.write(listReq(1));
       const reply = await nextJson(lines);
@@ -875,7 +1020,7 @@ describe("connector MCP bridge", () => {
       expect(reply.result._meta).toMatchObject({ "murage/provisional": true });
       // A bot with nothing approved is shown nothing (never the unrestricted tools).
       child!.kill("SIGKILL");
-      const empty = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_INITIAL_GENERATION: "initial", MURAGE_CONNECTOR_INITIAL_TOOLS: "[]", MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000" });
+      const empty = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_INITIAL_GENERATION: "initial", MURAGE_CONNECTOR_INITIAL_TOOLS: "[]", MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000" });
       child!.stdin.write(listReq(2));
       expect(names(await nextJson(empty))).toEqual([]);
     }, 30_000);
@@ -887,7 +1032,7 @@ describe("connector MCP bridge", () => {
       expect(JSON.stringify(approved).length).toBeGreaterThan(24_000);
       writeFileSync(join(dir, `initial-${ID_A}-${revision}.json`), JSON.stringify({ revision, tools: approved }), { mode: 0o600 });
       const url = await upstream(realTools("UNAPPROVED"), null);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_GENERATION: "initial", MURAGE_CONNECTOR_INITIAL_TOOLS: "@file", ...scopeEnv(ID_A, revision) });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_GENERATION: "initial", MURAGE_CONNECTOR_INITIAL_TOOLS: "@file", ...scopeEnv(ID_A, revision) });
       child!.stdin.write(listReq(1));
       const reply = await nextJson(lines);
       expect(names(reply)).toEqual(["APPS_MULTI_EXECUTE_TOOL"]);
@@ -896,11 +1041,10 @@ describe("connector MCP bridge", () => {
       child!.kill("SIGKILL");
       // A file written for another access revision is never read, and an empty list is never handed over:
       // the mount fails recoverably (a fresh process next turn), with no unrestricted tools.
-      const other = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_TOOLS: "@file", MURAGE_CONNECTOR_TOOLS_LIST_MS: "800", ...scopeEnv(ID_A, "rev-other") });
+      const other = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_TOOLS: "@file", MURAGE_CONNECTOR_TOOLS_LIST_MS: "800", ...scopeEnv(ID_A, "rev-other") });
       child!.stdin.write(listReq(2));
-      const stale = await nextJson(other);
-      expect(stale.result).toBeUndefined();
-      expect(stale.error.message).toContain("next turn");
+      // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: a stale private handoff cannot publish ordinary output.
+      const stale = await terminalRefusal(other);
       expect(JSON.stringify(stale)).not.toContain("APPS_SEARCH_TOOLS");
     }, 30_000);
 
@@ -910,7 +1054,7 @@ describe("connector MCP bridge", () => {
       const writeCreds = (revision: string) => writeFileSync(credFile, JSON.stringify({ composio: { MURAGE_CONNECTOR_IDENTITY: ID_A, MURAGE_CONNECTOR_REVISION: revision } }));
       writeCreds("rev-1");
       const slow = await upstream(realTools("PREVIOUS_SCOPE"), 900);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: slow, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "4000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: slow, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "4000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
       child!.stdin.write(listReq(1));
       await new Promise((resolve) => setTimeout(resolve, 300));
       writeCreds("rev-2"); // the owner changed the bot's access during the request
@@ -931,7 +1075,7 @@ describe("connector MCP bridge", () => {
       writeFileSync(other, JSON.stringify({ revision: "rev-1", tools: realTools("ALSO_EXPIRED") }));
       utimesSync(other, old, old);
       const url = await upstream(realTools("A"), null);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
       await new Promise((resolve) => setTimeout(resolve, 600)); // the start-up sweep, before any request
       expect(readdirSync(dir).filter((name) => !name.startsWith("incomplete-"))).toEqual([]);
       // A file that turns up expired between sweeps (same running bridge) is rejected on read, not served.
@@ -943,7 +1087,7 @@ describe("connector MCP bridge", () => {
     }, 30_000);
     it("holds the first list for the real one: a 3 s upstream yields the real tools, with no notice", async () => {
       const url = await upstream(realTools("SLOWISH"), 3_000);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_BOT_ID: "bot-a" });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_BOT_ID: "bot-a" });
       child!.stdin.write(listReq(1));
       const reply = await nextJson(lines);
       expect(names(reply)).toEqual(["REAL_SLOWISH"]);
@@ -959,13 +1103,13 @@ describe("connector MCP bridge", () => {
         request.on("end", () => {
           const message = JSON.parse(body);
           response.writeHead(200, { "content-type": "application/json" });
-          if (message.method !== "tools/list") { response.end("{}"); return; }
+          if (message.method !== "tools/list") { response.end(emptyMcpReply(message)); return; }
           asked += 1;
           const bundled = asked === 1;
           response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: bundled ? [{ name: "BUNDLED", inputSchema: { type: "object" } }] : realTools("REAL").concat([]), ...(bundled ? { _meta: { "murage/provisional": true, "murage/provisional-bundled": true } } : {}) } }));
         });
       });
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_BOT_ID: "bot-a" });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_BOT_ID: "bot-a" });
       child!.stdin.write(listReq(1));
       const reply = await nextJson(lines);
       expect(names(reply)).toEqual(["REAL_REAL"]);
@@ -979,10 +1123,13 @@ describe("connector MCP bridge", () => {
         request.on("end", () => {
           const message = JSON.parse(body);
           const reply = () => { response.writeHead(200, { "content-type": "application/json" }); response.end(message.method === "tools/list" ? JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools("LATE") } }) : JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "ok" }] } })); };
-          if (message.method === "tools/list" && String(message.id).startsWith("murage-tools-bg") === false && message.id === 1) setTimeout(reply, 2_500); else reply();
+          if (message.method === "tools/list" && message.id === 1) {
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "fixture catalogue pending" } }));
+          } else reply();
         });
       });
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_LIST_MS: "600", MURAGE_BOT_ID: "bot-a" });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_LIST_MS: "600", MURAGE_BOT_ID: "bot-a" });
       const seen: Record<string, any>[] = [];
       lines.on("line", (line) => { try { seen.push(JSON.parse(line)); } catch { /* ignore */ } });
       child!.stdin.write(listReq(1));
@@ -1000,26 +1147,25 @@ describe("connector MCP bridge", () => {
 
     it("a handoff that failed ('@harness') gets the authoritative list from the harness, or fails the mount recoverably; never an empty list", async () => {
       const live = await upstream(realTools("AUTH"), 200);
-      const ok = start({ MURAGE_CONNECTOR_UPSTREAM_URL: live, MURAGE_CONNECTOR_INITIAL_TOOLS: "@harness" });
+      const ok = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: live, MURAGE_CONNECTOR_INITIAL_TOOLS: "@harness" });
       child!.stdin.write(listReq(1));
       expect(names(await nextJson(ok))).toEqual(["REAL_AUTH"]);
       child!.kill("SIGKILL");
       const dead = await upstream(realTools("AUTH"), null);
-      const bad = start({ MURAGE_CONNECTOR_UPSTREAM_URL: dead, MURAGE_CONNECTOR_INITIAL_TOOLS: "@harness", MURAGE_CONNECTOR_TOOLS_LIST_MS: "700" });
+      const bad = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: dead, MURAGE_CONNECTOR_INITIAL_TOOLS: "@harness", MURAGE_CONNECTOR_TOOLS_LIST_MS: "700" });
       child!.stdin.write(listReq(2));
-      const failed = await nextJson(bad);
-      expect(failed.result).toBeUndefined();
-      expect(failed.error.message).toContain("next turn");
+      // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: no authoritative handoff means terminal refusal.
+      await terminalRefusal(bad);
     }, 30_000);
 
     it("the whole list operation spends ONE absolute deadline: a failed handoff ('@harness') on a stalled upstream fails the mount at the deadline, not at twice it", async () => {
       const dead = await upstream(realTools("AUTH"), null);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: dead, MURAGE_CONNECTOR_INITIAL_TOOLS: "@harness", MURAGE_CONNECTOR_TOOLS_LIST_MS: "700" });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: dead, MURAGE_CONNECTOR_INITIAL_TOOLS: "@harness", MURAGE_CONNECTOR_TOOLS_LIST_MS: "700" });
       await new Promise((resolve) => setTimeout(resolve, 500)); // the bridge is up
       const asked = Date.now();
       child!.stdin.write(listReq(1));
-      const failed = await nextJson(lines);
-      expect(failed.error.message).toContain("next turn");
+      // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: the single handoff deadline ends in terminal refusal.
+      await terminalRefusal(lines);
       expect(Date.now() - asked).toBeLessThan(1_100);
     }, 20_000);
 
@@ -1032,7 +1178,7 @@ describe("connector MCP bridge", () => {
         request.on("data", (chunk) => { body += chunk; });
         request.on("end", () => {
           const message = JSON.parse(body);
-          if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end("{}"); return; }
+          if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end(emptyMcpReply(message)); return; }
           asked += 1;
           void gate.then(() => {
             if (response.destroyed) return;
@@ -1041,7 +1187,7 @@ describe("connector MCP bridge", () => {
           });
         });
       });
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_BOT_ID: "bot-a" });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_BOT_ID: "bot-a" });
       const seen: Record<string, any>[] = [];
       lines.on("line", (line) => { try { seen.push(JSON.parse(line)); } catch { /* ignore */ } });
       child!.stdin.write(listReq(1));
@@ -1061,7 +1207,7 @@ describe("connector MCP bridge", () => {
     it("a provisional list is filed for the driver (a fresh mount next turn) and the filing goes when the engine is given the real one", async () => {
       const dir = cacheDir();
       const slow = await upstream(realTools("LATER"), 1_500);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: slow, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "400", MURAGE_THREAD_ID: "thr-1", ...scopeEnv(ID_A) });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: slow, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "400", MURAGE_THREAD_ID: "thr-1", ...scopeEnv(ID_A) });
       const seen: Record<string, any>[] = [];
       lines.on("line", (line) => { try { seen.push(JSON.parse(line)); } catch { /* ignore */ } });
       child!.stdin.write(listReq(1));
@@ -1081,7 +1227,7 @@ describe("connector MCP bridge", () => {
       const dir = cacheDir();
       bumpGeneration(dir);
       const slow = await upstream(realTools("BEFORE_DISCONNECT"), 1_200);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: slow, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: slow, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...scopeEnv(ID_A) });
       child!.stdin.write(listReq(1));
       await new Promise((resolve) => setTimeout(resolve, 300));
       bumpGeneration(dir); // the harness announces the disconnect, then purges
@@ -1095,7 +1241,7 @@ describe("connector MCP bridge", () => {
       const entry = join(dir, `${ID_B}.json`);
       writeFileSync(entry, JSON.stringify({ revision: "rev-1", generation: "old-generation", tools: realTools("OLD_GEN") }));
       const stalled = await upstream(realTools("X"), null);
-      const again = start({ MURAGE_CONNECTOR_UPSTREAM_URL: stalled, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "500", ...scopeEnv(ID_B) });
+      const again = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: stalled, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "500", ...scopeEnv(ID_B) });
       child!.stdin.write(listReq(2));
       expect(JSON.stringify(await nextJson(again))).not.toContain("REAL_OLD_GEN");
     }, 40_000);
@@ -1105,14 +1251,13 @@ describe("connector MCP bridge", () => {
       bumpGeneration(dir);
       const stale = [{ name: "COMPOSIO_MULTI_EXECUTE_TOOL", description: "STALE_APPROVED_ACCOUNT", inputSchema: { type: "object", properties: {} } }];
       const stalled = await upstream(realTools("AUTH"), null);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: stalled, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(stale), MURAGE_CONNECTOR_INITIAL_GENERATION: "initial", MURAGE_CONNECTOR_TOOLS_LIST_MS: "1200", ...scopeEnv(ID_A) });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: stalled, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(stale), MURAGE_CONNECTOR_INITIAL_GENERATION: "initial", MURAGE_CONNECTOR_TOOLS_LIST_MS: "1200", ...scopeEnv(ID_A) });
       child!.stdin.write(listReq(1));
       await new Promise((resolve) => setTimeout(resolve, 300));
       bumpGeneration(dir); // the disconnect is announced while the list is being discovered
-      const reply = await nextJson(lines);
+      // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: revoked handoff refuses this mount, with no stale account output.
+      const reply = await terminalRefusal(lines);
       expect(JSON.stringify(reply)).not.toContain("STALE_APPROVED_ACCOUNT");
-      expect(reply.result).toBeUndefined();
-      expect(reply.error.message).toContain("next turn"); // recoverable: a fresh bridge, a fresh handoff
     }, 30_000);
 
     it("a handoff built under an older generation than the current one (harness-named) is not reused either, and the authoritative list is fetched instead", async () => {
@@ -1128,13 +1273,13 @@ describe("connector MCP bridge", () => {
         request.on("end", () => {
           const message = JSON.parse(body);
           response.writeHead(200, { "content-type": "application/json" });
-          if (message.method !== "tools/list") { response.end("{}"); return; }
+          if (message.method !== "tools/list") { response.end(emptyMcpReply(message)); return; }
           asked += 1;
-          if (asked === 1) return; // never answers
+          if (asked === 1) { response.end(JSON.stringify(pendingCatalogue(message.id))); return; }
           response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools("FRESH_AUTH") } }));
         });
       });
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(stale), MURAGE_CONNECTOR_INITIAL_GENERATION: built, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1500", ...scopeEnv(ID_A) });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(stale), MURAGE_CONNECTOR_INITIAL_GENERATION: built, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1500", ...scopeEnv(ID_A) });
       child!.stdin.write(listReq(1));
       const reply = await nextJson(lines);
       expect(JSON.stringify(reply)).not.toContain("STALE_APPROVED_ACCOUNT");
@@ -1149,10 +1294,10 @@ describe("connector MCP bridge", () => {
         request.on("end", () => {
           const message = JSON.parse(body);
           response.writeHead(200, { "content-type": "application/json" });
-          response.end(message.method === "tools/list" ? JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools("FRESH_AUTH") } }) : "{}");
+          response.end(message.method === "tools/list" ? JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools("FRESH_AUTH") } }) : emptyMcpReply(message));
         });
       });
-      const missing = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(stale), MURAGE_CONNECTOR_TOOLS_LIST_MS: "1500", ...scopeEnv(ID_A) });
+      const missing = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(stale), MURAGE_CONNECTOR_TOOLS_LIST_MS: "1500", ...scopeEnv(ID_A) });
       child!.stdin.write(listReq(1));
       expect(JSON.stringify(await nextJson(missing))).not.toContain("STALE_APPROVED_ACCOUNT");
       child!.kill("SIGKILL");
@@ -1160,10 +1305,11 @@ describe("connector MCP bridge", () => {
       //    after the handoff was made but before discovery: discovery stalls, the stale accounts are not sent.
       const dir = cacheDir();
       const stalled = await upstream(realTools("AUTH"), null);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: stalled, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(stale), MURAGE_CONNECTOR_INITIAL_GENERATION: "initial", MURAGE_CONNECTOR_TOOLS_LIST_MS: "1200", ...scopeEnv(ID_A) });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: stalled, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(stale), MURAGE_CONNECTOR_INITIAL_GENERATION: "initial", MURAGE_CONNECTOR_TOOLS_LIST_MS: "1200", ...scopeEnv(ID_A) });
       bumpGeneration(dir); // the first disconnect ever, before discovery starts
       child!.stdin.write(listReq(2));
-      expect(JSON.stringify(await nextJson(lines))).not.toContain("STALE_APPROVED_ACCOUNT");
+      // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: no current authoritative handoff means terminal refusal.
+      expect(JSON.stringify(await terminalRefusal(lines))).not.toContain("STALE_APPROVED_ACCOUNT");
     }, 30_000);
 
     describe("the stand-in probe stops when it should", () => {
@@ -1172,7 +1318,7 @@ describe("connector MCP bridge", () => {
         request.on("data", (chunk) => { body += chunk; });
         request.on("end", () => {
           const message = JSON.parse(body);
-          if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end("{}"); return; }
+          if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end(emptyMcpReply(message)); return; }
           hits.n += 1;
           if (hang && hits.n > 1) return; // later probes never answer: they stay in flight
           response.writeHead(200, { "content-type": "application/json" });
@@ -1185,7 +1331,7 @@ describe("connector MCP bridge", () => {
         const hits = { n: 0 };
         const url = await probeUpstream(hits);
         const credFile = creds("turn-token");
-        const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
+        const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
         void lines;
         child!.stdin.write(listReq(1));
         await new Promise((resolve) => setTimeout(resolve, 3_500)); // probing while the turn is active
@@ -1202,7 +1348,7 @@ describe("connector MCP bridge", () => {
         const url = await probeUpstream(hits, true);
         const dir = cacheDir();
         const credFile = creds("turn-token");
-        const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
+        const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
         void lines;
         child!.stdin.write(listReq(1));
         await new Promise((resolve) => setTimeout(resolve, 3_500)); // a probe request is in flight and unanswered
@@ -1218,7 +1364,7 @@ describe("connector MCP bridge", () => {
         const hits = { n: 0 };
         const url = await probeUpstream(hits);
         const credFile = creds("turn-token");
-        const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
+        const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
         void lines;
         child!.stdin.write(listReq(1));
         await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -1244,7 +1390,7 @@ describe("connector MCP bridge", () => {
           request.on("end", () => {
             const message = JSON.parse(body);
             response.writeHead(200, { "content-type": "application/json" });
-            if (message.method !== "tools/list") { response.end("{}"); return; }
+            if (message.method !== "tools/list") { response.end(emptyMcpReply(message)); return; }
             hits.n += 1;
             response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools(healthy ? "RECOVERED" : "OLD"), ...(healthy ? {} : { _meta: { "murage/provisional": true } }) } }));
           });
@@ -1253,7 +1399,7 @@ describe("connector MCP bridge", () => {
         dirs.push(credDir);
         const file = join(credDir, "creds.json");
         writeFileSync(file, credsFor("turn-1"));
-        const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_THREAD_ID: "thr-1", MURAGE_CRED_FILE: file, MURAGE_CRED_SERVER: "composio" });
+        const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_THREAD_ID: "thr-1", MURAGE_CRED_FILE: file, MURAGE_CRED_SERVER: "composio" });
         void lines;
         child!.stdin.write(listReq(1));
         await new Promise((resolve) => setTimeout(resolve, 2_500)); // probing, service still failing
@@ -1282,7 +1428,7 @@ describe("connector MCP bridge", () => {
             request.on("end", () => {
               const message = JSON.parse(body);
               response.writeHead(200, { "content-type": "application/json" });
-              if (message.method !== "tools/list") { response.end("{}"); return; }
+              if (message.method !== "tools/list") { response.end(emptyMcpReply(message)); return; }
               hits.n += 1;
               response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools(healthy ? "RECOVERED" : "OLD"), ...(healthy ? {} : { _meta: { "murage/provisional": true } }) } }));
             });
@@ -1304,7 +1450,7 @@ fs.watch = (...args) => {
 };
 syncBuiltinESMExports();
 `);
-          const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_THREAD_ID: "thr-1", MURAGE_CRED_FILE: file, MURAGE_CRED_SERVER: "composio", MURAGE_TEST_WATCH_FAIL: mode, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` });
+          const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_THREAD_ID: "thr-1", MURAGE_CRED_FILE: file, MURAGE_CRED_SERVER: "composio", MURAGE_TEST_WATCH_FAIL: mode, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` });
           void lines;
           let stderr = "";
           child!.stderr.on("data", (chunk) => { stderr += String(chunk); });
@@ -1342,16 +1488,16 @@ syncBuiltinESMExports();
               initializes += 1;
               if (initializes > 1) { response.on("close", () => { hungClosedAt = Date.now(); }); return; } // the reopen never answers
               response.writeHead(200, { "content-type": "application/json", "mcp-session-id": "sess-1" });
-              response.end("{}");
+              response.end(emptyMcpReply(message));
               return;
             }
-            if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end("{}"); return; }
+            if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end(emptyMcpReply(message)); return; }
             if (String(message.id).startsWith("murage-tools-refresh")) { response.writeHead(404); response.end("gone"); return; }
             response.writeHead(200, { "content-type": "application/json" });
             response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools("OLD"), _meta: { "murage/provisional": true } } }));
           });
         });
-        const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_THREAD_ID: "thr-1", MURAGE_CRED_FILE: file, MURAGE_CRED_SERVER: "composio" });
+        const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_THREAD_ID: "thr-1", MURAGE_CRED_FILE: file, MURAGE_CRED_SERVER: "composio" });
         void lines;
         child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} })}\n`);
         child!.stdin.write(listReq(1));
@@ -1373,13 +1519,13 @@ syncBuiltinESMExports();
         request.on("data", (chunk) => { body += chunk; });
         request.on("end", () => {
           const message = JSON.parse(body);
-          if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end("{}"); return; }
+          if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end(emptyMcpReply(message)); return; }
           response.writeHead(200, { "content-type": "application/json" });
           // The harness keeps answering provisionally while its own source fails; then it recovers.
           response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools(healthy ? "RECOVERED" : "OLD"), ...(healthy ? {} : { _meta: { "murage/provisional": true } }) } }));
         });
       });
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTORS_TOKEN: "turn-token", MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_THREAD_ID: "thr-1", ...scopeEnv(ID_A) });
+      const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTORS_TOKEN: "turn-token", MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_THREAD_ID: "thr-1", ...scopeEnv(ID_A) });
       void lines;
       child!.stdin.write(listReq(1));
       const marker = () => {
@@ -1444,8 +1590,22 @@ describe("the first tools/list is never an error or an empty list", () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-first-list-")); dirs.push(dir);
     let releaseReal!: () => void;
     const realReady = new Promise<void>((resolve) => { releaseReal = resolve; });
-    const url = await upstream(mode, realReady);
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" });
+    let url = await upstream(mode, realReady);
+    const env = { MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" };
+    let lines = await start({ ...env, MURAGE_CONNECTOR_UPSTREAM_URL: url });
+    if (mode === "http500" || mode === "unreadable") {
+      child!.stdin.write(listReq(1));
+      // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be 6a9dfe7db8: these raw failures retire the original mount.
+      await terminalRefusal(lines);
+      // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: failed publication may leave the next-turn recovery marker, never ready.
+      expect(markerOf(dir)).toMatchObject({ revision: "rev-1", ready: false });
+      server!.closeAllConnections();
+      await new Promise<void>(resolve => server!.close(() => resolve()));
+      server = null;
+      // A fresh live mount retains every fallback, recovery, and marker assertion below.
+      url = await upstream("rpc-error", realReady);
+      lines = await start({ ...env, MURAGE_CONNECTOR_UPSTREAM_URL: url });
+    }
     let stderr = "";
     child!.stderr.on("data", (chunk) => { stderr += String(chunk); });
     const seen: Record<string, any>[] = [];
@@ -1468,13 +1628,12 @@ describe("the first tools/list is never an error or an empty list", () => {
     expect(toolNames(second)).toEqual(expect.arrayContaining(SEVEN.map((t) => exposedToolName(t.name))));
     expect(second.result._meta?.["murage/provisional"]).toBeUndefined();
     expect(markerOf(dir)).toBeNull(); // the engine now holds the real list
-    // One log line per list: outcome, count and status; nothing else.
-    // stderr and stdout are separate pipes, so the reply alone does not drain the logs.
-    await waitUntil(() => /tools\/list outcome=remembered tools=\d+/.test(stderr), `${mode}: recovered list log`, 4_000);
-    expect(stderr).toMatch(/tools\/list outcome=standin tools=\d+/);
-    if (mode === "http500") expect(stderr).toContain("http=500");
-    expect(stderr).toMatch(/tools\/list outcome=remembered tools=\d+/);
-    expect(stderr).not.toMatch(/token|authorization|bearer/i);
+    // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: consuming diagnostics expose counts only; catalogue contents and recovery are proved above.
+    // stderr and stdout are separate pipes, so wait for the actual count record.
+    await waitUntil(() => stderr.includes(`connector tools=${second.result.tools.length}\n`), `${mode}: recovered list log`, 4_000);
+    expect(stderr).toContain(`connector tools=${first.result.tools.length}\n`); // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: counts-only consuming diagnostics.
+    expect(stderr).toContain(`connector tools=${second.result.tools.length}\n`); // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: counts-only consuming diagnostics.
+    expect(stderr).not.toMatch(/token|authorization|bearer|outcome=|http=/i); // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: counts-only consuming diagnostics.
   }, 30_000);
 
   it("one odd entry in a real list is dropped and logged; the rest is the real catalogue, not the stand-in", async () => {
@@ -1491,33 +1650,39 @@ describe("the first tools/list is never an error or an empty list", () => {
         response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: [...SEVEN, ...odd] } }));
       });
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" });
     let stderr = "";
     child!.stderr.on("data", (chunk) => { stderr += String(chunk); });
     const seen: Record<string, any>[] = [];
     lines.on("line", (line) => { try { seen.push(JSON.parse(line)); } catch { /* ignore */ } });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2024-11-05" } })}\n`);
     child!.stdin.write(listReq(1));
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await waitUntil(() => seen.some(m => m.id === 1), "the first catalogue reply");
     const first = seen.find((m) => m.id === 1)!;
     expect(first.error).toBeUndefined();
     // The seven real tools (beside the bridge's own status tool), in the engine's first answer; neither odd entry, and no stand-in.
     expect(toolNames(first).filter((name) => name !== "CHECK_CONNECTED_APP_ACTION").sort()).toEqual(SEVEN.map((t) => exposedToolName(t.name)).sort());
     expect(first.result._meta?.["murage/provisional"]).toBeUndefined();
     expect(markerOf(dir)).toBeNull(); // a real list: the mount is not incomplete
-    expect(stderr).toMatch(/tools\/list outcome=real tools=8/); // seven, plus the bridge's status tool
-    expect(stderr).toMatch(/tools\/list dropped=2 without a name or object inputSchema: NO_SCHEMA_TOOL, \(unnamed\)/);
+    // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: preserve exact counts without logging upstream tool names.
+    await waitUntil(() => stderr.includes("connector tools=8\n") && stderr.includes("connector dropped=2\n"), "catalogue count diagnostics");
+    expect(stderr).toMatch(/connector tools=8/); // seven, plus the bridge's status tool // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: counts-only consuming diagnostics.
+    expect(stderr).toMatch(/connector dropped=2/); // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: counts-only consuming diagnostics.
+    expect(stderr).not.toMatch(/NO_SCHEMA_TOOL|unnamed/); // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: counts-only consuming diagnostics.
     expect(stderr).not.toMatch(/outcome=standin/);
   }, 30_000);
 
   it("an exact WORKBENCH call after a failed first list is never 'Tool not found': it waits for the real list, then runs", async () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-first-list-")); dirs.push(dir);
-    const url = await upstream("http500", 1_200);
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" });
+    const url = await upstream("rpc-error", 1_200);
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" });
     const seen: Record<string, any>[] = [];
     lines.on("line", (line) => { try { seen.push(JSON.parse(line)); } catch { /* ignore */ } });
+    // Process startup is not the event under test. Subscribe before writing so
+    // a loaded runner and an immediate reply both exercise the same call path.
+    const firstReply = nextJson(lines);
     child!.stdin.write(listReq(1));
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await firstReply;
     expect(toolNames(seen.find((m) => m.id === 1)!)).toContain("APPS_REMOTE_WORKBENCH");
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "COMPOSIO_REMOTE_WORKBENCH", arguments: { code_to_execute: "print(1)" } } })}\n`);
     for (let waited = 0; waited < 12_000 && !seen.some((m) => m.id === 9); waited += 100) await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1532,8 +1697,8 @@ describe("the first tools/list is never an error or an empty list", () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-first-list-")); dirs.push(dir);
     const built = bumpGeneration(dir);
     const approved = [{ name: "COMPOSIO_MULTI_EXECUTE_TOOL", description: "APPROVED_ONLY", inputSchema: { type: "object", properties: {} } }];
-    const url = await upstream("http500", 60_000);
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(approved), MURAGE_CONNECTOR_INITIAL_GENERATION: built, MURAGE_BOT_ID: "bot-r", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-r" });
+    const url = await upstream("rpc-error", 60_000);
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_INITIAL_TOOLS: JSON.stringify(approved), MURAGE_CONNECTOR_INITIAL_GENERATION: built, MURAGE_BOT_ID: "bot-r", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-r" });
     child!.stdin.write(listReq(1));
     const reply = await nextJson(lines);
     const names = toolNames(reply);
@@ -1562,7 +1727,7 @@ describe("the first tools/list is never an error or an empty list", () => {
         response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }));
       });
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" });
     let stderr = "";
     child!.stderr.on("data", (chunk) => { stderr += String(chunk); });
     child!.stdin.write(listReq(1));
@@ -1572,7 +1737,9 @@ describe("the first tools/list is never an error or an empty list", () => {
     expect(reply.error.message).toBe(rpcError.message);
     expect(reply.error.message).toContain("resets at 00:00 UTC");
     expect(markerOf(dir)).toMatchObject({ revision: "rev-1" }); // recovered at the next turn, as for the direct 429
-    expect(stderr).toMatch(/tools\/list outcome=error tools=0 http=429/);
+    // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: the exact HTTP refusal and its words are asserted above; diagnostics carry counts only.
+    await waitUntil(() => stderr.includes("connector tools=0\n"), "refused catalogue count diagnostic");
+    expect(stderr).toMatch(/connector tools=0/); // MAIN RULING INT-CONFLICT-DEFAULT 3442c52c86 6a9dfe7db8: counts-only consuming diagnostics.
     expect(stderr).not.toMatch(/outcome=standin/);
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "COMPOSIO_SEARCH_TOOLS", arguments: {} } })}\n`);
     const call = await nextJson(lines);
@@ -1588,7 +1755,7 @@ describe("the first tools/list is never an error or an empty list", () => {
       request.resume();
       request.on("end", () => { response.writeHead(403, { "content-type": "text/plain" }); response.end("no"); });
     });
-    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" });
+    const lines = await start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" });
     child!.stdin.write(listReq(1));
     const reply = await nextJson(lines);
     expect(reply.error.message).toContain("HTTP 403");

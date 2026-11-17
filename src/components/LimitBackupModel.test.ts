@@ -14,7 +14,9 @@ import type { Bot, InstanceInfo } from "@/state/store";
 const fixture = vi.hoisted(() => ({ instances: [] as unknown[], api: vi.fn(async (..._args: unknown[]) => ({})) }));
 vi.mock("react", async (importOriginal) => {
   const original = await importOriginal<typeof import("react")>();
-  return { ...original, useState: <T,>(value: T) => [value, () => {}] as const };
+  // Direct handler tests below invoke the component with inert hooks; effects
+  // are exercised by mounted surface tests, not these tree/handler fixtures.
+  return { ...original, useEffect: () => {}, useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot(), useState: <T,>(value: T) => [value, () => {}] as const };
 });
 vi.mock("@/state/store", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/state/store")>();

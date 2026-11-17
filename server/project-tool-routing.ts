@@ -1,4 +1,5 @@
 import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
+import type { ToolText, TurnLineage } from "./memory/lineage-types.ts";
 import { partitionSourcesAllowed } from "./partition-sources.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -118,6 +119,7 @@ export function authorizeProjectTool(db: DatabaseSync, call: ProjectToolCall): {
 }
 
 export interface ProjectToolCallContext {
+  consumingTurn?: TurnLineage;
   db: DatabaseSync;
   groupId: string;
   botId: string;
@@ -213,7 +215,7 @@ function canonicalCard(card: Record<string, unknown>): string {
   const { key: _key, ...fields } = card;
   return JSON.stringify(sorted(fields));
 }
-export type ProjectToolHandler = (context: ProjectToolCallContext, body: Record<string, unknown>) => { status: number; body: unknown };
+export type ProjectToolHandler = (context: ProjectToolCallContext, body: Record<string, unknown>) => { status: number; body: unknown; toolText?: ToolText };
 
 /** Lanes R and M register each tool's effect by name (SPEC-P 16). */
 export const projectToolHandlers = new Map<string, ProjectToolHandler>();
@@ -293,7 +295,7 @@ export function projectToolRoleForTurn(db: DatabaseSync, group: { id: string; ch
 
 /** Use the same preview/interrupt/apply boundary as owner card actions. */
 export async function handleProjectToolWithInterrupt(name: string, call: ProjectToolCallContext, sent: Record<string, unknown>,
-  interrupt: ProjectInterrupt): Promise<{ status: number; body: unknown }> {
+  interrupt: ProjectInterrupt): Promise<ReturnType<ProjectToolHandler>> {
   // a member's name where a new assignee or a suggested member is expected
   const field = name === "card-manage" && "assigneeBotId" in sent ? "assigneeBotId" : name === "suggest" && "botId" in sent ? "botId" : null;
   const member = field ? projectMemberRefResolved(call, sent[field]) : null;

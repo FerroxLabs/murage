@@ -46,7 +46,7 @@ belongs to old source and cannot satisfy the changed-main candidate. Verify Vali
 Ferrox Labs, LLC signatures on app/helper and exact shared/windows-backup-tools.mjs
 raw age/keygen/LICENSE hashes; no signing-policy or PATH changes.
 
-Use the already available SeanDesktop\\seand Interactive/Limited session. A new
+Use the already available FIXTURE-PC\\fixture-user Interactive/Limited session. A new
 task name, if needed, uses the existing scheduled-task mechanism only after root
 admits it. No new account/password/global install. Pin the existing executable
 tools by absolute paths. Refuse any other process already executing the extracted

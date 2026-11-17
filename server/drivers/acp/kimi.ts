@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Kimi Code harness support — Moonshot's `kimi` CLI over ACP stdio
 // (`kimi acp`), on the Kimi Code subscription login
 // (~/.kimi-code/credentials/kimi-code.json for kimi.com, or
@@ -7,8 +8,9 @@
 // loadSession:true (session/load resume works), mcpCapabilities http+sse,
 // and a full session/new → session/prompt roundtrip streams
 // agent_thought_chunk + agent_message_chunk and settles with end_turn.
-import { constants as fsConstants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { lstat, open, opendir, type FileHandle } from "node:fs/promises";
+import { writeFileSync } from "../../counted-fs.ts";
+import { constants as fsConstants, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { open, lstat, opendir, type FileHandle } from "node:fs/promises";
 import type { Dir, Stats } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +19,7 @@ import type { ModelCatalog } from "../../contracts.ts";
 import { decodeInjectId, hostApiKey, localContextWindow, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { displayConfigPath, NativeConfigRefusal } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
+import { engineReach } from "../../flux-engine-reach.ts";
 
 const STATIC_KIMI_MODELS: ModelCatalog = {
   default: "kimi-code/k3",
@@ -117,7 +120,7 @@ async function readKimiCandidate(path: string, dir: string, pin: { dev: number |
     }
     if (total > KIMI_CREDENTIAL_MAX_BYTES) return "ignored";
     let parsed: unknown;
-    try { parsed = JSON.parse(buf.subarray(0, total).toString("utf8")); } catch { return "ignored"; }
+    try { parsed = registerBusyloopPayloadSite("read", JSON.parse(buf.subarray(0, total).toString("utf8"))); } catch { return "ignored"; }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "ignored";
     const token = parsed as { access_token?: unknown; refresh_token?: unknown };
     if (token.access_token === "" && token.refresh_token === "") return "ignored";
@@ -726,6 +729,8 @@ export const KIMI_LOGIN_NOTE = "Kimi Code CLI is not signed in. Outside mainland
 
 const support: AcpSupport = {
   driverKind: "kimiAgent",
+  // U05: KIMI_MODEL_BASE_URL, else the providers in the Kimi data root config.toml, else Kimi's own backend.
+  fluxReach: (env) => engineReach(env, { hostEnv: ["KIMI_MODEL_BASE_URL"], configFiles: [join(kimiDataRoot(env), "config.toml")], compiledDefault: "https://api.kimi.com/coding/v1" }),
   // Kimi answers initialize with mcpCapabilities and takes the servers handed
   // at session/new (kimi-code 0.29.1, file header), with no readiness signal.
   mcpListedWait: true,
@@ -788,4 +793,6 @@ const support: AcpSupport = {
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),
 };
 
+/** The support table, for the per-engine Flux reach tests (U05). */
+export const kimiAcpSupport = support;
 export const KimiAgentDriver = createAcpDriver(support);

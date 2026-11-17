@@ -31,6 +31,11 @@ const messagesOf = async (botId: string) =>
 
 async function withBotTurn<T>(run: (ctx: { botId: string; botName: string; token: string; threadId: string }) => Promise<T>): Promise<T> {
   const bot = (await desktopApi("POST", "/api/bots", { name: "Filing fixture" })).body.bot;
+  // These original card, revision and secret-storage assertions pin Ask behavior.
+  // No limits has separate real-tool regressions in gnl-apps-review-api.test.ts.
+  const ask = { autoApprove: false, fullAccess: false, noLimits: false };
+  expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { settingsScope: "defaults", ...ask })).status).toBe(200);
+  expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, ask)).status).toBe(200);
   let turn: Awaited<ReturnType<typeof startInternalFixtureTurn>> | undefined;
   try {
     turn = await startInternalFixtureTurn(bot.id, undefined, "__fixture_hold_authority__");

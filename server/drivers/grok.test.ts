@@ -1,3 +1,4 @@
+// control: legacy cases retain their original assertions unless individually labelled red-at-4df086541 below.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Grok driver contract tests — the API-backed driver rides fetch, so the
@@ -12,7 +13,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { GrokDriver } from "./grok.ts";
+import { GrokDriver as rawDriver } from "./grok.ts";
+import { bindOpenAIFixture } from "../testing/bound-openai-fixture.ts";
+const GrokDriver = { ...rawDriver, create: async (...args: Parameters<typeof rawDriver.create>) => bindOpenAIFixture(await rawDriver.create(...args)) };
 
 const SSE_BODY = (text: string) =>
   [
@@ -101,6 +104,20 @@ describe("GrokDriver turns (fake fetch)", () => {
     });
   });
 
+  it("preserves the Grok API default on the actual outbound request", async () => {
+    const bodies: Array<{ model?: string }> = [];
+    globalThis.fetch = (async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return sseResponse(SSE_BODY("fixture reply"));
+    }) as typeof fetch;
+    await create();
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "default-wire", text: "hi" });
+    await recorder.until(event => event.type === "turn.completed");
+    // MAIN RULING 1114-MODELS-FRESH permits a default change only for Grok ACP.
+    expect(instance.models.default).toBe("grok-4");
+    expect(bodies.map(body => body.model)).toEqual(["grok-4"]);
+  });
+
   it("records the resolved default model in native diagnostics", async () => {
     script = [];
     await create();
@@ -112,6 +129,7 @@ describe("GrokDriver turns (fake fetch)", () => {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as { dir: string; msg: { model?: string } });
+    // MAIN RULING 1114-MODELS-FRESH: the API default stays unchanged; only ACP is excepted.
     expect(entries.find((entry) => entry.dir === "out")?.msg.model).toBe("grok-4");
   });
 

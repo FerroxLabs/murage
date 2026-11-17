@@ -44,6 +44,8 @@ beforeAll(async () => {
   vi.stubEnv("TMPDIR", fixtureRoot);
   for (const path of [FAKE_ACP, FAKE_CODEX, FAKE_PI, FAKE_AGY]) chmodSync(path, 0o755);
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+    // Match testing/setup.ts: these are repository fake engines, without host power namespace tools.
+    process.env.NODE_ENV='test';globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;
     const fs=await import('node:fs');const path=await import('node:path');
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
     fs.mkdirSync(path.join(process.env.HOME,'.fuigo'),{recursive:true});fs.writeFileSync(path.join(process.env.HOME,'.fuigo','auth.json'),'{}');
@@ -59,8 +61,8 @@ beforeAll(async () => {
     cfg.instances['rev-grok']={driver:'grokAgent',displayName:'Grok reviewer',environment:{...pass,...grokReady},config:{cli:acp,fullAuto:true}};
     cfg.instances['rev-gemini']={driver:'geminiAgent',displayName:'Gemini reviewer',environment:{...pass,GEMINI_API_KEY:'fixture',FAKE_ACP_AUTH:'1'},config:{cli:acp,fullAuto:true}};
     cfg.instances['rev-pi']={driver:'piAgent',displayName:'Pi reviewer',environment:pass,config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true}};
-    // agy runs its PreToolUse hooks before every tool (agy 1.4.4); the reviewer is at Ask, so Murage's Ask hook
-    // refuses the fake's write before it runs, as on a real agy, and the verdict still comes back
+    // agy runs its PreToolUse hooks before every tool (agy 1.4.4).
+    // The managed Ask reviewer waits for the owner's denial below before returning its verdict.
     cfg.instances['rev-agy']={driver:'antigravityAgent',displayName:'Antigravity reviewer',environment:{...pass,FAKE_AGY_RUN_HOOKS:'1'},config:{cli:${JSON.stringify(FAKE_AGY)},fullAuto:true}};
     cfg.instances['rev-silent']={driver:'grokAgent',displayName:'Silent reviewer',environment:{...grokReady,FAKE_REVIEW_VERDICT:'none'},config:{cli:acp,fullAuto:true}};
     fs.writeFileSync(file,JSON.stringify(cfg));
@@ -107,6 +109,21 @@ const reviewRows = (cardId: string) => withDb(db => db.prepare("SELECT to_bot_id
 describe.skipIf(process.platform === "win32")("a card in review always ends in a verdict", () => {
   it.each(REVIEWERS)("the %s reviewer's verdict moves the card to done", async (instance) => {
     const { group, card, reviewer } = await goalCard(instance);
+    if (instance === "rev-agy") {
+      // MAIN RULING: 2ffd134722 routes managed Antigravity Ask turns through the broker.
+      // Deny the same attempted write the old read-only hook refused, then require the verdict.
+      let held: { threadId: string; requestId: string } | undefined;
+      await expect.poll(async () => {
+        const record = (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === reviewer!.id);
+        for (const threadId of [record?.threadId, ...(record?.tasks ?? []).map((task: any) => task.threadId)].filter(Boolean)) {
+          const rows = (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).body.messages;
+          const row = rows.find((message: any) => message.card?.tool === "write_to_file" && !message.card.answered && message.card.requestId);
+          if (row) { held = { threadId, requestId: row.card.requestId }; return true; }
+        }
+        return false;
+      }, { timeout: 15000 }).toBe(true);
+      expect((await api("POST", `/api/threads/${held!.threadId}/respond`, { requestId: held!.requestId, behavior: "deny" })).status).toBe(200);
+    }
     try { await expect.poll(async () => (await cardOf(group.id, card.id))?.state, { timeout: 60000, interval: 250 }).toBe("done"); }
     catch (error) {
       // what the reviewer's run left: its review request and the server's last lines

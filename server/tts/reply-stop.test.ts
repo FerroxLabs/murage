@@ -59,6 +59,8 @@ it("S-late real generation-specific interrupt checks replacement before durable 
     const stop = extract("interruptDirectThread", {
       replyState: state, callSpeech: { invalidate: vi.fn() }, directRuns: { get: () => ({ generation }) }, internalTurnOwners: new Map(),
       botForDirectThread: () => ({ modelSelection: { instanceId: "fixture" } }), cancelDirectTurnDispatch: () => ({ phase: "dispatching" }),
+      ownerLimitContinuations: { cancel: vi.fn() }, limitApplications: { cancel: vi.fn() },
+      sealDirectAttempts: vi.fn(), randomUUID: () => "fixture-stop", ownWriteHolds: { stop: vi.fn() }, bus: { cancelTurn: vi.fn() },
       stopEmailForTurn: vi.fn(), emailRuntime: {}, emailGeneration: () => 0, releaseBrowserCapabilityForThread: release,
     });
     await stop("bot", "thread", "old"); expect(state.revision("thread")).toBe(0); expect(release).not.toHaveBeenCalled();

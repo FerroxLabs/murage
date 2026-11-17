@@ -24,8 +24,8 @@ export const RESTIC_PINS=Object.freeze({
     url:"https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_amd64.bz2",
     archiveSha256:"f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c",
     originalSha256:"20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639"}),
-  // Raw upstream bytes: copied as a single file so Windows signing never
-  // touches them, like age.exe; the release gate verifies this exact hash.
+  // Source provenance: copied raw, then afterPack checks Windows trust and
+  // emits per-build post-sign pins if it appends a production signature.
   "win32-x64":Object.freeze({platform:"win32",arch:"x64",format:"zip",executable:"restic.exe",member:"restic_0.19.1_windows_amd64.exe",stagingDirectory:"backup-tools/win32-x64",
     url:"https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_windows_amd64.zip",
     archiveSha256:"da948ad707ed690426473aaba2046cd61f8f90f6f0e7dab6be0d5796531de67d",

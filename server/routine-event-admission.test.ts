@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmdirSync, writeFileSync } from "node:fs";
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,8 @@ const delivery = { webhookId: "hook-a", webhookName: "Fixture hook", prompt: "Or
 describe("durable webhook run admission", () => {
   it("rolls back failed saves and admits a clean retry without emission or scheduling on failure", async () => {
     const f = fixture();
+    const saved = `${f.file}.before-fault`;
+    renameSync(f.file, saved);
     mkdirSync(f.file); // A real atomic-rename failure in a task-owned directory.
     expect(() => f.manager.enqueueWebhook(delivery)).toThrow();
     expect(f.manager.listRuns()).toEqual([]);
@@ -27,6 +29,8 @@ describe("durable webhook run admission", () => {
     await Promise.resolve();
     expect(f.emit).not.toHaveBeenCalled(); expect(f.createTask).not.toHaveBeenCalled(); expect(f.startTurn).not.toHaveBeenCalled();
     rmdirSync(f.file);
+    renameSync(saved, f.file);
+    f.manager.recoverPersistence();
     const admitted = f.manager.enqueueWebhook(delivery);
     expect(readRoutinesWithRuns(f.file).runs.map((run: { id: string }) => run.id)).toEqual([admitted.id]);
     expect(f.manager.listRuns()).toHaveLength(1);

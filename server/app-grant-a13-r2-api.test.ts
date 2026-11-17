@@ -8,6 +8,10 @@
 //   - a Deny racing an Always allow never leaves a grant behind a Deny.
 //
 // HEADLESS ONLY: a throwaway temp HOME and a probed port, clear of 8799.
+import { sessionBoundAcpPermissionEnvironment } from "./testing/acp-permission-fixture.ts";
+import { fixtureDisplayApi } from "./testing/display-fixture.ts";
+import { powerBlockTestEnv } from "./testing/power-block-test.ts";
+import { fakeEngineServerArgs } from "./testing/fake-engine-server.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -29,10 +33,10 @@ let child: ChildProcess;
 let home: string;
 let stderr = "";
 
-const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = desktopHeaders): Promise<{ status: number; body: any }> => {
+const request = fixtureDisplayApi(() => join(home, ".murage", "messages.db"), async (method: string, path: string, body?: unknown, headers: Record<string, string> = desktopHeaders): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, { method, headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
   return { status: res.status, body: await res.json().catch(() => null) };
-};
+});
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function poll<T>(read: () => Promise<T | null>, ms: number): Promise<T | null> {
   const deadline = Date.now() + ms;
@@ -68,14 +72,15 @@ describe.skipIf(process.platform === "win32")("Astra a13 r2: every grant write a
       instances: {
         asker: {
           driver: "grokAgent",
-          environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: "printf 'tick 13:25' >> notes/log.md" },
+          environment: sessionBoundAcpPermissionEnvironment({ FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: "printf 'tick 13:25' >> notes/log.md" }),
           config: { cli: FAKE_CLI, fullAuto: false },
         },
       },
     }));
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, fakeEngineServerArgs(join(SERVER_DIR, "index.ts")), {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...powerBlockTestEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_COMPANION_TOKEN: LAUNCH_PROOF,

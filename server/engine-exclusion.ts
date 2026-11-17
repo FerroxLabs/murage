@@ -1,3 +1,4 @@
+import { windowsCodeIntegrityBlock } from "./windows-code-integrity.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -14,16 +15,40 @@
 // file at all and says the helper cannot load on this system (HelperError "helper-unloadable" in engine-plan-core.ts). That covers a
 // missing file, a require() the loader refuses (an older glibc), and an addon of another version; it is looked for once per process.
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdtempSync, openSync, readSync, realpathSync, writeSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainThread } from "node:worker_threads";
+import { realCleanupHost, removeOwnCopyDir, sweepStaleMeterCopies, writeCopyMarker } from "./meter-copy-cleanup.ts";
 
 import type { HeldFile } from "./engine-plan-core.ts";
+import { dataDirLeasePaths } from "./data-dir-lease.ts";
 
 /** An opaque handle the addon owns (Windows). JS never reads it; it only hands it back to the addon's handle functions. */
 export type NativeHandle = object;
 
+export interface IoGrantState {
+  sqlDeadline?: boolean;
+ rawBytes:number; threadRawBytes:number; backgroundProcess:number; live:boolean; usedBytes:number; capBytes:number; refusedWrites:number;
+ ceilingMiss:number; wallTime:number; pageSize:number; readBytes:number; threadReadBytes:number; chargedBytes:number;
+}
 export interface ExclusionAddon {
+  /** Password admission requires OS core dump prevention in this process. */
+  disableCoreDumps?(): boolean;
+  ioFgBegin?():void;
+  ioFgEnd?():IoGrantState;
+  ioGrantBegin?(bytes:number,expiresAt:number):void;
+  ioGrantEnd?():IoGrantState;
+  ioGrantSnapshot?():IoGrantState;
+  ioGrantCharge?(bytes:number):void;
+  ioAllBg?():void;
+  ioMeterUnknown?():void;
+  ioMeterAdd?(source:string,bytes:number):void;
+  ioMeterBytes?(source:string):number;
+  ioMeterTotal?():number|null;
+  ioMeterSnapshot?():{total:number;known:boolean;buckets:Array<[string,number]>};
   /** Takes the engine's whole-file lock on `fd`, waiting up to one second. False if another process keeps it. (macOS, Linux) */
   lock(fd: number): boolean;
   /** Every process on this computer. A process that could not be inspected is listed with null where it could not be read. */
@@ -62,7 +87,7 @@ export interface ExclusionAddon {
   bootId?(): string | null;
   /** Windows: WinVerifyTrust's answer for a file's Authenticode signature, on a worker thread: { status (Get-AuthenticodeSignature's
    * names), publisher (the signer's simple name when Valid), code }. Absent in an older build. */
-  authenticode?(path: string): Promise<{ status: string; publisher: string; code: number }>;
+  authenticode?(path: string): Promise<{ status: string; publisher: string; subject?: string; code: number }>;
   /** Windows: removes `path` and everything under it by handle, never following a symlink or junction and never resolving a path
    * below `path` again (link-removal.ts). true removed, false nothing there; throws with a Node errno name as `code`.
    * `beforeFolder` (tests) runs after each folder is opened and before it is listed. Absent in an older build. */
@@ -98,6 +123,18 @@ export interface ExclusionAddon {
   /** Windows (DELETION-WHILE-OPEN-107): another process's working folder, from its PEB; null when it cannot be read. Absent in an older
    * build: the open-home pass then does not run on Windows (engine-closed.ts holdersClearOf fails closed). */
   cwdOf?(pid: number): string | null;
+  // Windows, version 11 (CONTRACTS-B 1.3, native/engine-exclusion/anchored-win.c): the anchored opens the Claude Code import reads through.
+  // The shapes are WinAnchor in server/claude-code-import.ts; they are `unknown` here so this file stays free of that one.
+  anchorBegin?(home: string, budgetMs: number): unknown;
+  anchorOpen?(parent: unknown, name: string, want: "dir" | "file"): unknown;
+  anchorList?(dir: unknown): unknown;
+  anchorRead?(file: unknown, position: number, length: number): Buffer;
+  anchorStat?(handle: unknown): unknown;
+  anchorClose?(handle: unknown): void;
+  anchorEnd?(session: unknown): boolean;
+  /** Test-hooks build only (-DANCHOR_TEST_HOOKS, never packaged): the shipped loader and after-pack refuse an addon that exports either. */
+  anchorTestStall?(eventName: string): void;
+  anchorTestFail?(query: string): void;
 }
 
 /** A running process as the addon reports it. `mine`: this user's (null: could not be told). `exe` "" is a process with no program
@@ -121,8 +158,8 @@ export interface FileWriters { writers: Array<{ pid: number; index: number }>; u
 export type Barrier = "full" | "fallback" | "none";
 
 /** 7: fullSync says which barrier it gave. 8: the Windows calls that replaced PowerShell. 9: domainSids, and jobAssign ends a
- * process it cannot open. 10: removes and verifies the Windows shutdown privileges. */
-export const ADDON_VERSION = 10;
+ * process it cannot open. 10: removes and verifies the Windows shutdown privileges. 11: the Windows anchored-open helper (anchor*). */
+export const ADDON_VERSION = 11;
 
 /** The override is for tests only: not in a packaged app, and never outside a test process. */
 export function overrideAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -133,30 +170,53 @@ function candidates(): string[] {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const out: string[] = [];
   if (overrideAllowed()) {
-    const explicit = process.env.MURAGE_ENGINE_EXCLUSION_PATH?.trim();
-    if (explicit) out.push(explicit);
+    const trimmed = process.env.MURAGE_ENGINE_EXCLUSION_PATH?.trim();
+    if (trimmed) out.push(path.resolve(trimmed));
   }
-  const resources = process.env.MURAGE_RESOURCES_PATH ?? process.env.OMB_RESOURCES_PATH;
-  if (resources) out.push(path.join(resources, "engine-exclusion.node"));
-  out.push(path.join(here, "..", "dist-native", "engine-exclusion", `${process.platform}-${process.arch}`, "engine-exclusion.node"));
-  out.push(path.join(here, "..", "..", "dist-native", "engine-exclusion", `${process.platform}-${process.arch}`, "engine-exclusion.node"));
+  const rawResources = process.env.MURAGE_RESOURCES_PATH ?? process.env.OMB_RESOURCES_PATH;
+  // A relative resources root is skipped, never resolved against the working directory.
+  if (rawResources && path.isAbsolute(rawResources)) out.push(path.resolve(path.join(rawResources, "engine-exclusion.node")));
+  out.push(path.resolve(path.join(here, "..", "dist-native", "engine-exclusion", `${process.platform}-${process.arch}`, "engine-exclusion.node")));
+  out.push(path.resolve(path.join(here, "..", "..", "dist-native", "engine-exclusion", `${process.platform}-${process.arch}`, "engine-exclusion.node")));
   return out;
 }
 
-const HANDLE_FUNCTIONS = ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose"] as const;
+/** The resolved test override when the gate is open and the trimmed value is non-empty, else undefined (the same path.resolve as candidates()). */
+function explicitOverride(): string | undefined {
+  if (!overrideAllowed()) return undefined;
+  const trimmed = process.env.MURAGE_ENGINE_EXCLUSION_PATH?.trim();
+  return trimmed ? path.resolve(trimmed) : undefined;
+}
+
+export const HANDLE_FUNCTIONS = ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose"] as const;
 /** Windows, version 10: the native calls and shutdown privilege removal. A packaged build that lacks one is refused when it is assembled
  * (scripts/engine-exclusion-resource.mjs). */
-export const WINDOWS_NATIVE_FUNCTIONS = ["authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave"] as const;
+export const WINDOWS_NATIVE_FUNCTIONS = ["authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave", "anchorBegin", "anchorOpen", "anchorList", "anchorRead", "anchorStat", "anchorClose", "anchorEnd"] as const;
 
-function usable(addon: Partial<ExclusionAddon>): addon is ExclusionAddon {
+/** Every export only the test-hooks build has (R8, R16). The loader refuses a build exporting ANY name that starts with the prefix, so a new
+ * hook cannot ship by being left off this list; the list names each one so each is tested on its own. */
+export const ANCHOR_TEST_PREFIX = "anchorTest";
+export const ANCHOR_TEST_EXPORTS = ["anchorTestStall", "anchorTestStallOpen", "anchorTestRelease", "anchorTestFail", "anchorTestWhy", "anchorTestDropPrivileges", "anchorTestStallMs", "anchorTestStallExit", "anchorTestStats", "anchorTestCorruptName", "anchorTestDeadlineAtPost", "anchorTestHeapMark", "anchorTestHeapCheck", "anchorTestHeapLeaks", "anchorTestHeapCanary", "anchorTestSchedule", "anchorTestWaitSettled", "anchorTestGateReset"] as const;
+
+/** Whether an addon may be used (test seam: tests hand it a plain object). */
+export function addonIsUsable(addon: Partial<ExclusionAddon>, override = false): addon is ExclusionAddon { return usable(addon, override); }
+
+function usable(addon: Partial<ExclusionAddon>, override = false): addon is ExclusionAddon {
   if (typeof addon.lock !== "function" || typeof addon.processes !== "function" || typeof addon.renameNoReplace !== "function" || typeof addon.version !== "function") return false;
   try { if (addon.version() !== ADDON_VERSION) return false; } catch { return false; }
+  // R16: a build that exports a test hook is loaded only through the test-only override, never from a packaged location.
+  if (!override && Object.keys(addon).some((name) => name.startsWith(ANCHOR_TEST_PREFIX))) return false;
   if (process.platform === "win32") for (const name of [...HANDLE_FUNCTIONS, ...WINDOWS_NATIVE_FUNCTIONS]) if (typeof addon[name] !== "function") return false;
   if (process.platform !== "win32" && (typeof addon.writers !== "function" || typeof addon.fullSync !== "function")) return false;
   return true;
 }
 
 let loaded: ExclusionAddon | null | undefined;
+let loadedPath:string|undefined;
+let windowsBlocked = false;
+/** Retains the loader verdict for the turn card; this never changes addon admission. */
+export function exclusionAddonBlockedByWindows(): boolean { loadExclusionAddon(); return loaded === null && windowsBlocked; }
+export function exclusionAddonPath():string|undefined { loadExclusionAddon(); return loadedPath; }
 
 /** The addon for one of the Windows calls that replaced a PowerShell start. Never a silent fallback: without it the call throws a
  * plain sentence (a packaged build always carries it; a source checkout without a build refuses the feature). */
@@ -167,7 +227,7 @@ export function requireWindowsAddon(): ExclusionAddon {
 }
 
 /** Looks for the addon again on the next use (tests that switch between the stand-in and the real build). */
-export function forgetExclusionAddon(): void { loaded = undefined; }
+export function forgetExclusionAddon(): void { loaded = undefined; loadedPath=undefined; windowsBlocked = false; }
 
 /** The addon, or null when it is not there or will not load. Looked for once. */
 export function loadExclusionAddon(): ExclusionAddon | null {
@@ -178,13 +238,123 @@ export function loadExclusionAddon(): ExclusionAddon | null {
     if (!existsSync(file)) continue;
     try {
       const addon = require(file) as Partial<ExclusionAddon>;
-      if (usable(addon)) {
-        loaded = addon;
+      const explicit = explicitOverride();
+      if (usable(addon, Boolean(explicit) && file === explicit)) {
+        loaded = addon; loadedPath=file;
         break;
       }
-    } catch { /* the next candidate */ }
+    } catch (error) {
+      if (process.platform === "win32" && windowsCodeIntegrityBlock(error)) windowsBlocked = true;
+    }
   }
   return loaded;
+}
+
+/** Folders this thread made. The main thread removes them at exit (the copy is no longer needed then); a Windows process cannot delete the .node it
+ * has loaded, so a folder that cannot go is left for the next start's sweep, which recognises it by its marker's dead pid. */
+const ownCopyDirs = new Set<string>();
+let ownCopyExitHook = false;
+function trackOwnCopyDir(dir: string): void {
+  ownCopyDirs.add(dir);
+  if (!isMainThread || ownCopyExitHook) return;
+  ownCopyExitHook = true;
+  process.once("exit", () => { for (const own of ownCopyDirs) removeOwnCopyDir(own); });
+}
+let staleSwept = false;
+
+/** The identity of the private copy the meter chain loads: the same bytes at the parent's require, the SQLite load and the worker's require. */
+export interface IoMeterFileId { dev: number; ino: number; size: number; sha256: string }
+const insideDir = (child: string, parent: string): boolean => { const rel = path.relative(parent, child); return rel === "" || (rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel)); };
+function readFd(fd: number, size: number): Buffer {
+  const buf = Buffer.alloc(size); let off = 0;
+  while (off < size) { const n = readSync(fd, buf, off, size - off, off); if (!n) break; off += n; }
+  if (off !== size) throw new Error("short read");
+  return buf;
+}
+/** P5g: for the one candidate about to be executed: a regular file (lstat), canonical (realpath === file), opened O_NOFOLLOW twice with the same
+ * dev, ino and size; its bytes are read from the descriptor, hashed (sha256) and written to an O_EXCL, mode 0600 file in a fresh 0700 directory
+ * outside the working directory, the data directory, the resources root and the module directory. A mismatch returns null (the candidate is skipped). */
+function privateCopy(file: string): { copy: string; id: IoMeterFileId } | null {
+  const st = lstatSync(file);
+  if (!st.isFile() || realpathSync(file) !== file) return null;
+  const nofollow = fsConstants.O_NOFOLLOW ?? 0;
+  const fd = openSync(file, fsConstants.O_RDONLY | nofollow);
+  let bytes: Buffer;
+  try {
+    const first = fstatSync(fd);
+    const fd2 = openSync(file, fsConstants.O_RDONLY | nofollow);
+    try { const second = fstatSync(fd2); if (!first.isFile() || first.dev !== second.dev || first.ino !== second.ino || first.size !== second.size) return null; }
+    finally { closeSync(fd2); }
+    bytes = readFd(fd, first.size);
+  } finally { closeSync(fd); }
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  // The first temporary folder outside every protected directory (launchers may put TMPDIR inside the data folder).
+  // Roots and unresolvable hints must not disable the remaining protections.
+  const forbidden = [process.cwd(), process.env.MURAGE_DATA_DIR ?? path.join(homedir(), ".murage"), process.env.MURAGE_RESOURCES_PATH, process.env.OMB_RESOURCES_PATH, path.dirname(fileURLToPath(import.meta.url))]
+    .filter((root): root is string => !!root)
+    .flatMap(root => { try { return [dataDirLeasePaths(root).canonicalDataDir]; } catch { return []; } });
+  let base: string | null = null;
+  for (const candidate of process.platform === "win32" ? [tmpdir()] : [tmpdir(), "/tmp", "/var/tmp"]) {
+    let real: string;
+    try { real = realpathSync.native(candidate); } catch { continue; }
+    const comparable = process.platform === "win32" ? real.toLowerCase() : real;
+    if (!forbidden.some(root => insideDir(comparable, root))) { base = real; break; }
+  }
+  if (base === null) throw new Error("no temporary directory outside the protected directories for the private copy");
+  const dir = realpathSync(mkdtempSync(path.join(base, "murage-meter-")));
+  trackOwnCopyDir(dir);
+  writeCopyMarker(dir);
+  const copy = path.join(dir, "engine-exclusion.node");
+  const out = openSync(copy, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | nofollow, 0o600);
+  let dev: number, ino: number;
+  try {
+    let at = 0;
+    while (at < bytes.length) { const n = writeSync(out, bytes, at, bytes.length - at, at); if (!(n > 0)) throw new Error("the private copy made no write progress"); at += n; }
+    const copied = fstatSync(out); dev = copied.dev; ino = copied.ino;
+  } finally { closeSync(out); }
+  // The copy is proven by reading it back, not by a durability barrier: a fresh no-follow descriptor must see the same inode and size and bytes
+  // with the published sha256, so a short or foreign write is never executed. The copy is this process's scratch (removed at exit, swept after a
+  // crash), so it takes no fsync; a barrier here ran inside the first durable write that loads the meter and reordered that write's own syncs.
+  const back = openSync(copy, fsConstants.O_RDONLY | nofollow);
+  try {
+    const seen = fstatSync(back);
+    if (!seen.isFile() || seen.dev !== dev || seen.ino !== ino || seen.size !== bytes.length || createHash("sha256").update(readFd(back, seen.size)).digest("hex") !== sha256) { removeOwnCopyDir(dir); return null; }
+  } finally { closeSync(back); }
+  return { copy, id: { dev, ino, size: bytes.length, sha256 } };
+}
+
+/** Once per process, main thread: removes the folders of dead processes beside our own (Windows reads owner and start time through this addon). */
+function sweepOnce(ownCopy: string, addon: Partial<ExclusionAddon>): void {
+  if (staleSwept || !isMainThread) return;
+  staleSwept = true;
+  try {
+    const own = path.dirname(ownCopy);
+    sweepStaleMeterCopies([path.dirname(own)], own, realCleanupHost(
+      addon.fileOwnerSid ? target => addon.fileOwnerSid!(target) : undefined,
+      addon.processStart ? pid => addon.processStart!(pid) : undefined));
+  } catch { /* a failed sweep leaves folders for the next start */ }
+}
+
+/** Metering is independent of the engine-lock stand-in: select a qualified binary with a VFS entry point. Only the private copy is executed. */
+export function loadIoMeterAddon():{addon:ExclusionAddon;path:string;id:IoMeterFileId}|null {
+  const require=createRequire(import.meta.url);
+  for(const file of candidates()){
+    if(!existsSync(file))continue;
+    let copyDir:string|null=null;
+    try{
+      const held=privateCopy(file);
+      if(!held)continue;
+      copyDir=path.dirname(held.copy);
+      const addon=require(held.copy) as Partial<ExclusionAddon>;
+      const explicit=explicitOverride();
+      if(usable(addon,Boolean(explicit)&&file===explicit)&&addon.ioMeterAdd&&addon.ioMeterTotal&&addon.ioMeterBytes){
+        sweepOnce(held.copy,addon);
+        return {addon,path:held.copy,id:held.id};
+      }
+      removeOwnCopyDir(copyDir);
+    }catch{if(copyDir)removeOwnCopyDir(copyDir);/* a source checkout without a native build remains explicitly unqualified */}
+  }
+  return null;
 }
 
 /** A file the addon holds, as the rest of the deletion code sees it: every call goes into the addon, on the handle it owns. */

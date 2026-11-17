@@ -75,22 +75,21 @@ Then smoke-test the installer itself. Run it, and confirm:
 
 ## 4. Publish
 
-Upload to the **same tag** as the macOS release for that version, so one release
-carries both platforms.
+Use the repository's **Release** workflow. It assembles the complete asset set
+from one pinned commit and calls the shared Signal pin and post-G0 check before
+creating, uploading or publishing a draft.
+
+For an emergency resume, stage only the intended assets in a separate directory
+and use the guarded command from the candidate checkout (with dependencies
+installed). This refuses null G0 or any missing/skipped post-G0 test and refuses
+to upload to a published release:
 
 ```powershell
-Copy-Item release/Murage-<version>-setup.exe release/Murage-setup.exe
-gh release upload v<version> --repo FerroxLabs/murage-releases `
-  release/Murage-<version>-setup.exe `
-  release/Murage-setup.exe `
-  release/Murage-<version>-setup.exe.blockmap `
-  release/latest.yml
+node scripts/release-guard.mjs upload <version> <staged-assets-directory> <release-notes-file>
+if ($LASTEXITCODE -ne 0) { throw "Release upload refused" }
 ```
 
-Prefer the repository's **Release** workflow, which builds every platform from
-one pinned commit, refuses an incomplete asset set, and proves the uploaded
-bytes match what it staged. This manual path is for emergencies only, and never
-replaces the bytes of an already-published asset.
+Never invoke a raw GitHub release mutation to bypass this check.
 
 Both names are required, for different consumers:
 

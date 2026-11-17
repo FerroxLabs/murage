@@ -1,0 +1,36 @@
+✔ p11b 1: TimeoutSeconds 60, prelaunch CIM blocked beyond 150s still has operator-owned wrapper cleanup (1.060108ms)
+✔ p11b 2: schtasks beyond 30s uses suspended job creation, job timeout and empty proof (0.406952ms)
+✔ p11b 2: recursive ban includes all Windows source and test files (1066.745291ms)
+✔ p11b 3: all six MAIN mutants are installed (0.393682ms)
+SCANNER FIXTURE HIT RATE 57/57 (100%)
+✔ p11c 1: cleanup removes the fixed wrapper before any bounded snapshot diff (1.101368ms)
+✔ p11c 2: reviewer snapshot helper >300s has one job owner for every Node native (0.378452ms)
+✔ p11c 3: scanner flags every reviewer form recursively, including test/check/mutate (823.97125ms)
+✔ p11c 3: complete Windows tree passes exact-path ownership scanner (872.701319ms)
+✔ p11c 4: four additional real source mutants exist (0.352963ms)
+✔ p11c 3: owner basenames elsewhere are never allowlisted (499.005823ms)
+P11D SCANNER FIXTURE HIT RATE 57/57 (100%); PARSE-FAILURE COUNT 0
+✔ p11d: crev4 exact parenthesized multiline CIM input is rejected (680.66737ms)
+✔ p11d: valid hostile fixtures are detected without masking parser failures (678.841399ms)
+✔ p11d: malformed PowerShell, JavaScript, C# and batch source fails closed (1782.73749ms)
+✔ p11d: harmless syntax and command-looking data do not produce violations (970.018547ms)
+✔ p11d: a missing PowerShell parser fails closed (8.990881ms)
+✔ p11d: JavaScript bindings respect lexical scopes (11.436347ms)
+P11E SCANNER FIXTURE HIT RATE 94/94 (100%); PARSE-FAILURE COUNT 0
+P11E ALLOWED FIXTURES 45/45
+✔ p11e: crev5 exact parenthesized imported alias is rejected (25.004829ms)
+✔ p11e: every valid hostile allowlist fixture fails recursively (229.097989ms)
+✔ p11e: each allowed process form and harmless data remain accepted (86.252073ms)
+P11F BANNED FIXTURES 81/81; PARSE-FAILURE COUNT 0
+P11F ALLOWED FIXTURES 15/15
+✔ p11f: crev6 exact Function-constructor input is rejected (23.075816ms)
+✔ p11f: MAIN cheap structural bans reject valid JavaScript (210.081531ms)
+✔ p11f: ordinary local functions, data and lexical scopes remain accepted (34.908505ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4419.118772

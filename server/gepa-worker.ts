@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
@@ -87,7 +88,7 @@ export async function runGepaWorker(options:GepaWorkerOptions):Promise<GepaWorke
     PYTHONNOUSERSITE:"1",PYTHONDONTWRITEBYTECODE:"1"};
   for(const key of ["SystemRoot","TMPDIR","TEMP","TMP"] as const)if(process.env[key])env[key]=process.env[key];
   if(command.runAsNode)env.ELECTRON_RUN_AS_NODE="1";
-  const child=spawn(command.executable,[...command.args],{cwd:command.cwd,env,shell:false,windowsHide:true,stdio:["pipe","pipe","pipe"]});
+  const child=spawn(command.executable,[...command.args],withHideInherit({cwd:command.cwd,env,shell:false,windowsHide:true,stdio:["pipe","pipe","pipe"]}));
   const controller=new AbortController(),evaluations:EvaluationObservation[]=[],reflections:ReflectionObservation[]=[];
   let ready=false,pythonVersion="",terminal:GepaResult|undefined,pending=false,failed:Error|undefined,closed=false;
   let metrics=0,reflectionCalls=0,evaluationCalls=0,stderr=Buffer.alloc(0),stderrTruncated=false;

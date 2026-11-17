@@ -20,7 +20,7 @@ exit 1
   chmodSync(bin, 0o755);
   return { dir, bin };
 }
-const run = (bin: string, args: string[] = []) => spawnSync("node", [script, ...args], { env: { PATH: process.env.PATH, WRANGLER_BIN: bin }, encoding: "utf8" });
+const run = (bin: string, args: string[] = []) => spawnSync("node", [script, ...args], { windowsHide: true, env: { PATH: process.env.PATH, WRANGLER_BIN: bin }, encoding: "utf8" });
 
 describe("production signing key script", () => {
   it("pipes the private JWK to wrangler stdin and prints only the public half", () => {

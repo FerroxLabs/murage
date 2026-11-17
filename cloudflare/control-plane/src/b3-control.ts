@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { fluxRoutesEnabled } from "./b4-flux-config";
+import { fluxServing } from "./b4-flux-config";
 import { fluxRenewalDue } from "./b4-flux-renewal";
 import { applyServiceLogSoon, serviceLogStatement, SERVICE_ENDS, SERVICE_STARTS } from "./service-intervals";
 import { exportPausesDeletion, NO_EXPORT_HOLD_SQL, queueServerReady, readyStamp } from "./legal-flows";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { alertStatement, dropHealth, healthSchema, homeChangeBump, persistResolveUnless, recordHealth } from "./ops-monitor";
+import { alertStatement, dropHealth, healthSchema, heartbeatAckHeaders, homeChangeBump, persistResolveUnless, recordHealth } from "./ops-monitor";
 import { b3Config, b3Enabled, type B3Config } from "./b3-config";
-import { fakeProvider, validateVolume, type ProviderAdapter, type ProviderResource, type VolumeDescriptor, type ResourceRole } from "./b3-provider";
+import { fakeProvider, validateVolume, type ProviderAdapter, type ProviderResource, type VolumeDescriptor, type ResourceRole, type ProvisionFence } from "./b3-provider";
 import { consumeDeviceProof, envelopeSchema, signPayload, type SignedEnvelope } from "./b3-signatures";
+import { failAbandonedClaims } from "./warm-pool-claim";
 import { prepareB3Enrollment, bindB3Enrollment, deriveBackupPassword, loadProvisionToken, rotateProvisionToken } from "./cloud-machines";
 import { persistAlert, resolveAlertStatement, subjectAlertStatements, UI_INSTANCE } from "./ops-monitor";
 import { cloudHomeCloudflare, readConfig } from "./config";
@@ -16,8 +17,11 @@ import { allocateMachineEndpoint, expediteMachineEndpointCleanup, type ObservedM
   reopenMachineEndpoint, restoreMachineEndpoint } from "./endpoints";
 import { createLiveProvider, HostError, sanitizeProviderMessage } from "./b5-provisioner";
 import { errorResponse, HTTPError, json, readBoundedJSON } from "./http";
+import { isStagingEnv } from "./b5-config";
+import { runtimeEnvironment } from "./env-isolation";
 import { requireInstallation, sha256 } from "./installations";
 import { doorV2Required } from "./customer-identity";
+import { joinRequired } from "./held-until-item9-highs";
 import { notePowerHeartbeat } from "./self-service";
 import { claimStatements } from "./purchase-bootstrap";
 import { DB_NOW, fencedBatch, HomeBusy, LeaseLost, q, withHomeLease, type HomeLease, type Q } from "./billing-lease";
@@ -121,10 +125,15 @@ export async function machine(request: Request, env: Env, h: Pick<Home, "id" | "
   }
 }
 async function seedCapacity(db: D1Database, config: B3Config) {
-  if (!config.capacity.length) return;
-  await db.batch(config.capacity.map((slot) => db.prepare(`INSERT INTO cloud_capacity
+  const rows = config.capacity.map((slot) => db.prepare(`INSERT INTO cloud_capacity
     (id,project_id,location,server_type,outcome) VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING`)
-    .bind(slot.id, slot.projectId, slot.location, slot.serverType, slot.outcome)));
+    .bind(slot.id, slot.projectId, slot.location, slot.serverType, slot.outcome));
+  // One statement per block: <prefix>-1 .. <prefix>-<count>, in order, so rowid order (the claim order) follows the slot number.
+  // Seeding only adds: lowering a count, or dropping a listed row, leaves the existing rows in place (retire slots by hand in D1).
+  const blocks = (config.capacityBlocks ?? []).map((b) => db.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+    INSERT INTO cloud_capacity (id,project_id,location,server_type,outcome) SELECT ?||'-'||i,?,?,?,? FROM n WHERE true ORDER BY i
+    ON CONFLICT(id) DO NOTHING`).bind(b.count, b.prefix, b.projectId, b.location, b.serverType, b.outcome));
+  if (rows.length + blocks.length) await db.batch([...rows, ...blocks]);
 }
 async function replay(db: D1Database, mutationId: string, input: unknown): Promise<Response | null> {
   const previous = await db.prepare("SELECT fingerprint,response FROM cloud_mutations WHERE id=?")
@@ -1026,7 +1035,7 @@ interface ProvisionIntent {
   volume_id: string | null; server_id: string | null; volume_json: string | null; state: "pending" | "bound" | "failed";
 }
 /** Where a new home enrolls. Fake mode keeps the inert test origin; live mode must be the Worker's own public origin. */
-function controlPlaneOriginFor(env: Env): string {
+export function controlPlaneOriginFor(env: Env): string {
   if (env.CLOUD_B3_MODE !== "live") return "https://admin.murage.test";
   return originSchema.parse(new URL(env.BETTER_AUTH_URL).origin);
 }
@@ -1047,7 +1056,8 @@ function faultFor(env: Env, failedSoFar: number): (step: FaultStep) => void {
 }
 const SAFE_ERRORS = new Set(["provider_identity_conflict", "provider_ip_missing", "reservation_missing", "machine_identity_conflict",
   "machine_creation_failed", "no_capacity", "provider_unconfigured", "provision_choice_missing", "storage_boxes_full", "injected_fault",
-  "provision_intent_conflict", "provider_volume_conflict", "provider_attachment_conflict", "enrollment_delivery_expired"]);
+  "provision_intent_conflict", "provider_volume_conflict", "provider_attachment_conflict", "enrollment_delivery_expired", "pool_ownership_lost",
+  "claim_rebuild_failed", "claim_rebuild_in_progress", "claim_rebuild_timeout", "claim_image_mismatch"]);
 /** Operator-facing failure code: our own error codes, or the hosting provider's API error code (a short token such as
  *  resource_limit_exceeded; it never carries customer data or secrets). Anything else is reduced to provider_error. */
 const errorCode = (error: unknown) => error instanceof Error && SAFE_ERRORS.has(error.message) ? error.message
@@ -1193,23 +1203,29 @@ async function provision(env: Env, h: Home, provider: ProviderAdapter, now: numb
   // The lease also proves the budget is open and the home still paid and provisioning (Astra MAILRETRY-9): a give-up committed since the read
   // matches nothing here. One committed while this attempt runs is refused by the provider steps' own fence (cloud_provision_intents: state
   // 'failed', home no longer 'provisioning'), and its cleanup is the failed-home branch's.
-  const lease = await env.DB.prepare(`UPDATE provision_attempts SET next_at=? WHERE home_id=? AND resource_generation=? AND next_at<=? AND gave_up_at IS NULL
+  // The lease runs from the moment it is TAKEN (a serial pass of many homes reaches this one minutes after `now` was read: a stale stamp
+  // would be an already-expired lease and let another pass provision the same home at the same time).
+  const leaseAt = Math.max(now, Date.now());
+  // Astra round 2 #1: the lease carries a fencing token. The warm-pool path re-checks it before every pool-row write and provider mutation.
+  const token = crypto.randomUUID();
+  const lease = await env.DB.prepare(`UPDATE provision_attempts SET next_at=?,lease_token=? WHERE home_id=? AND resource_generation=? AND next_at<=? AND gave_up_at IS NULL
       AND ${STILL_PROVISIONING_PAID}`)
-    .bind(now + PROVISION_LEASE_MS, h.id, h.resource_generation, now, h.id, h.generation).run();
+    .bind(leaseAt + PROVISION_LEASE_MS, token, h.id, h.resource_generation, leaseAt, h.id, h.generation).run();
   if (lease.meta.changes !== 1) return; // backing off, another sweep holds the attempt, or the home was given up since it was read
   try {
-    await provisionOnce(env, h, provider, now, faultFor(env, row.attempts));
-    await env.DB.prepare("UPDATE provision_attempts SET next_at=0 WHERE home_id=? AND resource_generation=? AND gave_up_at IS NULL")
-      .bind(h.id, h.resource_generation).run();
+    await provisionOnce(env, h, provider, now, faultFor(env, row.attempts), { homeId: h.id, resourceGeneration: h.resource_generation, token });
+    await env.DB.prepare("UPDATE provision_attempts SET next_at=0 WHERE home_id=? AND resource_generation=? AND gave_up_at IS NULL AND lease_token IS ?")
+      .bind(h.id, h.resource_generation, token).run();
   } catch (error) {
     const code = errorCode(error);
     const failed = row.attempts + 1;
     // Astra MAILRETRY-13 P1-3: the attempt's result is written to ITS budget only, keyed by (home, resource generation) and still open. A late
     // failure of an attempt given up since (the overdue pass) or superseded (a new payment re-opened the home at the next resource generation)
     // matches nothing and is dropped: it never counts against the new attempt's budget, and never gives anything up.
+    // Astra round 2 #1: and only while this attempt still holds the lease: a stale attempt's failure neither counts nor moves the holder's next_at.
     const counted = await env.DB.prepare(`UPDATE provision_attempts SET attempts=?,next_at=?,last_error=?,last_error_detail=?
-      WHERE home_id=? AND resource_generation=? AND gave_up_at IS NULL`)
-      .bind(failed, now + provisionBackoffMs(failed), code, errorDetail(error), h.id, h.resource_generation).run();
+      WHERE home_id=? AND resource_generation=? AND gave_up_at IS NULL AND lease_token IS ?`)
+      .bind(failed, now + provisionBackoffMs(failed), code, errorDetail(error), h.id, h.resource_generation, token).run();
     if (counted.meta.changes === 1 && failed >= PROVISION_MAX_ATTEMPTS) { await giveUp(env, h, provider, code, now); return; }
     throw error;
   }
@@ -1670,7 +1686,108 @@ async function releaseFailedResources(env: Env, h: Home, provider: ProviderAdapt
   return true;
 }
 
-async function provisionOnce(env: Env, h: Home, provider: ProviderAdapter, now: number, fault: (step: FaultStep) => void) {
+/** KMS signing design 12.5 H3 (fixing 12.2): the recovery of a home that is already BOUND (`checking`) to a warm-pool server that was rejected or
+ *  retired (its pool row is `retired` or `failed`, not yet destroyed) and has not enrolled. The pool server is never Started or Rebooted. In order:
+ *   1. only the pool association of the stored choice is cleared (`provision_choices` is never deleted: the provider and location stay, so the
+ *      retained volume is still found by its labels);
+ *   2. the server is destroyed by exact id;
+ *   3. ONLY once the provider no longer shows it (asked by exact id AND by label), ONE D1 batch puts the home back on the normal provisioning
+ *      path: the SAME resource generation, the SAME volume (volume_phase 'created', volume_id kept), server_phase 'pending', server_id and
+ *      server_claim cleared, the intent 'pending' again (so provisionOnce takes it: no provision_intent_conflict), the machine unbound, the old
+ *      enrollment token revoked, and then desired_state 'provisioning'. provisionOnce mints the new token (rotateProvisionToken), verifies the
+ *      image, and dispatches a NEW create (a new call row) within the home's existing provisioning budget.
+ *  A server still listed (the delete not yet done) applies nothing and the next pass looks again. Returns true when this pass owned the home
+ *  (recovery in progress or finished); false when the home is not such a home. */
+export async function recoverRejectedPoolHome(env: Env, h: Home, provider: ProviderAdapter, now: number): Promise<boolean> {
+  if (h.desired_state !== "checking" || h.entitlement !== "paid") return false;
+  const pool = await env.DB.prepare(`SELECT id FROM warm_pool WHERE home_id=? AND resource_generation=? AND state IN ('retired','failed') AND destroyed_at IS NULL`)
+    .bind(h.id, h.resource_generation).first<{ id: string }>();
+  if (!pool) return false;
+  const intent = await env.DB.prepare("SELECT * FROM cloud_provision_intents WHERE home_id=? AND resource_generation=?")
+    .bind(h.id, h.resource_generation).first<ProvisionIntent & { cp_generation: number }>();
+  if (!intent || intent.state !== "bound" || intent.cp_generation !== h.generation || intent.volume_phase !== "created" || !intent.volume_id || !intent.server_id) return false;
+  // A server that enrolled is an established home, not an unenrolled pool server: this recovery never touches it.
+  const enrolled = () => env.DB.prepare("SELECT 1 AS x FROM cloud_machines WHERE id=? AND credential_hash IS NOT NULL").bind(h.id).first();
+  if (await enrolled()) return false;
+  // Astra (stale recovery): the fence. This pass works only while it holds the attempt's lease (the same fenced lease provision() takes: a
+  // provisioning pass or another recovery that took it since changes lease_token), and only for the exact bound attempt it read: the intent's
+  // server_id, token_hash and cp_generation, with the pool row still undestroyed. owns() re-proves all of it in ONE read.
+  const leaseAt = Math.max(now, Date.now());
+  const lease = crypto.randomUUID();
+  const took = await env.DB.prepare(`UPDATE provision_attempts SET next_at=?,lease_token=? WHERE home_id=? AND resource_generation=? AND next_at<=? AND gave_up_at IS NULL`)
+    .bind(leaseAt + PROVISION_LEASE_MS, lease, h.id, h.resource_generation, leaseAt).run();
+  if (took.meta.changes !== 1) {
+    // Another sweep holds the attempt: it is theirs this pass. No open budget row at all: nothing to fence, so this is not a recoverable home.
+    const open = await env.DB.prepare("SELECT 1 AS x FROM provision_attempts WHERE home_id=? AND resource_generation=? AND gave_up_at IS NULL").bind(h.id, h.resource_generation).first();
+    return !!open;
+  }
+  const owns = async () => !!await env.DB.prepare(`SELECT 1 AS x FROM provision_attempts a WHERE a.home_id=? AND a.resource_generation=? AND a.gave_up_at IS NULL AND a.lease_token=?
+      AND EXISTS (SELECT 1 FROM cloud_provision_intents i WHERE i.home_id=? AND i.resource_generation=? AND i.cp_generation=? AND i.state='bound'
+        AND i.server_id=? AND i.token_hash=? AND i.volume_phase='created' AND i.volume_id=?)
+      AND EXISTS (SELECT 1 FROM warm_pool w WHERE w.id=? AND w.state IN ('retired','failed') AND w.destroyed_at IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM cloud_machines m WHERE m.id=? AND m.credential_hash IS NOT NULL)`)
+    .bind(h.id, h.resource_generation, lease, h.id, h.resource_generation, h.generation, intent.server_id, intent.token_hash, intent.volume_id, pool.id, h.id).first();
+  /** Gives the lease back for the next pass (the final batch already did, on success). Only this pass's own token is cleared. */
+  const release = () => env.DB.prepare("UPDATE provision_attempts SET next_at=0,lease_token=NULL WHERE home_id=? AND resource_generation=? AND gave_up_at IS NULL AND lease_token=?")
+    .bind(h.id, h.resource_generation, lease).run();
+  try {
+  // Claim before any provider call: revoke THIS attempt's enrollment token (by hash, never the machine's other tokens) through the row enroll()
+  // consumes (used_at IS NULL), so enrollment and this recovery cannot both win. Enrollment that landed first leaves a credential (its token
+  // update and credential write are one batch): then stop. The claim only matches while the lease and the bound attempt are still ours.
+  await env.DB.prepare(`UPDATE cloud_enrollment_tokens SET used_at=? WHERE machine_id=? AND hash=? AND used_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM cloud_machines m WHERE m.id=machine_id AND m.credential_hash IS NOT NULL)
+    AND EXISTS (SELECT 1 FROM provision_attempts a WHERE a.home_id=? AND a.resource_generation=? AND a.gave_up_at IS NULL AND a.lease_token=?)
+    AND EXISTS (SELECT 1 FROM cloud_provision_intents i WHERE i.home_id=? AND i.resource_generation=? AND i.state='bound' AND i.server_id=? AND i.token_hash=?)`)
+    .bind(now, h.id, intent.token_hash, h.id, h.resource_generation, lease, h.id, h.resource_generation, intent.server_id, intent.token_hash).run();
+  if (await enrolled()) return false;
+  if (!await owns()) return true; // superseded (another recovery finished, or provisioning bound a replacement): never touch what is there now
+  // 1. Only the pool association goes.
+  await env.DB.prepare("UPDATE provision_choices SET pool_id=NULL WHERE home_id=? AND resource_generation=? AND pool_id IS NOT NULL")
+    .bind(h.id, h.resource_generation).run();
+  // 2. Destroy by exact id (and anything listed under the home's labels), never a power action. Ownership is re-proved right before each destroy.
+  const signal = () => AbortSignal.timeout(cleanupBound(provider));
+  const listed = checkedResources(await provider.list_by_tag(h.id, h.resource_generation, "home"), h, "home");
+  const ids = [...new Set([intent.server_id, ...listed.map((r) => r.id)])];
+  for (const id of ids) {
+    if (!await owns()) return true;
+    await provider.destroy(id, signal());
+  }
+  // 3. Confirmed gone: asked by exact id, and by label. An adapter that cannot say never lets the batch run.
+  if (!provider.server_exists) return true;
+  for (const id of ids) if (await provider.server_exists(id)) return true;
+  if (checkedResources(await provider.list_by_tag(h.id, h.resource_generation, "home"), h, "home").length) return true;
+  const g = crypto.randomUUID();
+  let guards = 0;
+  const guard = () => env.DB.prepare("INSERT INTO cloud_write_guards VALUES (?,changes())").bind(`${g}:${guards++}`);
+  await env.DB.batch([
+    // Revoked first: the old enrollment authorization can never be redeemed once the home is back on the provisioning path.
+    env.DB.prepare("UPDATE cloud_enrollment_tokens SET used_at=? WHERE machine_id=? AND hash=? AND used_at IS NULL").bind(now, h.id, intent.token_hash),
+    env.DB.prepare(`UPDATE cloud_provision_intents SET server_phase='pending',server_id=NULL,server_claim=NULL,state='pending'
+      WHERE home_id=? AND cp_generation=? AND resource_generation=? AND state='bound' AND server_id=? AND token_hash=? AND volume_phase='created' AND volume_id=?
+        AND EXISTS (SELECT 1 FROM provision_attempts a WHERE a.home_id=? AND a.resource_generation=? AND a.gave_up_at IS NULL AND a.lease_token=?)
+        AND EXISTS (SELECT 1 FROM cloud_homes h WHERE h.id=? AND h.generation=? AND h.resource_generation=? AND h.desired_state='checking' AND h.entitlement='paid')
+        AND NOT EXISTS (SELECT 1 FROM cloud_machines m WHERE m.id=? AND m.credential_hash IS NOT NULL)`)
+      .bind(h.id, h.generation, h.resource_generation, intent.server_id, intent.token_hash, intent.volume_id, h.id, h.resource_generation, lease,
+        h.id, h.generation, h.resource_generation, h.id),
+    guard(),
+    env.DB.prepare("UPDATE cloud_machines SET state='pending_binding',server_id=NULL,bound_ips=NULL WHERE id=? AND generation=? AND credential_hash IS NULL")
+      .bind(h.id, h.generation),
+    env.DB.prepare(`UPDATE warm_pool SET state='failed',fail_reason=COALESCE(fail_reason,'claim_rejected'),retired_at=COALESCE(retired_at,?),destroyed_at=?,phase='destroyed',secret_hash=NULL
+      WHERE id=? AND home_id=? AND resource_generation=? AND destroyed_at IS NULL`).bind(now, now, pool.id, h.id, h.resource_generation),
+    env.DB.prepare("UPDATE warm_pool_deliveries SET payload_wrapped=NULL,purged_at=? WHERE pool_id=? AND purged_at IS NULL").bind(now, pool.id),
+    env.DB.prepare("INSERT INTO warm_pool_events (pool_id,at,kind,detail) VALUES (?,?,'recovered',?)").bind(pool.id, now, h.id),
+    env.DB.prepare("UPDATE provision_attempts SET next_at=0,lease_token=NULL WHERE home_id=? AND resource_generation=? AND gave_up_at IS NULL").bind(h.id, h.resource_generation),
+    env.DB.prepare(`UPDATE cloud_homes SET desired_state='provisioning',observed_state='reserved',updated_at=?
+      WHERE id=? AND generation=? AND resource_generation=? AND desired_state='checking'`).bind(now, h.id, h.generation, h.resource_generation),
+    guard(),
+    homeChangeBump(env.DB, h.id, { desired_state: "checking", generation: h.generation }, now),
+    env.DB.prepare("DELETE FROM cloud_write_guards WHERE id LIKE ?").bind(`${g}:%`),
+  ]);
+  return true;
+  } finally { await release(); }
+}
+
+async function provisionOnce(env: Env, h: Home, provider: ProviderAdapter, now: number, fault: (step: FaultStep) => void, fence: ProvisionFence) {
   // Reject a hostile role/identity before preparing any local machine/key material.
   const initialServers = checkedResources(await provider.list_by_tag(h.id, h.resource_generation, "home"), h, "home");
   const initialVolumes = checkedResources(await provider.list_by_tag(h.id, h.resource_generation, "volume"), h, "volume");
@@ -1833,7 +1950,7 @@ async function provisionOnce(env: Env, h: Home, provider: ProviderAdapter, now: 
       resource = await provider.create({ homeId: h.id, resourceGeneration: h.resource_generation,
         idempotencyKey: call.id, type: capacity.server_type, location: capacity.location,
         image: h.image_digest, labels: { homeId: h.id, resourceGeneration: String(h.resource_generation), role: "home" },
-        volume: v, userData, signal: call.signal, ...(backup ? { backup } : {}) });
+        volume: v, userData, signal: call.signal, fence, ...(backup ? { backup } : {}) });
       await settle(call.id, "created", `resource:${resource.id}`);
       fault("after_create_server");
     } catch (error) {
@@ -1848,7 +1965,7 @@ async function provisionOnce(env: Env, h: Home, provider: ProviderAdapter, now: 
   await record("home", resource.id);
   const expectedVolumeId = v.id;
   fault("attach_volume");
-  v = validateVolume(await provider.attach_volume(v.id, resource.id), h.id, h.resource_generation);
+  v = validateVolume(await provider.attach_volume(v.id, resource.id, fence), h.id, h.resource_generation);
   if (v.id !== expectedVolumeId) throw new Error("provider_volume_conflict");
   if (v.attachment.serverId !== resource.id || v.attachment.state !== "attached") {
     if (v.attachment.serverId !== resource.id || v.attachment.state !== "attaching") throw new Error("provider_attachment_conflict");
@@ -1915,6 +2032,32 @@ export const AUTO_CANARY_PROBE_MS = 5_000;
 export const AUTO_CANARY_PROBE_CONCURRENCY = 5;
 export const AUTO_CANARY_PROBE_BUDGET_PER_PASS = 90;
 export const AUTO_CANARY_STAGE_MS = 92_000;
+/** The 1-minute cron's pass (a paid home whose evidence holds waited up to 5 extra minutes for the 5-minute cron): a smaller stage, probe
+ *  budget and concurrency, and a deadline on the WHOLE pass (canary-minute round 2, Astra and Grok Medium). Concurrency 3, not 5: the pass runs
+ *  beside minuteTick, which fetches too, and one invocation has six connections (AUTO_CANARY_PROBE_CONCURRENCY). Stage: 30 s = 6 waves of
+ *  3 probes at the 5 s probe cap = 18 probes = the budget, plus 2 s of timer slack like the 5-minute stage = 32 s. The whole pass has
+ *  AUTO_CANARY_MINUTE_PASS_MS = 40 s: after the stage, no alert, promotion or reconcile is admitted with less than
+ *  AUTO_CANARY_STEP_MS left (a leftover promotion waits for the next pass, which probes the home again). The pass runs beside minuteTick
+ *  (its own 50 s deadline), not after it. The 5-minute pass keeps AUTO_CANARY_STAGE_MS, its 90 probes and no pass deadline.
+ *  Post-commit tails of a promotion (applyServiceLogSoon in transition, queueServerReady) are not deferred (round 3, Astra Medium): they
+ *  are best-effort, idempotent and re-run by the billing sweep, sit behind the admission check above, and a pass that overruns its
+ *  lease (AUTO_CANARY_MINUTE_LEASE_MS) is fenced, so the overrun can write nothing further to the pass's own bookkeeping. */
+export const AUTO_CANARY_MINUTE_STAGE_MS = 32_000;
+export const AUTO_CANARY_MINUTE_BUDGET = 18;
+export const AUTO_CANARY_MINUTE_CONCURRENCY = 3;
+export const AUTO_CANARY_MINUTE_PASS_MS = 40_000;
+/** The time one alert write or one promotion batch needs; with less than this left in a deadline-bound pass none is started. */
+export const AUTO_CANARY_STEP_MS = 3_000;
+/** One pass at a time, fleet-wide (canary-minute round 2, Astra and Grok High): the lease row in auto_canary_lease (migration 0133). The
+ *  expiry is per pass and short (canary-minute round 3, Astra Medium: a crashed holder must not block the next passes for minutes). The
+ *  1-minute pass holds it for its 40 s deadline + 15 s = 55 s (AUTO_CANARY_MINUTE_LEASE_MS); the 5-minute pass for its 92 s stage + 60 s
+ *  = 152 s (AUTO_CANARY_LEASE_MS; it has no pass deadline, and 60 s covers its candidate read, stamp, bookkeeping and the promotions that fit
+ *  the Worker's budget). A holder that crashes frees the lease by that expiry. A pass that overruns its lease is not stopped; it is fenced:
+ *  every write of the pass (the stamp, the bookkeeping batch, each alert, each promotion, the reconcile) is conditioned on still owning
+ *  the row (autoCanaryFence, or EXISTS on the row with our owner), so once another pass has taken the lease the overrunning pass writes
+ *  nothing. No renewal. */
+export const AUTO_CANARY_LEASE_MS = AUTO_CANARY_STAGE_MS + 60_000;
+export const AUTO_CANARY_MINUTE_LEASE_MS = AUTO_CANARY_MINUTE_PASS_MS + 15_000;
 /** Render age (Astra AUTOCANARY-5 P1: a cached "ok" repeated on later heartbeats is not a fresh render). The app renders its built UI
  *  once per process start, then every 10 minutes (server/index.ts), and reports the time its last render FINISHED (uiAt). A render is
  *  evidence for AUTO_CANARY_RENDER_MAX_AGE_MS = the 10-minute render cadence + 5 minutes of slack (one render may run late or take a
@@ -2120,10 +2263,12 @@ async function probeHome(fetcher: typeof fetch, hostname: string, instance: stri
     if (bytes === null) return failed;
     const body: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     if (!(typeof body === "object" && body !== null && !Array.isArray(body))) return failed;
-    const answer = body as { app?: unknown; door?: unknown; ui?: unknown; uiAt?: unknown; instance?: unknown };
-    // A door-v2 home also names its door ("door":"v1"|"v2"); it is not part of the render evidence.
+    const answer = body as { app?: unknown; door?: unknown; ownerFactor?: unknown; ui?: unknown; uiAt?: unknown; instance?: unknown };
+    // A door-v2 home also names its door ("door":"v1"|"v2") and, from the remembered-owner browser factor on, "ownerFactor":1;
+    // neither is part of the render evidence.
     if ("door" in answer && answer.door !== "v1" && answer.door !== "v2") return failed;
-    const keys = Object.keys(answer).filter((key) => key !== "door");
+    if ("ownerFactor" in answer && answer.ownerFactor !== 1) return failed;
+    const keys = Object.keys(answer).filter((key) => key !== "door" && key !== "ownerFactor");
     if (answer.app !== "murage" || !keys.every((key) => ["app", "ui", "uiAt", "instance"].includes(key))) return failed;
     const answeredAt = Date.now();
     const renderedNow = keys.length === 4 && answer.ui === "ok" && typeof answer.uiAt === "number" && Number.isSafeInteger(answer.uiAt)
@@ -2144,7 +2289,9 @@ async function probeHome(fetcher: typeof fetch, hostname: string, instance: stri
     const served = (await readPrefix(asset, AUTO_CANARY_ASSET_READ_BYTES)) > 0;
     const rendered = served && renderedNow;
     return { served, rendered, uiAt: rendered ? answer.uiAt as number : null };
-  } catch {
+  } catch (error) {
+    // The pass ran out of its own time between two requests: no verdict on the home, a skip (it keeps its place), not a failed probe.
+    if (error instanceof Error && error.message === "auto_canary_stage_over") return null;
     return failed;
   }
 }
@@ -2169,8 +2316,56 @@ const idList = (ids: string[]) => JSON.stringify(ids);
  *  ceil(n / AUTO_CANARY_PROBE_BUDGET_PER_PASS) passes; (3) the probe stage, with no D1 call in it; (4) one batch puts back the probed_at of
  *  candidates the stage had no time for (they keep their place) and keeps ui_missing_since; (5) the render alerts; (6) the promotions,
  *  each its own guarded batch, AUTO_CANARY_PROBE_CONCURRENCY at a time. Returns how many homes failed with an error. Exported for the
- *  throughput test. */
-export async function autoCanaryPass(env: Env, fetcher: typeof fetch): Promise<number> {
+ *  throughput test. `limits` (the 1-minute cron's pass, AUTO_CANARY_MINUTE_*) shortens the stage, the probe budget and concurrency, bounds the whole pass (passMs) and returns after the candidate read when it finds none (skipIdle); the default is the 5-minute pass. */
+export interface AutoCanaryLimits { stageMs?: number; budget?: number; concurrency?: number; passMs?: number; skipIdle?: boolean; leaseMs?: number }
+
+/** The SQL condition (binding the owner) that the pass still owns the lease row; used inside single statements and guards. */
+const LEASE_OWNED_SQL = "EXISTS(SELECT 1 FROM auto_canary_lease WHERE id=1 AND owner=?)";
+/** True while `owner` still holds the lease. */
+async function autoCanaryHeld(env: Env, owner: string): Promise<boolean> {
+  return (await env.DB.prepare("SELECT 1 AS x FROM auto_canary_lease WHERE id=1 AND owner=?").bind(owner).first()) !== null;
+}
+/** The statements that abort a batch (the CHECK on cloud_write_guards) unless `owner` still holds the lease; first in every write batch of the pass. */
+function autoCanaryFence(env: Env, owner: string): D1PreparedStatement[] {
+  const id = crypto.randomUUID();
+  return [
+    env.DB.prepare("INSERT INTO cloud_write_guards SELECT ?, CASE WHEN EXISTS(SELECT 1 FROM auto_canary_lease WHERE id=1 AND owner=?) THEN 1 ELSE 0 END").bind(id, owner),
+    env.DB.prepare("DELETE FROM cloud_write_guards WHERE id=?").bind(id),
+  ];
+}
+
+/** The pass under the lease: taken by compare-and-set (a free row, or one whose expiry passed), released at the end only if still ours. A
+ *  caller that finds it held skips and returns 0. Both callers (reconcileB3, the 1-minute cron) come through here, so no work is done
+ *  without it. */
+export async function autoCanaryPass(env: Env, fetcher: typeof fetch, limits: AutoCanaryLimits = {}): Promise<number> {
+  const owner = crypto.randomUUID();
+  const at = Date.now();
+  let taken: D1Result;
+  try {
+    taken = await env.DB.prepare(`INSERT INTO auto_canary_lease (id,owner,expires_at) VALUES (1,?1,?2)
+      ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at WHERE auto_canary_lease.expires_at<=?3`)
+      .bind(owner, at + (limits.leaseMs ?? AUTO_CANARY_LEASE_MS), at).run();
+  } catch (error) {
+    // Migration 0133 not applied yet (canary-minute round 3, Astra High): the pass is skipped, logged once per pass, and never throws out
+    // of the caller (reconcileB3 still reclaims resources and completes receipts). Any other lease error is handled the same way.
+    console.error(JSON.stringify({ message: "b3 auto-canary lease unavailable, pass skipped",
+      errorCode: error instanceof Error && /no such table: auto_canary_lease/.test(error.message) ? "auto_canary_lease_missing" : "auto_canary_lease_error" }));
+    return 0;
+  }
+  if (taken.meta.changes !== 1) return 0;
+  try {
+    return await runAutoCanaryPass(env, fetcher, limits, owner, at);
+  } finally {
+    try { await env.DB.prepare("DELETE FROM auto_canary_lease WHERE id=1 AND owner=?").bind(owner).run(); } catch { /* it expires */ }
+  }
+}
+
+async function runAutoCanaryPass(env: Env, fetcher: typeof fetch, limits: AutoCanaryLimits, owner: string, started: number): Promise<number> {
+  const stageMs = limits.stageMs ?? AUTO_CANARY_STAGE_MS;
+  const budget = limits.budget ?? AUTO_CANARY_PROBE_BUDGET_PER_PASS;
+  const concurrency = limits.concurrency ?? AUTO_CANARY_PROBE_CONCURRENCY;
+  const passDeadline = limits.passMs === undefined ? Infinity : started + limits.passMs;
+  const timeLeft = () => passDeadline - Date.now();
   const read = Date.now();
   const candidates = (await env.DB.prepare(`SELECT h.id AS id, h.generation AS generation, e.hostname AS hostname, e.tunnel_id AS tunnelId,
       e.dns_record_id AS dnsRecordId, e.updated_at AS endpointUpdatedAt, x.app_ok_at AS appOkAt, h.heartbeat_at AS heartbeatAt,
@@ -2180,15 +2375,23 @@ export async function autoCanaryPass(env: Env, fetcher: typeof fetch): Promise<n
     WHERE h.desired_state='checking' AND p.first_at>? AND ${AUTO_CANARY_BASE}${doorReadySql(env)}
     ORDER BY p.probed_at ASC NULLS FIRST, h.id LIMIT ?`)
     .bind(read - AUTO_CANARY_RENDER_MAX_AGE_MS, read - PROVISION_MAX_MS, read - AUTO_CANARY_FRESH_MS, read - AUTO_CANARY_FRESH_MS,
-      AUTO_CANARY_PROBE_BUDGET_PER_PASS).all<AutoCanaryCandidate>()).results;
+      budget).all<AutoCanaryCandidate>()).results;
+  // The 1-minute pass with nothing to probe costs this one read: the bookkeeping below (alert reconcile, ui_missing_since clean-up for homes
+  // that left 'checking') is left to the 5-minute pass, which always runs it.
+  if (limits.skipIdle && !candidates.length) return 0;
   const stamp = Date.now();
   if (candidates.length) {
-    await env.DB.prepare("UPDATE provision_attempts SET probed_at=? WHERE home_id IN (SELECT value FROM json_each(?))")
-      .bind(stamp, idList(candidates.map((c) => c.id))).run();
+    // Compare-and-set against the probed_at just read (canary-minute round 2, Grok High): only the rows still holding that value are
+    // stamped, and only those are probed and bookkept. The owner fence is in the same statement (round 3, Astra Medium): a pass whose lease
+    // was taken over between the candidate read and here stamps nothing, and then probes and bookkeeps nothing.
+    const stamped = new Set(((await env.DB.prepare(`UPDATE provision_attempts SET probed_at=?1 WHERE EXISTS(SELECT 1 FROM json_each(?2)
+      WHERE json_extract(value,'$.id')=home_id AND json_extract(value,'$.at') IS probed_at) AND ${LEASE_OWNED_SQL.replace("?", "?3")} RETURNING home_id AS id`)
+      .bind(stamp, JSON.stringify(candidates.map((c) => ({ id: c.id, at: c.probedAt }))), owner).all<{ id: string }>()).results ?? []).map((r) => r.id));
+    for (let i = candidates.length - 1; i >= 0; i--) if (!stamped.has(candidates[i].id)) candidates.splice(i, 1);
   }
 
   // The probe stage: fetches only.
-  const deadline = Date.now() + AUTO_CANARY_STAGE_MS;
+  const deadline = Math.min(Date.now() + stageMs, passDeadline - AUTO_CANARY_STEP_MS);
   const results: (ProbeResult | null)[] = candidates.map(() => null);
   let next = 0;
   const prober = async () => {
@@ -2201,7 +2404,7 @@ export async function autoCanaryPass(env: Env, fetcher: typeof fetch): Promise<n
       results[index] = result;
     }
   };
-  await Promise.all(Array.from({ length: Math.min(AUTO_CANARY_PROBE_CONCURRENCY, candidates.length) }, prober));
+  await Promise.all(Array.from({ length: Math.min(concurrency, candidates.length) }, prober));
 
   // Bookkeeping, one batch: candidates not probed get their place back; render-missing homes keep (or start) ui_missing_since, every
   // other probed home and every home no longer a candidate loses it.
@@ -2209,7 +2412,9 @@ export async function autoCanaryPass(env: Env, fetcher: typeof fetch): Promise<n
   const skipped = candidates.filter((_, i) => results[i] === null);
   const missing = candidates.filter((c, i) => results[i]?.served === true && !(c.renderOk === 1 && results[i]?.rendered === true));
   const clear = candidates.filter((c, i) => results[i] !== null && !missing.includes(c));
-  const bookkeeping = await env.DB.batch([
+  let bookkeeping: D1Result[];
+  try { bookkeeping = await env.DB.batch([
+    ...autoCanaryFence(env, owner),
     env.DB.prepare(`UPDATE provision_attempts SET probed_at=(SELECT json_extract(value,'$.at') FROM json_each(?2) WHERE json_extract(value,'$.id')=home_id)
       WHERE probed_at=?1 AND home_id IN (SELECT json_extract(value,'$.id') FROM json_each(?2))`)
       .bind(stamp, JSON.stringify(skipped.map((c) => ({ id: c.id, at: c.probedAt })))),
@@ -2234,12 +2439,16 @@ export async function autoCanaryPass(env: Env, fetcher: typeof fetch): Promise<n
           drop_reason=CASE WHEN ?3=0 THEN 'probe_failed' WHEN evidence_epoch<>?4 THEN 'stale_probe' ELSE drop_reason END,
           dropped_at=CASE WHEN ?3=1 AND evidence_epoch=?4 THEN dropped_at ELSE ?7 END,
           evidence_epoch=CASE WHEN ?3=1 AND evidence_epoch=?4 THEN evidence_epoch ELSE evidence_epoch+1 END
-        WHERE home_id=?1 AND generation IS ?2`).bind(c.id, c.generation, ok, c.epoch, ok ? c.uiInstance : null, ok ? r.uiAt : null, now)];
+        WHERE home_id=?1 AND generation IS ?2 AND EXISTS(SELECT 1 FROM cloud_homes h WHERE h.id=?1 AND h.generation=?2 AND h.desired_state='checking')`).bind(c.id, c.generation, ok, c.epoch, ok ? c.uiInstance : null, ok ? r.uiAt : null, now)];
     }),
-  ]);
+  ]); } catch (error) {
+    if (!(await autoCanaryHeld(env, owner))) return 0; // the lease was taken over: this pass writes nothing more
+    throw error;
+  }
   let failures = 0;
-  for (const row of (bookkeeping[2].results ?? []) as { id: string; since: number }[]) {
+  for (const row of (bookkeeping[4].results ?? []) as { id: string; since: number }[]) {
     if (now - row.since < UI_RENDER_MISSING_ALERT_MS) continue;
+    if (timeLeft() < AUTO_CANARY_STEP_MS) break; // no time for another alert: the next pass records it (ui_missing_since is kept)
     const c = candidates.find((candidate) => candidate.id === row.id)!;
     try {
       // Deduplicated by cloud_alerts_open: a home already alerted changes nothing. Recorded only, never sent here (Astra AUTOCANARY-6
@@ -2249,7 +2458,7 @@ export async function autoCanaryPass(env: Env, fetcher: typeof fetch): Promise<n
       await persistAlert(env, { homeId: row.id, kind: UI_RENDER_MISSING_ALERT, severity: "high",
         detail: `checking home serves its UI publicly and every other check passes, but no recent render from its running app for ${Math.floor((now - row.since) / 60_000)} min` }, now,
         { sql: `SELECT 1 FROM cloud_homes h JOIN provision_attempts p ON p.home_id=h.id WHERE h.id=? AND h.generation=?
-          AND h.desired_state='checking' AND p.gave_up_at IS NULL AND p.ui_missing_since IS NOT NULL`, binds: [row.id, c.generation] });
+          AND h.desired_state='checking' AND p.gave_up_at IS NULL AND p.ui_missing_since IS NOT NULL AND ${LEASE_OWNED_SQL}`, binds: [row.id, c.generation, owner] });
     } catch (error) {
       failures++;
       console.error(JSON.stringify({ message: "b3 auto-canary alert failed for a home", homeId: row.id,
@@ -2264,10 +2473,11 @@ export async function autoCanaryPass(env: Env, fetcher: typeof fetch): Promise<n
     for (;;) {
       const c = passed[promote++];
       if (!c) return;
+      if (timeLeft() < AUTO_CANARY_STEP_MS) { promote = passed.length; return; } // the rest wait for the next pass
       try {
         const h = await home(env.DB, c.id);
         if (h.generation !== c.generation || h.desired_state !== "checking") continue;
-        await autoCanary(env, h, c);
+        if (!(await autoCanary(env, h, c, owner)) && !(await autoCanaryHeld(env, owner))) { promote = passed.length; return; }
       } catch (error) {
         failures++;
         console.error(JSON.stringify({ message: "b3 auto-canary failed for a home", homeId: c.id,
@@ -2275,13 +2485,15 @@ export async function autoCanaryPass(env: Env, fetcher: typeof fetch): Promise<n
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(AUTO_CANARY_PROBE_CONCURRENCY, passed.length) }, promoter));
+  await Promise.all(Array.from({ length: Math.min(concurrency, passed.length) }, promoter));
   // Reconcile (Astra AUTOCANARY-6 P2): a render alert open for a home that no longer waits in 'checking' (ready, failed, deleted, or
-  // gone) is resolved, whatever opened it, without network (the monitoring sweep sends the notice).
+  // gone) is resolved, whatever opened it, without network (the monitoring sweep sends the notice). Not admitted in a deadline-bound
+  // pass with no time left, nor by a pass that lost its lease (the 5-minute pass runs it).
+  if (timeLeft() < AUTO_CANARY_STEP_MS || !(await autoCanaryHeld(env, owner))) return failures;
   try {
     await env.DB.prepare(`UPDATE cloud_alerts SET resolved_at=?,resolve_notice_due=1 WHERE kind=? AND resolved_at IS NULL
-      AND NOT EXISTS(SELECT 1 FROM cloud_homes WHERE id=cloud_alerts.home_id AND desired_state='checking')`)
-      .bind(Date.now(), UI_RENDER_MISSING_ALERT).run();
+      AND NOT EXISTS(SELECT 1 FROM cloud_homes WHERE id=cloud_alerts.home_id AND desired_state='checking') AND ${LEASE_OWNED_SQL}`)
+      .bind(Date.now(), UI_RENDER_MISSING_ALERT, owner).run();
   } catch (error) {
     failures++;
     console.error(JSON.stringify({ message: "b3 auto-canary alert reconcile failed",
@@ -2295,7 +2507,7 @@ export async function autoCanaryPass(env: Env, fetcher: typeof fetch): Promise<n
  *  and it still current), with freshness and render age judged at this later time and the endpoint pinned to the row read before the
  *  probe, so a negative event recorded since by any worker, evidence that aged out, an endpoint replaced, or a provisioning budget that ran
  *  out (Astra AUTOCANARY-3 P3) never promotes. True when the home became ready. */
-async function autoCanary(env: Env, h: Home, c: AutoCanaryCandidate): Promise<boolean> {
+async function autoCanary(env: Env, h: Home, c: AutoCanaryCandidate, owner: string): Promise<boolean> {
   // The database clock first, then ours: the guard's execution time is never earlier than the real one (AUTO_CANARY_EVIDENCE_SQL).
   const dbAt = (await env.DB.prepare(AUTO_CANARY_DB_ANCHOR_SQL).first<{ dbAt: number }>())!.dbAt;
   const now = Date.now();
@@ -2304,12 +2516,14 @@ async function autoCanary(env: Env, h: Home, c: AutoCanaryCandidate): Promise<bo
   try {
     await canaryOutcome(env, h, true, { auto: true, generation: h.generation, imageDigest: h.image_digest,
       evidence: { appOkAt: c.appOkAt, heartbeatAt: c.heartbeatAt, endpoint: "ready", probe: "ok" } }, now, [
+      ...autoCanaryFence(env, owner), // the pass still holds the lease (a pass taken over promotes nothing)
       env.DB.prepare(`INSERT INTO cloud_write_guards VALUES (?,${autoCanaryEvidenceSql(doorReadySql(env))})`).bind(guard, ...binds),
       env.DB.prepare("DELETE FROM cloud_write_guards WHERE id=?").bind(guard),
     ]);
   } catch (error) {
     // Lost a race (state, generation, epoch, evidence or endpoint moved since the read, or the evidence or the budget ran out during
     // the probe): nothing was written; a later pass looks again.
+    if (!(await autoCanaryHeld(env, owner))) return false;
     const current = await home(env.DB, h.id);
     if (current.generation !== h.generation || current.desired_state !== h.desired_state
       || !(await env.DB.prepare(`SELECT ${autoCanaryEvidenceSql(doorReadySql(env))} AS ok`).bind(...binds).first<{ ok: number }>())?.ok) return false;
@@ -2526,6 +2740,8 @@ export async function reconcileB3(env: Env, dependencies: B3Dependencies = {}): 
       continue;
     }
     if (h.desired_state === "checking" && h.entitlement === "paid") {
+      // A rejected or retired warm-pool server the home is bound to (and which never enrolled): back on the normal provisioning path (12.5 H3).
+      if (await recoverRejectedPoolHome(env, h, provider, now)) continue;
       // Booted but never became healthy (enrolment or tunnel never completed) within the same budget: give up and refund.
       const budget = await env.DB.prepare("SELECT first_at FROM provision_attempts WHERE home_id=? AND resource_generation=? AND gave_up_at IS NULL")
         .bind(h.id, h.resource_generation).first<{ first_at: number }>();
@@ -2614,7 +2830,11 @@ export async function reconcileB3(env: Env, dependencies: B3Dependencies = {}): 
   // Round 10 (Astra TAXCOUNTRY-9 P1-5): every paid, billing-suspended home's resume obligation is settled (resumed, or refunded at its deadline).
   failures += await settleResumes(env, config, now);
   // The automatic canary, fleet-wide and fair (after the loop, so a home past its budget was given up on first).
-  failures += await autoCanaryPass(env, probeFetch);
+  // Isolated (canary-minute round 3, Astra High): any canary error (a missing 0133 table included) is logged and never stops the stages below.
+  try { failures += await autoCanaryPass(env, probeFetch); } catch (error) {
+    failures++;
+    console.error(JSON.stringify({ message: "b3 auto-canary pass failed", errorCode: error instanceof Error ? error.message.slice(0, 80) : "unknown" }));
+  }
   // Astra MAILRETRY-14 P1: a late create of a given-up or superseded setup attempt (any resource generation) is reclaimed here.
   failures += await reclaimDispatchedGenerations(env, provider, now);
   // Persisted completion receipt describes fake effects only. External token
@@ -2625,6 +2845,45 @@ export async function reconcileB3(env: Env, dependencies: B3Dependencies = {}): 
     .bind(now, JSON.stringify({ fakeOnly: true, reconciledAt: now })).run();
   // Surface failure after all other homes have been given their bounded turn.
   if (failures) throw new Error("b3_reconcile_incomplete");
+}
+
+/** Warm pool 4.1: the faster start. Run from a 1-minute cron (wired separately): settle the payments that arrived, then give the paid homes
+ *  waiting to be provisioned their pass now instead of at the next 5-minute reconcile. provision() holds its own per-home lease
+ *  (provision_attempts.next_at), so an overlapping reconcile never doubles an attempt. Homes are taken oldest first, at most 20 a minute, so
+ *  no cursor can starve one. Returns the number of homes whose pass failed (each failure is already counted against that home's budget). */
+/** The fast pass stops taking homes after this long, well inside the 1-minute cadence's worker budget. */
+export const FAST_PROVISION_DEADLINE_MS = 50_000;
+export async function fastProvision(env: Env, dependencies: B3Dependencies = {}, deadlineMs: number = FAST_PROVISION_DEADLINE_MS): Promise<number> {
+  if (!b3Enabled(env)) return 0;
+  const config = b3Config(env);
+  const started = Date.now();
+  const provider = providerFor(env, dependencies);
+  await processPayments(env, config, started);
+  // Eligible attempts are chosen BEFORE the limit: a home backing off (provision_attempts.next_at ahead) never takes a slot from one that can run.
+  const rows = await env.DB.prepare(`SELECT h.* FROM cloud_homes h LEFT JOIN provision_attempts p ON p.home_id=h.id
+    WHERE h.desired_state='provisioning' AND h.entitlement='paid'
+      AND (p.home_id IS NULL OR p.next_at<=? OR p.gave_up_at IS NOT NULL OR p.resource_generation<>h.resource_generation)
+    ORDER BY h.updated_at,h.id LIMIT 20`).bind(Date.now()).all<Home>();
+  let failures = 0;
+  for (const h of rows.results) {
+    if (Date.now() - started >= deadlineMs) break; // the rest wait for the next minute
+    try {
+      await provision(env, h, provider, Date.now()); // provision() stamps its lease when it takes it
+    } catch (error) {
+      const current = await home(env.DB, h.id);
+      if (current.generation !== h.generation || current.desired_state !== h.desired_state) {
+        try { await cleanStaleProvision(env, h, provider); continue; } catch { /* counted below */ }
+      }
+      failures++;
+      console.error(JSON.stringify({ message: "b3 fast provision failed for a home", homeId: h.id,
+        errorCode: error instanceof Error ? error.message.slice(0, 80) : "unknown" }));
+    }
+  }
+  // Claimed pool servers whose home is gone: the row fails (never back to the pool); B3 cleanup or the grabber destroys the server.
+  try {
+    await failAbandonedClaims(env, Date.now());
+  } catch { /* the next minute retries */ }
+  return failures;
 }
 
 async function holderAuthorization(request: Request, env: Env, h: Home, holder: string) {
@@ -2730,7 +2989,7 @@ async function desired(request: Request, env: Env, h: Home, config: B3Config) {
       homeKey: h.home_key, publicOrigin: machineRow?.public_origin, issuedAt: now, expiresAt: now + LEASE_TTL_MS }),
     // B4: the poller's cue to renew this home's Flux key (POST /v1/machines/:id/flux/renewal-due gives the op_id). Behind the same
     // default-off switch as the Flux routes: off, the field is ABSENT and no flux_home_keys row is read.
-    ...(fluxRoutesEnabled(env) ? { flux_renewal_due: await fluxRenewalDue(env, h.id, now) } : {}),
+    ...(fluxServing(env) ? { flux_renewal_due: await fluxRenewalDue(env, h.id, now) } : {}),
   });
 }
 
@@ -2745,9 +3004,11 @@ export type HoldSource = "operator" | "customer";
  *  billing lease) the batch is fenced: it commits whole only while that lease is held, so a deletion hold and the plan end it journals
  *  (b5-billing.ts deletionPlanEnd) are one transaction (Astra JOURNEY-B-1 #1). */
 export async function startHold(env: Env, h: Home, action: HoldAction, source: HoldSource, now: number,
-  holdId: string = crypto.randomUUID(), extra: (D1PreparedStatement | Q)[] = [], lease?: HomeLease) {
+  holdId: string = crypto.randomUUID(), extra: (D1PreparedStatement | Q)[] = [], lease?: HomeLease, before: D1PreparedStatement[] = []) {
   const completesAt = now + RECOVERY_HOLD_MS;
+  // `before`: guards that abort the whole batch (so no hold is inserted) when a condition read earlier no longer holds at commit.
   const stmts: (D1PreparedStatement | Q)[] = [
+    ...before,
     env.DB.prepare(`INSERT INTO cloud_recovery_holds
       (id,home_id,action,generation,started_at,completes_at,source) VALUES (?,?,?,?,?,?,?)`)
       .bind(holdId, h.id, action, h.generation, now, completesAt, source),
@@ -2883,7 +3144,7 @@ export const DOOR_HEADER = "x-murage-door";
  *  header x-murage-door-proof, which is never sent to the CP. */
 export const OWNER_FACTOR_HEADER = "x-murage-owner-factor";
 /** DOOR_V2_REQUIRED (MurageCloud (a)): a home is marked ready only after it stamped door_version 'v2', so the first press after ready mints v2. */
-const doorReadySql = (env: Env) => (doorV2Required(env) ? " AND h.door_version='v2'" : "");
+export const doorReadySql = (env: Env) => (doorV2Required(env) ? " AND h.door_version='v2'" : "") + (doorV2Required(env) && joinRequired(env) ? " AND h.door_proof=1" : "");
 /** Seconds after which a home whose heartbeat could not be recorded resends it (Astra AUTOCANARY-11 P1-1; murage-control's 5xx retry). */
 export const HEARTBEAT_RETRY_AFTER_S = 5;
 const heartbeatSchema = z.object({ generation: generationSchema, health: healthSchema.optional() }).strict();
@@ -2951,7 +3212,10 @@ async function heartbeat(request: Request, env: Env, h: Home): Promise<Response>
   // daemon); an older one, or a report with a legacy field, keeps its old ack and is never promoted automatically.
   const echoes = request.headers.get(EVIDENCE_HEADER) === "epoch"
     || (input.health?.evidenceEpoch !== undefined && input.health.bootSeq === undefined);
-  return json({ wire: WIRE, accepted: true, ...(echoes && typeof epoch === "number" ? { generation: h.generation, evidenceEpoch: epoch } : {}) });
+  const ack = json({ wire: WIRE, accepted: true, ...(echoes && typeof epoch === "number" ? { generation: h.generation, evidenceEpoch: epoch } : {}) });
+  const advertised = new Response(ack.body, ack);
+  for (const [name, value] of Object.entries(heartbeatAckHeaders())) advertised.headers.set(name, value);
+  return advertised;
 }
 
 export async function b3Route(request: Request, env: Env, dependencies: B3Dependencies = {}): Promise<Response | null> {
@@ -2959,9 +3223,18 @@ export async function b3Route(request: Request, env: Env, dependencies: B3Depend
   const path = new URL(request.url).pathname;
   if (!path.startsWith("/v1/fake-b3/") && !/^\/v1\/machines\/[\w-]+\/(desired|heartbeat|lease|resume)$/.test(path)) return null;
   const config = b3Config(env);
-  if (request.method === "POST" && path === "/v1/fake-b3/reserve") return reserve(request, env, config);
+  // CH1 P3 (Grok N5): a live-environment Worker never reaches the fake reserve or payment routes, whatever CLOUD_B3_MODE says (a "fake" override on a
+  // live MURAGE_ENV is a misconfiguration the deploy check also rejects).
+  const liveRuntime = runtimeEnvironment(env) === "live";
+  if (request.method === "POST" && path === "/v1/fake-b3/reserve") {
+    if (liveRuntime) throw new HTTPError(404, "not_found");
+    // CH1 M2 (Astra r1): the legacy reserve route creates a payment_pending home with no sales or invite gate. Fail closed: only the fake mode or
+    // the explicitly marked staging control plane (CLOUD_CP0_STAGING "1", isStagingEnv) may reach it; production (live, unmarked) answers 404.
+    if (env.CLOUD_B3_MODE !== "fake" && !isStagingEnv(env)) throw new HTTPError(404, "not_found");
+    return reserve(request, env, config);
+  }
   if (request.method === "POST" && path === "/v1/fake-b3/payments") {
-    if (env.CLOUD_B3_MODE === "live") throw new HTTPError(404, "not_found"); // only Stripe may mark a live home paid
+    if (liveRuntime || env.CLOUD_B3_MODE === "live") throw new HTTPError(404, "not_found"); // only Stripe may mark a live home paid
     return payment(request, env);
   }
   if (request.method === "POST" && path === "/v1/fake-b3/reconcile") {
@@ -3008,9 +3281,11 @@ export async function b3Route(request: Request, env: Env, dependencies: B3Depend
     if (input.generation !== h.generation || h.desired_state !== "checking") throw new HTTPError(409, "state_conflict");
     const passed = input.imageDigest === h.image_digest && Object.values(input.checks).every(Boolean);
     // MurageCloud (a): with DOOR_V2_REQUIRED on, a home that has not advertised door v2 is never marked ready (its pass is refused).
+    // DOOR_JOIN_REQUIRED (door device confirmation): the home must also have sent door_proof, or its first ticket would carry no proof.
+    const proofNeeded = doorV2Required(env) && joinRequired(env);
     if (passed && doorV2Required(env)) {
-      const door = await env.DB.prepare("SELECT door_version FROM cloud_homes WHERE id=? AND generation=?").bind(h.id, h.generation).first<{ door_version: string | null }>();
-      if (door?.door_version !== "v2") throw new HTTPError(409, "door_not_advertised");
+      const door = await env.DB.prepare("SELECT door_version, door_proof FROM cloud_homes WHERE id=? AND generation=?").bind(h.id, h.generation).first<{ door_version: string | null; door_proof: number | null }>();
+      if (door?.door_version !== "v2" || (proofNeeded && door.door_proof !== 1)) throw new HTTPError(409, "door_not_advertised");
     }
     await dependencies.afterDoorCheck?.();
     const response = { fakeOnly: true, state: passed ? "ready" : "failed" };
@@ -3020,7 +3295,7 @@ export async function b3Route(request: Request, env: Env, dependencies: B3Depend
     try {
       await canaryOutcome(env, h, passed, input, Date.now(), [
         ...(doorGuard ? [
-          env.DB.prepare("INSERT INTO cloud_write_guards VALUES (?,(SELECT COUNT(*) FROM cloud_homes WHERE id=? AND generation=? AND door_version='v2'))")
+          env.DB.prepare(`INSERT INTO cloud_write_guards VALUES (?,(SELECT COUNT(*) FROM cloud_homes WHERE id=? AND generation=? AND door_version='v2'${proofNeeded ? " AND door_proof=1" : ""}))`)
             .bind(doorGuard, h.id, h.generation),
           env.DB.prepare("DELETE FROM cloud_write_guards WHERE id=?").bind(doorGuard),
         ] : []),
@@ -3028,8 +3303,8 @@ export async function b3Route(request: Request, env: Env, dependencies: B3Depend
       ]);
     } catch (error) {
       if (doorGuard) {
-        const door = await env.DB.prepare("SELECT door_version FROM cloud_homes WHERE id=? AND generation=?").bind(h.id, h.generation).first<{ door_version: string | null }>();
-        if (door?.door_version !== "v2") throw new HTTPError(409, "door_not_advertised");
+        const door = await env.DB.prepare("SELECT door_version, door_proof FROM cloud_homes WHERE id=? AND generation=?").bind(h.id, h.generation).first<{ door_version: string | null; door_proof: number | null }>();
+        if (door?.door_version !== "v2" || (proofNeeded && door.door_proof !== 1)) throw new HTTPError(409, "door_not_advertised");
       }
       throw error;
     }

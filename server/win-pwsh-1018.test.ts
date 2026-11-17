@@ -126,7 +126,8 @@ describe("WIN-PWSH-1018: pwsh `bash ./build.sh` at Full access runs as the Claud
       expect(viaPwsh, text).toMatchObject({ approve: null, source: "always-ask" });
       expect(viaBash, text).toMatchObject({ approve: null, source: "always-ask" });
       expect(viaPwsh.rule, text).toBe(viaBash.rule);
-      expect(pwsh(NO_LIMITS, text, { ownerStarted: true }), text).toMatchObject({ approve: null, rule: "protected-path", classification: "deny" });
+      // NOLIM 1.0.19: protected-path is a deny row, not a wipe row: the owner's No limits turn runs it
+      expect(pwsh(NO_LIMITS, text, { ownerStarted: true }), text).toMatchObject({ source: "no-limits" });
     }
   });
   it("pwsh syntax the reader does not model (or that does not parse) still holds at Full access", () => {
@@ -142,10 +143,13 @@ describe("WIN-PWSH-1018: pwsh `bash ./build.sh` at Full access runs as the Claud
       expect(direct(bot, text0).approve, JSON.stringify(bot)).toBeNull();
     }
   });
-  it("No limits keeps the D4 gate: without the owner-started proof it cards, as the Claude Bash tool's text does", () => {
+  it("No limits no longer reads the owner-started proof (NOLIM 1.0.19): the stored owner origin runs it, as the Claude Bash tool's text does", () => {
     const viaPwsh = pwsh(NO_LIMITS, text0);
-    expect(viaPwsh.approve).toBeNull();
-    expect(direct(NO_LIMITS, text0).approve).toBeNull();
+    expect(viaPwsh.approve).toBeTruthy();
+    expect(direct(NO_LIMITS, text0).approve).toBeTruthy();
+    // an unproven origin (nothing stored) is the card that stays
+    expect(pwsh(NO_LIMITS, text0, { fullAccessOrigin: undefined }).approve).toBeNull();
+    expect(direct(NO_LIMITS, text0, { fullAccessOrigin: undefined }).approve).toBeNull();
     // with the proof, the D4 admission as shipped
     expect(pwsh(NO_LIMITS, text0, { ownerStarted: true })).toMatchObject({ source: "no-limits" });
   });
@@ -205,6 +209,12 @@ describe("WIN-PWSH-1018 H1: the bare `bash` PowerShell runs must be the engine's
   const LANES = ["payload", "d4", "full"] as const;
   const run = (lane: (typeof LANES)[number], handed: object | undefined, text: string = TEXT[lane]) =>
     autoVerdict((lane === "d4" ? NO_LIMITS : FULL) as never, "shell", text, { ...clean(text), ownerStarted: lane === "d4", handedShellPath: handed } as unknown as Context);
+  /** NOLIM 1.0.19: a held `bash` resolution is an unreadable row, not a wipe row. The payload and Full access lanes keep the card; the
+   * d4 lane (the owner's No limits turn) runs it. */
+  const held = (lane: (typeof LANES)[number], found: { approve: string | null }, label: string) => {
+    if (lane === "d4") expect(found.approve, `${label}: No limits runs it`).toBeTruthy();
+    else expect(found.approve, label).toBeNull();
+  };
   const disk = (dirs: Record<string, Record<string, Entry>>, path: string | undefined, ext: string | undefined = EXTS, gitBash: string | undefined = GIT_BASH) => fakeDisk(dirs, path, ext, gitBash);
 
   it.each(LANES)("%s: the real Git Bash is admitted (Git bin, a per-user Git, case on disk, empty PATH entries)", (lane) => {
@@ -265,8 +275,8 @@ describe("WIN-PWSH-1018 H1: the bare `bash` PowerShell runs must be the engine's
     BASE["c:\\windows\\none"] = { "cmd.exe": F };
     for (const [name, make] of HOLDS) {
       const found = run(lane, make());
-      expect(found.approve, `${lane}: ${name}`).toBeNull();
-      expect(found.source, `${lane}: ${name}`).toBe("always-ask");
+      held(lane, found, `${lane}: ${name}`);
+      if (lane !== "d4") expect(found.source, `${lane}: ${name}`).toBe("always-ask");
     }
   });
   it.each(LANES)("%s: no file index falls back to the exact-case realpath: equal admits, stat failing falls back the same way (R2)", (lane) => {
@@ -275,14 +285,14 @@ describe("WIN-PWSH-1018 H1: the bare `bash` PowerShell runs must be the engine's
     const d = disk(BASE, GIT);
     expect(run(lane, { ...d, stat: () => { throw new Error("EPERM"); } }).approve, `${lane} stat throws, same real path`).not.toBeNull();
     const cs = disk({ ...BASE, [k(GIT)]: { "bash.exe": { kind: "file", caseSensitive: true } } }, GIT, EXTS, GIT_BASH.replace("Program Files", "PROGRAM FILES"));
-    expect(run(lane, { ...cs, stat: () => { throw new Error("EPERM"); } }).approve, `${lane} stat throws, case differs`).toBeNull();
+    held(lane, run(lane, { ...cs, stat: () => { throw new Error("EPERM"); } }), `${lane} stat throws, case differs`);
   });
   it.each(LANES)("%s: equal realpaths still need equal dev and ino when stat gives them; ino 0 on one side or a second stat that throws is decided by the realpath (H4, R2)", (lane) => {
     const d = disk(BASE, GIT);
     const seq = (...answers: ({ dev: bigint; ino: bigint } | "throw")[]) => { let i = 0; return () => { const a = answers[i++]; if (a === "throw" || a === undefined) throw new Error("EPERM"); return a; }; };
     expect(run(lane, { ...d, stat: seq({ dev: 1n, ino: 5n }, { dev: 1n, ino: 5n }) }).approve, `${lane} equal`).not.toBeNull();
-    expect(run(lane, { ...d, stat: seq({ dev: 1n, ino: 5n }, { dev: 1n, ino: 6n }) }).approve, `${lane} ino differs`).toBeNull();
-    expect(run(lane, { ...d, stat: seq({ dev: 1n, ino: 5n }, { dev: 2n, ino: 5n }) }).approve, `${lane} dev differs`).toBeNull();
+    held(lane, run(lane, { ...d, stat: seq({ dev: 1n, ino: 5n }, { dev: 1n, ino: 6n }) }), `${lane} ino differs`);
+    held(lane, run(lane, { ...d, stat: seq({ dev: 1n, ino: 5n }, { dev: 2n, ino: 5n }) }), `${lane} dev differs`);
     expect(run(lane, { ...d, stat: seq({ dev: 1n, ino: 0n }, { dev: 2n, ino: 6n }) }).approve, `${lane} ino 0 on one side`).not.toBeNull();
     expect(run(lane, { ...d, stat: seq({ dev: 1n, ino: 5n }, "throw") }).approve, `${lane} second stat throws`).not.toBeNull();
   });
@@ -290,8 +300,8 @@ describe("WIN-PWSH-1018 H1: the bare `bash` PowerShell runs must be the engine's
     const text = "sh ./build.sh";
     const onlyUsr: Record<string, Record<string, Entry>> = { ...BASE, [k(GIT)]: { "bash.exe": F }, [k(USR)]: { "bash.exe": F, "sh.exe": F } };
     expect(run("full", disk(onlyUsr, USR), text).approve).not.toBeNull();
-    expect(run("d4", disk({ ...BASE, [k(TOOLS)]: { sh: F } }, `${TOOLS};${GIT}`), text).approve).toBeNull();
-    expect(run("d4", disk({ ...BASE, [k(TOOLS)]: { sh: { kind: "dir" } } }, `${TOOLS};${GIT}`), text).approve).toBeNull();
+    held("d4", run("d4", disk({ ...BASE, [k(TOOLS)]: { sh: F } }, `${TOOLS};${GIT}`), text), "d4 extensionless sh");
+    held("d4", run("d4", disk({ ...BASE, [k(TOOLS)]: { sh: { kind: "dir" } } }, `${TOOLS};${GIT}`), text), "d4 sh directory");
   });
   it("sh: an extensionless `sh` ahead, or a different file index for sh.exe, holds (R1, R2)", () => {
     const text = "sh ./build.sh";
@@ -300,7 +310,7 @@ describe("WIN-PWSH-1018 H1: the bare `bash` PowerShell runs must be the engine's
     expect(run("full", disk(BASE, `${GIT};${SYS}`), text).approve).not.toBeNull();
   });
   it.each(LANES)("%s: no handed environment at all is held", (lane) => {
-    expect(run(lane, undefined).approve).toBeNull();
+    held(lane, run(lane, undefined), `${lane} no environment`);
   });
   it("only the exact bare word gets the `bash -c` relief: bash.exe, drive, UNC and rooted paths keep the 1.0.5 launcher hold", () => {
     const handed = disk(BASE, `${GIT};${SYS}`);
@@ -318,10 +328,10 @@ describe("WIN-PWSH-1018 H1: the bare `bash` PowerShell runs must be the engine's
     for (const lane of ["full", "d4"] as const) {
       expect(go(lane, disk(BASE, `${GIT};${SYS}`)).approve, lane).not.toBeNull();
       expect(go(lane, disk(BASE, `${USR};${SYS}`)).approve, lane).not.toBeNull();
-      expect(go(lane, disk({ ...BASE, [k(TOOLS)]: { "sh.cmd": F } }, `${TOOLS};${GIT}`)).approve, lane).toBeNull();
-      expect(go(lane, disk({ ...BASE, [k(TOOLS)]: { "sh.exe": F } }, `${TOOLS};${GIT}`)).approve, lane).toBeNull();
-      expect(go(lane, disk({ ...BASE, [k(SYS)]: { "sh.exe": F } }, `${SYS};${GIT}`)).approve, lane).toBeNull();
-      expect(go(lane, disk({ ...BASE, [k(GIT)]: { "sh.exe": { kind: "link", real: `${SYS}\\sh.exe` } } }, GIT)).approve, lane).toBeNull();
+      held(lane, go(lane, disk({ ...BASE, [k(TOOLS)]: { "sh.cmd": F } }, `${TOOLS};${GIT}`)), lane);
+      held(lane, go(lane, disk({ ...BASE, [k(TOOLS)]: { "sh.exe": F } }, `${TOOLS};${GIT}`)), lane);
+      held(lane, go(lane, disk({ ...BASE, [k(SYS)]: { "sh.exe": F } }, `${SYS};${GIT}`)), lane);
+      held(lane, go(lane, disk({ ...BASE, [k(GIT)]: { "sh.exe": { kind: "link", real: `${SYS}\\sh.exe` } } }, GIT)), lane);
     }
   });
 });

@@ -1,0 +1,11 @@
+it-remote: ci-reds on murage-build3 (load here 29)
+
+Running 1 test using 1 worker
+
+(node:41) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:41) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [mobile] › src/e2e/user-smoke-0152-r2.human.spec.ts:759:1 › 05 CTA1: no key → dimmed app grid behind 'Connect your apps', 'Add Flux Router key' lands on the key field, no catalog request (26.9s)
+
+  1 passed (35.0s)

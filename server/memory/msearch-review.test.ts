@@ -1,3 +1,4 @@
+// MAIN RULING RULINGS-1019-RECALL-1116 R7-5.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -14,12 +15,14 @@ import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // byte cap was checked between slices; a late index acknowledgement overwrote a rolled checkpoint's pending cleanup;
 // the purge walked every checkpoint entry in one step and merged the whole index at once. Every read now goes through
 // readableMemoryRecord (readable.ts); the property test below compares all five search paths with memory_get.
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
+import { ioBudget } from "../io-budget.ts";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { closeDatabase, database } from "../database.ts";
 import { appendMessage } from "../message-db.ts";
@@ -30,7 +33,9 @@ import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { MemoryIndex, type IndexHit } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPage, RECALL_FIRST_PAGE, RECALL_SEARCH_SQL } from "./index-reader.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
-import { assertMemoryAccess, ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { assertMemoryAccess, ensureScope, persistMemoryRoster, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess, settleFixtureRecallViews } from "../testing/recall-access-fixture.ts";
+import { ensureCheckpointSchema } from "./checkpoint-schema.ts";
 import { pendingProjectionRecords } from "./projection.ts";
 import { KEYWORD_FALLBACK_BUDGET_MS, KEYWORD_FALLBACK_MAX_BYTES, KEYWORD_FALLBACK_MAX_ROWS, KEYWORD_FALLBACK_SLICE, keywordScan } from "./recent.ts";
 import { setMemoryMode } from "./repository.ts";
@@ -39,7 +44,7 @@ import { clearMemorySearchCache, searchMemory, type MemorySearchBridge } from ".
 import { CURRENT_MEMORY, MemoryEligibility } from "./eligibility.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { removeTempDirSync } from "../testing/cleanup.ts";
+import { removeTempDir } from "../testing/cleanup.ts";
 
 const ROOM_THREAD = "room-thread";
 const ROSTER: MemoryRoster = { bots: [{ id: "a", threadId: "thread-a", section: "crew" }, { id: "b", threadId: "thread-b", section: "crew" }], groups: [{ id: "room", threadId: ROOM_THREAD, memberIds: ["a", "b"] }] };
@@ -54,7 +59,9 @@ let roster: MemoryRoster = structuredClone(ROSTER);
 async function fresh() {
   closeMemoryIndexReader(); closeDatabase();
   expect(await stopWalMaintenance()).toBe(true);
-  removeTempDirSync(DATA_DIR);
+  // A fresh world also joins the search-index writer, which can otherwise
+  // finish opening the old path after the synchronous removal returned.
+  await removeTempDir(DATA_DIR);
   expect(existsSync(DATA_DIR)).toBe(false);
   mkdirSync(DATA_DIR, { recursive: true });
   roster = structuredClone(ROSTER);
@@ -102,24 +109,30 @@ const PATHS = ["helper", "word", "recent", "keyword", "historical"] as const;
 type SearchPath = typeof PATHS[number];
 /** Each search path on its own, over the given record ids (version 1). The helper, word, keyword and historical runs
  * mark every record indexed so the recent fallback stays silent; the recent run marks none, with no helper or word hit. */
-async function fivePaths(access: MemoryAccess, ids: readonly string[]): Promise<Record<SearchPath, Set<string>>> {
+async function fivePaths(access: MemoryAccess, ids: readonly string[], refusal?: string): Promise<Record<SearchPath, Set<string>>> {
   const db = database(), query = "harbour lantern note", fed = new Set(ids);
   const hits = ids.map(id => ({ id, version: 1, score: 1 }));
-  const found = (result: { hits: Array<{ id: string }> }) => new Set(result.hits.map(hit => hit.id).filter(id => fed.has(id)));
+  const checked = async (request: ReturnType<typeof searchMemory>) => {
+    if (refusal) { await expect(request).rejects.toThrow(refusal); return null; }
+    return request;
+  };
+  const found = (result: { hits: Array<{ id: string }> } | null) => new Set((result?.hits ?? []).map(hit => hit.id).filter(id => fed.has(id)));
   const indexed = (on: boolean) => {
     db.exec("DELETE FROM memory_projection_receipts");
     if (on) db.exec("INSERT INTO memory_projection_receipts SELECT id,version,0,'indexed','indexed',NULL FROM memory_records");
+    settleFixtureRecallViews();
   };
   const options = { caller: "tool" as const, limit: 20 };
   indexed(true);
-  const helper = found(await searchMemory(query, access, plainBridge(hits), { allowance: LineageAllowance.tool(1_000_000_000), ...options, lexical: null }));
-  const word = found(await searchMemory(query, access, plainBridge([]), { allowance: LineageAllowance.tool(1_000_000_000), ...options, lexical: () => ({ hits, more: false }) }));
-  const keywordResult = await searchMemory(query, access, failing, { allowance: LineageAllowance.tool(1_000_000_000), ...options, lexical: null });
-  expect(keywordResult.recallMode).toBe("keyword");
+  const helper = found(await checked(searchMemory(query, access, plainBridge(hits), { allowance: LineageAllowance.tool(1_000_000_000), ...options, lexical: null })));
+  const word = found(await checked(searchMemory(query, access, plainBridge([]), { allowance: LineageAllowance.tool(1_000_000_000), ...options, lexical: () => ({ hits, more: false }) })));
+  const keywordResult = await checked(searchMemory(query, access, failing, { allowance: LineageAllowance.tool(1_000_000_000), ...options, lexical: null }));
+  if (refusal) expect(keywordResult).toBeNull();
+  else { expect(keywordResult).not.toBeNull(); expect(keywordResult!.recallMode).toBe("keyword"); }
   const keyword = found(keywordResult);
-  const historical = found(await searchMemory(query, access, plainBridge(hits), { allowance: LineageAllowance.tool(1_000_000_000), ...options, lexical: null, historical: true }));
+  const historical = found(await checked(searchMemory(query, access, plainBridge(hits), { allowance: LineageAllowance.tool(1_000_000_000), ...options, lexical: null, historical: true })));
   indexed(false);
-  const recent = found(await searchMemory(query, access, plainBridge([]), { allowance: LineageAllowance.tool(1_000_000_000), ...options, lexical: null }));
+  const recent = found(await checked(searchMemory(query, access, plainBridge([]), { allowance: LineageAllowance.tool(1_000_000_000), ...options, lexical: null })));
   return { helper, word, recent, keyword, historical };
 }
 /** A captured source: `texts[n]` is revision n+1's text; the source stands at the last revision. */
@@ -137,7 +150,7 @@ const forget = (id: string) => { database().prepare("UPDATE memory_records SET s
 const scopeOk = (access: MemoryAccess, scope: string) => { try { assertMemoryAccess(access, scope); return true; } catch { return false; } };
 /** Every path misses each id, and memory_get refuses each one. */
 async function refusedEverywhere(access: MemoryAccess, ids: string[], code?: string) {
-  const paths = await fivePaths(access, ids);
+  const paths = await fivePaths(access, ids, code === "MEMORY_CONTEXT_REVOKED" ? code : undefined);
   for (const path of PATHS) expect({ path, found: [...paths[path]] }).toEqual({ path, found: [] });
   for (const id of ids) { const got = await memoryGet(access, id); expect(got).not.toBe(true); if (code) expect(got).toBe(code); }
 }
@@ -186,9 +199,11 @@ describe("search denies exactly what memory_get denies", () => {
     expect(await memoryGet(access, "lesson")).toBe(true);
     const before = await fivePaths(access, ["lesson"]);
     for (const path of PATHS) expect({ path, found: [...before[path]] }).toEqual({ path, found: ["lesson"] });
-    roster.groups[0].memberIds = ["b"];  // A leaves the room; its access was minted before
+    const next = structuredClone(roster); next.groups[0].memberIds = ["b"];
+    persistMemoryRoster(next, () => { roster.groups = next.groups; });
     expect(scopeOk(access, room)).toBe(false);
-    await refusedEverywhere(access, ["lesson"], "MEMORY_SCOPE_DENIED");
+    expect(() => assertMemoryAccess(access)).toThrow("MEMORY_CONTEXT_REVOKED");
+    await refusedEverywhere(access, ["lesson"], "MEMORY_CONTEXT_REVOKED");
     // a fresh access does not reach the room at all: same answer
     await refusedEverywhere(accessOf("a", "thread-a"), ["lesson"], "MEMORY_SCOPE_DENIED");
   });
@@ -229,8 +244,13 @@ describe("search denies exactly what memory_get denies", () => {
       if (grant < 0.5) grantBotScope("a", scopes.b);
       else if (grant < 0.65) { grantBotScope("a", scopes.b); database().exec("UPDATE memory_scope_bindings SET state='revoked' WHERE subject_id='a' AND state='granted'; UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1"); }
       const inRoom = rand() < 0.25;
-      const access = inRoom ? accessOf("a", ROOM_THREAD) : accessOf("a", "thread-a");
-      if (!inRoom && rand() < 0.35) roster.groups[0].memberIds = ["b"]; // A leaves the room after its access was minted
+      let access = inRoom ? accessOf("a", ROOM_THREAD) : accessOf("a", "thread-a");
+      // A leaves the room after its access was minted, through the real roster producer (MAIN ruling R7-5: a raw edit is not a product path)
+      if (!inRoom && rand() < 0.35) { const next = structuredClone(roster); next.groups[0].memberIds = ["b"]; persistMemoryRoster(next, () => { roster.groups = next.groups; });
+        // R7-5 oracle split: the access issued before the removal is revoked outright; a fresh access reaches what the member still holds.
+        expect(() => assertMemoryAccess(access)).toThrow("MEMORY_CONTEXT_REVOKED");
+        access = accessOf("a", "thread-a");
+      }
       // Which scopes bot A can reach, modelled from the fixture and NOT from assertMemoryAccess: its own, the team's, its
       // conversation, the room while it is a member, bot B's when granted, not revoked and outside a room, never another conversation's.
       const reach = (scope: string) => scope === scopes.a || scope === scopes.team || scope === scopes.conv ? true : scope === scopes.room ? roster.groups[0].memberIds.includes("a") : scope === scopes.b ? grant < 0.5 && !inRoom : false;
@@ -316,12 +336,12 @@ describe("search denies exactly what memory_get denies", () => {
       // must answer identically, scores, counts, coverage and cursors included.
       const text = (id: string) => `harbour lantern note ${id}`;
       database().exec("DELETE FROM memory_projection_receipts; INSERT INTO memory_projection_receipts SELECT id,version,0,'indexed','indexed',NULL FROM memory_records");
-      const build = (name: string, keep: (id: string) => boolean) => {
-        const index = new MemoryIndex(join(DATA_DIR, name));
+      const build = async (name: string, keep: (id: string) => boolean) => {
+        const index = await openTestIndex(join(DATA_DIR, name));
         index.prepareModel("model");
         const entries = ids.filter(keep).map(id => ({ id, version: 1, scopeId: records.get(id)!.scope, text: text(id), deleted: false }));
-        index.upsert(entries);
-        entries.forEach(entry => { const angle = (ids.indexOf(entry.id) + 1) * 0.37; index.vector(entry, "model", 0, [Math.cos(angle), Math.sin(angle)]); });
+        await put(index, entries);
+        for (const entry of entries) { const angle = (ids.indexOf(entry.id) + 1) * 0.37; await index.vector(entry, "model", 0, [Math.cos(angle), Math.sin(angle)]); }
         return index;
       };
       // Each world is asked with its own empty answer cache and its own counter: the cache key is (query, reader, revision), the
@@ -341,10 +361,10 @@ describe("search denies exactly what memory_get denies", () => {
         expect({ trial, historical, executedThisSearch: (executed.get(index) ?? 0) - before }).toEqual({ trial, historical, executedThisSearch: 1 });
         return response;
       };
-      const everything = build(`full-${trial}.db`, () => true);
+      const everything = await build(`full-${trial}.db`, () => true);
       for (const historical of [false, true]) {
         const permitted = new Set(ids.filter(id => fault(id, historical ? "historical" : "current") === null));
-        const reference = build(`reference-${trial}-${historical}.db`, id => permitted.has(id));
+        const reference = await build(`reference-${trial}-${historical}.db`, id => permitted.has(id));
         const full = await answer(everything, historical), ref = await answer(reference, historical);
         // both worlds really ran the index search
         expect(executed.get(everything) ?? 0).toBeGreaterThan(0);
@@ -390,6 +410,7 @@ describe("bounded keyword fallback", () => {
       CREATE TABLE branch_change(thread_id TEXT PRIMARY KEY, from_id TEXT, to_id TEXT NOT NULL, leave_at TEXT, join_at TEXT, leave_done INTEGER NOT NULL DEFAULT 0, join_done INTEGER NOT NULL DEFAULT 0, all_cursor TEXT) WITHOUT ROWID;
       CREATE TABLE memory_source_versions (source_id TEXT NOT NULL, revision INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(source_id,revision));
       CREATE TABLE memory_tombstones (target_type TEXT NOT NULL, target_id TEXT NOT NULL, revision INTEGER);`);
+    ensureCheckpointSchema(db as never);
     return db;
   }
 
@@ -464,7 +485,7 @@ describe("bounded keyword fallback", () => {
 });
 
 describe("old checkpoint versions leave the word index", () => {
-  it("P2: a rolled checkpoint version projects as deleted; one archived with no successor stays for historical search", () => {
+  it("P2: a rolled checkpoint version projects as deleted; one archived with no successor stays for historical search", async () => {
     const scope = ensureScope("bot", "a"), db = database();
     const add = (id: string, version: number, kind: string, state: string) => {
       db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,'assistant-inference',?,0,0,NULL,NULL,0)").run(id, version, scope, kind, `${kind} ${id} ${version}`, state);
@@ -483,12 +504,12 @@ describe("old checkpoint versions leave the word index", () => {
    * its write stalls (a commit waiting 100-500 ms on a busy disk), so what is asserted is the work each step does and the
    * median time; the 95th percentile and the longest are printed (on tmpfs: every walk step under ~21 ms, every merge
    * step under ~26 ms). */
-  function purgeAll(index: MemoryIndex) {
+  async function purgeAll(index: MemoryIndex) {
     const walk: number[] = [], merge: number[] = [];
     let removed = 0, examined = 0, maxExamined = 0;
     const started = performance.now();
     for (;;) {
-      const at = performance.now(), step = index.purgeRolledCheckpoints(), ms = performance.now() - at;
+      const at = performance.now(), step = await index.purgeRolledCheckpoints(), ms = performance.now() - at;
       (step.merged ? merge : walk).push(ms);
       removed += step.removed; examined += step.examined; maxExamined = Math.max(maxExamined, step.examined);
       if (step.done) break;
@@ -497,27 +518,29 @@ describe("old checkpoint versions leave the word index", () => {
     return { walk: stat(walk), merge: stat(merge), removed, examined, maxExamined, ms: performance.now() - started };
   }
   const fmt = (stat: { n: number; p50: number; p95: number; max: number }) => `${stat.n} steps p50=${stat.p50.toFixed(1)} p95=${stat.p95.toFixed(1)} max=${stat.max.toFixed(1)}ms`;
-  function seedIndex(path: string, sql: string) {
-    new MemoryIndex(path).close();
+  async function seedIndex(path: string, sql: string) {
+    (await openTestIndex(path)).close();
     const raw = new DatabaseSync(path);
+    raw.exec("INSERT INTO lexical(lexical,rank) VALUES('automerge',4)");
     raw.exec("BEGIN");
     raw.exec(sql);
     raw.exec("INSERT INTO entries VALUES('fact-1',1,'s','The quarterly launch review is on Friday at ten.')");
     raw.exec("INSERT INTO lexical(id,version,text) SELECT id,version,text FROM entries ORDER BY id,version");
     raw.exec("INSERT INTO lexical_keys SELECT id,CAST(version AS INTEGER),rowid FROM lexical");
     raw.exec("COMMIT");
+    raw.exec("INSERT INTO lexical(lexical,rank) VALUES('automerge',0); INSERT INTO lexical(lexical,rank) VALUES('crisismerge',1999)");
     return raw;
   }
 
-  it("P2: an index holding 500,000 versions of one checkpoint is purged in short steps, merged in short steps, then the word query is fast and current", { tags: ["perf-budget"], timeout: 600_000 }, () => {
+  it("P2: an index holding 500,000 versions of one checkpoint is purged in short steps, merged in short steps, then the word query is fast and current", { tags: ["perf-budget"], timeout: 600_000 }, async () => {
     const scope = "s", path = join(DATA_DIR, "memory-index.db"), versions = 500_000;
-    const raw = seedIndex(path, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${versions})
+    const raw = await seedIndex(path, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${versions})
       INSERT INTO entries SELECT 'checkpoint:long',i,'${scope}','Working evidence: the launch review status, version '||i FROM n`);
     const timeQuery = (db: DatabaseSync) => { const started = performance.now(); db.prepare(RECALL_SEARCH_SQL).all("\"launch\" OR \"review\"", JSON.stringify([scope]), RECALL_FIRST_PAGE + 1, 0); return performance.now() - started; };
     const before = timeQuery(raw);
     raw.close();
-    const index = new MemoryIndex(path);
-    const run = purgeAll(index);
+    const index = await openTestIndex(path);
+    const run = await purgeAll(index);
     index.close();
     console.log(`[msearch] purge 500k versions: removed=${run.removed}; walk ${fmt(run.walk)}; merge ${fmt(run.merge)}; total ${run.ms.toFixed(0)}ms`);
     expect(run.removed).toBe(versions - 1);
@@ -536,14 +559,14 @@ describe("old checkpoint versions leave the word index", () => {
     console.log(`[msearch] 500k checkpoint versions: query before=${before.toFixed(1)}ms after=${query.toFixed(1)}ms`);
   });
 
-  it("round 2 P2: 500,000 sole checkpoints: every step examines a bounded number of entries and none is removed", () => {
+  it("round 2 P2: 500,000 sole checkpoints: every step examines a bounded number of entries and none is removed", async () => {
     const path = join(DATA_DIR, "memory-index.db"), count = 500_000;
-    seedIndex(path, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${count})
-      INSERT INTO entries SELECT 'checkpoint:thread-'||i,1,'s','Working evidence: thread '||i FROM n`).close();
-    const index = new MemoryIndex(path);
-    const run = purgeAll(index);
+    (await seedIndex(path, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${count})
+      INSERT INTO entries SELECT 'checkpoint:thread-'||i,1,'s','Working evidence: thread '||i FROM n`)).close();
+    const index = await openTestIndex(path);
+    const run = await purgeAll(index);
     // a later pass starts again from the beginning, bounded the same way
-    const again = index.purgeRolledCheckpoints();
+    const again = await index.purgeRolledCheckpoints();
     index.close();
     console.log(`[msearch] purge 500k sole checkpoints: examined=${run.examined} removed=${run.removed}; walk ${fmt(run.walk)}; total ${run.ms.toFixed(0)}ms`);
     expect(run.removed).toBe(0);
@@ -559,12 +582,18 @@ describe("old checkpoint versions leave the word index", () => {
 describe("index acknowledgements are fenced against the record's current state", () => {
   it("round 2 P2: 205 rollovers each landing before their late ack: no rolled version is marked indexed, every one stays owed for removal", async () => {
     const scope = ensureScope("bot", "a"), db = database(), id = "checkpoint:thread-a", rounds = 205;
+    // These owner-side fixture rollovers exercise receipt races, not the
+    // process I/O floor. Keep their setup writes out of the admission sample;
+    // receipt transactions still use the real checked writer and BG grants.
+    const realRead = Reflect.get(ioBudget, "read"), realAdmissionRead = Reflect.get(ioBudget, "admissionRead");
+    const read = () => ({ at: 0, fsWriteBlocks: 0, cpuMicros: 0 });
+    Reflect.set(ioBudget, "read", read); Reflect.set(ioBudget, "admissionRead", read); ioBudget.resetAdmissionForFixture();
     const controller = new MemoryWorkerController();
     const internals = controller as unknown as { child: unknown; ready: boolean; indexing: boolean; indexRequestId: string | null; onWorkerMessage(child: unknown, message: unknown): void };
     const sent: Array<{ type: string; requestId?: string }> = [];
     internals.child = { kill() {}, on() {}, send: (message: { type: string; requestId?: string }) => { sent.push(message); } };
     internals.ready = true;
-    const settle = () => new Promise<void>(resolve => setTimeout(resolve, 5));
+    const settle = () => vi.waitFor(() => expect(internals.indexing).toBe(false), { interval: 1 });
     const add = (version: number) => {
       db.prepare("INSERT INTO memory_records VALUES(?,?,?,'checkpoint',?,'assistant-inference','active',0,0,NULL,NULL,0)").run(id, version, scope, `checkpoint ${version}`);
       db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL)").run(id, version);
@@ -596,7 +625,10 @@ describe("index acknowledgements are fenced against the record's current state",
       internals.onWorkerMessage(internals.child, { type: "index-result", requestId: "req-last", records: [{ id, version: last, deleted: false }], embeddingStatus: "indexed" });
       await settle();
       expect(db.prepare("SELECT lexical_status FROM memory_projection_receipts WHERE record_id=? AND record_version=?").get(id, last)?.lexical_status).toBe("indexed");
-    } finally { await controller.stop().catch(() => {}); }
+    } finally {
+      await controller.stop().catch(() => {});
+      Reflect.set(ioBudget, "read", realRead); Reflect.set(ioBudget, "admissionRead", realAdmissionRead); ioBudget.resetAdmissionForFixture();
+    }
   }, 60_000);
 });
 

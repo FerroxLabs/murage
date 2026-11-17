@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "C3-d7 builder (Claude Sonnet)",
+  "date": "2026-11-11",
+  "base": "2c6879040",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "en:engine.submission.resendOffer": {
+      "text": "The AI may already be working on this message, so Murage did not send it twice. Use Send again to send it now.",
+      "en": "The AI may already be working on this message, so Murage did not send it twice. Use Send again to send it now.",
+      "verdict": "pass",
+      "note": "Plain, calm and actionable; button label matches exactly."
+    },
+    "de:engine.submission.resendOffer": {
+      "text": "Diese Nachricht wird möglicherweise schon bearbeitet, deshalb hat Murage sie nicht zweimal gesendet. Nutze „Erneut senden“, um sie jetzt zu senden.",
+      "en": "The AI may already be working on this message, so Murage did not send it twice. Use Send again to send it now.",
+      "verdict": "pass",
+      "note": "Natural and faithful, with informal address and the exact button label."
+    },
+    "es:engine.submission.resendOffer": {
+      "text": "Es posible que este mensaje ya se esté procesando, así que Murage no lo envió dos veces. Usa Enviar de nuevo para enviarlo ahora.",
+      "en": "The AI may already be working on this message, so Murage did not send it twice. Use Send again to send it now.",
+      "verdict": "pass",
+      "note": "Natural and faithful, with informal address and the exact button label."
+    },
+    "fr:engine.submission.resendOffer": {
+      "text": "Le traitement de ce message a peut-être déjà commencé, donc Murage ne l'a pas envoyé deux fois. Utilise Renvoyer pour l'envoyer maintenant.",
+      "en": "The AI may already be working on this message, so Murage did not send it twice. Use Send again to send it now.",
+      "verdict": "pass",
+      "note": "Clear and faithful, with informal address and the exact button label."
+    },
+    "hi:engine.submission.resendOffer": {
+      "text": "इस संदेश पर शायद पहले ही काम शुरू हो चुका है, इसलिए Murage ने इसे दो बार नहीं भेजा। इसे अभी भेजने के लिए “फिर भेजें” दबाएँ।",
+      "en": "The AI may already be working on this message, so Murage did not send it twice. Use Send again to send it now.",
+      "verdict": "pass",
+      "note": "Natural and faithful; button label matches exactly."
+    },
+    "ja:engine.submission.resendOffer": {
+      "text": "このメッセージの処理はすでに始まっている可能性があるため、Murage は二重には送信しませんでした。今すぐ送信するには「もう一度送信」を使ってください。",
+      "en": "The AI may already be working on this message, so Murage did not send it twice. Use Send again to send it now.",
+      "verdict": "pass",
+      "note": "Clear and faithful; button label matches exactly."
+    },
+    "pt-br:engine.submission.resendOffer": {
+      "text": "Esta mensagem pode já estar sendo processada, então o Murage não a enviou duas vezes. Use Enviar de novo para enviá-la agora.",
+      "en": "The AI may already be working on this message, so Murage did not send it twice. Use Send again to send it now.",
+      "verdict": "pass",
+      "note": "Natural and faithful, with appropriate address and the exact button label."
+    },
+    "zh:engine.submission.resendOffer": {
+      "text": "此消息可能已经开始处理，所以 Murage 没有重复发送。请使用“重新发送”立即发送。",
+      "en": "The AI may already be working on this message, so Murage did not send it twice. Use Send again to send it now.",
+      "verdict": "pass",
+      "note": "Clear and faithful; button label matches exactly."
+    }
+  },
+  "files": {}
+}

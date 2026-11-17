@@ -5,9 +5,9 @@ import type { MessageOrigin } from "../store.ts";
 
 /**
  * The authority for one turn to use the owner's phone. It is held in memory only, never persisted, and is minted from
- * exactly one place in the harness: the idle entry of admitDirectSend, through runIt (S11). Nothing else mints.
+ * the harness: a fresh idle owner send, or an authenticated No limits generation at its phone mount.
  */
-export interface PhoneAuthority { threadId: string; turnId: string; generation: string; origin: "desktop" | "companion"; sendId?: string; botId: string; issuedAt: number }
+export interface PhoneAuthority { threadId: string; turnId: string; generation: string; origin: "desktop" | "companion" | "no-limits"; sendId?: string; botId: string; issuedAt: number }
 
 export interface MintFacts {
   origin: MessageOrigin | undefined; unprovenSend: boolean; ownerActs: boolean; answer: boolean;
@@ -47,7 +47,7 @@ export class PhoneAuthorities {
   mint(a: Omit<PhoneAuthority, "issuedAt">): PhoneAuthority {
     if (typeof a !== "object" || a === null) throw new Error("phone authority: malformed grant");
     if (!nonEmpty(a.threadId) || !nonEmpty(a.turnId) || !nonEmpty(a.generation) || !nonEmpty(a.botId)) throw new Error("phone authority: malformed grant");
-    if (a.origin !== "desktop" && a.origin !== "companion") throw new Error("phone authority: origin is not owner-proven");
+    if (a.origin !== "desktop" && a.origin !== "companion" && a.origin !== "no-limits") throw new Error("phone authority: origin is not owner-proven");
     if (a.sendId !== undefined && !nonEmpty(a.sendId)) throw new Error("phone authority: malformed grant");
     if (this.#byGeneration.has(a.generation)) throw new Error("phone authority: generation already used");
     const earlier = this.#generationByThread.get(a.threadId);

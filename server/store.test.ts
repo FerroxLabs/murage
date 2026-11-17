@@ -1,9 +1,12 @@
+import { redactSecretsForCard } from './redact.ts';
+import { appendFixtureMessage } from './testing/approval-card.ts';
+import { fixtureLink } from "./testing/platform-fixtures.ts";
 import { readChatsGen, readThreadSummary } from "./thread-summary.ts";
 // Store persistence contract: bots.json + messages-<threadId>.json are
 // the durable record — everything here must survive a process restart
 // except `busy`, which never does (no turn survives one either).
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, readlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,7 +14,8 @@ import { BOT_OPENERS, openerAt } from "../shared/bot-openers.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import { resolveToolLabel } from "../shared/tool-activity.ts";
 import { DATA_DIR } from "./config.ts";
-import { flushCoalesced } from "./atomic.ts";
+import { BotTurnState } from "./bot-turn-state.ts";
+import { atomicWriteCount, flushCoalesced } from "./atomic.ts";
 import { ROUTINE_USAGE_KEPT, ROUTINE_USAGE_MORE, usageMonthKey } from "../shared/usage-month.ts";
 import { closeDatabase, database, finishBackgroundUpgradeWorkNow } from "./database.ts";
 import type { ModelSelection } from "./contracts.ts";
@@ -103,7 +107,7 @@ describe("Store", () => {
     const reloaded = new Store(selection);
     expect(reloaded.messagesFor(bot.threadId).find((m) => m.id === quiz.id)?.card?.dismissed).toBe(true);
 
-    const ask = store.appendMessage(bot.threadId, {
+    const ask = appendFixtureMessage(store, bot.threadId, {
       role: "bot",
       kind: "options",
       card: {
@@ -282,11 +286,30 @@ describe("Store", () => {
   it("turn path cost: one usage write adds one bounded bucket update, never a scan of history", () => {
     const store = new Store(selection);
     const bot = store.createBot();
-    const save = vi.spyOn(store as unknown as { saveBots: (...args: unknown[]) => void }, "saveBots");
-    for (let i = 0; i < 50; i += 1) store.addTaskUsage(bot.id, bot.threadId, { input: 1, output: 1, costUsd: null }, `turn-${i}`);
-    expect(save).toHaveBeenCalledTimes(50);
-    for (const call of save.mock.calls) expect(call[1]).toEqual({ defer: true });
-    expect(Object.keys(store.bot(bot.id)?.usageMonths ?? {})).toHaveLength(1);
+    flushCoalesced();
+    const roster = join(DATA_DIR, "bots.json"), rosterWrites = atomicWriteCount(roster);
+    const save = vi.spyOn(BotTurnState.prototype, "writeTask");
+    try {
+      for (let i = 0; i < 50; i += 1) store.addTaskUsage(bot.id, bot.threadId, { input: 1, output: 1, costUsd: null }, `turn-${i}`);
+      // MAIN RULING 1115-DIGEST-ADOPTED S1; server/bot-turn-state.ts:105: one bounded sidecar commit per usage write.
+      expect(save).toHaveBeenCalledTimes(50);
+      // MAIN RULING 1115-DIGEST-ADOPTED S1; keep the exact bot and task on every sidecar commit.
+      for (const call of save.mock.calls) expect(call).toEqual([bot, store.taskByThread(bot.id, bot.threadId)]);
+      expect(Object.keys(store.bot(bot.id)?.usageMonths ?? {})).toHaveLength(1);
+      // MAIN RULING 1115-DIGEST-ADOPTED S1; exact totals survive the bounded write.
+      expect(store.taskByThread(bot.id, bot.threadId)?.usage).toMatchObject({ input: 50, output: 50, turns: 50 });
+      store.addTaskUsage(bot.id, bot.threadId, { input: 1, output: 1, costUsd: null }, 'turn-49');
+      // MAIN RULING 1115-DIGEST-ADOPTED S1; retrying an already counted turn adds no commit.
+      expect(save).toHaveBeenCalledTimes(50);
+      flushCoalesced();
+      // MAIN RULING 1115-DIGEST-ADOPTED S1; usage writes never write the roster.
+      expect(atomicWriteCount(roster)).toBe(rosterWrites);
+      const restarted = new Store(selection);
+      // MAIN RULING 1115-DIGEST-ADOPTED S1; exact totals recover after restart.
+      expect(restarted.taskByThread(bot.id, bot.threadId)?.usage).toMatchObject({ input: 50, output: 50, turns: 50 });
+      // MAIN RULING 1115-DIGEST-ADOPTED S1; restart keeps the one bounded month bucket.
+      expect(Object.keys(restarted.bot(bot.id)?.usageMonths ?? {})).toHaveLength(1);
+    } finally { save.mockRestore(); }
   });
 
   it("addTaskUsage accumulates settled-turn totals per task and survives a restart", () => {
@@ -579,6 +602,25 @@ describe("Store", () => {
     expect(reloaded.bot(truthy.id)).not.toHaveProperty("useMyChrome");
     const saved: BotRecord[] = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
     expect(saved.filter((bot) => bot.useMyChrome).map((bot) => bot.id)).toEqual([kept]);
+  });
+
+  it("profile cleanup clears authoritative, queued and Switch back references across restart", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.commitBrowserChoice(bot.id, {browserMode:'builtin',browserProfile:'client',selectionRevision:3,
+      pendingBrowserChoice:{mode:'builtin',profile:'client',baseRevision:3,disclosureKey:'review'},
+      previousBrowserChoice:{mode:'builtin',profile:'client'}}, undefined);
+    store.clearBrowserProfile(bot.id, 'client');
+    const reloaded = new Store(selection).bot(bot.id)!;
+    expect(reloaded.browserProfile).toBeUndefined();
+    expect(reloaded.pendingBrowserChoice).toBeUndefined();
+    expect(reloaded.previousBrowserChoice).toBeUndefined();
+    expect(reloaded.selectionRevision).toBe(4);
+    const queued = store.createBot();
+    store.commitBrowserChoice(queued.id, {browserMode:'builtin',selectionRevision:0,
+      pendingBrowserChoice:{mode:'builtin',profile:'client',baseRevision:0,disclosureKey:'review'}}, undefined);
+    store.clearBrowserProfile(queued.id,'client');
+    expect(new Store(selection).bot(queued.id)?.pendingBrowserChoice).toBeUndefined();
   });
 
   // The voice note round-trips like any other optional field, and has exactly
@@ -965,26 +1007,31 @@ describe("Store", () => {
   });
 
   it("records the session contract a cursor was made under, and forgets it for a cursor with none", () => {
-    const store = new Store(selection);
+    let store = new Store(selection);
     const bot = store.createBot();
     store.setResumeCursor(bot.id, "claude", "sess-1", bot.threadId, undefined, 1);
-    expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.resumeContracts).toEqual({ claude: 1 });
+    // Continue through the restarted owner: the old Store holds the prior sidecar generation.
+    store = new Store(selection);
+    expect(store.taskByThread(bot.id, bot.threadId)?.resumeContracts).toEqual({ claude: 1 });
     store.setResumeCursor(bot.id, "claude", "sess-2", bot.threadId);
     expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.resumeContracts).toEqual({});
   });
 
   it("marks a cursor made by a session shown the plain connected-app names, and leaves a 1.0.1 session's unmarked", () => {
-    const store = new Store(selection);
+    let store = new Store(selection);
     const bot = store.createBot();
     // A 1.0.1 cursor: no mark, so its session is resumed with the older names.
     store.setResumeCursor(bot.id, "claude", "sess-101", bot.threadId);
-    expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.resumePlainToolNames).toBeUndefined();
+    store = new Store(selection);
+    expect(store.taskByThread(bot.id, bot.threadId)?.resumePlainToolNames).toBeUndefined();
     // A legacy session resumed again keeps no mark.
     store.setResumeCursor(bot.id, "claude", "sess-101", bot.threadId, undefined, undefined, false);
-    expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.resumePlainToolNames?.claude).toBeUndefined();
+    store = new Store(selection);
+    expect(store.taskByThread(bot.id, bot.threadId)?.resumePlainToolNames?.claude).toBeUndefined();
     // A session started now is marked; dropping its cursor drops the mark.
     store.setResumeCursor(bot.id, "claude", "sess-102", bot.threadId, undefined, undefined, true);
-    expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.resumePlainToolNames).toEqual({ claude: true });
+    store = new Store(selection);
+    expect(store.taskByThread(bot.id, bot.threadId)?.resumePlainToolNames).toEqual({ claude: true });
     store.setResumeCursor(bot.id, "claude", undefined, bot.threadId, undefined, undefined, true);
     expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.resumePlainToolNames).toEqual({});
   });
@@ -1176,10 +1223,10 @@ describe("Store", () => {
       expect(reloaded.messagesFor(bot.threadId)[0].text).toBe("Legacy conversation");
     });
 
-    it.skipIf(process.platform === "win32")("does not treat dangling state symlinks as fresh installation", () => {
+    it("does not treat dangling state symlinks as fresh installation", () => {
       mkdirSync(DATA_DIR, { recursive: true });
       const target = join(DATA_DIR, "bots.json");
-      symlinkSync("missing-saved-state.json", target);
+      fixtureLink("missing-saved-state.json", target, "file");
       expect(() => new Store(selection)).toThrowError(expect.objectContaining({
         reason: "unreadable", readErrorCode: "ENOENT", filePath: target,
       }));
@@ -1369,6 +1416,20 @@ describe("Store", () => {
       expect(existsSync(workspace)).toBe(true);
     });
 
+    // Restore park T14 (r3.1 section 6 condition 3): a delete whose save fails never reaches the email commit, the park/gate is left as it was.
+    it("a saveBots that throws withdraws the email intent, never commits it, and surfaces the error", () => {
+      const store = new Store(selection);
+      const doomed = store.createBot({ name: "Doomed" }, { seedMessages: false });
+      const channel = store.createGroup("Seats", [doomed.id]);
+      const calls: string[] = [];
+      store.emailDeletion = { record: (id) => calls.push(`record:${id}`), withdraw: (id) => calls.push(`withdraw:${id}`), commit: (id) => calls.push(`commit:${id}`) };
+      vi.spyOn(store as unknown as { saveBots: () => void }, "saveBots").mockImplementation(() => { throw new Error("disk full"); });
+      expect(() => store.deleteBot(doomed.id, { emailConfirm: "tok" })).toThrow("disk full");
+      expect(calls).toEqual([`record:${doomed.id}`, `withdraw:${doomed.id}`]);
+      expect(store.bot(doomed.id)).toBeTruthy();
+      expect(store.group(channel.id)!.memberIds).toEqual([doomed.id]);
+    });
+
     it("calls releaseBotState exactly once with the id, before the bot disappears", () => {
       const store = new Store(selection);
       const doomed = store.createBot({ name: "Doomed" }, { seedMessages: false });
@@ -1502,9 +1563,14 @@ describe("Store change stream", () => {
     const store = new Store(selection);
     const events = record(store);
     const bot = store.createBot();
-    expect(events.map((event) => event.type)).toEqual(["bot", "message", "message"]);
-    expect(events[0]).toEqual({ type: "bot", botId: bot.id });
-    expect(events.slice(1).every((event) => event.threadId === bot.threadId)).toBe(true);
+    // MAIN RULING INT-CONFLICT-DEFAULT c83707eb9b 7467f16bc6: root registration precedes the unchanged bot-before-messages contract.
+    expect(events.slice(0, 2)).toEqual([
+      { type: "workroot", owner: `bot:${bot.id}:cwd`, botId: bot.id, paths: null },
+      { type: "workroot", owner: `task:${bot.id}:${bot.threadId}:cwd`, botId: bot.id, paths: null },
+    ]);
+    expect(events.slice(2).map((event) => event.type)).toEqual(["bot", "message", "message"]);
+    expect(events[2]).toEqual({ type: "bot", botId: bot.id });
+    expect(events.slice(3).every((event) => event.threadId === bot.threadId)).toBe(true);
   });
 
   it("every message-tree write emits a message or thread event", () => {
@@ -1540,14 +1606,23 @@ describe("Store change stream", () => {
     const bot = store.createBot();
     const events = record(store);
     store.patchBot(bot.id, { name: "Zed" });
-    store.createTask(bot.id, "t2");
+    const task = store.createTask(bot.id, "t2")!;
     store.switchTask(bot.id, bot.threadId);
     store.renameTask(bot.id, bot.threadId, "renamed");
     store.setResumeCursor(bot.id, "claude", "s1", bot.threadId);
     store.pinTaskCwd(bot.id, bot.threadId, "/private/workspace");
     store.addTaskUsage(bot.id, bot.threadId, { input: 10, output: 5, costUsd: null });
-    expect(events.every((e) => e.type === "bot" && e.botId === bot.id)).toBe(true);
-    expect(events).toHaveLength(7);
+    // MAIN RULING INT-CONFLICT-DEFAULT c83707eb9b 7467f16bc6: pin both root deltas in addition to all seven bot writes.
+    expect(events.filter(e => e.type === "workroot")).toEqual([
+      { type: "workroot", owner: `task:${bot.id}:${task.threadId}:cwd`, botId: bot.id, paths: null },
+      { type: "workroot", owner: `task:${bot.id}:${bot.threadId}:cwd`, botId: bot.id, paths: null },
+    ]);
+    // MAIN RULING INT-CONFLICT-DEFAULT f0fcf15cff: the usage write carries only its bounded numeric delta alongside the bot id.
+    expect(events.filter(e => e.type !== "workroot")).toEqual([
+      ...Array.from({ length: 6 }, () => ({ type: "bot", botId: bot.id })),
+      { type: "bot", botId: bot.id, usageDelta: { before: undefined, after: { input: 10, output: 5, costUsd: null, turns: 1 } } },
+    ]);
+    expect(events).toHaveLength(9);
     store.deleteBot(bot.id);
     expect(events).toContainEqual({ type: "thread.deleted", threadId: bot.threadId });
     expect(events.at(-1)).toEqual({ type: "bot.deleted", botId: bot.id });
@@ -1683,6 +1758,28 @@ describe("Store redacts bot-authored secrets on write", () => {
     expect(new Store(selection).messagesFor(bot.threadId).find(item => item.id === row.id)?.removedText).toBe(merged?.removedText);
   });
 
+  it.each(["append", "loaded patch", "point patch"])("masks original Basic credentials once before bounding a display unit: %s", mode => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    const credential = Buffer.from("fixture:credential").toString("base64");
+    const detail = `Before\nAuthorization: Basic ${credential}\nAfter`;
+    const input = { role: "bot" as const, kind: "activity" as const, removedText: detail, tool: { name: "private sibling", errorDetails: detail } };
+    const original = structuredClone(input);
+    const initial = store.appendMessage(bot.threadId, mode === "append" ? input : { role: "bot", kind: "activity", tool: { name: "pending" } });
+    const writer = mode === "point patch" ? new Store(selection) : store;
+    const row = mode === "append" ? initial : mode === "point patch"
+      ? writer.patchMessagePoint(bot.threadId, initial.id, input)!
+      : writer.patchMessage(bot.threadId, initial.id, input)!;
+    for (const text of [row.removedText, row.tool?.errorDetails]) {
+      expect(text).toContain("Before\nAuthorization: «redacted");
+      expect(text).toContain("\nAfter");
+      expect(text).not.toContain(credential);
+    }
+    expect(row.tool?.name).toBe("«redacted»");
+    expect(input).toEqual(original);
+    expect(new Store(selection).messageById(bot.threadId, row.id)).toMatchObject({ removedText: row.removedText, tool: row.tool });
+  });
+
   it("masks a key that a tool argument carried into the chip's stored summary", () => {
     const store = new Store(selection);
     const bot = store.createBot();
@@ -1721,14 +1818,14 @@ describe("Store redacts bot-authored secrets on write", () => {
     expect(reply.text).toContain("«redacted");
     const chip = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: `Bash: export TOKEN=${key}`, ok: true } });
     expect(chip.tool?.name).not.toContain(key);
-    const card = store.appendMessage(bot.threadId, {
+    const card = appendFixtureMessage(store, bot.threadId, {
       role: "bot",
       kind: "options",
       card: { title: "Run this?", summary: `curl -H "Authorization: Bearer ${key}"`, held: `Blocked ${key}`, options: [], requestId: "r1", tool: "Bash" } as never,
-    });
+    }, undefined, card => redactSecretsForCard(card) as typeof card);
     expect((card.card as { summary?: string }).summary).not.toContain(key);
     expect(card.card?.held).not.toContain(key);
-    const routineCard = store.appendMessage(bot.threadId, {
+    const routineCard = appendFixtureMessage(store, bot.threadId, {
       role: "bot",
       kind: "options",
       card: {
@@ -1755,12 +1852,12 @@ describe("Store redacts bot-authored secrets on write", () => {
           },
         },
       },
-    });
+    }, undefined, card => redactSecretsForCard(card) as typeof card);
     expect(routineCard.card?.routineRequest?.operation.action).toBe("create");
     if (routineCard.card?.routineRequest?.operation.action !== "create" || !("routine" in routineCard.card.routineRequest.operation)) throw new Error("missing routine payload");
     expect(routineCard.card.routineRequest.operation.routine.name).not.toContain(key);
     expect(routineCard.card.routineRequest.operation.routine.instructions).not.toContain(key);
-    const skillCard = store.appendMessage(bot.threadId, {
+    const skillCard = appendFixtureMessage(store, bot.threadId, {
       role: "bot",
       kind: "options",
       card: {
@@ -1785,7 +1882,7 @@ describe("Store redacts bot-authored secrets on write", () => {
           createdAt: 1,
         },
       },
-    });
+    }, undefined, card => { const scrubbed=redactSecretsForCard(card) as typeof card; return {...scrubbed,skillRequest:{...scrubbed.skillRequest!,sha256:undefined}}; });
     expect(skillCard.card?.skillRequest?.gist).not.toContain(key);
     expect(skillCard.card?.skillRequest?.source).not.toContain(key);
     expect(skillCard.card?.skillRequest?.preview).not.toContain(key);
@@ -1794,7 +1891,7 @@ describe("Store redacts bot-authored secrets on write", () => {
 
     const reviewedPreview = "---\nname: reviewed-skill\ndescription: Already scrubbed.\n---\n";
     const reviewedSha256 = createHash("sha256").update(reviewedPreview).digest("hex");
-    const reviewedSkillCard = store.appendMessage(bot.threadId, {
+    const reviewedSkillCard = appendFixtureMessage(store, bot.threadId, {
       role: "bot",
       kind: "options",
       card: {
@@ -2843,7 +2940,7 @@ describe("Store bounded message pages", () => {
         : i === 20 ? card("dismissed", { dismissed: true })
           : i === 30 ? card("open")
             : ({ role: "user", kind: "text", text: `m ${i}` } as never);
-      ids.push(store.appendMessage("span", message)!.id);
+      ids.push(appendFixtureMessage(store, "span", message)!.id);
     }
     const fresh = (cached: boolean) => {
       const reader = new Store(selection);

@@ -12,6 +12,7 @@ import { DATA_DIR } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { closeDatabase, database } from "../database.ts";
 import { withCliMemoryLearning } from "../drivers/cli-memory-learning.ts";
+import { fencedSubmit } from "../drivers/engine-input.ts";
 import { checkEngineReply, engineCheckHost } from "../engine-reply-check.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { openLearningGate } from "../testing/open-learning-gate.ts";
@@ -39,10 +40,11 @@ function engine(replyFor: (prompt: string) => string) {
   const sent: SendTurnInput[] = [];
   const emit = (threadId: string, event: Record<string, unknown>) => listeners.forEach(l => l({ eventId: "e", provider: "codex", threadId, createdAt: "now", ...event } as RuntimeEvent));
   const adapter = {
-    provider: "codex", capabilities: { sessionModelSwitch: "unsupported" },
+    provider: "codex", capabilities: { sessionModelSwitch: "unsupported", fencedLearningWrite: true },
     onEvent: (listener: (event: RuntimeEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
     sendTurn: async (input: SendTurnInput) => {
-      sent.push(input);
+      // The fake's physical send follows the same gate as the production adapter.
+      fencedSubmit(input, () => sent.push(input), input.text);
       emit(input.threadId, { type: "turn.started" });
       emit(input.threadId, { type: "item.completed", itemType: "assistant_text", origin: "engine", text: replyFor(input.text) });
       emit(input.threadId, { type: "turn.completed", ok: true });

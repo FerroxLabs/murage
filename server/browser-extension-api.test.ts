@@ -1,3 +1,4 @@
+import {confirmedBrowserFields} from './testing/browser-choice.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Real isolated Murage HTTP server with fake engine. No browser is launched.
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
@@ -5,7 +6,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeAll, afterAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { sharedRegistrationBrowsers } from "../scripts/browser-extension-host-registration.mjs";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
@@ -15,6 +15,7 @@ let resourcesRoot: string;
 /** The staged helper resources the server reads per request (build.json). */
 function stageBuild(build: unknown) { writeFileSync(join(resourcesRoot, "browser-extension", "build.json"), JSON.stringify(build)); }
 async function api(method: string, path: string, body?: unknown, owner = true) {
+  if(method==='PATCH'&&/^\/api\/bots\/[^/]+$/.test(path)&&body&&typeof body==='object'&&['useMyChrome','browserTransport','browserProfile','browserExtensionProfileId','browserExtensionBrowser'].some(key=>key in (body as Record<string,unknown>)))body=await confirmedBrowserFields(fixture.info.url,headers,path,body as Record<string,unknown>);
   const res = await fetch(fixture.info.url + path, { method, headers: { ...(owner ? headers : {}), "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: await res.json() as any };
 }
@@ -109,6 +110,7 @@ it("remembers which browser the owner connected for a bot, and forgets it with t
   const one = await bot("Remembered browser fixture");
   const read = async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((item: { id: string }) => item.id === one.id);
   expect((await api("PATCH", `/api/bots/${one.id}`, { useMyChrome: true, browserTransport: "extension" })).status).toBe(200);
+  expect((await api("PATCH", `/api/bots/${one.id}`, {useMyChrome:true,browserTransport:"extension",browserExtensionBrowser:"brave"})).status).toBe(200);
   const connected = await api("POST", `/api/bots/${one.id}/browser-extension`, { action: "connect", browser: "brave" });
   expect(connected.status, JSON.stringify(connected.body)).toBe(200);
   expect((await read()).browserExtensionBrowser).toBe("brave");
@@ -119,24 +121,11 @@ it("remembers which browser the owner connected for a bot, and forgets it with t
   expect((await api("PATCH", `/api/bots/${one.id}`, { useMyChrome: false, browserTransport: null, browserExtensionProfileId: null })).status).toBe(200);
   expect((await read()).browserExtensionBrowser).toBeUndefined();
 });
-it("review follow-up L8: the remembered browser name is cleared on a profile change and when that browser's helper is removed", async () => {
-  const one = await bot("Stale browser name fixture");
-  const read = async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((item: { id: string }) => item.id === one.id);
-  expect((await api("PATCH", `/api/bots/${one.id}`, { useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: "profile_a" })).status).toBe(200);
-  expect((await api("POST", `/api/bots/${one.id}/browser-extension`, { action: "connect", browser: "edge" })).status).toBe(200);
-  expect((await read()).browserExtensionBrowser).toBe("edge");
-  // Same profile again: nothing changes.
-  expect((await api("PATCH", `/api/bots/${one.id}`, { browserExtensionProfileId: "profile_a" })).status).toBe(200);
-  expect((await read()).browserExtensionBrowser).toBe("edge");
-  expect((await api("PATCH", `/api/bots/${one.id}`, { browserExtensionProfileId: "profile_b" })).status).toBe(200);
-  expect((await read()).browserExtensionBrowser).toBeUndefined();
-  expect((await api("POST", `/api/bots/${one.id}/browser-extension`, { action: "connect", browser: "brave" })).status).toBe(200);
-  expect((await read()).browserExtensionBrowser).toBe("brave");
-  // Removing another browser's helper leaves it; removing Brave's clears it (from any bot's panel).
-  const other = await bot("Remove from another panel fixture");
-  expect((await api("POST", `/api/bots/${other.id}/browser-extension`, { action: "remove", browser: "edge" })).status).toBe(200);
-  expect((await read()).browserExtensionBrowser).toBe(sharedRegistrationBrowsers("edge").includes("brave") ? undefined : "brave");
-  expect((await api("POST", `/api/bots/${other.id}/browser-extension`, { action: "remove", browser: "brave" })).status).toBe(200);
-  expect((await read()).browserExtensionBrowser).toBeUndefined();
+it("helper connection and removal change readiness without rewriting the saved browser choice",async()=>{
+ const one=await bot('Stable browser selection'),path=`/api/bots/${one.id}`;
+ expect((await api('PATCH',path,{useMyChrome:true,browserTransport:'extension',browserExtensionProfileId:'profile_a',browserExtensionBrowser:'edge'})).status).toBe(200);
+ const before=(await api('GET',path)).body.bot;
+ await api('POST',path+'/browser-extension',{action:'connect',browser:'brave'});
+ await api('POST',path+'/browser-extension',{action:'remove',browser:'edge'});
+ const after=(await api('GET',path)).body.bot;expect(after.browserExtensionProfileId).toBe('profile_a');expect(after.browserExtensionBrowser).toBe('edge');expect(after.selectionRevision).toBe(before.selectionRevision);
 });
-

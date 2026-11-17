@@ -18,10 +18,16 @@ import { NEWS_COPY } from "./news-consent";
 import { t } from "./i18n";
 import type { LocaleKey } from "@/locales";
 import type { SettingsCard } from "./settings-cards";
+import signalPin from "../../server/channels/signal/runtime-pin.json";
+
+// No card or search target until the runtime evidence is present. B8's server
+// additionally requires the verified B4/G0 adapters before accepting a route.
+export const signalSettingsEnabled = Boolean(signalPin.g0 && !JSON.stringify(signalPin).includes("G0_REQUIRED"));
 
 // `keywords` by name: the copy rules know these are matched against what a person types and never shown.
-const card = (id: string, section: SettingsCard["section"], anchor: string, spec: { keywords: readonly string[]; advanced?: boolean; surface?: SettingsCard["surface"] }): SettingsCard => ({
-  id: `${section}.${id}`,
+// `idSection`: a card that moved to another page keeps its id (its address, its label, its search rank); `section` is where it renders.
+const card = (id: string, section: SettingsCard["section"], anchor: string, spec: { keywords: readonly string[]; advanced?: boolean; surface?: SettingsCard["surface"]; idSection?: string }): SettingsCard => ({
+  id: `${spec.idSection ?? section}.${id}`,
   section,
   advanced: spec.advanced ?? false,
   surface: spec.surface ?? "desktop",
@@ -31,9 +37,11 @@ const card = (id: string, section: SettingsCard["section"], anchor: string, spec
 
 // ---- General (L4 owns the page; L1 seeds) ----
 const GENERAL: SettingsCard[] = [
+  // The first card of the page (SETTINGS-LOCKED-1019.md 2.5): "advanced", "simple", "show all settings" and "settings view" land here.
+  card("mode", "general", "advanced-mode-heading", { keywords: ["advanced mode", "advanced", "simple", "simple mode", "show all settings", "settings view", "every setting", "fine control", "power user"], surface: "any" }),
   card("profile", "general", "profile-heading", { keywords: ["profile", "name", "email"], surface: "any" }),
   card("appearance", "general", "appearance-heading", { keywords: ["skin", "theme", "appearance", "dark", "light"], surface: "any" }),
-  card("sidebar-density", "general", "sidebar-density-heading", { keywords: ["sidebar", "density", "rail", "compact"], advanced: true }),
+  card("sidebar-density", "general", "sidebar-density-heading", { keywords: ["sidebar", "density", "rail", "compact"] }),
   card("language", "general", "language-heading", { keywords: ["language", "translation"] }),
   card("time-zone", "general", "time-zone-heading", { keywords: ["time zone", "timezone", "zone", "clock", "daylight saving", "dst", "calendar times"] }),
   card("send-key", "general", "send-key-heading", { keywords: ["sending messages", "send", "enter", "shift enter", "return key", "new line", "newline", "keyboard"], surface: "any" }),
@@ -44,9 +52,13 @@ const GENERAL: SettingsCard[] = [
   card("bring-your-ai", "general", "bring-your-ai-heading", { keywords: ["bring what you already use", "bring your ai", "import", "grok bot", "chatgpt", "claude", "dots", "duet", "learn about me", "export"] }),
 ];
 
+// ---- Calls (1.0.19 shell: the page the notifications card's calls part moved to) ----
+const CALLS: SettingsCard[] = [
+  card("calls", "calls", "calls-settings-title", { keywords: ["calls", "call history", "off for today"] }),
+];
+
 // ---- Bots (L4) ----
 const BOT_DEFAULTS: SettingsCard[] = [
-  card("new-bot-effort", "botDefaults", "new-bot-effort-heading", { keywords: ["new bots", "effort", "default", "defaults"], advanced: true }),
   card("tool-calls", "botDefaults", "tool-calls-heading", { keywords: ["tool calls", "tools", "show tool calls"], advanced: true }),
   card("project-autonomy", "botDefaults", "project-autonomy-heading", { keywords: ["autonomy", "project autonomy", "projects"], advanced: true }),
   card("channel-turns", "botDefaults", "room-turn-timeout", { keywords: ["channel turns", "turn", "timeout", "quiet"], advanced: true }),
@@ -58,20 +70,22 @@ const BOT_DEFAULTS: SettingsCard[] = [
 // ---- Skills (L1) ----
 const SKILLS: SettingsCard[] = [
   card("recorder", "skills", "skill-recorder-heading", { keywords: ["teach", "teach a skill", "skill recorder", "record", "workflow", "learn", "early", "experimental"] }),
+  // The AssemblyAI key is one field on Skills, next to Teach a skill (MurageMain ruling 11-10); the id stays webSearch.voice-key.
+  card("voice-key", "skills", "voice-key-heading", { idSection: "webSearch", keywords: ["assemblyai key", "transcription key", "voice key", "api key"], advanced: true }),
   card("library", "skills", "skills-settings-title", { keywords: ["skills", "skill", "import", "library", "instructions"] }),
   card("scan-rules", "skills", "skill-scan-rules-heading", { keywords: ["scan", "scan rules", "import check"], advanced: true }),
 ];
 
 // ---- Memory (L2) ----
 const MEMORY: SettingsCard[] = [
-  card("overview", "memory", "memory-heading", { keywords: ["memory", "learning", "learned", "remember", "forget", "facts", "notes", "what it knows", "history", "review", "smart search", "switch", "delete", "erase", "wipe", "remove"] }),
+  card("overview", "memory", "memory-heading", { keywords: ["memory", "learning", "learned", "remember", "switch"] }),
+  card("browser", "memory", "memory-browser-heading", { keywords: ["search records", "find a memory", "forget", "delete", "review", "waiting", "inspect", "filters", "important", "recent", "facts", "notes", "what it knows", "history", "smart search", "erase", "wipe", "remove", "conflicts", "paging", "next page", "previous page"] }),
   card("how-it-learns", "memory", "memory-how-heading", { keywords: ["learn as we talk", "review before using", "learn from chats", "learn from channels", "facts", "procedures"] }),
   card("bots", "memory", "memory-bots-heading", { keywords: ["bots", "pause", "each bot", "paused"] }),
   card("learned", "memory", "memory-learned-heading", { keywords: ["what it learned", "keep", "undo", "history", "skipped", "try again"] }),
   card("people", "memory", "memory-people-heading", { keywords: ["people", "humans", "who is who", "link"] }),
   card("import", "memory", "memory-import-heading", { keywords: ["import", "notes", "notebook", "memory.md", "bring in"] }),
   card("mode", "memory", "memory-mode-heading", { keywords: ["memory mode", "capture only", "paused", "off", "learn facts", "how you like things done", "procedures"], advanced: true }),
-  card("limit", "memory", "memory-limit-heading", { keywords: ["monthly limit", "learning limit", "ceiling", "tokens", "usage", "spend", "flux balance"], advanced: true }),
   card("connection", "memory", "memory-connection-heading", { keywords: ["learning connection", "flux fast", "connection", "extractor"], advanced: true }),
   card("audience", "memory", "memory-audience-heading", { keywords: ["audience", "audience access", "folder memory", "share"], advanced: true }),
   card("procedures", "memory", "memory-procedures-heading", { keywords: ["procedure reviews", "procedures", "evaluation", "test run", "improvements"], advanced: true }),
@@ -88,6 +102,8 @@ const MODELS: SettingsCard[] = [
   card("catalogs", "models", "model-catalogs-heading", { keywords: ["model catalogs", "catalog", "model list", "search models", "context", "chat models"], advanced: true }),
   card("local-servers", "models", "local-models-heading", { keywords: ["local models", "local servers", "ollama", "llama", "lm studio", "model server", "vllm", "offline", "on this computer", "local ai"], advanced: true }),
   card("claude-accounts", "models", "claude-accounts-heading", { keywords: ["claude accounts", "several claude accounts", "second account", "config directory", "work account"], advanced: true }),
+  // Moved here from How every bot behaves (1.0.19 page 6); the id stays botDefaults.new-bot-effort.
+  card("new-bot-effort", "models", "new-bot-effort-heading", { idSection: "botDefaults", keywords: ["new bots", "effort", "default", "defaults"], advanced: true }),
   card("command-lines", "models", "engine-command-lines-heading", { keywords: ["command line", "set cli", "cli", "binary", "path", "reset", "wrapper"], advanced: true }),
 ];
 
@@ -98,7 +114,6 @@ const TOOLS: SettingsCard[] = [
   card("voice", "webSearch", "voice-settings-heading", { keywords: ["voice", "transcription", "transcribe", "assemblyai", "voice notes", "speech", "dictation", "narration", "dictate", "speak", "talk"] }),
   card("provider-keys", "webSearch", "search-keys-heading", { keywords: ["search keys", "provider keys", "tavily", "exa", "firecrawl", "api key", "web search key"], advanced: true }),
   card("daily-check", "webSearch", "image-daily-check-heading", { keywords: ["daily check", "image check", "daily image check", "probe", "test image model"], advanced: true }),
-  card("voice-key", "webSearch", "voice-key-heading", { keywords: ["assemblyai key", "transcription key", "voice key", "api key"], advanced: true }),
 ];
 
 // ---- Connected apps and Messaging apps (L1) ----
@@ -108,23 +123,25 @@ const REACH: SettingsCard[] = [
   card("highlevel", "connections", "highlevel-heading", { keywords: ["highlevel", "high level", "gohighlevel", "crm", "private integration", "location", "contacts", "opportunities"] }),
   card("phone-calls", "connections", "phone-calls-heading", { keywords: ["phone calls", "call a business", "make a call", "vapi", "voice account", "caller", "outbound calls", "phone number"] }),
   card("mcp", "connections", "mcp-servers-heading", { keywords: ["mcp", "mcp servers", "servers"], advanced: true }),
-  card("telegram", "channels", "telegram-settings-title", { keywords: ["telegram", "botfather", "pair", "messaging", "channels"] }),
-  card("slack", "channels", "slack-settings-title", { keywords: ["slack", "messaging", "channels"] }),
-  card("discord", "channels", "discord-settings-title", { keywords: ["discord", "messaging", "channels"] }),
-  card("whatsapp", "channels", "whatsapp-settings-title", { keywords: ["whatsapp", "messaging", "channels"] }),
-  card("slack-setup", "channels", "slack-app-setup-heading", { keywords: ["slack", "private app", "socket mode", "tokens"], advanced: true }),
-  card("discord-setup", "channels", "discord-app-setup-heading", { keywords: ["discord", "private app", "application"], advanced: true }),
-  card("allow-lists", "channels", "whatsapp-allow-heading", { keywords: ["allow list", "allowed", "who can message", "contacts", "whatsapp"], advanced: true }),
-  card("whatsapp-groups", "channels", "whatsapp-groups-heading", { keywords: ["groups", "whatsapp groups", "group chats"], advanced: true }),
+  card("claude-code", "connections", "claude-code-import-heading", { keywords: ["claude code", "claude code setup", "import", "copy", "bring", "sync"], advanced: true }),
+  card("telegram", "connections", "telegram-settings-title", { idSection: "channels", keywords: ["telegram", "bot token", "botfather", "pair", "messaging", "channels"] }),
+  card("slack", "connections", "slack-settings-title", { idSection: "channels", keywords: ["slack", "bot token", "app token", "app keys", "messaging", "channels"] }),
+  card("discord", "connections", "discord-settings-title", { idSection: "channels", keywords: ["discord", "messaging", "channels"] }),
+  card("whatsapp", "connections", "whatsapp-settings-title", { idSection: "channels", keywords: ["whatsapp", "messaging", "channels"] }),
+  ...(signalSettingsEnabled ? [card("signal", "connections", "signal-settings-title", { idSection: "channels", keywords: ["signal", "Note to Self", "connect phone messages", "messaging", "channels"] })] : []),
+  card("slack-setup", "connections", "slack-app-setup-heading", { idSection: "channels", keywords: ["slack", "private app", "socket mode", "tokens"], advanced: true }),
+  card("discord-setup", "connections", "discord-app-setup-heading", { idSection: "channels", keywords: ["discord", "private app", "application"], advanced: true }),
+  card("allow-lists", "connections", "whatsapp-allow-heading", { idSection: "channels", keywords: ["allow list", "allowed", "who can message", "contacts", "whatsapp"], advanced: true }),
+  card("whatsapp-groups", "connections", "whatsapp-groups-heading", { idSection: "channels", keywords: ["groups", "whatsapp groups", "group chats"], advanced: true }),
 ];
 
-// ---- Devices (L4) ----
+// ---- Phone and other devices, and Computer & browser (L4; the shell gave the computer cards a page of their own, ids kept) ----
 const DEVICES: SettingsCard[] = [
-  card("browser", "companion", "browser-settings-heading", { keywords: ["built-in browser", "browser", "browser switch", "browser access"] }),
+  card("browser", "computer", "browser-settings-heading", { idSection: "companion", keywords: ["built-in browser", "browser", "browser switch", "browser access"] }),
   card("pairing", "companion", "companion-heading", { keywords: ["companion", "phone", "pair", "mobile", "devices", "tablet", "laptop", "browser", "webui", "qr", "code", "tailscale", "remote access", "iphone", "android", "phone pairing"] }),
-  card("script-access", "companion", "script-access-heading", { keywords: ["script access", "scripts", "script"], advanced: true }),
-  card("vps", "companion", "vps-heading", { keywords: ["vps", "remote computer", "server", "ssh", "box", "cloud computer", "remote"], advanced: true }),
-  card("computer", "companion", "computer-settings-heading", { keywords: ["computer", "vm", "virtual", "desktop", "local vm", "vps", "server", "ssh", "box", "cloud computer", "browser", "browser profiles", "sign-in", "browser access", "other agents", "extension", "sandbox"] }),
+  card("script-access", "computer", "script-access-heading", { idSection: "companion", keywords: ["script access", "scripts", "script"], advanced: true }),
+  card("vps", "computer", "vps-heading", { idSection: "companion", keywords: ["vps", "remote computer", "server", "ssh", "box", "cloud computer", "remote"], advanced: true }),
+  card("computer", "computer", "computer-settings-heading", { idSection: "companion", keywords: ["computer", "vm", "virtual", "desktop", "local vm", "vps", "server", "ssh", "box", "cloud computer", "browser", "browser profiles", "sign-in", "browser access", "other agents", "extension", "sandbox"] }),
 ];
 
 // ---- Backups (L5) ----
@@ -137,25 +154,55 @@ const BACKUPS: SettingsCard[] = [
 const USAGE: SettingsCard[] = [
   card("by-bot", "usage", "usage-heading", { keywords: ["usage", "tokens", "cost", "billing", "replies", "by bot", "export", "spend"], surface: "any" }),
   card("learning", "usage", "usage-learning-heading", { keywords: ["learning", "memory learning", "limit", "learning limit", "monthly limit", "tokens read", "tokens written"] }),
+  // Moved from Memory (SETTINGS-LOCKED-1019.md 3.16, "Monthly learning limit"): it keeps its id, its address and its anchor.
+  card("limit", "usage", "memory-limit-heading", { keywords: ["monthly limit", "learning limit", "ceiling", "tokens", "usage", "spend", "flux balance"], advanced: true, idSection: "memory" }),
+  card("spend-limit", "usage", "spend-limit-heading", { keywords: ["spending notice", "monthly spend", "monthly amount", "flux chat spend", "budget", "heads up", "dollars", "usd"], surface: "any" }),
+  card("by-routine", "usage", "usage-by-routine-heading", { keywords: ["by routine", "routines", "routine usage", "routine tokens", "routine replies"], surface: "any" }),
+  card("account", "usage", "plan-usage-heading", { keywords: ["account usage", "plan usage", "plan", "window", "reset", "subscription", "claude usage", "codex usage"], surface: "any" }),
 ];
 
 // ---- About & updates (L4 owns the page; L1 seeds) ----
 const ABOUT: SettingsCard[] = [
-  card("version", "about", "about-version-heading", { keywords: ["about & updates", "copy version", "version", "app version", "about", "help"], surface: "any" }),
-  card("updates", "about", "updates-heading", { keywords: ["updates", "update", "version"], surface: "any" }),
+  // Version and updates is one card (SETTINGS-LOCKED-1019.md 3.17): it holds what used to be Updates and Previous version.
+  card("version", "about", "about-version-heading", { keywords: ["about & updates", "copy version", "version", "app version", "about", "help", "updates", "update", "previous version", "go back", "downgrade", "older version", "reinstall", "roll back"], surface: "any" }),
   card("whats-new", "about", "whats-new-heading", { keywords: ["what's new", "whats new", "release notes"], surface: "any" }),
-  card("announcements", "about", "announcements-heading", { keywords: ["announcements", "news", "notices"], advanced: true }),
   card("diagnostics", "about", "diagnostics-heading", { keywords: ["diagnostics", "logs", "support"], surface: "any", advanced: true }),
   card("setup", "about", "setup-heading", { keywords: ["setup", "first run", "get set up", "walkthrough"] }),
   card("shortcuts", "about", "shortcuts-heading", { keywords: ["keyboard", "shortcuts"], surface: "any" }),
-  card("previous-version", "about", "previous-version-heading", { keywords: ["previous version", "go back", "downgrade", "older version", "reinstall", "roll back"] }),
-  card("news", "about", "news-heading", { keywords: ["news", "newsletter", "setup guide", "release emails", "new releases", "subscribe", "email me"] }),
+  card("news", "about", "news-heading", { keywords: ["news", "newsletter", "setup guide", "release emails", "new releases", "subscribe", "email me", "announcements", "notices"] }),
   card("health", "about", "health-heading", { keywords: ["health", "status", "problems", "issues", "is it working", "checks", "sentinel", "recovered"], surface: "any" }),
 ];
 
 export const SETTINGS_CARDS: readonly SettingsCard[] = [
-  ...GENERAL, ...BOT_DEFAULTS, ...SKILLS, ...MEMORY, ...MODELS, ...TOOLS, ...REACH, ...DEVICES, ...BACKUPS, ...USAGE, ...ABOUT,
+  ...GENERAL, ...CALLS, ...BOT_DEFAULTS, ...SKILLS, ...MEMORY, ...MODELS, ...TOOLS, ...REACH, ...DEVICES, ...BACKUPS, ...USAGE, ...ABOUT,
 ];
+
+/** Anchors of rows that now sit inside a merged card (About: Updates and Previous version inside Version and updates,
+ *  Announcements inside News from us). A stub reads the merged card; an opener keeps the inner row's anchor. */
+export const MERGED_CARD_ANCHORS: Readonly<Record<string, string>> = {
+  "updates-heading": "about-version-heading",
+  "previous-version-heading": "about-version-heading",
+  "announcements-heading": "news-heading",
+  // Computer and browser: the default-computer row sits inside the computer card, above Browser profiles.
+  "default-computer-heading": "computer-settings-heading",
+};
+
+/** Published card addresses whose controls now live inside another card. */
+export const SETTINGS_CARD_ALIASES: Readonly<Record<string, string>> = {
+  "about.updates": "updates-heading",
+  "about.previous-version": "previous-version-heading",
+  "about.announcements": "announcements-heading",
+};
+
+/** Resolve a card id or DOM anchor, retaining the inner row and its owning card's visibility rules. */
+export function resolveSettingsCard(idOrAnchor: string): SettingsCard | undefined {
+  const direct = SETTINGS_CARDS.find((card) => card.id === idOrAnchor || card.anchor === idOrAnchor);
+  if (direct) return direct;
+  const anchor = Object.hasOwn(SETTINGS_CARD_ALIASES, idOrAnchor) ? SETTINGS_CARD_ALIASES[idOrAnchor] : idOrAnchor;
+  const parent = Object.hasOwn(MERGED_CARD_ANCHORS, anchor) ? MERGED_CARD_ANCHORS[anchor] : undefined;
+  const card = SETTINGS_CARDS.find((entry) => entry.anchor === parent);
+  return card ? { ...card, anchor } : undefined;
+}
 
 /** Anchors a card owes the DOM that the lane owning that page has not rendered yet. Each lane deletes its entries as
  *  it renders the ids; L7's gate asserts the map is empty. (A search "Open" on one of these lands on its page.) */
@@ -163,11 +210,16 @@ export const ANCHORS_OWED: Readonly<Record<string, string>> = {};
 
 /** Cards whose name already lives with the card's own copy (SETTINGS-UX-1011 S2), read from there so the two never drift. */
 const CARD_NAMES: Readonly<Record<string, () => string>> = {
+  "memory.browser": () => t("memorySettings.openMemory"),
+  "channels.signal": () => "Signal",
   "connections.bot-email": () => EMAIL_OWNER_COPY.sectionTitle,
   "connections.highlevel": () => t("highlevel.title"),
   // The screen's own words load with it (src/locales/lazy/phone-calls); search names the card in English, as Bot email does.
   "connections.phone-calls": () => "Phone calls",
   "general.send-key": () => t("settings.sendKey.title"),
+  "usage.spend-limit": () => t("ux.l2c.usage.title"),
+  "usage.by-routine": () => t("settings.l6.usage.byRoutine"),
+  "usage.account": () => t("settings.l6.usage.plan.title"),
   "about.news": () => NEWS_COPY.title,
   "about.health": () => HEALTH_COPY.title,
 };

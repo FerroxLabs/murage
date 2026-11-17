@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { initializeProjectTables } from "./project-tables.ts";
 import { channelToProjectRows } from "./project-settings.ts";
-import { recordProjectRoutine, linkLegacyProjectRoutineRuns, projectMainThread } from "./project-routines.ts";
+import { recordProjectRoutine, linkLegacyProjectRoutineRuns, projectMainThread, filterRoutineStartup, mapRoutineStartup } from "./project-routines.ts";
 import { createProjectGoal, startProjectGoal } from "./project-goals.ts";
 
 describe("project routine row delivery", () => {
@@ -30,8 +30,8 @@ it("links existing routine threads in Activity once", () => {
   const db = new DatabaseSync(":memory:"); initializeProjectTables(db);
   channelToProjectRows(db, { groupId: "g", bulletin: "", leadBotId: null, now: 1 });
   const runs = [{ id: "old", groupId: "g", threadId: "old-task", target: "room-goal", createdAt: 1 }];
-  linkLegacyProjectRoutineRuns(db, runs);
-  linkLegacyProjectRoutineRuns(db, runs);
+  linkLegacyProjectRoutineRuns(db, (function* () { yield* runs; })());
+  linkLegacyProjectRoutineRuns(db, (function* () { yield* runs; })());
   const rows = db.prepare("SELECT detail FROM project_activity WHERE kind='routine_run'").all();
   expect(rows).toHaveLength(1);
   expect(JSON.parse(String(rows[0]!.detail))).toMatchObject({ threadId: "old-task", runId: "old" });
@@ -40,4 +40,15 @@ it("links existing routine threads in Activity once", () => {
 
 it("uses the group main chat even when older routine tasks exist", () => {
   expect(projectMainThread({ threadId: "main", tasks: [{ threadId: "new", createdAt: 2 }, { threadId: "old", createdAt: 1 }] })).toBe("main");
+});
+
+
+it("startup filter/map leaves the input untouched until consumption and streams one result", () => {
+  let visited = 0;
+  function* source() { for (let n = 0; n < 100; n++) { visited++; yield n; } }
+  const iterator = mapRoutineStartup(filterRoutineStartup(source(), n => n % 2 === 1), n => [n, String(n)] as const);
+  expect(visited).toBe(0);
+  expect(iterator.next().value).toEqual([1, "1"]);
+  expect(visited).toBe(2);
+  iterator.return?.();
 });

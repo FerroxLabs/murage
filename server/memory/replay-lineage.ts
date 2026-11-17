@@ -21,7 +21,15 @@
 // lists outgrew a whole-thread budget). Past the node and receipt budgets a
 // caller that asks for failClosed gets the message withheld instead of an
 // error, so a turn never fails and never shows what it could not check.
+import { MemoryPinProjectionPending } from './recall-recovery.ts';
+import { failReplayShadow, rethrowReplayShadow } from "./replay-shadow.ts";
 import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
+import { accountedPrepare, chargeReleaseWork, chargeReleaseStatement } from "./release-budget.ts";
+import { ReplayWalk, walkOf, replayShadowEnabled, replayNodeKey, adoptReplayProof } from "./replay-walk.ts";
+import { advanceDurableReplay, durableReplayAlive, invalidateDurableReplay, loadDurableReplay, saveDurableReplayBase, type SendReplayWriteReceipt } from "./replay-durable.ts";
+export type { SendReplayWriteReceipt } from "./replay-durable.ts";
+import { setReplayEligibilityObserver, type ReplayEligibilityChange } from "../send-attempt-state.ts";
+import { onRollback } from "../tx-scope.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { ancestryUnrepaired, connectionId, database } from "../database.ts";
 import { memoryGate } from "./memory-gate.ts";
@@ -39,7 +47,7 @@ import { denyLookup, lineageLive, memoryLookup } from "./deny-read.ts";
 import { chainJudge } from "../bot-read.ts";
 import type { Message } from "../store.ts";
 import { readTimeRetired, withoutDroppedTableTriggers } from "./read-time-retired.ts";
-import { FOOTPRINT_STAR, memoryRefKey } from "./lineage-types.ts";
+import { FOOTPRINT_STAR, memoryRefKey, type SessionKey } from "./lineage-types.ts";
 import { bumpHandleEpoch, proofBucket, verdictStore as store, type ConfirmCounters, type Owner, type Verdict, type VerdictReads } from "./verdict-store.ts";
 // TURNSTART r14 S6 / r15 epoch split: every handle-layer clear in root-set-handles.ts moves the store's handleEpoch
 onHandlesForgotten(why => bumpHandleEpoch(`handles:${why}`));
@@ -54,17 +62,18 @@ type DatabaseLike = ReturnType<typeof database>;
 // connection takes its statements with it (WeakMap).
 type Statement = ReturnType<DatabaseLike["prepare"]>;
 const statements = new WeakMap<object, Map<string, Statement>>();
-function stmt(db: DatabaseLike, sql: string): Statement {
+export function replayStatement(db: DatabaseLike, sql: string): Statement {
   let known = statements.get(db);
   if (!known) statements.set(db, known = new Map());
   let statement = known.get(sql);
   if (!statement) {
     if (known.size >= 256) known.clear();
-    statement = db.prepare(sql);
+    statement = accountedPrepare(db, sql);
     known.set(sql, statement);
   }
   return statement;
 }
+const stmt = replayStatement;
 /** Test hook: how many statements the cache holds for the shared connection. */
 export function lineageStatementCount(): number { return statements.get(database())?.size ?? 0; }
 
@@ -106,6 +115,384 @@ export interface MessageCopy { threadId: string; messageIds: string[] }
 /** role "user": the owner's or a person's own words. Only bot output is ever
  * linked to a receipt (dispatch.ts), so those are never looked up. */
 export interface ReplayMessage { id: string; role?: string; copyOf?: MessageCopy }
+
+/** PROVISIONAL INTERFACE: F3 leaves copyRoots/snapshot and the proof carrier
+ * unnamed. Match A1's candidate -> source-point map; snapshot is the existing
+ * SQLite connection. B2 owns the bounded copy walk, never receipt writes. */
+export type ReplayCopyRoots = ReadonlyMap<string, readonly { threadId: string; messageId: string }[]>;
+export interface SendReplayProof {
+  threadId: string;
+  messageIds: readonly string[];
+  copyRoots: ReplayCopyRoots;
+  revision: number;
+  epochs: ReadonlyArray<readonly [string, number]>;
+  ancestry: string;
+  excludedIds: ReadonlySet<string>;
+}
+
+/** An entirely pre-F7 database is ordinary legacy context. A partial schema is
+ * maintenance, never permission to bypass a durable exclusion. */
+export function sendReplaySchema(db: DatabaseSync): boolean {
+  const names = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('send_attempts','send_replay_exclusions','send_replay_epochs')").all().map(row => String(row.name));
+  if (!names.length) return false;
+  if (!names.includes("send_replay_exclusions") || !names.includes("send_replay_epochs")) throw new Error("SEND_REPLAY_NOT_READY");
+  return true;
+}
+
+export function replayCopyRoots(messages: readonly ReplayMessage[]): ReplayCopyRoots {
+  return new Map(messages.filter(m => m.copyOf).map(m => [m.id, m.copyOf!.messageIds.map(messageId => ({ threadId: m.copyOf!.threadId, messageId }))]));
+}
+
+/** Keyed source-and-exclusion reads, batched for a large candidate window.
+ * No owner_sends scan, status scan, or receipt payload read. Copy cycles,
+ * missing originals and a copy walk beyond its fixed allowance fail closed. */
+export function captureSendReplayProof(threadId: string, messageIds: readonly string[], copyRoots: ReplayCopyRoots = new Map(), snapshot: DatabaseSync = database()): SendReplayProof {
+  const own = !snapshot.isTransaction;
+  if (own) snapshot.exec("BEGIN");
+  try {
+    const enabled = sendReplaySchema(snapshot);
+    if (!enabled) {
+      // Before F7 there is no attempt evidence to add to the existing lineage
+      // rules. In particular, do not reinterpret damaged legacy rows here.
+      const proof: SendReplayProof = { threadId, messageIds: [...new Set(messageIds)], copyRoots, revision: 0,
+        epochs: [[threadId, 0]], ancestry: "", excludedIds: new Set() };
+      if (own) snapshot.exec("COMMIT");
+      return proof;
+    }
+    const walk = new ReplayWalk(threadId, copyRoots);
+    walk.addAll(messageIds, snapshot);
+    const proof = walk.toProof();
+    if (own) snapshot.exec("COMMIT");
+    return proof;
+  } catch (error) { if (own) snapshot.exec("ROLLBACK"); throw error; }
+}
+
+/** Frozen F3 entry point; the richer proof stays local to replay consumers. */
+export function replayEligibility(threadId: string, messageIds: readonly string[], copyRoots: ReplayCopyRoots, snapshot: DatabaseSync): { excludedIds: Set<string>; revision: number } {
+  const proof = captureSendReplayProof(threadId, messageIds, copyRoots, snapshot);
+  return { excludedIds: new Set(proof.excludedIds), revision: proof.revision };
+}
+
+export function sendReplayEpochsCurrent(epochs: SendReplayProof["epochs"], db: DatabaseSync = database()): boolean {
+  const enabled = sendReplaySchema(db);
+  const read = enabled ? db.prepare("SELECT revision FROM send_replay_epochs WHERE thread_id=?") : null;
+  return epochs.every(([thread, revision]) => Number(read?.get(thread)?.revision ?? 0) === revision);
+}
+
+/** Call immediately before rendering and again at each provider write fence.
+ * A stale proof holds the write; callers must build fresh filtered context. */
+export function assertSendReplayProof(proof: SendReplayProof, db: DatabaseSync = database()): void {
+  const current = walkOf(proof)?.witnessCurrent(db) === "current";
+  if (current && !replayShadowEnabled()) return;
+  const now = captureSendReplayProof(proof.threadId, proof.messageIds, proof.copyRoots, db);
+  if (JSON.stringify(now.epochs) !== JSON.stringify(proof.epochs) || now.ancestry !== proof.ancestry
+    || JSON.stringify([...now.excludedIds].sort()) !== JSON.stringify([...proof.excludedIds].sort())) {
+    if (current && replayShadowEnabled()) failReplayShadow();
+    throw new Error("SEND_REPLAY_CHANGED");
+  }
+  // A newly present plain candidate can leave the comparison identical. Keep
+  // that refreshed witness so subsequent checks do not repeat the full walk.
+  if (!current && walkOf(now)) replaceConfirmedReplayProof(proof, now, [], true);
+}
+
+type ReplaySession = { walk: ReplayWalk; pending: Map<string, string>; invalid: boolean; threadIds: Set<string>; key: string; conservative: "R1" | "R2" | null; written?: SendReplayWriteReceipt };
+type SessionPool = { sessions: Map<string, ReplaySession>; byThread: Map<string, Set<ReplaySession>>; touched: number; dropped: Map<string, "R1" | "R2"> };
+let lastConservative: "R1" | "R2" | null = null;
+export function lastReplaySessionConservativeForTest(): "R1" | "R2" | null { return lastConservative; }
+/** Test-only materialisation, deliberately outside receipt work windows. */
+export function replaySessionStateForTest(thread: string, instance: string, session: string) {
+  const entry = store.replaySessionPool<SessionPool>(database())?.sessions.get(JSON.stringify([thread, instance, session]));
+  if (!entry) return undefined;
+  return { candidates: [...entry.walk.candidates], touched: [...entry.walk.touched].sort(), checked: [...entry.walk.checked].sort(),
+    epochs: entry.walk.orderedEpochs(), pending: [...entry.pending], missing: [...entry.walk.missing].sort(), invalid: entry.invalid };
+}
+
+function sessionPool(db: DatabaseSync): SessionPool {
+  let pool = store.replaySessionPool<SessionPool>(db);
+  if (!pool) {
+    pool = { sessions: new Map(), byThread: new Map(), touched: 0, dropped: new Map() };
+    store.setReplaySessionPool(db, pool);
+  }
+  return pool;
+}
+function indexSession(pool: SessionPool, entry: ReplaySession, add: boolean): void {
+  for (const thread of entry.threadIds) {
+    if (add) { let set = pool.byThread.get(thread); if (!set) pool.byThread.set(thread, set = new Set()); set.add(entry); }
+    else { const set = pool.byThread.get(thread); set?.delete(entry); if (!set?.size) pool.byThread.delete(thread); }
+  }
+}
+function removeSession(pool: SessionPool, entry: ReplaySession, reason?: "R2"): void {
+  if (reason && entry.written) invalidateDurableReplay(database(), entry.key);
+  const dropped = pool.dropped.get(entry.key);
+  onRollback(() => {
+    pool.sessions.set(entry.key, entry); indexSession(pool, entry, true); pool.touched += entry.walk.touched.size;
+    if (dropped) pool.dropped.set(entry.key, dropped); else pool.dropped.delete(entry.key);
+  });
+  pool.sessions.delete(entry.key); indexSession(pool, entry, false); pool.touched -= entry.walk.touched.size;
+  if (reason) {
+    pool.dropped.set(entry.key, reason);
+    if (pool.dropped.size > 512) pool.dropped.delete(pool.dropped.keys().next().value!);
+    lastConservative = reason;
+  }
+}
+function capSessions(pool: SessionPool): void {
+  while (pool.touched > 262_144 || pool.sessions.size > 512) removeSession(pool, pool.sessions.values().next().value!, "R2");
+}
+/** Only a witnessed, exactly one-epoch receipt at an unread node can advance a
+ * retained walk. Every history dependency is indexed, and every rollback
+ * restores the persistent roots and the reverse index together. */
+function preserveReplaySessionReceipts(db: DatabaseSync, change: ReplayEligibilityChange, write: () => void): void {
+  const entries = [...(store.replaySessionPool<SessionPool>(db)?.byThread.get(change.threadId) ?? [])].filter(entry => !entry.invalid);
+  if (!entries.length) { write(); return; }
+  const read = stmt(db, "SELECT reason,revision FROM send_replay_exclusions WHERE thread_id=? AND message_id=?");
+  const prior = JSON.stringify(read.get(change.threadId, change.messageId) ?? null);
+  const current = new Set<ReplaySession>();
+  for (const entry of entries) {
+    if ((!entry.written || durableReplayAlive(db, entry.key, entry.written)) && entry.walk.witnessCurrent(db) === "current") {
+      try {
+        if (replayShadowEnabled()) assertSendReplayProof(entry.walk.toProof(), db);
+        current.add(entry);
+      } catch (error) { rethrowReplayShadow(error); /* an unproven/raw source change cannot heal through receipts */ }
+    }
+  }
+  write();
+  if (JSON.stringify(read.get(change.threadId, change.messageId) ?? null) === prior) return;
+  const pool = sessionPool(db);
+  for (const entry of entries) {
+    const before = { ...entry }, journal = entry.walk.begin(), touched = entry.walk.touched.size;
+    onRollback(() => {
+      indexSession(pool, entry, false); pool.touched -= entry.walk.touched.size;
+      journal.undo(); Object.assign(entry, before);
+      indexSession(pool, entry, true); pool.touched += entry.walk.touched.size;
+    });
+    entry.invalid = true;
+    if (entry.written) invalidateDurableReplay(db, entry.key);
+    if (!current.has(entry)) continue;
+    const key = replayNodeKey(change.threadId, change.messageId);
+    if (entry.walk.touched.has(key)) { entry.conservative = "R1"; lastConservative = "R1"; continue; } // MAIN RULING R1
+    const epoch = entry.walk.readEpoch(change.threadId, db);
+    if (epoch !== entry.walk.epochs.get(change.threadId)! + 1) continue;
+    const pending = new Map(entry.pending);
+    if (pending.has(key) && pending.get(key) !== change.attemptId) continue;
+    if (change.delivery === "uncertain") {
+      if (pending.size >= 4096 && !pending.has(key)) continue;
+      pending.set(key, change.attemptId);
+    }
+    else if (change.delivery === "submitted") pending.delete(key);
+    else if (pending.has(key)) continue;
+    entry.walk.epochs.set(change.threadId, epoch);
+    if (change.delivery === "submitted" && change.threadId === entry.walk.threadId) {
+      const excluded = entry.walk.add(change.messageId, db, journal);
+      pool.touched += entry.walk.touched.size - touched;
+      indexSession(pool, entry, false); entry.threadIds = new Set([...entry.walk.epochs].map(([thread]) => thread)); indexSession(pool, entry, true);
+      if (excluded) continue;
+    }
+    if (!entry.walk.withinCaps()) { removeSession(pool, entry, "R2"); continue; } // MAIN RULING R2
+    entry.pending = pending; entry.invalid = false;
+    if (entry.written) advanceDurableReplay(db, entry.key, entry.walk, change.delivery === "submitted" && change.threadId === entry.walk.threadId ? [change.messageId] : [], pending.size > 0);
+    if (replayShadowEnabled()) assertSendReplayProof(entry.walk.toProof(), db);
+  }
+  capSessions(pool);
+}
+export function confirmFreshReplaySession(threadId: string, instanceId: string, sessionId: string, proof: SendReplayProof, written?: SendReplayWriteReceipt): void {
+  if (proof.threadId !== threadId) throw new Error("SEND_REPLAY_SCOPE");
+  const db = database();
+  let walk = walkOf(proof);
+  if (!walk || walk.witnessCurrent(db) !== "current") {
+    const fresh = captureSendReplayProof(threadId, proof.messageIds, proof.copyRoots, db);
+    if (JSON.stringify(fresh.epochs) !== JSON.stringify(proof.epochs) || fresh.ancestry !== proof.ancestry
+      || JSON.stringify([...fresh.excludedIds].sort()) !== JSON.stringify([...proof.excludedIds].sort())) throw new Error("SEND_REPLAY_CHANGED");
+    walk = walkOf(fresh);
+  } else if (replayShadowEnabled()) assertSendReplayProof(proof, db);
+  if (!walk) return; // pre-F7 legacy proof
+  setReplayEligibilityObserver(preserveReplaySessionReceipts);
+  const pool = sessionPool(db), key = JSON.stringify([threadId, instanceId, sessionId]), before = pool.sessions.get(key);
+  if (before) removeSession(pool, before);
+  if (!walk.withinCaps()) { pool.dropped.set(key, "R2"); lastConservative = "R2"; return; }
+  if (written) {
+    beginWrite(db, "confirm_send_replay");
+    try { saveDurableReplayBase(db, key, proof, written); endWrite(db, "confirm_send_replay"); }
+    catch (error) { undoWrite(db, "confirm_send_replay"); throw error; }
+  }
+  // Captured turn proofs remain immutable aliases while the session advances.
+  const entry: ReplaySession = { walk: walk.fork(), pending: new Map(), invalid: false, threadIds: new Set([...walk.epochs].map(([thread]) => thread)), key, conservative: null, written };
+  const dropped = pool.dropped.get(key);
+  onRollback(() => {
+    pool.sessions.delete(key); indexSession(pool, entry, false); pool.touched -= entry.walk.touched.size;
+    if (dropped) pool.dropped.set(key, dropped);
+  });
+  store.setReplayProofSession(proof, entry);
+  pool.dropped.delete(key); pool.sessions.set(key, entry); indexSession(pool, entry, true); pool.touched += entry.walk.touched.size;
+  capSessions(pool);
+}
+function heldReplaySession(db: DatabaseSync, threadId: string, instanceId: string, sessionId: string): ReplaySession | undefined {
+  const key = JSON.stringify([threadId, instanceId, sessionId]), pool = sessionPool(db), known = pool.sessions.get(key);
+  if (known) {
+    if (known.written && !durableReplayAlive(db, key, known.written)) { removeSession(pool, known); return; }
+    return known;
+  }
+  if (pool.dropped.has(key)) return;
+  const durable = loadDurableReplay(db, key);
+  if (!durable) return;
+  const walk = walkOf(durable.proof)!;
+  if (!walk.withinCaps()) { pool.dropped.set(key, "R2"); return; }
+  const entry: ReplaySession = { walk, pending: new Map(), invalid: false, key,
+    threadIds: new Set([...walk.epochs].map(([thread]) => thread)), conservative: null, written: durable.written };
+  pool.sessions.set(key, entry); pool.touched += walk.touched.size; indexSession(pool, entry, true); capSessions(pool);
+  setReplayEligibilityObserver(preserveReplaySessionReceipts);
+  return pool.sessions.get(key);
+}
+export function sendReplaySessionCurrent(threadId: string, instanceId: string, sessionId: string): boolean {
+  const db = database(), key = JSON.stringify([threadId, instanceId, sessionId]), pool = sessionPool(db);
+  try {
+    const session = heldReplaySession(db, threadId, instanceId, sessionId);
+    lastConservative = session?.conservative ?? pool.dropped.get(key) ?? null;
+    if (session) {
+      pool.sessions.delete(key); pool.sessions.set(key, session);
+      if (session.invalid || session.pending.size) return false;
+      const proof = session.walk.toProof(); store.setReplayProofSession(proof, session);
+      assertSendReplayProof(proof, db); return true;
+    }
+    if (pool.dropped.has(key)) return false;
+    const restored = stmt(db, "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='send_restore_generation'").get()
+      && stmt(db, "SELECT 1 FROM send_restore_generation WHERE id=1").get();
+    return !restored && (!sendReplaySchema(db) || !stmt(db, "SELECT 1 FROM send_replay_epochs WHERE revision>0 UNION ALL SELECT 1 FROM send_replay_epochs WHERE revision<0 LIMIT 1").get());
+  } catch (error) { rethrowReplayShadow(error); return false; }
+}
+// Producer owner: recall-s1s2j (MAIN RULING 1115-RECALL-GROK-Q1Q2).
+// Consumer owner: recall-s1s2j, MemoryDispatchReceipt submission checks only.
+export type OwnPendingCertificate = Readonly<{ readonly ownPending: unique symbol }>;
+type OwnPendingBinding = { attemptId: string; generation: string; providerInstanceId: string };
+const ownPendingCertificates = new WeakMap<OwnPendingCertificate, {
+ db: DatabaseSync; entry: ReplaySession; walk: ReplayWalk; key: string; generation: string;
+ pending: ReadonlyMap<string,string>;
+}>();
+/** Start under the producer's writer lock, before the owned transition. The
+ * finish function may be called only after the normal own-change comparison. */
+export function prepareOwnPendingCertificate(proof: SendReplayProof | undefined, key: SessionKey | undefined,
+ generation: string | undefined, ids: readonly string[], bindings: readonly OwnPendingBinding[]): (() => OwnPendingCertificate | undefined) | undefined {
+ if(!proof||!key||!generation||!bindings.length||bindings.length>4096)return;
+ const db=database(),pool=sessionPool(db),encoded=JSON.stringify([key.threadId,key.driverInstance,key.nativeSession]);
+ const entry=pool.sessions.get(encoded);
+ if(!entry||entry!==store.replayProofSession<ReplaySession>(proof)||entry.invalid||entry.pending.size||entry.conservative||pool.dropped.has(encoded))return;
+ assertSendReplayProof(proof,db);
+ const before=entry.walk.fork(),owned=new Set(ids),prior=new Map<string,string>();
+ const read=stmt(db,'SELECT attempt_id,reason FROM send_replay_exclusions WHERE thread_id=? AND message_id=?');
+ for(const binding of bindings) {
+  if(binding.generation!==generation||binding.providerInstanceId!==key.driverInstance)return;
+  const row=stmt(db,'SELECT message_id,delivery FROM send_attempts WHERE attempt_id=? AND thread_id=?').get(binding.attemptId,key.threadId);
+  if(!row||row.delivery!=='not_submitted'||!owned.has(String(row.message_id))||before.candidateSet.has(String(row.message_id)))return;
+  const excluded=read.get(key.threadId,String(row.message_id));
+  if(excluded?.attempt_id!==binding.attemptId||excluded.reason!=='not_submitted')return;
+  prior.set(replayNodeKey(key.threadId,String(row.message_id)),binding.attemptId);
+ }
+ if(prior.size!==bindings.length||prior.size!==owned.size)return;
+ return ()=>{
+  if(pool.sessions.get(encoded)!==entry||entry.invalid||entry.conservative||pool.dropped.has(encoded)||!entry.pending.size||entry.pending.size!==prior.size||!before.sameReplayContents(entry.walk))return;
+  for(const [node,attempt] of entry.pending) {
+   if(prior.get(node)!==attempt)return;
+   const [thread,id]=JSON.parse(node) as [string,string],excluded=read.get(thread,id);
+   if(thread!==key.threadId||excluded?.attempt_id!==attempt||excluded.reason!=='uncertain'||entry.walk.candidateSet.has(id))return;
+   const bound=stmt(db,`SELECT 1 FROM send_attempts a JOIN send_attempt_bindings b ON b.attempt_id=a.attempt_id AND b.binding_epoch=a.binding_epoch
+    WHERE a.attempt_id=? AND a.thread_id=? AND a.message_id=? AND a.delivery='uncertain' AND b.generation=? AND b.provider_instance_id=? AND b.active=1 AND b.sealed=0`).get(attempt,thread,id,generation,key.driverInstance);
+   if(!bound)return;
+  }
+  if(before.epochs.size!==entry.walk.epochs.size)return;
+  for(const [thread,epoch] of before.epochs)if(entry.walk.epochs.get(thread)!==epoch+(thread===key.threadId?prior.size:0))return;
+  assertSendReplayProof(entry.walk.toProof(),db);
+  const token=Object.freeze({}) as OwnPendingCertificate;
+  ownPendingCertificates.set(token,{db,entry,walk:entry.walk.fork(),key:encoded,generation,pending:new Map(entry.pending)});
+  onRollback(()=>ownPendingCertificates.delete(token));return token;
+ };
+}
+/** Does not clear pending or durable blocked. Never called by preparation,
+ * steer, room, fence, recall-free, or the ordinary session predicate. */
+export function ownPendingSessionCurrent(token:OwnPendingCertificate|undefined,key:SessionKey,generation:string):boolean {
+ if(!token)return false;
+ const c=ownPendingCertificates.get(token),db=database(),encoded=JSON.stringify([key.threadId,key.driverInstance,key.nativeSession]);
+ if(!c||c.db!==db||c.key!==encoded||c.generation!==generation)return false;
+ const pool=sessionPool(db),entry=pool.sessions.get(encoded);
+ if(entry!==c.entry||entry.invalid||entry.conservative||pool.dropped.has(encoded)||entry.pending.size!==c.pending.size||!entry.pending.size||!c.walk.sameReplayContents(entry.walk))return false;
+ for(const [node,attempt] of entry.pending){
+  if(c.pending.get(node)!==attempt)return false;
+  const [thread,id]=JSON.parse(node) as [string,string];
+  if(thread!==key.threadId)return false;
+  const bound=stmt(db,`SELECT 1 FROM send_attempts a JOIN send_attempt_bindings b ON b.attempt_id=a.attempt_id AND b.binding_epoch=a.binding_epoch
+   JOIN send_replay_exclusions e ON e.thread_id=a.thread_id AND e.message_id=a.message_id
+   WHERE a.attempt_id=? AND a.thread_id=? AND a.message_id=? AND a.delivery='uncertain' AND e.attempt_id=a.attempt_id AND e.reason='uncertain'
+   AND b.generation=? AND b.provider_instance_id=? AND b.active=1 AND b.sealed=0`).get(attempt,thread,id,generation,key.driverInstance);
+  if(!bound)return false;
+ }
+ if(entry.walk.epochs.root!==c.walk.epochs.root)return false;
+ try{assertSendReplayProof(entry.walk.toProof(),db);return true;}catch{return false;}
+}
+// Replay primitive and normalized durable-delta owner: new3-g5.
+// Accepted-write correlation producer owner: tri3-g7-d.
+export function currentSendReplaySessionProof(threadId: string, instanceId: string, sessionId: string): SendReplayProof | undefined {
+  const db = database();
+  try {
+    const session = heldReplaySession(db, threadId, instanceId, sessionId);
+    if (!session || session.invalid || session.pending.size) return;
+    const proof = session.walk.toProof(); store.setReplayProofSession(proof, session); assertSendReplayProof(proof, db); return proof;
+  } catch (error) { rethrowReplayShadow(error); return; }
+}
+export function isConfirmedReplayProof(proof: SendReplayProof): boolean { return store.replayProofSession(proof) !== undefined; }
+export function forgetSendReplaySessionProof(threadId: string, instanceId: string, sessionId: string): void {
+  const db = database(), pool = sessionPool(db), key = JSON.stringify([threadId, instanceId, sessionId]), entry = pool.sessions.get(key);
+  if (entry) removeSession(pool, entry);
+  pool.dropped.set(key, "R2"); invalidateDurableReplay(db, key);
+}
+export function replaceConfirmedReplayProof(target: SendReplayProof, next: SendReplayProof, ids: readonly string[], refreshWitness = false): void {
+  const linked = store.replayProofSession<ReplaySession>(target);
+  // A captured turn proof may still point at an older fork after the session
+  // advances. Refresh that alias without replacing the newer session walk.
+  const entry = !refreshWitness || linked?.walk === walkOf(target) ? linked : undefined, previous = walkOf(target), descriptors = Object.getOwnPropertyDescriptors(target);
+  onRollback(() => { Object.defineProperties(target, descriptors); if (previous) adoptReplayProof(target, previous.toProof()); });
+  adoptReplayProof(target, next);
+  if (entry) {
+    const db = database(), pool = sessionPool(db), oldWalk = entry.walk, oldThreads = entry.threadIds;
+    onRollback(() => { indexSession(pool, entry, false); pool.touched -= entry.walk.touched.size; entry.walk = oldWalk; entry.threadIds = oldThreads; pool.touched += oldWalk.touched.size; indexSession(pool, entry, true); });
+    indexSession(pool, entry, false); pool.touched -= oldWalk.touched.size;
+    entry.walk = walkOf(next)!; entry.threadIds = new Set([...entry.walk.epochs].map(([thread]) => thread)); pool.touched += entry.walk.touched.size; indexSession(pool, entry, true);
+    if (!entry.walk.withinCaps()) { removeSession(pool, entry, "R2"); return; }
+    if (entry.written) advanceDurableReplay(db, entry.key, entry.walk, ids, entry.pending.size > 0, entry.invalid);
+    capSessions(pool);
+  }
+}
+export function persistConfirmedSendReplayProofs(proofs: readonly SendReplayProof[]): void {
+  for (const proof of proofs) {
+    const entry = store.replayProofSession<ReplaySession>(proof);
+    if (entry?.written) advanceDurableReplay(database(), entry.key, entry.walk, [], entry.pending.size > 0, entry.invalid);
+  }
+}
+/** New delivered inputs extend the memo only at their tail. An existing
+ * candidate with newly disclosed copy roots is a real ancestry change and
+ * takes the exact full fallback, preserving both earlier and later roots. */
+export function extendConfirmedReplayProof(retained: SendReplayProof, turn: SendReplayProof, own: readonly string[]): void {
+  const db = database(), parent = walkOf(retained)!;
+  assertSendReplayProof(retained, db); assertSendReplayProof(turn, db);
+  const child = parent.fork(), ids = [...new Set([...turn.messageIds, ...own])];
+  let changedRoot = false;
+  for (const [id, roots] of turn.copyRoots) {
+    const prior = child.copyRoots.get(id) ?? [], union = new Map([...prior, ...roots].map(root => [JSON.stringify(root), root]));
+    if (union.size > 256) throw new Error("SEND_REPLAY_LIMIT");
+    if (child.candidateSet.has(id) && JSON.stringify([...union.values()]) !== JSON.stringify(prior)) changedRoot = true;
+    child.copyRoots.set(id, [...union.values()]);
+  }
+  let proof: SendReplayProof;
+  if (changedRoot) proof = captureSendReplayProof(parent.threadId, [...new Set([...parent.candidates, ...ids])], child.copyRoots, db);
+  else {
+    for (const id of ids) {
+      const excluded = child.add(id, db);
+      // An excluded historical candidate stays excluded; it was never delivered.
+      // Newly excluded candidates and every excluded owned input still refuse.
+      if (excluded && (!parent.excluded.has(id) || own.includes(id))) throw new Error("SEND_REPLAY_CHANGED");
+    }
+    proof = child.toProof();
+  }
+  replaceConfirmedReplayProof(retained, proof, ids);
+}
+
 /** The reader's side of a replay check. Null means content checks only. */
 export interface ReplayAudience {
   policyRevision: number; deletionEpoch: number; revoked(row: Disclosure): boolean;
@@ -252,6 +639,7 @@ export function messageSourceForgotten(threadId: string, messageId: string): boo
  * across calls under a counter key twice failed open, Astra TCFO r1 H1 / r2 H1-H2, so there is none). */
 const threadForgetsPass = new Map<string, { pass: number; writes: number; db: object; forgets: Array<{ at: number; forgetAt: number; id: string }> | "many" }>();
 const threadForgetsWork = { seeks: 0, lines: 0, rows: 0, reads: 0 };
+const missingForgetIndexes = new WeakSet<object>();
 /** The rows sourcesBad's positional meter charged (test hook: it equals the rows read). */
 const positionalWork = { paid: 0 };
 export function positionalPaidForTest(): number { return positionalWork.paid; }
@@ -262,9 +650,10 @@ const FORGET_FIRST_PAGE = ROWS_PER_NODE;
 /** Test hook: the forget-list range seeks, tombstone rows visited, listed-line key reads and positional row reads (cited line, turn_first,
  * parent) executed so far. */
 export function threadForgetsWorkForTest(): { seeks: number; lines: number; rows: number; reads: number } { return { ...threadForgetsWork }; }
-/** Whether the forget-list index is absent from the schema (not built yet, or dropped by a downgrade): asked only after the indexed read
- * failed, so the fallback is taken for a missing index and nothing else (Grok tcfo5 L). */
+/** Whether the forget-list index is absent from the schema (not built yet, or dropped by a downgrade): the fallback always checks the live schema, never the error wording (Grok tcfo5 L). */
 export function forgetIndexMissing(db: DatabaseLike): boolean {
+  if (!stmt(db, "SELECT 1 FROM pragma_index_info(?) LIMIT 1").get(TOMBSTONE_FORGETS_INDEX)) return true;
+  // WITHOUT ROWID tables also have index_info rows; retain the exact schema type check.
   return !stmt(db, "SELECT 1 FROM sqlite_schema WHERE type='index' AND name=?").get(TOMBSTONE_FORGETS_INDEX);
 }
 /** (TCFO-METER) A meter on the allowance itself, for a caller outside a judge: a bounded read is reserved (allowance.reserveRows) and the
@@ -285,16 +674,18 @@ function threadForgets(db: DatabaseLike, threadId: string, meter?: PositionalMet
   threadForgetsWork.seeks++;
   // (Astra TCFO r3 H2) at most FORGET_SCAN_MAX tombstone rows are visited: by the forgets index when it is built (only the owner's forgets),
   // else by the thread's range of the unique index (any reason). Past the bound the list is "many" (every generated line withheld: fail closed).
-  // (the index is asked for by using it: one statement per read, not a schema probe first; until it is built, or once a downgrade dropped it,
-  // the read turns to the bounded range scan. Which it is, the schema says (forgetIndexMissing), not the error's wording: an error with the
-  // index there is thrown on.)
+  // Recheck a known absence live instead of repeatedly compiling an impossible indexed query.
   const read = (limit: number): Array<Record<string, unknown>> => {
-    try {
-      return stmt(db, `SELECT target_id,created_at,1 AS kept FROM memory_tombstones INDEXED BY ${TOMBSTONE_FORGETS_INDEX} WHERE target_type='source' AND reason IN ('owner-forget','forgotten-supporting-source') AND target_id>=?1 AND target_id<?2 ORDER BY target_id LIMIT ?3`).all(prefix, `message:${threadId};`, limit);
-    } catch (error) {
-      if (!forgetIndexMissing(db)) throw error;
-      return stmt(db, `SELECT target_id,created_at,reason IN ('owner-forget','forgotten-supporting-source') AS kept FROM memory_tombstones WHERE target_type='source' AND target_id>=?1 AND target_id<?2 LIMIT ?3`).all(prefix, `message:${threadId};`, limit);
+    if (!missingForgetIndexes.has(db) || !forgetIndexMissing(db)) {
+      missingForgetIndexes.delete(db);
+      try {
+        return stmt(db, `SELECT target_id,created_at,1 AS kept FROM memory_tombstones INDEXED BY ${TOMBSTONE_FORGETS_INDEX} WHERE target_type='source' AND reason IN ('owner-forget','forgotten-supporting-source') AND target_id>=?1 AND target_id<?2 ORDER BY target_id LIMIT ?3`).all(prefix, `message:${threadId};`, limit);
+      } catch (error) {
+        if (!forgetIndexMissing(db)) throw error;
+        missingForgetIndexes.add(db);
+      }
     }
+    return stmt(db, `SELECT target_id,created_at,reason IN ('owner-forget','forgotten-supporting-source') AS kept FROM memory_tombstones WHERE target_type='source' AND target_id>=?1 AND target_id<?2 LIMIT ?3`).all(prefix, `message:${threadId};`, limit);
   };
   // (TCFO-METER) a metered caller reserves each bounded read before it is made and is charged the rows it read: a first page the size of one
   // node, and only when that is full the whole bound (its first rows read again, and paid again). A reservation that cannot be made throws
@@ -314,6 +705,7 @@ function threadForgets(db: DatabaseLike, threadId: string, meter?: PositionalMet
   if (raw.length > FORGET_SCAN_MAX || rows.length > 256) forgets = "many";
   else if (rows.length) meter?.pay(rows.length);
   if (forgets !== "many") for (const row of rows) {
+    chargeReleaseWork();
     threadForgetsWork.lines++;
     const id = String(row.target_id).slice(prefix.length);
     const line = stmt(db, "SELECT at FROM messages WHERE thread_id=? AND id=?").get(threadId, id);
@@ -349,6 +741,7 @@ export function positionalWithheld(threadId: string, messageIds: Iterable<string
   const line = stmt(db, "SELECT at,role,json_extract(json,'$.turnId') AS turn,json_extract(json,'$.parentId') AS parent FROM messages WHERE thread_id=? AND id=?");
   const atOf = (id: unknown) => { if (typeof id !== "string") return undefined; dep("m", threadId, id); pay(1); return done(stmt(db, "SELECT at FROM messages WHERE thread_id=? AND id=?").get(threadId, id))?.at; };
   for (const id of ids) {
+    chargeReleaseWork();
     dep("m", threadId, id);
     pay(1);
     const row = done(line.get(threadId, id));
@@ -357,6 +750,7 @@ export function positionalWithheld(threadId: string, messageIds: Iterable<string
     const at = Number(row.at);
     let start: number | undefined;
     for (const forget of forgets) {
+    chargeReleaseWork();
       if (forget.id === id || !(forget.at < at)) continue;
       if (at < forget.forgetAt) { out.add(id); break; }
       if (start === undefined) {
@@ -447,6 +841,12 @@ export class JudgeMemo<T> {
 /** The content half of a receipt check: every record and source the receipt
  * cites still exists at the version disclosed, and nothing of it was
  * forgotten. No reader access and no global counter is consulted. */
+function chargedSupersededThreadCheckpoint(...args: Parameters<typeof supersededThreadCheckpoint>): boolean {
+  // That helper performs at most two get() seeks on its own shared handle.
+  // Reserve both statements/rows before entering it; unused work is not refunded.
+  chargeReleaseStatement(); chargeReleaseStatement(); chargeReleaseWork(2);
+  return supersededThreadCheckpoint(...args);
+}
 export function contentRevoked(allowance: LineageAllowance, row: Disclosure, threadId: string, memo?: JudgeMemo<boolean>): boolean {
   try {
     const db = database();
@@ -459,11 +859,12 @@ export function contentRevoked(allowance: LineageAllowance, row: Disclosure, thr
     };
     const records: Array<{id:string;version:number}> = JSON.parse(String(row.record_versions));
     for (const record of records) {
+    chargeReleaseWork();
       const bad = once(`r\u0000${record.id}\u0000${record.version}`, () => {
         // (a deleted bot's scope refuses its records from the deletion's commit: deny.ts)
         const current = stmt(db, `SELECT r.state,r.kind,r.scope_id,${DENIED_RECORD_SCOPE("r")} AS denied FROM memory_records r WHERE r.id=? AND r.version=?`).get(record.id,record.version);
         recordDep(record.id, record.version, current, threadId);
-        if (!current || (current.state!=="active" && !supersededThreadCheckpoint(record.id,record.version,{threadId}))) return true;
+        if (!current || (current.state!=="active" && !chargedSupersededThreadCheckpoint(record.id,record.version,{threadId}))) return true;
         if (current.denied) return true;
         return Boolean(stmt(db, "SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(record.id,record.version));
       });
@@ -471,6 +872,7 @@ export function contentRevoked(allowance: LineageAllowance, row: Disclosure, thr
     }
     const sources: Array<{id:string;revision:number}> = JSON.parse(String(row.source_versions));
     for (const source of sources) {
+    chargeReleaseWork();
       dep("s", source.id);
       const bad = once(`s\u0000${source.id}\u0000${source.revision}`, () => {
         const current = stmt(db, `SELECT s.state,s.revision,s.thread_id,s.kind,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`).get(source.id);
@@ -524,6 +926,7 @@ export class BundleList implements Iterable<string> {
   append(ids: BundleList | readonly string[]): number {
     let added = 0;
     for (const chunk of ids instanceof BundleList ? ids.chunks : [ids as readonly string[]]) {
+    chargeReleaseWork();
       if (!chunk.length) continue;
       this.starts.push(this.length + added); this.chunks.push(chunk.slice()); added += chunk.length;
     }
@@ -728,6 +1131,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
       let total = 0;
       const count = stmt(db, "SELECT count(*) AS n FROM (SELECT 1 FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? AND rowid<=? LIMIT ?)");
       for (const session of sessions) {
+    chargeReleaseWork();
         total += Number(count.get(thread, session.d, session.ns, session.c, limit - total)?.n ?? 0);
         if (total >= limit) break;
       }
@@ -759,6 +1163,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     /** The groups of one stretch of receipts all hold on content, and what each rests on joins `consulted`. */
     const groupsSound = (groups: ReceiptGroup[], consulted: Set<string>): boolean => {
       for (const group of groups) {
+    chargeReleaseWork();
         // judged at the depth of the check that asked: a session's receipts each cite the reply before, and judging them all at depth 0 left nothing to
         // bound the recursion down a conversation (it overflowed the stack at about 250 replies, and every reply of the window was withheld)
         if (groupBad(group, depth)) return false;
@@ -830,6 +1235,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     if (!reached.length) return fallback(thread, messageIds);
     const covers: string[] = [];
     for (const row of reached) {
+    chargeReleaseWork();
       const cover = provePrefix(cache, thread, String(row.d), String(row.ns), Number(row.c), depth);
       if (cover === null) return fallback(thread, messageIds);
       if (cover) covers.push(cover);
@@ -952,6 +1358,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     if (wholeThread) {
       const any = stmt(db, "SELECT 1 FROM memory_disclosure_outputs WHERE thread_id=? AND message_id=? LIMIT 1");
       for (const message of messageIds) {
+    chargeReleaseWork();
         dirtyMessage(thread, message);
         charge();
         if (any.get(thread, message)) { hits.push(message); if (first) break; }
@@ -973,6 +1380,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
       if (earliest) return earliest;
       earliest = new Map();
       for (const row of stmt(db, "SELECT driver_instance,native_session,rowid AS seq FROM memory_disclosures WHERE bundle_id IN (SELECT value FROM json_each(?)) AND native_session IS NOT NULL").all(bundleJson)) {
+    chargeReleaseWork();
         const key = `${String(row.driver_instance)}${SEP}${String(row.native_session)}`, at = Number(row.seq);
         if ((earliest.get(key)?.at ?? Infinity) > at) earliest.set(key, { driver: String(row.driver_instance), session: String(row.native_session), at });
       }
@@ -980,6 +1388,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
       return earliest;
     };
     for (const message of messageIds) {
+    chargeReleaseWork();
       dirtyMessage(thread, message);
       charge();
       // a few bundles: probe them, no count needed
@@ -1000,6 +1409,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
   const anyProducerBad = (thread: string, messageIds: readonly string[], depth: number, alsoBad?: (group: ReceiptGroup) => boolean): boolean => {
     const { groups, exact } = producers(thread, messageIds, depth);
     for (const group of groups) {
+    chargeReleaseWork();
       if (exact) { if (alsoBad?.(group) || groupBad(group, depth)) return true; continue; }
       // Judging the whole thread meets groups that list none of these
       // messages, among them the one being judged right now: their lineage
@@ -1118,10 +1528,12 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
       charge(1+refs.length+direct.length);
       const sourceIds = new Set(direct.map(source=>source.id));
       for (const source of direct) {
+    chargeReleaseWork();
         const current = sourceRow(source.id);
         if (!current || current.state!=="active" || current.revision!==source.revision) return true;
       }
       for (const ref of refs) {
+    chargeReleaseWork();
         const verdict = refBad(ref, own);
         if (verdict.bad) return true;
         for (const sourceId of verdict.sources) sourceIds.add(sourceId);
@@ -1140,7 +1552,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
       recordDep(ref.id, ref.version, current, own);
       // A receipt's own thread checkpoint, superseded since, is stale there, not
       // revoked (checkpoints.ts), wherever the receipt is read from.
-      if (!current || (current.state!=="active" && !supersededThreadCheckpoint(ref.id,ref.version,{threadId:own})) || stmt(db, "SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(ref.id,ref.version)) return {bad:true,sources};
+      if (!current || (current.state!=="active" && !chargedSupersededThreadCheckpoint(ref.id,ref.version,{threadId:own})) || stmt(db, "SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(ref.id,ref.version)) return {bad:true,sources};
       // An owner's correction does not carry the old words, so the version
       // it replaced is history, not evidence (recordRestsOnWithheldMessage).
       const parents = stmt(db, `WITH RECURSIVE parents(id,version) AS (
@@ -1176,15 +1588,18 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
         const self = stmt(db, "SELECT supersedes_id FROM memory_records WHERE id=? AND version=?").get(ref.id,ref.version);
         if (self?.supersedes_id) replacing.add(String(self.supersedes_id));
         for (const edge of edges) {
+    chargeReleaseWork();
           const history = replacing.has(String(edge.parent_id)) && (edge.state==="superseded" || edge.state==="archived");
           if (!edge.state || (edge.state!=="active" && !history) || stmt(db, "SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(edge.parent_id,edge.parent_version)) return {bad:true,sources};
         }
       }
       for (const parent of parents) {
+    chargeReleaseWork();
         const evidence = stmt(db, "SELECT e.source_id,e.source_revision,s.revision,s.state FROM memory_evidence e LEFT JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=? LIMIT 1025").all(parent.id,parent.version);
         if (evidence.length > 1024) throw limit();
         charge(evidence.length);
         for (const source of evidence) {
+    chargeReleaseWork();
           dep("s", String(source.source_id));
           if (source.state!=="active" || source.revision!==source.source_revision) return {bad:true,sources};
           sources.push(String(source.source_id));
@@ -1206,6 +1621,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
   const sourcesBad = (sourceIds: ReadonlySet<string>, depth: number): boolean => {
     const replies = new Map<string,string[]>();
     for (const sourceId of sourceIds) {
+    chargeReleaseWork();
       charge();
       const source = sourceRow(sourceId);
       if (!source || source.state!=="active") return true;
@@ -1217,6 +1633,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
       list.push(message);
     }
     for (const [thread, cited] of replies) {
+    chargeReleaseWork();
       let messages = cited;
       if (audience === null) {
         // On content (no reader), a cited reply already judged is not walked again: its verdict is the one the replay
@@ -1233,6 +1650,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
         };
         const unjudged: string[] = [];
         for (const message of messages) {
+    chargeReleaseWork();
           const known = keptVerdict(thread, message);
           if (known === undefined) unjudged.push(message);
           else if (settle(message, known)) return true;
@@ -1254,6 +1672,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
       if (positionalWithheld(thread, messages, judgeMeter()).size) return true;
       if (anyProducerBad(thread, messages, depth+1)) return true;
       for (const message of messages) {
+    chargeReleaseWork();
         // a reply made without a receipt rests on the replies its context carried
         if (rootsBad(thread, message, depth+1)) return true;
         // a copy used as evidence carries its original's lineage
@@ -1289,12 +1708,14 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
       const positional = deniedThread ? new Set<string>() : positionalWithheld(thread, pending, judgeMeter());
       const rest: string[] = [];
       for (const message of pending) {
+    chargeReleaseWork();
         if (deniedThread || positional.has(message) || forgotten.has(`message:${thread}:${message}`)) rootVerdicts.set(rootKey(thread, message), true); else rest.push(message);
       }
       if (rest.length) {
         const { groups, exact } = producers(thread, rest, depth);
         const bad: string[] = [];
         for (const group of groups) {
+    chargeReleaseWork();
           let verdict: boolean;
           try { verdict = groupBad(group, depth+1); }
           catch (error) {
@@ -1307,6 +1728,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
         }
         const hit = new Set(bad.length ? listingAny(thread, bad, rest, false) : []);
         for (const message of rest) {
+    chargeReleaseWork();
           rootVerdicts.set(rootKey(thread, message), hit.has(message));
           if (!hit.has(message)) soundReplies.set(rootKey(thread, message), true);
         }
@@ -1326,6 +1748,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     const sizes = new Map(stmt(db, "SELECT set_id,size FROM memory_root_sets WHERE set_id IN (SELECT value FROM json_each(?))").all(json).map(row => [String(row.set_id), Number(row.size)]));
     const live: string[] = [];
     for (const id of pending) {
+    chargeReleaseWork();
       const size = sizes.get(id);
       if (size === undefined || size > rootCeiling()) { setVerdicts.set(id, true); out.add(id); } else live.push(id);
     }
@@ -1336,6 +1759,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     if (kept) {
       const cache = handles();
       for (const id of live) {
+    chargeReleaseWork();
         // in a time-boxed background slice a set more than one chunk large that is not proven whole gets a proof of its own before anything of it is
         // read (building its handle reads its rows)
         if (sliceDeadline !== Infinity && sizes.get(id)! > soundChunk() && !kept.has(readerKey ? `R${SEP}${readerKey}${SEP}${id}` : `R${SEP}${id}`) && !kept.has(wholeProofKey(id, readerKey))) {
@@ -1357,6 +1781,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     const scratchKept = new Map<string, Verdict>();
     const cache = handles();
     for (const id of live) {
+    chargeReleaseWork();
       const handle = storedHandle(cache, id, sizes.get(id)!, allowance.meter(threadId));
       const bad = !handle || replaySetBad(scratchKept, handle, depth, (key, entry) => { scratchKept.set(key, entry); return true; });
       setVerdicts.set(id, bad);
@@ -1371,6 +1796,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
   const chunkBad = (keys: readonly string[], depth: number, consulted: Set<string>): boolean => {
     const byThread = new Map<string, string[]>();
     for (const key of keys) {
+    chargeReleaseWork();
       const cut = key.indexOf("\u0000"), thread = key.slice(0, cut);
       let list = byThread.get(thread);
       if (!list) byThread.set(thread, list = []);
@@ -1516,6 +1942,8 @@ function replayExclusionsWork(allowance: LineageAllowance, threadId: string, mes
       }
       for (const id of positional) excluded.add(id);
     }
+    const attempts = captureSendReplayProof(threadId, messages.map(m => m.id), replayCopyRoots(messages));
+    for (const id of attempts.excludedIds) { excluded.add(id); options.checking?.delete(id); }
     return excluded;
   }));
 }
@@ -1528,6 +1956,7 @@ function writetimeContentWithheld(db: DatabaseLike, threadId: string, messages: 
   if (!messages.length) return out;
   const verdicts = denyLookup(db, { threadId, lines: messages.map(message => ({ messageId: message.id, author: message.role === "user" ? "owner" as const : "generated" as const })) }, { audience: null });
   for (const message of messages) {
+    chargeReleaseWork();
     const verdict = verdicts.get(message.id);
     if (verdict?.state === "shown") continue;
     out.add(message.id);
@@ -1548,6 +1977,7 @@ function retiredExclusions(threadId: string, messages: readonly ReplayMessage[],
   const excluded = writetimeContentWithheld(db, threadId, messages, options.checking);
   // a copy is withheld with its original (its own line carries the original too; this covers a copy not yet written, the egress probe)
   for (const message of messages) {
+    chargeReleaseWork();
     if (!message.copyOf || excluded.has(message.id)) continue;
     const origin = message.copyOf;
     const roles = new Map(stmt(db, "SELECT id,role FROM messages WHERE thread_id=? AND id IN (SELECT value FROM json_each(?))").all(origin.threadId, JSON.stringify(origin.messageIds)).map(row => [String(row.id), String(row.role)]));
@@ -1893,6 +2323,7 @@ function currentThreadGroups(db: DatabaseLike, thread: string): ReceiptGroup[] |
         const merged = held.groups, at = held.at;
         let added = 0;
         for (const group of fresh) {
+    chargeReleaseWork();
           added += group.bundles.length;
           const index = at.get(groupShape(group.row));
           if (index === undefined) { at.set(groupShape(group.row), merged.length); merged.push(group); continue; }
@@ -2133,6 +2564,7 @@ function drainDirty(db: ReturnType<typeof database>): void {
   if (!rows.length) return;
   const keys = new Set<string>();
   for (const row of rows) {
+    chargeReleaseWork();
     const key = String(row.k);
     // a receipt of this thread was changed or removed: the kept groups of the thread are read afresh
     if (key.startsWith(`d${SEP}`)) { store.loseGroups(key.slice(2), "dirty"); continue; }
@@ -2166,7 +2598,8 @@ export function ancestryWithheld(db: DatabaseSync, thread: string): boolean {
 export function databaseStamp(): string | undefined {
   if (database().isTransaction) return undefined;
   const row = stmt(database(), "SELECT total_changes() AS changes, (SELECT data_version FROM pragma_data_version) AS version").get();
-  return `${connectionId(database())}.${row?.changes}:${row?.version}`;
+  // Hexadecimal connection ids can begin with the trigger stamp prefix.
+  return `d${connectionId(database())}.${row?.changes}:${row?.version}`;
 }
 /** Commits by another connection (1.0.2 lineage-cold r3). This connection's triggers do not see them, so a commit nothing accounted for moves
  * the generation, which drops the cache as before (fail closed). A commit made through foreignLineageWrite is accounted for: the writing
@@ -2297,11 +2730,13 @@ const keepRefused = (): boolean => txnTainted && database().isTransaction;
  * used was forgotten, deleted or changed, or it is a copy of a message that
  * is. Checks it cannot finish withhold it. */
 export function capturedMessageWithheld(allowance: LineageAllowance, threadId: string, messageId: string): boolean {
+  if (captureSendReplayProof(threadId, [messageId]).excludedIds.has(messageId)) return true;
   return capturedMessageVerdicts(allowance, threadId, [messageId]).get(messageId)!.withheld;
 }
 /** The same answer with why: `unproven` when it is withheld only because the check could not finish (shown as "still being checked",
  * never as deleted or changed). */
 export function capturedMessageVerdict(allowance: LineageAllowance, threadId: string, messageId: string): { withheld: boolean; unproven: boolean } {
+  if (captureSendReplayProof(threadId, [messageId]).excludedIds.has(messageId)) return { withheld: true, unproven: false };
   const verdict = capturedMessageVerdicts(allowance, threadId, [messageId]).get(messageId)!;
   return { withheld: verdict.withheld, unproven: verdict.withheld && verdict.unproven };
 }
@@ -2382,6 +2817,7 @@ const judging = new Map<string, { batch: number; size: number }>();
 function judgeCapturedMessages(allowance: LineageAllowance, threadId: string, messageIds: readonly string[]): Map<string, Verdict> {
   const cache = verdictCache(), out = new Map<string, Verdict>(), pending: string[] = [];
   for (const messageId of new Set(messageIds)) {
+    chargeReleaseWork();
     const key = messageVerdictKey(threadId, messageId);
     const cached = cache?.get(key), known = cached ?? scratch?.get(key);
     if (known === undefined) { pending.push(messageId); continue; }
@@ -2405,6 +2841,7 @@ function judgeCapturedMessages(allowance: LineageAllowance, threadId: string, me
   }
   const keys = pending.map(messageId => JSON.stringify([threadId, messageId]));
   for (const key of keys) {
+    chargeReleaseWork();
     const owner = judging.get(key);
     if (!owner) continue;
     if (owner.size > 1) throw new LineageSplit(owner.batch);
@@ -2500,6 +2937,7 @@ function derivationAncestryCurrentWork(allowance: LineageAllowance, db: Database
   const replacing = new Set(edges.map(edge => String(edge.supersedes_id ?? "")));
   if (typeof selfSupersedes === "string" && selfSupersedes) replacing.add(selfSupersedes);
   for (const edge of edges) {
+    chargeReleaseWork();
     // the first edge of an owner correction is history (see the walk above)
     if (edge.assertion === "owner-statement" && edge.supersedes_id === edge.parent_id) continue;
     // a parent forgotten by what it rests on (a forgotten or deleted source, a deleted conversation or bot) takes its copies with it
@@ -2522,7 +2960,9 @@ const DERIVATION_PAGE = 4, DERIVATION_EDGE_ROWS = 4;
  * (what its reply used was forgotten, deleted, changed or archived). The
  * owner's and a person's own words are never withheld this way. */
 export function capturedSourceWithheld(allowance: LineageAllowance, source: {thread_id?: unknown; message_id?: unknown; speaker?: unknown}): boolean {
-  if (typeof source.thread_id !== "string" || typeof source.message_id !== "string" || !generatedSpeaker(source.speaker)) return false;
+  if (typeof source.thread_id !== "string" || typeof source.message_id !== "string") return false;
+  if (captureSendReplayProof(source.thread_id, [source.message_id]).excludedIds.has(source.message_id)) return true;
+  if (!generatedSpeaker(source.speaker)) return false;
   return capturedMessageWithheld(allowance, source.thread_id, source.message_id);
 }
 
@@ -2530,7 +2970,7 @@ export function capturedSourceWithheld(allowance: LineageAllowance, source: {thr
  * memory search and the thread checkpoint leave it out, so a withheld reply
  * does not come back as a remembered line. `alsoWithheld` adds a reader's
  * own transcript rule (a room turn that is not the owner's). */
-function recordRestsOnWithheldMessageWork(allowance: LineageAllowance, recordId: string, version: number, alsoWithheld?: (threadId: string, messageId: string, allowance: LineageAllowance) => boolean): boolean {
+function recordRestsOnWithheldMessageWork(allowance: LineageAllowance, recordId: string, version: number, alsoWithheld?: (threadId: string, messageId: string, allowance: LineageAllowance, verdict?: { checking?: boolean }) => boolean, requireComplete = false): boolean {
   // The record and every record it was derived from (an approved projection
   // carries no evidence of its own): a line resting on a withheld reply
   // anywhere up that chain rests on it.
@@ -2540,7 +2980,11 @@ function recordRestsOnWithheldMessageWork(allowance: LineageAllowance, recordId:
   const db = database();
   // retired (S6): the record's own write-time mark first (the marker walks evidence and derivations from a denied line); a record it does not
   // show is withheld whatever its chain holds. The chain walk below then still answers a reader's own transcript rule (`alsoWithheld`).
-  if (readTimeRetired(db) && memoryLookup(db, [{ kind: "record", id: recordId, version }], { audience: null }).get(memoryRefKey({ kind: "record", id: recordId, version }))?.state !== "shown") return true;
+  if (readTimeRetired(db)) {
+    const verdict=memoryLookup(db, [{ kind: "record", id: recordId, version }], { audience: null }).get(memoryRefKey({ kind: "record", id: recordId, version }));
+    if (requireComplete && (!verdict || verdict.state === "checking")) throw new MemoryPinProjectionPending();
+    if (verdict?.state !== "shown") return true;
+  }
   verdictCache();  // brings the chain cache up to date with the stamp
   const stamp = verdictStamp, chainKey = `${recordId}${SEP}${version}`;
   // chains is a judge-only memo (r15 sec. 4, Fable L3: OPERATIONAL): a verdict hit never reads it, so reading it marks no handle use on the trace
@@ -2557,14 +3001,14 @@ function recordRestsOnWithheldMessageWork(allowance: LineageAllowance, recordId:
     // and the rest only when the first was full
     // a read the allowance cannot cover is not made: the record counts as resting on a withheld reply for now; a read made pays for its rows
     const reserve = (count: number): boolean => { try { allowance.reserveRows("", count); return true; } catch (error) { if (isLineageLimit(error)) return false; throw error; } };
-    if (!reserve(66 * 2)) return true;
+    if (!reserve(66 * 2)) { if(requireComplete)throw new MemoryPinProjectionPending();return true; }
     const length = Number(stmt(db, `${chain} SELECT count(*) AS n FROM chain`).get(recordId, version)?.n ?? 0);
     allowance.spendRows("", Math.max(1, length) * 2);
     if (length > 64) rows = "long";
     else {
       const read = (limit: number) => stmt(db, `${chain} SELECT DISTINCT s.thread_id,s.message_id,s.speaker FROM chain c JOIN memory_evidence e ON e.record_id=c.id AND e.record_version=c.version
         JOIN memory_sources s ON s.id=e.source_id WHERE s.thread_id IS NOT NULL AND s.message_id IS NOT NULL LIMIT ?`).all(recordId, version, limit);
-      if (!reserve(257 * 2)) return true;
+      if (!reserve(257 * 2)) { if(requireComplete)throw new MemoryPinProjectionPending();return true; }
       const found = read(257);
       allowance.spendRows("", Math.max(1, found.length) * 2);
       rows = found.length > 256 ? "many" : found.map(row => ({ thread: String(row.thread_id), message: String(row.message_id), generated: generatedSpeaker(row.speaker) }));
@@ -2572,7 +3016,28 @@ function recordRestsOnWithheldMessageWork(allowance: LineageAllowance, recordId:
     if (stamp !== undefined && lineageStamp() === stamp) chains.set(chainKey, rows);
   }
   if (rows === "long" || rows === "many") return true;
-  return rows.some(row => row.generated && (capturedMessageWithheld(allowance, row.thread, row.message) || Boolean(alsoWithheld?.(row.thread, row.message, allowance))));
+  // The chain cache stores identities, not eligibility. Failed owner inputs
+  // and their copied evidence must be checked on every recall, even when the
+  // generated-message lineage verdict was already warm.
+  const candidates = new Map<string, string[]>();
+  for (const row of rows) {
+    let ids = candidates.get(row.thread);
+    if (!ids) candidates.set(row.thread, ids = []);
+    ids.push(row.message);
+  }
+  for (const [thread, ids] of candidates) if (captureSendReplayProof(thread, ids).excludedIds.size) return true;
+  return rows.some(row => {
+    if (row.generated) {
+      const verdict = capturedMessageVerdict(allowance, row.thread, row.message);
+      if (requireComplete && verdict.unproven) throw new MemoryPinProjectionPending();
+      if (verdict.withheld) return true;
+    }
+    const audience: { checking?: boolean } = {};
+    const withheld = alsoWithheld?.(row.thread, row.message, allowance, audience) === true;
+    // PIN-6: an unfinished audience lookup is not a decided pin omission.
+    if (requireComplete && audience.checking) throw new MemoryPinProjectionPending();
+    return withheld;
+  });
 }
 
 /** A reply made under a memory receipt, built on one (its output roots),
@@ -2706,6 +3171,7 @@ function outputRootsForWork(allowance: LineageAllowance, lines: ReadonlyArray<{ 
   // reply may repeat it, so forgetting it withholds the reply (1.0.2 r3). The turn's own thread needs none: positionalWithheld.
   try {
     for (const line of lines) {
+    chargeReleaseWork();
       if (home !== undefined && line.threadId !== home) { found.roots.add(rootKey(line.threadId, line.id)); if (found.roots.size > rootCeiling()) found.over = true; }
       if (line.role !== "user") visit(line.threadId, line.id, line.copyOf, 0);
     }
@@ -2821,6 +3287,7 @@ export function recordSessionRoots(threadId: string, driverInstance: string, nat
 function flatRootsBad(allowance: LineageAllowance, keys: Iterable<string>): boolean {
   const byThread = new Map<string, string[]>();
   for (const key of keys) {
+    chargeReleaseWork();
     memberWork++;
     const at = key.indexOf("\u0000"), thread = key.slice(0, at);
     let list = byThread.get(thread);
@@ -2829,6 +3296,7 @@ function flatRootsBad(allowance: LineageAllowance, keys: Iterable<string>): bool
   }
   const db = database();
   for (const [thread, messages] of byThread) {
+    chargeReleaseWork();
     // a deleted conversation, or a root written after a line the owner forgot (positionalWithheld)
     if (stmt(db, "SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(thread) || positionalWithheld(thread, messages, allowanceMeter(allowance, thread)).size) return true;
     // forgotten roots, read in batches rather than one query per root
@@ -2935,6 +3403,7 @@ export function advanceRootSetProofs(budget: number, sliceMs = Infinity): { memb
   sliceDeadline = sliceMs === Infinity ? Infinity : performance.now() + sliceMs * 0.75; sliceProgressed = false; sliceWorkEnd = memberWork + Math.max(0, budget);
   try {
     for (const [key, state] of [...proving]) {
+    chargeReleaseWork();
       if (left <= 0 || (sliceProgressed && performance.now() > sliceDeadline)) break;
       if (proving.get(key) !== state) continue;
       let step: { members: number; finished: boolean; waiting?: boolean };
@@ -3128,7 +3597,7 @@ export function sourceAwaitsProof(allowance: LineageAllowance, source: Record<st
 }
 /** The same rule for one captured source (checkpoint maintenance). */
 export function sourceIsWithheldMessage(allowance: LineageAllowance, source: Record<string, unknown>): boolean {
-  return Boolean(source.thread_id && source.message_id && generatedSpeaker(source.speaker) && capturedMessageWithheld(allowance, String(source.thread_id), String(source.message_id)));
+  return capturedSourceWithheld(allowance, source);
 }
 
 /** A session that was shown memory before output lineage began (memory
