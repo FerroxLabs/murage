@@ -239,10 +239,10 @@ async function base() {
       clock = at;
       const from = thread.room ? color(memberBot(thread.room, r)) : undefined;
       const rows = turnRows(parent, at, between(Math.max(0, S.chipsPerTurn - 2), S.chipsPerTurn + 2, r), from, thread.kind === "feed", r);
-      // one unanswered question card from about two years ago in the longest thread (SCALE-PLAN D2)
+      // Historical engine waits cannot survive an upgrade; this two-year-old legacy fixture is terminal (r3.1 A5a).
       if (thread === sableMain && !oldCard && at > START + 365 * DAY) {
         oldCard = true;
-        rows.push({ id: seededUuid(), at: at + 1, parentId: rows[rows.length - 1].id, role: "bot", kind: "options", text: "Which vendor should I shortlist?", card: { requestId: `req-${seededUuid()}`, question: "Which vendor should I shortlist?", options: [{ label: "Acme" }, { label: "Globex" }] } });
+        rows.push({ id: seededUuid(), at: at + 1, parentId: rows[rows.length - 1].id, role: "bot", kind: "options", text: "Which vendor should I shortlist?", card: { requestId: `req-${seededUuid()}`, question: "Which vendor should I shortlist?", options: [{ label: "Acme" }, { label: "Globex" }], orphaned: true, answered: "Expired (upgrade)" } });
       }
       batch.push(...rows); parent = rows[rows.length - 1].id;
       if (batch.length >= 20_000) flush();

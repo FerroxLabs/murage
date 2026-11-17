@@ -14,6 +14,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import { CAPABILITY_DB_REV, CAPABILITY_ENTRIES } from "./capability-db.ts";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
+import { SECTION_PAGES } from "../src/lib/settings-pages";
+import { SETTINGS_CARDS, cardLabel } from "../src/lib/settings-card-registry";
+import en from "../src/locales/en.json";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const script = join(root, "scripts", "build-capability-db.mjs");
@@ -52,13 +55,55 @@ const entry = (files: Map<string, { entries: Record<string, unknown>[] }>, id: s
 };
 
 const SLICE = [
-  "apps.bot-email", "apps.chat-approval-buttons", "apps.own-browser", "apps.webhook-routines", "bots.channel-turns", "bots.rename-chief",
+  "apps.bot-email", "apps.chat-approval-buttons", "apps.own-browser", "apps.web-read", "apps.webhook-routines", "bots.channel-turns", "bots.rename-chief",
   "engines.continue-with-chatgpt-grok", "engines.default-models", "engines.grok-images", "engines.muse-code", "engines.openai-compatible-tools", "engines.set-up-claude-code", "engines.set-up-from-the-app", "engines.use-my-subscription",
   "install-account.policy-lock", "install-account.ubuntu-computer-control", "limits.plan-usage", "limits.spending-per-bot",
   "memory.learn-about-me", "memory.pin",
+  "settings.notification-chooser", "settings.review-and-approve-all", "settings.search-chief-fallback",
+  "skills.library",
 ];
 
+// Every bullet under "## New" in release-notes/1.0.19.md, by its bold title, and the capability entries that answer it.
+const NEW_IN_1019: Record<string, string[]> = {
+  "The whole library, within reach.": ["skills.library"],
+  "Read before you add.": ["skills.library"],
+  "Settings, all in one place.": ["settings.search-chief-fallback"],
+  "Pick how Murage reaches you.": ["settings.notification-chooser"],
+  "Read beyond the search result.": ["apps.web-read"],
+  "Review the whole change.": ["settings.review-and-approve-all"],
+};
+
 describe("capability database", () => {
+  it("reads localized, shared and literal card names from the rendered registry", async () => {
+    const { buildNavigation } = await import("../scripts/build-capability-db.mjs");
+    const { cards } = buildNavigation();
+    expect(cards.get("memory/browser")?.label).toBe("Open memory");
+    expect(cards.get("general/send-key")?.label).toBe("Sending messages");
+    expect(cards.get("connections/bot-email")?.label).toBe("Bot email");
+    expect(cards.get("connections/phone-calls")?.label).toBe("Phone calls");
+    expect(cards.get("about/health")?.label).toBe("Health");
+    expect(cards.get("usage/spend-limit")?.label).toBe("Monthly spending notice");
+  });
+
+  it("reads every current Settings page and preserves each card's stable identity and actual page", async () => {
+    const { buildNavigation } = await import("../scripts/build-capability-db.mjs");
+    const navigation = buildNavigation();
+    expect([...navigation.pages.values()]).toEqual(SECTION_PAGES.map((page) => ({
+      id: page.id, label: en[`settings.page.${page.id}`], desktopOnly: Boolean(page.desktopOnly),
+    })));
+    expect([...navigation.cards.keys()].sort()).toEqual(SETTINGS_CARDS.map((card) => card.id.replace(".", "/")).sort());
+    for (const card of SETTINGS_CARDS) {
+      expect(navigation.cards.get(card.id.replace(".", "/")), card.id).toEqual({
+        id: card.id, page: card.section, anchor: card.anchor, advanced: card.advanced, surface: card.surface,
+        label: cardLabel(card),
+      });
+    }
+    expect(navigation.paths.get("Settings → Computer & browser → Built-in browser")).toEqual({
+      owner: "card:companion/browser", page: "computer", desktopOnly: true,
+    });
+    expect(navigation.paths.has("Settings → Phone and other devices → Built-in browser")).toBe(false);
+  });
+
   it("is valid and the generated file is fresh (recomputed from the sources, never the committed inventory)", () => {
     const result = run(["--check"]);
     expect(result.out).toContain("capability db up to date");
@@ -69,6 +114,98 @@ describe("capability database", () => {
     expect(CAPABILITY_ENTRIES.map((record) => record.capability).sort()).toEqual(SLICE);
     for (const record of CAPABILITY_ENTRIES) expect(record.id).toBe(`cap:${record.capability}`);
     expect(CAPABILITY_DB_REV).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("has a since-1.0.19 entry for every feature marked New in the 1.0.19 release notes", () => {
+    const notes = readFileSync(join(root, "release-notes", "1.0.19.md"), "utf8");
+    const section = notes.split(/^## New\s*$/m)[1]?.split(/^## /m)[0] ?? "";
+    const titles = [...section.matchAll(/^- \*\*(.+?)\*\*/gm)].map((match) => match[1]);
+    expect(titles.length).toBeGreaterThan(0);
+    // A new New bullet with no mapping here fails: add the entry, then name it.
+    expect(titles.sort()).toEqual(Object.keys(NEW_IN_1019).sort());
+    const yamlEntries = readdirSync(join(root, "shared", "capabilities")).filter((file) => file.endsWith(".yaml"))
+      .flatMap((file) => parse(readFileSync(join(root, "shared", "capabilities", file), "utf8")).entries as { id: string; since?: string; verified?: string }[]);
+    for (const id of new Set(Object.values(NEW_IN_1019).flat())) {
+      expect(CAPABILITY_ENTRIES.some((candidate) => candidate.capability === id), id).toBe(true);
+      const source = yamlEntries.find((candidate) => candidate.id === id);
+      expect(String(source?.since), id).toBe("1.0.19");
+      expect(String(source?.verified), id).toBe("1.0.19");
+    }
+  });
+
+  const row = (id: string) => {
+    const found = CAPABILITY_ENTRIES.find((candidate) => candidate.capability === id);
+    expect(found, id).toBeDefined();
+    return found!;
+  };
+
+  it("pins the answer and applicability for skills.library", () => {
+    const skills = row("skills.library");
+    expect(skills.status).toBe("can");
+    expect(skills.answer).toContain("2,247 skills across 141 topics");
+    expect(skills.answer).toContain("Save as my copy");
+    expect(skills.answer).toContain("Go back to the original");
+    expect(skills.limits).toContain("Skill Guard checks a skill before a bot can use it");
+    expect(skills.limits).toContain("desktop app only");
+    expect(skills.platforms).toEqual(["mac", "windows", "linux"]);
+    expect(skills.engines).toEqual(["all"]);
+  });
+
+  it("pins the answer and applicability for apps.web-read", () => {
+    const web = row("apps.web-read");
+    expect(web.status).toBe("can");
+    expect(web.answer).toContain("read it with Murage");
+    expect(web.limits).toContain("16,000 characters");
+    expect(web.limits).toContain("untrusted text");
+    expect(web.limits).toMatch(/OpenClaw and Box Agent read pages with their own tools/);
+    expect(web.engines).not.toContain("openclaw");
+    expect(web.engines).not.toContain("all");
+    for (const engine of ["fuigo", "claude", "codex", "gemini"]) expect(web.engines).toContain(engine);
+    expect(web.applies).not.toMatch(/OpenClaw|Box Agent|every engine/);
+    expect(web.limits).toContain("so may some agent engines");
+  });
+
+  it("pins the answer and applicability for engines.default-models", () => {
+    const models = row("engines.default-models");
+    expect(models.answer).toContain("Claude Sonnet 5.5");
+    expect(models.answer).toContain("Claude Fable 5.2 (whether your Claude Code version accepts it is separate)");
+    expect(models.answer).toContain("GPT-6.1 Sol");
+    expect(models.limits).toContain("Fuigo 1.0.43");
+    expect(models.platforms).toEqual(["mac", "windows", "linux", "cloud"]);
+    expect(models.engines).toEqual(["claude", "codex"]);
+    const modelSource = parse(readFileSync(join(SOURCE, "engines.yaml"), "utf8")).entries
+      .find((candidate: { id: string }) => candidate.id === "engines.default-models");
+    expect(String(modelSource?.verified)).toBe("1.0.19");
+  });
+
+  it("pins the answer and applicability for settings.search-chief-fallback", () => {
+    const search = row("settings.search-chief-fallback");
+    expect(search.status).toBe("can");
+    expect(search.answer).toContain("ask your Chief of Staff");
+    expect(search.limits).toContain("only once you have a bot to ask");
+    expect(search.engines).toEqual(["all"]);
+  });
+
+  it("pins the answer and applicability for settings.notification-chooser", () => {
+    const chooser = row("settings.notification-chooser");
+    expect(chooser.status).toBe("can");
+    expect(chooser.answer).toContain("It lists what your computer supports");
+    expect(chooser.limits).toContain("The chooser is in the desktop app");
+    expect(chooser.platforms).toEqual(["mac", "windows", "linux"]);
+  });
+
+  it("pins the answer and applicability for settings.review-and-approve-all", () => {
+    const review = row("settings.review-and-approve-all");
+    expect(review.status).toBe("can");
+    expect(review.answer).toMatch(/Approve all/);
+    expect(review.limits).toContain("desktop app and the owner's phone app, never a browser");
+  });
+
+  it("qualifies the notification chooser: the pill is Mac only, not every unsupported option is listed (review 1019-n2 Low)", () => {
+    const record = CAPABILITY_ENTRIES.find((candidate) => candidate.capability === "settings.notification-chooser");
+    expect(record?.limits).toMatch(/menu bar pill/i);
+    expect(record?.limits).toMatch(/Mac only/);
+    expect(record?.limits).not.toMatch(/^An option your computer cannot do is shown with the reason, and/);
   });
 
   it("says webhook routines exist and that the desktop link is local only (WEBHOOK-SELF-KNOWLEDGE-1015)", () => {
@@ -94,6 +231,30 @@ describe("capability database", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.out).toContain("belongs to card:botDefaults/channel-turns");
+  });
+
+  it("accepts a moved card's current page with its stable anchor", () => {
+    const result = checkFixture((files) => {
+      entry(files, "apps.own-browser").settings_path = "Settings → Computer & browser";
+    });
+    expect(result.out).toContain("capability db up to date");
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a moved card's former page even though the page and stable anchor still exist", () => {
+    const result = checkFixture((files) => {
+      entry(files, "apps.own-browser").settings_path = "Settings → Phone and other devices";
+    });
+    expect(result.ok).toBe(false);
+    expect(result.out).toContain("is on page companion, but the card anchor is on computer");
+  });
+
+  it("keeps a moved desktop card unavailable to phone platforms", () => {
+    const result = checkFixture((files) => {
+      entry(files, "apps.own-browser").platforms = ["all"];
+    });
+    expect(result.ok).toBe(false);
+    expect(result.out).toContain("is desktop only");
   });
 
   it("rejects a reused id", () => {
@@ -169,7 +330,7 @@ describe("export and diff", () => {
     expect(JSON.stringify(exported)).not.toContain("\"internal\"");
     for (const record of exported.entries) expect(record.applies).toMatch(/^Applies to /);
     expect(exported.valid_paths).toEqual(expect.arrayContaining([
-      "Settings → Bots → Advanced → Time limit for bot activity in channels", "Settings → Memory → Learn about me", "Team map", "Routines", "Connected apps", "Tools",
+      "Settings → How every bot behaves → Advanced → Time limit for bot activity in channels", "Settings → Memory → Learn about me", "Team map", "Routines", "Connected apps", "Tools",
     ]));
     const diff = run(["--diff", join(scratch, "no-previous.json"), "--current", file]);
     expect(diff.ok).toBe(true);

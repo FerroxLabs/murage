@@ -1,3 +1,4 @@
+import { remoteControlDirectory, localAppDataDirectory } from "./backup-remote-runtime.mjs";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
@@ -26,7 +27,7 @@ it("the real main-process launch blocks share one fresh private token without mu
   // startServerOn awaits the port check (electron/port-availability.mjs), so
   // the extracted body runs in an async function with the port reported free.
   const AsyncFunction = (async () => {}).constructor;
-  const launch = new AsyncFunction("randomBytes","process","path","app","packagedGepaManifestEnvironment","launchSecretVia","closedControlDirectory","desktopFluxEnvironment","phoneSecretsEnv","reasonForTest",`
+  const launch = new AsyncFunction("randomBytes","process","path","app","packagedGepaManifestEnvironment","launchSecretVia","closedControlDirectory","desktopFluxEnvironment","phoneSecretsEnv","reasonForTest","remoteControlDirectory","localAppDataDirectory",`
     const portAvailable=async()=>true;
     const SERVER_PORT=8799;
     const remoteAccessLaunch=()=>null, slog=()=>{};
@@ -57,7 +58,7 @@ it("the real main-process launch blocks share one fresh private token without mu
   const ambient = {MURAGE_COMPANION_TOKEN:"untrusted-ambient-value",FLUX_API_KEY:"sk-flux-FAKE_SHELL",MURAGE_SECRET_SAVE_REFUSED:"inherited",MURAGE_PHONE_CALL_SECRETS:AMBIENT_PHONE};
   const process = {env:ambient,resourcesPath:"/fixture/resources"};
   // The real GEPA manifest pin helper: an unpackaged launch publishes an empty pin.
-  const invoke = (reason = "keyring") => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{isPackaged:false,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/app",getVersion:()=>"1.0.0-fixture"},packagedGepaManifestEnvironment,launchSecretVia,closedControlDirectory,desktopFluxEnvironment,phoneSecretsEnv,reason);
+  const invoke = (reason = "keyring") => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{isPackaged:false,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/app",getVersion:()=>"1.0.0-fixture"},packagedGepaManifestEnvironment,launchSecretVia,closedControlDirectory,desktopFluxEnvironment,phoneSecretsEnv,reason,remoteControlDirectory,localAppDataDirectory);
   const first = await invoke();
   const second = await invoke();
   // The token reaches the harness over the private parent port, never the
@@ -77,6 +78,8 @@ it("the real main-process launch blocks share one fresh private token without mu
   expect(first.env.MURAGE_DATA_DIR).toBe("/fixture/canonical-installation");
   // The server is told where the closed-app backup controller keeps its state.
   expect(first.env.MURAGE_BACKUP_CONTROL_DIR).toBe(closedControlDirectory("/fixture/canonical-installation"));
+  expect(first.env.MURAGE_CREDENTIAL_TUNNEL_ROOT).toBe("/fixture/user-data/managed-companion-tunnel");
+  expect(first.env.MURAGE_CREDENTIAL_BACKUP_ROOT).toBe(closedControlDirectory("/fixture/canonical-installation") + "/remote");
   expect(first.env.MURAGE_GEPA_MANIFEST_SHA256).toBe("");
   expect(first.options.MURAGE_INTERNAL_DATA_DIR_LEASE).toBeUndefined();
   expect(secondToken).not.toBe(firstToken);

@@ -5,6 +5,7 @@
 // (.ts in dev, .js once packaged). server/proxy-paths.ts resolves them (SPAWNED_PROXIES); the desktop main process
 // reads the same list to refuse to start as the app when it was launched as one of them without ELECTRON_RUN_AS_NODE.
 export const SPAWNED_PROXY_FILES = Object.freeze({
+  consumingIngress: "consuming-turn-ingress",
   memory: "drivers/memory-proxy",
   panelAvatarEncoder: "browser-extension-panel-avatar-encoder",
   memoryWorker: "memory/worker",
@@ -19,6 +20,8 @@ export const SPAWNED_PROXY_FILES = Object.freeze({
   inboxFillWorker: "inbox-fill-worker",
   // Windows only: the per-engine launcher that is in the engine's job before it starts the CLI (procs.ts, U24).
   jobLauncher: "job-launcher",
+  // One MCP stop proof attempt in its own child, so a stuck proof can be killed alone (drivers/mcp-stop-runtime.ts, nlrace V4).
+  mcpStopProbe: "drivers/mcp-stop-probe",
   computer: "computer-proxy",
   permission: "permission-proxy",
   containerMcp: "container-mcp",
@@ -28,6 +31,7 @@ export const SPAWNED_PROXY_FILES = Object.freeze({
   dweb: "drivers/dweb-proxy",
   connectors: "connector-proxy",
   remoteMcp: "drivers/remote-mcp-proxy",
+  wipeMcp: "mcp-wipe-proxy",
   phone: "drivers/phone-proxy",
   // The owner's-phone tools (calendar, reminders, ...) reached through the harness, not ADB (1.0.9 phone tools). Not the "phone" proxy above.
   phoneJobs: "drivers/phone-jobs-proxy",
@@ -40,6 +44,11 @@ export const SPAWNED_PROXY_FILES = Object.freeze({
   // Loaded by the external `pi` process via `-e`, not by this server — but
   // resolved through the same single source of truth so the packaged layout
   // check can assert it ships.
+  cliMountShim: "drivers/cli-mount-shim",
   piMcpExtension: "drivers/pi-mcp-extension",
   piPermissionGate: "drivers/pi-permission-gate",
 });
+
+// Registry role is explicit: a worker never inherits engine-release authority.
+export const SPAWNED_PROXY_ROLES = Object.freeze(Object.fromEntries(Object.keys(SPAWNED_PROXY_FILES).map(key => [key,
+  key === "cliMountShim" ? "server-relay-transport" : key === "consumingIngress" ? "server-final-ingress" : ["panelAvatarEncoder", "memoryWorker", "whatsappBridge", "importGuardWorker", "engineHistoryWorker", "transcriptReadWorker", "inboxFillWorker", "jobLauncher", "mcpStopProbe"].includes(key) ? "non-consuming" : "consuming"])));

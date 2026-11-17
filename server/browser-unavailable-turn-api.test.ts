@@ -1,3 +1,5 @@
+import { fixtureNativeShim } from "./testing/native-launch-fixture.ts";
+import {confirmedBrowserFields} from './testing/browser-choice.ts';
 // A browser that cannot be bound never takes the turn down with it. Drives
 // the real server over HTTP with the isolated fake Claude CLI and a fake
 // agent-browser whose `--version` answer this suite controls: it can hang past
@@ -10,7 +12,9 @@
 // the red "This request hit a problem" card, which pointed at Provider
 // settings for a failure no provider was involved in.
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { boundProxyState, spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
@@ -84,6 +88,10 @@ registerHooks({ load(url, context, nextLoad) {
       const fake = 'resolve(binary) === resolve(' + JSON.stringify(binary) + ')';
       patched = patched.replace(anchor, 'const child = spawn(' + fake + ' ? process.execPath : binary, ' + fake + ' ? [' + JSON.stringify(engineScript) + ', ...args] : args, {');
     }
+    // 0b8e3d7232 rejects real engine launches on container hosts. The version
+    // check still runs this suite's fake executable; the native relay is fake.
+    patched = patched.replace('export function agentBrowserIntegration(', 'function unusedRealAgentBrowserIntegration(')
+      + String.fromCharCode(10) + 'export function agentBrowserIntegration(input) { return { command: input.binaryPath, args: [], env: { HOME: input.dataDir, AGENT_BROWSER_SESSION: input.session, AGENT_BROWSER_SOCKET_DIR: input.dataDir } }; }';
     return { format: 'module-typescript', shortCircuit: true, source: patched };
   }
   return nextLoad(url, context);
@@ -95,6 +103,7 @@ let headers: Record<string, string> = {};
 let model: string;
 
 const api = async (method: string, path: string, body?: unknown) => {
+  if(method==='PATCH'&&path.startsWith('/api/bots/')&&body&&typeof body==='object'&&('useMyChrome' in body||'browserTransport' in body))body=await confirmedBrowserFields(fixture.info.url,headers,path,body as Record<string,unknown>);
   const response = await fetch(fixture.info.url + path, {
     method,
     headers: { ...headers, "content-type": "application/json" },
@@ -112,7 +121,7 @@ const versionSpawns = () => {
 };
 const setEngine = (mode: "hang" | "ok") => writeFileSync(join(fixture.info.dataDir, "engine-mode"), `${mode}\n`);
 const dump = () => {
-  try { return JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")); } catch { return null; }
+  try { return withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))); } catch { return null; }
 };
 const createBot = async (name: string) => {
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "verification", model } });
@@ -174,7 +183,7 @@ it("completes the turn without browser tools when the browser check times out, a
   // One quiet, accurate note — not an error chip.
   const notes = await activities(first.threadId, BROWSER_UNAVAILABLE_PREFIX);
   expect(notes).toHaveLength(1);
-  expect(notes[0].tool.name).toBe(`${BROWSER_UNAVAILABLE_PREFIX} agent-browser command timed out`);
+  expect(notes[0].tool.name).toBe(`${BROWSER_UNAVAILABLE_PREFIX} browser-cause:builtin_restart:0|agent-browser command timed out`);
   expect(notes[0].tool.ok).toBe(true);
   expect(versionSpawns()).toBe(1);
 }, 60_000);
@@ -243,7 +252,7 @@ it("lets a room member's turn go on without the browser when the check times out
   expect(dump().mcpConfig?.mcpServers?.browser).toBeUndefined();
   expect(await activities(room.threadId, "error:")).toEqual([]);
   const notes = await activities(room.threadId, BROWSER_UNAVAILABLE_PREFIX);
-  expect(notes.map((m) => [m.tool.name, m.from?.botId])).toEqual([[`${BROWSER_UNAVAILABLE_PREFIX} agent-browser command timed out`, bot.id]]);
+  expect(notes.map((m) => [m.tool.name, m.from?.botId])).toEqual([[`${BROWSER_UNAVAILABLE_PREFIX} browser-cause:builtin_restart:0|agent-browser command timed out`, bot.id]]);
   expect(versionSpawns()).toBe(before + 1);
 }, 60_000);
 
@@ -287,12 +296,16 @@ it("hands a consent step to the owner on a default-on browser turn", async () =>
     const mounted = dump().mcpConfig.mcpServers.browser as { command: string; args: string[]; env: Record<string, string> };
     expect((await api("GET", "/api/config")).body.features.browser).toBe(true);
     expect(JSON.parse(readFileSync(join(fixture.info.dataDir, "config.json"), "utf8")).features ?? {}).not.toHaveProperty("browser");
-    proxy = spawn(mounted.command, mounted.args, {
+// MAIN RULING INT-CONFLICT-DEFAULT c542c40722 / eb01447e7d: exact metered prefix, native shim and browser args; no arbitrary wrapper exemption.
+    expect(fixtureNativeShim(dump().wireMcpConfig.mcpServers.browser, 'browser')).toContain('cli-mount-shim');
+    proxy = await spawnBoundProxy('unifiedBrowser', mounted.command, mounted.args, {
+      windowsHide: true,
       env: { PATH: process.env.PATH, HOME: fixture.info.dataDir, MURAGE_DATA_DIR: fixture.info.dataDir, ...mounted.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
-    let stdout = "";
-    proxy.stdout!.on("data", (chunk) => { stdout += chunk; });
+    let stdout = "", replyReady!: () => void;
+    const received = new Promise<void>(resolve => { replyReady = resolve; });
+    proxy.stdout!.on("data", (chunk) => { stdout += chunk; if (stdout.includes("\n")) replyReady(); });
     proxy.stderr!.resume();
     const child = proxy;
     const closed = new Promise<number | null>((resolve, reject) => {
@@ -300,8 +313,16 @@ it("hands a consent step to the owner on a default-on browser turn", async () =>
       child.once("error", (error) => { clearTimeout(timer); reject(error); });
       child.once("close", (code) => { clearTimeout(timer); resolve(code); });
     });
-    proxy.stdin!.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "agent_browser_click", arguments: { selector: "#accept" } } }) + "\n");
-    expect(await closed).toBe(0);
+    proxy.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "agent_browser_click", arguments: { selector: "#accept" } } }) + "\n");
+    await Promise.race([received, closed.then(() => { throw new Error("Browser proxy closed before delivering its floor result"); })]);
+    proxy.stdin!.end();
+    // MAIN RULING INT-CONFLICT-DEFAULT 6a9dfe7db8 9e75ffd075: EOF seals a consuming mount; receive the live result first, then require terminal closure.
+    const code = await closed;
+    if (child.signalCode) {
+      expect(code).toBeNull();
+      expect(child.signalCode).toBe("SIGTERM");
+    } else expect(code).toBe(1);
+    expect(boundProxyState(child)).toMatchObject({ sealed: true, refusals: 1 });
     const reply = JSON.parse(stdout.trim());
     // The built-in floor answers with plain hand-off text (floorToolResult), not an error result,
     // so every engine reads it the same way; it must name the consent step.

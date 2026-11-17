@@ -210,6 +210,7 @@ export interface InboxPage {
    *  locale sentence (shared/backup-capture-failure.mjs backupNoticeSentence);
    *  `sentence` is the English fallback. */
   backupFailed?: { sentence: string; at: number; code?: string };
+  hookRepairNeeds?: Array<{ engine: string; sentence: string; at: number }>;
   /** Health on the owner's read only: the quiet level, and `needs`, each one an ordinary Needs you item counted in
    *  `decisions` and in no segment, gone by itself once the problem clears. Everything else is on the Health screen. */
   health?: HealthInbox;

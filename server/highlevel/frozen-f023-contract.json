@@ -1,0 +1,5 @@
+{
+  "server/highlevel/approval-invocations.ts": [
+    "export function runApprovedInvocation(journal: ApprovalJournal, approvalId: string, requestDigest: string, invoke: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome>;"
+  ]
+}

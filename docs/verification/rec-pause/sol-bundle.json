@@ -1,0 +1,705 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "preB-locale-astra-builder",
+  "date": "2026-11-11",
+  "base": "bbf96a5cb20c8cd7a902e1d41cc82905d9864c75",
+  "scope": "sol-pause2: 136 pause strings only; static copy and source review",
+  "strings": {
+    "en:ux.l2c.pause.limit": {
+      "text": "You reached your {limit} monthly limit.",
+      "en": "You reached your {limit} monthly limit.",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.unknown": {
+      "text": "Murage cannot read Flux Router's figure right now.",
+      "en": "Murage cannot read Flux Router's figure right now.",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.otherAccount": {
+      "text": "This Flux Router key is on another Flux account, so Murage's limit cannot count it.",
+      "en": "This Flux Router key is on another Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.noAccount.line": {
+      "text": "This Flux Router key is not on a Flux account, so Murage's limit cannot count it.",
+      "en": "This Flux Router key is not on a Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.fluxKey": {
+      "text": "Flux Router reached this key's limit.",
+      "en": "Flux Router reached this key's limit.",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.fluxTokens": {
+      "text": "Flux Router reached this key's token limit.",
+      "en": "Flux Router reached this key's token limit.",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.fluxBot": {
+      "text": "Flux Router reached this bot's limit.",
+      "en": "Flux Router reached this bot's limit.",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.fluxAlso": {
+      "text": "Flux Router's own limit for this key also applies.",
+      "en": "Flux Router's own limit for this key also applies.",
+      "verdict": "fail",
+      "note": "Reason: server/spend-gate.ts describeHolds also selects this message for a combined hold involving bot_monthly_spend. Describing the additional limit as belonging to this key obscures its possible bot-wide scope. Corrected string: A limit in Flux Router has also been reached."
+    },
+    "en:ux.l2c.pause.emailOnly": {
+      "text": "Only {bot}'s email waits.",
+      "en": "Only {bot}'s email waits.",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.botWaits": {
+      "text": "{bot} waits.",
+      "en": "{bot} waits.",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.raise": {
+      "text": "Raise limit",
+      "en": "Raise limit",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.check": {
+      "text": "Check again",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.openFlux": {
+      "text": "Open Flux Router",
+      "en": "Open Flux Router",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.capabilityOff.title": {
+      "text": "Murage's limit is a heads-up only for now",
+      "en": "Murage's limit is a heads-up only for now",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.capabilityOff.body": {
+      "text": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "en": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.capabilityOff.ok": {
+      "text": "OK",
+      "en": "OK",
+      "verdict": "pass"
+    },
+    "en:ux.l2c.pause.promiseOff": {
+      "text": "If Flux Router stops offering the account figure, the limit goes back to a heads-up only and Murage tells you.",
+      "en": "If Flux Router stops offering the account figure, the limit goes back to a heads-up only and Murage tells you.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.limit": {
+      "text": "Du hast dein Monatslimit von {limit} erreicht.",
+      "en": "You reached your {limit} monthly limit.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.unknown": {
+      "text": "Murage kann den Betrag von Flux Router gerade nicht abrufen.",
+      "en": "Murage cannot read Flux Router's figure right now.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.otherAccount": {
+      "text": "Dieser Flux-Router-Schlüssel gehört zu einem anderen Flux-Konto. Deshalb kann Murage ihn bei deinem Limit nicht mitzählen.",
+      "en": "This Flux Router key is on another Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.noAccount.line": {
+      "text": "Dieser Flux-Router-Schlüssel gehört zu keinem Flux-Konto. Deshalb kann Murage ihn bei deinem Limit nicht mitzählen.",
+      "en": "This Flux Router key is not on a Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.fluxKey": {
+      "text": "Das Limit dieses Schlüssels bei Flux Router ist erreicht.",
+      "en": "Flux Router reached this key's limit.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.fluxTokens": {
+      "text": "Das Tokenlimit dieses Schlüssels bei Flux Router ist erreicht.",
+      "en": "Flux Router reached this key's token limit.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.fluxBot": {
+      "text": "Das Limit dieses Bots bei Flux Router ist erreicht.",
+      "en": "Flux Router reached this bot's limit.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.fluxAlso": {
+      "text": "Das eigene Limit von Flux Router für diesen Schlüssel gilt ebenfalls.",
+      "en": "Flux Router's own limit for this key also applies.",
+      "verdict": "fail",
+      "note": "Reason: describeHolds also uses this message for a combined bot_monthly_spend hold. The additional limit can cover the bot rather than this individual key. Corrected string: Ein Limit in Flux Router ist ebenfalls erreicht."
+    },
+    "de:ux.l2c.pause.emailOnly": {
+      "text": "Nur die E-Mails von {bot} warten.",
+      "en": "Only {bot}'s email waits.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.botWaits": {
+      "text": "{bot} wartet.",
+      "en": "{bot} waits.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.raise": {
+      "text": "Limit erhöhen",
+      "en": "Raise limit",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.check": {
+      "text": "Erneut prüfen",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.openFlux": {
+      "text": "Flux Router öffnen",
+      "en": "Open Flux Router",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.capabilityOff.title": {
+      "text": "Murages Limit dient vorerst nur als Hinweis",
+      "en": "Murage's limit is a heads-up only for now",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.capabilityOff.body": {
+      "text": "Flux Router liefert den Kontobetrag nicht mehr, den Murage zum Pausieren an deinem Limit braucht. Deine Bots arbeiten weiter, und die Anzeige warnt dich weiterhin bei 80% und 100%. Limits, die du in Flux Router festlegst, gelten weiterhin.",
+      "en": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "verdict": "fail",
+      "note": "Reason: zum Pausieren an deinem Limit is an awkward literal translation. State naturally that pausing happens when the limit is reached. Corrected string: Flux Router liefert den Kontobetrag nicht mehr, den Murage braucht, um beim Erreichen deines Limits zu pausieren. Deine Bots arbeiten weiter, und die Anzeige warnt dich weiterhin bei 80% und 100%. Limits, die du in Flux Router festlegst, gelten weiterhin."
+    },
+    "de:ux.l2c.pause.capabilityOff.ok": {
+      "text": "OK",
+      "en": "OK",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.promiseOff": {
+      "text": "Falls Flux Router den Kontobetrag nicht mehr liefert, dient das Limit wieder nur als Hinweis. Murage sagt dir dann Bescheid.",
+      "en": "If Flux Router stops offering the account figure, the limit goes back to a heads-up only and Murage tells you.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.limit": {
+      "text": "Has alcanzado tu límite mensual de {limit}.",
+      "en": "You reached your {limit} monthly limit.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.unknown": {
+      "text": "Murage no puede consultar la cifra de Flux Router en este momento.",
+      "en": "Murage cannot read Flux Router's figure right now.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.otherAccount": {
+      "text": "Esta clave de Flux Router pertenece a otra cuenta de Flux, por lo que el límite de Murage no puede incluir su consumo.",
+      "en": "This Flux Router key is on another Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.noAccount.line": {
+      "text": "Esta clave de Flux Router no pertenece a ninguna cuenta de Flux, por lo que el límite de Murage no puede incluir su consumo.",
+      "en": "This Flux Router key is not on a Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.fluxKey": {
+      "text": "Se ha alcanzado el límite de esta clave en Flux Router.",
+      "en": "Flux Router reached this key's limit.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.fluxTokens": {
+      "text": "Se ha alcanzado el límite de tokens de esta clave en Flux Router.",
+      "en": "Flux Router reached this key's token limit.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.fluxBot": {
+      "text": "Se ha alcanzado el límite de este bot en Flux Router.",
+      "en": "Flux Router reached this bot's limit.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.fluxAlso": {
+      "text": "También se aplica el límite que Flux Router tiene para esta clave.",
+      "en": "Flux Router's own limit for this key also applies.",
+      "verdict": "fail",
+      "note": "Reason: describeHolds also uses this message for a combined bot_monthly_spend hold. The additional limit can cover the bot rather than this individual key. Corrected string: También se ha alcanzado un límite en Flux Router."
+    },
+    "es:ux.l2c.pause.emailOnly": {
+      "text": "Solo queda en espera el correo de {bot}.",
+      "en": "Only {bot}'s email waits.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.botWaits": {
+      "text": "{bot} espera.",
+      "en": "{bot} waits.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.raise": {
+      "text": "Aumentar el límite",
+      "en": "Raise limit",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.check": {
+      "text": "Comprobar de nuevo",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.openFlux": {
+      "text": "Abrir Flux Router",
+      "en": "Open Flux Router",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.capabilityOff.title": {
+      "text": "Por ahora, el límite de Murage solo sirve como aviso",
+      "en": "Murage's limit is a heads-up only for now",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.capabilityOff.body": {
+      "text": "Flux Router ha dejado de enviar la cifra de la cuenta que Murage necesita para pausar al llegar a tu límite. Tus bots siguen trabajando y el indicador sigue avisándote al 80% y al 100%. Los límites que establezcas en Flux Router siguen vigentes.",
+      "en": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.capabilityOff.ok": {
+      "text": "Aceptar",
+      "en": "OK",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.promiseOff": {
+      "text": "Si Flux Router deja de ofrecer la cifra de la cuenta, el límite volverá a servir solo como aviso y Murage te lo comunicará.",
+      "en": "If Flux Router stops offering the account figure, the limit goes back to a heads-up only and Murage tells you.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.limit": {
+      "text": "Tu as atteint ta limite mensuelle de {limit}.",
+      "en": "You reached your {limit} monthly limit.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.unknown": {
+      "text": "Murage ne peut pas consulter le montant de Flux Router pour le moment.",
+      "en": "Murage cannot read Flux Router's figure right now.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.otherAccount": {
+      "text": "Cette clé Flux Router appartient à un autre compte Flux. La limite de Murage ne peut donc pas prendre en compte sa consommation.",
+      "en": "This Flux Router key is on another Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.noAccount.line": {
+      "text": "Cette clé Flux Router n’est liée à aucun compte Flux. La limite de Murage ne peut donc pas prendre en compte sa consommation.",
+      "en": "This Flux Router key is not on a Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.fluxKey": {
+      "text": "La limite de cette clé sur Flux Router est atteinte.",
+      "en": "Flux Router reached this key's limit.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.fluxTokens": {
+      "text": "La limite de tokens de cette clé sur Flux Router est atteinte.",
+      "en": "Flux Router reached this key's token limit.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.fluxBot": {
+      "text": "La limite de ce bot sur Flux Router est atteinte.",
+      "en": "Flux Router reached this bot's limit.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.fluxAlso": {
+      "text": "La limite définie dans Flux Router pour cette clé s’applique aussi.",
+      "en": "Flux Router's own limit for this key also applies.",
+      "verdict": "fail",
+      "note": "Reason: describeHolds also uses this message for a combined bot_monthly_spend hold. The additional limit can cover the bot rather than this individual key. Corrected string: Une limite de Flux Router est également atteinte."
+    },
+    "fr:ux.l2c.pause.emailOnly": {
+      "text": "Seuls les e-mails de {bot} sont en attente.",
+      "en": "Only {bot}'s email waits.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.botWaits": {
+      "text": "{bot} attend.",
+      "en": "{bot} waits.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.raise": {
+      "text": "Augmenter la limite",
+      "en": "Raise limit",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.check": {
+      "text": "Vérifier à nouveau",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.openFlux": {
+      "text": "Ouvrir Flux Router",
+      "en": "Open Flux Router",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.capabilityOff.title": {
+      "text": "Pour le moment, la limite de Murage sert seulement d’avertissement",
+      "en": "Murage's limit is a heads-up only for now",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.capabilityOff.body": {
+      "text": "Flux Router n’envoie plus le montant du compte dont Murage a besoin pour mettre tes bots en pause à ta limite. Tes bots continuent de travailler et l’indicateur t’avertit toujours à 80% et à 100%. Les limites que tu définis dans Flux Router restent en vigueur.",
+      "en": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "verdict": "fail",
+      "note": "Reason: mettre tes bots en pause à ta limite is an unnatural literal translation. State explicitly that the limit has been reached. Corrected string: Flux Router n’envoie plus le montant du compte dont Murage a besoin pour mettre tes bots en pause lorsque ta limite est atteinte. Tes bots continuent de travailler et l’indicateur t’avertit toujours à 80% et à 100%. Les limites que tu définis dans Flux Router restent en vigueur."
+    },
+    "fr:ux.l2c.pause.capabilityOff.ok": {
+      "text": "OK",
+      "en": "OK",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.promiseOff": {
+      "text": "Si Flux Router cesse de fournir le montant du compte, la limite redevient un simple avertissement et Murage te prévient.",
+      "en": "If Flux Router stops offering the account figure, the limit goes back to a heads-up only and Murage tells you.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.limit": {
+      "text": "आपकी {limit} की मासिक सीमा पूरी हो गई है।",
+      "en": "You reached your {limit} monthly limit.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.unknown": {
+      "text": "Murage अभी Flux Router का आँकड़ा नहीं पढ़ पा रहा है।",
+      "en": "Murage cannot read Flux Router's figure right now.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.otherAccount": {
+      "text": "यह Flux Router कुंजी किसी दूसरे Flux खाते से जुड़ी है, इसलिए इसका इस्तेमाल Murage की सीमा में नहीं गिना जा सकता।",
+      "en": "This Flux Router key is on another Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.noAccount.line": {
+      "text": "यह Flux Router कुंजी किसी Flux खाते से नहीं जुड़ी है, इसलिए इसका इस्तेमाल Murage की सीमा में नहीं गिना जा सकता।",
+      "en": "This Flux Router key is not on a Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.fluxKey": {
+      "text": "Flux Router में इस कुंजी की सीमा पूरी हो गई है।",
+      "en": "Flux Router reached this key's limit.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.fluxTokens": {
+      "text": "Flux Router में इस कुंजी की टोकन सीमा पूरी हो गई है।",
+      "en": "Flux Router reached this key's token limit.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.fluxBot": {
+      "text": "Flux Router में इस बॉट की सीमा पूरी हो गई है।",
+      "en": "Flux Router reached this bot's limit.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.fluxAlso": {
+      "text": "Flux Router में इस कुंजी के लिए तय सीमा भी लागू होती है।",
+      "en": "Flux Router's own limit for this key also applies.",
+      "verdict": "fail",
+      "note": "Reason: describeHolds also uses this message for a combined bot_monthly_spend hold. The additional limit can cover the bot rather than this individual key. Corrected string: Flux Router में भी एक सीमा पूरी हो गई है।"
+    },
+    "hi:ux.l2c.pause.emailOnly": {
+      "text": "सिर्फ़ {bot} का ईमेल रुका है।",
+      "en": "Only {bot}'s email waits.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.botWaits": {
+      "text": "{bot} इंतज़ार कर रहा है।",
+      "en": "{bot} waits.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.raise": {
+      "text": "सीमा बढ़ाएँ",
+      "en": "Raise limit",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.check": {
+      "text": "फिर जाँचें",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.openFlux": {
+      "text": "Flux Router खोलें",
+      "en": "Open Flux Router",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.capabilityOff.title": {
+      "text": "फ़िलहाल Murage की सीमा सिर्फ़ सूचना देती है",
+      "en": "Murage's limit is a heads-up only for now",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.capabilityOff.body": {
+      "text": "Flux Router ने खाते का वह आँकड़ा भेजना बंद कर दिया है जिसकी मदद से Murage आपकी सीमा पर काम रोकता है। आपके बॉट काम करते रहेंगे और संकेतक 80% और 100% पर चेतावनी देता रहेगा। Flux Router में तय की गई सीमाएँ अब भी लागू हैं।",
+      "en": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.capabilityOff.ok": {
+      "text": "ठीक है",
+      "en": "OK",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.promiseOff": {
+      "text": "अगर Flux Router खाते का आँकड़ा देना बंद कर दे, तो सीमा फिर से सिर्फ़ सूचना देगी और Murage आपको इसकी जानकारी देगा।",
+      "en": "If Flux Router stops offering the account figure, the limit goes back to a heads-up only and Murage tells you.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.limit": {
+      "text": "月間上限の{limit}に達しました。",
+      "en": "You reached your {limit} monthly limit.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.unknown": {
+      "text": "現在、MurageはFlux Routerの金額を取得できません。",
+      "en": "Murage cannot read Flux Router's figure right now.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.otherAccount": {
+      "text": "このFlux Routerキーは別のFluxアカウントに属しているため、Murageの上限には使用額を含められません。",
+      "en": "This Flux Router key is on another Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.noAccount.line": {
+      "text": "このFlux RouterキーはFluxアカウントに属していないため、Murageの上限には使用額を含められません。",
+      "en": "This Flux Router key is not on a Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.fluxKey": {
+      "text": "Flux Routerでこのキーの上限に達しました。",
+      "en": "Flux Router reached this key's limit.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.fluxTokens": {
+      "text": "Flux Routerでこのキーのトークン上限に達しました。",
+      "en": "Flux Router reached this key's token limit.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.fluxBot": {
+      "text": "Flux Routerでこのボットの上限に達しました。",
+      "en": "Flux Router reached this bot's limit.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.fluxAlso": {
+      "text": "Flux Routerでこのキーに設定された上限も適用されます。",
+      "en": "Flux Router's own limit for this key also applies.",
+      "verdict": "fail",
+      "note": "Reason: describeHolds also uses this message for a combined bot_monthly_spend hold. The additional limit can cover the bot rather than this individual key. Corrected string: Flux Router側の上限にも達しています。"
+    },
+    "ja:ux.l2c.pause.emailOnly": {
+      "text": "{bot}のメールだけが待機しています。",
+      "en": "Only {bot}'s email waits.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.botWaits": {
+      "text": "{bot}は待機しています。",
+      "en": "{bot} waits.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.raise": {
+      "text": "上限を引き上げる",
+      "en": "Raise limit",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.check": {
+      "text": "もう一度確認",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.openFlux": {
+      "text": "Flux Routerを開く",
+      "en": "Open Flux Router",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.capabilityOff.title": {
+      "text": "当面、Murageの上限は通知のみになります",
+      "en": "Murage's limit is a heads-up only for now",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.capabilityOff.body": {
+      "text": "Flux Routerからアカウントの金額が送られなくなったため、Murageは上限で一時停止できません。ボットは作業を続け、使用量の表示は引き続き80%と100%で通知します。Flux Router内で設定した上限は引き続き適用されます。",
+      "en": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.capabilityOff.ok": {
+      "text": "OK",
+      "en": "OK",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.promiseOff": {
+      "text": "Flux Routerがアカウントの金額を提供しなくなった場合、上限は通知のみの機能に戻り、Murageがお知らせします。",
+      "en": "If Flux Router stops offering the account figure, the limit goes back to a heads-up only and Murage tells you.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.limit": {
+      "text": "Você atingiu seu limite mensal de {limit}.",
+      "en": "You reached your {limit} monthly limit.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.unknown": {
+      "text": "O Murage não consegue consultar o valor do Flux Router agora.",
+      "en": "Murage cannot read Flux Router's figure right now.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.otherAccount": {
+      "text": "Esta chave do Flux Router pertence a outra conta Flux, então o limite do Murage não pode incluir o uso dela.",
+      "en": "This Flux Router key is on another Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.noAccount.line": {
+      "text": "Esta chave do Flux Router não pertence a uma conta Flux, então o limite do Murage não pode incluir o uso dela.",
+      "en": "This Flux Router key is not on a Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.fluxKey": {
+      "text": "O limite desta chave no Flux Router foi atingido.",
+      "en": "Flux Router reached this key's limit.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.fluxTokens": {
+      "text": "O limite de tokens desta chave no Flux Router foi atingido.",
+      "en": "Flux Router reached this key's token limit.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.fluxBot": {
+      "text": "O limite deste bot no Flux Router foi atingido.",
+      "en": "Flux Router reached this bot's limit.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.fluxAlso": {
+      "text": "O limite definido no Flux Router para esta chave também se aplica.",
+      "en": "Flux Router's own limit for this key also applies.",
+      "verdict": "fail",
+      "note": "Reason: describeHolds also uses this message for a combined bot_monthly_spend hold. The additional limit can cover the bot rather than this individual key. Corrected string: Um limite no Flux Router também foi atingido."
+    },
+    "pt-br:ux.l2c.pause.emailOnly": {
+      "text": "Só o e-mail de {bot} fica em espera.",
+      "en": "Only {bot}'s email waits.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.botWaits": {
+      "text": "{bot} está aguardando.",
+      "en": "{bot} waits.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.raise": {
+      "text": "Aumentar limite",
+      "en": "Raise limit",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.check": {
+      "text": "Verificar novamente",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.openFlux": {
+      "text": "Abrir Flux Router",
+      "en": "Open Flux Router",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.capabilityOff.title": {
+      "text": "Por enquanto, o limite do Murage serve apenas como aviso",
+      "en": "Murage's limit is a heads-up only for now",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.capabilityOff.body": {
+      "text": "O Flux Router parou de enviar o valor da conta de que o Murage precisa para pausar ao atingir seu limite. Seus bots continuam trabalhando e o indicador ainda avisa em 80% e 100%. Os limites que você define no Flux Router continuam valendo.",
+      "en": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.capabilityOff.ok": {
+      "text": "OK",
+      "en": "OK",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.promiseOff": {
+      "text": "Se o Flux Router parar de fornecer o valor da conta, o limite volta a servir apenas como aviso e o Murage informa você.",
+      "en": "If Flux Router stops offering the account figure, the limit goes back to a heads-up only and Murage tells you.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.limit": {
+      "text": "你已达到每月 {limit} 的限额。",
+      "en": "You reached your {limit} monthly limit.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.unknown": {
+      "text": "Murage 目前无法读取 Flux Router 的金额。",
+      "en": "Murage cannot read Flux Router's figure right now.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.otherAccount": {
+      "text": "此 Flux Router 密钥属于另一个 Flux 账户，因此其用量无法计入 Murage 的限额。",
+      "en": "This Flux Router key is on another Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.noAccount.line": {
+      "text": "此 Flux Router 密钥未关联任何 Flux 账户，因此其用量无法计入 Murage 的限额。",
+      "en": "This Flux Router key is not on a Flux account, so Murage's limit cannot count it.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.fluxKey": {
+      "text": "此密钥已达到 Flux Router 中的限额。",
+      "en": "Flux Router reached this key's limit.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.fluxTokens": {
+      "text": "此密钥已达到 Flux Router 中的令牌限额。",
+      "en": "Flux Router reached this key's token limit.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.fluxBot": {
+      "text": "此机器人已达到 Flux Router 中的限额。",
+      "en": "Flux Router reached this bot's limit.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.fluxAlso": {
+      "text": "Flux Router 为此密钥设置的限额也会生效。",
+      "en": "Flux Router's own limit for this key also applies.",
+      "verdict": "fail",
+      "note": "Reason: describeHolds also uses this message for a combined bot_monthly_spend hold. The additional limit can cover the bot rather than this individual key. Corrected string: Flux Router 中的一项限额也已达到。"
+    },
+    "zh:ux.l2c.pause.emailOnly": {
+      "text": "只有 {bot} 的电子邮件在等待。",
+      "en": "Only {bot}'s email waits.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.botWaits": {
+      "text": "{bot} 正在等待。",
+      "en": "{bot} waits.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.raise": {
+      "text": "提高限额",
+      "en": "Raise limit",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.check": {
+      "text": "重新检查",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.openFlux": {
+      "text": "打开 Flux Router",
+      "en": "Open Flux Router",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.capabilityOff.title": {
+      "text": "Murage 的限额目前仅作提醒",
+      "en": "Murage's limit is a heads-up only for now",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.capabilityOff.body": {
+      "text": "Flux Router 已停止发送账户金额，Murage 需要该金额才能在达到限额时暂停工作。你的机器人会继续工作，用量指示器仍会在 80% 和 100% 时提醒你。在 Flux Router 中设置的限额仍然有效。",
+      "en": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.capabilityOff.ok": {
+      "text": "确定",
+      "en": "OK",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.promiseOff": {
+      "text": "如果 Flux Router 不再提供账户金额，限额将恢复为仅作提醒，Murage 会通知你。",
+      "en": "If Flux Router stops offering the account figure, the limit goes back to a heads-up only and Murage tells you.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

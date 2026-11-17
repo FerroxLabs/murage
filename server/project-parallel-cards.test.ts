@@ -369,7 +369,8 @@ function serverStop(name: string, deps: Record<string, unknown>) {
   expect(begin).toBeGreaterThan(0); expect(end).toBeGreaterThan(begin);
   const code = ts.transpileModule(source.slice(begin, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   // the owed asker wakes a bot Stop forgets (lane 0163-delegate-wake) are not under test here
-  const all: Record<string, unknown> = { replyState: { invalidate: () => {} }, askerWakes: { dropBot: () => {} }, dropHeldAskerWakes: () => {}, ...deps };
+  // the owner-Stop note on the turn's lease (turn-end-stop-entries.test.ts holds its witnesses) is not under test here either
+  const all: Record<string, unknown> = { replyState: { invalidate: () => {} }, askerWakes: { dropBot: () => {} }, dropHeldAskerWakes: () => {}, noteOwnerStop: () => {}, ...deps };
   // a bot Stop also walks the bot's pending threads to drop their held wakes; this fixture holds none
   const store = all.store as Record<string, unknown> | undefined;
   if (store && !("pendingThreadsFor" in store)) all.store = { ...store, tasks: () => [], pendingThreadsFor: () => [] };

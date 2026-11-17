@@ -1,3 +1,4 @@
+// control: legacy cases retain their original assertions unless individually labelled red-at-4df086541 below.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Renewable idle budget over a real loopback HTTP/SSE transport (U02). The
@@ -15,7 +16,7 @@ import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
 import { freePortBlock } from "../testing/ports.ts";
-import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createOpenAIChatRuntime } from "../testing/bound-openai-fixture.ts";
 import { IntakeValve, installIntakeValve } from "../harness/intake.ts";
 
 const IDLE_MS = 600;

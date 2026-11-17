@@ -1,3 +1,4 @@
+import * as meteredFs from "./counted-fs-promises.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SABLE-B r8 design 5.6 "A failed grant fails closed" (tests 25, 38, 47, 51, 52, 53, 54, 55). The fake extension below models the
 // runtime's own rules (runtime.mjs, d2933fab0): a bind or command carries the server's generation and a stale one is refused; a bind
@@ -94,7 +95,9 @@ async function fixture(extra: Record<string, unknown> = {}) {
     if (b.state !== 'active' || !b.ready) return { error: 'binding_inactive' };
     if (command.operation === 'cdp') {
       const { method, params: p } = params as { method: string; params: Record<string, unknown> }; let value: any = {};
+      if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1, url: b.tabs[0].url }] };
       if (method === 'Page.getFrameTree') value = { frameTree: { frame: { id: 'frame', loaderId: 'L' } } };
+      if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
       if (method === 'Page.createIsolatedWorld') value = { executionContextId: 7 };
       if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
       if (method === 'DOM.describeNode') value = { node: { backendNodeId: 12 } };
@@ -412,8 +415,8 @@ describe('SABLE-B test 47: the Pause outcomes (NEW)', () => {
   });
   it.runIf(POSIX_SAVE)('(f) the Pause is answered but the reconcile of its answer throws (the save fails): outcome paused, no drop', async () => {
     const f = await fixture(); await f.start(); failBindAfterInstall(f);
-    const real = fs.writeFile.bind(fs); let threw = false;
-    f.on('pause', async (_command, apply) => { vi.spyOn(fs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) { threw = true; throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); } return (real as any)(file, ...rest); }); return apply(); });
+    const real = meteredFs.writeFile; let threw = false;
+    f.on('pause', async (_command, apply) => { vi.spyOn(meteredFs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) { threw = true; throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); } return (real as any)(file, ...rest); }); return apply(); });
     expect(await f.openD()).toMatch(FAILED);
     vi.restoreAllMocks();
     expect(threw).toBe(true);                                  // the save really failed (the hook point exists)

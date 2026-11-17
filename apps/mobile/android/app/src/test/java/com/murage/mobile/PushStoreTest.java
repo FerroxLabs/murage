@@ -127,15 +127,15 @@ public class PushStoreTest {
     @Test public void forgetAndSweepRemoveTheExpiryToo() throws Exception {
         FakePrefs prefs = new FakePrefs();
         PushStore store = new PushStore(prefs, memoryKey(), memoryKey());
-        store.updateLedger(l -> { l.bind("B1", "https://kept.tailnet123.ts.net"); l.bind("B2", "https://gone.tailnet123.ts.net"); return null; });
+        store.updateLedger(l -> { l.bind("B1", "https://kept.tail000000.ts.net"); l.bind("B2", "https://gone.tail000000.ts.net"); return null; });
         store.putTokens("B1", "murage_pd_1", "murage_pr_1", 5_000L);
         store.putTokens("B2", "murage_pd_2", "murage_pr_2", 5_000L);
         prefs.values.put("expires.B9", 5_000L); // no binding owns it
-        assertEquals(java.util.Arrays.asList("B2"), store.sweep(Collections.singleton("https://kept.tailnet123.ts.net")));
+        assertEquals(java.util.Arrays.asList("B2"), store.sweep(Collections.singleton("https://kept.tail000000.ts.net")));
         assertEquals(5_000L, store.expiresAt("B1"));
         assertEquals(0L, store.expiresAt("B2"));
         assertEquals(0L, store.expiresAt("B9"));
-        assertEquals("B1", store.forget("https://kept.tailnet123.ts.net"));
+        assertEquals("B1", store.forget("https://kept.tail000000.ts.net"));
         assertEquals(0L, store.expiresAt("B1"));
     }
 
@@ -149,35 +149,35 @@ public class PushStoreTest {
 
     @Test public void forgetDeletesTheTokensAndReturnsTheBinding() throws Exception {
         PushStore store = new PushStore(new FakePrefs(), memoryKey(), memoryKey());
-        store.updateLedger(l -> { l.bind("B1", "https://mac.tailnet123.ts.net"); return null; });
+        store.updateLedger(l -> { l.bind("B1", "https://mac.tail000000.ts.net"); return null; });
         store.putTokens("B1", "murage_pd_x", "murage_pr_y");
-        assertEquals("B1", store.forget("https://mac.tailnet123.ts.net"));
+        assertEquals("B1", store.forget("https://mac.tail000000.ts.net"));
         assertNull(store.detail("B1"));
         assertNull(store.respond("B1"));
-        assertNull(store.ledger().binding("https://mac.tailnet123.ts.net"));
-        assertNull(store.forget("https://mac.tailnet123.ts.net"));
+        assertNull(store.ledger().binding("https://mac.tail000000.ts.net"));
+        assertNull(store.forget("https://mac.tail000000.ts.net"));
     }
 
     @Test public void forgetStillNamesTheBindingWhenTheLedgerCannotBeSaved() throws Exception {
         FakePrefs prefs = new FakePrefs();
         PushStore store = new PushStore(prefs, memoryKey(), memoryKey());
-        store.updateLedger(l -> { l.bind("B1", "https://mac.tailnet123.ts.net"); return null; });
+        store.updateLedger(l -> { l.bind("B1", "https://mac.tail000000.ts.net"); return null; });
         LogCapture log = new LogCapture();
         prefs.commitSucceeds = false;
-        assertEquals("B1", store.forget("https://mac.tailnet123.ts.net"));
+        assertEquals("B1", store.forget("https://mac.tail000000.ts.net"));
         assertEquals("push forget deferred", log.all());
     }
 
     @Test public void sweepDropsBindingsForRemovedComputersAndStrayTokens() throws Exception {
         FakePrefs prefs = new FakePrefs();
         PushStore store = new PushStore(prefs, memoryKey(), memoryKey());
-        store.updateLedger(l -> { l.bind("B1", "https://kept.tailnet123.ts.net"); l.bind("B2", "https://gone.tailnet123.ts.net"); return null; });
+        store.updateLedger(l -> { l.bind("B1", "https://kept.tail000000.ts.net"); l.bind("B2", "https://gone.tail000000.ts.net"); return null; });
         store.putTokens("B1", "murage_pd_1", "murage_pr_1");
         store.putTokens("B2", "murage_pd_2", "murage_pr_2");
         store.putTokens("B9", "murage_pd_9", "murage_pr_9");
         assertTrue(store.putDeviceSecret("secret"));
         // B9's tokens had no binding (a forget that could not save): it goes at the relay too (A4).
-        assertEquals(java.util.Arrays.asList("B2", "B9"), store.sweep(Collections.singleton("https://kept.tailnet123.ts.net")));
+        assertEquals(java.util.Arrays.asList("B2", "B9"), store.sweep(Collections.singleton("https://kept.tail000000.ts.net")));
         assertEquals(Collections.singletonList("B1"), store.ledger().bindingIds());
         assertEquals("murage_pd_1", store.detail("B1"));
         assertEquals("murage_pr_1", store.respond("B1"));
@@ -186,7 +186,7 @@ public class PushStoreTest {
         assertNull(store.detail("B9"));
         assertNull(store.respond("B9"));
         assertEquals("secret", store.deviceSecret());
-        assertEquals(Collections.emptyList(), store.sweep(Collections.singleton("https://kept.tailnet123.ts.net")));
+        assertEquals(Collections.emptyList(), store.sweep(Collections.singleton("https://kept.tail000000.ts.net")));
     }
 
     @Test public void theInstallKeepsOnlyADigestOfThePushTokenAndDropsBoth() throws Exception {
@@ -222,7 +222,7 @@ public class PushStoreTest {
     @Test public void theLedgerIsPlainJsonAndSurvives() throws Exception {
         FakePrefs prefs = new FakePrefs();
         PushStore first = new PushStore(prefs, memoryKey(), memoryKey());
-        first.updateLedger(l -> { l.bind("B1", "https://mac.tailnet123.ts.net"); l.setBadge("B1", 2); return null; });
+        first.updateLedger(l -> { l.bind("B1", "https://mac.tail000000.ts.net"); l.setBadge("B1", 2); return null; });
         assertEquals(2, new PushStore(prefs, memoryKey(), memoryKey()).ledger().total());
     }
 

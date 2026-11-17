@@ -1,3 +1,55 @@
+import { deliverWipeGuardTerminal, wipeGuardTurnEnvironment } from './murage-exec-wipe.ts';
+import { wipeContextFor, wipeEnvironment } from '../wipe/context.ts';
+import { withHideInherit, stripNodeOptionsExceptHide } from "../../shared/win-hide-child-process.mjs";
+import { highlevelHandlerTools } from "../highlevel/engine-policy.ts";
+import { CLAUDE_NATIVE_SHELL_TOOLS } from './claude-tool-names.ts';
+import { HelperReadEvidence } from './helper-read-evidence.ts';
+import { complete_flag } from '../turn-settle.ts';
+import { authenticatedTurnWrittenScripts, registerRecoveryScriptRequest } from '../no-limits-wipe-scripts.ts';
+import { Duplex } from 'node:stream';
+import { markTurnOutside } from '../email/external-marks.ts';
+import { registerBusyloopPayloadSite, fluxRouteFor, registerBusyloopRequestSite } from "../../shared/flux-route.ts";
+import { isTerminal, type Decision } from "../../shared/flux-busyloop.ts";
+import { gatewayBusyLine } from "../limit-continuation.ts";
+import { permissionReplyFits, PERMISSION_REPLY_TOO_LARGE } from '../permission-reply.ts';
+import { holdEnginePermissionReply, guardEngineRelease } from '../decision/provider-release.ts';
+import { deliverNative, type NativeAskSlot } from './native-ask.ts';
+import { recordPostureAck } from './posture-tap.ts';
+import { RequestTransport } from './request-transport.ts';
+import { withRequestDelivery } from "./request-delivery.ts";
+import { ClaudeStdinGate, type StdinFrame } from "./cli-stdin.ts";
+import { awaitClaudeS2Barrier } from "./claude-s2-barrier.ts";
+import { claudeS2QualifiedCli, claudeS2QualifiedCliNow } from "./claude-s2-qualification.ts";
+import { beginClaudeS2Pending, hasClaudeS2Pending, holdClaudeS2Input } from "./claude-s2-pending.ts";
+import { cliStdinEnd } from "./cli-stdin-eof.ts";
+import type { Writable } from "node:stream";
+
+type ClaudeStdinOwner = { requestUrl?: string; child: { stdin: Writable }; stdinGate?: ClaudeStdinGate; closing?: boolean; turn?: { stopRequested?: boolean; settled: boolean } | null };
+/** Route before authorizing: held frames retain their generation fence, never
+ * an admission grant or a closure bound to a discarded child's stdin. */
+function cliStdinWrite(s: ClaudeStdinOwner, wire: string, done?: StdinFrame["done"], release?: StdinFrame["release"]): void {
+  try {
+    const gate = s.stdinGate ??= new ClaudeStdinGate();
+    const route = gate.route({ wire, done, release });
+    if (route === "held") return;
+    if (route === "blocked") throw new Error(gate.failure ?? "S2 stdin blocked");
+    const validate = () => {
+      if (release && "turn" in s && (s.closing || !s.turn || s.turn.stopRequested || s.turn.settled)) throw new GateStopped("asked");
+      if (!s.child.stdin.writable || s.child.stdin.destroyed) throw new Error("Claude stdin is not writable");
+    };
+    validate();
+    const write = () => { validate(); return registerBusyloopRequestSite(fluxRouteFor(s.requestUrl), s.child.stdin.write(wire, done)); };
+    if (release) release(write, validate); else write();
+  } catch (error) {
+    if (done) done(error instanceof Error ? error : new Error(String(error)));
+    else throw error;
+  }
+}
+import { CliMountRelay, mountedTurn, assertRelayAvailable, relayHoldReleased } from "./cli-mount-relay.ts";
+import { engineJsonLine, emitEngineWire } from "./engine-wire.ts";
+import { assertConsumingMountAdmission, freshMcpMountAdmission } from "./mcp-mounts.ts";
+import { composeClose, fencedOf, fencedRefusalRegistry, fencedSubmit, isMemoryRefusal, refusalFor, releaseNativeAnswer, type CloseResult, type ConfirmedClose, type FencedRefusal } from "./engine-input.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { recordOutsideInstallChange } from "../outside-wire.ts";
 import { cliFluxBudget } from "./cli-flux-budget.ts";
 import { nativeTurnModel } from "../default-engine.ts";
@@ -11,6 +63,7 @@ import { ENGINE_CHECK_CLAUDE_MD_EXCLUDES, isEngineCheckFolder } from "../engine-
 import { isMemorySendFenced } from "../memory/learning-send-fence.ts";
 import { isMemorySendBusy, type LearningGate } from "../memory/learning-send.ts";
 import { CLOUD_BROKER_DIR, CLOUD_RENDER_MCP, CLOUD_RENDER_SYSTEM_PROMPT, CLOUD_WORKSPACE_ROOT, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, isCloudRenderPlaceholder } from "../cloud-home/turn-process.ts";
+import {meterProxyServers} from "../io-proxy-receipts.ts";
 import { cloudMcpStanza, cloudRenderMcp } from "../cloud-home/engine-render.ts";
 import { cloudHomeCopy } from "../cloud-home/copy.ts";
 import { cloudClaudeRenewalDue } from "../cloud-home/bot-state.ts";
@@ -33,7 +86,8 @@ import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { claudeBrowserMount } from "./claude-browser-mount.ts";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { parseDocument as parseYamlDocument } from "yaml";
 import { createConnection as createNetConnection, createServer as createNetServer } from "node:net";
 import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, ClaudeProbeMissing, claudeVersionVerdict, knownClaudeCliVersion, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
@@ -48,9 +102,10 @@ import { writeFileAtomic } from "../atomic.ts";
 import { augmentedPath, envGeneration } from "../env-path.ts";
 import { engineLaunchFile } from "./isolation-cache.ts";
 import { HOOK_ASK_BOUND_MS } from "./codex-hook.ts";
+import { CLAUDE_BASH_WIPE_CALLBACK, CLAUDE_BASH_WIPE_HOOK, relayClaudeBash } from './claude-bash-hook.ts';
 import { humanWaitOpen } from "../harness/human-wait.ts";
 import { wakeAwareTimeout } from "../sleep-clock.ts";
-import { CLAUDE_ACCOUNT_ENV_KEYS, claudeAccountEnvironment,resolveClaudeConfigDir } from "../claude-accounts.ts";
+import { CLAUDE_ACCOUNT_ENV_KEYS, claudeAccountEnvironment, resolveClaudeConfigDir } from "../claude-accounts.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { toolFilePaths } from "../own-workspace-approval.ts";
 import { engineToolFields } from "./contracts.ts";
@@ -64,7 +119,8 @@ import { cachedCliVersion } from "../cli-version-cache.ts";
 import { anyMountIncomplete, bindCredentialPath, clearMountsIncomplete, connectorMountRefsOf, connectorScopeOf, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantBaseline, untrackedDescendants, processNames } from "./process-tree.ts";
 import { reuseStats, type ReuseProcess, type SpareHandle } from "./reuse-stats.ts";
-import { createPrewarmGate, createTurnMemory, spawnInputsOf, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
+import { createPrewarmGate, createTurnMemory, PrewarmRefused, spawnInputsOf, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
+import type { PrewarmFence } from "../contracts.ts";
 import { credentialDigest, diffWarmKey, warmKey, type WarmKey } from "./warm-key.ts";
 import { approvalSummary } from "../../shared/approval-summary.ts";
 import { draftOnlyQualifies } from "../draft-only.ts";
@@ -75,6 +131,7 @@ import type {
   ModelCatalog,
   ProviderDriver,
   ProviderInstance,
+  ProviderStopResult,
   ProviderSnapshot,
   RuntimeEvent,
   RuntimeEventListener,
@@ -117,13 +174,14 @@ import {
   resolveInjectId,
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
+import { assertFinalEngineEnv, scrubFluxFromSignInEnv } from "../cloud-home/engine-flux-guard.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
 import { registerIntake } from "../harness/intake.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { BROKER_UNAVAILABLE_NOTE, brokerPathForArgv } from "../permission-pipe.ts";
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
-import { engineClosedLine } from "./stop-copy.ts";
+import { engineClosedLine, mountNeverConnectedLine } from "./stop-copy.ts";
 import { createStopGate, GateStopped, type GateEntry, type Verdict } from "./stop-gate.ts";
 import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
@@ -142,7 +200,7 @@ import { LocalSetupError } from "../local-setup-failure.ts";
 import { TurnRefusal } from "./turn-refusal.ts";
 import { NarrowDenials } from "../narrow-denials.ts";
 import { appendDecision } from "../decision-log.ts";
-import { EXEC_ENV_FILE, EXEC_KEEP, murageExecPrefix, withExecKeep, writeExecEnvFile } from "./murage-exec.ts";
+import { EXEC_ENV_FILE, EXEC_KEEP, EXEC_NONCE, execDiagCount, execEnvFilePath, execKeepHead, newestShellSnapshot, snapshotPathMissing, murageExecPrefix, newExecNonce, readExecFlag, watchExecFlag, withExecKeep, writeExecEnvFile, type ExecFlag } from "./murage-exec.ts";
 import { noteFrontMatterFallback, observeIsolationScan } from "../health/isolation-observer.ts";
 
 /** Whether `claude` has been signed in.
@@ -193,7 +251,7 @@ export function claudeAuthStatus(
   return new Promise((resolve) => {
     run(cli, [...leadArgs, "auth", "status", "--json"], { timeout: 8000, maxBuffer:65536, env }, (error, stdout, stderr) => {
       try {
-        const status: unknown = JSON.parse(stdout);
+        const status: unknown = registerBusyloopPayloadSite("read", JSON.parse(stdout));
         if (typeof status === "object" && status !== null && "loggedIn" in status) {
           const signedIn = status.loggedIn === true;
           const billing = signedIn ? claudeBillingOf((status as { authMethod?: unknown }).authMethod) : undefined;
@@ -280,6 +338,8 @@ export function claudeEnvironment(
   } else if (claudeRouting(env, model).flux) {
     env.ANTHROPIC_CUSTOM_HEADERS = claudeCustomHeadersValue(fluxMemory.headers);
   }
+  // Last word: nothing Flux-bearing, under any name, reaches Claude Code on a home.
+  scrubFluxFromSignInEnv(DRIVER_KIND, env);
   return env;
 }
 
@@ -312,6 +372,10 @@ export function stripClaudeOwnedEnv(map: Record<string, string | undefined>, con
   stripCapturedProviderEnv(map, platform);
   stripClaudeSessionEnv(map);
   delete map.CLAUDE_CODE_PLUGIN_DIRS;
+  // The permission reply limit belongs to this launch, including on Windows.
+  for (const name of Object.keys(map)) {
+    if (name === "MAX_MCP_OUTPUT_TOKENS" || (platform === "win32" && name.toUpperCase() === "MAX_MCP_OUTPUT_TOKENS")) delete map[name];
+  }
   if (!configDir?.trim()) return;
   for (const name of Object.keys(map)) {
     const upper = name.toUpperCase();
@@ -329,9 +393,17 @@ export function stripClaudeOwnedEnv(map: Record<string, string | undefined>, con
  * `mcp_status` (`statusSupported` false) keeps the CLI's own hold, bounded by
  * the same MCP_TIMEOUT: Murage cannot check for it, so the CLI waits instead. */
 export function claudeMcpStartupEnv(statusSupported = true): Record<string, string> {
+  // Permission-prompt replies pass through Claude's ordinary MCP output limiter.
+  // An oversized reply becomes a persisted-file notice (a string), which the
+  // permission consumer rejects before parsing the allow JSON. Keep the judged
+  // input, including narrowed calls, intact for every tool and approval source.
+  // 2.1.305: FJt/c in the MCP limit chunk, rs in the MCP call chunk, RA in print.
+  // This positive integer exceeds every possible JS string/token count, and
+  // avoids both truncation and persistence without changing permission rules.
+  const output = { MAX_MCP_OUTPUT_TOKENS: String(Number.MAX_SAFE_INTEGER) };
   return statusSupported
-    ? { CLAUDE_CODE_MCP_STARTUP_WAIT_MS: "0", MCP_TIMEOUT: String(mcpReconnectWaitMs()) }
-    : { MCP_TIMEOUT: String(mcpReconnectWaitMs()) };
+    ? { ...output, CLAUDE_CODE_MCP_STARTUP_WAIT_MS: "0", MCP_TIMEOUT: String(mcpReconnectWaitMs()) }
+    : { ...output, MCP_TIMEOUT: String(mcpReconnectWaitMs()) };
 }
 
 /** Per CLI build (path and version): does it answer `mcp_status`. */
@@ -375,6 +447,11 @@ const DRIVER_KIND = "claudeAgent";
 /** Errors thrown by a turn's submission fence (SendTurnInput.beforeSubmit):
  * nothing was written, so a relaunch refused by one shows no engine error. */
 const submissionRefusals = new WeakSet<object>();
+/** Attempt boundaries whose prompt write began (stdin.write called): a failure after that may have sent bytes, so it is uncertain (1.0.19 D4). */
+const partialWrites = new WeakSet<object>();
+const promptSubmissionRefusals = new WeakMap<object,{error:unknown}>();
+/** Boundaries whose in-flight prompt write then failed: the bytes may have gone out, so the failure stays uncertain (never `refused`, never replayed). */
+const failedInFlightWrites = new WeakSet<object>();
 /** How long a hold waits for an idle engine to exit (longer than the 5 s the close itself allows before it kills). */
 const HOLD_CLOSE_MS = 9_000;
 /** Resolves true when the child has exited, false when it has not within `ms`. */
@@ -454,8 +531,10 @@ export interface ClaudeConfig {
 export const STATIC_CLAUDE_MODELS: ModelCatalog = {
   default: "claude-sonnet-5-5",
   options: [
-    { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
-    { id: "claude-fable-5", label: "Claude Fable 5" },
+    // https://platform.claude.com/docs/en/about-claude/models/overview (2026-11-14).
+    { id: "claude-fable-5-2", label: "Claude Fable 5.2", contextWindow: 1_000_000 },
+    { id: "claude-fable-5-1", label: "Claude Fable 5.1", contextWindow: 1_000_000 },
+    { id: "claude-fable-5", label: "Claude Fable 5", contextWindow: 1_000_000 },
     { id: "claude-opus-5-5", label: "Claude Opus 5.5", contextWindow: 1_000_000 },
     { id: "claude-opus-5", label: "Claude Opus 5" },
     { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", contextWindow: 1_000_000 },
@@ -520,7 +599,7 @@ const OFFICIAL_CLAUDE_ID = /^claude-[a-z0-9.-]+$/;
 export function readClaudeModelCatalog(env: Record<string, string | undefined> = process.env) {
   let settings: Record<string, unknown> = {};
   try {
-    settings = JSON.parse(readFileSync(join(claudeConfigDir(env), "settings.json"), "utf8")) as Record<string, unknown>;
+    settings = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(join(claudeConfigDir(env), "settings.json"), "utf8"))) as Record<string, unknown>;
   } catch {
     return STATIC_CLAUDE_MODELS;
   }
@@ -606,6 +685,8 @@ function removePrivateTempDir(filePath: string | null | undefined): boolean {
 // wait up to 30 minutes and then receive an honest "nobody answered" —
 // never an invented answer presented as the owner's (0.1.52 ASK2).
 interface Ask {
+  /** Set only by the host in-memory recovery connection. */
+  recoveryScript?: true;
   id: string;
   kind: "permission" | "question";
   /** Absent when the ask did not name a tool; never replaced by a stand-in (Rule 55). */
@@ -617,7 +698,7 @@ interface Ask {
   questions?: QuestionSpec[];
 }
 type AskBehavior = "allow" | "deny" | "answer";
-type AskResolutionSource = "user" | "timeout" | "system" | "auto";
+type AskResolutionSource = "user" | "timeout" | "system" | "auto" | "unavailable";
 /** Ends one MCP elicitation: what goes back to the CLI (unless `write` is
  * false: the CLI withdrew it, or the process is gone) and why. */
 type ElicitEnd = (outcome: "accept" | "decline" | "cancel", source: AskResolutionSource, answers?: readonly QuestionAnswer[], write?: boolean) => void;
@@ -628,6 +709,7 @@ type ElicitEnd = (outcome: "accept" | "decline" | "cancel", source: AskResolutio
  *  Equal to the Codex hook's ceiling (HOOK_ASK_BOUND_MS, Sean 10-29): a transport limit, never a card deadline. */
 export const CLAUDE_BROKER_TOOL_TIMEOUT_MS = HOOK_ASK_BOUND_MS;
 const DUPLICATE_ASK_ID_NOTE = "Murage: duplicate ask id, so this request is skipped.";
+const BROKER_RETIRE_RECEIPT_MS = 300;
 
 /** The system-source reply for an ask that outlives the turn — used both to
  * drain in-flight `pending` asks on close() and to answer one that arrives
@@ -668,6 +750,7 @@ export function claudeMountRecords(keys: readonly string[], connectorKey: string
  * (phone, browser, computer) gets none, and every one of its calls asks through the broker. */
 export function claudeOwnUnaskedTools(builtin: OwnBuiltin, emailMode?: string): string[] {
   const server = OWN_BUILTINS[builtin];
+  if (builtin === "highlevel") return highlevelHandlerTools.map(tool => `mcp__${server}__${tool}`);
   // the email tools only on a turn whose email mount listed them (dark launch: with no mode the list is the build without email)
   return OWN_UNASKED.filter((row) => row.mount === `own:${builtin}`)
     .flatMap((row) => row.tools.filter((tool) => ownToolListedOnTurn(tool, emailMode)).map((tool) => `mcp__${server}__${tool}`));
@@ -783,29 +866,63 @@ export async function socketNameHasLiveListener(path: string, timeoutMs = 1_000)
   });
 }
 
+/** Per socket name, the tail of the binds waiting on it (see the bind loop). */
+const brokerBindLocks = new Map<string, Promise<void>>();
+async function acquireBrokerBindLock(path: string): Promise<() => void> {
+  const prior = brokerBindLocks.get(path) ?? Promise.resolve();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const tail = prior.then(() => held);
+  brokerBindLocks.set(path, tail);
+  await prior;
+  return () => {
+    release();
+    if (brokerBindLocks.get(path) === tail) brokerBindLocks.delete(path);
+  };
+}
+
 export async function createPermissionBroker(opts: {
+  releaseBinding?: SendTurnInput["releaseBinding"];
+  /** The relay's bounded pre-stop capture, before a disconnect can end its permission proxy. */
+  beforeDisconnect?: () => Promise<void>;
+  threadId?: string;
   /** Candidate bind paths, tried in order; the first that listens wins. */
   socketPaths: string[];
   onAsk: (ask: Ask) => void;
   onResolve: (resolved: Ask & { behavior: AskBehavior; source: AskResolutionSource }) => void;
+  canAllow?: (requestId:string,updatedInput?:Record<string,unknown>)=>boolean;
+  permissionOutputTokenLimit?: number;
+  onDelivery?: (requestId: string, accepted: boolean) => void;
   isActive?: () => boolean;
   /** A question on this turn takes the 30 minute note (contracts: unattendedAskNote). */
   askNote?: () => boolean;
   /** How long that note waits. Tests only; the product value is QUESTION_TIMEOUT_MS. */
   noteMs?: number;
+  /** CL1-4 (N3): the live owner of a fenced reply, read at the refusal: the turn (settled first), the session it runs on (the close
+   * target) and that session's confirmed retire. null = no live turn (the refusal only registers, as a notice-time reply does). */
+  refusalCtx?: (error: unknown) => { owner: { fenced?: FencedRefusal; teardowns?: Promise<unknown>[]; settleFenced?: () => Promise<unknown> }; target: object; close: (R: FencedRefusal) => ConfirmedClose } | null;
 }) {
+  let generationBinding = opts.releaseBinding ?? null;
+  let refusalCtx = opts.refusalCtx;
+  let generation = 0;
+  let generationRetiring = false;
+  let generationChange: Promise<void> | undefined;
+  let pendingBinding: SendTurnInput["releaseBinding"] | null;
+  const connections = new Set<import("node:net").Socket>();
   const noteMs = opts.noteMs ?? QUESTION_TIMEOUT_MS;
+  const outOfBand = new Set<string>();
   const pending = new Map<
     string,
     {
       ask: Ask;
+      gone: () => void;
       finish: (
         behavior: AskBehavior,
         message: string | undefined,
         source: AskResolutionSource,
         answers?: Record<string, string | string[]>,
         updatedInput?: Record<string, unknown>,
-      ) => void;
+      ) => Promise<boolean>;
     }
   >();
   // server.close() only stops accepting NEW connections — it does not touch
@@ -817,7 +934,38 @@ export async function createPermissionBroker(opts: {
   // never be answered — the "zombie card" in issue #211.
   let closed = false;
   let boundPath = opts.socketPaths[0] ?? "";
-  const connectionHandler = (conn: import("node:net").Socket) => {
+  const connectionHandler = (conn: import("node:net").Socket, recoveryScript=false) => {
+    const owned = new Set<string>();
+    const gone = () => { for (const id of owned) pending.get(id)?.gone(); };
+    conn.on('error', gone); conn.on('close', gone);
+    const connectionGeneration = generation;
+    const answerBinding = generationBinding;
+    connections.add(conn);
+    conn.once("close", () => connections.delete(conn));
+    const answer = (socket: import("node:net").Socket, value: unknown) => {
+      if (connectionGeneration !== generation) return false;
+      const serialized = JSON.stringify(value) + "\n";
+      return releaseNativeAnswer(answerBinding, "claude:broker", serialized, () => socket.write(serialized));
+    };
+    /** CL1-5: a fenced local reply (or owner answer) is a recorded refusal on the turn (joined by dispatch generation), never swallowed.
+     * The proxy only resolves on an answer or a closed connection, so the refused connection closes (fail-closed deny). */
+    const refusedReply = (error: unknown, site: string, close = true): boolean => {
+      // N3 owner composite: with a live owner turn the claim is a DRIVER close: the turn settles first (settleFenced), then the
+      // connection closes and the captured session is retired and confirmed. No live turn (settled, between turns): register only.
+      const ctx = isMemoryRefusal(error) ? refusalCtx?.(error) ?? null : null;
+      const R = refusalFor(error, site, { engine: DRIVER_KIND, threadId: opts.threadId ?? "", binding: answerBinding, kind: "turn", owner: ctx?.owner, target: ctx ? ctx.target : undefined });
+      if (close) conn.destroy();
+      if (ctx && R?.closer === "driver") {
+        const connClosed: ConfirmedClose = () => new Promise<CloseResult>(resolve => {
+          if (conn.closed) return resolve({ confirmed: true });
+          conn.once("close", () => resolve({ confirmed: true })); conn.destroy();
+        });
+        void R.close(composeClose(ctx.owner, connClosed, ctx.close(R)));
+      }
+      return R !== undefined;
+    };
+    // A native socket error (including a proxy exiting during Stop) is not
+    // a retained-context lookup failure. The owning transport handles closure.
     conn.on("error", () => {});
     // The ask proxy runs in the engine's process tree, so its socket is
     // engine-controlled ingress too (A4). An oversized ask is never parsed:
@@ -829,24 +977,25 @@ export async function createPermissionBroker(opts: {
     });
     conn.on("data", (chunk: Buffer) => askLines.push(chunk));
     const handleAskLine = (line: string) => {
+      if (connectionGeneration !== generation) return;
       let msg: any;
       try {
-        msg = JSON.parse(line);
+        msg = registerBusyloopPayloadSite("read", JSON.parse(line));
       } catch {
         return;
       }
       if (msg.t !== "ask") return;
       const askId = String(msg.id ?? newId());
       const kind = msg.kind === "question" ? ("question" as const) : ("permission" as const);
-      if (closed) {
+      if (closed || generationRetiring) {
         // Closure is terminal and takes precedence over every active-turn
         // rule, including duplicate-id rejection. Never register a pending
         // entry or notify onAsk, but always answer an existing connection:
         // permission-proxy.ts only resolves on an explicit answer (or a
         // connection error/close), so a silent drop would hang the tool.
         try {
-          conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
-        } catch {}
+          answer(conn, { t: "answer", id: askId, ...systemEndedReply(kind) });
+        } catch (error) { refusedReply(error, "claude.broker.1"); }
         return;
       }
       // A retained Claude process keeps its proxy connection between
@@ -854,8 +1003,8 @@ export async function createPermissionBroker(opts: {
       // a card for a turn that has already settled.
       if (opts.isActive && !opts.isActive()) {
         try {
-          conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
-        } catch {}
+          answer(conn, { t: "answer", id: askId, ...systemEndedReply(kind) });
+        } catch (error) { refusedReply(error, "claude.broker.2"); }
         return;
       }
       // `pending` is server-scoped, not per-connection: two asks with the
@@ -866,15 +1015,13 @@ export async function createPermissionBroker(opts: {
       // resolves and deletes the shared key. Reject before either ask
       // becomes visible to onAsk.
       if (pending.has(askId)) {
-        // askId is client-controlled; JSON.stringify escapes newlines and
-        // control characters so it can't corrupt the log line or terminal.
-        console.error(`permission broker on ${boundPath}: duplicate ask id ${JSON.stringify(askId)} — denying`);
+        console.warn("native broker duplicate=1");
         try {
-          conn.write(JSON.stringify({ t: "answer", id: askId, behavior: "deny", message: DUPLICATE_ASK_ID_NOTE }) + "\n");
-        } catch {}
+          answer(conn, { t: "answer", id: askId, behavior: "deny", message: DUPLICATE_ASK_ID_NOTE });
+        } catch (error) { refusedReply(error, "claude.broker.3"); }
         return;
       }
-      const ask: Ask = { id: askId, kind, ...(typeof msg.tool === "string" && msg.tool ? { tool: msg.tool } : {}), ...(msg.input && typeof msg.input === "object" && !Array.isArray(msg.input) ? { input: msg.input as Record<string, unknown> } : {}), at: Date.now() };
+      const ask: Ask = { id: askId, kind, ...(recoveryScript?{recoveryScript:true as const}:{}), ...(typeof msg.tool === "string" && msg.tool ? { tool: msg.tool } : {}), ...(msg.input && typeof msg.input === "object" && !Array.isArray(msg.input) ? { input: msg.input as Record<string, unknown> } : {}), at: Date.now() };
       if (kind === "question") {
         // Engine-controlled input becomes a card only once it is bounded and
         // well formed. A question the owner cannot be shown is answered at
@@ -882,25 +1029,32 @@ export async function createPermissionBroker(opts: {
         const normalized = ask.tool === "AskUserQuestion" ? fromClaude(ask.input) : fromMuragebox(ask.input);
         if (!normalized.ok) {
           try {
-            conn.write(JSON.stringify({ t: "answer", id: askId, behavior: "deny", message: QUESTION_NOTES.unshowable(normalized.error) }) + "\n");
-          } catch {}
+            answer(conn, { t: "answer", id: askId, behavior: "deny", message: QUESTION_NOTES.unshowable(normalized.error) });
+          } catch (error) { refusedReply(error, "claude.broker.4"); }
           return;
         }
         ask.questions = normalized.questions;
       }
-      const finish = (
-        behavior: AskBehavior,
-        message: string | undefined,
-        source: AskResolutionSource,
-        answers?: Record<string, string | string[]>,
-        updatedInput?: Record<string, unknown>,
-      ) => {
-        if (!pending.delete(askId)) return;
-        timer?.clear();
-        try {
-          conn.write(JSON.stringify({ t: "answer", id: askId, behavior, message, ...(answers ? { answers } : {}), ...(updatedInput ? { updatedInput } : {}) }) + "\n");
-        } catch {}
-        opts.onResolve({ ...ask, behavior, source });
+      const slot: NativeAskSlot = { closed: false };
+      const commit = (accepted: boolean, behavior: AskBehavior, source: AskResolutionSource) => {
+        pending.delete(askId); owned.delete(askId); timer?.clear();
+        opts.onDelivery?.(askId, accepted);
+        opts.onResolve({ ...ask, behavior: accepted ? behavior : 'deny', source: accepted ? source : 'unavailable' });
+      };
+      const finish = (behavior: AskBehavior, message: string | undefined, source: AskResolutionSource,
+        answers?: Record<string, string | string[]>, updatedInput?: Record<string, unknown>) => {
+        const frame = JSON.stringify({ t: 'answer', id: askId, behavior, message, ...(answers ? { answers } : {}), ...(updatedInput ? { updatedInput } : {}) }) + '\n';
+        const receipt = deliverNative(slot, source === 'user' || source === 'auto' ? 'answer' : 'retire', frame,
+          () => new Promise<boolean>((resolve, reject) => { try { releaseNativeAnswer(answerBinding, "claude:broker", frame, () => conn.write(frame, error => resolve(!error))); } catch (error) { if (isMemoryRefusal(error)) reject(error); else resolve(false); } }),
+          () => connectionGeneration === generation && conn.writable && !conn.destroyed,
+          accepted => commit(accepted, behavior, source),
+          () => behavior !== 'allow' || !generationRetiring && opts.canAllow?.(askId, updatedInput) !== false,
+          source === 'system' && generationRetiring
+            ? { timeoutMs: BROKER_RETIRE_RECEIPT_MS, onTimeout: () => conn.destroy() } : undefined,
+          error => { refusedReply(error, "claude.broker.finish", false); });
+        // Failed writes on a live socket keep the ask and its original timer armed.
+        void receipt.then(ok => { if (!ok && !slot.closed) opts.onDelivery?.(askId, false); });
+        return receipt;
       };
       // A question left unanswered gets an honest non-answer: Claude sees a
       // deny whose note says nobody answered, never a guess in the owner's
@@ -911,7 +1065,10 @@ export async function createPermissionBroker(opts: {
         () => finish("deny", QUESTION_NOTES.timeout(Math.max(1, Math.round(noteMs / 60_000))), "timeout"),
         noteMs,
       );
-      pending.set(askId, { ask, finish });
+      owned.add(askId);
+      pending.set(askId, { ask, finish, gone: () => {
+        if (!slot.closed) { slot.closed = true; commit(false, 'deny', 'unavailable'); }
+      } });
       opts.onAsk(ask);
     };
   };
@@ -921,6 +1078,11 @@ export async function createPermissionBroker(opts: {
   // but leave an actionable diagnostic either way.
   let server: ReturnType<typeof createNetServer> | null = null;
   for (const [index, candidate] of opts.socketPaths.entries()) {
+    // One probe-unlink-listen per name at a time in this process (U1 M4): two
+    // brokers starting together for the same name could both see it absent,
+    // and the second unlink would remove the first one's live socket.
+    const releaseBind = await acquireBrokerBindLock(candidate);
+    try {
     const attempt = createNetServer(connectionHandler);
     // A name already held by another uid is never replaced or bound over: take the next candidate.
     if (socketNameHeldByAnotherUid(candidate)) {
@@ -980,18 +1142,79 @@ export async function createPermissionBroker(opts: {
       console.error(`permission broker unavailable on ${candidate}: ${outcome.message}`);
       break;
     }
+    } finally {
+      releaseBind();
+    }
   }
   // Never hand the proxy an occupied candidate when every bind failed. That
   // could connect it to a stale (or unrelated) listener instead of this
   // broker, defeating the fail-closed boundary.
   if (!server) throw new Error("claude: permission broker could not bind a local socket");
-  const drain = () => {
-    for (const p of [...pending.values()]) {
-      const { behavior, message } = systemEndedReply(p.ask.kind);
-      p.finish(behavior, message, "system");
-    }
-  };
+  const drain = () => [...pending.values()].map(p => {
+    const { behavior, message } = systemEndedReply(p.ask.kind);
+    return p.finish(behavior, message, "system");
+  });
   return {
+    /** A host-hook recovery enters the ordinary broker without its socket.
+     * The in-memory transport still uses pending asks and deliverNative. */
+    recoverBash(input:Record<string,unknown>,signal:AbortSignal,recoveryScript=false):Promise<{behavior:'allow'|'deny';updatedInput?:Record<string,unknown>}> {
+      return new Promise(resolve=>{
+        let done=false;
+        const finish=(answer:{behavior:'allow'|'deny';updatedInput?:Record<string,unknown>})=>{
+          if(done)return;done=true;signal.removeEventListener('abort',abort);resolve(answer);
+          setImmediate(()=>conn.destroy());
+        };
+        const conn=new Duplex({read(){},write(chunk,_encoding,callback){
+          try{const answer=JSON.parse(chunk.toString());callback();finish({behavior:answer.behavior==='allow'?'allow':'deny',...(answer.updatedInput?{updatedInput:answer.updatedInput}:{})});}
+          catch{callback();finish({behavior:'deny'});}
+        }});
+        const abort=()=>{finish({behavior:'deny'});conn.destroy();};
+        signal.addEventListener('abort',abort,{once:true});
+        if(signal.aborted){abort();return;}
+        connectionHandler(conn as import('node:net').Socket,recoveryScript);
+        conn.push(JSON.stringify({t:'ask',id:newId(),tool:'Bash',input})+'\n');
+      });
+    },
+    /** Revoke card/allow ingress now, then give only the fixed retirement
+     * replies a bounded chance to obtain their actual write receipts. Never
+     * advance the connection generation while its denial is still unwritten. */
+    nextGeneration(binding: SendTurnInput["releaseBinding"] = undefined): Promise<void> {
+      const next = binding ?? null;
+      if (generationChange) {
+        if (pendingBinding !== next) return Promise.reject(new Error("CLAUDE_BROKER_GENERATION_RETIRING"));
+        return generationChange;
+      }
+      generationRetiring = true;
+      pendingBinding = next;
+      const capture = opts.beforeDisconnect?.();
+      const receipts = drain();
+      const change = (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await capture;
+          if (receipts.length) await Promise.race([
+            Promise.allSettled(receipts),
+            new Promise<void>(resolve => { timer = setTimeout(resolve, BROKER_RETIRE_RECEIPT_MS); timer.unref?.(); }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+          generation++;
+          for (const conn of connections) conn.destroy();
+          connections.clear();
+          // Any receipt still absent at the bound is unaccepted. Retire its
+          // card once before the successor can answer an old request id.
+          for (const p of [...pending.values()]) p.gone();
+          generationBinding = next;
+          // Retirement leaves no card ingress between turns. Only an
+          // explicitly admitted successor binding reopens this broker.
+          generationRetiring = binding === undefined;
+        }
+      })();
+      generationChange = change;
+      const finished = () => { if (generationChange === change) generationChange = undefined; };
+      void change.then(finished, finished);
+      return change;
+    },
     /** Settle one ask. A question takes `answer` (with the owner's picks)
      * or `deny` — an explicit skip, delivered immediately. Before 0.1.52 a
      * deny on a question was refused, so closing a question card left
@@ -1000,13 +1223,13 @@ export async function createPermissionBroker(opts: {
      * the call as judged or the narrowed call as `updatedInput`. */
     settle(askId: string, behavior: "allow" | "deny", message: string | undefined, source: AskResolutionSource, updatedInput?: Record<string, unknown>): boolean {
       const p = pending.get(askId);
-      if (!p || p.ask.kind !== "permission") return false;
+      if (!p || p.ask.kind !== "permission" || generationRetiring && behavior === "allow") return false;
       p.finish(behavior, message, source, undefined, updatedInput);
       return true;
     },
     answer(askId: string, behavior: AskBehavior, message?: string, answers?: QuestionAnswer[], updatedInput?: Record<string, unknown>): boolean {
       const p = pending.get(askId);
-      if (!p) return false;
+      if (!p || generationRetiring) return false;
       if (p.ask.kind === "question") {
         if (behavior === "allow") return false;
         if (behavior === "deny") {
@@ -1029,15 +1252,29 @@ export async function createPermissionBroker(opts: {
       p.finish(behavior, message, "user", undefined, behavior === "allow" ? updatedInput : undefined);
       return true;
     },
+    /** Only the driver's SDK hook relay registers these ids, before connecting. */
+    registerOutOfBand(askId: string): () => void {
+      outOfBand.add(askId);
+      return () => { outOfBand.delete(askId); };
+    },
+    allowFits(askId: string, updatedInput?: Record<string, unknown>): boolean {
+      const input = pending.get(askId)?.ask.input;
+      // The SDK control response bypasses MCP's cap, but its relay is bounded.
+      const limit = outOfBand.has(askId) ? 4 * 1024 * 1024 - 1024 : opts.permissionOutputTokenLimit ?? Number.MAX_SAFE_INTEGER;
+      return !input || permissionReplyFits(input, updatedInput, limit);
+    },
     /** Cards this turn's engine is waiting on. */
     openAsks: () => pending.size,
     /** NOLIMITS v1 V5: the ask is still waiting (not answered, not ended by a stop or a close). */
     isPending: (askId: string): boolean => pending.has(askId),
+    /** CL1-4 (N3): the driver names the live owner of a fenced reply after it has the broker (see opts.refusalCtx). */
+    ownRefusals(ctx: NonNullable<typeof opts.refusalCtx>): void { refusalCtx = ctx; },
     pause() {
       drain();
     },
     close() {
       closed = true;
+      outOfBand.clear();
       drain();
       try {
         server?.close();
@@ -1200,7 +1437,7 @@ const FORBIDDEN_COST_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 function readCostHistory(): Record<string, ClaudeCostSnapshot[]> {
   const history: Record<string, ClaudeCostSnapshot[]> = Object.create(null);
   try {
-    const parsed: unknown = JSON.parse(readFileSync(COST_HISTORY_FILE, "utf8"));
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(COST_HISTORY_FILE, "utf8")));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return history;
     for (const [id, states] of Object.entries(parsed)) {
       if (FORBIDDEN_COST_KEYS.has(id)) continue;
@@ -1391,7 +1628,7 @@ function skillsDirPluginName(folder: string, folderName: string): string | null 
   let raw: string;
   try { raw = readFileSync(join(folder, ".claude-plugin", "plugin.json"), "utf8"); } catch { return null; }
   try {
-    const name = (JSON.parse(raw) as { name?: unknown } | null)?.name;
+    const name = (registerBusyloopPayloadSite("read", JSON.parse(raw)) as { name?: unknown } | null)?.name;
     return typeof name === "string" && name.trim() ? name.trim() : folderName;
   } catch { return folderName; }
 }
@@ -1493,7 +1730,7 @@ export function claudeIsolationSettings(env: NodeJS.ProcessEnv, cwd: string, pla
   const plugins = new Set<string>();
   for (const file of files) {
     try {
-      const enabled = (JSON.parse(readFileSync(file, "utf8")) as { enabledPlugins?: unknown } | null)?.enabledPlugins;
+      const enabled = (registerBusyloopPayloadSite("read", JSON.parse(readFileSync(file, "utf8"))) as { enabledPlugins?: unknown } | null)?.enabledPlugins;
       if (enabled && typeof enabled === "object" && !Array.isArray(enabled)) for (const id of Object.keys(enabled)) plugins.add(id);
     } catch { /* absent or unreadable: nothing of the owner's to switch off */ }
   }
@@ -1586,12 +1823,63 @@ const exitToken = (code: number | string | null): string => (code === null ? "nu
 /** POSIX single-quoting, as Claude Code quotes a stdio server's command line for the shell prefix. */
 const posixQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
 
+/** X3 r4.5 B5: a MURAGE_EXEC_* name (any case: Windows names ignore it). */
+export const isExecName = (name: string): boolean => name.toUpperCase().startsWith("MURAGE_EXEC_");
+
+/** X3 r2 section 2: threads whose wrapper wrote a flag (on the floor from then on), and the refusal memory keyed (CLI
+ * version, shell) -> shape hashes. A spawn whose (version, shell) has a remembered refusal starts PROVEN=0. */
+const execFloored = new Set<string>();
+const execRefusalMemory = new Map<string, Set<string>>();
+const execFlagWatches = new Map<string, () => void>();
+const execMemoryKey = (cli: string | null, shell: string): string => `${cli ?? "unknown"}\u0000${shell}`;
+/** C2 widened: a map holding one of these puts the thread on the floor (bash imports BASH_FUNC_*; SHELLOPTS, BASHOPTS). */
+const execFloorName = (name: string): boolean => /^BASH_FUNC_/.test(name) || name === "SHELLOPTS" || name === "BASHOPTS";
+
+/** X3: PROVEN at a murage-exec spawn. 1 only when the thread has no flag, (CLI version, shell) has no remembered refusal,
+ * no managed settings file declares hooks (r4.5 B6: read at EVERY spawn; with managed hooks the thread starts on the
+ * floor), the shell is bash, and the map holds no C2 name. */
+export function claudeExecSpawnProven(input: { threadId: string; cli: string | null; shell: string; map: Readonly<Record<string, string>>; cwd: string; envs: readonly NodeJS.ProcessEnv[]; managedPaths?: readonly string[]; noLimits?: boolean }): { proven: boolean; reason: string | null } {
+  if (input.noLimits) return { proven: false, reason: "no-limits" };
+  if (execFloored.has(input.threadId) || readExecFlag(execEnvFilePath(input.threadId))) { execFloored.add(input.threadId); return { proven: false, reason: "thread-flag" }; }
+  if ((execRefusalMemory.get(execMemoryKey(input.cli, input.shell))?.size ?? 0) > 0) return { proven: false, reason: "memory" };
+  if (claudeDraftOnlyFacts(input.envs, input.cwd, input.managedPaths).managedHooks) return { proven: false, reason: "managed-hooks" };
+  if (!/^bash(\.exe)?$/i.test(win32.basename(input.shell))) return { proven: false, reason: "shell" };
+  if (Object.keys(input.map).some(execFloorName)) return { proven: false, reason: "map" };
+  return { proven: true, reason: null };
+}
+
+/** X3 r2 section 2: on the thread's FIRST flag, at once (not at turn end): the thread goes on the floor, the refusal is
+ * remembered for (CLI version, shell), and `rewrite` writes the env file again with PROVEN=0. */
+export function armClaudeExecFlag(threadId: string, envFile: string, cli: string | null, shell: string, rewrite: () => void): void {
+  execFlagWatches.get(threadId)?.();
+  const stop = watchExecFlag(envFile, (flag: ExecFlag) => {
+    const first = !execFloored.has(threadId);
+    execFloored.add(threadId);
+    const key = execMemoryKey(cli, shell);
+    const hashes = execRefusalMemory.get(key) ?? new Set<string>();
+    hashes.add(flag.shape);
+    execRefusalMemory.set(key, hashes);
+    if (!first) return;
+    try { rewrite(); } catch { /* the next spawn starts PROVEN=0 from the flag */ }
+    console.info(`claude exec floor thread=${threadId} reason=${flag.reason} shape=${flag.shape}`);
+  });
+  execFlagWatches.set(threadId, stop);
+}
+
+/** Test seam: forget every X3 floor, memory entry and flag watch. */
+export function resetClaudeExecStateForTests(): void {
+  for (const stop of execFlagWatches.values()) stop();
+  execFlagWatches.clear();
+  execFloored.clear();
+  execRefusalMemory.clear();
+}
+
 /** The pre-flight for a found shell (1.0.5): starts `node -e <print a marker>` (Murage's own runtime, as every built-in MCP
  * server is started) through the installed murage-exec wrapper exactly as Claude Code starts a stdio server: `<shell>
  * <wrapper> '<command line>'` with an MCP stanza's env (the turn's environment file, ELECTRON_RUN_AS_NODE kept by
  * MURAGE_EXEC_KEEP, and on Windows the shell's own folder first on PATH, claudeShellServers). It passes only when the marker
  * comes back on stdout with exit 0; otherwise `detail` carries the exit status and a fixed reason only (r2: never the child's
- * stderr). r2 (Grok High): the pre-flight runs with the pinned environment the engine run gets: NODE_OPTIONS "" in every
+ * stderr). r2 (Grok High): the pre-flight runs with the pinned environment the engine run gets: NODE_OPTIONS stripped to the hide preload on Windows in every
  * spelling (claude.ts writes "" into the hand before the turn's environment file) and every absence pin (ABSENT_PINS: BASH_ENV,
  * ENV, ...) removed in every spelling, so a handed loader value runs nothing inside the pre-flight. A pass is kept per
  * generation, shell, cwd, PATH and the identity of the shell, the wrapper and (Windows) cygpath; a failure is checked again on
@@ -1613,15 +1901,19 @@ export async function claudeExecLaunchCheck(
   if (execLaunchPassed.get(key) === generation) return { ok: true };
   const turnEnv: Record<string, string> = {};
   for (const [name, value] of Object.entries(handed)) {
-    if (typeof value !== "string" || name === "CLAUDE_CODE_SHELL_PREFIX" || name === "CLAUDE_CODE_SHELL" || name === EXEC_ENV_FILE || name === EXEC_KEEP) continue;
+    // r4.5 B5 (Grok r4 Low 8): no MURAGE_EXEC_* name of the hand is copied (KEEP, NONCE, PROVEN, CWD, SHELL, any other)
+    if (typeof value !== "string" || name === "CLAUDE_CODE_SHELL_PREFIX" || name === "CLAUDE_CODE_SHELL" || isExecName(name)) continue;
     turnEnv[name] = value;
   }
   // r2 (Grok High): the same pins as the engine run, before anything is written or started
   for (const name of ABSENT_PINS) deleteEnvName(turnEnv, name, platform);
+  const hideOptions = stripNodeOptionsExceptHide(withHideInherit({ env: turnEnv }).env.NODE_OPTIONS, platform);
   for (const name of Object.keys(turnEnv)) if (name.toUpperCase() === "NODE_OPTIONS") delete turnEnv[name];
-  turnEnv.NODE_OPTIONS = "";
+  turnEnv.NODE_OPTIONS = hideOptions;
   const envFile = writeExecEnvFile(`launch-check\u0000${key}`, turnEnv, cwd, shell);
-  const env: Record<string, string> = { ...turnEnv, [EXEC_ENV_FILE]: envFile, ELECTRON_RUN_AS_NODE: "1", [EXEC_KEEP]: "ELECTRON_RUN_AS_NODE" };
+  // r4.5 B1/B2: the pre-flight is an MCP-class call of its own: its own nonce in the env, its own marker on KEEP
+  const launchNonce = newExecNonce();
+  const env: Record<string, string> = { ...turnEnv, [EXEC_ENV_FILE]: envFile, ELECTRON_RUN_AS_NODE: "1", [EXEC_NONCE]: launchNonce, [EXEC_KEEP]: `${execKeepHead(launchNonce)}ELECTRON_RUN_AS_NODE` };
   if (platform === "win32") {
     const bashDir = win32.dirname(shell);
     for (const name of Object.keys(env)) if (name.toUpperCase() === "PATH") delete env[name];
@@ -1630,7 +1922,7 @@ export async function claudeExecLaunchCheck(
   const command = `${posixQuote(opts.runtime ?? process.execPath)} -e ${posixQuote(`process.stdout.write(${JSON.stringify(EXEC_LAUNCH_MARKER)})`)}`;
   try {
     const result = await new Promise<{ code: number | string | null; stdout: string; stderr: string }>((resolve) => {
-      execFile(shell, [wrapper, command], { env, timeout: opts.timeoutMs ?? EXEC_LAUNCH_TIMEOUT_MS, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => {
+      execFile(shell, [wrapper, command], withHideInherit({ env, timeout: opts.timeoutMs ?? EXEC_LAUNCH_TIMEOUT_MS, windowsHide: true, maxBuffer: 64 * 1024 }), (error, stdout, stderr) => {
         const code = error ? ((error as NodeJS.ErrnoException & { code?: number | string }).code ?? (error.killed ? "timeout" : 1)) : 0;
         resolve({ code: code ?? null, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
       });
@@ -1729,7 +2021,7 @@ export const CLAUDE_INHERIT_ADDS: Readonly<Record<string, readonly string[]>> = 
 export const CLAUDE_UNENFORCEABLE_ABSENT: readonly string[] = ["POSIXLY_CORRECT", "GIT_SSH"];
 
 /** The tool each mode runs commands on. */
-const modeTool = (mode: ClaudeShellMode): "Bash" | "PowerShell" => (mode.kind === "murage-exec" ? "Bash" : "PowerShell");
+const modeTool = (mode: ClaudeShellMode): "Bash" | "PowerShell" => (mode.kind === "murage-exec" ? CLAUDE_NATIVE_SHELL_TOOLS.bash : CLAUDE_NATIVE_SHELL_TOOLS.powershell);
 
 export interface ClaudeShellSetup {
   /** The hand with the mode's names written (and the other mode's removed). */
@@ -1801,9 +2093,10 @@ export function claudeShellSetup(platform: NodeJS.Platform, mode: ClaudeShellMod
  * with the found bash's own folder first (that exact bash, never another one such as WSL's System32\bash.exe). The
  * CLI reads the upper-case name. It is added after the keep list is made, so the wrapper does not carry it: the server
  * still runs on the turn's own PATH. A stanza that brings its own PATH keeps it, with the folder in front. */
-export function claudeShellServers(mode: ClaudeShellMode | null, servers: Record<string, unknown>, platform: NodeJS.Platform = process.platform, handed: Readonly<Record<string, string>> = {}): Record<string, unknown> {
+export function claudeShellServers(mode: ClaudeShellMode | null, servers: Record<string, unknown>, platform: NodeJS.Platform = process.platform, handed: Readonly<Record<string, string>> = {}, nonce: string = ""): Record<string, unknown> {
   if (mode?.kind !== "murage-exec") return servers;
-  const kept = withExecKeep(servers);
+  // r4.5 B2: every stdio stanza carries mcp:<the spawn's nonce>:<names>
+  const kept = withExecKeep(servers, nonce);
   if (platform !== "win32") return kept;
   const bashDir = win32.dirname(mode.shell);
   const handPath = Object.entries(handed).find(([name]) => name.toUpperCase() === "PATH")?.[1] ?? "";
@@ -1821,7 +2114,10 @@ export function claudeShellServers(mode: ClaudeShellMode | null, servers: Record
     if (own !== undefined) delete env[own];
     env.PATH = front(ownValue ?? handPath);
     // an own PATH stays in the keep list, under the name the wrapper now sees
-    if (own !== undefined && own !== "PATH" && typeof env[EXEC_KEEP] === "string") env[EXEC_KEEP] = env[EXEC_KEEP]!.split(",").map((key) => (key === own ? "PATH" : key)).join(",");
+    // r4.5 B2 (Grok r4 Low 10): only the names part is renamed; the `mcp:<nonce>:` head stays whole
+    const head = execKeepHead(nonce);
+    const keep = env[EXEC_KEEP];
+    if (own !== undefined && own !== "PATH" && typeof keep === "string" && keep.startsWith(head)) env[EXEC_KEEP] = head + keep.slice(head.length).split(",").map((key) => (key === own ? "PATH" : key)).join(",");
     out[name] = { ...stanza, env };
   }
   return out;
@@ -1848,7 +2144,7 @@ const AWS_ENDPOINT_NAMES: readonly string[] = ["AWS_ENDPOINT_URL_BEDROCK", "AWS_
  * - `Nl`: the names the CLI refuses from a settings source it has not verified (proxy and TLS `Ro`, the OAuth and federation
  *   login names, the bridge and local-OAuth endpoints);
  * - the documented login, gateway and helper names not in either set.
- * Left out, with the reason: NODE_OPTIONS (always "" in the overlay), the process-location and settings-location names in
+ * Left out, with the reason: NODE_OPTIONS (only the Windows hide preload in the overlay), the process-location and settings-location names in
  * CLAUDE_SIGNIN_UNPINNED_NAMES (an empty value counts as set for them, so a pin to "" would move the owner's own login store or
  * break commands; they are restated when a repository names them and the sign-in hold asks about them), and Nl's
  * API_FORCE_IDLE_TIMEOUT, CLAUDE_CODE_ENVIRONMENT_KIND and CLAUDE_CODE_REMOTE_SESSION_ID (a timeout and cloud-session labels, not
@@ -2115,11 +2411,11 @@ export const CLAUDE_OVERLAY_NEUTRAL: Readonly<Record<string, string>> = { BASH_E
  * runs), CLAUDE_ENV_FILE (a file the CLI sources), PYTHONINSPECT (any non-empty value turns inspect mode on),
  * CLAUDE_CODE_PLUGIN_DIRS (isolation: any value is a directory list the CLI loads), and (1.0.4 U19) ENV (any value is a file a
  * POSIX shell sources; "" is no file, and leaks no value to a script that reads `$ENV`). Each reader takes "" as unset, so none
- * changes what a helper child does: the spawn env already carries NODE_OPTIONS="" and GIT_ASKPASS=""; node and python read an
+ * changes what a helper child does: the spawn env already strips NODE_OPTIONS to the hide preload and carries GIT_ASKPASS=""; node and python read an
  * empty NODE_OPTIONS / PYTHONINSPECT as unset; the CLI tests CLAUDE_CODE_SHELL_PREFIX and CLAUDE_ENV_FILE for truthiness
  * (2.1.305, `strings -n 8` offsets 27487109 `a.CLAUDE_CODE_SHELL_PREFIX;if(ft)` and 25098417
  * `h=a.CLAUDE_ENV_FILE;if(h)try{...readFile(h)}`), so "" is never read or stat'ed as a path. */
-export const CLAUDE_OVERLAY_EMPTY_ALLOWED: readonly string[] = ["CLAUDE_CODE_SHELL_PREFIX", "NODE_OPTIONS", "GIT_ASKPASS", "CLAUDE_ENV_FILE", "PYTHONINSPECT", "CLAUDE_CODE_PLUGIN_DIRS", "ENV"];
+export const CLAUDE_OVERLAY_EMPTY_ALLOWED: readonly string[] = ["CLAUDE_CODE_SHELL_PREFIX", "NODE_OPTIONS", "GIT_ASKPASS", "CLAUDE_ENV_FILE", "PYTHONINSPECT", "CLAUDE_CODE_PLUGIN_DIRS", "ENV", "MURAGE_EXEC_KEEP"];
 
 export function isClaudeOverlayEmptyAllowed(name: string, platform: NodeJS.Platform = process.platform): boolean {
   return CLAUDE_OVERLAY_EMPTY_ALLOWED.some((known) => (platform === "win32" ? known.toUpperCase() === name.toUpperCase() : known === name));
@@ -2163,7 +2459,7 @@ function settingsEnvBlock(file: string): Record<string, unknown> | { cannot: str
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = registerBusyloopPayloadSite("read", JSON.parse(text));
   } catch {
     return { cannot: "it is not valid JSON" };
   }
@@ -2179,15 +2475,15 @@ const envOf = (read: Record<string, unknown>): Record<string, unknown> => (read.
  * session names Murage strips or sets (the canary class). */
 const managedReported = (name: string): boolean => {
   const upper = name.toUpperCase();
-  return ENV_PINS.some((pin) => pin.name === upper) || upper === "PATH" || upper === "NODE_OPTIONS" || upper === "PSMODULEPATH" || /^(ANTHROPIC_|CLAUDE|AI_AGENT$|MURAGE_)/.test(upper);
+  return ENV_PINS.some((pin) => pin.name === upper) || upper === "PATH" || upper === "NODE_OPTIONS" || upper === "PSMODULEPATH" || upper === "MAX_MCP_OUTPUT_TOKENS" || /^(ANTHROPIC_|CLAUDE|AI_AGENT$|MURAGE_)/.test(upper);
 };
 
-export type ClaudeOverlayEnv = { env: Record<string, string>; managed: string[]; ownerRouting: string[] } | { refusal: string };
+export type ClaudeOverlayEnv = { env: Record<string, string>; managed: string[]; ownerRouting: string[]; permissionOutputTokenLimit: number; logs?: string[] } | { refusal: string };
 
 /** The overlay's `env` for a turn (3.4, section 11 D1, the section 14 ruling and 14.6). 14.6: NO name is ever "" here (a value
- * is the owner's non-empty one, Murage's non-empty neutral one, or absent), except the seven ruled names (CLAUDE_OVERLAY_EMPTY_ALLOWED).
+ * is the owner's non-empty one, Murage's non-empty neutral one, or absent), except the eight ruled names (CLAUDE_OVERLAY_EMPTY_ALLOWED; X3 r4.5 B0 added MURAGE_EXEC_KEEP).
  * In order: every value and resolved pin with a non-empty handed value, the handed PATH, the
- * mode's names, NODE_OPTIONS (""), PSModulePath as handed, BASH_ENV at /dev/null (CLAUDE_OVERLAY_NEUTRAL),
+ * mode's names, NODE_OPTIONS (only the Windows hide preload), PSModulePath as handed, BASH_ENV at /dev/null (CLAUDE_OVERLAY_NEUTRAL),
  * ENV, CLAUDE_ENV_FILE and PYTHONINSPECT (""), then each name a loaded settings file's `env` sets:
  * - every routing name (CLAUDE_OWNER_ROUTING_NAMES), on every turn (14.2 N1): the owner's effective non-empty value (user
  *   settings, then managed, then the hand), else left out; a repository's file that sets one differently raises the sign-in
@@ -2198,8 +2494,10 @@ export type ClaudeOverlayEnv = { env: Record<string, string>; managed: string[];
  *   `ownerRouting` ("visible to commands (owner routing)"), names only.
  * A name the spawn env must not carry is stripped there (the child-env build), not here. POSIXLY_CORRECT and GIT_SSH are never
  * restated (an empty value still counts as set): a settings file naming one refuses the turn, as does a settings file that
- * cannot be read. Managed settings outrank the overlay: their reported names come back in `managed`. */
-export function claudeOverlayEnv(platform: NodeJS.Platform, mode: ClaudeShellMode, handed: Readonly<Record<string, string>>, files: readonly ClaudeSettingsFile[], managedFiles: readonly string[] = [], cli?: string | null): ClaudeOverlayEnv {
+ * cannot be read. Managed settings outrank the overlay: their reported names come back in `managed`; a conflicting
+ * permission-reply limit refuses the turn because the overlay cannot keep those replies intact.
+ * No limits keeps the overlay but permits these non-wipe settings restrictions automatically. */
+export function claudeOverlayEnv(platform: NodeJS.Platform, mode: ClaudeShellMode, handed: Readonly<Record<string, string>>, files: readonly ClaudeSettingsFile[], managedFiles: readonly string[] = [], cli?: string | null, noLimits = false): ClaudeOverlayEnv {
   const lookup = (name: string): string | undefined => {
     if (name in handed) return handed[name];
     if (platform !== "win32") return undefined;
@@ -2220,8 +2518,13 @@ export function claudeOverlayEnv(platform: NodeJS.Platform, mode: ClaudeShellMod
   };
   for (const pin of ENV_PINS) if (!("absent" in pin)) restate(pin.name);
   restate("PATH");
+  // A settings env block must not shrink permission-prompt results after launch.
+  restate("MAX_MCP_OUTPUT_TOKENS");
   if (mode.kind === "murage-exec") {
     for (const name of ["CLAUDE_CODE_SHELL_PREFIX", "CLAUDE_CODE_SHELL", EXEC_ENV_FILE]) restate(name);
+    // X3 r4.5 B1: the spawn's nonce restated non-empty at flag precedence, over any user settings value; r2 M1: SHLVL=1
+    restate(EXEC_NONCE);
+    restate("SHLVL");
     if (platform === "win32") for (const name of ["CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_USE_POWERSHELL_TOOL"]) restate(name);
   } else {
     restate("CLAUDE_CODE_USE_POWERSHELL_TOOL");
@@ -2230,9 +2533,12 @@ export function claudeOverlayEnv(platform: NodeJS.Platform, mode: ClaudeShellMod
     fixedNames.push("CLAUDE_CODE_SHELL_PREFIX");
     out.CLAUDE_CODE_SHELL_PREFIX = "";
   }
-  // 3.4: NODE_OPTIONS is "" whatever was handed (the driver writes "" into the hand too, so the record agrees); 14.6 ruled ""
+  // X3 r4.5 B0 (ruled): MURAGE_EXEC_KEEP has no safe non-empty value in the CLI's own environment ("" is Bash class)
+  fixedNames.push(EXEC_KEEP);
+  if (isClaudeOverlayEmptyAllowed(EXEC_KEEP, platform)) out[EXEC_KEEP] = "";
+  // Strip inherited Electron/Node flags, retaining only the Windows hide preload for MCP descendants.
   fixedNames.push("NODE_OPTIONS");
-  out.NODE_OPTIONS = "";
+  out.NODE_OPTIONS = stripNodeOptionsExceptHide(lookup("NODE_OPTIONS"), platform);
   restate("PSModulePath");
   // 14.6: an absence pin takes its non-empty neutral value (BASH_ENV: /dev/null), or the ruled ""
   // (ENV, 1.0.4 U19; CLAUDE_ENV_FILE, PYTHONINSPECT); POSIXLY_CORRECT and GIT_SSH are never restated (CLAUDE_UNENFORCEABLE_ABSENT)
@@ -2249,17 +2555,35 @@ export function claudeOverlayEnv(platform: NodeJS.Platform, mode: ClaudeShellMod
   const blocks: Array<{ file: ClaudeSettingsFile | { path: string; source: "managed" }; env: Record<string, unknown> }> = [];
   for (const file of files) {
     const read = settingsEnvBlock(file.path);
-    if ("cannot" in read) return { refusal: `Claude's turn was not started: Murage cannot check the "env" block of ${file.path} because ${read.cannot}. Fix or remove that file and send the message again.` };
-    blocks.push({ file, env: envOf(read) });
+    if ("cannot" in read && !noLimits) return { refusal: `Claude's turn was not started: Murage cannot check the "env" block of ${file.path} because ${read.cannot}. Fix or remove that file and send the message again.` };
+    blocks.push({ file, env: "cannot" in read ? {} : envOf(read) });
   }
   for (const path of managedFiles) {
     const read = settingsEnvBlock(path);
     blocks.push({ file: { path, source: "managed" }, env: "cannot" in read ? {} : envOf(read) });
   }
+  // X3 r4.5 B5: managed settings outrank the overlay, so a managed MURAGE_EXEC_* (a managed MURAGE_EXEC_ENV_FILE is a door the
+  // wrapper does not close) refuses the turn; B4: a user, project or local file's MURAGE_EXEC_* is restated, named in one line.
+  const restatedExec: string[] = [];
   for (const { file, env } of blocks) {
-    if (file.source === "managed") continue;
+    const names = Object.keys(env).filter(isExecName);
+    if (!names.length) continue;
+    if (file.source === "managed" && !noLimits) return { refusal: `Claude's turn was not started: the managed settings file ${file.path} sets ${names.join(", ")} in its "env" block, which would change how Murage runs every command. Remove ${names.length === 1 ? "that name" : "those names"} from that file's "env" block and send the message again.` };
+    for (const name of names) restatedExec.push(`claude settings name ${name} restated file=${file.path}`);
+  }
+  for (const { file, env } of blocks) {
+    if (file.source === "managed") {
+      // Policy wins over --settings. Require the known-safe integer spelling;
+      // low, empty or invalid values can restore truncation or the default cap.
+      for (const [name, value] of Object.entries(env)) {
+        if (!noLimits && (platform === "win32" ? name.toUpperCase() : name) === "MAX_MCP_OUTPUT_TOKENS" && value !== String(Number.MAX_SAFE_INTEGER)) {
+          return { refusal: `Claude's turn was not started: ${file.path} sets ${name} in its managed "env" block, which can truncate permission replies. Remove "${name}" from managed settings or set it to ${Number.MAX_SAFE_INTEGER} and send the message again.` };
+        }
+      }
+      continue;
+    }
     for (const name of Object.keys(env)) {
-      if (CLAUDE_UNENFORCEABLE_ABSENT.includes(name.toUpperCase())) {
+      if (!noLimits && CLAUDE_UNENFORCEABLE_ABSENT.includes(name.toUpperCase())) {
         return { refusal: `Claude's turn was not started: ${file.path} sets ${name} in its "env" block, and Murage cannot clear that name (an empty value still counts as set). Remove "${name}" from that file's "env" block and send the message again.` };
       }
     }
@@ -2328,12 +2652,19 @@ export function claudeOverlayEnv(platform: NodeJS.Platform, mode: ClaudeShellMod
   // the plugin directory variable stays empty whatever a settings file says (claudeIsolationSettings); 14.6 ruled ""
   out.CLAUDE_CODE_PLUGIN_DIRS = "";
   const managed = new Set<string>();
+  let permissionOutputTokenLimit = Number.MAX_SAFE_INTEGER;
   for (const path of managedFiles) {
     const read = settingsEnvBlock(path);
     if ("cannot" in read) { managed.add(`unreadable:${path}`); continue; }
-    for (const name of Object.keys(envOf(read))) if (managedReported(name)) managed.add(name);
+    for (const [name, value] of Object.entries(envOf(read))) {
+      if (managedReported(name)) managed.add(name);
+      if ((platform === "win32" ? name.toUpperCase() : name) === "MAX_MCP_OUTPUT_TOKENS") {
+        const parsed = parseInt(String(value), 10);
+        permissionOutputTokenLimit = Number.isFinite(parsed) && parsed >= 0 ? parsed : 25000;
+      }
+    }
   }
-  return { env: out, managed: [...managed].sort(), ownerRouting: [...ownerRouting].sort() };
+  return { env: out, managed: [...managed].sort(), ownerRouting: [...ownerRouting].sort(), permissionOutputTokenLimit, ...(restatedExec.length ? { logs: restatedExec } : {}) };
 }
 
 // ---- Final round item 5: a probe of the CLI (--version, auth status) is handed the pins like a turn -------------------------
@@ -2375,7 +2706,7 @@ export function isClaudeSigninEnvName(name: string, cli?: string | null, platfor
 /** A settings file as an object: {} when it is absent or cannot be read as one (the overlay has already refused such a file). */
 function settingsObjectOf(file: string): Record<string, unknown> {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(file, "utf8")));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
   } catch {
     return {};
@@ -2550,7 +2881,7 @@ function draftSettingsRead(path: string): "absent" | "unreadable" | Record<strin
   let text: string;
   try { text = readFileSync(path, "utf8"); } catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "unreadable"; }
   try {
-    const parsed: unknown = JSON.parse(text);
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(text));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : "unreadable";
   } catch { return "unreadable"; }
 }
@@ -2934,6 +3265,25 @@ export function claudeIsolation(env: NodeJS.ProcessEnv, cwd: string, platform: N
   return observeIsolationScan("claude", () => ["--strict-mcp-config", "--settings", isolationSettingsFile(claudeIsolationSettings(env, cwd, platform, overlayEnv)).path]);
 }
 
+/** Final user/steer serialization, including image blocks and JSONL framing. */
+export function serializeClaudeInput(message: unknown, beforeWrite?: () => void): string {
+  return engineJsonLine(message, beforeWrite);
+}
+
+/** N2: one first-wins stop verdict per CLI process. */
+function sessionStopVerdict(): { promise: Promise<boolean>; resolve: (stopped: boolean) => void } {
+  let resolve!: (stopped: boolean) => void;
+  const promise = new Promise<boolean>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+/** CL1-S2-OWNER (Fl#12): the owner of a fenced broker reply while an S2 submission waits in its barrier (no SessionTurn yet). Its settle
+ * fails the gate (the composite's retire ends the barrier's control request); the submission then throws the error the reply was
+ * refused with (kept as `refused`), never the cold path's MOUNT_RELAY_STOP_UNCONFIRMED while the kept child's stop is held. */
+type S2BarrierOwner = { fenced?: FencedRefusal; teardowns: Promise<unknown>[]; settleFenced: () => Promise<void>; refused?: unknown };
+function s2BarrierOwner(gate: { fail(reason: string): void }): S2BarrierOwner {
+  return { teardowns: [], settleFenced: async () => { gate.fail("S2 reply refused"); } };
+}
+
 export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Claude", supportsMultipleInstances: true },
@@ -2990,6 +3340,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
     };
     await refreshModels();
+    const answerTransport = new RequestTransport();
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread; a second send while busy is a caller bug
     interface ActiveTurn {
@@ -3029,12 +3380,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * and resets after each completed assistant block. `boundary` is the
      * monotonic accepted/output record that the retry guard reads (A1, U-17). */
     interface SessionTurn {
+      /** The turn's ONE fenced refusal (RefusalOwner), claimed by the first site that classifies it. */
+      fenced?: FencedRefusal;
+      teardowns?: Promise<unknown>[];
+      /** N5: settles THIS captured turn as memory-refused (once; P1: a later `result` or exit finds it settled). Never a lookup. */
+      settleFenced?: () => Promise<void>;
+      /** Set by the prompt's actual native write acknowledgement, per turn. */
+      promptSent?: boolean;
+      permissionNow?: SendTurnInput["permissionNow"];
+      releaseBinding?: SendTurnInput["releaseBinding"];
+      sourceContext?: SendTurnInput["sourceContext"];
       turnId: string;
       settled: boolean;
       sawStreamDelta: boolean;
       /** Set once this turn's prompt is written: what its first token is timed against. */
       timing?: { dispatchAt: number; process: ReuseProcess; sealed: boolean; resumed: boolean; background: boolean; gateMs: number; writtenMs: number; reported?: boolean };
       authFailed?: boolean;
+      fluxDecision?: Decision;
       /** the CLI is too old for the model (claudeVersionTooOld) */
       updateRequired?: boolean;
       boundary: AttemptBoundary;
@@ -3051,6 +3413,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       unattendedAskNote?: boolean;
       /** The engine's background sub agents for this turn (see handleLine). */
       bg?: BackgroundState;
+      helperReads?: HelperReadEvidence;
+      steerEverWaited?: true;
+      bgEverHeld?: true;
       /** A continuation of an EARLIER turn (a background task's notice, then
        * the model's follow-up) is playing out on this process. Its frames
        * belong to that turn and are dropped until its own result closes it. */
@@ -3090,7 +3455,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       usage: { input: number; output: number; cachedInput: number };
     }
     interface Session {
+      requestUrl: string | undefined;
       child: ReturnType<typeof spawnCli>;
+      stdinGate?: ClaudeStdinGate;
+      relay?: CliMountRelay;
+      s2Eligible?: boolean;
+      used: boolean;
       broker?: Awaited<ReturnType<typeof createPermissionBroker>>;
       mcpConfigPath: string | null;
       systemPromptPath: string | null;
@@ -3132,6 +3502,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
        * undefined until the first result; null when the start is unknown. */
       costTotal: number | null | undefined;
       finishClose?: () => Promise<void>;
+      /** N2: this process's ONE stop verdict (first call wins): true once its tree is confirmed gone, false when it is quarantined
+       * unconfirmed. A false verdict never flips; a later confirmation is the refusal's `late` (watchLateStop). */
+      closedResult: Promise<boolean>;
+      closedIs: (stopped: boolean) => void;
+      /** N5: the launch's settle, bound to a CAPTURED turn (set at launch; every turn of this process gets its settleFenced from it). */
+      settleTurnFenced?: (turn: SessionTurn) => Promise<void>;
+      /** CL1-S2-OWNER (Fl#12): the S2 submission in its barrier (kept.turn is null until the release) owns a fenced broker reply. */
+      s2Owner?: S2BarrierOwner;
       /** Started on intent and not yet taken by a turn. */
       spare?: SpareHandle;
       /** Custom servers seen failed on this kept process, with the kept turns in a row. */
@@ -3163,6 +3541,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
        * wait for the owner's card, by the CLI's request id. Each ends exactly
        * once: answered, declined, cancelled, or withdrawn by the CLI. */
       elicitations?: Map<string, ElicitEnd>;
+      bashHooks?: Map<string, AbortController>;
       /** The CLI build this process runs (claudeExecutableIdentity): what
        * `mcp_status` support is remembered under. */
       cliIdentity?: string;
@@ -3172,6 +3551,85 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       startupHoldOff?: boolean;
     }
     const sessions = new Map<string, Session>();
+    // Proof belongs to the exact provider turn. Resolved entries
+    // retain a small result, never a current-thread lookup or a live child.
+    const stopProofs = new Map<string, { threadId: string; pending: boolean; promise: Promise<ProviderStopResult>; closed: Promise<void>; confirmUnlaunched?: () => void }>();
+    const rememberStopProof = (threadId: string, turnId: string, targets: readonly Session[], setupPending: boolean) => {
+      if (stopProofs.has(turnId)) return;
+      if (stopProofs.size >= 4096) {
+        const oldest = [...stopProofs].find(([, proof]) => !proof.pending);
+        if (!oldest) return; // missing proof remains unconfirmed, never a grant
+        stopProofs.delete(oldest[0]);
+      }
+      let unlaunched = false;
+      let closeSetup!: () => void;
+      let unlaunchedSeen!: () => void;
+      const unlaunchedSignal = new Promise<void>(resolve => { unlaunchedSeen = resolve; });
+      const closed = !setupPending && targets.length > 0
+        ? Promise.all(targets.map(target => target.relay ? target.relay.stopped : cliTreeStoppedSignal(target.child))).then(() => {})
+        : new Promise<void>(resolve => { closeSetup = resolve; });
+      const proof = { threadId, pending: true, closed, promise: Promise.resolve<ProviderStopResult>({ closeConfirmed: false, reason: "stop-failed" }), confirmUnlaunched: undefined as (() => void) | undefined };
+      if (setupPending) proof.confirmUnlaunched = () => {
+        unlaunched = true;
+        closeSetup();
+        unlaunchedSeen();
+        proof.pending = false;
+        proof.promise = Promise.resolve({ closeConfirmed: true });
+        proof.confirmUnlaunched = undefined;
+      };
+      stopProofs.set(turnId, proof);
+      proof.promise = Promise.all(targets.map(async target => {
+        try {
+          return target.relay ? await target.relay.finish(target.child)
+            : await awaitCliTreeStopped(target.child, undefined, CLI_CALLER_DEADLINE_MS);
+        } catch { return false; }
+      })).then(async results => {
+        // A setup Stop that landed before launch waits, bounded by the same caller
+        // deadline, for the unwind that proves no child was ever created.
+        if (setupPending && !unlaunched) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([unlaunchedSignal, new Promise<void>(resolve => { timer = setTimeout(resolve, CLI_CALLER_DEADLINE_MS); })]);
+          clearTimeout(timer);
+        }
+        const result: ProviderStopResult = (!setupPending || unlaunched) && results.every(Boolean)
+          ? { closeConfirmed: true } : { closeConfirmed: false, reason: "timeout" };
+        proof.pending = false;
+        proof.promise = Promise.resolve(result);
+        return result;
+      });
+    };
+    /** A completed turn releases its exact lease. A proven idle retained
+     * process is detached from that turn; a retiring process must really close.
+     * Install before publishing completion so synchronous durable listeners
+     * can capture both the bounded result and its later confirmation. */
+    const rememberCompletionProof = (threadId: string, turnId: string, session: Session,
+      settleCheck: Promise<unknown> | null | undefined, retirement?: () => Promise<void>) => {
+      if (stopProofs.has(turnId)) return;
+      if (stopProofs.size >= 4096) {
+        const oldest = [...stopProofs].find(([, proof]) => !proof.pending);
+        if (!oldest) return;
+        stopProofs.delete(oldest[0]);
+      }
+      // The microtask starts only after the completion's synchronous listeners.
+      const result = Promise.resolve().then(async (): Promise<ProviderStopResult> => {
+        try {
+          await retirement?.();
+          await settleCheck;
+          if (!session.closing && session.child.exitCode === null && session.child.signalCode === null)
+            return { closeConfirmed: true }; // the settled generation is detached, not the retained child
+          const stopped = session.relay ? await session.relay.finish(session.child)
+            : await awaitCliTreeStopped(session.child, undefined, CLI_CALLER_DEADLINE_MS);
+          return stopped ? { closeConfirmed: true } : { closeConfirmed: false, reason: "timeout" };
+        } catch { return { closeConfirmed: false, reason: "stop-failed" }; }
+      });
+      const closed = result.then(async value => {
+        if (!value.closeConfirmed)
+          await (session.relay ? session.relay.stopped : cliTreeStoppedSignal(session.child));
+      });
+      const proof = { threadId, pending: true, promise: result, closed };
+      stopProofs.set(turnId, proof);
+      void result.then(() => { proof.pending = false; });
+    };
     /** Sessions that were closed or replaced and whose process is not yet
      * CONFIRMED stopped, with the thread each belongs to. `sessions` forgets a
      * session the moment a replacement takes its slot; this registry does not,
@@ -3236,8 +3694,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
     const stopSession = (session: Session) => {
       warmPool.release(session);
-      killCliTree(session.child);
-      const confirmed = awaitCliTreeStopped(session.child, undefined, CLI_CALLER_DEADLINE_MS);
+      session.relay?.retire();
+      if (!session.relay) killCliTree(session.child);
+      const confirmed = session.relay ? session.relay.finish(session.child) : awaitCliTreeStopped(session.child, undefined, CLI_CALLER_DEADLINE_MS);
       void confirmed.then((stopped) => {
         if (stopped) void session.finishClose?.();
         // Termination failed and the root's close may never arrive: do not rely
@@ -3259,20 +3718,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       s.idleTimer = null;
       if (s.startupTimer) clearTimeout(s.startupTimer);
       s.startupTimer = null;
-      // Broker ownership belongs to this session. Detach and close it now,
-      // before a replacement can bind the same per-thread socket; the old
-      // child's later close event must never unlink a new broker.
+      // Detach this session's broker now; capture before its proxy can exit.
       const broker = s.broker;
       s.broker = undefined;
-      broker?.close();
+      if (s.relay) void s.relay.captureBeforeStop().then(() => broker?.close());
+      else broker?.close();
       // the process is going away: its credential file goes with it
-      s.cred?.dispose();
+      if (s.relay) { s.relay.retire(); void s.relay.finish(s.child); }
+      else s.cred?.dispose();
       appendNative(threadId, { dir: "out", source: "claude.session", msg: { close: why } });
       // The reason a warm process was not kept, where diagnostics can see it.
       console.info(`claude close thread=${threadId} reason=${why}${detail ? ` ${detail}` : ""}`);
       // stdin EOF is the CLI's exit signal; give it a moment, then insist
       try {
-        s.child.stdin.end();
+        if (!s.relay) cliStdinEnd(s);
       } catch {}
       const kill = setTimeout(() => {
         stopSession(s);
@@ -3284,15 +3743,39 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const stopRetiring = async (threadId?: string): Promise<number> => {
       const targets = threadId === undefined ? [...retiring.keys()] : [...(retiringByThread.get(threadId) ?? [])];
       const confirmed = await Promise.all(targets.map(async (session) => {
-        killCliTree(session.child);
-        const stopped = await awaitCliTreeStopped(session.child, undefined, CLI_CALLER_DEADLINE_MS);
+        if (!session.relay) killCliTree(session.child);
+        const stopped = session.relay ? await session.relay.finish(session.child)
+          : await awaitCliTreeStopped(session.child, undefined, CLI_CALLER_DEADLINE_MS);
         if (stopped) {
+          session.closedIs(true);
           unretire(session);
-          void session.finishClose?.();
+          await session.finishClose?.();
         } else watchLateStop(session);
         return stopped;
       }));
       return confirmed.filter((stopped) => !stopped).length;
+    };
+    /** N1 (nativecrash r4): retire the CAPTURED session now and confirm it gone. Joins a close already in flight (closeSession is a no-op
+     * on a closing session) but never waits out its 5 s stdin-EOF grace: the tree is killed and confirmed here, as stopRetiring does. */
+    const retireSession = async (s: Session, threadId: string, why: string, detail?: string): Promise<CloseResult> => {
+      if (sessions.get(threadId) === s) closeSession(threadId, why, detail);
+      killCliTree(s.child);
+      const stopped = await awaitCliTreeStopped(s.child, undefined, CLI_CALLER_DEADLINE_MS);
+      if (stopped) { s.closedIs(true); unretire(s); void s.finishClose?.(); } else { s.quarantine?.(); s.closedIs(false); void watchLateStop(s, threadId); }
+      return await s.closedResult ? { confirmed: true } : { confirmed: false, reason: "timeout" };
+    };
+    /** The refusal's close part: retire the captured session; an unconfirmed stop stays unconfirmed and its later proof is R.late (lifts the lease's thread block). */
+    const retireClose = (R: FencedRefusal, s: Session, threadId: string, why: string, detail?: string): ConfirmedClose => async () => {
+      const result = await retireSession(s, threadId, why, detail);
+      if (!result.confirmed) void watchLateStop(s, threadId).then(() => R.confirmedLate());
+      return result;
+    };
+    /** CLSUB: a fenced refusal at a prompt-submission site is ONE record (kind submission); the driver-claimed close retires the CAPTURED
+     * session and confirms it gone (no lookup, no 5 s EOF grace). target null = no process of this submission to retire (the lease closes it). */
+    const refuseSubmission = async (error: unknown, site: string, threadId: string, turn: { releaseBinding?: unknown }, target: Session | null): Promise<boolean> => {
+      const R = refusalFor(error, site, { engine: DRIVER_KIND, threadId, binding: turn.releaseBinding as never, kind: "submission", target: target ?? null });
+      if (R?.closer === "driver" && target) { await R.close(composeClose(null, retireClose(R, target, threadId, "submission refused", refusalName(error)))); return true; }
+      return false;
     };
     /** The thread has no older process left unconfirmed: lift the quarantine,
      * or hand it to the next predecessor still retiring. */
@@ -3321,7 +3804,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           timer.unref?.();
         }
       };
-      const watch = cliTreeStoppedSignal(session.child).then(() => release(250));
+      const watch = (session.relay ? session.relay.stopped : cliTreeStoppedSignal(session.child)).then(() => release(250));
       lateStopWatch.set(session, watch);
       return watch;
     };
@@ -3423,7 +3906,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * first, pictures after, so a prompt that says "the image below" still
      * reads in order. No images means the bare string, byte-for-byte as before:
      * a turn with no attachment must not change shape. */
-    const writeUser = (s: Session, threadId: string, text: string, boundary?: AttemptBoundary, images?: SendTurnInput["images"]): Promise<boolean> => {
+    const writeUser = (s: Session, threadId: string, text: string, boundary?: AttemptBoundary, images?: SendTurnInput["images"], beforeWrite?: () => void, input?: SendTurnInput,
+      submit: (frame: StdinFrame) => void = frame => cliStdinWrite(s, frame.wire, frame.done, frame.release)): Promise<boolean> => {
       const content = images?.length
         ? [
             { type: "text", text },
@@ -3431,19 +3915,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           ]
         : text;
       const promptMsg = { type: "user", message: { role: "user", content } };
-      if (!s.child.stdin.writable || s.child.stdin.destroyed) {
-        boundary?.markRefused();
-        return Promise.resolve(false);
-      }
       return new Promise((resolve) => {
         try {
-          boundary?.markInFlight();
-          s.child.stdin.write(JSON.stringify(promptMsg) + "\n", (error) => {
+          const wire = serializeClaudeInput(promptMsg, beforeWrite);
+          let releaseAttempt: number | void;
+          let promptReleased=false;
+          let promptTurn:SessionTurn|null|undefined;
+          const done = (error?: Error | null) => {
             if (error) {
-              boundary?.markRefused();
+              if (promptReleased) {
+                if (boundary && !partialWrites.has(boundary)) input?.attemptNotWritten?.(releaseAttempt);
+                else input?.attemptUncertain?.(releaseAttempt);
+              }
+              if (boundary) failedInFlightWrites.add(boundary);
               return resolve(false);
             }
             boundary?.markWritten();
+            if(input){
+              input.attemptWritten?.(releaseAttempt);
+              if(promptTurn&&s.turn===promptTurn){promptTurn.promptSent=true;if(s.initHandled)flushQueuedSteers(s,threadId);}
+            }
             // The engine has the prompt: the memory worker's hold for this turn ends (turn-hold.ts).
             notePromptSent(threadId);
             // The native log is a debugging transcript a person reads and
@@ -3452,7 +3943,29 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             // so the log keeps the shape and drops the bytes.
             appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: images?.length ? { ...promptMsg, message: { role: "user", content: [{ type: "text", text }, ...images.map((image) => ({ type: "image", source: { type: "base64", media_type: image.mimeType, data: `<${image.data.length} base64 chars elided>` } }))] } } : promptMsg });
             resolve(true);
-          });
+          };
+          const release: StdinFrame["release"] = (write, validate) => {
+            if(promptReleased)throw new Error('Claude prompt already released');
+            validate();
+            promptTurn=s.turn;
+            // Commit the send-store release before opening the final byte-fence
+            // transaction. A nested savepoint would roll back on a crash after IO.
+            if(input){
+              try { releaseAttempt=input.beforeSubmit?.();promptReleased=true; }
+              catch(error){
+                if(boundary)promptSubmissionRefusals.set(boundary,{error});
+                if(typeof error==='object'&&error!==null)submissionRefusals.add(error);
+                throw error;
+              }
+            }
+            const emit = () => {
+              promptReleased=true;
+              boundary?.markInFlight(); if (boundary) partialWrites.add(boundary); return write();
+            };
+            const check=()=>{validate();if(!input)beforeWrite?.();};
+            return input ? fencedSubmit(input, emit, wire, check) : emitEngineWire(beforeWrite, wire, emit, check);
+          };
+          submit({ wire, done, release });
         } catch {
           boundary?.markRefused();
           resolve(false);
@@ -3473,25 +3986,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     /** Writes the steers that waited for `init`, each only if its turn is
      * still the live, unstopped one: a Stop or close in between writes nothing. */
     const flushQueuedSteers = (s: Session, threadId: string, written = true) => {
+      if(written&&(!s.initHandled||!s.turn?.promptSent))return;
       const queued = s.queuedSteers;
       s.queuedSteers = undefined;
       for (const item of queued ?? []) {
         const live = written && s.turn === item.turn && !item.turn.settled && !item.turn.stopRequested && !s.closing && s.child.exitCode === null;
-        if (!live || !steerFenceHolds(item.beforeWrite)) item.resolve(false);
+        if (!live || !steerFenceHolds(item.beforeWrite, threadId, item.turn, "claude.stdin.warm")) item.resolve(false);
         else {
           (item.turn.unreadSteers ??= []).push(Date.now());
           extendSteerHold(item.turn);
-          void writeUser(s, threadId, item.text).then(item.resolve);
+          void writeUser(s, threadId, item.text, undefined, undefined, item.beforeWrite).then(item.resolve);
         }
       }
     };
     /** One control request to the CLI, answered by its control_response (the
      * `response` object: subtype, request_id, response or error), or null when
      * the bound passes, stdin is gone or the process is closing. */
-    const controlRequest = (s: Session, threadId: string, request: Record<string, unknown>, timeoutMs: number): Promise<any | null> =>
+    const controlRequest = (s: Session, threadId: string, request: Record<string, unknown>, timeoutMs: number, ownedId?: string): Promise<any | null> =>
       new Promise((resolve) => {
-        if (s.closing || s.child.exitCode !== null || !s.child.stdin.writable || s.child.stdin.destroyed) return resolve(null);
-        const id = `murage-ctl-${newId()}`;
+        if (s.closing || s.child.exitCode !== null) return resolve(null);
+        const id = ownedId ?? `murage-ctl-${newId()}`;
         const waiters = (s.control ??= new Map());
         const done = (response: any | null) => {
           clearTimeout(timer);
@@ -3503,12 +4017,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         waiters.set(id, done);
         const message = { type: "control_request", request_id: id, request };
         try {
-          s.child.stdin.write(JSON.stringify(message) + "\n");
+          cliStdinWrite(s, JSON.stringify(message) + "\n");
           appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: message });
         } catch {
           done(null);
         }
       });
+
+
 
     /** A new process connects every server again; a kept one holds a failure for good.
      * After FAILED_ON_KEPT_TURNS kept turns in a row with a custom server still failed,
@@ -3589,6 +4105,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
     /** The prompt reached the engine. A retry of the same turn counts once (reuse-stats.ts). */
     const noteSubmitted = (threadId: string, t: SessionTurn, turn: SendTurnInput, process: ReuseProcess, spawnReason: string | null, dispatchAt: number, gateMs: number) => {
+      turn.onEngineWrite?.();
       const sealed = turn.sealed === true;
       const background = turn.background === true;
       reuseStats.submitted({ engine: DRIVER_KIND, threadId, turnId: t.turnId, background, sealed, process, spawnReason });
@@ -3609,8 +4126,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (!timing.background) reuseStats.firstToken(timing.process, firstTokenMs);
     };
     /** A steer's fence (steer's `beforeWrite`), run right before its write. */
-    const steerFenceHolds = (beforeWrite: (() => void) | undefined): boolean => {
-      try { beforeWrite?.(); return true; } catch { return false; }
+    const steerFenceHolds = (beforeWrite: (() => void) | undefined, threadId: string, turn: SessionTurn | null | undefined, site: string): boolean => {
+      try { beforeWrite?.(); return true; } catch (error) {
+        // CLW / CL7 (M16): the ONE swallow site hands a fenced refusal on. A refused LEASE joins the turn's own record (the turn's close
+        // owns it); a quote-only refusal leaves the ledger valid, so the STEER alone is recorded (submission kind, nothing retired).
+        if (isMemoryRefusal(error)) {
+          const turnR = turn?.releaseBinding ? fencedRefusalRegistry.byGeneration((turn.releaseBinding as { identity?: { dispatchGeneration?: string | number } }).identity?.dispatchGeneration) : undefined;
+          if (turnR) refusalFor(error, site, { engine: DRIVER_KIND, threadId, binding: turn!.releaseBinding, kind: "turn", target: undefined });
+          else { const R = refusalFor(error, site, { engine: DRIVER_KIND, threadId, kind: "submission", target: turn ?? {} }); if (R?.closer === "driver") void R.close(async () => ({ confirmed: true })); }
+        }
+        return false;
+      }
     };
 
     /** Turn ids that belong to an intent warm: the engine is up but no turn exists, so
@@ -3618,12 +4144,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * `session.started` is held and replayed on the first real turn that adopts the engine. */
     const prewarmTurns = new Set<string>();
     const heldStarted = new Map<string, RuntimeEvent>();
-    const emit = (event: RuntimeEvent) => {
+    const emissionSource = new AsyncLocalStorage<SendTurnInput["sourceContext"]>();
+    const emit = (event: RuntimeEvent, source = emissionSource.getStore()) => {
+      if (deliverWipeGuardTerminal(event, terminal => emit(terminal, source))) return;
       if (prewarmTurns.has((event as { turnId?: string }).turnId ?? "")) {
         if (event.type === "session.started") heldStarted.set(event.threadId, event);
         return;
       }
-      for (const l of [...listeners]) l(event);
+      for (const l of [...listeners]) l(event, source);
     };
     const base = (threadId: string, turnId: string) => ({
       eventId: newEventId(),
@@ -3634,7 +4162,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     });
     // STOP-NONACP-DISPOSE (design r3 + r3.1): one stop gate. An asked Stop (interruptTurn, stopAll, resetSession) ends a turn as the stopped
     // pair, a dispose nobody asked for ends it as the engine closing, and the precedence lives in the entry's finish only.
-    const stopGate = createStopGate({ engineName: ENGINE, emit: (event) => emit(event as unknown as RuntimeEvent), base });
+    const stopGate = createStopGate({ engineName: ENGINE, emit: (event, source) => emit(event as unknown as RuntimeEvent, source as SendTurnInput["sourceContext"]), base });
     /** The gate entry of each turn in flight, by turn id: how settle (the live close path) reaches the entry that finishes the turn. */
     const turnEntries = new Map<string, GateEntry>();
     /** A turn's one ending, through its entry (a mark that reached the turn decides what it says). */
@@ -3644,7 +4172,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       entry.finish(v);
       turnEntries.delete(turnId);
     };
-    /** 14.3 item 2: the sign-in card, a question never auto-answered (like the folder-trust card): true only on the owner's
+    /** Below No limits, the sign-in card is true only on the owner's
      * Allow. A Stop, the 30 minute note (only on a turn nobody is at) or a prewarm, which nobody sees, is no. */
     const askClaudeSignin = (threadId: string, turnId: string, stopped: Promise<void>, note: boolean): Promise<{ allowed: boolean; byOwner: boolean }> => {
       if (prewarmTurns.has(turnId)) return Promise.resolve({ allowed: false, byOwner: false });
@@ -3675,14 +4203,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
     };
     /** Write one control_response to the CLI, if it can still read it. */
-    const writeControlResponse = (s: Session, threadId: string, response: Record<string, unknown>): boolean => {
-      if (s.child.exitCode !== null || !s.child.stdin.writable || s.child.stdin.destroyed) return false;
+    const writeControlResponse = (s: Session, threadId: string, response: Record<string, unknown>, binding: SendTurnInput["releaseBinding"] | null, site: string): boolean => {
+      if (s.child.exitCode !== null) return false;
       const message = { type: "control_response", response };
       try {
-        s.child.stdin.write(JSON.stringify(message) + "\n");
+        const serialized = JSON.stringify(message) + "\n";
+        cliStdinWrite(s, serialized, undefined, write => releaseNativeAnswer(binding, "claude:elicitation", serialized, write));
         appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: message });
         return true;
-      } catch {
+      } catch (error) {
+        // CL6a-d: a fenced reply is a refusal on the live turn: ONE record, the turn's child is retired and confirmed gone (the CLI
+        // waits on this reply with no bound of its own), never a bare `return false`.
+        const owner = s.turn && !s.turn.settled ? s.turn : null;
+        const R = owner ? refusalFor(error, site, { engine: DRIVER_KIND, threadId, binding, owner, kind: "turn", target: s }) : undefined;
+        if (R?.closer === "driver") void R.close(composeClose(owner, retireClose(R, s, threadId, "control reply refused")));
         return false;
       }
     };
@@ -3696,7 +4230,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * closing are `cancel`. A withdrawal by the CLI closes the card silently. */
     const openElicitation = (s: Session, threadId: string, cliRequestId: string, request: Record<string, any>) => {
       const turn = s.turn;
-      const cancelNow = () => writeControlResponse(s, threadId, { subtype: "success", request_id: cliRequestId, response: { action: "cancel" } });
+      const binding = turn?.releaseBinding ?? null;
+      const cancelNow = () => writeControlResponse(s, threadId, { subtype: "success", request_id: cliRequestId, response: { action: "cancel" } }, binding, "claude.control.a");
       if (!turn || turn.settled || turn.stopRequested || s.closing || prewarmTurns.has(turn.turnId)) return void cancelNow();
       const turnId = turn.turnId;
       const elicitations = (s.elicitations ??= new Map());
@@ -3719,14 +4254,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         timer?.clear();
         const answered = outcome === "accept" && answers?.length ? answers : null;
         const action = answered ? "accept" : outcome === "accept" ? "decline" : outcome;
-        if (write) {
-          writeControlResponse(s, threadId, {
-            subtype: "success",
-            request_id: cliRequestId,
-            response: action === "accept" && !urlMode ? { action, content: toElicitationContent(request.requested_schema, questions, answered!) } : { action },
-          });
-        }
-        emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: answered ? "answer" : "deny", source });
+        // the card is discharged unconditionally (nativecrash r4 item 5, F11 d): a refused or blocked write means the CLI never
+        // saw the answer, so the card closes as a deny, never stays open and never reports an answer that was not delivered
+        const delivered = !write || writeControlResponse(s, threadId, {
+          subtype: "success",
+          request_id: cliRequestId,
+          response: action === "accept" && !urlMode ? { action, content: toElicitationContent(request.requested_schema, questions, answered!) } : { action },
+        }, binding, "claude.control.b");
+        emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: answered && delivered ? "answer" : "deny", source });
       };
       // awake time (1.0.10 C3)
       const timer = turn.unattendedAskNote ? wakeAwareTimeout(() => end("cancel", "timeout"), QUESTION_TIMEOUT_MS) : undefined;
@@ -3749,6 +4284,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * while it can still read it, and each card closes. */
     const endElicitations = (s: Session, source: AskResolutionSource) => {
       for (const end of [...(s.elicitations?.values() ?? [])]) end("cancel", source);
+      for (const hook of s.bashHooks?.values() ?? []) hook.abort();
     };
     // retry bookkeeping lives PER THREAD, not per sendTurn call: a relaunch
     // is a fresh sendTurn, and the attempt cap must survive across launches
@@ -3770,7 +4306,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     /** STOP-NONACP-DISPOSE: every user send enters the stop gate before its first await (stopGate.enter), so an asked Stop (interruptTurn,
      * stopAll, resetSession: stopGate.ask) and dispose (stopGate.close) reach it wherever it waits. Every await on the dispatch path is
      * stopGate.step; the ending is the entry's finish (asked: the stopped pair, closing: the engine-closed line), never an inline emit. */
-    const sendTurn = async (turn: SendTurnInput, relaunch?: { turnId: string }) => {
+    const sendTurn = (turn: SendTurnInput, relaunch?: { turnId: string }): Promise<{ turnId: string }> => emissionSource.run(turn.prewarm ? undefined : turn.sourceContext, () => sendTurnCaptured(turn, relaunch));
+    const sendTurnCaptured = async (turn: SendTurnInput, relaunch?: { turnId: string }) => {
+
+      if (turn.prewarm && mountedTurn(turn, !turn.draftOnly)) throw new Error("MOUNTED_PREWARM_REFUSED");
+      assertConsumingMountAdmission(turn, "server", !turn.draftOnly);
       turn = { ...turn, model: nativeTurnModel({ driverKind: "claudeAgent", models }, turn.model) };
       // a draft-only turn runs in its own empty private folder (claudeDraftOnlyCwd below) and never in the bot's folder, so it needs none
       if (!turn.draftOnly) turn = { ...turn, cwd: botFolderOrThrow(turn) };
@@ -3782,13 +4322,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
       const turnId = relaunch?.turnId ?? newId();
       // A relaunch continues its logical turn under the entry the first launch made (the retry path keeps it in turnEntries).
-      const e = relaunch ? turnEntries.get(turnId) : stopGate.enter(turn.prewarm ? `${PREWARM_GATE_KEY}${threadId}` : threadId, { turnId, announceStart: !turn.prewarm });
+      const e = relaunch ? turnEntries.get(turnId) : stopGate.enter(turn.prewarm ? `${PREWARM_GATE_KEY}${threadId}` : threadId, { turnId, announceStart: !turn.prewarm, source: turn.prewarm ? undefined : turn.sourceContext });
       if (!e) return { turnId };
       if (!relaunch) turnEntries.set(turnId, e);
       if (turn.prewarm && !relaunch) prewarmTurns.add(turnId);
       /** A failure after the launch that the caller must still see (a refused submission): it rides out of the gate wrapper. */
       const late: { has: boolean; error?: unknown } = { has: false };
-      const body = async (): Promise<{ turnId: string }> => {
+      const body = async (): Promise<{ turnId: string; spawnCwd?: string }> => {
         // An intent warm is still starting this thread's engine: take it over, never fail as busy.
         if (!relaunch && prewarming.has(threadId)) {
           if (!(await stopGate.step(e, prewarming.wait(threadId)))) {
@@ -3833,7 +4373,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           if (stopGate.why(e) !== null) { stoppedBeforeLaunch = true; wake(); }
         }
         try {
-          return await dispatchTurn(turn, relaunch, { turnId, reservation, stopped, isStopped: () => stoppedBeforeLaunch, entry: e });
+          const ctl: { turnId: string; reservation: ActiveTurn | null; stopped: Promise<void>; isStopped: () => boolean; entry: GateEntry; spawnCwd?: string } = { turnId, reservation, stopped, isStopped: () => stoppedBeforeLaunch, entry: e };
+          const started = await dispatchTurn(turn, relaunch, ctl);
+          return ctl.spawnCwd ? { ...started, spawnCwd: ctl.spawnCwd } : started;
         } catch (error) {
           // a live turn's ending belongs to its close path (settle): nothing here releases or ends it
           if (e.live && error instanceof GateStopped) throw error;
@@ -3865,6 +4407,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           return { ok: true, stopReason: "cancelled" };
         }
         if (turn.prewarm) return null;
+        // Cloud's final-boundary Flux refusal (assertFinalEngineEnv above) is customer copy: the first launch and the relaunch both end the turn once with it.
+        if (error instanceof Error && error.message === cloudHomeCopy.signInEnginesNoFlux) return { ok: false, stopReason: "refused", error: { message: error.message } };
         if (error instanceof ClaudeProbeMissing) return { ok: false, stopReason: "spawn_error", error: error.message };
         // A Claude Code older than the qualified minimum: the same update offer a refused model gets.
         if (error instanceof ClaudeUpdateRequired) return { ok: false, stopReason: "update_required", error: { message: error.message, setup: true, claudeUpdate: true } };
@@ -3888,7 +4432,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             throw error;
           }
         }
-        const out = await stopGate.run(e, body, classify);
+        const out = await stopGate.run(e, async () => {
+          try { return await body(); }
+          finally {
+            // The gate never launched this turn, and every setup await has now unwound.
+            if (e.asked && !e.live) {
+              rememberStopProof(threadId, turnId, [], true);
+              const proof = stopProofs.get(turnId);
+              if (proof?.threadId === threadId) proof.confirmUnlaunched?.();
+            }
+          }
+        }, classify);
         if (late.has) throw late.error;
         return out as { turnId: string };
       } finally {
@@ -3902,8 +4456,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const dispatchTurn = async (
       turn: SendTurnInput,
       relaunch: { turnId: string } | undefined,
-      ctl: { turnId: string; reservation: ActiveTurn | null; stopped: Promise<void>; isStopped: () => boolean; entry: GateEntry },
-    ): Promise<{ turnId: string }> => {
+      ctl: { turnId: string; reservation: ActiveTurn | null; stopped: Promise<void>; isStopped: () => boolean; entry: GateEntry; spawnCwd?: string },
+    ): Promise<{ turnId: string; spawnCwd?: string }> => {
       const { threadId } = turn;
       const e = ctl.entry;
       // A draft-only turn (server/draft-only.ts) keeps only Murage's connected-app relay and no extra folders, whatever reached
@@ -3962,12 +4516,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         for (const dir of granted) args.push("--add-dir", dir);
       }
       // A draft-only turn has no built-in tool at all (the text-only argv of headless-text-only.ts and the proposal path).
+      // Saved native permission lists cannot deny or hide tools at No limits.
+      // Keep the same effective lists for argv and shell dispatch diagnostics.
+      const nativeTools: Pick<ClaudeConfig, "tools" | "disallowedTools"> = (turn.permissionNow?.() ?? turn).noLimits === true ? {} : config;
       if (turn.draftOnly) args.push("--tools", "");
-      else if (config.tools !== undefined) args.push("--tools", config.tools.filter((tool) => !CLAUDE_SEARCH_TOOLS.has(tool)).join(","));
+      else if (nativeTools.tools !== undefined) args.push("--tools", nativeTools.tools.filter((tool) => !CLAUDE_SEARCH_TOOLS.has(tool)).join(","));
       const disallowedTools = [...new Set([
-        ...(config.disallowedTools ?? []),
+        ...(nativeTools.disallowedTools ?? []),
         // These native tools address provider sessions, not Murage's roster.
-        ...(turn.integrations?.agents ? ["ListAgents", "SendMessage"] : []),
+        ...(turn.integrations?.agents ? ["ListAgents", "SendMessage", "WebFetch"] : []),
       ])];
       if (disallowedTools.length) args.push("--disallowedTools", disallowedTools.join(","));
       const turnEnvironment: NodeJS.ProcessEnv = accountEnvironment();
@@ -4167,7 +4724,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // in the warm key below and forces a respawn. The usage tags (bot, feature, conversation) ride the same header value.
       const fluxMemory = fluxTurnDecision(turn);
       const env = claudeEnvironment(turnModel, turnEnvironment, turn.providerRoute, fluxMemory);
-      const budgetRoute = turn.providerRoute ? (turn.providerRoute.preset === "flux" ? { key: turn.providerRoute.apiKey, baseUrl: turn.providerRoute.baseUrl } : null) : isFluxModel(turnModel) ? { key: env.ANTHROPIC_AUTH_TOKEN ?? env.ANTHROPIC_API_KEY ?? "", baseUrl: env.ANTHROPIC_BASE_URL ?? "https://api.fluxrouter.ai/v1" } : null;
+      const requestUrl = env.ANTHROPIC_BASE_URL;
+      const budgetRoute = fluxRouteFor(requestUrl).routed ? { key: turn.providerRoute?.apiKey ?? env.ANTHROPIC_AUTH_TOKEN ?? env.ANTHROPIC_API_KEY ?? "", baseUrl: requestUrl! } : null;
       // MCP start-up is Murage's to wait for (gateMcpServers, before the prompt):
       // the CLI's own first-prompt hold is off, and a connect or reconnect ends
       // at the reconnect bound, so neither can hold a turn past the budgets in
@@ -4178,10 +4736,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // another, older claude first (1.0.3 gate). That PATH stays the child's own; only the engine file is pinned
       // (isolation-cache.ts engineLaunchFile).
       const launchPath = { PATH: env.PATH };
+      // Qualification only reads a completed identity digest; a cache miss
+      // starts a background hash and this turn immediately keeps S1 mounts.
+      const s2Version = await stopGate.step(e, knownClaudeCliVersion(config.cli));
+      let s2Qualified = await stopGate.step(e, claudeS2QualifiedCli(engineLaunchFile(config.cli, launchPath), s2Version));
+      assertSoleDispatch();
       Object.assign(env, claudeMcpStartupEnv(claudeMcpStatusSupport.get(cliIdentity) !== "unsupported"));
       // The launcher scopes this turn's state by bot and refuses a non-probe turn without one.
       cloudTurnBot(env, turn.warmIdentity?.botId);
       const cwd = turn.draftOnly ? claudeDraftOnlyCwd(threadId) : botFolderOrThrow(turn);
+      // X3 P-SPAWN (A:20): the exact value handed to spawn, handedEngineEnv and the exec env file
+      ctl.spawnCwd = cwd;
       // The owner's own Claude setup stays out of the bot's turns (claudeIsolation); with no Murage
       // server mounted the strict flag still needs an (empty) config to mean "none". The isolation
       // settings file is named by its content hash and its path stays in the key's argv, so a change
@@ -4221,28 +4786,65 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const shellRefusal = claudeShellRefusal(process.platform, discovered.bash);
       if (shellRefusal) throw new ClaudeTurnRefused(shellRefusal);
       const shellMode = claudeShellMode(process.platform, discovered)!;
-      // MURAGE_EXEC_KEEP belongs on MCP server stanzas only: in Claude's own environment it would reach every Bash command.
-      delete handed.env[EXEC_KEEP];
+      const shellNoLimits = (turn.permissionNow?.() ?? turn).noLimits === true;
+      // X3 r4.5 B5: no MURAGE_EXEC_* name of the hand reaches the CLI (KEEP, NONCE, PROVEN, CWD, SHELL and any other); Murage
+      // sets only MURAGE_EXEC_ENV_FILE and MURAGE_EXEC_NONCE below.
+      for (const name of Object.keys(handed.env)) if (isExecName(name)) delete handed.env[name];
       const execShell = shellMode.kind === "murage-exec" ? shellMode.shell : null;
-      const shellSetup = claudeShellSetup(process.platform, shellMode, handed.env, args, execShell ? murageExecPrefix() : "", { tools: config.tools, disallowedTools: config.disallowedTools });
+      const shellSetup = claudeShellSetup(process.platform, shellMode, handed.env, args, execShell ? murageExecPrefix(process.platform, shellNoLimits) : "", nativeTools);
       args.splice(0, args.length, ...shellSetup.args);
       handed.env = shellSetup.env;
       // A draft-only turn: no claude.ai account connectors either.
       if (turn.draftOnly) setEnvName(handed.env, "ENABLE_CLAUDEAI_MCP_SERVERS", "false", process.platform);
-      // 3.4 (Astra #8): NODE_OPTIONS is "" in the overlay, so it is "" in the hand and the F12 record too
-      if (process.env.MURAGE_CLOUD_ROLE !== "home") setEnvName(handed.env, "NODE_OPTIONS", "", process.platform);
+      // Keep the hand and settings overlay aligned: only the hide preload survives on Windows.
+      if (process.env.MURAGE_CLOUD_ROLE !== "home") setEnvName(handed.env, "NODE_OPTIONS", stripNodeOptionsExceptHide(withHideInherit({ env: handed.env }).env.NODE_OPTIONS), process.platform);
       for (const line of shellSetup.logs) console.info(line);
       assertSoleDispatch();
       const shellForm = execShell ? [execShell, "-c"] : [...CLAUDE_POWERSHELL_FORM];
-      const childEnv = Object.fromEntries(Object.entries(handed.env).filter(([name]) => name !== "CLAUDE_CODE_SHELL_PREFIX" && name !== "CLAUDE_CODE_SHELL" && name !== EXEC_ENV_FILE));
+      handed.env = await stopGate.step(e, wipeGuardTurnEnvironment({
+        turn, turnId, env: handed.env, signal: e.signal, posixShell: !!execShell,
+        isLive: () => !e.done && !e.signal.aborted,
+        subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        askWipe: async (request, signal) => {
+          const live = sessions.get(threadId);
+          if (live?.turn?.turnId !== turnId || !live.broker) return 'deny';
+          const answer = await live.broker.recoverBash({ command: request.cardCommand, cwd: request.cwd }, signal, false);
+          return answer.behavior === 'allow' && !answer.updatedInput ? 'allow' : 'deny';
+        },
+      })) as Record<string, string>;
+      const childEnv = Object.fromEntries(Object.entries(handed.env).filter(([name]) => name !== "CLAUDE_CODE_SHELL_PREFIX" && name !== "CLAUDE_CODE_SHELL" && !isExecName(name)));
       const childHanded: HandedEnv = { ...handed, env: childEnv };
-      if (execShell) handed.env[EXEC_ENV_FILE] = writeExecEnvFile(threadId, childEnv, cwd, execShell);
+      // X3 r4.5 B1: this spawn's nonce, held in memory; it goes into the CLI's spawn env and the overlay (and the mcp-config
+      // markers), never into the turn's environment file.
+      const execNonce = execShell ? newExecNonce() : "";
+      if (execShell) {
+        // X3 r2 section 2 / r4.5 B6: PROVEN for this spawn (thread flag, refusal memory, managed hooks read at every spawn,
+        // shell, C2), and the immediate PROVEN=0 rewrite on the thread's first flag
+        const execCli = await knownClaudeCliVersion(config.cli);
+        const spawnProven = claudeExecSpawnProven({ threadId, cli: execCli, shell: execShell, map: childEnv, cwd, envs: [isolationEnv, handed.env], noLimits: shellNoLimits });
+        if (spawnProven.reason) console.info(`claude exec floor thread=${threadId} reason=${spawnProven.reason}`);
+        const envFile = writeExecEnvFile(threadId, childEnv, cwd, execShell, spawnProven.proven);
+        handed.env[EXEC_ENV_FILE] = envFile;
+        // r4.5 A5: the engine check's counter, value-free (a mismatch alone changes neither PROVEN nor the memory)
+        const keepMismatch = execDiagCount(envFile);
+        if (keepMismatch) console.info(`claude exec diag thread=${threadId} keep-mismatch-recent=${keepMismatch}`);
+        // r4.5 A5: per leg, value-free: how many of the CLI snapshot's `export PATH` entries the bot PATH lacks
+        const snapshot = newestShellSnapshot(isolationEnv.CLAUDE_CONFIG_DIR || handed.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"));
+        const pathMissing = snapshot === null ? null : snapshotPathMissing(snapshot, Object.entries(childEnv).find(([name]) => name.toUpperCase() === "PATH")?.[1] ?? "", process.platform);
+        if (pathMissing !== null) console.info(`claude exec path-missing thread=${threadId} entries=${pathMissing}`);
+        armClaudeExecFlag(threadId, envFile, execCli, execShell, () => { writeExecEnvFile(threadId, childEnv, cwd, execShell, false); });
+        setEnvName(handed.env, EXEC_NONCE, execNonce, process.platform);
+        // r2 M1 (Grok 2): SHLVL=1 in the CLI process, so its `-c` prefix shell with a socket stdin reads no ~/.bashrc; its own
+        // assignment, restated by the overlay (SHLVL is not an ABSENT_PINS name). The turn's map never holds it.
+        setEnvName(handed.env, "SHLVL", "1", process.platform);
+      }
       // 3.4 / section 11 D1: the isolation overlay (`--settings`, which outranks user, project and local settings) restates the
       // hand over every name a loaded settings file's `env` sets; a file that cannot be read, or a name an empty value cannot
       // clear, refuses the turn. Managed settings outrank the overlay: what they redefine is named, not fought.
       // Section 14: the overlay holds restated values, so it lives in this process's private folder (claude-private.ts), is
       // written only when a process is launched with it, and goes when the last process launched with it exits.
       let managedEnv: string[] = [];
+      let permissionOutputTokenLimit = Number.MAX_SAFE_INTEGER;
       let ownerRouting: string[] = [];
       let overlayText: string | null = null;
       // DRAFT-ONLY-ALLOWLIST-104 R2/R6: a draft-only turn is judged again here, on the facts as they are now, before every spawn
@@ -4257,9 +4859,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         const managedFiles = claudeManagedSettingsFiles();
         // the probed CLI version picks each version-keyed table (claudeTableFor: an unknown or newer version uses the newest known)
         const cliVersion = await stopGate.step(e, knownClaudeCliVersion(config.cli));
-        const overlay = claudeOverlayEnv(process.platform, shellMode, handed.env, settingsFiles, managedFiles, cliVersion);
+        // Settings restrictions cannot refuse a current No limits turn. Keep
+        // the normal overlay and all lower-level refusals.
+        const overlay = claudeOverlayEnv(process.platform, shellMode, handed.env, settingsFiles, managedFiles, cliVersion, (turn.permissionNow?.() ?? turn).noLimits === true);
         if ("refusal" in overlay) throw new ClaudeTurnRefused(refusalOf(overlay.refusal));
+        for (const line of overlay.logs ?? []) console.info(line);
         managedEnv = overlay.managed;
+        permissionOutputTokenLimit = overlay.permissionOutputTokenLimit;
         ownerRouting = overlay.ownerRouting;
         let overlayEnv = overlay.env;
         // 14.3 item 2: a repository's project or local settings that change how Claude signs in hold the turn on a card (names
@@ -4271,10 +4877,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (signin) {
           console.info(`claude sign-in hold: project settings set ${[...signin.keys, ...signin.env].join(",")}`);
           const scope = claudeSigninScope(process.platform, settingsFiles, cliVersion);
-          const remembered = claudeSigninAnswers.recall(scope);
+          // This is a settings permission, not an authentication request. Current
+          // No limits permits it before any saved denial, prewarm hold or card.
+          const noLimits = (turn.permissionNow?.() ?? turn).noLimits === true;
+          const remembered = noLimits ? undefined : claudeSigninAnswers.recall(scope);
           let allowed: boolean;
           let byOwner = remembered !== undefined;
-          if (remembered !== undefined) {
+          if (noLimits) {
+            allowed = true;
+          } else if (remembered !== undefined) {
             allowed = remembered;
             console.info(`claude sign-in hold: the owner's remembered answer (${allowed ? "allow" : "don't allow"})`);
           } else if (turn.prewarm) {
@@ -4308,7 +4919,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // Everything that shapes the process, minus session/turn-specific temp
       // paths. Their contents are represented directly in the key instead.
       const privateFileFlags = new Set(["--mcp-config"]);
-      const keyArgs = args.filter((a, i) => !privateFileFlags.has(a) && !privateFileFlags.has(args[i - 1] ?? ""));
+      // X3 r4.5 B1: the spawn nonce is drawn afresh at every dispatch, so the key sees it as one placeholder. A reused
+      // process keeps the nonce it was spawned with (its env and its MCP stanzas); only a new spawn carries the new one.
+      const keyArgs = args.filter((a, i) => !privateFileFlags.has(a) && !privateFileFlags.has(args[i - 1] ?? "")).map((a, i, all) => (overlayText !== null && all[i - 1] === "--settings" && a === claudeOverlays.pathFor(overlayText) ? "overlay:" + createHash("sha256").update(execNonce ? overlayText.split(execNonce).join("<exec-nonce>") : overlayText).digest("hex") : execNonce ? a.split(execNonce).join("<exec-nonce>") : a));
       // Per-turn capability tokens leave env for the process's credential
       // file, so the key sees only what is stable. Field order is the order
       // `diffWarmKey` reports: identity first, then the cheap named fields,
@@ -4321,11 +4934,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // only in the 0600 file, never in the stable servers, argv, env or the prompt.
       const secrets = mountSecrets.agents ? { ...mountSecrets, agents: { ...mountSecrets.agents, MURAGE_TURN_ID: turnId } } : mountSecrets;
       const mountRefs = connectorMountRefsOf(stableServers, mountSecrets, threadId);
+      const mounted = mountedTurn(turn, !turn.draftOnly);
       const warm = warmKey({
+        mounted,
         bot: turn.warmIdentity?.botId ?? null,
         thread: threadId,
         audience: turn.warmIdentity ? [turn.warmIdentity.audience, turn.warmIdentity.decidedOwner === true, turn.warmIdentity.humanPrincipal ?? null] : null,
         permissionMode,
+        noLimits: shellNoLimits,
         // below-Full asks route to Murage's broker (int3): a permission change, so it recycles
         routeAsks: turn.routeAsks === true,
         model: injected.model ?? null,
@@ -4340,7 +4956,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // only matters at spawn: learning a build's status support never recycles.
         credentials: credentialDigest(Object.fromEntries(Object.entries(env).filter(([name]) => /^(ANTHROPIC_|CLAUDE_CODE_)/.test(name) && name !== "CLAUDE_CODE_MCP_STARTUP_WAIT_MS"))),
         cwd,
-        mcp: stableServers,
+        // X3 r4.5 B1: the mounts carry the spawn nonce too (the murage-exec stanzas); the key sees the same placeholder
+        mcp: execNonce ? JSON.parse(JSON.stringify(stableServers).split(execNonce).join("<exec-nonce>")) : stableServers,
         // the bot's connected-app access: a change relists the tools by recycling
         connectorScope: connectorScopeOf(mountSecrets),
         system: turn.system ?? null,
@@ -4370,6 +4987,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         try {
           assertSoleDispatch();
         } catch (error) {
+          if (ctl.isStopped() && sessions.get(threadId) === live) closeSession(threadId, "stopped during settle check");
           if (mcpConfigPath) {
             try { removeMcpConfigDir(mcpConfigPath); } catch {}
           }
@@ -4393,6 +5011,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           throw error;
         }
       }
+      // An in-flight reset/settle owns the old relay until its stop is confirmed.
+      // Wait above before checking quarantine; no new generation may launch past it.
+      try {
+        if (mountedTurn(turn, !turn.draftOnly)) {
+          // The previous generation stop confirms in the background after its turn completed (update required, failed turn).
+          // Wait for it here; a Stop ends the wait at once, and an unconfirmed stop still refuses below.
+          const released = relayHoldReleased(turn, CLI_CALLER_DEADLINE_MS);
+          if (released) { await Promise.race([released, ctl.stopped]); assertSoleDispatch(); }
+          assertRelayAvailable(turn);
+        }
+      } catch (error) {
+        if (mcpConfigPath) {
+          try { removeMcpConfigDir(mcpConfigPath); } catch {}
+        }
+        throw error;
+      }
       live = sessions.get(threadId);
       if (turn.prewarm && live && !live.closing && live.child.exitCode === null) {
         // an engine is already live on this thread: nothing to warm
@@ -4403,6 +5037,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
       const spawnReason: string | null = !live
         ? "no-process"
+        : mounted && !(s2Qualified && claudeS2QualifiedCliNow(engineLaunchFile(config.cli, launchPath), s2Version) && live.cliIdentity === cliIdentity && live.s2Eligible && live.stdinGate?.barrier === "open" && process.env.MURAGE_CLOUD_ROLE !== "home" && claudeMcpStatusSupport.get(cliIdentity) !== "unsupported") ? "mounted-single-use"
         : turn.sessionReset ? "sessionReset"
         : live.turn ? "busy"
         : live.closing || live.child.exitCode !== null ? "process-exited"
@@ -4421,6 +5056,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // A kept process connected its servers when it started, but one may
         // have failed since: the same readiness check a new process gets, while
         // the process is held out of the pool so nothing retires it meanwhile.
+        live.used = true;
         warmPool.release(live);
         if (live.idleTimer) clearTimeout(live.idleTimer);
         live.idleTimer = null;
@@ -4428,7 +5064,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // reconnects (a connected-apps bridge that died between turns) starts
         // again and lists its tools with them. Settlement emptied the file.
         try {
-          live.cred?.write(secrets);
+          if (!live.s2Eligible) live.cred?.write(secrets);
         } catch (error) {
           closeSession(threadId, "credential write failed");
           if (mcpConfigPath) {
@@ -4455,17 +5091,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         let startedTurn: SessionTurn | null = null;
         /** The turn starts here: before the write, or as soon as the check
          * takes long enough to show its chip (which belongs to a turn). */
-        const startLiveTurn = (): SessionTurn => {
+        const startLiveTurn = (boundary = createAttemptBoundary()): SessionTurn => {
           if (startedTurn) return startedTurn;
           const started: SessionTurn = {
+            releaseBinding: turn.releaseBinding,
+            sourceContext: turn.sourceContext,
             turnId,
             settled: false,
             sawStreamDelta: false,
-            boundary: createAttemptBoundary(),
+            permissionNow: turn.permissionNow ?? (() => turn),
+            boundary,
             submission: null,
             engineCommand: Boolean(turn.engineCommand),
             unattendedAskNote: turn.unattendedAskNote === true,
           };
+          started.settleFenced = () => live.settleTurnFenced?.(started) ?? Promise.resolve();
           startedTurn = started;
           live.turn = started;
           const stopThis = () => {
@@ -4482,6 +5122,106 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           return started;
         };
         const gateStartedAt = Date.now();
+        if (live.s2Eligible && live.relay && live.stdinGate?.barrier === "open") {
+          const kept = live;
+          const input = beginClaudeS2Pending(threadId, () => !!kept.turn);
+          const gate = kept.stdinGate!;
+          // CL1-S2-OWNER: a fenced broker reply before the release settles THIS submission: the barrier ends at once, the refusal is
+          // thrown (joined at claude.s2.prompt) and the composite retires kept; no cold successor is dispatched.
+          const s2Owner = s2BarrierOwner(gate);
+          kept.s2Owner = s2Owner;
+          try {
+            let passed = false;
+            try {
+              await kept.broker?.nextGeneration(turn.releaseBinding);
+              if (kept.broker && stableServers.muragebox) {
+                stableServers.muragebox = { ...stableServers.muragebox as Record<string, unknown>,
+                  args: [PERM_PROXY_PATH, brokerPathForArgv(kept.broker.socketPath)] };
+              }
+              kept.relay = await kept.relay!.nextGeneration(turn, stableServers, secrets, () => gate.fail("S2 ticket rejected"));
+              passed = await Promise.race([
+                awaitClaudeS2Barrier(gate, Object.keys(stableServers),
+                  (id, request, ms) => controlRequest(kept, threadId, request, ms, id), 15_000),
+                ctl.stopped.then(() => { gate.fail("S2 stopped"); return false; }),
+              ]);
+            } catch { gate.fail("S2 generation failed"); }
+            if (s2Owner.fenced) throw s2Owner.refused;
+            if (!passed) {
+              // Retirement precedes disposal: no refusal and no old release
+              // authority is reused by the cold successor of this same turn.
+              // The kept child dies below. Its broker connection closing is retirement, never a refusal of this turn: a cold successor reuses this same binding.
+              const brokerStopped = kept.broker?.nextGeneration();
+              const mountsStopped = kept.relay!.retireGeneration();
+              await Promise.all([brokerStopped, mountsStopped]);
+              if (!await kept.relay!.finish(kept.child)) throw new Error("MOUNT_RELAY_STOP_UNCONFIRMED");
+              closeSession(threadId, "S2 cold fallback");
+              dropConfig();
+              if (ctl.isStopped()) throw new StoppedBeforeLaunch();
+              assertSoleDispatch();
+              turn.mountAdmission!.dispose();
+              const mountAdmission = freshMcpMountAdmission(turn.mountAdmission!, turn.releaseBinding!);
+              const result = await dispatchTurn({ ...turn, mountAdmission }, relaunch, ctl);
+              const cold = sessions.get(threadId);
+              if (cold?.turn && !cold.closing) {
+                const coldTurn = cold.turn;
+                for (const frame of gate.takeForCold()) cliStdinWrite(cold, frame.wire, frame.done, frame.release);
+                await input.flush((text, fence) => cold.turn === coldTurn && !coldTurn.stopRequested && !cold.closing && steerFenceHolds(fence, threadId, coldTurn, "claude.stdin.cold")
+                  ? writeUser(cold, threadId, text, undefined, undefined, fence) : Promise.resolve(false));
+              }
+              return result;
+            }
+            assertSoleDispatch();
+            if (ctl.isStopped()) throw new StoppedBeforeLaunch();
+            if(turn.beforePrepare)turn.beforePrepare();
+            else if(turn.prepareSubmit&&turn.beforeSubmit)turn.prepareSubmit(turn.beforeSubmit.bind(turn));
+            kept.relay!.barrierPassed();
+            const boundary = createAttemptBoundary();
+            const submission = writeUser(kept, threadId, turnPrompt, boundary, turn.images, turn.beforeSubmit, turn,
+              prompt => gate.release(prompt, () => { startLiveTurn(boundary); }, frame => {
+                if (kept.turn?.stopRequested || kept.closing) { frame.done?.(new Error("S2 stopped")); return; }
+                gate.forward(frame, () => cliStdinWrite(kept, frame.wire, frame.done, frame.release));
+              }));
+            const liveTurn = startedTurn as SessionTurn | null;
+            if (liveTurn) liveTurn.submission = submission;
+            if (!await submission || !liveTurn) {
+              // A turn.started listener may stop the newly released turn.
+              // Its existing stop/close path owns the cancelled terminal.
+              // CLX: the refusal is read BEFORE the stop check, so a Stop landing inside the refusing release cannot hide it
+              const refusal=promptSubmissionRefusals.get(boundary);
+              const R = refusal && refusalFor(refusal.error, "claude.s2.prompt", { engine: DRIVER_KIND, threadId, binding: turn.releaseBinding, kind: "submission", target: kept });
+              if (liveTurn?.stopRequested && !R) { turn.notWritten?.(); return { turnId }; }
+              if(refusal&&liveTurn){
+                liveTurn.settled=true;kept.turn=null;forgetActive(threadId);retryState.delete(threadId);
+                // CLS2: the child is retired and confirmed gone BEFORE the entry leaves the gate (admission waits for the teardown)
+                if (R?.closer === "driver") await R.close(composeClose(null, retireClose(R, kept, threadId, "S2 prompt refused")));
+                stopGate.leave(e);turnEntries.delete(turnId);
+              }
+              closeSession(threadId, "S2 prompt write failed");
+              if(refusal)throw refusal.error;
+              throw new Error("claude session stdin is not writable");
+            }
+            for (const frame of gate.takeForCold()) cliStdinWrite(kept, frame.wire, frame.done, frame.release);
+            await input.flush((text, fence) => kept.turn === liveTurn && !liveTurn.stopRequested && !kept.closing && steerFenceHolds(fence, threadId, liveTurn, "claude.stdin.postwarm")
+              ? writeUser(kept, threadId, text, undefined, undefined, fence) : Promise.resolve(false));
+            noteSubmitted(threadId, liveTurn, turn, "reused", null, dispatchAt, Date.now() - gateStartedAt);
+            return { turnId };
+          } catch (error) {
+            // A submission that ended (refused, stopped, unwritable) takes this turn's credentials back out of the file now, synchronously;
+            // the relay's own finish clears them again when the process ends.
+            try { kept.relay?.cred?.clear(); } catch { /* finish() clears and disposes it again */ }
+            // CLS2: a fenced refusal anywhere in the S2 submission (prepare, release, prompt write) is ONE record; its close retires the
+            // captured child and confirms it gone (no 5 s stdin-EOF grace). Any other ending keeps the plain close.
+            const R = refusalFor(error, "claude.s2.prompt", { engine: DRIVER_KIND, threadId, binding: turn.releaseBinding, kind: "submission", target: kept });
+            if (R?.closer === "driver") await R.close(composeClose(null, retireClose(R, kept, threadId, "S2 submission refused")));
+            else if (sessions.get(threadId) === kept && !kept.closing) closeSession(threadId, "S2 submission ended");
+            throw error;
+          } finally {
+            if (kept.s2Owner === s2Owner) kept.s2Owner = undefined;
+            input.close();
+            for (const frame of gate.takeForCold()) frame.done?.(new Error("S2 input cancelled"));
+            dropConfig();
+          }
+        }
         const reused = await stopGate.step(e, gateMcpServers(live, threadId, Object.keys(mcpServers), () => startLiveTurn().turnId,
           () => ctl.isStopped() || (startedTurn as SessionTurn | null)?.stopRequested === true, true), { onStopped: () => dropConfig() });
         const gateMs = Date.now() - gateStartedAt;
@@ -4514,23 +5254,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // takes this turn's credentials back out of the file. Before the turn
         // started the idle process goes back to the warm pool as it was; once
         // it started (a slow check) the process ends, as a new one's does.
+        let reuseAttempt: number | void=undefined;
         try {
-          turn.beforeSubmit?.();
+          if(turn.beforePrepare)turn.beforePrepare();
+          else if(turn.prepareSubmit&&turn.beforeSubmit)turn.prepareSubmit(turn.beforeSubmit.bind(turn));
         } catch (error) {
           dropConfig();
           noteRefused(threadId, turnId, turn, "submission refused");
-          if (early) {
-            if (typeof error === "object" && error !== null) submissionRefusals.add(error);
-            early.settled = true;
-            live.turn = null;
-            forgetActive(threadId);
-            retryState.delete(threadId);
-            withdrawCredentials();
-            // the refusal is the caller's (the harness re-runs the turn): no ending, the entry leaves
-            stopGate.leave(e);
-            turnEntries.delete(turnId);
-            if (sessions.get(threadId) === live) closeSession(threadId, "submission refused", refusalName(error));
-          } else if (withdrawCredentials()) armIdle(threadId);
+          await refuseSubmission(error, "claude.prompt.reuse", threadId, turn, null);
+          if (withdrawCredentials()) armIdle(threadId);
           throw error;
         }
         if (live.idleTimer) clearTimeout(live.idleTimer);
@@ -4541,7 +5273,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // A Stop inside the turn.started listeners writes nothing.
         liveTurn.submission = liveTurn.stopRequested ? Promise.resolve(false) : (() => {
           try {
-            return stopGate.launch(e, () => writeUser(live, threadId, withToolsNotice(turnPrompt, reused, Boolean(turn.engineCommand)), liveTurn.boundary, turn.images));
+            return stopGate.launch(e, () => writeUser(live, threadId, withToolsNotice(turnPrompt, reused, Boolean(turn.engineCommand)), liveTurn.boundary, turn.images, turn.beforeSubmit, turn));
           } catch (error) {
             if (!(error instanceof GateStopped)) throw error;
             // a mark landed before the write: nothing is written, the stop reaches the process, its close settles the turn
@@ -4551,6 +5283,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           }
         })();
         const written = await stopGate.step(e, liveTurn.submission, { onStopped: () => dropConfig() });
+        // D5: the reuse write's own attempt reports what the write did (a partial write is uncertain, D4; a write refused whole is zero bytes)
+        if (!written && partialWrites.has(liveTurn.boundary)) turn.attemptUncertain?.(reuseAttempt);
+        else if(!written)turn.attemptNotWritten?.(reuseAttempt);
         if (written) {
           noteSubmitted(threadId, liveTurn, turn, live.spare ? "spare" : "reused", null, dispatchAt, gateMs);
           // a routine that lands on a spare took it from the owner: that is not a spare serving a turn
@@ -4561,15 +5296,24 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // the Stop, not a broken session: the child's close settles this turn
         // as cancelled once the kill is confirmed (upstream #1701).
         if (!written && !liveTurn.stopRequested) {
+          const refusal=promptSubmissionRefusals.get(liveTurn.boundary);
+          if(refusal){
+            dropConfig();
+            liveTurn.settled=true;
+            if(typeof refusal.error==='object'&&refusal.error!==null)submissionRefusals.add(refusal.error);
+            withdrawCredentials();
+            stopGate.leave(e);turnEntries.delete(turnId);
+          }
           forgetActive(threadId);
           live.turn = null;
-          if (sessions.get(threadId) === live) closeSession(threadId, "stdin write failed");
+          if (!(refusal && await refuseSubmission(refusal.error, "claude.prompt.reuse", threadId, turn, live)) && sessions.get(threadId) === live) closeSession(threadId, "stdin write failed");
           retryState.delete(threadId);
           if (mcpConfigPath) {
             try {
               removeMcpConfigDir(mcpConfigPath);
             } catch {}
           }
+          if(refusal)throw refusal.error;
           throw new Error("claude session stdin is not writable");
         }
         // the MCP config was for the first spawn; nothing to clean here
@@ -4583,14 +5327,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (live && !turn.sessionReset && spawnReason) live.spare?.lost(`key:${spawnReason}`);
       if (live) closeSession(threadId, turn.sessionReset ? "context reset" : spawnReason === "max-age" ? "max-age" : `spawn contract changed: ${spawnReason}`);
       let cred: TurnCredentialStore | null = null;
+      let relay: CliMountRelay | undefined;
 
       // Until sessions.set() below, this turn owns every launch resource.
       // Any bind, private-config or synchronous spawn failure must release
       // them here rather than leave a live listener or credential temp file.
-      const cleanupUnownedLaunch = () => {
+      const cleanupUnownedLaunch = async () => {
+        // No prompt was submitted by this unowned launch. Retire its
+        // transports without turning cleanup into a new ledger refusal.
+        if (relay) { relay.retire(); await relay.finish(); }
         broker?.close();
         broker = undefined;
-        cred?.dispose();
+        if (!relay) {
+          try { cred?.clear(); } catch { console.warn("[claude] credential clear failed"); }
+          try { cred?.dispose(); } catch { console.warn("[claude] credential dispose failed"); }
+        }
         cred = null;
         if (mcpConfigPath) {
           try {
@@ -4606,6 +5357,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       };
 
       try {
+        // S2 key changes retire a retained CLI. Its relay quarantine clears
+        // only after combined CLI/mount death, before a successor may launch.
+        if (live?.relay && !await live.relay.finish(live.child)) throw new Error("MOUNT_RELAY_STOP_UNCONFIRMED");
+        assertSoleDispatch();
         // Create the prompt file only for a new process. A compatible live
         // session has already consumed the same system prompt at launch.
         if (turn.system) {
@@ -4625,14 +5380,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // remembers which tool each pending ask came from, so the resolved
           // event can scope approvals to real desktop-control tools only
           const askTools = new Map<string, string | undefined>();
+          const recoveryCleanups = new Map<string,()=>void>();
           broker = await stopGate.step(e, createPermissionBroker({
+            beforeDisconnect: () => {
+              const current = sessions.get(threadId);
+              return (current && current.broker === broker ? current.relay : relay)?.captureBeforeStop() ?? Promise.resolve();
+            },
+            releaseBinding: turn.releaseBinding,
             socketPaths: brokerSocketCandidates(threadId, turn.warmIdentity?.botId),
+            permissionOutputTokenLimit, threadId,
             // never while an earlier turn's continuation is playing: its asks
             // are not this turn's to open a card for
             isActive: () => { const t = sessions.get(threadId)?.turn; return Boolean(t && !t.lateContinuation); },
             askNote: () => sessions.get(threadId)?.turn?.unattendedAskNote === true,
             onAsk: (ask) => {
               const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
+              if(ask.recoveryScript)recoveryCleanups.set(ask.id,registerRecoveryScriptRequest({threadId,providerInstanceId:instanceId,turnId:eventTurnId,requestId:ask.id}));
               askTools.set(ask.id, typeof ask.tool === "string" ? ask.tool : undefined);
               if (ask.kind === "permission") askCalls.set(`${threadId}\u0000${ask.id}`, { turn: eventTurnId, tool: ask.tool ?? "", text: JSON.stringify(ask.input ?? null) });
               // NOLIMITS v1 V5 (a): on the lane, hold the ask until stdout delivered this call's own item.started, at
@@ -4654,8 +5417,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               }
               judgeAsk(ask, eventTurnId, false);
             },
+            canAllow:(requestId,updatedInput)=>{const live=sessions.get(threadId)?.turn;return !!live&&(live.permissionNow?.().noLimits!==true||answerTransport.guardRelease(threadId,requestId,()=>guardEngineRelease({threadId,requestId,turnId:live.turnId,providerInstanceId:instanceId},updatedInput)));},
+            onDelivery: (requestId, accepted) => answerTransport.confirm(threadId, requestId, Promise.resolve(accepted)),
             onResolve: (resolved) => {
-              const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
+              const live = sessions.get(threadId)?.turn;
+              const eventTurnId = live?.turnId ?? turnId;
+              if (live?.permissionNow) recordPostureAck('claude', instanceId, threadId, eventTurnId, live.permissionNow(), 'broker/write');
               emit({
                 ...base(threadId, eventTurnId),
                 type: "request.resolved",
@@ -4664,11 +5431,31 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 source: resolved.source,
                 approvalScope:
                   controlsHost && typeof askTools.get(resolved.id) === "string" && askTools.get(resolved.id)!.startsWith("mcp__computer") ? "local-computer" : undefined,
-              });
+              }, live?.sourceContext);
               askTools.delete(resolved.id);
+              recoveryCleanups.get(resolved.id)?.();recoveryCleanups.delete(resolved.id);
             },
           }), { onStopped: (made) => made.close() });
+          // CL1-4 (N3): the live turn of THIS broker's session owns a fenced reply; a settled or between-turns session has no owner.
+          // Named after the gated call (not an option of it) so the stop-gate fixture of that call is unchanged.
+          const ownedBroker = broker;
+          const brokerRefusalCtx = (error: unknown) => {
+            const s = sessions.get(threadId), t = s?.turn;
+            if (!s || s.broker !== ownedBroker) return null;
+            if (!t && s.s2Owner) { s.s2Owner.refused ??= error; return { owner: s.s2Owner, target: s, close: (R: FencedRefusal) => retireClose(R, s, threadId, "S2 broker reply refused") }; }
+            if (!t || t.settled) return null;
+            return { owner: t, target: s, close: (R: FencedRefusal) => retireClose(R, s, threadId, "broker reply refused") };
+          };
+          ownedBroker.ownRefusals(brokerRefusalCtx);
           function judgeAsk(ask: Ask, eventTurnId: string, itemUnseen: boolean): void {
+            const live = sessions.get(threadId);
+            if (!live || live.turn?.turnId !== eventTurnId) { broker?.settle(ask.id, "deny", "The turn has ended.", "auto"); return; }
+            // A retained broker's socket callback belongs to its process,
+            // which may have been created by another turn or a prewarm.
+            // Admit display events with this checked live turn's host source.
+            emissionSource.run(live.turn.sourceContext, () => judgeAskWithPosture(ask, eventTurnId, itemUnseen));
+          }
+          function judgeAskWithPosture(ask: Ask, eventTurnId: string, itemUnseen: boolean): void {
               if (ask.kind === "permission" && !recordOutsideInstallChange(threadId, { origin: "engine", title: ask.tool ?? "", input: ask.input }, cwd)) {
                 broker?.settle(ask.id, "deny", "Murage could not record this change. Check available disk space.", "auto");
                 return;
@@ -4677,7 +5464,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               // trip; the decision log records it. Anything else goes on to the verdict.
               // V5 (b): on a marked lane turn (or one whose ask item never came) a dot path or a gate file is not taken.
               const laneMarked = ask.kind === "permission" && (itemUnseen || laneStateOf(threadId, eventTurnId) === "marked");
-              if (ask.kind === "permission" && claudeInProjectAllow(ask.tool, ask.input, cwd) && !(laneMarked && claudeLaneShortcutSkip(ask.tool, ask.input, cwd))) {
+              if ((turn.permissionNow?.() ?? turn).noLimits !== true && ask.kind === "permission" && claudeInProjectAllow(ask.tool, ask.input, cwd) && !(laneMarked && claudeLaneShortcutSkip(ask.tool, ask.input, cwd))) {
                 appendDecision(DATA_DIR, { threadId, requestId: ask.id, tool: ask.tool, summary: askSummary(ask), decision: "auto-approved", source: "own-workspace" });
                 if (broker?.settle(ask.id, "allow", undefined, "auto", ask.input)) return;
               }
@@ -4695,6 +5482,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               const open = (execEnv: ExecEnv | undefined) => emit({
                 ...base(threadId, eventTurnId),
                 type: "request.opened",
+                executionCwd: cwd,
                 requestId: ask.id,
                 ...(localHold ? { localHold: localHold.slice(0, 80) } : {}),
                 ...(itemUnseen ? { itemUnseen: true } : {}),
@@ -4730,13 +5518,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                   : {}),
                 // F12: the environment the command would run in, after the pinned-form check
                 ...(execEnv ? { execEnv } : {}),
+                // X3 P-CLAUDE: the turn's shell mode and the env file the wrapper reads E from
+                ...(ask.kind === "permission" ? { execShellMode: shellMode.kind, ...(handed.env[EXEC_ENV_FILE] ? { execFile: handed.env[EXEC_ENV_FILE] } : {}) } : {}),
               });
               // F12 when the card opens (Rule 74d): the check of the generation the card opens in, never one made at spawn
               // only a command ask is checked (and so only a command card can carry U20); a file or MCP permission reports
               // the map as handed, unchecked, as Codex and the ACP engines do
               const withManaged = (record: ExecEnv): ExecEnv => (managedEnv.length ? { ...record, managedEnv } : record);
-              if (ask.kind === "permission" && (ask.tool === "Bash" || ask.tool === "PowerShell") && inheritProvenance) open(withManaged(execEnvHanded(childHanded, cwd, shellForm, { provenance: inheritProvenance })));
-              else if (ask.kind === "permission" && (ask.tool === "Bash" || ask.tool === "PowerShell")) void execEnvNow(threadId, shellForm, childHanded, cwd).then((record) => open(withManaged(record)), () => open(undefined));
+              if (ask.kind === "permission" && (ask.tool === CLAUDE_NATIVE_SHELL_TOOLS.bash || ask.tool === CLAUDE_NATIVE_SHELL_TOOLS.powershell) && inheritProvenance) open(withManaged(execEnvHanded(childHanded, cwd, shellForm, { provenance: inheritProvenance })));
+              else if (ask.kind === "permission" && (ask.tool === CLAUDE_NATIVE_SHELL_TOOLS.bash || ask.tool === CLAUDE_NATIVE_SHELL_TOOLS.powershell)) void execEnvNow(threadId, shellForm, childHanded, cwd).then((record) => open(withManaged(record)), () => open(undefined));
               else if (ask.kind === "permission") open(withManaged(execEnvHanded(childHanded, cwd, shellForm)));
               else open(undefined);
           }
@@ -4776,24 +5566,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
 
         // This process's credential file, holding the first turn's tokens.
-        if (Object.keys(secrets).length) {
+        if (process.env.MURAGE_CLOUD_ROLE !== "home" && (mounted || Object.keys(secrets).length)) {
           cred = createTurnCredentialStore();
           cred.write(secrets);
         }
+        if (mounted) relay = await CliMountRelay.create(turn, stableServers, secrets, cred);
+        assertSoleDispatch();
         // Write once, only after the broker has selected its real endpoint.
         if (mcpConfigPath) {
           // Claude starts each stdio server through the shell prefix (murage-exec), whose `env -i` keeps only the names
           // MURAGE_EXEC_KEEP lists: without it ELECTRON_RUN_AS_NODE and the credential-file names are lost (1.0.3).
-          const bound = cred ? bindCredentialPath(stableServers, cred.path) : stableServers;
-          const mcpJson = JSON.stringify({ mcpServers: claudeShellServers(shellMode, bound, process.platform, handed.env) });
-          if (process.env.MURAGE_CLOUD_ROLE === "home") cloudTurnRender(env, "mcp", cloudRenderMcp(stableServers));
+          const bound = relay?.servers ?? (cred ? bindCredentialPath(stableServers, cred.path) : stableServers);
+          const mcpJson = JSON.stringify({ mcpServers: claudeShellServers(shellMode, await meterProxyServers(bound), process.platform, handed.env, execNonce) });
+          if (process.env.MURAGE_CLOUD_ROLE === "home") cloudTurnRender(env, "mcp", cloudRenderMcp(bound, () => false, mounted));
           else writeFileSync(mcpConfigPath, mcpJson, { mode: 0o600 });
         }
         if (process.env.MURAGE_CLOUD_ROLE === "home") args.push("--strict-mcp-config");
         if (sessionId) args.push("--resume", sessionId);
         else args.push("--session-id", newSessionId!);
       } catch (error) {
-        cleanupUnownedLaunch();
+        await cleanupUnownedLaunch();
         throw error;
       }
 
@@ -4802,22 +5594,25 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // instead of spawning a process nobody wants. No await separates this
       // fence from the spawn below.
       if (relaunch ? retry.cancelled : ctl.isStopped()) {
-        cleanupUnownedLaunch();
+        await cleanupUnownedLaunch();
         throw new StoppedBeforeLaunch();
       }
       // A prewarm never starts an engine while Murage removes a deleted conversation from the engine's files (holdIdle).
       if (turn.prewarm && idleHeld > 0) {
-        cleanupUnownedLaunch();
+        await cleanupUnownedLaunch();
         throw new StoppedBeforeLaunch();
       }
-      // The submission fence (SendTurnInput.beforeSubmit), on every launch
-      // (a relaunch too). No await separates it from the spawn and the first
-      // write below, so it holds at the write; a refusal spawns nothing.
+      let launchAttempt: number | void = undefined;
+      // Validate every launch before spawning, without recording a prompt release.
+      // MCP readiness is awaited below; beforeSubmit runs after it, at the actual write.
       try {
-        turn.beforeSubmit?.();
+        if (turn.beforePrepare) turn.beforePrepare();
+        else if (turn.prepareSubmit && turn.beforeSubmit) turn.prepareSubmit(turn.beforeSubmit.bind(turn));
+        else launchAttempt = turn.beforeSubmit?.(); // Legacy callers report the setup attempt by id.
       } catch (error) {
-        cleanupUnownedLaunch();
+        await cleanupUnownedLaunch();
         if (typeof error === "object" && error !== null) submissionRefusals.add(error);
+        await refuseSubmission(error, relaunch ? "claude.relaunch.prepare" : "claude.prompt.launch", threadId, turn, null);
         throw error;
       }
 
@@ -4837,6 +5632,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // Section 14: the overlay is written for this launch and held by it (released when it exits, below)
         overlayHeld = overlayText === null ? null : acquireClaudeOverlay(overlayText);
         const launchCli = engineLaunchFile(config.cli, launchPath);
+        // Final boundary (B4 hole 6): the MCP config file is rendered by the launcher from the typed render, checked here.
+        assertFinalEngineEnv(DRIVER_KIND, env, args);
+        s2Qualified = s2Qualified && claudeS2QualifiedCliNow(launchCli, s2Version);
         child = stopGate.launch(e, () => spawnCli(launchCli, args, {
           cwd,
           env,
@@ -4848,25 +5646,34 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // no child exists: the gate read the entry live at the call, a failed or refused launch gives that back
         e.live = false;
         // The fence above released the prompt to a write that will not happen (turn-attribution.ts, I14).
-        turn.notWritten?.();
+        turn.attemptNotWritten?.(launchAttempt);
         releaseOverlay();
-        cleanupUnownedLaunch();
+        await cleanupUnownedLaunch();
         throw error;
       }
       // the overlay goes when this process exits, or fails to start
       child.once("exit", releaseOverlay);
       child.once("error", releaseOverlay);
+      // Spawning sends no prompt bytes, so the launch fence's attempt is proven unwritten (1.0.19 A4). It is settled once the prompt's own second
+      // fence below has opened the attempt that can write (or refused): settled earlier, it would be the turn's only attempt and withdraw the stamp
+      // before the write that may have started (D4).
       const launchTurn: SessionTurn = {
+        releaseBinding: turn.releaseBinding,
+        sourceContext: turn.sourceContext,
         turnId,
         settled: false,
         sawStreamDelta: false,
+        permissionNow: turn.permissionNow ?? (() => turn),
         boundary: createAttemptBoundary(),
         submission: null,
         engineCommand: Boolean(turn.engineCommand),
           unattendedAskNote: turn.unattendedAskNote === true,
       };
+      const closedVerdict = sessionStopVerdict();
       const session: Session = {
-        child,
+        requestUrl,
+        child, relay, used: !turn.prewarm,
+        s2Eligible: s2Qualified && mounted && process.env.MURAGE_CLOUD_ROLE !== "home" && claudeMcpStatusSupport.get(cliIdentity) !== "unsupported",
         broker,
         mcpConfigPath,
         systemPromptPath,
@@ -4876,6 +5683,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         turn: launchTurn,
         idleTimer: null,
         closing: false,
+        closedResult: closedVerdict.promise,
+        closedIs: closedVerdict.resolve,
         stderr: new EngineStderrCapture(),
         commands: { requestId: `murage-commands-${newId()}` },
         costTotal: undefined,
@@ -4883,9 +5692,25 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         startupHoldOff: env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS === "0",
       };
       sessions.set(threadId, session);
+      relay?.attach(child, (_nativeError, refusal) => {
+        // CLK (G0-LLM consumer): the relay sealed on a pre-entry ledger denial and hands the refusal itself. It is claimed now, before
+        // any continuation, for the live turn; target null = no driver close: the lease closes it (its interrupt joins this retirement).
+        const refused = refusal === undefined || sessions.get(threadId) !== session ? null : session.turn;
+        if (refused && !refused.settled) refusalFor(refusal, "claude.mount", { engine: DRIVER_KIND, threadId, binding: refused.releaseBinding, owner: refused, kind: "turn", target: null });
+        // An explicit Stop already owns seal, kill and confirmed close. Do not
+        // turn it into a retiring-session wait inside interruptTurn itself.
+        queueMicrotask(() => {
+          if (sessions.get(threadId) !== session || !session.turn || session.turn.stopRequested || session.turn.settled) return;
+          if (session.turn.submission === null) {
+            turnError({ message: mountNeverConnectedLine(ENGINE) });
+            void settle(false, "mcp_unavailable");
+          } else closeSession(threadId, "mount-relay-sealed");
+        });
+      }, () => cliStdinEnd(session));
       // A control request the process can no longer answer ends now, not at its bound.
       child.once("exit", () => {
         for (const answer of [...(session.control?.values() ?? [])]) answer(null);
+        for (const hook of session.bashHooks?.values() ?? []) hook.abort();
         // the server's request died with the process: the cards close
         for (const end of [...(session.elicitations?.values() ?? [])]) end("cancel", "system", undefined, false);
       });
@@ -4901,17 +5726,66 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       };
       // settles the TURN, not the process: the CLI stays for the next
       // message until it has been quiet for SESSION_IDLE_MS
-      const settle = (
+      const settle = async (
         ok: boolean,
         stopReason: string | null,
         total: number | null = null,
         usage?: { input: number; output: number; cachedInput?: number },
         /** `final`: the ending is emitted as is under any mark (a stop that could not be confirmed says so). */
-        opts?: { final?: true; error?: string },
+        opts?: { final?: true; error?: string; terminalResult?: boolean; readsComplete?: true; helperRow?: import('../turn-settle.ts').HelperRow },
       ) => {
         const t = session.turn;
         if (!t || t.settled) return;
         t.settled = true;
+        // P1 (M4 ATTACH): a turn refusal ends this turn memory-refused whatever ended it (a late `result`, an exit, a Stop). A refusal
+        // only the lease registered is found by dispatch generation and attached here; joined to a lease it settles in lease mode.
+        const fenced = t.fenced ?? fencedRefusalRegistry.byGeneration((t.releaseBinding as { identity?: { dispatchGeneration?: string | number } } | null | undefined)?.identity?.dispatchGeneration);
+        if (fenced && !t.fenced) t.fenced = fenced;
+        const refusedTurn = fenced?.kind === "turn";
+        if (refusedTurn) { ok = false; stopReason = "memory-refused"; }
+        let retireSingleUse: (() => Promise<void>) | undefined;
+        // A completed model/API error is not a broken MCP transport. S2
+        // retires that generation normally too; auth/exit/Stop still recycle.
+        if (session.relay && session.s2Eligible && (ok || opts?.terminalResult) && !t.stopRequested
+          && !t.authFailed && !t.updateRequired && !session.closing && child.exitCode === null
+          && claudeMcpStatusSupport.get(session.cliIdentity ?? "") !== "unsupported") {
+          // Open synchronously at settlement, before any teardown await.
+          (session.stdinGate ??= new ClaudeStdinGate()).open();
+          const brokerStopped = session.broker?.nextGeneration();
+          // Starting relay retirement revokes shims synchronously, before
+          // waiting for either the broker receipt or descendant close.
+          const mountsStopped = session.relay.retireGeneration();
+          const check = Promise.all([brokerStopped, mountsStopped]).then(([, confirmed]) => {
+            if (!confirmed) { session.s2Eligible = false; closeSession(threadId, "S2 retirement unconfirmed"); }
+          });
+          session.settleCheck = check;
+          await check;
+        } else if (session.relay) {
+          // The durable completion belongs to this generation. Mark the
+          // process unavailable now, then publish before its mounts retire.
+          // Retirement may close the native transport and revoke its ledger.
+          session.closing = true;
+          retire(session, threadId);
+          const relay = session.relay;
+          // Close authorization synchronously; process teardown follows the
+          // durable ending. No next generation can reuse these credentials.
+          const brokerStopped = session.broker?.nextGeneration();
+          relay.retire();
+          try { session.cred?.clear(); } catch { console.warn("[mount-relay] credential clear failed"); }
+          try { session.cred?.dispose(); } catch { console.warn("[mount-relay] credential dispose failed"); }
+          let retiringSingleUse: Promise<void> | undefined;
+          retireSingleUse = () => retiringSingleUse ??= (async () => {
+            const reason = stopReason === "mcp_unavailable" ? "mount-relay-sealed" : "mounted-single-use";
+            reuseStats.closed(reason);
+            console.info(`claude close thread=${threadId} reason=${reason}`);
+            const check = Promise.all([brokerStopped, relay.finish(child)]).then(([, confirmed]) => {
+              if (!confirmed) session.quarantine?.();
+            });
+            session.settleCheck = check;
+            await check;
+            rememberStopProof(threadId, t.turnId, [session], false);
+          })();
+        }
         // the turn is over: an elicitation still open is cancelled, never left waiting
         endElicitations(session, "system");
         if (t.steerFollowUp) clearTimeout(t.steerFollowUp.timer);
@@ -4923,7 +5797,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // turn N's tokens stop working here; the file is empty until N+1 starts
         let recycleReason: string | null = null;
         try {
-          session.cred?.clear();
+          if (!session.relay) session.cred?.clear();
         } catch {
           // turn N's token may still be in the file: do not keep this process
           recycleReason = "credential clear failed";
@@ -5021,10 +5895,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             session.settleCheck = check;
           }
         }
-        endTurn(t.turnId, { ok, stopReason: stopReason as string, ...opts, extra: { cost, ...(usage ? { usage } : {}), ...(t.toolsUnavailable?.length ? { toolsUnavailable: t.toolsUnavailable } : {}), ...(t.mcpReadiness ? { mcpReadiness: t.mcpReadiness } : {}) } });
+        rememberCompletionProof(threadId, t.turnId, session, session.settleCheck, retireSingleUse);
+        endTurn(t.turnId, { ok, stopReason: stopReason as string, ...opts, ...(refusedTurn ? { final: true as const, ...(fenced.lease ? { leaseMode: true as const } : {}) } : {}), extra: { cost, ...(usage ? { usage } : {}), ...(t.toolsUnavailable?.length ? { toolsUnavailable: t.toolsUnavailable } : {}), ...(t.mcpReadiness ? { mcpReadiness: t.mcpReadiness } : {}) } });
+        // Teardown also runs when an earlier Stop already installed its proof,
+        // or when the bounded proof cache cannot retain another entry.
+        await retireSingleUse?.();
       };
       const currentTurnId = () => session.turn?.turnId ?? turnId;
       /** The failure line that precedes a settle. Under a mark (an asked Stop, a dispose) the entry's finish says the ending (the pair, or the engine-closed line). */
+      session.settleTurnFenced = async (captured) => {
+        if (captured.settled) return;
+        if (session.turn === captured) return settle(false, "memory-refused");
+        captured.settled = true;
+        endTurn(captured.turnId, { ok: false, stopReason: "memory-refused" });
+      };
+      launchTurn.settleFenced = () => session.settleTurnFenced!(launchTurn);
       const turnError = (detail: Record<string, unknown>) => {
         const at = currentTurnId();
         const entry = turnEntries.get(at);
@@ -5097,7 +5982,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const handleLine = (line: string) => {
         let o: any;
         try {
-          o = JSON.parse(line);
+          o = registerBusyloopPayloadSite("read", JSON.parse(line));
         } catch {
           return;
         }
@@ -5208,6 +6093,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               // native.ndjson). Tracked for the turn they belong to.
               const t = session.turn;
               const bg = backgroundOf(t);
+              const reads = t.helperReads ??= new HelperReadEvidence();
+              if (['background_tasks_changed', 'task_started', 'task_progress', 'task_notification', 'task_updated'].includes(o.subtype)) markTurnOutside(threadId, 'helper', undefined, undefined, 'claude-helper-lifecycle', true);
               const id = typeof o.task_id === "string" ? o.task_id : null;
               const owners = (session.taskOwner ??= new Map<string, string>());
               // This turn's own tasks only. An id another turn started is its
@@ -5226,16 +6113,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 bg.open = new Set();
                 for (const task of o.tasks) {
                   if (!task || typeof task.task_id !== "string" || !claim(task.task_id, true)) continue;
+                  if (!bg.tracker.has(task.task_id)) reads.spawn(task.task_id);
                   emitSubtask(t, bg.tracker.start(task.task_id, task.description));
                   if (isAgentTask(task.task_type, undefined)) bg.open.add(task.task_id);
                 }
               } else if (o.subtype === "task_started" && id) {
                 if (claim(id, true)) {
+                  if (!bg.tracker.has(id)) reads.spawn(id);
                   emitSubtask(t, bg.tracker.start(id, o.description));
                   if (o.is_backgrounded === true && isAgentTask(o.task_type, o.subagent_type)) bg.open.add(id);
                 }
               } else if (o.subtype === "task_progress" && id) {
-                if (claim(id, false)) emitSubtask(t, bg.tracker.progress(id, { label: o.description, toolCount: o.usage?.tool_uses }));
+                if (claim(id, false)) {
+                  reads.progress(id, o.usage?.tool_uses);
+                  emitSubtask(t, bg.tracker.progress(id, { label: o.description, toolCount: o.usage?.tool_uses }));
+                } else reads.unknown();
               } else if ((o.subtype === "task_notification" || o.subtype === "task_updated") && id) {
                 if (!claim(id, false)) {
                   // a notice for another turn's task: its follow-up (model
@@ -5247,6 +6139,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 } else {
                   const status = o.subtype === "task_notification" ? o.status : o.patch?.status;
                   if (status === "completed" || status === "failed" || status === "killed" || status === "stopped") {
+                    reads.finish(id, status === 'completed');
                     bg.open.delete(id);
                     emitSubtask(t, bg.tracker.end(id, status === "completed"));
                   }
@@ -5273,9 +6166,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           case "assistant": {
             const msg = o.message ?? {};
             const text = firstText(msg.content);
-            const providerError = o.is_api_error_message ? cliFluxBudget({ ...o, message: text }, budgetRoute) : undefined;
+            const providerError = o.is_api_error_message ? cliFluxBudget(registerBusyloopPayloadSite("classify", { ...o, message: text }), budgetRoute) : undefined;
             if (providerError) {
-              emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: "This Flux key has reached its budget.", providerError });
+              if (session.turn) session.turn.fluxDecision = providerError.fluxDecision;
+              emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: providerError.fluxDecision ? gatewayBusyLine("Flux", providerError.fluxDecision.reason === "other" ? "busy" : providerError.fluxDecision.reason) : "This Flux key has reached its budget.", providerError, ...(providerError.fluxDecision ? { fluxDecision: providerError.fluxDecision, httpStatus: providerError.httpStatus, gatewayResetsAt: providerError.fluxResetsAt } : {}) });
               break;
             }
             if (claudeAuthFailure(o, text)) {
@@ -5380,16 +6274,37 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             break;
           }
           case "control_request": {
-            // A request FROM the CLI. Only an MCP elicitation is served; any
-            // other subtype gets an explicit error at once, so the CLI never
-            // waits on a request nobody here will answer.
+            if (session.stdinGate?.incomingRequest()) break;
+            // Requests FROM the CLI: its MCP elicitations and our SDK host
+            // Bash callback. Unknown subtypes get an explicit error at once.
             const requestId = typeof o.request_id === "string" ? o.request_id : null;
             if (!requestId) break;
             const request = o.request && typeof o.request === "object" && !Array.isArray(o.request) ? o.request : {};
-            if (request.subtype === "elicitation") openElicitation(session, threadId, requestId, request);
+            if (request.subtype === 'hook_callback' && request.callback_id === CLAUDE_BASH_WIPE_CALLBACK) {
+              const live = session.turn, input = request.input;
+              const answer = (response: Record<string, unknown>) => writeControlResponse(session, threadId, { subtype: 'success', request_id: requestId, response }, live?.releaseBinding ?? null, "claude.control.c");
+              const deny = () => answer({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' } });
+              if (!live || live.settled || live.stopRequested || live.lateContinuation || session.closing) { deny(); break; }
+              if (live.permissionNow?.().noLimits !== true) { answer({}); break; }
+              if (input?.hook_event_name !== 'PreToolUse' || input.tool_name !== 'Bash' || !input.tool_input || typeof input.tool_input !== 'object' || Array.isArray(input.tool_input) || !session.broker) { deny(); break; }
+              const hooks = session.bashHooks ??= new Map();
+              if (hooks.has(requestId)) break;
+              const abort = new AbortController(); hooks.set(requestId, abort);
+              void relayClaudeBash(session.broker.socketPath, input.tool_input, abort.signal,
+                ()=>({...wipeContextFor(threadId,turn.warmIdentity?.botId),cwd,project:cwd,dialect:'sh',platform:process.platform,env:wipeEnvironment(undefined,childHanded.env,childHanded.absent),unseen:{sessionEdits:authenticatedTurnWrittenScripts(threadId,instanceId,live.turnId)}}),
+                ()=>live.permissionNow?.().noLimits===true,
+                (raw,signal,recoveryScript)=>session.broker!.recoverBash(raw,signal,recoveryScript),
+                id=>session.broker!.registerOutOfBand(id)).then(response => {
+                if (hooks.get(requestId) !== abort) return;
+                hooks.delete(requestId);
+                if (session.turn !== live || live.settled || live.stopRequested || session.closing) deny();
+                else answer(response);
+              });
+            }
+            else if (request.subtype === "elicitation") openElicitation(session, threadId, requestId, request);
             else {
               const subtype = typeof request.subtype === "string" ? request.subtype.slice(0, 80) : "unknown";
-              writeControlResponse(session, threadId, { subtype: "error", request_id: requestId, error: `Murage does not handle control request ${JSON.stringify(subtype)}` });
+              writeControlResponse(session, threadId, { subtype: "error", request_id: requestId, error: `Murage does not handle control request ${JSON.stringify(subtype)}` }, session.turn?.releaseBinding ?? null, "claude.control.d");
             }
             break;
           }
@@ -5397,6 +6312,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             // The CLI withdrew its request (the tool server cancelled it): the
             // card closes, and nothing is written back.
             const requestId = typeof o.request_id === "string" ? o.request_id : null;
+            if (requestId) {
+              const hook = session.bashHooks?.get(requestId);
+              session.bashHooks?.delete(requestId);
+              hook?.abort();
+            }
             if (requestId) session.elicitations?.get(requestId)?.("cancel", "system", undefined, false);
             break;
           }
@@ -5448,7 +6368,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             const stoppedResult = o.is_error === true && session.turn?.stopRequested === true && !session.turn.authFailed && !session.turn.updateRequired;
             // Stop owns the whole group; a result emitted while stopping is
             // not permission to release this turn before close finalization.
-            if (session.turn?.stopRequested) return;
+            if (session.turn?.stopRequested) {
+              // Stop may be marked before stdout delivers the first result.
+              // Keep that paid result for close/drain settlement without
+              // publishing another completion or starting a background cap.
+              const bg = session.turn.bg;
+              if (bg && !bg.waiting && bg.open.size > 0 && o.is_error !== true && o.usage) {
+                bg.usage.input += (o.usage.input_tokens || 0) + (o.usage.cache_read_input_tokens || 0) + (o.usage.cache_creation_input_tokens || 0);
+                bg.usage.output += o.usage.output_tokens || 0;
+                bg.usage.cachedInput += o.usage.cache_read_input_tokens || 0;
+                bg.waiting = true;
+              }
+              return;
+            }
             if (stoppedResult) retryState.delete(threadId);
             // A local command (/context, /cost) answers here and nowhere else.
             if (session.turn?.engineCommand && !session.turn.answered && o.is_error !== true && typeof o.result === "string" && o.result.trim()) {
@@ -5466,6 +6398,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               bg.usage.output += o.usage?.output_tokens || 0;
               bg.usage.cachedInput += o.usage?.cache_read_input_tokens || 0;
               if (!bg.waiting) {
+                session.turn.bgEverHeld = true;
                 bg.waiting = true;
                 bg.cap = setTimeout(endAtCap, backgroundCapMs);
                 bg.cap.unref?.();
@@ -5475,7 +6408,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             const heldUsage = session.turn?.bg?.waiting ? session.turn.bg.usage : null;
             const carried = session.turn?.carriedUsage ?? null;
             const settleArgs: Parameters<typeof settle> = [
-              stoppedResult || (o.is_error !== true && !session.turn?.authFailed && !session.turn?.updateRequired),
+              stoppedResult || (o.is_error !== true && !session.turn?.fluxDecision && !session.turn?.authFailed && !session.turn?.updateRequired),
               stoppedResult ? "cancelled" : session.turn?.authFailed ? "auth_required" : session.turn?.updateRequired ? "update_required" : o.stop_reason ?? o.terminal_reason ?? null,
               o.total_cost_usd ?? session.turn?.carriedTotal ?? null,
               o.usage || carried
@@ -5487,6 +6420,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                       : {}),
                   }
                 : undefined,
+              { terminalResult: true },
             ];
             // A steer written during the final answer was not read by it: the
             // CLI answers it in a turn of its own, started (with `init`) right
@@ -5532,8 +6466,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               };
               const timer = setTimeout(finish, STEER_FOLLOW_UP_WAIT_MS);
               timer.unref?.();
+              t.steerEverWaited = true;
               t.steerFollowUp = { timer, finish, usage, total: typeof o.total_cost_usd === "number" ? o.total_cost_usd : null };
               break;
+            }
+            if (t && complete_flag('claude', { site: 'result', subtype: o.subtype, steer_ever_waited: t.steerEverWaited, bg_ever_held: t.bgEverHeld }, new Set(['claude-bg']))) {
+              settleArgs[4] = { readsComplete: true, ...(t.bgEverHeld && t.helperReads ? { helperRow: t.helperReads.terminal('claude-bg', 'result', t.stopRequested === true || t.steerEverWaited === true) } : {}) };
             }
             settle(...settleArgs);
             break;
@@ -5546,7 +6484,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const stdoutLines = createBoundedLineSplitter({
         onLine: (line) => {
           if (!line.trim()) return;
-          handleLine(line);
+          // The process can serve several operations. Bind this frame to the
+          // host SessionTurn now; any async work/flush it starts retains this
+          // exact context after that operation ends or the process is reused.
+          emissionSource.run(session.turn?.sourceContext, () => handleLine(line));
         },
         onOverflow: (overflow) => {
           appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: { frameOverflow: overflow } });
@@ -5590,6 +6531,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // is never replayed (U-17).
           retryState.delete(threadId);
           settle(true, "cancelled", null, heldBgUsage());
+        } else if (session.turn && !session.turn.settled && isTerminal(session.turn.fluxDecision)) {
+          retryState.delete(threadId);
+          settle(false, "flux_refusal");
         } else if (session.turn?.updateRequired && !session.turn.settled) {
           // The CLI already said it is too old for the model and then exited
           // with no result frame: that is the whole answer. A second, generic
@@ -5615,7 +6559,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // The classifier reads the raw exit above; the chat reads plain words.
           const shown = engineClosedLine(ENGINE, code, undefined, session.stderr.lastWords());
           if (
-            !retry.cancelled &&
+            (!mounted || turn.draftOnly) && !retry.cancelled &&
             code !== 0 &&
             verdict.transient &&
             // Only the turn that launched this process owns its relaunch. A
@@ -5626,6 +6570,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             // message was written, or any output or tool activity was seen,
             // the CLI may already have acted, so the turn fails visibly.
             isPreAcceptFailure(closingTurn.boundary) &&
+            // CLG: a fenced turn is never relaunched; it settles memory-refused below.
+            !fencedOf(closingTurn) &&
             retry.attempt < RETRY_MAX_ATTEMPTS - 1
           ) {
             // the CLI is gone but the TURN continues: keep the thread busy,
@@ -5712,7 +6658,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           turnError({ message: shown });
           // the process died before the prompt was even attempted (the baseline
           // wait) or its write was refused: the prompt never reached the CLI
-          settle(false, closingTurn.boundary.submission === "refused" || closingTurn.submission === null ? "stdin_write_failed" : "exit_before_result", null, heldBgUsage());
+          settle(false, closingTurn.boundary.submission === "refused" || failedInFlightWrites.has(closingTurn.boundary) || closingTurn.submission === null ? "stdin_write_failed" : "exit_before_result", null, heldBgUsage());
         }
         flushQueuedSteers(session, threadId, false);
         if (session.idleTimer) clearTimeout(session.idleTimer);
@@ -5735,6 +6681,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // never closes, from the stop path itself.
       const quarantineSession = () => {
         if (closeFinalized) return;
+        session.closedIs(false);
         session.closing = true;
         retire(session, threadId);
         if (!resetBlocked.has(threadId)) resetBlocked.set(threadId, session);
@@ -5758,7 +6705,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           if (closingTurn && !closingTurn.settled && closingTurn.boundary.submission === "in-flight" && closingTurn.submission) {
             await stopGate.cleanupStep(e, closingTurn.submission);
           }
-          const confirmed = session.stopProven ? Promise.resolve(true) : awaitCliTreeStopped(child, undefined, CLI_CALLER_DEADLINE_MS);
+          const confirmed = session.relay ? session.relay.finish(child) : session.stopProven ? Promise.resolve(true) : awaitCliTreeStopped(child, undefined, CLI_CALLER_DEADLINE_MS);
           if (!(await stopGate.cleanupStep(e, confirmed))) {
             quarantineSession();
             watchLateStop(session);
@@ -5766,6 +6713,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           }
           if (closeFinalized) return;
           closeFinalized = true;
+          session.closedIs(true);
           unretire(session);
           refreshBlocked(threadId, session);
           onChildClose(code);
@@ -5774,12 +6722,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
 
       const stop = () => {
+        // StopGate has already closed new submissions. Drain this fixed cancel
+        // while the exact turn's control transport still accepts its fenced frame.
+        endElicitations(session, "system");
         launchTurn.stopRequested = true;
         retry.cancelled = true;
         retryAbort.abort();
         flushQueuedSteers(session, threadId, false);
-        // a Stop mid-elicitation tells the tool server no (cancel) before the process goes
-        endElicitations(session, "system");
         stopSession(session);
       };
       // The pool let this thread's engine go while it was idle: this send starts a fresh one,
@@ -5815,9 +6764,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // it: `init` names the commands either way, and a CLI that does not
       // answer only leaves them without descriptions.
       if (session.commands && !cancelledBeforeWrite()) {
-        const ask = { type: "control_request", request_id: session.commands.requestId, request: { subtype: "initialize" } };
+        const ask = { type: "control_request", request_id: session.commands.requestId, request: { subtype: "initialize", ...(session.broker ? { hooks: CLAUDE_BASH_WIPE_HOOK } : {}) } };
         try {
-          child.stdin.write(JSON.stringify(ask) + "\n");
+          cliStdinWrite(session, JSON.stringify(ask) + "\n");
           appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: ask });
         } catch { /* the prompt write below reports a dead stdin */ }
       }
@@ -5861,7 +6810,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (cancelledBeforeWrite()) {
         // Stop already killed the child; its close settles the turn as cancelled.
         launchTurn.submission = Promise.resolve(false);
-        turn.notWritten?.();
+        turn.attemptNotWritten?.(launchAttempt);
         return { turnId };
       }
       // The new process connects its MCP servers in the background: wait
@@ -5871,7 +6820,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       try {
         mcpGate = await stopGate.step(e, gateMcpServers(session, threadId, Object.keys(mcpServers), () => turnId, cancelledBeforeWrite));
       } catch (error) {
-        turn.notWritten?.();
+        turn.attemptNotWritten?.(launchAttempt);
         throw error;
       }
       const gateMs = Date.now() - gateStartedAt;
@@ -5880,16 +6829,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // close as a prompt that never reached it: nothing is written either way.
       if (cancelledBeforeWrite()) {
         launchTurn.submission = Promise.resolve(false);
-        turn.notWritten?.();
+        turn.attemptNotWritten?.(launchAttempt);
         return { turnId };
       }
-      if (session.turn !== launchTurn || session.closing || session.child.exitCode !== null) { turn.notWritten?.(); return { turnId }; }
+      if (session.turn !== launchTurn || session.closing || session.child.exitCode !== null) { turn.attemptNotWritten?.(launchAttempt); return { turnId }; }
       // The wait was an await after the fence above: the fence runs again, with
       // none between it and the write. A refusal writes nothing and ends this
       // process; the turn is the harness's to re-run.
+      let writeAttempt: number | void=undefined;
+      // the launch attempt is settled BEFORE the fence can publish a refusal (no stamp withdrawal here: that stays after the fence)
+      turn.attemptSettled?.(launchAttempt);
       try {
-        turn.beforeSubmit?.();
+        if(turn.beforePrepare)turn.beforePrepare();
+        else if(turn.prepareSubmit&&turn.beforeSubmit)turn.prepareSubmit(turn.beforeSubmit.bind(turn));
       } catch (error) {
+        turn.attemptNotWritten?.(launchAttempt);
         if (typeof error === "object" && error !== null) submissionRefusals.add(error);
         launchTurn.settled = true;
         session.turn = null;
@@ -5899,27 +6853,45 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         stopGate.leave(e);
         turnEntries.delete(turnId);
         noteRefused(threadId, turnId, turn, "submission refused");
-        if (sessions.get(threadId) === session) closeSession(threadId, "submission refused", refusalName(error));
+        // Proven unwritten for THIS attempt only (attemptNotWritten above withdraws the stamp when every attempt of the turn is unwritten);
+        // no arg-less notWritten here: a relaunch may reuse a turn whose earlier attempt was written (1.0.19 D2, as in Codex).
+        if (!await refuseSubmission(error, "claude.prompt.launch2", threadId, turn, session) && sessions.get(threadId) === session) closeSession(threadId, "submission refused", refusalName(error));
         throw error;
       }
       if (mcpGate.missing.length) launchTurn.toolsUnavailable = mcpGate.missing;
       if (mcpGate.readiness === "unknown" && mcpGate.required.length) launchTurn.mcpReadiness = "unknown";
       try {
-        launchTurn.submission = stopGate.launch(e, () => writeUser(session, threadId, withToolsNotice(turnPrompt, mcpGate, Boolean(turn.engineCommand)), launchTurn.boundary, turn.images));
+        launchTurn.submission = stopGate.launch(e, () => writeUser(session, threadId, withToolsNotice(turnPrompt, mcpGate, Boolean(turn.engineCommand)), launchTurn.boundary, turn.images, turn.beforeSubmit, turn));
       } catch (error) {
         if (!(error instanceof GateStopped)) throw error;
         // a mark landed before the write: nothing is written, the stop reaches the child, its close settles the turn
         launchTurn.stopRequested = true;
         launchTurn.submission = Promise.resolve(false);
-        turn.notWritten?.();
+        turn.attemptNotWritten?.(launchAttempt);
+        turn.attemptNotWritten?.(writeAttempt);
         stop();
         return { turnId };
       }
       const launchWritten = await stopGate.step(e, launchTurn.submission);
-      if (launchWritten) noteSubmitted(threadId, launchTurn, turn, "spawned", spawnReason, dispatchAt, gateMs);
+      // Settle the legacy setup attempt after the prompt's own fence. Settling
+      // it first can withdraw twice when that later fence refuses a new attempt.
+      turn.attemptNotWritten?.(launchAttempt);
+      const promptRefusal=promptSubmissionRefusals.get(launchTurn.boundary);
+      if(promptRefusal){
+        if(typeof promptRefusal.error==='object'&&promptRefusal.error!==null)submissionRefusals.add(promptRefusal.error);
+        launchTurn.settled=true;session.turn=null;forgetActive(threadId);retryState.delete(threadId);
+        stopGate.leave(e);turnEntries.delete(turnId);
+        noteRefused(threadId,turnId,turn,'submission refused');
+        if(!await refuseSubmission(promptRefusal.error, "claude.prompt.launch2", threadId, turn, session)&&sessions.get(threadId)===session)closeSession(threadId,'submission refused',refusalName(promptRefusal.error));
+        throw promptRefusal.error;
+      }
+      if (launchWritten) { noteSubmitted(threadId, launchTurn, turn, "spawned", spawnReason, dispatchAt, gateMs);  }
       else noteRefused(threadId, turnId, turn, "stdin write failed");
       if (!launchWritten) {
-        turn.notWritten?.();
+        // A failed write that may have sent bytes (it was in flight) is UNCERTAIN, never proven unwritten (1.0.19 D4); only a write refused
+        // before it began (stdin not writable) is proven zero bytes.
+        if (partialWrites.has(launchTurn.boundary)) turn.attemptUncertain?.(writeAttempt);
+        else turn.attemptNotWritten?.(writeAttempt); // per attempt only: no arg-less notWritten (1.0.19 D2)
         // The message never reached the CLI whole. End the session and let
         // its close decide: a transient pre-accept failure may relaunch
         // (U-17), anything else settles as stdin_write_failed. The fallback
@@ -5943,9 +6915,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * window. A no-op without remembered inputs (after a restart, say), when an engine is
      * already live, or when the thread is busy. The next real turn still runs the warm-key
      * check, so changed settings, routeAsks or MCP config recycle this process. */
-    const prewarm = async (threadId: string): Promise<boolean> => {
+    const prewarm = async (threadId: string, opts?: { fence?: PrewarmFence }): Promise<boolean> => {
       const mem = lastTurns.get(threadId);
       const held = sessions.get(threadId);
+      if (mem && mountedTurn(mem, !mem.draftOnly)) return false;
       if (idleHeld > 0 || !mem || active.has(threadId) || resetBarriers.has(threadId) || resetBlocked.has(threadId) || (held && !held.closing && held.child.exitCode === null) || !prewarming.begin(threadId)) return false;
       const turnId = newId();
       // a prewarm is gate-checked like a send (a dispose or a Stop All reaches it), but it announces nothing: no turn exists
@@ -5959,11 +6932,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const reservation = activeTurn(turnId, undefined, () => { stoppedBeforeLaunch = true; wake(); }, () => stoppedBeforeLaunch);
       active.set(threadId, reservation);
       try {
-        await dispatchTurn({ ...mem, prewarm: true, background: false, sessionReset: false }, undefined, { turnId, reservation, stopped, isStopped: () => stoppedBeforeLaunch, entry: pe });
+        // The fence reads the exact cursor the launch turns into --resume, in the launch's own no-await block (the beforeSubmit call before the spawn).
+        const { fence } = opts ?? {};
+        const cursor = typeof mem.resumeCursor === "string" ? mem.resumeCursor : null;
+        await dispatchTurn({ ...mem, prewarm: true, background: false, sessionReset: false, ...(fence ? { beforeSubmit: () => fence(cursor) } : {}) }, undefined, { turnId, reservation, stopped, isStopped: () => stoppedBeforeLaunch, entry: pe });
         const parked = sessions.get(threadId);
         return parked?.turn === null && !parked.closing;
       } catch (error) {
-        if (!(error instanceof StoppedBeforeLaunch) && !(error instanceof GateStopped)) console.info(`claude prewarm thread=${threadId} failed=${error instanceof Error ? error.message : String(error)}`);
+        if (error instanceof PrewarmRefused) spare.lost(error.spareLoss);
+        else if (!(error instanceof StoppedBeforeLaunch) && !(error instanceof GateStopped)) console.info(`claude prewarm thread=${threadId} failed=${error instanceof Error ? error.message : String(error)}`);
         if (active.get(threadId) === reservation) forgetActive(threadId);
         prewarmTurns.delete(turnId);
         return false;
@@ -5979,16 +6956,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     /** A user message into the running turn: the CLI delivers it before its
      * next model call. False when nothing is running here to steer. */
     const steer = async (threadId: string, text: string, beforeWrite?: () => void): Promise<boolean> => {
+      if (hasClaudeS2Pending(threadId)) return holdClaudeS2Input(threadId, text, beforeWrite);
       const s = sessions.get(threadId);
       if (!s || !s.turn || s.turn.settled || s.closing || s.child.exitCode !== null) return false;
       // Nothing is written before the CLI's `init` has been handled (and the
       // descendant baseline taken); the steer waits for it and is dropped
       // if the turn was stopped or the process closed meanwhile.
-      if (!s.initHandled) return new Promise<boolean>((resolve) => (s.queuedSteers ??= []).push({ turn: s.turn!, text, beforeWrite, resolve }));
-      if (!steerFenceHolds(beforeWrite)) return false;
+      if (!s.initHandled||!s.turn.promptSent) return new Promise<boolean>((resolve) => (s.queuedSteers ??= []).push({ turn: s.turn!, text, beforeWrite, resolve }));
+      if (!steerFenceHolds(beforeWrite, threadId, s.turn, "claude.stdin.steer")) return false;
       (s.turn.unreadSteers ??= []).push(Date.now());
       extendSteerHold(s.turn);
-      return writeUser(s, threadId, text);
+      return writeUser(s, threadId, text, undefined, undefined, beforeWrite);
     };
 
     /** The reset itself; resetSession wraps it in the thread barrier. */
@@ -6116,18 +7094,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }, turnEnv);
       const env = handed.env;
       return new Promise((resolve, reject) => {
-        // The learning gate (memory/learning-send.ts admit, r8 section 1): checked and released under the write lock; nothing below awaits before
-        // child.stdin.end(prompt), so a call
-        // whose words were forgotten while it waited (the queue, a deletion's one-shot pause and its re-run, the version and env reads
-        // above) starts no process and writes nothing.
-        try { memory?.gate?.admit(); } catch (error) { reject(error); return; }
+        // The learning gate (memory/learning-send.ts, H1-SENDLOCK): the cheap check first, so a call whose words were forgotten while it
+        // waited (the queue, a deletion's one-shot pause and its re-run, the version and env reads above) starts no process; the write
+        // itself runs inside gate.send below, so the check and the prompt bytes leaving hold one write lock.
+        try { memory?.gate?.check(); } catch (error) { reject(error); return; }
         // The claude whose --version the review was gated on (turnEnv: Murage's own PATH), not the handed PATH's first.
         const launchCli = engineLaunchFile(config.cli, turnEnv);
         // Same isolation as a turn: no MCP server, hook, plugin or personal CLAUDE.md of the
         // owner's, with the owner's login untouched. A proposal also gets no tools at all.
         let child: ReturnType<typeof spawnCli>;
-        // a spawn that throws wrote nothing: the admission is withdrawn (r8 review change 1)
-        try {
+        // a spawn that throws wrote nothing and released nothing
         child = spawnCli(
           launchCli,
           // stream-json so the call knows when the CLI started work (`init`): only what it printed
@@ -6147,7 +7123,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // S4 power (design sections 1 and 7): the Windows job, as the turn spawn; no hostPower on Mac or Linux.
           engineJob({ posixHostPower: false }),
         );
-        } catch (error) { memory?.gate?.notWritten(); throw error; }
         let stdout = "";
         const stderr = new EngineStderrCapture();
         /** stderr as it stood when `init` arrived; null until then */
@@ -6164,7 +7139,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         };
         const readLine = (line: string) => {
           let frame: { type?: unknown; subtype?: unknown; result?: unknown; is_error?: unknown };
-          try { frame = JSON.parse(line); } catch { return; }
+          try { frame = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { return; }
           if (frame.type === "system" && frame.subtype === "init" && preInitStderr === null) preInitStderr = stderr.text;
           if (frame.type === "result") result = { text: typeof frame.result === "string" ? frame.result : "", isError: frame.is_error === true };
         };
@@ -6207,18 +7182,28 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const refusal = claudeLaunchRefusalError(preInitStderr ?? stderr.text);
           finish(refusal ?? new Error(failed ?? (stderr.redactedEnd(8_192) || (code === 0 ? "Claude review gave no result" : `Claude review exited ${code}`))));
         });
-        // pre-aborted: no stdin.end, so the admission is withdrawn
-        if (signal?.aborted) { memory?.gate?.notWritten(); onAbort(); }
+        // pre-aborted: kill, no stdin.end, nothing released
+        if (signal?.aborted) onAbort();
         else {
           signal?.addEventListener("abort", onAbort, { once: true });
-          child.stdin.end(prompt);
-          memory?.gate?.wrote();
+          const wirePrompt = registerBusyloopRequestSite(fluxRouteFor(env.ANTHROPIC_BASE_URL), prompt);
+          // the prompt goes in on stdin (never argv), inside the gate's lock: a refusal or busy lock kills the child with stdin unwritten
+          const gate = memory?.gate;
+          if (gate) {
+            try { gate.send(() => { cliStdinWrite({ child }, wirePrompt); cliStdinEnd({ child }); }); }
+            catch (error) {
+              // memorySession reads gate.released: a release before the throw is an interrupted call, never "nothing sent"
+              killCliTree(child);
+              finish(error instanceof Error ? error : new Error(String(error)));
+              return;
+            }
+          } else { cliStdinWrite({ child }, wirePrompt); cliStdinEnd({ child }); }
           if (memory) memory.sent = true;
         }
       });
     };
 
-    return withCliMemoryLearning({
+    return withRequestDelivery(withCliMemoryLearning({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
@@ -6234,6 +7219,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpToolSurface: CLAUDE_TOOL_SURFACE,
         capabilities: {
           sessionModelSwitch: "in-session",
+          // Native write producer owner: recall-fix-a; dispatch contract consumer owner: recall-fix-a.
+          // Preparation emits no user prompt. Every prompt release runs the
+          // durable submission callback and final byte fence in writeUser.
+          // Only proven unwritten attempts may be rebuilt by the dispatcher.
+          fencedWrites: true,
+          // H1-SENDLOCK: the learning runner (memorySession) writes its prompt inside gate.send
+          fencedLearningWrite: true,
           agentsMcp: true,
           memoryMcp: true,
         customMcp: true,
@@ -6258,11 +7250,40 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         sendTurn,
         prewarm,
         steer,
-        interruptTurn: async (threadId) => {
-          stopGate.ask(threadId);
-          active.get(threadId)?.stop();
+        interruptTurn: async (threadId, turnId) => {
+          stopGate.ask(threadId, turnId);
+          const live = active.get(threadId);
+          if (turnId && live?.turnId !== turnId) {
+            // A repeated exact-turn Stop may report only that same thread's
+            // recorded teardown proof. It never claims a current idle child
+            // or a successor, and an absent proof remains unconfirmed.
+            const proof = stopProofs.get(turnId);
+            return proof?.threadId === threadId ? proof.promise : { closeConfirmed: false, reason: "stop-failed" };
+          }
+          const target = sessions.get(threadId);
+          const targets = [...new Set([...(target ? [target] : []), ...(retiringByThread.get(threadId) ?? [])])];
+          live?.stop();
+          if (live) rememberStopProof(threadId, live.turnId, targets, targets.length === 0);
+          // A thread-wide Stop also retires the idle process whose settle
+          // check the waiting dispatch was using. An exact-turn Stop cannot
+          // claim an unrelated idle predecessor or a successor.
+          const kept = sessions.get(threadId);
+          if (!turnId && kept && !kept.turn) closeSession(threadId, "stop");
           // A replaced predecessor still shutting down is this thread's too.
           if (retiringByThread.has(threadId)) await requireRetiredStopped(threadId);
+          // Expose the exact proof already captured above. A setup Stop cannot
+          // release its owner on the legacy "requested" result alone.
+          if (live) return stopProofs.get(live.turnId)?.promise ?? { closeConfirmed: false, reason: "stop-failed" };
+        },
+        awaitTurnTeardown: async (threadId, turnId) => {
+          if (!turnId) return { closeConfirmed: false, reason: "stop-failed" };
+          const proof = stopProofs.get(turnId);
+          if (!proof || proof.threadId !== threadId) return { closeConfirmed: false, reason: "stop-failed" };
+          return proof.promise;
+        },
+        awaitTurnClose: (threadId, turnId) => {
+          const proof = turnId ? stopProofs.get(turnId) : undefined;
+          return proof?.threadId === threadId ? proof.closed : new Promise<void>(() => {});
         },
         holdIdle: async () => {
           idleHeld++;
@@ -6337,6 +7358,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const call = askCalls.get(key);
           if (extra.source === "narrow" && behavior === "deny" && call && narrowDenials.raiseCard(call.turn, call.tool, call.text)) return "card";
           const updated = extra.updatedInput && typeof extra.updatedInput === "object" && !Array.isArray(extra.updatedInput) ? (extra.updatedInput as Record<string, unknown>) : undefined;
+          if (behavior === "allow" && !broker.allowFits(requestId, updated)) {
+            const live = sessions.get(threadId)?.turn;
+            const held = live && holdEnginePermissionReply({ threadId, requestId, turnId: live.turnId, providerInstanceId: instanceId }, PERMISSION_REPLY_TOO_LARGE);
+            answerTransport.guardRelease(threadId, requestId, () => false);
+            return held ? "card" : "unavailable";
+          }
           if (!broker.answer(requestId, behavior, decision.message, decision.answers, updated)) return "unavailable";
           askCalls.delete(key);
           return behavior === "allow" ? "allowed-once" : behavior === "answer" ? "answered" : "rejected";
@@ -6367,6 +7394,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         await requireRetiredStopped();
         listeners.clear();
       },
-    }, { run: () => memorySession });
+    }, { run: () => memorySession }), answerTransport);
   },
 };

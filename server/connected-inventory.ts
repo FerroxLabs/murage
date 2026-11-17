@@ -25,6 +25,7 @@ import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { backoffDelayMs, isBackoffStatus, parseRetryAfterMs } from "./upstream-backoff.ts";
 
 export interface InventoryService {
   connected: boolean;
@@ -32,7 +33,7 @@ export interface InventoryService {
   status: string;
   /** Set on the way out, never stored: a call to this app was refused. */
   needsReconnect?: boolean;
-  accounts: Array<{ id: string; alias?: string; status: string }>;
+  accounts: Array<{ id: string; alias?: string; status: string; expiresAt?: number }>;
 }
 export type InventoryServices = Record<string, InventoryService>;
 
@@ -47,7 +48,7 @@ const fileSchema = z.object({
     connected: z.boolean(),
     pending: z.boolean(),
     status: z.string(),
-    accounts: z.array(z.object({ id: z.string(), alias: z.string().optional(), status: z.string() })),
+    accounts: z.array(z.object({ id: z.string(), alias: z.string().optional(), status: z.string(), expiresAt: z.number().optional() })),
   })),
 });
 
@@ -58,7 +59,19 @@ interface Entry {
   version: number;
   inflight?: Promise<InventoryServices>;
   scheduled: boolean;
+  /** After a 429, a 5xx or a dropped connection: no new fetch before `retryAt` (exponential, jittered, Retry-After honoured). */
+  failures?: number;
+  retryAt?: number;
+  lastError?: unknown;
 }
+
+/** Whether a failed fetch should slow the next one: the service's request limit or fault, or no answer at all. */
+function backsOff(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null)?.status;
+  if (typeof status === "number") return isBackoffStatus(status) || status === 502;
+  return error instanceof TypeError;
+}
+const waiting = (e: Entry, now: number): boolean => e.retryAt !== undefined && now < e.retryAt;
 
 let entry: Entry | null = null;
 let diskChecked = false;
@@ -145,17 +158,28 @@ function isFresh(e: Entry, now: number): boolean {
 
 function startFetch(e: Entry, load: () => Promise<InventoryServices>): Promise<InventoryServices> {
   if (e.inflight) return e.inflight;
+  // Admission also covers delayed refreshes and the settle-after-invalidation path.
+  if (waiting(e, Date.now())) return Promise.reject(e.lastError);
   const startedAt = e.version;
   let promise!: Promise<InventoryServices>;
   promise = (async () => {
     try {
       const services = await load();
       if (entry === e && e.version === startedAt) {
+        // Another generation can have been refused while this request was running.
+        if (!waiting(e, Date.now())) { e.failures = 0; e.retryAt = undefined; e.lastError = undefined; }
         e.snapshot = { services, at: Date.now() };
         e.dirty = false;
         persist();
       }
       return services;
+    } catch (error) {
+      if (backsOff(error) && entry === e) {
+        e.failures = (e.failures ?? 0) + 1;
+        e.retryAt = Math.max(e.retryAt ?? 0, Date.now() + backoffDelayMs(e.failures, parseRetryAfterMs((error as { retryAfter?: string | null }).retryAfter)));
+        e.lastError = error;
+      }
+      throw error;
     } finally {
       if (e.inflight === promise) e.inflight = undefined;
     }
@@ -187,6 +211,12 @@ export async function readInventory(
   const now = Date.now();
   const mustRefresh = options.force === true || !isFresh(e, now);
   if (e.snapshot && !mustRefresh) return { services: e.snapshot.services, at: e.snapshot.at, revalidating: false };
+  // The service refused or failed the last ask: what is remembered answers, and nothing new is asked until the backoff ends.
+  if (waiting(e, now) && !e.inflight) {
+    if (e.snapshot) return { services: e.snapshot.services, at: e.snapshot.at, revalidating: true };
+    if (options.waitMs !== undefined) return { services: null, at: null, revalidating: true };
+    throw e.lastError ?? new Error("connected apps are rate limited; try again shortly");
+  }
   if (e.snapshot && !options.fresh && !options.force) {
     scheduleRefresh(e, load);
     return { services: e.snapshot.services, at: e.snapshot.at, revalidating: true };

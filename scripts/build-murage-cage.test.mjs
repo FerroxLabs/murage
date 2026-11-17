@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -349,4 +350,35 @@ describe("the emitted cage files", () => {
     expect(build).toContain("verifyPowerFilter(path.join(stage, name), arch, powerPins)");
     expect(build).not.toContain(": sha256(readFileSync(path.join(stage, name)))");
   });
+});
+
+// MAIN RULING 1115-CIINH-TLS: preserve x64 rejection; arm64 requires exactly libc.
+it("builds static libcap for executable TLS without admitting the dynamic loader", () => {
+  expect(CAGE_BUILD_SCRIPT).toContain("-ftls-model=initial-exec");
+  for (const arch of ["x64", "arm64"]) {
+    for (const loader of ["ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1"]) {
+      expect(() => verifyBwrapImage(elf(arch), arch, `(NEEDED) Shared library: [${loader}]`)).toThrow("DYNAMIC_DEPENDENCY");
+    }
+  }
+});
+
+it.skipIf(process.platform !== "linux")("executable TLS removes the loader dependency without relaxing the image guard", () => {
+  const root = scratch(), unit = path.join(root, "tls.c"), main = path.join(root, "main.c");
+  writeFileSync(unit, "static __thread int state; int fixture(void) { return ++state; }\n");
+  writeFileSync(main, "int fixture(void); int main(void) { return fixture() == 1 ? 0 : 1; }\n");
+  for (const fixed of [false, true]) {
+    const object = path.join(root, fixed ? "fixed.o" : "dynamic.o"), binary = path.join(root, fixed ? "fixed" : "dynamic");
+    execFileSync("cc", ["-O2", "-fPIC", ...(fixed ? ["-ftls-model=initial-exec"] : []), "-c", unit, "-o", object]);
+    execFileSync("cc", [main, object, "-o", binary]);
+    const section = String(execFileSync("readelf", ["-d", binary]));
+    if (!fixed && process.arch === "x64") {
+      expect(section).toMatch(/\(NEEDED\).*ld-linux/);
+      expect(() => verifyBwrapImage(readFileSync(binary), process.arch, section)).toThrow("DYNAMIC_DEPENDENCY");
+    } else {
+      // AArch64 uses TLS descriptors by default, so even the PIC object needs only libc.
+      expect([...section.matchAll(/\(NEEDED\).*\[([^\]]+)\]/g)].map(match => match[1])).toEqual(["libc.so.6"]);
+      expect(() => verifyBwrapImage(readFileSync(binary), process.arch, section)).not.toThrow();
+      execFileSync(binary);
+    }
+  }
 });

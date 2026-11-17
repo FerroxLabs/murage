@@ -182,7 +182,7 @@ it.each(["take_over", "reassign"])("F4 %s cancels and interrupts the running rev
   const interrupted: unknown[] = [];
   const result = await handleProjectRouteWithInterrupt(db, route(c.id, { action, assigneeBotId: "lead" }), async target => { interrupted.push(target); });
   expect(result?.status).toBe(200); expect(roomRequestById(db, "review")?.state).toBe("cancelled");
-  expect(interrupted).toEqual([{ id: c.id, requestId: "review", backoff: false, assigneeBotId: "reviewer", deskThreadId: "review-desk" }]);
+  expect(interrupted).toEqual([{ id: c.id, requestId: "review", backoff: false, assigneeBotId: "reviewer", deskThreadId: "review-desk", ownerStop: true }]);
 });
 it("F5 the main chat is group.threadId even with older task threads", () => {
   expect(projectMainThread({ threadId: "room", tasks: [{ threadId: "old-task", createdAt: 1 }] })).toBe("room");

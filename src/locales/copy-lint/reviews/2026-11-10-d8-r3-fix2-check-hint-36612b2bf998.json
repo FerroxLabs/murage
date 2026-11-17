@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "d8fix2",
+  "date": "2026-11-10",
+  "base": "286a732",
+  "scope": "D8-4 r3 fix2 desktop phone.checkHint",
+  "strings": {
+    "en:phone.checkHint": {
+      "text": "Pair this phone again if you want {bot} to see your recent chat when you send from it.",
+      "en": "Pair this phone again if you want {bot} to see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "claude-copyrev: plain, says what the phone can do (an optional re-pair), no claim it must, no fixed/problem wording, {bot} placeholder kept, informal register matches the neighbouring phone.* strings"
+    },
+    "de:phone.checkHint": {
+      "text": "Koppel dieses Telefon erneut, falls {bot} deinen letzten Chat sehen soll, wenn du von hier sendest.",
+      "en": "Pair this phone again if you want {bot} to see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "claude-copyrev: plain, says what the phone can do (an optional re-pair), no claim it must, no fixed/problem wording, {bot} placeholder kept, informal register matches the neighbouring phone.* strings"
+    },
+    "es:phone.checkHint": {
+      "text": "Vuelve a emparejar este teléfono si quieres que {bot} vea tu chat reciente cuando envíes desde él.",
+      "en": "Pair this phone again if you want {bot} to see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "claude-copyrev: plain, says what the phone can do (an optional re-pair), no claim it must, no fixed/problem wording, {bot} placeholder kept, informal register matches the neighbouring phone.* strings"
+    },
+    "fr:phone.checkHint": {
+      "text": "Associe à nouveau ce téléphone si tu veux que {bot} voie ta conversation récente quand tu envoies depuis celui-ci.",
+      "en": "Pair this phone again if you want {bot} to see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "claude-copyrev: plain, says what the phone can do (an optional re-pair), no claim it must, no fixed/problem wording, {bot} placeholder kept, informal register matches the neighbouring phone.* strings"
+    },
+    "hi:phone.checkHint": {
+      "text": "अगर आप चाहते हैं कि इस फ़ोन से भेजने पर {bot} आपकी हाल की चैट देख सके, तो इसे फिर से जोड़ें।",
+      "en": "Pair this phone again if you want {bot} to see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "claude-copyrev: plain, says what the phone can do (an optional re-pair), no claim it must, no fixed/problem wording, {bot} placeholder kept, informal register matches the neighbouring phone.* strings"
+    },
+    "ja:phone.checkHint": {
+      "text": "このスマートフォンから送信するときに {bot} に最近のチャットを見せたい場合は、もう一度ペアリングしてください。",
+      "en": "Pair this phone again if you want {bot} to see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "claude-copyrev: plain, says what the phone can do (an optional re-pair), no claim it must, no fixed/problem wording, {bot} placeholder kept, informal register matches the neighbouring phone.* strings"
+    },
+    "pt-br:phone.checkHint": {
+      "text": "Pareie este telefone novamente se quiser que {bot} veja seu chat recente quando você enviar dele.",
+      "en": "Pair this phone again if you want {bot} to see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "claude-copyrev: plain, says what the phone can do (an optional re-pair), no claim it must, no fixed/problem wording, {bot} placeholder kept, informal register matches the neighbouring phone.* strings"
+    },
+    "zh:phone.checkHint": {
+      "text": "如果你希望 {bot} 在你从这部手机发送时看到最近的聊天，请重新配对这部手机。",
+      "en": "Pair this phone again if you want {bot} to see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "claude-copyrev: plain, says what the phone can do (an optional re-pair), no claim it must, no fixed/problem wording, {bot} placeholder kept, informal register matches the neighbouring phone.* strings"
+    }
+  },
+  "files": {}
+}

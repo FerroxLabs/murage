@@ -77,7 +77,7 @@ interface Waiter {
 export const ROOT_CLOSE_GRACE_MS = 1_000;
 
 /** A child whose exit and every stdio stream are already done: its `close` has been emitted before this observation. */
-const alreadyClosed = (child: ChildProcess): boolean =>
+export const alreadyClosed = (child: ChildProcess): boolean =>
   (typeof child.exitCode === "number" || typeof child.signalCode === "string")
   && [child.stdin, child.stdout, child.stderr].every((stream) => !stream || stream.destroyed);
 
@@ -139,7 +139,13 @@ export class ChildTeardown {
    * itself is tracked from then on by the pool's own teardown, which stopAll,
    * dispose, reset and interrupt wait on. Never call this for a child that
    * is still serving the turn. */
+  #handedToPool = false;
+  get handedToPool(): boolean { return this.#handedToPool; }
   detach(): void {
+    // A refusal/stop owns this child until closure. Pool hand-back cannot
+    // turn a requested kill into confirmation.
+    if (this.#stopRequested) return;
+    this.#handedToPool = true;
     this.child.removeListener("close", this.#onRootClose);
     this.#markClosed();
   }
@@ -256,6 +262,20 @@ export class ChildTeardown {
 /** Every not-yet-closed child a driver instance has spawned, by provider turn. */
 export class TurnTeardowns {
   readonly #byTurn = new Map<string, { threadId: string; teardown: ChildTeardown }>();
+  readonly #confirmed = new Map<string, string>();
+  readonly #poolReturns = new Set<string>();
+  handedBack(turnId: string): void {
+    if (this.#byTurn.has(turnId) || !this.#poolReturns.delete(turnId)) return;
+    this.#confirmed.delete(turnId);
+  }
+  #rememberClosed(threadId: string, turnId: string): void {
+    this.#confirmed.set(turnId, threadId);
+    // Forgetting old proof is conservative: an unknown exact lease refuses.
+    while (this.#confirmed.size > 4096) {
+      const oldest = this.#confirmed.keys().next().value!;
+      this.#confirmed.delete(oldest); this.#poolReturns.delete(oldest);
+    }
+  }
   private readonly confirm: (child: ChildProcess) => Promise<boolean>;
   private readonly delivery: (child: ChildProcess) => StopDelivery;
   private readonly stoppedSignal: (child: ChildProcess) => Promise<true>;
@@ -271,14 +291,18 @@ export class TurnTeardowns {
   }
 
   track(threadId: string, turnId: string, child: ChildProcess): ChildTeardown {
+    if (this.#byTurn.has(turnId) || this.#confirmed.has(turnId)) throw new Error("PROVIDER_LEASE_ALREADY_TRACKED");
     const teardown = new ChildTeardown(child, this.confirm, this.delivery, this.stoppedSignal);
     if (!teardown.closed) {
       const entry = { threadId, teardown };
       this.#byTurn.set(turnId, entry);
       teardown.onClosed(() => {
-        if (this.#byTurn.get(turnId) === entry) this.#byTurn.delete(turnId);
+        if (this.#byTurn.get(turnId) === entry) {
+          this.#byTurn.delete(turnId); this.#rememberClosed(threadId, turnId);
+          if (teardown.handedToPool) this.#poolReturns.add(turnId);
+        }
       });
-    }
+    } else this.#rememberClosed(threadId, turnId);
     return teardown;
   }
 
@@ -291,6 +315,9 @@ export class TurnTeardowns {
   /** Close of the child that served `turnId`, or of every child on the thread
    * when no turn is named. Nothing tracked means nothing remains alive. */
   wait(threadId: string, turnId: string | undefined, budget: TeardownWait): Promise<ProviderStopResult> {
+    if (turnId !== undefined && this.#byTurn.get(turnId)?.threadId !== threadId && this.#confirmed.get(turnId) !== threadId) {
+      return Promise.resolve({ closeConfirmed: false, reason: "stop-failed" });
+    }
     const entries = [...this.#byTurn.entries()]
       .filter(([id, entry]) => entry.threadId === threadId && (turnId === undefined || id === turnId))
       .map(([, entry]) => entry.teardown);
@@ -304,6 +331,9 @@ export class TurnTeardowns {
    * captured at the call, because a close drops them from this map, so call
    * it before waiting on the same turn. Nothing tracked resolves at once. */
   closed(threadId: string, turnId: string | undefined): Promise<void> {
+    if (turnId !== undefined && this.#byTurn.get(turnId)?.threadId !== threadId && this.#confirmed.get(turnId) !== threadId) {
+      return Promise.reject(new ProviderStopUnconfirmedError("provider", { closeConfirmed: false, reason: "stop-failed" }));
+    }
     const entries = [...this.#byTurn.entries()]
       .filter(([id, entry]) => entry.threadId === threadId && (turnId === undefined || id === turnId))
       .map(([, entry]) => entry.teardown);

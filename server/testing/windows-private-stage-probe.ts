@@ -27,7 +27,7 @@ export async function probePrivateStage(toolsSource: string, roots: string[]): P
     validate: async () => { prepared = true; return { value: "admitted" }; } }, {
     verifyHelper: async () => ({ executable: join(tools, "murage-backup-age.exe") }),
     spawn: (executable, args, options) => {
-      const child = spawn(executable, args, options);
+      const child = spawn(executable, args, { ...options, windowsHide: true });
       child.stdout.on("data", (chunk: Buffer) => { stdoutBytes += chunk.length; });
       child.stderr.on("data", (chunk: Buffer) => { controlBytes += chunk.length; });
       child.on("close", code => { exitCode = code; });

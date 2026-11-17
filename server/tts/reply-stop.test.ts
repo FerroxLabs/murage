@@ -1,3 +1,5 @@
+import { createTurnCardGate } from "../turn-card-gate.ts";
+import { wiring } from "../decision-wiring/fixture.ts";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
@@ -36,6 +38,7 @@ it("S-remote real owner Stop wiring revokes completed playback subscriptions bef
     const interrupt = vi.fn();
     const cancel = vi.fn();
     const stop = extract("stopDirectThreadForOwner", {
+      noteOwnerStop: wiring(["noteOwnerStop"], { directRuns: { get: () => undefined }, internalTurnOwners: new Map(), admittedLedgerLeases: new Map(), turnCardGate: createTurnCardGate() }).noteOwnerStop,
       replyState: state, callSpeech, interruptDirectThread: interrupt, dropAskerWakes: () => {}, recordStopForThread: () => {}, database: () => db,
       markSendsStopped: () => {}, botCalls: { cancel }, stopHeldVenuePosts: () => [], settleVenuePostCard: () => {},
       routines: { activeBotRunForThread: () => undefined },
@@ -59,7 +62,10 @@ it("S-late real generation-specific interrupt checks replacement before durable 
     const stop = extract("interruptDirectThread", {
       replyState: state, callSpeech: { invalidate: vi.fn() }, directRuns: { get: () => ({ generation }) }, internalTurnOwners: new Map(),
       botForDirectThread: () => ({ modelSelection: { instanceId: "fixture" } }), cancelDirectTurnDispatch: () => ({ phase: "dispatching" }),
+      ownerLimitContinuations: { cancel: vi.fn() }, limitApplications: { cancel: vi.fn() },
+      sealDirectAttempts: vi.fn(), randomUUID: () => "fixture-stop", ownWriteHolds: { stop: vi.fn() }, bus: { cancelTurn: vi.fn() },
       stopEmailForTurn: vi.fn(), emailRuntime: {}, emailGeneration: () => 0, releaseBrowserCapabilityForThread: release,
+      refusedTurnOf: () => undefined, stopInterrupts: new Map(), // LLS: no ledger refusal here
     });
     await stop("bot", "thread", "old"); expect(state.revision("thread")).toBe(0); expect(release).not.toHaveBeenCalled();
     await stop("bot", "thread", "current"); expect(release).toHaveBeenCalledOnce(); expect(state.revision("thread")).toBe(1);

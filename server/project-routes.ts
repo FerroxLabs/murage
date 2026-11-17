@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { beginRead, beginWrite, endWrite, undoWrite } from "./write-tx.ts";
+import { afterCommit } from "./tx-scope.ts";
 import { scopedTx } from "./tx-scope.ts";
 import { cardRequestIsReview } from "./project-card-executor.ts";
 import { roomRequest } from "./room-requests.ts";
@@ -37,6 +38,7 @@ const cardPatchSchema = z.object({ expectedRevision: revision, action: z.enum(["
 const columnsSchema = z.object({ expectedRevision: revision, columns: z.array(z.object({ id: id.optional(), title: z.string().trim().min(1).max(40), state: states, position: z.number().finite() }).strict()).max(12) }).strict();
 
 export interface ProjectRouteInput {
+  workRootsCommitted?: (id:string,paths:readonly string[])=>void;
   botName?: (id: string) => string;
   origin?: "desktop" | "companion" | "unproven";
   method: string;
@@ -186,6 +188,7 @@ export function handleProjectRoute(db: DatabaseSync, input: ProjectRouteInput): 
         try {
           const roots = canonicalProjectRoots(body.roots,{dataDir:DATA_DIR}).map(root => ({...root,label:root.label ?? "Work folder",addedAt:now}));
           db.prepare("UPDATE project_settings SET work_roots=?,revision=revision+1,updated_at=? WHERE group_id=?").run(JSON.stringify(roots),now,groupId);
+          afterCommit(()=>input.workRootsCommitted?.(groupId,roots.map(root=>root.path)));
         } catch (cause) { return error(400,cause instanceof Error ? cause.message : "Choose a work folder."); }
       } else db.prepare("UPDATE project_settings SET work_profile=?,revision=revision+1,updated_at=? WHERE group_id=?").run(body.workProfile,now,groupId);
       records.insertProjectActivity(db,{groupId,kind:action === "work-roots" ? "work_roots" : "settings",actor:"owner",at:now,detail:{field:action}});
@@ -338,7 +341,9 @@ export function projectRouteMatch(method: string, path: string): { action: strin
 
 /** The HTTP boundary stops the current engine before applying live-card actions.
  * A rolled-back preview validates every field and transition before that effect. */
-export type ProjectInterruptTarget = Pick<records.ProjectCard, "id" | "assigneeBotId" | "deskThreadId"> & { requestId?: string | null; backoff?: boolean };
+export type ProjectInterruptTarget = Pick<records.ProjectCard, "id" | "assigneeBotId" | "deskThreadId"> & { requestId?: string | null; backoff?: boolean;
+  /** The owner's own route asked for this stop (goal Stop, End project, a card action). A bot's project tool shares the callback and never sets it. */
+  ownerStop?: boolean };
 
 export interface PreparedProjectInterrupt { commit(): void; abort(): void }
 export type ProjectInterrupt = ((target: ProjectInterruptTarget) => Promise<void | PreparedProjectInterrupt>) & {
@@ -370,11 +375,11 @@ export async function handleProjectRouteWithInterrupt(db: DatabaseSync, input: P
   // A GET (project, board, activity, versions, usage) only reads: it keeps one snapshot without the writer lock, so it never
   // waits behind an owner write or a search-index merge slice (DBBUSY-1018).
   const readOnly = input.method === "GET" && !end;
-  return applyProjectChangeWithInterrupt(db, apply, interrupt, { stopping: !readOnly && (stopping || cardAction), liveCard, roomThreadId: input.group?.threadId, readOnly });
+  return applyProjectChangeWithInterrupt(db, apply, interrupt, { stopping: !readOnly && (stopping || cardAction), liveCard, roomThreadId: input.group?.threadId, readOnly, ownerStop: true });
 }
 
 export async function applyProjectChangeWithInterrupt<T extends { status: number } | null>(db: DatabaseSync, apply: () => T,
-  interrupt: ProjectInterrupt, options: { stopping: boolean; liveCard?: ProjectInterruptTarget | null; roomThreadId?: string; readOnly?: boolean }): Promise<T> {
+  interrupt: ProjectInterrupt, options: { stopping: boolean; liveCard?: ProjectInterruptTarget | null; roomThreadId?: string; readOnly?: boolean; ownerStop?: boolean }): Promise<T> {
   const prepared: PreparedProjectInterrupt[] = [];
   let committed = false;
   try {
@@ -415,7 +420,7 @@ export async function applyProjectChangeWithInterrupt<T extends { status: number
       for (const target of targets) {
         const key = JSON.stringify([target.assigneeBotId, target.deskThreadId, target.requestId]);
         if (stopped.has(key)) continue;
-        const pending = await interrupt(target);
+        const pending = await interrupt(options.ownerStop ? { ...target, ownerStop: true } : target);
         if (pending) prepared.push(pending);
         stopped.add(key);
       }

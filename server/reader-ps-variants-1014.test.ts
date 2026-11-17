@@ -63,7 +63,13 @@ describe("the PowerShell reader reads line ends and blanks as PowerShell does", 
 
   it.each(CASES)("it cards at Ask, Auto, Full access and No limits: %s", (_, cmd) => {
     for (const [level, bot, context] of levels(cmd)) {
-      expect(autoVerdict(bot, "PowerShell", cmd, context), level).toMatchObject({ approve: null, source: "always-ask" });
+      if (level === "No limits" && cmd.endsWith('$env:X')) {
+        // MAIN RULING 1114-NOLIMITS-OLD-ORACLES point 1: the unset
+        // PowerShell variable supplies no protected target (SCOPE.md:28-30,43-46).
+        expect(autoVerdict(bot, "PowerShell", cmd, context), level).toMatchObject({ approve: expect.any(String), source: "no-limits" });
+      } else {
+        expect(autoVerdict(bot, "PowerShell", cmd, context), level).toMatchObject({ approve: null, source: "always-ask" });
+      }
     }
   });
 

@@ -14,7 +14,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { database, transaction } from "../database.ts";
 import { partitionOfScopeKey } from "../execution-audience.ts";
 import { redactSecretsInText } from "../redact.ts";
-import { readCorrectionTarget, requireMemoryOwner, approveMemory, type CorrectionPinChoice } from "./authority.ts";
+import { readCorrectionTarget, recordForgotten, requireMemoryOwner, approveMemory, type CorrectionPinChoice } from "./authority.ts";
 import { recordLearningEvent } from "./learning-ledger.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
 import { PIP_ALL_KINDS_SQL, isPipKind } from "./pip-kinds.ts";
@@ -71,20 +71,29 @@ function writeLater(db: DatabaseSync, items: Record<string, LaterEntry>): void {
 // ── Who a scope belongs to ───────────────────────────────────────────────
 interface Index {
   bots: Map<string, { name: string }>; groups: Map<string, { name: string }>;
-  botThread: Map<string, string>; groupThread: Map<string, string>;
+  botThread: { get(threadId: string): string | undefined }; groupThread: Map<string, string>;
 }
 function indexRoster(roster: MemoryRoster): Index {
-  const index: Index = { bots: new Map(), groups: new Map(), botThread: new Map(), groupThread: new Map() };
+  const botThread = new Map<string, string>();
+  const index: Index = { bots: new Map(), groups: new Map(), botThread, groupThread: new Map() };
   for (const bot of roster.bots) {
     index.bots.set(bot.id, { name: bot.name || "Your bot" });
-    index.botThread.set(bot.threadId, bot.id);
-    for (const task of bot.tasks ?? []) index.botThread.set(task.threadId, bot.id);
+    botThread.set(bot.threadId, bot.id);
+    if (!roster.taskByThread) for (const task of bot.tasks ?? []) botThread.set(task.threadId, bot.id);
   }
   for (const group of roster.groups) {
     index.groups.set(group.id, { name: group.name || "Your room" });
     index.groupThread.set(group.threadId, group.id);
     for (const task of group.tasks ?? []) index.groupThread.set(task.threadId, group.id);
   }
+  if (roster.taskByThread) index.botThread = { get(thread: string) {
+    // The original review index let the last holder win an aliased thread.
+    for (let i = roster.bots.length - 1; i >= 0; i--) {
+      const bot = roster.bots[i]!;
+      if (bot.threadId === thread || roster.taskByThread!(bot.id, thread)) return bot.id;
+    }
+    return undefined;
+  } };
   return index;
 }
 const SHARED: Subject = { kind: "other", id: "shared", name: "Shared notes" };
@@ -156,7 +165,8 @@ function collect(db: DatabaseSync, roster: MemoryRoster, options: { only?: { kin
       const reasons = eligibility.reasons;
       const rank = reasons.some(reason => reason === "replaces-pinned" || reason === "correction" || reason === "edited") ? 0 : eligibility.decision === "keep" ? 2 : 1;
       const entry: WaitingEntry = {
-        id: String(row.id), version: Number(row.version), text: String(row.text), group: eligibility.decision === "keep" ? "everyday" : "one-by-one",
+        // a forgotten candidate past the 64 versions its forget wiped keeps text until its job: shown with no words (B2, spec r3 2.4)
+        id: String(row.id), version: Number(row.version), text: recordForgotten(db, String(row.id)) ? "" : String(row.text), group: eligibility.decision === "keep" ? "everyday" : "one-by-one",
         rank, reasons, origin: originOf(db, row), at: Number(row.created_at), later: later[String(row.id)] !== undefined, scopeLabel: scopeLabel(scope, subject),
       };
       if (options.detail && row.supersedes_id) {
@@ -249,7 +259,11 @@ export function reviewSources(ticket: object, roster: MemoryRoster, input: { id:
     sources: rows.map(row => {
       let payload: { text?: string; occurredAt?: number } = {};
       try { payload = JSON.parse(String(row.payload)); } catch { /* an unreadable excerpt is shown as missing */ }
-      const bytes = Buffer.from(payload.text ?? "").subarray(Number(row.start_byte), Number(row.end_byte)).toString("utf8").trim();
+      const original = payload.text ?? "";
+      const safe = redactSecretsInText(original);
+      // Evidence offsets address the original bytes. Once redaction changes
+      // them, show the safe whole unit instead of slicing past its label.
+      const bytes = (safe === original ? Buffer.from(original).subarray(Number(row.start_byte), Number(row.end_byte)).toString("utf8") : safe).trim();
       const thread = row.thread_id === null ? "" : String(row.thread_id);
       const botId = index.botThread.get(thread), groupId = index.groupThread.get(thread);
       const speaker = String(row.speaker);
@@ -299,6 +313,8 @@ function activateSlice(db: DatabaseSync, rows: Array<Record<string, any>>): Map<
   const touched: string[] = [];
   const held = new Map<string, string>();
   for (const row of rows) {
+    // B2 (spec r3 2.5): a batch Keep never makes a forgotten record current
+    if (recordForgotten(db, String(row.id))) throw fail("MEMORY_NOT_FOUND", 404);
     const basis = waitingBasis(db, row);
     if (basis !== undefined) held.set(String(row.id), basis);
     const changed = db.prepare("UPDATE memory_records SET state='active',owner_pinned=0 WHERE id=? AND version=? AND state='candidate'").run(row.id, row.version).changes;
@@ -332,6 +348,8 @@ function receiptTop(db: DatabaseSync): number {
 function candidateRow(db: DatabaseSync, id: string, version: number): Record<string, any> {
   const row = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(id, version);
   if (!row) throw fail("MEMORY_NOT_FOUND", 404);
+  // B2 (spec r3 2.5): a stale Needs you window never keeps, edits or saves words under a forgotten id
+  if (recordForgotten(db, id)) throw fail("MEMORY_NOT_FOUND", 404);
   if (row.state !== "candidate") throw fail("MEMORY_VERSION_CONFLICT");
   if (isPipKind(row.kind)) throw fail("MEMORY_IDENTITY_PIP_USE_CONTINUITY", 400);
   return row;

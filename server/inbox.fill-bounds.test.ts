@@ -1,3 +1,4 @@
+import { insertFixtureRows } from './testing/approval-card.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The Inbox projection's first fill is bounded three ways, and survives being
 // killed at any step:
@@ -28,12 +29,12 @@ const access = { owner: true, threads: Array.from({ length: 40 }, (_, i) => ({ t
 
 /** Half bot chat lines, half user lines, across `conversations`; one in `cardEvery` bot rows is an owed approval card. */
 function bulk(db: DatabaseSync, total: number, conversations: number, cardEvery = 0) {
-  db.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+  insertFixtureRows(db, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
     INSERT INTO messages(thread_id,id,at,role,kind,text,json)
     SELECT 't' || (i % CAST(? AS INTEGER)), 'm' || i, 1700000000000 + i, CASE WHEN i % 2 THEN 'bot' ELSE 'user' END, k, 'line ' || i,
       CASE WHEN k = 'options' THEN json_object('id','m' || i,'at',1700000000000 + i,'role','bot','kind','options','card',json_object('requestId','req' || i,'title','Command','options',json_array('Allow','Deny'),'tool','Bash'))
         ELSE json_object('id','m' || i,'at',1700000000000 + i,'role',CASE WHEN i % 2 THEN 'bot' ELSE 'user' END,'kind','text','text','line ' || i) END
-    FROM (SELECT i, CASE WHEN ? > 0 AND i % 2 AND i % (2 * ?) = 1 THEN 'options' ELSE 'text' END AS k FROM n)`).run(total, conversations, cardEvery, cardEvery || 1);
+    FROM (SELECT i, CASE WHEN ? > 0 AND i % 2 AND i % (2 * ?) = 1 THEN 'options' ELSE 'text' END AS k FROM n)`, total, conversations, cardEvery, cardEvery || 1);
 }
 const median = (values: number[]) => values.slice().sort((a, b) => a - b)[Math.floor(values.length / 2)]!;
 
@@ -109,11 +110,11 @@ describe("a slice never holds the loop", () => {
     initializeMessageTables(db);
     bulk(db, 30_000, 40);
     // a stretch of tool failures with large output after the chat lines
-    db.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+    insertFixtureRows(db, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
       INSERT INTO messages(thread_id,id,at,role,kind,text,json)
       SELECT 't' || (i % 40), 'big' || i, 1800000000000 + i, 'bot', 'activity', NULL,
         json_object('id','big' || i,'at',1800000000000 + i,'role','bot','kind','activity','tool',json_object('name','run','ok',json('false'),'providerError',json_object('httpStatus',500,'provider','x'),'output',replace(hex(zeroblob(6000)),'0','x')))
-      FROM n`).run(1_500);
+      FROM n`, 1_500);
     initializeInbox(db);
     const fill = startInboxProjectionFill(slowDisk(db, 60));
     expect(await fill.done).toEqual({ filled: true });

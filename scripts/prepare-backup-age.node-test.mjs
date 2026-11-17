@@ -16,11 +16,13 @@ function fixture(){
   copyFileSync(new URL("../third_party/age/LICENSE",import.meta.url),path.join(root,"third_party","age","LICENSE"));
   return root;
 }
-test("immutable metadata admits only exact Mac arm64 and Linux x64 targets",()=>{
+test("immutable metadata admits only exact reviewed targets",()=>{
   for(const pin of Object.values(BACKUP_AGE_PINS)){
     assert.equal(backupAgePinForTarget(pin.platform,pin.arch),pin);assert.equal(Object.isFrozen(pin),true);
   }
-  for(const pair of [["darwin","x64"],["linux","arm64"],["win32","x64"],["linux","amd64"],["linux-x64",""],["__proto__",""]])assert.equal(backupAgePinForTarget(...pair),null);
+  // MAIN RULING: the integrated catalogue already includes darwin-x64; selection must recognize that exact pin and still refuse unrecorded targets.
+  assert.equal(backupAgePinForTarget("darwin","x64"),BACKUP_AGE_PINS["darwin-x64"]);
+  for(const pair of [["darwin","amd64"],["linux","arm64"],["win32","x64"],["linux","amd64"],["linux-x64",""],["__proto__",""]])assert.equal(backupAgePinForTarget(...pair),null);
   assert.notEqual(BACKUP_AGE_PINS["linux-x64"].executableSha256,BACKUP_AGE_PINS["darwin-arm64"].executableSha256);
   assert.equal(Object.isFrozen(BACKUP_AGE_PINS),true);
 });

@@ -41,6 +41,9 @@ import { ROOM_REPLY_CHECKING, ROOM_REPLY_FORGOTTEN, ROOM_REPLY_WITHHELD } from "
 import { Store, type BotRecord, type Message } from "./store.ts";
 import { ensureTaskWorkspace } from "./workspace.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { serviceQueueFixture } from "./testing/service-queue-fixture.ts";
+import { serviceQueue, producerBase } from "./narrow-denials.ts";
+let serviceFixture: ReturnType<typeof serviceQueueFixture>;
 
 const CANARY = "Biscuit";
 const P = "matrix-input", L = "launch-chat", PROV = "prov-matrix";
@@ -71,45 +74,65 @@ function land(thread: string, row: Omit<Message, "id" | "at">, id?: string): Mes
   if (thread === L) { head = message.id; written.set(writer, [...(written.get(writer) ?? []), message.id]); }
   return message;
 }
-const store = { appendMessage: land, messageById: () => undefined, patchMessage: () => null, patchGroup: () => undefined, groupByThread: () => undefined, group: () => undefined, bot: () => undefined };
+const patch = (threadId: string, id: string, change: Partial<Message>) => {
+  const previous = readMessage(threadId, id);
+  if (!previous) return null;
+  const message = { ...previous, ...change };
+  updateMessage(threadId, message);
+  return message;
+};
+const store = { appendMessage: land, messageById: readMessage, patchMessage: patch, patchMessagePoint: patch, patchGroup: () => undefined, groupByThread: () => undefined, group: () => undefined, bot: () => undefined };
 const turnOf = (thread: string) => (thread === L ? PROV : undefined);
-const as = (name: string, work: () => void) => { writer = name; work(); };
+const as = async (name: string, work: () => void | Promise<void>) => {
+  writer = name;
+  await work();
+  // Service producers present through the asynchronous decision boundary.
+  await new Promise<void>(resolve => setImmediate(resolve));
+};
 
 /** Every writer of a classified row, run for real into the room while finch's turn runs there. */
-function writeEveryClassifiedRow(): void {
-  as("lifecycle card", () => {
+async function writeEveryClassifiedRow(): Promise<void> {
+  await as("lifecycle card", () => {
     land(L, { role: "bot", kind: "routine.run", text: "Running", routineRun: { runId: "run-1", routineId: "routine-1", routineName: "Daily check", status: "running", executionThreadId: "run-thread" } } as Omit<Message, "id" | "at">, "card");
     updateMessage(L, { ...readMessage(L, "card")!, text: "Completed", routineRun: { runId: "run-1", routineId: "routine-1", routineName: "Daily check", status: "completed", executionThreadId: "run-thread", summary: `Checked ${CANARY}'s vet page` } } as Message);
   });
-  as("status rows (bot-egress sinks)", () => {
+  await as("status rows (bot-egress sinks)", () => {
     const sink = new RowSink(store);
     writeBotRow(sink, L, { turnId: PROV }, status("withheld"));
     writeActivityRow(sink, L, { turnId: PROV }, status("request_finished"), true);
   });
-  as("room Murage line (mirrorMurageLine)", () => mirrorMurageLine({ store, broadcast: () => {} } as unknown as CommsBus, { id: "launch", threadId: L } as never, status("withheld"), { kind: "failure" }));
-  as("legacy status text", () => { land(L, { role: "bot", kind: "text", text: `Queued for ${CANARY}`, actorKind: "murage", murage: { kind: "status" }, turnId: PROV } as Omit<Message, "id" | "at">); });
-  as("image approval line and card", () => {
+  await as("room Murage line (mirrorMurageLine)", () => mirrorMurageLine({ store, broadcast: () => {} } as unknown as CommsBus, { id: "launch", threadId: L } as never, status("withheld"), { kind: "failure" }));
+  await as("legacy status text", () => { land(L, { role: "bot", kind: "text", text: `Queued for ${CANARY}`, actorKind: "murage", murage: { kind: "status" }, turnId: PROV } as Omit<Message, "id" | "at">); });
+  await as("image approval line and card", async () => {
     const prompt = `A portrait of the owner's dog ${CANARY}`;
     land(L, murageLine({ role: "bot", kind: "activity", tool: { name: "Making an image without asking (level)", ok: true, imageRecord: { summary: "1 image", prompt } }, turnId: PROV } as Omit<Message, "id" | "at">));
-    land(L, murageLine({ role: "bot", kind: "options", card: { title: "Approve image generation", subtitle: "One image", held: prompt, options: ["Allow", "Deny"], requestId: "image-1", tool: "generate_image" }, turnId: PROV } as Omit<Message, "id" | "at">));
+    const queue = serviceQueue('image');
+    const request = queue.open({ authority: serviceFixture.authorityFor(L, finch.id), ref: 'image-1', tool: 'generate_image', input: { prompt },
+      action: { held: prompt, options: ['Allow', 'Deny'], requestId: 'image-1', tool: 'generate_image' },
+      view: { title: 'Approve image generation', subtitle: 'One image', turnId: PROV }, base: producerBase(true) });
+    const result = await queue.execute(request, async () => true);
+    if (result.kind !== 'card' && result.kind !== 'question') throw new Error('Image fixture must wait for its registered approval');
+    await queue.present(request, result.ref, () => {});
   });
-  as("voice note replay", () => { land(L, murageLine({ role: "bot", kind: "text", text: `Spoken: ${CANARY} is fine`, artifactIds: ["a2"], from: FINCH } as Omit<Message, "id" | "at">)); });
-  as("browser approval card", () => {
-    const approvals = new BrowserExtensionApprovals({ store, broadcast: () => {} } as unknown as ApprovalBus, { turnOf });
+  await as("voice note replay", () => { land(L, murageLine({ role: "bot", kind: "text", text: `Spoken: ${CANARY} is fine`, artifactIds: ["a2"], from: FINCH } as Omit<Message, "id" | "at">)); });
+  await as("browser approval card", async () => {
+    const approvals = new BrowserExtensionApprovals({ store, broadcast: () => {}, authorityFor: (thread: string, bot: string) => serviceFixture.authorityFor(thread, bot) } as unknown as ApprovalBus, { turnOf });
     void approvals.ask({ bot: finch, threadId: L, bindingId: "binding", generation: 1, digest: "a".repeat(64), summary: `Type "${CANARY}" into the search box`, waitMs: 60_000 }).catch(() => {});
+    await new Promise<void>(resolve => setImmediate(resolve));
     approvals.cancelBinding("binding");
   });
-  as("peer approval and event-limit cards", () => {
-    const bus = { store, broadcast: () => {}, turnOf } as unknown as ApprovalBus;
+  await as("peer approval and event-limit cards", async () => {
+    const bus = { store, broadcast: () => {}, turnOf, authorityFor: (thread: string, bot: string) => serviceFixture.authorityFor(thread, bot) } as unknown as ApprovalBus;
     void Promise.resolve(requestPeerApproval(bus, finch, dax, `Tell them the owner's dog is ${CANARY}`, "ask_bot", L)).catch(() => {});
     void Promise.resolve(requestEventLimitApproval(bus, finch, "handoff", 3, "ev-1", L, "Dax")).catch(() => {});
+    await new Promise<void>(resolve => setImmediate(resolve));
     cancelPeerApprovalsFor("finch");
   });
-  as("browser setup card", () => {
-    const setup = new BrowserExtensionSetup({ store: { ...store, keyedCards: () => [], keyedCardsEverywhere: () => [], newestMatching: () => ({ id: "u1" }), bots: () => [], groups: () => [] } as never, owner: () => finch, startHelper: async () => undefined, status: () => ({ profiles: [], bindings: [] }), optIn: () => {}, continueTask: async () => {}, turnOf });
+  await as("browser setup card", () => {
+    const setup = new BrowserExtensionSetup({ store: { ...store, keyedCards: () => [], keyedCardsEverywhere: () => [], newestMatching: () => ({ id: "u1" }), bots: () => [], groups: () => [] } as never, owner: () => finch, startHelper: async () => undefined, status: () => ({ profiles: [], bindings: [] }), optIn: () => {}, continueTask: async () => {}, turnOf, authorityFor: (thread: string, bot: string) => serviceFixture.authorityFor(thread, bot) });
     setup.request("finch", L, `I need your signed-in browser to read ${CANARY}'s vet page`);
   });
-  as("legacy hand-off line (mirrorExchange, no source row)", () => {
+  await as("legacy hand-off line (mirrorExchange, no source row)", () => {
     land("quiet-source", { role: "user", kind: "text", text: "quiet" } as Omit<Message, "id" | "at">, "q1");
     try { mirrorExchange({ store, broadcast: () => {}, turnOf } as unknown as CommsBus, finch, dax, `Tell them the owner's dog is ${CANARY}`, { id: "launch", threadId: L } as never, "quiet-source", undefined, "question", { sourceMessageId: undefined }); }
     catch { /* the target-side chip needs the full audience store, which this matrix does not build; the room line is written first */ }
@@ -126,7 +149,7 @@ const replay = (viewer: Viewer, rows: Message[]) => {
 const windowOf = (viewer: Viewer, rows: Message[]) => botWindow(database(), viewer, L, rows, () => false, 10_000).window;
 const projectPage = (reader: typeof DAX | typeof OWNER_PAGE) => (readProjectPage(database(), roster, "launch", { limit: 50 }, reader).result.body as { messages?: Array<{ id: string; text: string }> }).messages ?? [];
 
-beforeAll(() => {
+beforeAll(async () => {
   closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setExecutionStore({ bot: (id: string) => roster.bots.find(bot => bot.id === id) } as unknown as Store);
   setMemoryCaptureRoster(() => roster);
@@ -146,7 +169,12 @@ beforeAll(() => {
   bindProviderTurn(turn, PROV);
   writer = "engine reply (control)";
   land(L, { role: "bot", kind: "text", text: `The vet says ${CANARY} is fine.`, from: FINCH, turnId: PROV } as Omit<Message, "id" | "at">, "r1");
-  writeEveryClassifiedRow();
+  serviceFixture = serviceQueueFixture(store, { persisted: true });
+  for (const kind of ['image', 'browser', 'peer', 'event-limit'] as const) serviceFixture.queue(serviceQueue(kind));
+  await writeEveryClassifiedRow();
+  // Service approval fixtures construct their own backing Store. Restore this
+  // matrix's roster before checking the project reader's live membership.
+  setExecutionStore({ bot: (id: string) => roster.bots.find(bot => bot.id === id) } as unknown as Store);
 });
 afterAll(() => { closeTurnLineage(turn); setExecutionStore(undefined as never); closeMessageDb(); closeDatabase(); });
 

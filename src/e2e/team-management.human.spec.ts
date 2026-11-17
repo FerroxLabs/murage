@@ -9,7 +9,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
@@ -74,6 +74,7 @@ async function open(page: Page, width: number, skin: "light" | "dark") {
     localStorage.setItem("murage-skin", value);
     localStorage.setItem("murage-email-gate", "skipped");
     localStorage.setItem("murage-flux-invite-dismissed", "1");
+    localStorage.setItem("help.seen.chat.level-chip", "1");
   }, skin);
   await page.goto(origin);
   await page.evaluate((value) => (document.documentElement.dataset.skin = value), skin);

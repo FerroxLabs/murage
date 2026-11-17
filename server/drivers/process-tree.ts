@@ -1,10 +1,11 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // Child processes of a warm engine process. The engine starts its MCP servers
 // once; anything that appears under it after the turn began (a dev server a
 // Bash call left running) is background work that must not outlive the turn
 // inside a process we keep warm, so the driver recycles the process instead.
 import { execFile } from "node:child_process";
 import { windowsProcessTable, type WindowsProcessRow } from "./win-process-table.ts";
-import { realpathSync } from "node:fs";
+import { readdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { platformListTree, platformProcessHooks } from "../platform-process-hooks.ts";
@@ -30,7 +31,7 @@ function winBaseline(rows: readonly WindowsProcessRow[], kept: readonly WindowsP
   return found;
 }
 
-/** A hook baseline: the pids with their ps start identity (unreadable or a
+/** A hook or Linux baseline: the pids with their start identity (unreadable or a
  * failed lookup records "", which never matches), so a recycled pid is not exempt. */
 function hookBaseline(pids: ReadonlySet<number>, starts: ProcessIdentities | null): Set<number> {
   const found = new Set(pids);
@@ -86,11 +87,18 @@ function startedBeforeInit(elapsedSec: number, probeAtMs: number, initAtMs: numb
  * never part of the baseline, however late the probe ran. That holds: a tool
  * cannot start within a second of init (it needs a model round trip first),
  * and MCP servers start before init. Lines that do not parse are dropped. */
-export function baselineFromListing(stdout: string, root: number, probeAtMs: number, initAtMs: number): Set<number> {
+export function baselineFromListing(stdout: string, root: number, probeAtMs: number, initAtMs: number, exactStarts?: ReadonlyMap<number, number>): Set<number> {
   const kept: string[] = [];
   for (const line of stdout.split("\n")) {
     const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/.exec(line);
     if (!match) continue;
+    // An exact start (Linux, see linuxExactStarts) decides on its own, to the
+    // millisecond and strictly before init; the age estimate is not consulted.
+    const exact = exactStarts?.get(Number(match[1]));
+    if (exact !== undefined) {
+      if (exact < initAtMs) kept.push(`${match[1]} ${match[2]} ${match[4] ?? ""}`);
+      continue;
+    }
     const elapsed = parseEtime(match[3]!);
     if (elapsed === null) continue;
     if (!startedBeforeInit(elapsed, probeAtMs, initAtMs)) continue;
@@ -163,14 +171,64 @@ export async function descendantBaseline(root: number, initAtMs: number): Promis
   }
   return new Promise((resolve) => {
     // SIGKILL on timeout: a ps that ignores SIGTERM must not outlive the wait.
-    execFile("ps", PS_ETIME_ARGS, { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }, (error, stdout) => {
+    execFile("ps", [...PS_ETIME_ARGS], withHideInherit({ timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }), (error, stdout) => {
       if (error) return resolve(null);
       // The listing's ages were read while ps ran; "now" is after that, so
       // start = now - age can only be late. Late is the right direction: a
       // process that started after init can never be counted as baseline.
-      resolve(baselineFromListing(stdout, root, Date.now(), initAtMs));
+      const probeAtMs = Date.now();
+      // Linux: exact starts replace the age estimate for every pid /proc answers for,
+      // and the same /proc read is each pid's identity at settle.
+      linuxExactStarts(String(stdout), root).then(
+        ({ starts, ids }) => resolve(linuxIdentified(baselineFromListing(stdout, root, probeAtMs, initAtMs, starts), ids)),
+        () => resolve(linuxIdentified(baselineFromListing(stdout, root, probeAtMs, initAtMs), null)),
+      );
     });
   });
+}
+
+/** Linux reports /proc/<pid>/stat starttime in USER_HZ ticks, 100 a second on every ABI. */
+const PROC_TICK_MS = 10;
+
+/** Exported for tests: a process's wall-clock start (ms) from its /proc starttime
+ * ticks, with the uptime (seconds) read BEFORE `nowMs` was taken. Late only, by at
+ * most a tick plus the read: the tick count is rounded up, and /proc/uptime is cut
+ * to 10 ms and read before the clock, so boot is never placed too early. */
+export function exactStartMs(ticks: number, uptimeSec: number, nowMs: number): number {
+  return nowMs - uptimeSec * 1_000 + (ticks + 1) * PROC_TICK_MS;
+}
+
+/** Linux: the exact start of each descendant of `root` in an etime listing. The etime
+ * estimate is second-grained and as late as ps was slow, so under load it dropped
+ * MCP servers that had started well before init and the kept process was recycled.
+ * A pid /proc does not answer for is absent (the etime rule then decides it). Empty
+ * elsewhere, and when the uptime cannot be read. */
+async function linuxExactStarts(stdout: string, root: number): Promise<{ starts: Map<number, number>; ids: ProcessIdentities | null }> {
+  const out = new Map<number, number>();
+  if (process.platform !== "linux") return { starts: out, ids: null };
+  const rows: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s/.exec(line);
+    if (match) rows.push(`${match[1]} ${match[2]}`);
+  }
+  const candidates = walk(rows.join("\n"), root, null, null)?.found;
+  if (!candidates?.size) return { starts: out, ids: null };
+  const ticks = await procStarts([...candidates]);
+  const uptimeSec = Number((await readFile("/proc/uptime", "utf8")).split(" ")[0]);
+  const nowMs = Date.now(); // after the uptime read: late only
+  if (!Number.isFinite(uptimeSec) || uptimeSec <= 0) return { starts: out, ids: ticks };
+  for (const [pid, id] of ticks) {
+    const value = Number(id.slice("proc:".length));
+    if (Number.isFinite(value)) out.set(pid, exactStartMs(value, uptimeSec, nowMs));
+  }
+  return { starts: out, ids: ticks };
+}
+
+/** Linux: a native baseline registered with each pid's /proc start identity
+ * (see hookBaseline), so settle can tell a baseline process from a later one
+ * that was handed its pid. Elsewhere the set is returned as it is. */
+function linuxIdentified(found: Set<number>, ids: ProcessIdentities | null): Set<number> {
+  return process.platform === "linux" ? hookBaseline(found, ids) : found;
 }
 
 /** Process identities: pid to the start time ps reports for it (`lstart`,
@@ -218,6 +276,128 @@ async function procStartTicks(pid: number): Promise<string> {
   }
 }
 
+/** Linux: one /proc/<pid>/stat as parent, state and start identity, read synchronously; null when the pid is gone or unreadable.
+ *  The identity is the same `proc:<starttime>` string procStartTicks gives under a platform hook. */
+export function procStatSync(pid: number, procDir = "/proc"): { ppid: number; state: string; start: string; threads: number } | null {
+  try {
+    const text = procScanSeam.fs.readFile(`${procDir}/${pid}/stat`);
+    const rest = text.slice(text.lastIndexOf(")") + 2).split(" ");
+    const ppid = Number(rest[1]);
+    if (!/^\d+$/.test(rest[19] ?? "") || !Number.isInteger(ppid)) return null;
+    return { ppid, state: rest[0] ?? "", start: `proc:${rest[19]}`, threads: Number(rest[17]) };
+  } catch { return null; }
+}
+
+/** The /proc reads the scan makes (a seam, so a test can show an unreadable entry, a hidepid mount or another pid namespace). */
+export interface ProcFs { readdir(path: string): string[]; readFile(path: string): string; readlink(path: string): string }
+const realProcFs: ProcFs = { readdir: (path) => readdirSync(path), readFile: (path) => readFileSync(path, "utf8"), readlink: (path) => readlinkSync(path) };
+/** Work bound of one /proc scan: at most `entries` pids read and `ms` of wall time. Passing either is "unknown", never "gone". */
+export interface ProcScanBudget { entries: number; ms: number }
+/** The stop's own snapshot runs synchronously (it must answer inside its cap on a loaded machine), so its budget is small: 10 000
+ *  pids or 100 ms, whichever comes first (a normal host has a few hundred pids and needs a few milliseconds). */
+export const PROC_SCAN_SYNC_BUDGET: ProcScanBudget = { entries: 10_000, ms: 100 };
+/** The recovery probe yields to the event loop every PROC_SCAN_YIELD_EVERY pids, so it can afford more: 400 000 pids or 10 s. */
+export const PROC_SCAN_ASYNC_BUDGET: ProcScanBudget = { entries: 400_000, ms: 10_000 };
+const PROC_SCAN_YIELD_EVERY = 256;
+let procScanSeam: { fs: ProcFs; now: () => number } = { fs: realProcFs, now: () => Date.now() };
+/** Test seam for the scan's file system and clock (no argument restores the real ones). */
+export function setProcScanSeam(seam?: { fs?: ProcFs; now?: () => number }): void { procScanSeam = { fs: seam?.fs ?? realProcFs, now: seam?.now ?? (() => Date.now()) }; }
+const errno = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code;
+/** A pid that vanished between the listing and its read is gone, which is an answer; any other failure is not. */
+const vanished = (error: unknown) => errno(error) === "ENOENT" || errno(error) === "ESRCH";
+
+/** True only when this process can see every process: /proc is not mounted with hidepid (1, 2, invisible, noaccess, ptraceable) and
+ *  the server's pid namespace is the scanner's own (a server that unshared its pid namespace has descendants no pid here names). */
+function procVisibilityEstablished(fs: ProcFs, procDir: string, root: number): boolean {
+  try {
+    const line = fs.readFile(`${procDir}/self/mountinfo`).split("\n").find((row) => row.split(" ")[4] === procDir);
+    if (!line || /\bhidepid=(?:[1-9]|invisible|noaccess|ptraceable)\b/.test(line)) return false;
+    const own = fs.readlink(`${procDir}/self/ns/pid`);
+    try { if (fs.readlink(`${procDir}/${root}/ns/pid`) !== own) return false; } catch (error) { if (!vanished(error)) return false; }
+    return true;
+  } catch { return false; }
+}
+
+interface ProcPass { desc: ProcessIdentities; all: Set<number>; vanished: number[]; rootStart: string | undefined }
+
+/** One pass over /proc, as a generator that yields every PROC_SCAN_YIELD_EVERY pids so the async driver can give the event loop a
+ *  turn. It returns the descendants of `root`, or null (unknown) when visibility is not established, any entry cannot be read for a
+ *  reason other than the pid having vanished, or the budget ran out. */
+function* procPass(root: number, procDir: string, budget: ProcScanBudget): Generator<void, ProcPass | null> {
+  const { fs, now } = procScanSeam;
+  if (!procVisibilityEstablished(fs, procDir, root)) return null;
+  let names: string[];
+  try { names = fs.readdir(procDir); } catch { return null; }
+  const began = now();
+  const children = new Map<number, number[]>();
+  const starts = new Map<number, string>();
+  const vanishedPids: number[] = [];
+  let read = 0;
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    if (++read > budget.entries || now() - began > budget.ms) return null;
+    if (read % PROC_SCAN_YIELD_EVERY === 0) yield;
+    const pid = Number(name);
+    let text: string;
+    try { text = fs.readFile(`${procDir}/${pid}/stat`); } catch (error) { if (vanished(error)) { vanishedPids.push(pid); continue; } return null; }
+    const rest = text.slice(text.lastIndexOf(")") + 2).split(" ");
+    const ppid = Number(rest[1]);
+    if (!/^\d+$/.test(rest[19] ?? "") || !Number.isInteger(ppid)) return null;
+    starts.set(pid, `proc:${rest[19]}`);
+    (children.get(ppid) ?? children.set(ppid, []).get(ppid)!).push(pid);
+  }
+  const desc: ProcessIdentities = new Map();
+  const queue = [root];
+  while (queue.length) {
+    for (const child of children.get(queue.pop()!) ?? []) {
+      if (desc.has(child) || child === root) continue;
+      desc.set(child, starts.get(child)!);
+      queue.push(child);
+    }
+  }
+  return { desc, all: new Set(starts.keys()), vanished: vanishedPids, rootStart: starts.get(root) };
+}
+
+/** Two passes that must agree. One walk of a live table can be torn (a descendant forked after the listing, an ancestor that exited
+ *  before its children were linked): the descendant set and the server's own start identity must be the same in both passes, and a
+ *  pid that vanished during the second pass must have been outside the tree in the first (one that was inside it, or that the first
+ *  pass never saw at all, may have been a descendant; one that had already vanished in the first is gone for good). Anything else is
+ *  unknown. */
+function* procScan(root: number, procDir: string, budget: ProcScanBudget): Generator<void, ProcessIdentities | null> {
+  const first = yield* procPass(root, procDir, budget);
+  if (!first) return null;
+  const second = yield* procPass(root, procDir, budget);
+  if (!second || first.rootStart !== second.rootStart || first.desc.size !== second.desc.size) return null;
+  for (const [pid, start] of first.desc) if (second.desc.get(pid) !== start) return null;
+  for (const pid of second.vanished) if (first.desc.has(pid) || !(first.all.has(pid) || first.vanished.includes(pid))) return null;
+  return second.desc;
+}
+
+/** Linux: every descendant of `root` with its start identity, from /proc in synchronous passes (no process is spawned, so the
+ *  answer cannot be lost to a timer or a scheduler that runs the caller late). The answer is three-valued: a Map (the descendants;
+ *  empty means gone), or null for unknown. It is a Map only when visibility is established (see procVisibilityEstablished), every
+ *  entry was readable (a vanished pid excepted), two passes agreed (see procScan) and the work of each stayed inside `budget`
+ *  (PROC_SCAN_SYNC_BUDGET, so the call blocks the loop for at most about twice its ms). Unknown never reads as gone. A stop that
+ *  must read the tree before it signals it (chat-mcp-client.ts) depends on this answering inside its cap. */
+export function procDescendantsSync(root: number, procDir = "/proc", budget: ProcScanBudget = PROC_SCAN_SYNC_BUDGET): ProcessIdentities | null {
+  const scan = procScan(root, procDir, budget);
+  for (;;) { const step = scan.next(); if (step.done) return step.value; }
+}
+
+/** procDescendantsSync with the larger PROC_SCAN_ASYNC_BUDGET, yielding to the event loop between slices: the recovery probe. */
+export async function procDescendants(root: number, procDir = "/proc", budget: ProcScanBudget = PROC_SCAN_ASYNC_BUDGET): Promise<ProcessIdentities | null> {
+  const scan = procScan(root, procDir, budget);
+  for (;;) {
+    const step = scan.next();
+    if (step.done) return step.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+/** A /proc row that holds nothing any more: a zombie whose thread group has no other thread. A leader that reads Z while other
+ *  threads still run (num_threads above 1) is alive and keeps its credentials. */
+export function procRowGone(row: { state: string; threads: number }): boolean { return row.state === "Z" && row.threads === 1; }
+
 async function procStarts(pids: readonly number[]): Promise<ProcessIdentities> {
   const out: ProcessIdentities = new Map();
   await Promise.all(pids.map(async (pid) => {
@@ -240,7 +420,7 @@ function hookStartedBefore(platform: ReadonlySet<number>, initAtMs: number): Pro
   return new Promise((resolve) => {
     const linux = process.platform === "linux";
     (linux ? procStarts(pids) : Promise.resolve(new Map<number, string>())).then((first) => {
-      execFile("ps", ["-o", "pid=,etime=,lstart=", "-p", pids.join(",")], { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }, (error, stdout) => {
+      execFile("ps", ["-o", "pid=,etime=,lstart=", "-p", pids.join(",")], withHideInherit({ timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }), (error, stdout) => {
         if (psOutcome(error) === "failed") return resolve(null);
         const probeAtMs = Date.now();
         (linux ? procStarts(pids) : Promise.resolve(new Map<number, string>())).then((second) => {
@@ -299,7 +479,7 @@ async function identityListing(): Promise<ReturnType<typeof parseIdentityListing
     return rows ? rows.map((row) => ({ pid: row.pid, ppid: row.ppid, start: row.start, rest: "" })) : null;
   }
   return new Promise((resolve) => {
-    execFile("ps", PS_ID_ARGS, { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }, (error, stdout) => {
+    execFile("ps", [...PS_ID_ARGS], withHideInherit({ timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }), (error, stdout) => {
       if (error) return resolve(null);
       resolve(parseIdentityListing(String(stdout)));
     });
@@ -542,12 +722,43 @@ async function processTreeWalk(root: number, stopAt: ReadonlySet<number> | null,
     return walk(winWalkLines(rows), root, exact, layout)?.found ?? null;
   }
   return new Promise((resolve) => {
-    execFile("ps", stopAt ? PS_SETTLE_ARGS : PS_ARGS, { timeout: 5_000, maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }, (error, stdout) => {
+    execFile("ps", [...(stopAt ? PS_SETTLE_ARGS : PS_ARGS)], withHideInherit({ timeout: 5_000, maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }), (error, stdout) => {
       if (error) return resolve(null);
-      if (!stopAt) return resolve(walk(stdout, root, stopAt, layout)?.found ?? null);
-      resolve(settleWalk(stdout, root, stopAt, layout));
+      if (!stopAt) {
+        const found = walk(stdout, root, stopAt, layout)?.found ?? null;
+        if (!found || process.platform !== "linux") return resolve(found);
+        return procStarts([...found]).then((ids) => resolve(linuxIdentified(found, ids)), () => resolve(linuxIdentified(found, null)));
+      }
+      if (process.platform !== "linux") return resolve(settleWalk(stdout, root, stopAt, layout));
+      // Linux: a baseline pid is exempt only while its /proc start equals the
+      // one recorded for it. A baseline process that exited and whose pid went
+      // to another descendant is that descendant, reported; an unreadable or
+      // unrecorded start (a set with no identities) is never exempt. One that
+      // exited after ps listed it (the OS says it is gone) runs
+      // nothing: it leaves the answer like a zombie, its listed children stay.
+      const ids = winBaselineIds.get(stopAt);
+      const listed = [...new Set(settleListedPids(stdout))].filter((pid) => stopAt.has(pid));
+      procStarts(listed).then((now) => {
+        const exact = new Set(listed.filter((pid) => {
+          const start = now.get(pid);
+          return start !== undefined && start !== "" && ids?.get(pid) === start;
+        }));
+        const found = settleWalk(stdout, root, exact, layout);
+        for (const pid of listed) if (pidGone(pid)) found?.delete(pid);
+        resolve(found);
+      }, () => resolve(null));
     });
   });
+}
+
+/** The pids of a settle listing's rows. */
+function settleListedPids(stdout: string): number[] {
+  const out: number[] = [];
+  for (const line of stdout.split("\n")) {
+    const match = /^\s*(\d+)\s/.exec(line);
+    if (match) out.push(Number(match[1]));
+  }
+  return out;
 }
 
 /** Exported for tests: the settle walk over a `ps -o pid=,ppid=,stat=,comm=` listing.
@@ -623,7 +834,7 @@ export function processParentsAndArgs(pids: Iterable<number>): Promise<Map<numbe
   if (!list.length) return Promise.resolve(new Map());
   if (process.platform === "win32") return Promise.resolve(null);
   return new Promise((resolve) => {
-    execFile("ps", ["-ww", "-o", "pid=,ppid=,lstart=,args=", "-p", list.join(",")], { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }, (error, stdout) => {
+    execFile("ps", ["-ww", "-o", "pid=,ppid=,lstart=,args=", "-p", list.join(",")], withHideInherit({ timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }), (error, stdout) => {
       const settled = settleArgsProbe(error, String(stdout ?? ""), list);
       // Under a platform listTree hook the tree's identities are the hook
       // path's (processStarts), so start must come from the same source or a
@@ -669,10 +880,61 @@ export function processNames(pids: Iterable<number>): Promise<string[]> {
   const list = [...pids].filter((pid) => Number.isInteger(pid) && pid > 0).slice(0, 8);
   if (!list.length || process.platform === "win32") return Promise.resolve([]);
   return new Promise((resolve) => {
-    execFile("ps", ["-o", "comm=", "-p", list.join(",")], { timeout: 2_000, killSignal: "SIGKILL", env: PS_LOOKUP_ENV }, (error, stdout) => {
+    execFile("ps", ["-o", "comm=", "-p", list.join(",")], withHideInherit({ timeout: 2_000, killSignal: "SIGKILL", env: PS_LOOKUP_ENV }), (error, stdout) => {
       if (error && !stdout) return resolve([]);
       resolve(String(stdout).split("\n").map((line) => line.trim().split("/").pop() ?? "").filter(Boolean));
     });
   });
 }
 
+
+// ---- MCP stop proof (nlrace design V): one full-table pass with the facts the desktop proof needs --------------------------------
+
+export interface ProcTableRow { pid: number; ppid: number; start: string; state: string; threads: number }
+/** ONE pass over /proc, chunked (yields to the event loop every PROC_SCAN_YIELD_EVERY pids), budgeted and abortable. Every entry is
+ *  either parsed fully or vanished (ENOENT/ESRCH: the pid is gone); any other failure, a parse miss, the budget or an abort is null
+ *  (unknown), never a smaller table. */
+export async function procTable(procDir = "/proc", budget: ProcScanBudget = PROC_SCAN_ASYNC_BUDGET, signal?: AbortSignal): Promise<ProcTableRow[] | null> {
+  const { fs, now } = procScanSeam;
+  let names: string[];
+  try { names = fs.readdir(procDir); } catch { return null; }
+  const began = now();
+  const rows: ProcTableRow[] = [];
+  let read = 0;
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    if (signal?.aborted || ++read > budget.entries || now() - began > budget.ms) return null;
+    if (read % PROC_SCAN_YIELD_EVERY === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    const pid = Number(name);
+    let text: string;
+    try { text = fs.readFile(`${procDir}/${pid}/stat`); } catch (error) { if (vanished(error)) continue; return null; }
+    const rest = text.slice(text.lastIndexOf(")") + 2).split(" ");
+    const ppid = Number(rest[1]);
+    const threads = Number(rest[17]);
+    if (!/^\d+$/.test(rest[19] ?? "") || !Number.isInteger(ppid) || !Number.isInteger(threads)) return null;
+    rows.push({ pid, ppid, start: `proc:${rest[19]}`, state: rest[0] ?? "", threads });
+  }
+  return rows;
+}
+
+/** Linux boot id (/proc/sys/kernel/random/boot_id), or null. */
+export function procBootId(procDir = "/proc"): string | null {
+  try { const id = procScanSeam.fs.readFile(`${procDir}/sys/kernel/random/boot_id`).trim(); return id === "" ? null : id; } catch { return null; }
+}
+/** The scanner's own pid namespace inode (`pid:[n]`), or null. */
+export function procPidNs(procDir = "/proc"): string | null {
+  try { return procScanSeam.fs.readlink(`${procDir}/self/ns/pid`); } catch { return null; }
+}
+/** The visibility facts of the scanner: /proc mounted with hidepid, and whether `root` lives in the scanner's pid namespace (a root that
+ *  is gone is judged by its pair re-stat, not here: absent counts as the same namespace). null when the facts cannot be read. */
+export function procVisibilityFacts(root: number | null, procDir = "/proc"): { hidepid: boolean; sameNs: boolean } | null {
+  const { fs } = procScanSeam;
+  try {
+    const line = fs.readFile(`${procDir}/self/mountinfo`).split("\n").find((row) => row.split(" ")[4] === procDir);
+    if (!line) return null;
+    const hidepid = /\bhidepid=(?:[1-9]|invisible|noaccess|ptraceable)\b/.test(line);
+    if (root === null) return { hidepid, sameNs: true };
+    const own = fs.readlink(`${procDir}/self/ns/pid`);
+    try { return { hidepid, sameNs: fs.readlink(`${procDir}/${root}/ns/pid`) === own }; } catch (error) { return vanished(error) ? { hidepid, sameNs: true } : null; }
+  } catch { return null; }
+}

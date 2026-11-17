@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+# MAIN 2026-11-17: the locale source-hash files hold SHA-256 digests of public English strings, not secrets.
+[[rules.allowlists]]
+paths = ['''(^|/)src/locales/(.*/)?source-hashes\.json$''']

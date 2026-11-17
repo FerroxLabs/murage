@@ -1,0 +1,11 @@
+--- a/server/drivers/acp/core.ts
++++ b/server/drivers/acp/core.ts
+@@ -6796,7 +6796,7 @@
+             const attempt = async () => {
+               postureResume = sessionId ?? postureResume;
+               const old = proc;
+-              if (sessionId) send({jsonrpc:'2.0',method:'session/cancel',params:{sessionId}}, error => { if (error) acpFenced(error, "acp.cancel.posture", old, { method: "session/cancel" }); });
++              if (sessionId) send({jsonrpc:'2.0',method:'session/cancel',params:{sessionId}});
+               // A refused cancel claimed the turn: end here, before the old process is closed again and a continuation relaunches.
+               if (turnRef.fenced) throw new Error('posture restart stopped');
+               for (const { finish } of [...asks.values()]) await finish('cancel','system');

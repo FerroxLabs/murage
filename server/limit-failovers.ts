@@ -21,6 +21,7 @@
 // the row cancelled), with no gate and no resend, whatever the gate says by
 // then. The crash table is U22-REFUSAL-CRASH-NOTE.md.
 
+import type { DatabaseSync } from "node:sqlite";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -46,11 +47,16 @@ export interface FailoverRow {
   resetsAt: number | null;
   at: number;
   sourceMessageId: string;
+  /** The originating turn keeps its card scope after a newer turn is admitted. */
+  generation?: string;
+  providerTurnId?: string;
   /** a fresh 32-character send id for the resend (exact-id dedupe) */
   resendSendId: string;
   /** always 1: there is no second hop */
   hop: 1;
   updatedAt?: number;
+  /** New owner continuation: disk intent alone never authorizes its resend. */
+  ownerAuthorized?: boolean;
   /** a committed refusal and why: this row is only ever finished, never applied or resent */
   refusing?: BackupRefusal;
   /** `was` is the chat's own restore point, never a backup. `create` always stamps it, so only a row from before 1.0.18 can be without it */
@@ -76,10 +82,39 @@ function withOwnRestorePoints(rows: FailoverRow[]): FailoverRow[] {
 export class LimitFailoverStore {
   private readonly dataDir: () => string;
   private readonly now: () => number;
-  constructor(dataDir: () => string, now: () => number = Date.now) { this.dataDir = dataDir; this.now = now; }
+  private readonly database?: () => DatabaseSync;
+  private indexed?: DatabaseSync;
+  private legacyRows: FailoverRow[] = [];
+  private legacyUnreadable = false;
+  constructor(dataDir: () => string, now: () => number = Date.now, database?: () => DatabaseSync) { this.dataDir = dataDir; this.now = now; this.database = database; }
+  private db(): DatabaseSync | undefined {
+    const db = this.database?.();
+    if (!db || db === this.indexed) return db;
+    db.exec(`CREATE TABLE IF NOT EXISTS limit_failover_rows(row_id TEXT PRIMARY KEY, send_id TEXT NOT NULL UNIQUE, value TEXT NOT NULL);`);
+    // One boot migration of the old JSON store. Serving reads and writes use
+    // row/send indexes and never parse or rewrite retained historical rows.
+    try {
+      const raw: unknown = JSON.parse(readFileSync(this.file, 'utf8'));
+      if (!Array.isArray(raw)) this.legacyUnreadable = true;
+      else this.legacyRows = withOwnRestorePoints(raw.filter((r): r is FailoverRow => !!r && typeof r.rowId === 'string'));
+    } catch (error) { this.legacyUnreadable = (error as NodeJS.ErrnoException).code !== 'ENOENT'; }
+    const insert = db.prepare('INSERT OR IGNORE INTO limit_failover_rows VALUES(?,?,?)');
+    for (const row of this.legacyRows) insert.run(row.rowId, row.resendSendId, JSON.stringify(row));
+    this.indexed = db;
+    return db;
+  }
+  /** Compatibility for old binaries/legacy crash fixtures, once at boot only. */
+  flushLegacyRecovery(): void {
+    if (!this.db() || !this.legacyRows.length) return;
+    this.write(this.legacyRows.map(row => this.get(row.rowId) ?? row));
+    this.legacyRows = [];
+  }
+  private saveIndexed(row: FailoverRow): void { this.db()!.prepare('INSERT INTO limit_failover_rows VALUES(?,?,?) ON CONFLICT(row_id) DO UPDATE SET value=excluded.value').run(row.rowId, row.resendSendId, JSON.stringify(row)); }
   private get file(): string { return join(this.dataDir(), LIMIT_FAILOVERS_FILE); }
 
   list(): FailoverRow[] {
+    const db = this.db();
+    if (db) return (db.prepare('SELECT value FROM limit_failover_rows').all() as { value: string }[]).map(row => JSON.parse(row.value));
     try {
       const raw = JSON.parse(readFileSync(this.file, "utf8")) as unknown;
       return Array.isArray(raw) ? withOwnRestorePoints(raw.filter((row): row is FailoverRow => Boolean(row) && typeof row === "object" && typeof (row as FailoverRow).rowId === "string")) : [];
@@ -87,6 +122,7 @@ export class LimitFailoverStore {
   }
   /** The file is there but can't be read as rows. A missing row then proves nothing, so a chat's marker must not be taken as having no row behind it. */
   unreadable(): boolean {
+    if (this.db()) return this.legacyUnreadable;
     try { return !Array.isArray(JSON.parse(readFileSync(this.file, "utf8"))); }
     catch (error) { return (error as NodeJS.ErrnoException).code !== "ENOENT"; }
   }
@@ -95,20 +131,28 @@ export class LimitFailoverStore {
     const now = this.now();
     writeFileAtomic(this.file, JSON.stringify(rows.filter(row => (row.state !== "cancelled" && row.state !== "restored") || (row.updatedAt ?? row.at) > now - FAILOVER_KEEP_MS)), { mode: 0o600 });
   }
-  get(rowId: string): FailoverRow | undefined { return this.list().find(row => row.rowId === rowId); }
-  bySendId(sendId: string): FailoverRow | undefined { return this.list().find(row => row.resendSendId === sendId); }
+  get(rowId: string): FailoverRow | undefined {
+    const db = this.db(); if (!db) return this.list().find(row => row.rowId === rowId);
+    const row = db.prepare('SELECT value FROM limit_failover_rows WHERE row_id=?').get(rowId) as { value: string } | undefined;
+    return row && JSON.parse(row.value);
+  }
+  bySendId(sendId: string): FailoverRow | undefined {
+    const db = this.db(); if (!db) return this.list().find(row => row.resendSendId === sendId);
+    const row = db.prepare('SELECT value FROM limit_failover_rows WHERE send_id=?').get(sendId) as { value: string } | undefined;
+    return row && JSON.parse(row.value);
+  }
 
   /** step (1): the row, pending, before the chat is touched */
-  create(row: Omit<FailoverRow, "state" | "hop" | "rowId" | "resendSendId" | "wasChecked"> & { rowId?: string }): FailoverRow {
-    const created: FailoverRow = { ...row, rowId: row.rowId ?? newResendSendId(), state: "pending", hop: 1, resendSendId: newResendSendId(), updatedAt: this.now(), wasChecked: true };
-    this.write([...this.list(), created]);
+  create(row: Omit<FailoverRow, "state" | "hop" | "rowId" | "resendSendId" | "wasChecked"> & { rowId?: string; resendSendId?: string }): FailoverRow {
+    const created: FailoverRow = { ...row, rowId: row.rowId ?? newResendSendId(), state: "pending", hop: 1, resendSendId: row.resendSendId ?? newResendSendId(), updatedAt: this.now(), wasChecked: true };
+    if (this.db()) this.saveIndexed(created); else this.write([...this.list(), created]);
     return created;
   }
   /** A new failover on a chat, read from that chat. An owner's pick clears the marker, so a chat still carrying one is on a backup, whatever a
    * stale-model repair has made of its model: the new row takes the carried row's restore point and reset. A backup is never what a chat "was",
    * so no later refusal of it can come back as a pick, in any order of events. A marker whose row is gone says the same with no pick left to go
    * back to, so the chat follows its bot. No marker: the selection is the owner's own. */
-  startFrom(task: FailoverTaskView, row: Omit<FailoverRow, "state" | "hop" | "rowId" | "resendSendId" | "was" | "wasChecked">): FailoverRow {
+  startFrom(task: FailoverTaskView, row: Omit<FailoverRow, "state" | "hop" | "rowId" | "resendSendId" | "was" | "wasChecked"> & { rowId?: string; resendSendId?: string }): FailoverRow {
     if (task.limitFailover) {
       const carried = this.get(task.limitFailover);
       return this.create(carried
@@ -118,26 +162,26 @@ export class LimitFailoverStore {
     return this.create({ ...row, was: task.modelSelection ? structuredClone(task.modelSelection) : "following" });
   }
   setState(rowId: string, state: FailoverState): FailoverRow | undefined {
-    const rows = this.list();
-    const row = rows.find(item => item.rowId === rowId);
+    const rows = this.db() ? undefined : this.list();
+    const row = rows ? rows.find(item => item.rowId === rowId) : this.get(rowId);
     if (!row) return undefined;
     // a cancelled or restored row never regains authority
     if ((row.state === "cancelled" || row.state === "restored") && state !== row.state) return row;
     row.state = state; row.updatedAt = this.now();
-    this.write(rows);
+    if (rows) this.write(rows); else this.saveIndexed(row);
     return row;
   }
   cancel(rowId: string): FailoverRow | undefined { return this.setState(rowId, "cancelled"); }
   /** The refusal's commit point, one write. A pending row its chat carries is applied by then (see the header), and turn selection reads that. */
   markRefusing(rowId: string, reason: BackupRefusal, chatCarries: boolean): FailoverRow | undefined {
-    const rows = this.list();
-    const row = rows.find(item => item.rowId === rowId);
+    const rows = this.db() ? undefined : this.list();
+    const row = rows ? rows.find(item => item.rowId === rowId) : this.get(rowId);
     if (!row) return undefined;
     if (row.state === "cancelled" || row.state === "restored") return row;
     row.refusing = reason;
     if (chatCarries && row.state === "pending") row.state = "applied";
     row.updatedAt = this.now();
-    this.write(rows);
+    if (rows) this.write(rows); else this.saveIndexed(row);
     return row;
   }
 }

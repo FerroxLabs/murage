@@ -1,0 +1,21 @@
+{
+  "owner": "hl-c1-broker",
+  "strings": [
+    {
+      "key": "highlevel.oauth.callbackReady",
+      "english": "HighLevel authorization is ready. Go back to Murage to confirm.",
+      "source": "src/flow.ts"
+    },
+    {
+      "key": "highlevel.oauth.callbackDenied",
+      "english": "HighLevel was not connected. Go back to Murage to try again.",
+      "source": "src/flow.ts"
+    },
+    {
+      "key": "highlevel.oauth.callbackExpired",
+      "english": "This link has expired. Go back to Murage and connect again.",
+      "source": "src/flow.ts"
+    }
+  ],
+  "integration": "S-INT publishes locale/hash inventory; browser callback currently serves these fixed English strings. Machine errors contain codes only."
+}

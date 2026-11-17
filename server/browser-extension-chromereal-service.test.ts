@@ -31,7 +31,9 @@ async function fixture(overrides: Record<string, unknown> = {}) {
       if (command.operation === "stop" || command.operation === "pause") { b.generation++; b.state = command.operation === "stop" ? "stopped" : "paused"; }
       if (command.operation === "cdp") {
         const { method, params } = command.params as any; let value: any = {};
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1, url: b.tabs[0].url }] };
         if (method === "Page.getFrameTree") value = { frameTree: { frame: { id: "frame", loaderId: "L" } } };
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
         if (method === "Page.createIsolatedWorld") value = { executionContextId: 7 };
         if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
         if (method === "DOM.describeNode") value = { node: { backendNodeId: 12 } };
@@ -352,8 +354,8 @@ describe("Chrome proof: dialog answers have facts but no DOM target", () => {
 });
 
 
-describe("Chrome proof: authority invalidation retains its cause", () => {
-  it.each(["revision", "generation", "uncertain"])("reports %s instead of a generic authorisation failure", async reason => {
+describe("Chrome proof: revision fencing retains the underlying invalidation state", () => {
+  it.each(["revision", "generation", "uncertain"])("fences an admitted result after %s changes authority", async reason => {
     let f: Awaited<ReturnType<typeof fixture>>;
     f = await fixture({
       createEngine: (engine: any) => ({
@@ -370,7 +372,11 @@ describe("Chrome proof: authority invalidation retains its cause", () => {
       }),
     });
     try {
-      await expect(dispatch(f, "agent_browser_get_title")).rejects.toMatchObject({ code: reason === "revision" ? "stale_binding" : reason === "generation" ? "stale_generation" : "uncertain" });
+      // MAIN RULING 1116-R7NL: revision mismatch precedes generation and uncertain errors.
+      await expect(dispatch(f, "agent_browser_get_title")).rejects.toMatchObject({ code: "stale_binding", message: "stale_binding" });
+      const status = f.service.status().bindings[0];
+      if (reason === "generation") expect(status.generation).toBeGreaterThan(f.binding.generation);
+      if (reason === "uncertain") expect(status).toMatchObject({ state: "paused", pausedReason: "uncertain", outcomeUnknown: true });
     } finally { await f.service.close(); }
   });
 });

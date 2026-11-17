@@ -18,6 +18,7 @@
 // alone: parseWwwAuthenticate, classifyUnauthorized, safeResourceMetadataUrl,
 // reasonForGuardedError, isSameOriginEndpoint, redactUpstreamText, createSseReader.
 import { Readable } from "node:stream";
+import { currentUpstreamAccounting, type UpstreamAccounting } from "./memory/upstream-reader.ts";
 
 import { GuardedHttpError, guardedRequest, type GuardedRequestOptions, type GuardedStreamResponse } from "../shared/guarded-http.mjs";
 import { LIMITS, parseServerUrl, sameOrigin, type LocalConfirmation } from "../shared/remote-mcp-url.mjs";
@@ -232,10 +233,19 @@ export interface SseEvent {
  * nothing arrives for `idleMs`, and with `event-too-large` when one event
  * (its data lines together) passes `maxEventBytes`. Comment lines count as
  * activity but carry no bytes toward the cap. */
-export async function* createSseReader(
+export function createSseReader(
   stream: AsyncIterable<Buffer | Uint8Array | string>,
-  options: { idleMs: number; maxEventBytes: number },
+  options: { idleMs: number; maxEventBytes: number; accounting?: UpstreamAccounting; probeOnly?: true },
 ): AsyncGenerator<SseEvent> {
+  const inherited = currentUpstreamAccounting("sse");
+  const accounting = options.accounting ?? inherited;
+  return readSse();
+  async function* readSse(): AsyncGenerator<SseEvent> {
+  if (options.accounting && inherited && (options.accounting.budgets.length !== inherited.budgets.length
+    || options.accounting.budgets.some((budget, i) => budget !== inherited.budgets[i]))) {
+    options.accounting.refuse({ state: "checking", reason: "not-built" });
+  }
+  if (!accounting && options.probeOnly !== true) throw new Error("MEMORY_CONTEXT_REVOKED");
   const iterator = stream[Symbol.asyncIterator]();
   const decoder = new TextDecoder();
   let buffered = "";
@@ -264,10 +274,12 @@ export async function* createSseReader(
         }),
       ]).finally(() => clearTimeout(timer));
       if (next.done) {
+        accounting?.end();
         buffered += decoder.decode();
         break;
       }
       const chunk = next.value;
+      accounting?.accept(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
       buffered += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
       // A line that never ends is an event that never ends.
       if (buffered.length > options.maxEventBytes + 1_024 && !buffered.includes("\n")) throw new SseReaderError("event-too-large");
@@ -301,6 +313,7 @@ export async function* createSseReader(
     // `return()` until that read does, which for a silent server is never.
     // The caller closes the stream.
     void Promise.resolve(iterator.return?.(undefined)).catch(() => undefined);
+  }
   }
 }
 
@@ -508,7 +521,7 @@ export async function probeRemoteMcp(input: RemoteProbeInput): Promise<McpProbeR
     const opened = await request({ url: input.url, method: "GET", kind: "sse", responseMode: "stream", headers: { accept: "text/event-stream", ...authHeaders() } });
     if (opened.status !== 200 || !("stream" in opened)) return explainStatus(opened.status, opened.headers, "");
     const stream = opened as unknown as GuardedStreamResponse;
-    const events = createSseReader(stream.stream as Readable, { idleMs: input.idleMs ?? 10_000, maxEventBytes: LIMITS.sseEventBytes });
+    const events = createSseReader(stream.stream as Readable, { idleMs: input.idleMs ?? 10_000, maxEventBytes: LIMITS.sseEventBytes, probeOnly: true });
     // Every wait on the stream is bounded by the probe's own deadline and its
     // caller's abort, not only by the reader's per-event idle timer (comment
     // lines reset that one): M4.

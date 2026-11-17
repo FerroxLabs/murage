@@ -12,6 +12,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { RuntimeEvent } from "./contracts.ts";
+import { createTurnCardGate } from "./turn-card-gate.ts";
+import { frameSubject } from "./sse-visibility.ts";
+import { wiring } from "./decision-wiring/fixture.ts";
 import { EventBus } from "./harness/bus.ts";
 import { readThreadEvents } from "./thread-events.ts";
 import { loggedRuntimeEvent, requestOpenedOut, windowRuntimeEvent } from "./runtime-event-out.ts";
@@ -19,11 +22,18 @@ import { loggedRuntimeEvent, requestOpenedOut, windowRuntimeEvent } from "./runt
 import * as out from "./runtime-event-out.ts";
 import { boundedToolInput } from "./approval-text.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { makeFakeDriver } from "./testing/fake-driver.ts";
 import { ensureDirs, NATIVE_DIR } from "./config.ts";
 import { appendNative } from "./drivers/native.ts";
 import { appendDecision, flushDecisionLog, readDecisions } from "./decision-log.ts";
 
 ensureDirs();
+
+it('keeps the local tool execution cwd on the server', () => {
+  const event = { ...ask(), executionCwd: '/fixture/private-tool-cwd' } as Extract<RuntimeEvent, { type: 'request.opened' }>;
+  expect(requestOpenedOut(event)).toEqual(requestOpenedOut(ask() as typeof event));
+  expect(loggedRuntimeEvent(event)).toEqual(loggedRuntimeEvent(ask()));
+});
 
 const FAKE_PROVIDER_KEY = "fake-provider-key-0001-not-real";
 const FAKE_SHELL_VALUE = "fake-shell-value-0002-not-real";
@@ -99,7 +109,10 @@ describe("a permission ask leaving the server", () => {
   it("is written to the thread's event log without the handed map", () => {
     const writes: string[] = [];
     const bus = new EventBus(((_file: string, data: string) => { writes.push(data); }) as never);
-    bus.publish(ask("t-creds-log"));
+    // MAIN RULING INT-CONFLICT-DEFAULT e972f2e4fb 5be0eafbea: a positive log fixture needs real host admission; provider fields grant none.
+    const attachment = bus.collector.attach("log-fixture");
+    const source = bus.collector.source(bus.collector.admitNewTurn({ attachment, instanceId: "log-fixture", threadId: "t-creds-log" }));
+    bus.publish(ask("t-creds-log"), source);
     const written = writes.join("");
     expect(written).toContain("request.opened");
     expect(written).not.toContain("\"execEnv\"");
@@ -131,15 +144,73 @@ describe("a permission ask leaving the server", () => {
     const opener = "broadcast({ kind: \"runtime\", event: ";
     const calls: string[] = [];
     for (let at = source.indexOf(opener); at >= 0; at = source.indexOf(opener, at + 1)) calls.push(source.slice(at + opener.length, at + opener.length + 40));
-    expect(calls.length).toBe(2);
-    // the goal coordinator's own text frame is built field by field from an assistant_text event
-    for (const call of calls) expect(call.startsWith("windowRuntimeEvent(event) })") || call.startsWith("publicAssistantEvent })")).toBe(true);
+    // MAIN RULING 1115-SOURCE-PINS-GROK A4: all three sites are pinned; refusal control must also pass the public window projection.
+    expect(calls.length).toBe(3);
+    // MAIN RULING INT-CONFLICT-DEFAULT e972f2e4fb a62419d6d5: runtime broadcasts consume collector emissions and the coordinator's checked display text.
+    const checkedExpressions = [
+      "{ ...publicAssistantEvent, text: coordinatorDisplayText } });",
+      "safe as unknown as RuntimeEvent });",
+    ];
+    // file order: the ledger refusal's terminal control (the early site), then the two checked broadcasts
+    expect(calls[0]!.startsWith("windowRuntimeEvent(emission.event as unknown as RuntimeEvent) });".slice(0, 40))).toBe(true);
+    expect(calls.slice(1).map((call, i) => call.startsWith(checkedExpressions[i].slice(0, 40)))).toEqual([true, true]);
+    expect(source).toContain("for (const emission of bus.refuseTurn(threadId, completionSource)) broadcast({ kind: \"runtime\", event: windowRuntimeEvent(emission.event as unknown as RuntimeEvent) });");
+    expect(source).toContain("const audience = bus.audienceFor(executionEvent)");
+    expect(source).toContain("for (const emission of audience) {\n    const safe = emission.event;");
+    expect(source).toContain("sanitizeDisplayTextUnit([coordinatorVisibleText])");
+  });
+
+  it("a ledger refusal's terminal control is the collector's public projection, with no private field (A4)", async () => {
+    // MAIN RULING 1115-SOURCE-PINS-GROK A4
+    const driver = makeFakeDriver({ kind: "codex" });
+    const instance = await driver.driver.create({ instanceId: "inst-1", displayName: undefined, environment: {}, enabled: true, config: {} });
+    const bus = new EventBus(((_file: string, _data: string) => undefined) as never);
+    bus.attach([instance]);
+    // the same terminal event, published normally: its audience emission is the public projection the other two sites broadcast
+    const published = bus.admitNewTurn("inst-1", "t-refuse-public");
+    const turnEnd = { type: "turn.completed", eventId: "e-end", provider: "codex", threadId: "t-refuse-public", createdAt: "2026-10-19T00:00:00.000Z", ok: false,
+      stopReason: "memory_refused", turnId: "turn-1", providerSecret: FAKE_PROVIDER_KEY, execEnv: { env: { KEY: FAKE_PROVIDER_KEY } } } as unknown as RuntimeEvent;
+    bus.publish(turnEnd, published);
+    const normal = bus.audienceFor(turnEnd).filter(emission => emission.event.type === "turn.completed");
+    expect(normal).toHaveLength(1);
+    const refusedSource = bus.admitNewTurn("inst-1", "t-refuse-public");
+    const refused = bus.refuseTurn("t-refuse-public", refusedSource);
+    expect(refused).toHaveLength(1);
+    // Preserve the collector's public generation and speech control as well as the terminal outcome.
+    expect(windowRuntimeEvent(refused[0]!.event as unknown as RuntimeEvent)).toEqual(refused[0]!.event);
+    const event = refused[0]!.event as unknown as Record<string, unknown>;
+    // only fields the collector's public turn.completed projection carries; nothing the provider or the host kept private
+    const publicKeys = new Set(Object.keys(normal[0]!.event as unknown as Record<string, unknown>));
+    for (const key of Object.keys(event)) expect(publicKeys.has(key), key).toBe(true);
+    expect(event).toMatchObject({ type: "turn.completed", threadId: "t-refuse-public", ok: false, stopReason: "memory_refused" });
+    for (const hidden of ["providerSecret", "execEnv", "text", "turnId"]) expect(Object.hasOwn(event, hidden), hidden).toBe(false);
+    expect(JSON.stringify(refused)).not.toContain(FAKE_PROVIDER_KEY);
+    expect(refused[0]!.envelope).toEqual(expect.objectContaining({ instanceId: "inst-1" }));
   });
 
   it("names every request.opened field as out or kept in", () => {
     // a field the projection does not name is dropped, never sent by default
     const extra = { ...ask(), futureSecret: FAKE_PROVIDER_KEY } as unknown as RuntimeEvent;
     expect(JSON.stringify(requestOpenedOut(extra as Extract<RuntimeEvent, { type: "request.opened" }>))).not.toContain(FAKE_PROVIDER_KEY);
+  });
+});
+
+describe("the engine map's secret-shaped names (Pi gate, tokens, secrets, keys)", () => {
+  const SECRETS = { MURAGE_PI_GATE: "fake-gate-blob-0003-not-real", SERVICE_TOKEN: "fake-token-0004-not-real", SERVICE_SECRET: "fake-secret-0005-not-real",
+    SERVICE_API_KEY: "fake-key-0006-not-real", OWNER_PASSWORD: "fake-password-0007-not-real" };
+  const secretAsk = (): RuntimeEvent => {
+    const base = ask() as RuntimeEvent & { execEnv: { env: Record<string, string> } };
+    return { ...base, execEnv: { ...base.execEnv, env: { ...base.execEnv.env, ...SECRETS } } } as unknown as RuntimeEvent;
+  };
+  it("never reach a stream, the log line, the inspector entry or the value-free projection", () => {
+    const event = secretAsk();
+    for (const out of [windowRuntimeEvent(event), requestOpenedOut(event as never), loggedRuntimeEvent(event)]) {
+      const text = JSON.stringify(out);
+      for (const value of Object.values(SECRETS)) expect(text).not.toContain(value);
+      expect(Object.hasOwn(out as object, "execEnv")).toBe(false);
+      const names = (out as { envInfo?: { names?: string[] } }).envInfo?.names;
+      if (names) expect(names).toContain("MURAGE_PI_GATE");
+    }
   });
 });
 
@@ -320,19 +391,25 @@ describe("NOLIMITS L1-L4: a logged tool start is an allowlist (design 4.4)", () 
   });
 
   // row 6 (a): the real bus, Set T
-  it("row 6a (L6, Set T): a Codex shell start is logged as shell with its cwd; the live listener gets the original; the line reads back", () => {
+  it("row 6a (L6, Set T): a Codex shell start is logged as shell with its cwd; the live listener gets the original; the line reads back", async () => {
     const writes: string[] = [];
     const bus = new EventBus(((_file: string, data: string) => { writes.push(data); }) as never);
     const delivered: RuntimeEvent[] = [];
     bus.subscribe((event: RuntimeEvent) => { delivered.push(event); }, { durable: false });
+    // MAIN RULING INT-CONFLICT-DEFAULT e972f2e4fb 5be0eafbea: exercise a host-admitted Codex turn; preserve Set T and the exact execution callback.
+    const driver = makeFakeDriver({ kind: "codex" });
+    const instance = await driver.driver.create({ instanceId: "inst-1", displayName: undefined, environment: {}, enabled: true, config: {} });
+    bus.attach([instance]);
+    const source = bus.admitNewTurn("inst-1", "t-log-bus");
     const event = start({ provider: "codex", threadId: "t-log-bus", title: "cat > /w/a.md <<EOF\n" + SECRET + "\nEOF", toolIdentity: { name: "shell" }, input: { command: "cat > /w/a.md <<EOF\n" + SECRET + "\nEOF", cwd: "/w" } });
-    bus.publish(event);
+    bus.publish(event, source);
     const lines = writes.join("").split("\n").filter(Boolean);
     expect(lines).toHaveLength(1);
     const row = JSON.parse(lines[0]!) as Record<string, unknown>;
     setT(row, "bus codex shell");
     expect(row.title).toBe("shell");
     expect(row.input).toEqual({ cwd: "/w" });
+    expect(row.itemId).toBe("1-0"); // MAIN RULING INT-CONFLICT-DEFAULT e972f2e4fb: host-minted item identity replaces provider identity.
     expect(delivered.some((e) => JSON.stringify(e).includes(SECRET) && (e as unknown as { title: string }).title === (event as unknown as { title: string }).title)).toBe(true);
     const root = mkdtempSync(join(tmpdir(), "murage-log-allow-"));
     try {
@@ -340,8 +417,10 @@ describe("NOLIMITS L1-L4: a logged tool start is an allowlist (design 4.4)", () 
       mkdirSync(join(root, "native"), { recursive: true });
       writeFileSync(join(root, "events", "t-log-bus.ndjson"), `${lines[0]}\n`);
       const page = readThreadEvents({ eventsDir: join(root, "events"), nativeDir: join(root, "native"), threadId: "t-log-bus" });
-      expect(page.entries.map((entry) => entry.data)).toEqual([expect.objectContaining({ type: "item.started", itemType: "tool", itemId: "item-1", title: "shell" })]);
+      // MAIN RULING INT-CONFLICT-DEFAULT e972f2e4fb: read back the exact admitted item identity, with the same tool-start structure.
+      expect(page.entries.map((entry) => entry.data)).toEqual([expect.objectContaining({ type: "item.started", itemType: "tool", itemId: row.itemId, title: "shell" })]);
     } finally {
+      bus.detachAll();
       removeTempDirSync(root);
     }
   });
@@ -564,8 +643,15 @@ describe("sink allowlist: no marker reaches disk from any frame (Astra r1 H8-H11
         // the structure a bug report needs is still there (unmarked ids and labels)
         if (mode === "non-id") {
           const rows = readFileSync(eventsFile, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
-          expect(rows.find((row) => row.requestId === "r-1" && row.type === "request.opened")).toMatchObject({ tool: "Write", summary: "edit", toolInput: JSON.stringify({ file_path: "/w/a.md" }), filePaths: ["/w/a.md"] });
-          expect(rows.find((row) => row.type === "item.completed" && row.itemType === "tool")).toMatchObject({ itemId: "i-1", ok: true });
+          // MAIN RULING INT-CONFLICT-DEFAULT e972f2e4fb 5be0eafbea: unadmitted provider rows are omitted; retain every serializer allowlist assertion separately.
+          const omitted = rows.filter(row => row.type === "audience.omitted");
+          expect(omitted).toHaveLength(EVENTS.length);
+          expect(omitted.every(row => row.generation === 0)).toBe(true);
+          expect(rows.every(row => row.threadId === "unowned" && row.requestId === undefined && row.itemId === undefined)).toBe(true);
+          expect(rows.filter(row => row.type !== "audience.omitted").map(row => row.type)).toEqual(["session.exited", "turn.completed", "request.resolved", "runtime.error", "runtime.error"]);
+          const projected = EVENTS.map(event => loggedRuntimeEvent(mark(event, mode) as unknown as RuntimeEvent)) as unknown as Record<string, unknown>[];
+          expect(projected.find((row) => row.requestId === "r-1" && row.type === "request.opened")).toMatchObject({ tool: "Write", summary: "edit", toolInput: JSON.stringify({ file_path: "/w/a.md" }), filePaths: ["/w/a.md"] });
+          expect(projected.find((row) => row.type === "item.completed" && row.itemType === "tool")).toMatchObject({ itemId: "i-1", ok: true });
           const native = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8").trim().split("\n").map((line) => JSON.parse(line).msg);
           expect(native[4].params.item).toEqual({ type: "fileChange", id: "i-1", status: "inProgress", changes: [{ path: "/w/a.md", kind: "update" }] });
           expect(native[1].message.content).toEqual([{ type: "tool_result", tool_use_id: "toolu_1", is_error: false }, { type: "tool_result", tool_use_id: "toolu_2" }]);
@@ -654,4 +740,31 @@ describe("sink allowlist: no marker reaches disk from any frame (Astra r1 H8-H11
       removeTempDirSync(root);
     }
   });
+});
+
+// MAIN RULING 1115-SOURCE-PINS-GROK A4: execute the shipped refusal presenter, including the unscoped desktop delivery.
+it('refusal presentation projects private fields before an unscoped desktop receives the runtime frame',()=>{
+  const secret='private-refusal-fixture';
+  const event={type:'turn.completed',eventId:'refusal-event',provider:'murage',threadId:'refusal-thread',createdAt:'2026-11-01T00:00:00.000Z',ok:false,stopReason:'memory_refused',
+    source:{secret},lease:{secret},execEnv:{env:{FIXTURE_KEY:secret}},raw:{secret},toolCall:{input:{secret}},input:{secret},result:{secret}};
+  const frames:unknown[]=[];
+  let present:()=>void=()=>{throw Error('missing presenter');};
+  const {admitLedgerLease}=wiring(['admitLedgerLease','broadcast'],{
+    bus:{admitNewTurn:()=>({admission:{},attachment:{}}),refuseTurn:()=>[{event}]},database:()=>({}),
+    createLedgerLease:(_identity:unknown,hooks:{present:(line:string)=>void})=>{present=()=>hooks.present('Turn refused');return {};},
+    persistLedgerRefusal:(_db:unknown,work:()=>void)=>{work();return Promise.resolve();},
+    transaction:(work:()=>void)=>work(),store:{appendMessage:()=>{}},murageLine:(line:unknown)=>line,randomUUID:()=> 'refusal-notice',
+    turnCardGate:createTurnCardGate(),noteRefusedLeaseTerminal:()=>{},admittedLedgerLeases:new Map(),ledgerCompletionSources:new Map(),ledgerLeasesByAdmission:new WeakMap(),ledgerProviderInstances:new WeakMap(),windowRuntimeEvent,
+    lastSeq:0, STREAM_ID:'fixture-stream', frameSubject,
+    replayBuffer:{append:(entry:unknown)=>entry}, netMeter:{noteFrame:()=>{}},
+    // Drive the shipped broadcaster with an unscoped desktop writer: it receives the whole frame.
+    wants:(client:{scoped:boolean})=>!client.scoped,
+    sseClients:new Set([{scoped:false,writer:{acceptedBytes:0,send:(frame:string)=>frames.push(JSON.parse(frame.split('data: ')[1]!))}}]),
+  });
+  admitLedgerLease!('bot','refusal-thread','generation',{turnId:'turn'},{instanceId:'instance',adapter:{interruptTurn:async()=>({closeConfirmed:true})}},{});
+  present();
+  expect(frames).toHaveLength(1);
+  expect(frames[0]).toEqual({kind:'runtime',seq:1,event:{type:'turn.completed',eventId:'refusal-event',provider:'murage',threadId:'refusal-thread',createdAt:'2026-11-01T00:00:00.000Z',ok:false,stopReason:'memory_refused'}});
+  expect(JSON.stringify(frames)).not.toContain(secret);
+  for(const field of ['source','lease','execEnv','raw','toolCall','input','result']) expect(Object.hasOwn((frames[0] as any).event,field),field).toBe(false);
 });

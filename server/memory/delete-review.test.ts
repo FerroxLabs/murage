@@ -72,7 +72,10 @@ it("a synchronous access pass checks a thread once and observes deletion within 
   try {
     inMemoryAccessPass(()=>{
       for(let i=0;i<100;i++)assertMemoryAccess(f.deletedAccess);
-      expect(spy.mock.calls.filter(([sql])=>sql==="SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?")).toHaveLength(1);
+      // 249523340e combines the thread seek and deleted-reader bot seek in one statement.
+      const checks=spy.mock.calls.filter(([sql])=>sql.startsWith("SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?"));
+      expect(checks).toHaveLength(1);
+      expect(checks[0]![0]).toContain("UNION ALL SELECT 1 FROM memory_scopes s JOIN memory_deny d");
       deleteA();
       expect(()=>assertMemoryAccess(f.deletedAccess)).toThrow("MEMORY_CONTEXT_REVOKED");
       expect(()=>assertMemoryAccess(f.access)).not.toThrow();

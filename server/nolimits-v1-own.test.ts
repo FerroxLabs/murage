@@ -1,9 +1,11 @@
+import { fixtureMemoryAccess } from './testing/recall-access-fixture.ts';
+import { createMemoryEmailSecrets } from "./testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // NOLIMITS v1 cut part B (designs/NOLIMITS-V1-CUT.md V1, V6, F1, F2, F4): Murage's own tools at the server. One middleware in
-// front of every /api/internal/* route marks (a), holds writers on a marked lane turn with the floor refusal (b), records
-// ownWrite keys off the lane (c); the memory bundle and the recall tools mark (V1); memory_save on a marked turn binds the
+// front of every /api/internal/* route marks (a), preserves the writer floor below No limits (b), records
+// ownWrite keys on successful marked writes (c); the memory bundle and the recall tools mark (V1); memory_save on a marked turn binds the
 // outside origin (F2); the bot's notebook in the prompt is matched against the download registry (F4).
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,7 +25,7 @@ import { fileOutsideStore } from "./outside-store.ts";
 import { toolStartOutside } from "./outside-wire.ts";
 import {
   OUTSIDE_WRITE_REFUSAL, OWN_HOLD_EXEMPT, OWN_MARKS_TOOLS, OWN_READ_CLEAN_TOOLS, OWN_WRITERS, notebookOutsideMark, ownCreatedBot, ownEnvelopeApplied, ownTargetOfBody, ownToolGate, ownWriteCommit, ownWritePlan,
-  ownToolOfRoute, ownWriteTurnStartMark,
+  ownToolOfRoute, ownWriteTurnStartMark, ownPeerContentDelivered,
 } from "./outside-own.ts";
 import { markRecallRecords, markRecordOutsideDerived, memoryRecordsNotProvenClean, recordOutsideDerived } from "./memory/outside-derived.ts";
 import { appendMessage } from "./message-db.ts";
@@ -32,7 +34,7 @@ import { setMemoryMode } from "./memory/repository.ts";
 import { setMemoryCaptureRoster } from "./memory/capture-scope.ts";
 import { memoryAgentRoute } from "./memory/routes.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
-import { memoryAccess, reconcileMemoryRoster } from "./memory/policy.ts";
+import { reconcileMemoryRoster } from "./memory/policy.ts";
 import { captureSource } from "./memory/capture.ts";
 import { claimMemoryJob, publishMemoryWork } from "./memory/jobs.ts";
 import { captureWork } from "./memory/chunks.ts";
@@ -41,9 +43,11 @@ import { buildMemoryBundle } from "./memory/bundle.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { FluxEmailClient } from "./email/flux-email-client.ts";
-import { EmailSecretStore, emailCredentialProvider } from "./email/email-secrets.ts";
+import { emailCredentialProvider } from "./email/email-secrets.ts";
 import { EmailStore } from "./email/email-store.ts";
 import { EmailSendService } from "./email/send-service.ts";
+import { Store } from "./store.ts";
+import { serviceQueueFixture } from "./testing/service-queue-fixture.ts";
 import { FakeFlux } from "./testing/fake-flux-email.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { initializeMobilePush } from "./mobile-push-store.ts";
@@ -53,18 +57,19 @@ import { admitFact, type ServerFact } from "./bot-calls-facts.ts";
 import { CALL_CAPS, decide, type DecideWorld } from "./bot-calls-policy.ts";
 import { callCardText, callOpener } from "./bot-calls-card.ts";
 
+import { provenInsert } from "./testing/email-proven.ts";
 const tmp = () => mkdtempSync(join(tmpdir(), "nlmi-v6-"));
 let now = 0;
 const wire = () => expect(wireOutsideStore(fileOutsideStore(join(tmp(), "outside-state.jsonl")), () => now)).toBe(true);
 afterEach(() => { restartOutsideForTests(); now = 0; });
 
-const LANE = { lane: true } as const;
+const LANE = { lane: true, bot: { autoApprove: true, fullAccess: true, noLimits: true, permissionExplicit: true }, origin: 'owner' } as const;
 const OFF = { lane: false } as const;
 const gate = (tool: string, facts: { lane: boolean }, extra: Partial<Parameters<typeof ownToolGate>[0]> = {}) =>
-  ownToolGate({ threadId: "t1", botId: "b1", tool, lane: facts.lane, ...extra });
+  ownToolGate({ threadId: "t1", botId: "b1", tool, ...facts, ...extra });
 /** S4 R-a: the gate, then the route answering 2xx: the keys are recorded after the route (ownWritePlan, ownWriteCommit). */
 const gateThenRoute = (tool: string, facts: { lane: boolean }, extra: Partial<Parameters<typeof ownToolGate>[0]> = {}) => {
-  const call = { threadId: "t1", botId: "b1", tool, lane: facts.lane, ...extra };
+  const call = { threadId: "t1", botId: "b1", tool, ...facts, ...extra };
   const held = ownToolGate(call);
   if (!held) ownWriteCommit(ownWritePlan(call), 200);
   return held;
@@ -78,6 +83,8 @@ const ACTING_ROUTES: readonly string[] = [
   "/api/internal/computer-control", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer", "/api/internal/connectors/mcp", "/api/internal/highlevel/mcp",
   // the computer session's heartbeat: touches the stall watchdog, reads and writes nothing
   "/api/internal/computer-activity",
+  // 9e6f55e198: continuation-backed web reader, authorizes its own capability at each read and returns untrusted content.
+  "/api/internal/web-read",
 ];
 /** Tools the route table names that are outside the four closed lists; each entry says why. */
 const OWN_ROUTE_ONLY: readonly string[] = [
@@ -95,7 +102,8 @@ describe("V6-5 the own-tool lists are closed", () => {
     for (const list of lists) for (const tool of list) if (!WRITERS_NOT_UNASKED.includes(tool)) expect(every.has(tool), tool).toBe(true);
     for (const tool of WRITERS_NOT_UNASKED) expect(every.has(tool), tool).toBe(false);
     expect(OWN_WRITERS.size).toBe(46);
-    expect([...OWN_HOLD_EXEMPT].sort()).toEqual(["ask_user", "email_reply", "email_send", "email_trust_offer", "generate_image", "needs_owner_now"]);
+    // MAIN RULING INT-CONFLICT-DEFAULT dae96bbd09 6db73f030a: routine proposals file owner cards below No limits; all other writers remain gated.
+    expect([...OWN_HOLD_EXEMPT].sort()).toEqual(["ask_user", "email_reply", "email_send", "email_trust_offer", "generate_image", "needs_owner_now", "propose_routine", "propose_routine_action"]);
   });
 
   it("every /api/internal route the server serves or a driver calls has a classified tool, or is a named acting route", () => {
@@ -118,14 +126,15 @@ describe("V6-5 the own-tool lists are closed", () => {
     expect(unclassified.sort()).toEqual([]);
   });
 
-  it("venue_post: a Post in… line is an own write, so a marked No limits turn is refused and a clean one runs", () => {
+  it("venue_post reaches its own guard and preserves the outside mark", () => {
     wire();
     expect(ownToolOfRoute("POST", "/api/internal/venue/post")).toBe("venue_post");
     beginOutsideTurn("t1", "i1", "turn-1", false);
     expect(gate("venue_post", LANE)).toBeNull();
     expect(turnOutsideRead("t1")).toBeNull();
     markTurnOutside("t1", "web page");
-    expect(gate("venue_post", LANE)).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+    expect(gate("venue_post", LANE)).toBeNull();
+    expect(turnOutsideRead("t1")).toBe("web page");
   });
 });
 
@@ -177,17 +186,19 @@ describe("V6 (a) the mark, V1-2 the recall tools, F1 the readers", () => {
     expect(gate("route:/api/internal/host-computer", OFF)).toBeNull();
     expect(turnOutsideRead("t1")).toBe("outside tool");
   });
-  it("a writer does not mark its own turn (so a clean lane turn may save twice); ask_bot and delegate_bot mark another bot", () => {
+  it("a writer and a peer call stay clean until peer content is delivered", () => {
     wire(); beginOutsideTurn("t1", "i", undefined, false);
     expect(gate("memory_save", LANE)).toBeNull();
     expect(gate("update_bot", LANE)).toBeNull();
     expect(turnOutsideRead("t1")).toBeNull();
     expect(gate("ask_bot", LANE)).toBeNull();
+    expect(turnOutsideRead("t1")).toBeNull();
+    ownPeerContentDelivered("t1", { origins: ["peer-result"], ranges: [] });
     expect(turnOutsideRead("t1")).toBe("another bot");
     // the engine side agrees: an own writer's item.started does not mark, a foreign server's tool of that name does
     expect(toolStartOutside({ origin: "engine", title: "mcp__murage-memory__memory_save" })).toBeNull();
     expect(toolStartOutside({ origin: "engine", title: "mcp__agents__update_bot" })).toBeNull();
-    // 1.0.19 4.2: an own server's tool never marks at the item; ask_bot marks `another bot` in its handler (the gate above)
+    // 1.0.19 4.2: an own server's tool never marks at the item; ask_bot marks `another bot` only at content delivery
     expect(toolStartOutside({ origin: "engine", title: "mcp__agents__ask_bot" })).toBeNull();
     expect(toolStartOutside({ origin: "engine", title: "mcp__elsewhere__memory_save" })).toBe("outside tool");
   });
@@ -209,7 +220,7 @@ describe("V6 (a) the mark, V1-2 the recall tools, F1 the readers", () => {
 
 describe("V6 (b) the writer hold on a marked lane turn", () => {
   const held = [...OWN_WRITERS].filter((tool) => !OWN_HOLD_EXEMPT.has(tool));
-  it("route ruling 11-06: a connect-app card and a share ask are refused on a marked lane turn, run on a clean one, record their key off the lane", () => {
+  it("route ruling 11-06: a connect-app card and share ask reach their own guards and retain marks and write keys", () => {
     wire();
     expect(ownToolOfRoute("POST", "/api/internal/connectors/request")).toBe("connectors_request");
     expect(ownToolOfRoute("POST", "/api/internal/room-share/ask")).toBe("ask_owner_to_share");
@@ -218,7 +229,7 @@ describe("V6 (b) the writer hold on a marked lane turn", () => {
       expect(gate(tool, LANE), tool).toBeNull();
       expect(turnOutsideRead("t1"), tool).toBeNull();
       markTurnOutside("t1", "web page");
-      expect(gate(tool, LANE), tool).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+      expect(gate(tool, LANE), tool).toBeNull();
     }
     expect(ownWritten("bot:b1")).toBe(false);
     beginOutsideTurn("t1", "i", undefined, false);
@@ -278,42 +289,47 @@ describe("V6 (b) the writer hold on a marked lane turn", () => {
       expect(route).toContain("line: parsed.data.line, at: Date.now(), outside: turnOutsideRead(internalClaim.threadId) }");
     } finally { db.close(); }
   });
-  it("V6-1 every OWN_WRITERS tool but the six is refused with the fixed text on a marked lane turn, before it runs", () => {
+  it("bot-create authority replaces the blanket lane refusal; each tool keeps its own guards", () => {
     wire(); beginOutsideTurn("t1", "i", undefined, false); markTurnOutside("t1", "web page");
-    for (const tool of held) expect(gate(tool, LANE), tool).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+    for (const tool of held) expect(gate(tool, LANE), tool).toBeNull();
     for (const tool of OWN_HOLD_EXEMPT) expect(gate(tool, LANE), tool).toBeNull();
     expect(OUTSIDE_WRITE_REFUSAL).not.toMatch(/—|safe|free/i);
   });
   it("V6-1 a clean lane turn and a marked turn off the lane run every writer as today", () => {
     wire();
-    // a fresh clean turn per tool: ask_bot, delegate_bot and project_bring_in mark their own turn ("another bot"), so a later
-    // writer in the same turn is rightly refused
+    // A fresh clean turn per tool: ask_bot, delegate_bot and project_bring_in can mark their own turn.
     for (const tool of held) { beginOutsideTurn("t1", "i", undefined, false); expect(gate(tool, LANE), tool).toBeNull(); }
     beginOutsideTurn("t1", "i", undefined, false);
     markTurnOutside("t1", "web page");
     for (const tool of held) expect(gate(tool, OFF), tool).toBeNull();
   });
-  it("the store not ready reads as marked on the lane (fail closed)", () => {
+  it("the store not ready stays marked while the authority gate routes tools to their guards", () => {
     beginOutsideTurn("t1", "i", undefined, false);
-    expect(gate("memory_save", LANE)).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+    expect(gate("memory_save", LANE)).toBeNull();
+    expect(turnOutsideRead("t1")).not.toBeNull();
   });
-  it("V6-2 a phoneJobs tool on a marked lane turn is held before any job row; off the lane it runs", () => {
+  it("D3 phone tools on a marked lane reach the phone guards and mint nothing", () => {
     wire(); beginOutsideTurn("t1", "i", undefined, false); markTurnOutside("t1", "web search");
     for (const tool of [...PHONE_TOOL_NAMES, "phone"]) {
-      expect(gate(tool, LANE), tool).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+      expect(gate(tool, LANE), tool).toBeNull();
       expect(gate(tool, OFF), tool).toBeNull();
     }
   });
-  it("the hold is judged on the state before the call: a writer that is the first own call of a clean lane turn runs", () => {
+  it("delegate receipts stay clean; delivered content marks and later calls keep the mark", () => {
     wire(); beginOutsideTurn("t1", "i", undefined, false);
     expect(gate("delegate_bot", LANE)).toBeNull();
+    expect(turnOutsideRead("t1")).toBeNull();
+    ownPeerContentDelivered("t1", { origins: [], ranges: [] });
+    expect(turnOutsideRead("t1")).toBeNull();
+    ownPeerContentDelivered("t1", { origins: ["peer-result"], ranges: [] });
     expect(turnOutsideRead("t1")).toBe("another bot");
-    expect(gate("delegate_bot", LANE)).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+    expect(gate("delegate_bot", LANE)).toBeNull();
+    expect(turnOutsideRead("t1")).toBe("another bot");
   });
   it("the middleware sits in front of every /api/internal route, after the capability checks and before the memory routes", () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8").replace(/\r\n/g, "\n");
     const mount = source.indexOf('if (path.startsWith("/api/internal/")) {');
-    const call = source.indexOf("const ownHeld = ownToolGate(", mount);
+    const call = source.indexOf("const ownHeld = BOT_MANAGEMENT.has(ownTool) ? null : ownToolGate(ownCall)", mount);
     // the one route that answers before that step takes it too
     expect(source.indexOf('tool: "project_propose"', mount)).toBeLessThan(source.indexOf("chiefProposals.submit(", mount));
     expect(mount).toBeGreaterThan(0);
@@ -377,13 +393,15 @@ describe("V6-4 email on a marked lane turn", () => {
   beforeEach(() => {
     const fake = new FakeFlux();
     const store = new EmailStore(new DatabaseSync(":memory:"));
-    const secrets = new EmailSecretStore();
+    const secrets = createMemoryEmailSecrets();
     secrets.setOwner({ token: "owner-token", keyId: "key_owner" });
     secrets.setBotKey("b1", { token: "bot-token", keyId: "key_b1" });
     const client = new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: emailCredentialProvider(secrets, () => null), timeoutMs: 100 });
     let n = 0;
-    service = new EmailSendService({ store, client, installId: "inst", now: () => 1_800_000_000_000, newId: () => `send-${++n}` });
-    store.insertBinding({ botId: "b1", inboxId: "ibx_1", address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy: "auto", failure: null, updatedAt: 1_800_000_000_000 } as Parameters<EmailStore["insertBinding"]>[0]);
+    const authority = serviceQueueFixture(new Store());
+    service = new EmailSendService({ store, client, authorityFor: authority.authorityFor, installId: "inst", now: () => 1_800_000_000_000, newId: () => `send-${++n}` });
+    authority.queue(service.approvalQueue());
+    provenInsert(store, { botId: "b1", inboxId: "ibx_1", address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy: "auto", failure: null, updatedAt: 1_800_000_000_000 } as Parameters<EmailStore["insertBinding"]>[0]);
     store.addTrusted("b1", "jane@acme.test", "allow", "owner", 1_800_000_000_000);
   });
   const draft = { kind: "send" as const, to: ["jane@acme.test"], cc: [], subject: "Thursday", text: "Hi Jane", attachments: [], replyTo: null };
@@ -400,7 +418,7 @@ describe("V1-1 the memory bundle, F2 memory_save on a marked turn", () => {
   function access() {
     const registry = new InternalCapabilities(), generation = registry.begin("bot", "thread");
     const token = registry.mint({ botId: "bot", threadId: "thread", generation, depth: 10, kind: "memory", skillAuthoring: false });
-    return memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
+    return fixtureMemoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
   }
   function capture(id: string, text: string) {
     captureSource(database(), { id, threadId: "thread", origin: { kind: "attended" }, kind: "text", speaker: "owner", outcome: "recorded", text });
@@ -483,7 +501,7 @@ describe("1.0.19 4.2 r3 U3b through the memory routes: search and get mark the r
     const record = database().prepare("SELECT id, version FROM memory_records").get()!;
     const registry = new InternalCapabilities(); registry.begin("bot", "thread", "generation");
     const token = registry.mint({ botId: "bot", threadId: "thread", generation: "generation", depth: 99, kind: "memory", skillAuthoring: false });
-    const access = memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
+    const access = fixtureMemoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
     const hit = { id: String(record.id), version: Number(record.version) };
     const bridge = { search: async () => ({ hits: [{ ...hit, score: 1, lexical: true }], vectorRows: 0, coverageComplete: true }) };
     return { access, bridge, hit };
@@ -705,8 +723,12 @@ describe("S4 Astra round 1 findings (static review of fd59292a5)", () => {
   });
   it("K19 the record runs on finish or close, once", () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8");
-    expect(source).toContain('res.once("finish", record); res.once("close", record);');
-    expect(source).toContain("if (!recorded) { recorded = true; ownWriteCommit(ownKeys, res.statusCode); }");
+    // Row25 supersedes finish-time stamping: failure must still be able to stop the effect.
+    expect(source).not.toContain('res.once("finish", record); res.once("close", record);');
+    const beforeEffect = source.indexOf('if (!ownWriteCommit(ownKeys, 200)) return json(res, 503');
+    expect(beforeEffect).toBeGreaterThan(source.indexOf('const ownKeys = ownWritePlan(ownCall)'));
+    expect(beforeEffect).toBeLessThan(source.indexOf('if(requiredKind==="memory")', beforeEffect));
+    expect(source.match(/ownWriteCommit\(ownKeys, 200\)/g)).toHaveLength(1);
   });
   it("K20 the Chief turn-start check reads only the bots the Chief prompt names: leaders, individuals, direct reports, never a specialist", () => {
     const bots = [
@@ -763,7 +785,9 @@ describe("S4 Astra round 2 findings (static review of 32f483de3)", () => {
     expect(ownWritten("bot:*")).toBe(false);
     expect(ownWritten("project:*")).toBe(false);
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8");
-    expect(source).toContain("} else ownEnvelopeApplied(threadId, group.id, group.memberIds);");
+    const stamp = source.indexOf('ownEnvelopeApplied(threadId, group.id, group.memberIds);');
+    expect(stamp).toBeGreaterThan(0);
+    expect(stamp).toBeLessThan(source.indexOf('const outcome = projectHooks.applyGoalEnvelope(db,', stamp));
   });
   it("K23 an assignee whose name begins with @ is resolved with and without the @ (the route keeps it)", () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8");

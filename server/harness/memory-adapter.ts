@@ -25,6 +25,9 @@ export function decorateMemoryInstance(live: ProviderInstance): ProviderInstance
     }
   });
   const sendTurn = async (input: SendTurnInput) => {
+    // sourceContext is host-only provenance. The rest copy preserves its exact
+    // object identity through memory decoration; onEvent below binds and forwards
+    // the original callback, including its second SourceContext argument.
     const { memoryContext: bundled, ...turn } = input;
     // An engine command reaches the engine as the command alone, so it
     // carries no reference, and counts as an unbundled turn below: the next

@@ -1,3 +1,6 @@
+import { windowsHideBundlePlugin } from './windows-hide-bundle-plugin.mjs';
+import { windowsHideImport } from "../shared/win-hide-child-process.mjs";
+import { stagePiWindowsHide } from "./stage-pi-windows-hide.mjs";
 // Bundle each harness-server entry point into a self-contained ESM file.
 //
 // Why this exists: the packaged app ships ZERO node_modules (see the files:
@@ -18,7 +21,7 @@
 // drivers/ nested; import.meta.url still resolves to the same location, so
 // that lookup is unaffected.
 import { build } from "esbuild";
-import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { checkRuntimeSibling } from "./runtime-sibling-mode.mjs";
 import { assertSentinelBundles } from "./sentinel-bundle-check.mjs";
 import { fileURLToPath } from "node:url";
@@ -42,6 +45,10 @@ const yamlEsmPlugin = {
 
 // Every file run as its own process. Keep in sync with the spawn sites above.
 const ENTRY_POINTS = [
+  "env-path.ts",
+  "wipe-guard/server.ts",
+  "consuming-turn-ingress.ts",
+  "proxy-turn-release.ts",
   "approval-notification-state.ts",
   "incident-diagnostics.ts",
   "backup-coordinator.ts",
@@ -50,6 +57,8 @@ const ENTRY_POINTS = [
   "windows-backup-resources.ts",
   "installation-windows-backup-transport.ts",
   "memory/worker.ts",
+  "io-child-bootstrap.ts",
+  "io-proxy-launcher.ts",
   "browser-extension-panel-avatar-encoder.ts",
   "bot-package-guard-worker.ts",
   "engine-history-worker.ts",
@@ -59,6 +68,9 @@ const ENTRY_POINTS = [
   // The Cloud launcher runs this as the browser user (modes browser-restore / browser-restore-mark).
   "browser-restore-cli.ts",
   "drivers/memory-proxy.ts",
+  // One MCP stop proof attempt in its own child (nlrace V4). The packaged registry (shared/spawned-proxies.mjs) expects
+  // dist-server/drivers/mcp-stop-probe.js; the tsc copy lands under dist-server/server/, so it is bundled here.
+  "drivers/mcp-stop-probe.ts",
   "index.ts",
   // The packaged smoke probe imports this manifest directly. Importing the
   // shared avatar contract widens TypeScript's inferred emit root to the repo,
@@ -72,10 +84,12 @@ const ENTRY_POINTS = [
   "vps-container-mcp.ts",
   "cloud-home/vps-relay-mcp.ts",
   "permission-proxy.ts",
+  "mcp-wipe-proxy.ts",
   "job-launcher.ts",
   "connector-proxy.ts",
   "drivers/agents-proxy.ts",
   "drivers/remote-mcp-proxy.ts",
+  "drivers/cli-mount-shim.ts",
   "drivers/dweb-proxy.ts",
   "drivers/phone-proxy.ts",
   "drivers/phone-jobs-proxy.ts",
@@ -99,6 +113,8 @@ const ENTRY_POINTS = [
 const RUNTIME_SIBLINGS = [
   // server/drivers/murage-exec.ts reads the shell wrapper at module load: missing, the packaged server dies at boot.
   { reader: "drivers/murage-exec.ts", file: "drivers/murage-exec", mode: 0o755 },
+  // X3: and its W5 shape list, installed beside the wrapper (installMurageExec)
+  { reader: "drivers/murage-exec.ts", file: "drivers/murage-exec.shapes", mode: 0o644 },
 ];
 
 const main = await build({
@@ -111,11 +127,11 @@ const main = await build({
   outbase: server,
   outdir: join(root, "dist-server"),
   // Bundled CommonJS ZIP dependencies still require Node built-ins.
-  banner: { js: 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
+  banner: { js: windowsHideImport + 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
   // Written after tsc, replacing its output for these entry points.
   allowOverwrite: true,
   logLevel: "info",
-  plugins: [yamlEsmPlugin],
+  plugins: [yamlEsmPlugin, windowsHideBundlePlugin()],
   external: ["@huggingface/transformers"],
 });
 
@@ -134,6 +150,47 @@ for (const { reader, file, mode } of RUNTIME_SIBLINGS) {
   }
 }
 
+// Owners: wipe-guard-bundle owns packaging; wg-shim owns the shim tree;
+// wg-callback owns the standalone callback/client.
+// env-path resolves these relative to its bundle, so nested entry points need
+// the same sibling tree as index.js. Copy individual files: directory cpSync
+// can recreate tool aliases with build-machine absolute targets. Regular
+// executable bytes work in extraResources on POSIX and in Windows Git Bash.
+const WIPE_GUARD_RUNTIME = ["wipe-guard/shim", "wipe-guard/client.mjs"];
+function copyWipeGuardRuntime(source, target) {
+  if (statSync(source).isDirectory()) {
+    mkdirSync(target, { recursive: true });
+    for (const name of readdirSync(source)) copyWipeGuardRuntime(join(source, name), join(target, name));
+  } else {
+    copyFileSync(source, target);
+    chmodSync(target, 0o755);
+    checkRuntimeSibling(target, 0o755);
+  }
+}
+const guardOutputs = Object.entries(main.metafile.outputs).filter(([out, meta]) => out.endsWith(".js")
+  && Object.keys(meta.inputs).some(input => {
+    const path = input.replaceAll(String.fromCharCode(92), "/");
+    return path.endsWith("server/env-path.ts") || path.endsWith("server/drivers/murage-exec-wipe.ts");
+  }));
+for (const [out] of guardOutputs) {
+  const base = join(process.cwd(), dirname(out));
+  for (const file of WIPE_GUARD_RUNTIME) {
+    const target = join(base, file);
+    mkdirSync(dirname(target), { recursive: true });
+    // Remove stale links before copyFileSync, which otherwise writes through
+    // an old alias into the build checkout instead of replacing the alias.
+    rmSync(target, { recursive: true, force: true });
+    copyWipeGuardRuntime(join(server, file), target);
+    if (file.endsWith("/shim")) for (const name of readdirSync(target)) {
+      chmodSync(join(target, name), 0o755);
+      checkRuntimeSibling(join(target, name), 0o755);
+    }
+  }
+  const callback = join(root, "dist-server", "wipe-guard", "server.js");
+  const target = join(base, "wipe-guard", "server.js");
+  if (callback !== target) copyFileSync(callback, target);
+}
+
 // The WhatsApp bridge runs as its own forked process and imports Baileys, which is an ESM package
 // ("type":"module") with a wasm dependency and must not be inlined. It gets its own ESM build with `baileys`
 // and `jimp` external (the mcp-server build below is the pattern); it is deliberately NOT in ENTRY_POINTS,
@@ -150,7 +207,8 @@ if (WHATSAPP_ENTRY_POINTS.length > 0) {
     format: "esm",
     outbase: server,
     outdir: join(root, "dist-server"),
-    banner: { js: 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
+    banner: { js: windowsHideImport + 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
+    plugins: [windowsHideBundlePlugin()],
     allowOverwrite: true,
     logLevel: "info",
     external: ["baileys", "jimp"],
@@ -180,6 +238,8 @@ await build({
   target: "node20",
   format: "esm",
   outfile: join(root, "dist-server", "mcp-server.js"),
+  banner: { js: windowsHideImport },
+  plugins: [windowsHideBundlePlugin()],
   allowOverwrite: true,
   logLevel: "info",
 });
@@ -193,7 +253,8 @@ await build({
   target: "node24",
   format: "esm",
   outdir: join(root, "dist-server"),
-  banner: { js: 'import { createRequire as __recoveryRequire } from "node:module"; const require = __recoveryRequire(import.meta.url);' },
+  banner: { js: windowsHideImport + 'import { createRequire as __recoveryRequire } from "node:module"; const require = __recoveryRequire(import.meta.url);' },
+  plugins: [windowsHideBundlePlugin()],
   allowOverwrite: true,
   logLevel: "info",
 });
@@ -201,12 +262,10 @@ await build({
 // pi-mcp-extension.ts is NOT an Murage entry point: it is loaded by the
 // external `pi` process (pi's own jiti), which resolves its
 // @earendil-works/pi-coding-agent and typebox imports from pi's install. Ship
-// it verbatim as .ts so the packaged app has it too — never bundle it, or
+// it as .ts with only the installer path relocated — never bundle it, or
 // esbuild would inline pi's packages and the extension would stop loading.
-const piMcpExtSrc = join(server, "drivers", "pi-mcp-extension.ts");
-const piMcpExtDest = join(root, "dist-server", "drivers", "pi-mcp-extension.ts");
-mkdirSync(dirname(piMcpExtDest), { recursive: true });
-copyFileSync(piMcpExtSrc, piMcpExtDest);
-// pi-permission-gate.ts rides along the same way: pi loads it with `-e`.
-copyFileSync(join(server, "drivers", "pi-permission-gate.ts"), join(root, "dist-server", "drivers", "pi-permission-gate.ts"));
-
+stagePiWindowsHide(root);
+copyFileSync(join(server, "proxy-turn-release.ts"), join(root, "dist-server", "proxy-turn-release.ts"));
+copyFileSync(join(server, "ledger-refusal.ts"), join(root, "dist-server", "ledger-refusal.ts"));
+copyFileSync(join(server, "drivers", "hook-control.ts"), join(root, "dist-server", "drivers", "hook-control.ts"));
+copyFileSync(join(server, "drivers", "ask-stop.ts"), join(root, "dist-server", "drivers", "ask-stop.ts"));

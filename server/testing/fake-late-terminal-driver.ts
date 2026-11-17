@@ -50,6 +50,8 @@
 //                            dump line then also says whether the turn carried that mount (`memory`) and the threadRecall flag.
 //   FAKE_LATE_ENGINE_REFUSES "1" (with FAKE_LATE_HANDBACK): the engine itself refuses the late write (nothing written, stopReason
 //                            "submission_refused") without the harness's fence having refused it: a refusal nothing re-dispatches.
+//   FAKE_LATE_REFUSE_AFTER_FENCE "1" (with FAKE_LATE_HANDBACK): the harness's fence passes (the attempt is released), then the engine refuses the
+//                            write without confirming it (stopReason "submission_refused"): the owner's blocked-rebuild NOTE path, a refusal after a released attempt.
 //   FAKE_LATE_PLAIN_SESSION  "1" (without FAKE_LATE_HANDBACK): the engine reports its native session before it replies: the turn's resume
 //                            cursor when it resumes, a new session otherwise (a long chat on an engine that keeps its session).
 //   FAKE_LATE_DUMP_CONTEXT   "1": each dump line also says whether the turn carried a memory frame (`memoryContext`), the memory mount
@@ -64,6 +66,14 @@
 //   FAKE_LATE_IGNORE_STOP    "1" (with FAKE_LATE_HANDBACK): the late write is still attempted after a stop; each refused write then
 //                            appends {refused: true, turnId} (only in this mode: other tests count the dump's rows).
 //   FAKE_LATE_DUMP_FRAME     "1": each prompt line also carries the memory frame's text as the engine would receive it (`frame`).
+//   FAKE_LATE_TWO_FENCES     "1" (without FAKE_LATE_HANDBACK): the Claude and Antigravity shape (1.0.19 D3). The launch fence runs and the
+//                            process starts, sending no prompt bytes: the launch attempt is reported notWritten by id. The session gate
+//                            holds the turn, then the prompt's own second fence runs. Refused there, sendTurn THROWS (nothing handed back,
+//                            nothing written). Passed, the prompt is written: one {prompt: true} dump row and the usual reply.
+//   FAKE_LATE_ACCEPTED_RELAUNCH "1" (with FAKE_LATE_HANDBACK): the Claude shape on an ACCEPTED turn (1.0.19 D2b/R3): after the id is handed back
+//                            the engine relaunches: the launch fence passes (a fenced attempt, no prompt bytes), the session gate holds the turn,
+//                            then the prompt's own second fence runs. The driver settles the launch attempt (attemptSettled) BEFORE that fence and
+//                            attemptNotWritten after it, in claude.ts's order. Refused there, the turn is entirely unwritten and must rebuild.
 // An uninterrupted turn replies "Hello from late" and completes on its own.
 import { appendFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import type {
@@ -74,6 +84,7 @@ import type {
   RuntimeEventListener,
 } from "../contracts.ts";
 import { newEventId } from "../contracts.ts";
+import { fencedSubmit } from "../drivers/engine-input.ts";
 
 export const LATE_TERMINAL_DRIVER_KIND = "fakeLateTerminal";
 
@@ -93,7 +104,9 @@ const waitForFile = (path: string, everyMs = 20): Promise<void> =>
     poll.unref?.();
   });
 
-export function makeLateTerminalDriver(): AnyProviderDriver {
+/** Positive checked-write fixtures opt in; raw and unknown-action fixtures keep
+ * their original unknown-submission posture. */
+export function makeLateTerminalDriver(options: { fencedDefaults?: boolean } = {}): AnyProviderDriver {
   let turnCounter = 0;
   return {
     driverKind: LATE_TERMINAL_DRIVER_KIND,
@@ -107,11 +120,13 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
       const dump = input.environment.FAKE_LATE_DUMP;
       const agentsEnvPath = input.environment.FAKE_LATE_AGENTS_ENV;
       const listeners = new Set<RuntimeEventListener>();
+      const sources = new Map<string, import("../contracts.ts").SourceContext>();
       const emit = (event: EmittedEvent) => {
         const full = { eventId: newEventId(), provider: LATE_TERMINAL_DRIVER_KIND, providerInstanceId: input.instanceId, createdAt: new Date().toISOString(), ...event } as RuntimeEvent;
         // Snapshot: a listener may unsubscribe while the event is delivered.
         const snapshot = Array.from(listeners);
-        for (const listener of snapshot) listener(full);
+        for (const listener of snapshot) listener(full, sources.get(full.turnId ?? ""));
+        if (full.type === "turn.completed") sources.delete(full.turnId ?? "");
       };
       const active = new Map<string, { turnId: string; interrupted: boolean }>();
       return {
@@ -123,9 +138,10 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
         snapshot: async () => ({ state: "available", version: "0.0.0-late" }),
         adapter: {
           provider: LATE_TERMINAL_DRIVER_KIND,
-          capabilities: { sessionModelSwitch: "unsupported", agentsMcp: true, browserMcp: true, ...(input.environment.FAKE_LATE_MEMORY_MCP === "1" ? { memoryMcp: true } : {}), ...(input.environment.FAKE_LATE_FENCED_WRITES === "1" ? { fencedWrites: true } : {}) },
+          capabilities: { sessionModelSwitch: "unsupported", agentsMcp: true, browserMcp: true, ...(input.environment.FAKE_LATE_MEMORY_MCP === "1" ? { memoryMcp: true } : {}), ...((input.environment.FAKE_LATE_FENCED_WRITES === "1" || options.fencedDefaults && input.environment.FAKE_LATE_UNKNOWN_ACTION !== "1") ? { fencedWrites: true } : {}) },
           sendTurn: async (turn) => {
             const turnId = `late-turn-${++turnCounter}`;
+            if (turn.sourceContext) sources.set(turnId, turn.sourceContext);
             const skillAuthoring = turn.integrations?.agents?.env.MURAGE_SKILL_AUTHORING_ENABLED === "1";
             const memoryMount = input.environment.FAKE_LATE_MEMORY_MCP === "1" ? { memory: Boolean(turn.integrations?.memory), threadRecall: turn.threadRecall === true } : {};
             const context = input.environment.FAKE_LATE_DUMP_CONTEXT === "1" ? { memoryContext: turn.memoryContext !== undefined, memory: Boolean(turn.integrations?.memory), sessionReset: turn.sessionReset === true, resumed: typeof turn.resumeCursor === "string" } : {};
@@ -143,7 +159,10 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
               }
               void (async () => {
                 // as ACP's handshake: the write comes after the harness has heard the id (its acceptance runs first)
-                if (preGate) await new Promise(resolve => setTimeout(resolve, 20));
+                const relaunch = input.environment.FAKE_LATE_ACCEPTED_RELAUNCH === "1";
+                await new Promise(resolve => setTimeout(resolve, 20));
+                let launchAttempt: number | void = undefined;
+                if (relaunch) launchAttempt = turn.beforeSubmit?.();
                 if (sessionGate && !existsSync(sessionGate)) {
                   writeFileSync(`${sessionGate}.waiting`, turnId);
                   await waitForFile(sessionGate, 25);
@@ -167,22 +186,66 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
                   emit({ type: "item.started", itemType: "tool", origin: "engine", itemId: `tool-${turnId}`, title: "write_file", threadId: turn.threadId, turnId });
                   emit({ type: "item.completed", itemType: "tool", itemId: `tool-${turnId}`, ok: true, result: "written", threadId: turn.threadId, turnId });
                 }
-                try { turn.beforeSubmit?.(); } catch {
+                if (relaunch) turn.attemptSettled?.(launchAttempt);
+                let writing = false;
+                try {
+                  turn.beforeSubmit?.();
+                  if (relaunch) turn.attemptNotWritten?.(launchAttempt);
+                  if (input.environment.FAKE_LATE_REFUSE_AFTER_FENCE !== "1") fencedSubmit(turn, () => {
+                    writing = true;
+                    if (dump) appendFileSync(dump, `${JSON.stringify({ prompt: true, turnId, threadId: turn.threadId, ...(input.environment.FAKE_LATE_DUMP_FRAME === "1" ? { frame: `${turn.system ?? ""}\n${JSON.stringify(turn.memoryContext ?? null)}\n${turn.text ?? ""}` } : {}) })}\n`);
+                  }, turn.text);
+                } catch (error) {
+                  if (writing) throw error;
+                  if (relaunch) turn.attemptNotWritten?.(launchAttempt);
                   if (dump && input.environment.FAKE_LATE_IGNORE_STOP === "1") appendFileSync(dump, `${JSON.stringify({ refused: true, turnId, threadId: turn.threadId })}\n`);
                   if (active.get(turn.threadId) === entry) active.delete(turn.threadId);
                   emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
                   return;
                 }
-                if (dump) appendFileSync(dump, `${JSON.stringify({ prompt: true, turnId, threadId: turn.threadId, ...(input.environment.FAKE_LATE_DUMP_FRAME === "1" ? { frame: `${turn.system ?? ""}\n${JSON.stringify(turn.memoryContext ?? null)}\n${turn.text ?? ""}` } : {}) })}\n`);
+                // A released attempt without a confirmed write stays uncertain.
+                if (input.environment.FAKE_LATE_REFUSE_AFTER_FENCE === "1") {
+                  active.delete(turn.threadId);
+                  emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
+                  return;
+                }
+                turn.onEngineWrite?.();
                 emit({ type: "item.completed", itemType: "assistant_text", origin: "engine", text: "Hello from late", threadId: turn.threadId, turnId });
                 active.delete(turn.threadId);
                 emit({ type: "turn.completed", ok: true, threadId: turn.threadId, turnId });
               })();
               return { turnId };
             }
+            const beforeHandback = (write?: () => void) => {
+              try { const attempt = turn.beforeSubmit?.(); write?.(); return attempt; }
+              catch (error) { sources.delete(turnId); throw error; }
+            };
+            const twoFences = input.environment.FAKE_LATE_TWO_FENCES === "1";
+            if (twoFences) {
+              const attempt = beforeHandback();
+              // the launch attempt is settled, not withdrawn: the prompt's own fence follows on the same binding (antigravity.ts, attemptSettled)
+              turn.attemptSettled?.(attempt);
+            }
             if (sessionGate && !existsSync(sessionGate)) {
               writeFileSync(`${sessionGate}.waiting`, turnId);
               await waitForFile(sessionGate, 25);
+            }
+            if (twoFences) {
+              // the prompt's own second fence: a refusal throws, the engine has handed nothing back and written nothing (the Claude shape)
+              beforeHandback(() => {
+                fencedSubmit(turn, () => {
+                  if (dump) appendFileSync(dump, `${JSON.stringify({ prompt: true, turnId, threadId: turn.threadId })}\n`);
+                }, turn.text);
+                turn.onEngineWrite?.();
+              });
+            }
+            // Before handback a refused write throws to the caller; there is
+            // no native turn id or terminal event for the harness to bind.
+            if (!twoFences && input.environment.FAKE_LATE_UNKNOWN_ACTION !== "1") {
+              beforeHandback(() => {
+                fencedSubmit(turn, () => {}, turn.text);
+                turn.onEngineWrite?.();
+              });
             }
             const entry = { turnId, interrupted: false };
             active.set(turn.threadId, entry);
@@ -190,8 +253,6 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
             if (input.environment.FAKE_LATE_UNKNOWN_ACTION === "1" && dump) {
               // A real local fixture side effect before sendTurn resolves.
               appendFileSync(dump, `${JSON.stringify({ prompt: true, action: true, turnId, threadId: turn.threadId })}\n`);
-            } else {
-              try { turn.beforeSubmit?.(); } catch { return { turnId }; }
             }
             // The reply follows acceptance on a later tick, so a stop issued
             // inside the acceptance hook is seen before anything is said.
@@ -233,7 +294,7 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
             return () => listeners.delete(listener);
           },
         },
-        dispose: async () => { listeners.clear(); active.clear(); },
+        dispose: async () => { listeners.clear(); active.clear(); sources.clear(); },
       };
     },
   };

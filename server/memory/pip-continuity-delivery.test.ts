@@ -155,6 +155,28 @@ posixOnly("PIP P1 owner-authored Continuity in actual dispatch payloads", () => 
     expect(has(back, WORK) && has(back, TRAIT)).toBe(true);
   }, 150000);
 
+  it("R04 fresh admission delivers edited continuity after a retained predecessor is refused", async () => {
+    const fresh = (await api("POST", "/api/bots", { name: "Rebuild fixture", modelSelection: { instanceId: "verification", model: models[0] } })).bot;
+    await api("PATCH", `/api/bots/${fresh.id}`, { computer: "off", browser: false, composio: false, continuity: true });
+    await write(fresh.id, "relation", "owner", WORK);
+    await write(fresh.id, "commitment", "weekly-summary", COMMIT);
+    await write(fresh.id, "self-trait", "plain-words", TRAIT);
+    const first = await claudeTurn(fresh.id, fresh.threadId);
+    for (const text of PIP_ONLY) expect(has(first, text), text).toBe(true);
+
+    await api("PATCH", `/api/bots/${fresh.id}`, { continuity: false });
+    const off = await claudeTurn(fresh.id, fresh.threadId);
+    for (const text of PIP_ONLY) expect(has(off, text), text).toBe(false);
+    await api("PATCH", `/api/bots/${fresh.id}`, { continuity: true });
+    const edited = "PIP_REBUILD_EDITED send the weekly summary by noon.";
+    await write(fresh.id, "commitment", "weekly-summary", edited, 1);
+    const rebuilt = await claudeTurn(fresh.id, fresh.threadId);
+    for (const text of [edited, WORK, TRAIT]) expect(has(rebuilt, text), text).toBe(true);
+    expect(has(rebuilt, COMMIT)).toBe(false);
+    expect((await continuity(fresh.id)).records).toHaveLength(3);
+    expect((await continuity(fresh.id)).coverage).toMatchObject({ brought: 3, total: 3 });
+  }, 150000);
+
   it("keeps another bot's turns free of this bot's continuity", async () => {
     await api("PATCH", `/api/bots/${other.id}`, { continuity: true });
     const turn = await claudeTurn(other.id, other.threadId);

@@ -53,6 +53,9 @@ import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 import { insertRoomRequest, roomRequest } from "./room-requests.ts";
 import { botDeletionKey, recordOwnerDeletion } from "./owner-deletions.ts";
 import { released } from "./testing/released.ts";
+import { serviceQueueFixture } from "./testing/service-queue-fixture.ts";
+import { serviceQueue } from "./narrow-denials.ts";
+import type { ApprovalBus } from "./peer-approval.ts";
 import type { ReleasedActivityRow } from "./delegations.ts";
 import { status, outboundWords } from "./murage-status.ts";
 
@@ -62,7 +65,7 @@ const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-mo
 
 interface BusPair {
   commsBus: CommsBus;
-  approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  approvalBus: ApprovalBus;
   broadcasts: unknown[];
 }
 
@@ -79,7 +82,11 @@ function setupBuses(store: Store): BusPair {
     }
   });
   const commsBus: CommsBus = { store, broadcast };
-  const approvalBus = { store, broadcast };
+  // Peer approvals use the same authenticated producer and durable delivery
+  // queue as the server. A bare bus never opens a decision to answer.
+  const producer = serviceQueueFixture(store);
+  producer.queue(serviceQueue("peer"));
+  const approvalBus = { store, broadcast, authorityFor: producer.authorityFor };
   return { commsBus, approvalBus, broadcasts };
 }
 
@@ -229,7 +236,7 @@ describe("drainDelegations", () => {
   let from: BotRecord;
   let target: BotRecord;
   let commsBus: CommsBus;
-  let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  let approvalBus: ApprovalBus;
   let runTargetCalls: Array<{ toBotId: string; message: string; commsDepth: number; sourceThreadId?: string }>;
 
   beforeEach(() => {
@@ -908,7 +915,7 @@ describe("busy retries and receipts", () => {
   let from: BotRecord;
   let target: BotRecord;
   let commsBus: CommsBus;
-  let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  let approvalBus: ApprovalBus;
 
   beforeEach(() => {
     removeTempDirSync(DATA_DIR);
@@ -1305,6 +1312,21 @@ describe("delegations queued from a room", () => {
     ).toBe(true);
   });
 
+  it("M2 after the owner's Stop the dropped chip goes through the turn-card gate: no chip, the items are still dropped", async () => {
+    const queued = queueDelegation(buses.commsBus, chief, { toBotId: lead.id, message: "x", depth: 0 }, 1, room.threadId);
+    const { settleQueuedDelegations } = await import("./delegations.ts");
+    const { createTurnCardGate } = await import("./turn-card-gate.ts");
+    const gate = createTurnCardGate();
+    gate.noteStop({ threadId: room.threadId, botId: chief.id, turnIds: [] });
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const writeChip = (write: () => void) => { gate.write("delegations-dropped", { threadId: room.threadId, botId: chief.id }, write); };
+    expect(settleQueuedDelegations(buses.commsBus, {} as never, room.threadId, { ok: false, stopReason: "interrupted" }, chief.id, writeChip)).toBe("discarded");
+    expect({
+      chip: store.messagesFor(room.threadId).some((message) => message.tool?.name?.includes("dropped: the turn did not finish")),
+      receipt: findDelegationReceipt(queued.id!)?.status,
+    }).toEqual({ chip: false, receipt: "dropped" });
+  });
+
   // A room queue has many senders, and an interruption belongs to one turn.
   // Thread-granular discard made one member hitting Stop cancel another
   // member's handoff, with a receipt blaming "the delegating turn did not
@@ -1453,7 +1475,7 @@ describe("a busy teammate with a free thread", () => {
   let store: Store;
   let from: BotRecord;
   let target: BotRecord;
-  let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  let approvalBus: ApprovalBus;
   let broadcastOnly: CommsBus["broadcast"];
 
   beforeEach(() => {
@@ -1718,7 +1740,7 @@ describe("a parked handoff whose wake-up already passed", () => {
   let store: Store;
   let from: BotRecord;
   let target: BotRecord;
-  let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  let approvalBus: ApprovalBus;
   let broadcastOnly: CommsBus["broadcast"];
   let canStart: boolean;
   let bus: CommsBus;

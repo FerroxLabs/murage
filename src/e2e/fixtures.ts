@@ -21,10 +21,19 @@ export const test = base.extend<{ app: Page }>({
       },
       [EMAIL_GATE_KEY, "skipped"] as const,
     );
+    await page.addInitScript(() => { localStorage.setItem("help.seen.chat.level-chip", "1"); });
     await page.goto("/");
     await use(page);
   },
 });
+
+/** A spec that boots a fresh data dir meets the first-run welcome, which covers the whole window until the person
+ *  presses its one button (first-run-welcome.ts). Press it the way a person would, then wait for it to leave. */
+export async function dismissFirstRunWelcome(page: Page): Promise<void> {
+  const welcome = page.getByRole("dialog", { name: "Welcome to Murage", exact: true });
+  await welcome.getByRole("button", { name: "Get started", exact: true }).click();
+  await expect(welcome).toBeHidden();
+}
 
 /** The bot list. On desktop it is always in the layout; below `md` it slides
  *  in over the chat and has to be opened first, so a spec that just asserted

@@ -1,3 +1,6 @@
+import "../../shared/win-hide-child-process.mjs";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
+import { sendProxyFrame, proxyTransportLost, collectProxyUpstream } from "../proxy-turn-release.ts";
 // First-party Android phone MCP server. It deliberately accepts physical USB
 // devices only: no emulators, wireless debugging, network ADB, or Tailscale.
 import { spawn } from "node:child_process";
@@ -60,33 +63,30 @@ export function resolveAdbPath(env: NodeJS.ProcessEnv = process.env, platform = 
   return null;
 }
 
-async function runAdb(args: string[], options: { binary?: boolean; timeoutMs?: number } = {}): Promise<Buffer> {
+export async function runAdb(args: string[], options: { binary?: boolean; timeoutMs?: number } = {}): Promise<Buffer> {
   const adb = resolveAdbPath();
   if (!adb) throw new Error("Android platform tools are unavailable. Reopen Murage or install adb.");
   return new Promise((resolve, reject) => {
-    const child = spawn(adb, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let size = 0;
+    const child = spawn(adb, [...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const stdout = collectProxyUpstream("phone", child.stdout, MAX_ADB_OUTPUT);
+    const stderr = collectProxyUpstream("phone", child.stderr, MAX_ADB_OUTPUT);
+    void stdout.catch(() => child.kill());
+    void stderr.catch(() => child.kill());
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error("The Android device command timed out"));
     }, options.timeoutMs ?? 12_000);
-    child.stdout.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > MAX_ADB_OUTPUT) child.kill();
-      else stdout.push(chunk);
-    });
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.on("error", (error) => {
       clearTimeout(timer);
       reject(error);
     });
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       clearTimeout(timer);
-      if (size > MAX_ADB_OUTPUT) return reject(new Error("The Android device returned too much data"));
-      if (code !== 0) return reject(new Error(Buffer.concat(stderr).toString("utf8").trim() || `adb exited ${code}`));
-      resolve(Buffer.concat(stdout));
+      try {
+        const [out, err] = await Promise.all([stdout, stderr]);
+        if (code !== 0) return reject(new Error(err.toString("utf8").trim() || `adb exited`));
+        resolve(out);
+      } catch (error) { reject(error); }
     });
   });
 }
@@ -326,7 +326,7 @@ async function callTool(name: string, args: Json): Promise<ToolResult> {
   throw new Error(`Unknown phone tool: ${name}`);
 }
 
-const send = (message: Json) => process.stdout.write(`${JSON.stringify(message)}\n`);
+const send = (message: Json) => sendProxyFrame("phone", message);
 const ok = (id: unknown, result: unknown) => send({ jsonrpc: "2.0", id, result });
 const rpcError = (id: unknown, code: number, message: string) => send({ jsonrpc: "2.0", id, error: { code, message } });
 
@@ -343,8 +343,8 @@ async function handle(message: Json) {
     if (!TOOLS.some((tool) => tool.name === name)) return rpcError(id, -32602, `Unknown tool: ${name}`);
     try {
       return ok(id, await callTool(name, (params.arguments ?? {}) as Json));
-    } catch (error) {
-      return ok(id, textResult(error instanceof Error ? error.message : String(error), true));
+    } catch {
+      return proxyTransportLost("phone");
     }
   }
   if (id !== undefined) rpcError(id, -32601, `Method not found: ${String(method)}`);
@@ -354,7 +354,7 @@ if (process.argv[1] && existsSync(process.argv[1]) && /phone-proxy\.(?:ts|js)$/.
   const lines = createInterface({ input: process.stdin, terminal: false });
   lines.on("line", (line) => {
     try {
-      const message = JSON.parse(line) as Json;
+      const message = registerBusyloopPayloadSite("read", JSON.parse(line)) as Json;
       void handle(message).catch((error) => rpcError(message.id, -32603, error instanceof Error ? error.message : String(error)));
     } catch {}
   });

@@ -1,9 +1,22 @@
+import { registerBusyloopPayloadSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { inspectFluxResponse, fluxResponseDecision, refusalResetAt } from "./flux-busyloop-readers.ts";
+import { isTerminal, keyRejectedMark, type Decision } from "../../shared/flux-busyloop.ts";
+import { guardEngineRelease } from '../decision/provider-release.ts';
+import { RequestTransport } from './request-transport.ts';
+import { withRequestDelivery } from "./request-delivery.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { checkFluxBudget, FluxBudgetReached } from "../voice/flux-budget.ts";
 import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
 import { markBudgetReached } from "../voice/voice-routes.ts";
+import { refuseConsumingTurn } from "../consuming-turn-response.ts";
+import { releaseNativeAnswer, releaseNativeWire, preflightNativeRequest, refusalFor, fencedOf, composeClose, isMemoryRefusal, type FencedRefusal, type ConfirmedClose } from "./engine-input.ts";
+import { accountedResponse, withUpstreamOwner, reserveUpstreamRequest } from "../memory/upstream-reader.ts";
+import { checkedOpenTurns } from "../memory/lineage-write.ts";
 import { botFolderOrThrow } from "../bot-folder.ts";
 import { NO_TOOL_SURFACE, PI_TOOL_SURFACE, renderMurageTurn, type McpToolSurface } from "../murage-tool-surface.ts";
-import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
+import { classifyFluxRefusal as classifyCloudFluxRefusal, reportFluxRefusal } from "../cloud-home/flux-credit-refusal.ts";
+import { KEY_REJECTED_REASON, keyRejected, rejectsKey } from "../key-rejections.ts";
+import { beginFluxKeyEvidence, reportFluxKeyEvidence, type FluxKeyTicket } from "../flux-key-health.ts";
 import { httpErrorDetail, providerSentence } from "./provider-error-body.ts";
 import { awaitIntake, isIntakeOpen } from "../harness/intake.ts";
 import { readFluxMemoryResponse } from "../flux-memory-envelope.ts";
@@ -44,9 +57,10 @@ import {
   MAX_TURN_TOOL_CALLS, McpTurnTeardowns, NATIVE_TOOL_RESULT_MAX_BYTES, NUDGE_ANNOUNCED_ACTION, PERMISSION_DENIED,
   providerArguments, refusedToolCall, rejectsReasoningReplay, rejectsToolsParameter, SCREENSHOT_NOT_SHOWN, scrubKnown, scrubKnownLeaves,
   SecretStreamFilter, secretList,
-  STEPS_ALREADY_RAN, stoppedAfter, TEXT_ONLY_NOTICE, TextOnlyModels, TOOL_CALLS_TO_HELPER, TOOL_INTERRUPTED, TOOL_RESULT_MAX_BYTES,
+  STEPS_ALREADY_RAN, stoppedAfter, TEXT_ONLY_NOTICE, CLOUD_HOME_TOOLS_NOTICE, TextOnlyModels, TOOL_CALLS_TO_HELPER, TOOL_INTERRUPTED, TOOL_RESULT_MAX_BYTES,
   type ChatToolCatalog,
 } from "./openai-chat-tools.ts";
+import { authorizeFluxDispatch, reportFlux402 } from "../flux-start-gate.ts";
 
 /** The tool names these engines advertise (OPENAI-TOOLS-109 s1.3): Pi's direct `${server}_${tool}` form, so persona and how-to
  *  text name each tool exactly as the `tools` field does. */
@@ -190,6 +204,7 @@ interface ParkedSteer {
 }
 
 interface TurnState {
+  releaseBinding: SendTurnInput["releaseBinding"];
   threadId: string;
   turnId: string;
   abort: AbortController;
@@ -213,6 +228,12 @@ interface TurnState {
   emitted: Promise<void>;
   /** interruptTurn or stopAll asked for this stop; dispose never sets it. An abort without it is the engine closing (CLOSE-STOP-1014). */
   stopAsked: boolean;
+  /** The turn's fenced refusal (G0-R): set by the first claim or by P1 attach at settle. */
+  fenced?: FencedRefusal;
+  /** R.teardown of the refusal, pushed by refusalFor; the driver's own stop awaits them (I6). */
+  teardowns: Promise<unknown>[];
+  /** One call of this turn's settle for a refused turn (memory-refused), incl. its cleanup tail. */
+  settleFenced?: () => Promise<void>;
 }
 
 /** Where one request goes: a provider connection route or a local server. */
@@ -250,6 +271,10 @@ type FailedStreamStop = "incomplete" | "provider_error" | "empty_response" | "in
  * engine-shaped line that belongs in its Technical details disclosure. The two
  * are separate so a user never reads transport vocabulary as the headline. */
 class StreamOutcomeError extends Error {
+  fluxDecision?: Decision;
+  providerError?: FluxBudgetReached["providerError"];
+  httpStatus?: number;
+  gatewayResetsAt?: number;
   readonly partial: Completion;
   readonly stopReason: FailedStreamStop;
   readonly details?: string;
@@ -272,12 +297,33 @@ class StreamOutcomeError extends Error {
 class ProviderHttpError extends Error {
   readonly data: { http_status: number; message: string; body: string; flux_code?: FluxRefusalCode };
   readonly flux: boolean;
+  readonly fluxDecision?: Decision;
+  readonly gatewayResetsAt?: number;
   readonly details: string;
+  /** Set when the answer was a Cloud model-credits refusal worded by us (see below): the turn's error event must NOT also attach the
+   *  generic provider card, which would replace this wording (and its reset date) with payment advice. */
+  readonly fluxRefusal?: true;
 
   /** `flux`: the answer came from Flux (its preset or a Flux host), so a budget refusal in `body` stops the key.
    *  `fluxCode`: read from the whole body and the X-Flux-Hold-Reason header when the answer came in (1.0.18 f), because the
-   *  detail kept below is one sentence and the headers are not kept at all. */
-  constructor(status: number, rawBody: string, label: string, flux = false, fluxCode?: FluxRefusalCode) {
+   *  detail kept below is one sentence and the headers are not kept at all. `headers` and `fromRouter` feed the Cloud home's own
+   *  classifier (cloud-home/flux-credit-refusal.ts). */
+  constructor(status: number, rawBody: string, label: string, options: { flux?: boolean; fluxCode?: FluxRefusalCode; headers?: unknown; fromRouter?: boolean; key?: string | null; decision?: Decision } = {}) {
+    // A Cloud home's model-credits refusals (402 budget used, 402 service hold, 503 fence) are worded by us from the raw
+    // answer: none of the router's text, link or key names reaches the customer or the Technical details. This runs first;
+    // such an error carries fluxRefusal and skips every desktop Flux path (this.flux and this.fluxCode stay unset).
+    const refusal = process.env.MURAGE_CLOUD_ROLE === "home" ? classifyCloudFluxRefusal({ status, body: rawBody, headers: options.headers }, { fromRouter: options.fromRouter }) : null;
+    if (refusal) {
+      reportFluxRefusal(refusal);
+      super(refusal.message);
+      this.fluxRefusal = true;
+      this.name = "ProviderHttpError";
+      this.data = { http_status: status, message: "", body: "" };
+      this.flux = false;
+      this.details = `${label} HTTP ${status}${refusal.errorCode ? ` (${refusal.errorCode})` : ""}`;
+      return;
+    }
+    const flux = options.flux ?? false, fluxCode = options.fluxCode, decision = options.decision;
     // rawBody is already redacted. The Technical details carry the provider's
     // own sentence (and its machine code), not the first bytes of its JSON.
     const body = httpErrorDetail(rawBody, 500);
@@ -288,6 +334,9 @@ class ProviderHttpError extends Error {
     this.name = "ProviderHttpError";
     this.data = { http_status: status, message: body, body: rawBody, ...(fluxCode ? { flux_code: fluxCode } : {}) };
     this.flux = flux;
+    if (flux && status === 402) reportFlux402(rawBody, options.key); // UX-L2C-PAUSE r6: a chat 402 arms its scoped refusal, recorded against the key it was sent with
+    this.fluxDecision = decision;
+    try { this.gatewayResetsAt = refusalResetAt(decision, registerBusyloopPayloadSite("read", JSON.parse(rawBody))); } catch { /* no reset in a lost body */ }
     this.details = `${label} HTTP ${status}${body ? `: ${body}` : ""}`;
   }
 }
@@ -303,6 +352,7 @@ class RejectedToolCallError extends ProviderHttpError {}
 
 /** What one round of a tool turn adds to a request (OPENAI-TOOLS-109 s5). */
 interface RoundOptions {
+  releaseBinding?: SendTurnInput["releaseBinding"];
   /** The `tools` field; absent sends none. */
   tools?: unknown[];
   /** Run after the address check and the fence, in the same synchronous block, immediately before the first hop's body is
@@ -331,7 +381,7 @@ const providerHttpMessage = (status: number): string => {
  * between "the model returned nothing" and "that was not a completion" (F8). */
 const wholeCompletionFrom = (body: string, reasoning: boolean | undefined): Completion | null => {
   let parsed: unknown;
-  try { parsed = JSON.parse(body); } catch { return null; }
+  try { parsed = registerBusyloopPayloadSite("read", JSON.parse(body)); } catch { return null; }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const json = parsed as CompletionJson;
   if (!Array.isArray(json.choices)) return null;
@@ -552,12 +602,36 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
   const active = new Map<string, TurnState>();
   /** s3: every MCP child of every turn, tracked from spawn until its confirmed close. */
   const mcpTeardowns = new McpTurnTeardowns();
+  /** The ONE close of a refused turn: abort + every MCP child of this turn confirmed closed (never kills first). */
+  const openaiClose = (state: TurnState): ConfirmedClose => async () => {
+    state.abort.abort();
+    const result = await mcpTeardowns.wait(state.threadId, state.turnId, stopBudget(CLI_TERM_GRACE_MS));
+    if (!result.closeConfirmed) { void mcpTeardowns.closed(state.threadId, state.turnId).then(() => state.fenced?.confirmedLate()); return { confirmed: false, reason: "timeout" }; }
+    return { confirmed: true };
+  };
+  /** Claim + register (refusalFor), classifying FIRST. Undefined for a non-refusal. */
+  const claimRefusal = (state: TurnState, error: unknown, site: string, kind?: "submission"): FencedRefusal | undefined =>
+    refusalFor(error, site, { engine: "openai", threadId: state.threadId, binding: state.releaseBinding, owner: state, target: state, ...(kind ? { kind } : {}) });
+  /** OA2 cause form: a refused socket write reaches the round as the transport's own error (fetch's TypeError, then the
+   *  unreachable-endpoint rewrite) with the refusal as its cause. The refusal inside, or the value itself when there is none. */
+  const refusalIn = (value: unknown): unknown => {
+    for (let error = value, depth = 0; depth < 4 && typeof error === "object" && error !== null; error = (error as { cause?: unknown }).cause, depth++) if (isMemoryRefusal(error)) return error;
+    return value;
+  };
+  /** The claim winner runs the one composite close (settle first); a lease-won claim only joins, and the turn settles itself. */
+  const finishRefusal = async (state: TurnState, R: FencedRefusal): Promise<void> => {
+    if (R.closer === "driver") await R.close(composeClose(state, openaiClose(state)));
+    else await state.settleFenced?.();
+  };
   /** s2: models whose provider refused `tools`, and those that refused a replayed reasoning_content. */
   const textOnlyModels = new TextOnlyModels();
+  /** Conversations already told that this engine runs without tools on a Cloud home. */
+  const cloudHomeToolsNoticed = new Set<string>();
   const reasoningReplayRefused = new Set<string>();
 
-  const emit = (event: RuntimeEvent) => {
-    for (const listener of Array.from(listeners)) listener(event);
+  const emissionSource = new AsyncLocalStorage<SendTurnInput["sourceContext"]>();
+    const emit = (event: RuntimeEvent, source = emissionSource.getStore()) => {
+    for (const listener of Array.from(listeners)) listener(event, source);
   };
   const base = (threadId: string, turnId: string) => ({
     eventId: newEventId(),
@@ -570,7 +644,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
   /** A submission-fence refusal raised before a request write. */
   class SubmissionRefused extends Error {
     readonly refusal: unknown;
-    constructor(refusal: unknown) { super("the submission was refused before it was sent"); this.refusal = refusal; }
+    /** The boundary entry that refused, carried by the caller that entered it (the catch cannot tell origins apart). */
+    readonly site: string | undefined;
+    constructor(refusal: unknown, site?: string) { super("the submission was refused before it was sent"); this.refusal = refusal; this.site = site; }
   }
 
   const complete = async (
@@ -697,6 +773,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // first URL, and neither the body nor the key ever leaves that origin.
     let endpoint = firstEndpoint;
     let response!: Response;
+    let keyTicket: FluxKeyTicket | undefined;
+    let fluxResponse: Awaited<ReturnType<typeof inspectFluxResponse>> = {};
     for (let redirects = 0; ; redirects++) {
       let target: URL;
       try {
@@ -720,9 +798,16 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       }
       // Flux Memory, only on a Flux host (a Flux connection, or a compat URL that is Flux): decided for THIS write from the switch as it
       // stands now, with no await before the fetch, so "Use Flux memory" turned off while an earlier hop or attempt was out reaches it.
+      if (isFluxUrl(endpoint)) await authorizeFluxDispatch(secret); // spend gate: before the memory decision, which must have no await before the fetch
       const flux = isFluxUrl(endpoint) ? fluxMemoryAtSend(fluxMemory) : undefined;
+      // What this request learns about the key is ordered from here, not from when it ends (flux-key-health.ts).
+      keyTicket = secret ? beginFluxKeyEvidence(secret) : undefined;
+      const serialized = flux?.envelope ? JSON.stringify({ ...requestObject, metadata: { ...((requestObject as { metadata?: object }).metadata ?? {}), flux_memory: flux.envelope } }) : requestBody;
+      reserveUpstreamRequest(Buffer.byteLength(serialized));
+      const transport = round.releaseBinding ? providerDispatcher(endpoint,
+        (wire, write) => releaseNativeWire(round.releaseBinding, "openai:fetch", wire, write)) : providerDispatcher(endpoint);
       try {
-      response = await fetch(endpoint, {
+      const requestInit = {
         method: "POST",
         headers: {
           ...(sameOrigin ? { authorization: `Bearer ${secret}` } : {}),
@@ -730,14 +815,16 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           ...(flux?.headers ?? {}),
         },
         // the envelope (lane 2.2) rides as request metadata only while capture and inject are still on for this write
-        body: flux?.envelope
-          ? JSON.stringify({ ...requestObject, metadata: { ...((requestObject as { metadata?: object }).metadata ?? {}), flux_memory: flux.envelope } })
-          : requestBody,
+        body: serialized,
         signal: requestSignal,
         redirect: "manual",
         // No transport clock of its own (server/provider-dispatcher.ts).
-        dispatcher: providerDispatcher(endpoint),
-      } as RequestInit);
+        dispatcher: transport,
+      } as RequestInit;
+      preflightNativeRequest(round.releaseBinding ?? null, "openai:fetch", serialized);
+      response = await fetch(fluxRouteFor(endpoint).requestUrl, requestInit);
+      response = accountedResponse(response);
+      fluxResponse = await inspectFluxResponse(response, fluxRouteFor(endpoint).routed, requestSignal, !stream);
       } catch (failure) {
         // The fence released this request and no answer came back. Only a failure that never connected proves the endpoint did not
         // hear it (the name did not resolve, the address refused, the handshake failed): then the words were not delivered
@@ -747,12 +834,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         // follows an attempt that was answered) is possibly written whatever this hop did (r4 S1): the stamp stands.
         if (!requestSignal.aborted && !delivered.value && neverConnected(failure)) { try { notWritten?.(); } catch { /* a listener never decides the request */ } }
         throw failure;
-      }
+      } finally { if (round.releaseBinding) void transport.close().catch(() => {}); }
       // A response object, whatever its status: a server received this request.
       delivered.value = true;
       try { round.onResponse?.(); } catch { /* a listener never decides the request */ }
       const location = response.headers.get("location");
-      if (![301, 302, 307, 308].includes(response.status) || !location) break;
+      if ((fluxResponse.decision && fluxResponse.decision.action !== "PASS") || ![301, 302, 307, 308].includes(response.status) || !location) break;
       void response.body?.cancel().catch(() => {});
       if (redirects >= MAX_PROVIDER_REDIRECTS) {
         reached.value = true;
@@ -788,29 +875,41 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       const served = readServedModel(response.headers);
       if (served) { try { fluxMemory.onServedModel(served); } catch { /* recording must not fail the turn */ } }
     }
-    if (!response.ok) {
-      const rawBody = await readBoundedBody(response, requestSignal, RAW_BODY_MAX, true).catch(() => "");
+    if (!response.ok || (fluxResponse.decision && fluxResponse.decision.action !== "PASS")) {
+      const rawBody = fluxResponse.rawBody ?? (fluxResponse.decision ? "" : await readBoundedBody(response, requestSignal, RAW_BODY_MAX, true).catch(error => { if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error; return ""; }));
+      if (response.ok) void response.body?.cancel().catch(() => {});
       const body = redact(rawBody);
+      const decision = fluxResponse.decision;
       // A refusal that says the key itself is bad is remembered (in memory only), so the engine shows signed out until the key works.
-      if (secret && rejectsKey(response.status, body)) noteKeyRejected(providerRoute?.baseUrl ?? options.apiUrl, secret);
+      if (secret && keyTicket && (decision ? keyRejectedMark(decision) : rejectsKey(response.status, body))) reportFluxKeyEvidence(keyTicket, secret, "refused", { flux: false, scope: providerRoute?.baseUrl ?? options.apiUrl });
+      const holdReason = isFluxUrl(endpoint) ? response.headers.get("x-flux-hold-reason") : null;
+      const fluxCode = isFluxUrl(endpoint) ? fluxRefusalCode(body, holdReason === null ? undefined : { "x-flux-hold-reason": holdReason.slice(0, 200) }) : undefined;
+      if (decision && decision.action !== "PASS") throw new ProviderHttpError(response.status, body, label, { flux: fluxRouteFor(endpoint).routed, fluxCode, decision, headers: response.headers, fromRouter: isFluxUrl(endpoint), key: secret });
       if (round.tools?.length && rejectsToolsParameter(response.status, body)) throw new UnsupportedToolsError(response.status, body, label);
       if (refusedToolCall(response.status, body)) throw new RejectedToolCallError(response.status, body, label);
       if (!round.noReasoningReplay && messages.some((message) => message.reasoning_content !== undefined) && rejectsReasoningReplay(response.status, body)) {
         throw new UnsupportedReasoningReplayError(response.status, body, label);
       }
-      if ((providerRoute?.preset === "flux" || isFluxUrl(endpoint)) && secret && classifyFluxRefusal(response.status, rawBody) === "budget") markBudgetReached({ via: "flux", label: "Flux", baseUrl: providerRoute?.baseUrl ?? new URL(".", endpoint).toString().replace(/\/$/, ""), key: secret, model: "" });
+      const flux = fluxRouteFor(endpoint).routed;
+      // A Cloud home's own refusal wording owns this answer (flux-credit-refusal.ts): the desktop budget memo must not latch it, or a
+      // "still getting ready" 402 or a service hold would block that home's next sends.
+      const cloudClaims = process.env.MURAGE_CLOUD_ROLE === "home" && classifyCloudFluxRefusal({ status: response.status, body, headers: response.headers }, { fromRouter: isFluxUrl(endpoint) }) !== null;
+      if (!cloudClaims && flux && secret && classifyFluxRefusal(response.status, rawBody) === "budget") markBudgetReached({ via: "flux", label: "Flux", baseUrl: providerRoute?.baseUrl ?? new URL(".", endpoint).toString().replace(/\/$/, ""), key: secret, model: "" });
       // Flux's refusal code, read here while the whole body and the headers are still in hand: a free_cap_reached 429 keeps it in
       // error.state, and a metered credit_exhausted 402 sends it only as the X-Flux-Hold-Reason header (1.0.18 f). Only an answer
       // from a Flux host is read this way: another provider's 429 keeps the shared retry, whatever words its body holds.
-      const holdReason = isFluxUrl(endpoint) ? response.headers.get("x-flux-hold-reason") : null;
-      const fluxCode = isFluxUrl(endpoint) ? fluxRefusalCode(body, holdReason === null ? undefined : { "x-flux-hold-reason": holdReason.slice(0, 200) }) : undefined;
-      throw new ProviderHttpError(response.status, body, label, providerRoute?.preset === "flux" || isFluxUrl(endpoint), fluxCode);
+      throw new ProviderHttpError(response.status, body, label, { flux, fluxCode, decision, headers: response.headers, fromRouter: isFluxUrl(endpoint), key: secret });
     }
-    if (secret) noteKeyAccepted(providerRoute?.baseUrl ?? options.apiUrl, secret);
+    if (secret && keyTicket) reportFluxKeyEvidence(keyTicket, secret, "accepted", { flux: false, scope: providerRoute?.baseUrl ?? options.apiUrl });
 
     if (!stream) {
-      const json = (JSON.parse(await readBoundedBody(response, requestSignal, MAX_RESPONSE_BYTES, false, idle.renew)) ?? {}) as CompletionJson;
-      if ((providerRoute?.preset === "flux" || isFluxUrl(endpoint)) && secret) checkFluxBudget(0, json, providerRoute?.baseUrl ?? options.apiUrl, secret);
+      const json = (registerBusyloopPayloadSite("read", JSON.parse(fluxResponse.rawBody ?? await readBoundedBody(response, requestSignal, MAX_RESPONSE_BYTES, false, idle.renew))) ?? {}) as CompletionJson;
+      const decision = fluxResponse.decision ? fluxResponseDecision(registerBusyloopPayloadSite("classify", {status: response.status, headers: response.headers, body: json})) : undefined;
+      if (decision && decision.action !== "PASS") {
+        if (secret && keyTicket && keyRejectedMark(decision)) reportFluxKeyEvidence(keyTicket, secret, "refused", { flux: false, scope: providerRoute?.baseUrl ?? options.apiUrl });
+        throw new ProviderHttpError(response.status, redact(JSON.stringify(json)), label, { flux: true, decision, headers: response.headers, fromRouter: isFluxUrl(endpoint), key: secret });
+      }
+      if ((fluxRouteFor(endpoint).routed) && secret) checkFluxBudget(0, json, providerRoute?.baseUrl ?? options.apiUrl, secret);
       const errorDetail = inBandErrorDetail(json);
       if (errorDetail !== null) throw new Error(redact(`${label} error: ${errorDetail}`).slice(0, 300));
       const choice = json.choices?.[0];
@@ -867,7 +966,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       dataFrames++;
       let chunk: CompletionJson;
       try {
-        chunk = JSON.parse(data) as CompletionJson;
+        chunk = registerBusyloopPayloadSite("read", JSON.parse(data)) as CompletionJson;
       } catch {
         if (!atEof) unreadableFrames++;
         else cutTail = true;
@@ -877,7 +976,20 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         unreadableFrames++;
         return false;
       }
-      if ((providerRoute?.preset === "flux" || isFluxUrl(endpoint)) && secret) checkFluxBudget(0, chunk, providerRoute?.baseUrl ?? options.apiUrl, secret);
+      const decision = fluxResponse.decision ? fluxResponseDecision(registerBusyloopPayloadSite("classify", {status: response.status, headers: response.headers, body: chunk})) : undefined;
+      if (decision && decision.action !== "PASS") {
+        const error = failure("The model server reported an error part-way through the answer.", `stream error: ${inBandErrorDetail(chunk) ?? decision.reason}`, "provider_error");
+        if (secret && keyTicket && keyRejectedMark(decision)) reportFluxKeyEvidence(keyTicket, secret, "refused", { flux: false, scope: providerRoute?.baseUrl ?? options.apiUrl });
+        if (secret && classifyFluxRefusal(0, chunk) === "budget") {
+          markBudgetReached({via:"flux",label:"Flux",baseUrl:providerRoute?.baseUrl ?? options.apiUrl,key:secret,model:""});
+          error.providerError = new FluxBudgetReached().providerError;
+        }
+        error.fluxDecision = decision;
+        error.httpStatus = response.status;
+        error.gatewayResetsAt = refusalResetAt(decision, chunk);
+        throw error;
+      }
+      if ((fluxRouteFor(endpoint).routed) && secret) checkFluxBudget(0, chunk, providerRoute?.baseUrl ?? options.apiUrl, secret);
       const errorDetail = inBandErrorDetail(chunk);
       if (errorDetail !== null) {
         throw failure("The model server reported an error part-way through the answer.", `stream error: ${errorDetail}`, "provider_error");
@@ -932,6 +1044,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           }
           result = await readUnlessAborted(reader, requestSignal);
         } catch (value) {
+          if ((value as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw value;
           const cause = asError(value);
           // F6: a Stop used to rethrow the bare AbortError, which carries no
           // partial, so every streamed word the user had already read was
@@ -971,7 +1084,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           }
           const next = newline === -1 ? end : end + 1;
           const chunk = decoder.decode(result.value.subarray(offset, next), { stream: true });
-          body = appendBounded(body, chunk, RAW_BODY_MAX);
+          body = appendBounded(body, chunk, dataFrames === 0 && fluxResponse.decision ? MAX_RESPONSE_BYTES : RAW_BODY_MAX);
           buffer += newline === -1 ? chunk : chunk.slice(0, -1);
           lineBytes = nextLineBytes;
           offset = next;
@@ -1004,8 +1117,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       // An empty body is a stream that carried nothing, not a body of the
       // wrong shape, and keeps the truncated-stream reading.
       if (dataFrames === 0 && body.trim()) {
+        let parsed: unknown;
+        try { parsed = registerBusyloopPayloadSite("read", JSON.parse(body)); } catch { /* wrong-body handling below */ }
+        const decision = fluxResponse.decision ? fluxResponseDecision(registerBusyloopPayloadSite("classify", {status:response.status, headers:response.headers, body:parsed})) : undefined;
+        if (decision && decision.action !== "PASS") throw new ProviderHttpError(response.status, redact(body), label, { flux: true, decision, headers: response.headers, fromRouter: isFluxUrl(endpoint), key: secret });
         let whole: Completion | null;
-        try { whole = wholeCompletionFrom(body, options.reasoning); } catch (error) {
+        try { whole = wholeCompletionFrom(clipBytes(body, RAW_BODY_MAX, true), options.reasoning); } catch (error) {
           throw failure("The model server sent a tool call Murage could not read, so nothing ran.", `tool call refused: ${asError(error).message}`, "invalid_body", error);
         }
         if (whole) return whole;
@@ -1048,7 +1165,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     state.staged = [];
     if (state.ending) return;
     for (const steer of state.steers.splice(0)) {
-      try { steer.beforeWrite?.(); } catch { steer.resolve("rejected"); continue; }
+      try { steer.beforeWrite?.(); } catch (error) {
+        steer.resolve("rejected");
+        if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED" || (error as { message?: string })?.message === "MEMORY_CONTEXT_REVOKED") {
+          // M16: classify by whether the LEASE was refused, never by site. A refused lease ends the running turn (kind turn); a quote-only
+          // refusal leaves the ledger valid: the steer alone is refused (an R of kind submission scoped to it), the turn runs on.
+          if (fencedOf(state)) throw new SubmissionRefused(error, "openai.steer");
+          const R = refusalFor(error, "openai.steer", { engine: "openai", threadId: state.threadId, binding: null, kind: "submission", target: null });
+          if (R) void R.close(async () => ({ confirmed: true }));
+        }
+        continue;
+      }
       const message: OpenAIChatMessage = { role: "user", content: steer.text };
       messages.push(message);
       state.staged.push({ steer, message });
@@ -1081,7 +1208,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     }
   };
 
-  const sendTurn = async (turn: SendTurnInput) => {
+  const emitCapturedSource = emit;
+  const sendTurnInScope = async (turn: SendTurnInput) => {
+      const source = turn.prewarm ? undefined : turn.sourceContext;
+      const emit = (event: RuntimeEvent) => emitCapturedSource(event, source);
     if (turn.draftOnly !== true) turn = { ...turn, cwd: botFolderOrThrow(turn) }; // a draft-only turn is tool-less and has no working folder by design
     if (turn.providerRoute) validateProviderTurnRoute(options.driverKind, turn.providerRoute);
     const local = turn.providerRoute ? null : options.localEndpoint?.(turn.model || options.models().default) ?? null;
@@ -1093,7 +1223,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // s2: tool-less by rule (draft-only, an engine command), remembered text-only, or a catalog that says so.
     const toolLess = options.tools === false || turn.draftOnly === true || turn.engineCommand !== undefined
       || textOnlyModels.has(endpointUrl, model) || options.textOnlyHint?.(model) === true;
-    const servers = toolLess ? null : buildMcpServers(turn, { askBeforeCustom: true });
+    const wanted = toolLess ? null : buildMcpServers(turn, { askBeforeCustom: true });
+    // A Cloud home has no spawn path for these servers (CLOUD_HOME_TOOLS_NOTICE): skip them up front, with the no-tool surface.
+    const cloudHomeNoTools = wanted !== null && process.env.MURAGE_CLOUD_ROLE === "home";
+    const servers = cloudHomeNoTools ? null : wanted;
     turn = servers
       ? renderMurageTurn(turn, CHAT_TOOL_SURFACE, { agents: servers.agents ? "agents" : undefined, memory: servers["murage-memory"] ? "murage-memory" : undefined, phone: servers.phone ? "phone" : undefined })
       : renderMurageTurn(turn, NO_TOOL_SURFACE, {});
@@ -1111,10 +1244,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     let markDone!: () => void;
     let markEmitted!: () => void;
     const state: TurnState = {
+      releaseBinding: turn.releaseBinding,
       threadId, turnId, abort, mounted: servers !== null, ending: false, settled: false, steers: [], staged: [], uncertain: [], pending: new Map(), scoped: new Set(),
       done: new Promise<void>((resolve) => { markDone = resolve; }),
       emitted: new Promise<void>((resolve) => { markEmitted = resolve; }),
-      stopAsked: false,
+      stopAsked: false, teardowns: [],
     };
     active.set(threadId, state);
     // Stop with a card open: the card is resolved as the system's deny and the tool never runs (s5.5).
@@ -1131,7 +1265,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // A call's arguments are JSON text, where escaping changes a secret's bytes (`"` -> `\"`), so they are scrubbed on their
     // parsed values and serialized again; arguments that do not parse are not kept in the log at all.
     const scrubArguments = (text: string): string => {
-      try { return JSON.stringify(scrub(JSON.parse(text))); } catch { return "[unreadable arguments omitted]"; }
+      try { return JSON.stringify(scrub(registerBusyloopPayloadSite("read", JSON.parse(text)))); } catch { return "[unreadable arguments omitted]"; }
     };
     const nativeOut = (tools: string[]) => {
       const withTools = (record: unknown) => tools.length && record && typeof record === "object" && !Array.isArray(record) ? { ...record as object, tools } : record;
@@ -1164,7 +1298,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         emit({ ...base(threadId, turnId), type: "turn.served-model", routed: served.routed, requested: served.requested });
       },
     });
-    const notice = (message: string) => emit({ ...base(threadId, turnId), type: "runtime.error", message });
+    const notice = (message: string) => emit({ ...base(threadId, turnId), type: "runtime.error", message, nonTerminal: true });
+    if (cloudHomeNoTools && !cloudHomeToolsNoticed.has(threadId)) { cloudHomeToolsNoticed.add(threadId); notice(CLOUD_HOME_TOOLS_NOTICE); }
 
     let sessions: ChatMcpSession[] = [];
     /** s3/s5.5: the turn settles exactly once; its children are asked to stop first, and turn.completed waits for their
@@ -1172,9 +1307,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const settle = (completed: RuntimeEvent) => {
       if (state.settled) return;
       state.settled = true;
+      // P1 ATTACH (M4): a lease-only refusal (no driver claim) is found by the captured dispatch generation.
+      const fenced = fencedOf(state);
+      if (fenced && completed.type === "turn.completed" && fenced.kind !== "submission") completed = { ...completed, ok: false, stopReason: "memory-refused" };
       // Only a stop someone asked for ends as Stop: an abort that only dispose (quit, restart) made is the engine closing,
       // ended as ACP ends it (CLOSE-STOP-1014).
-      if (completed.type === "turn.completed" && completed.ok && completed.stopReason === "cancelled" && !state.stopAsked) {
+      if (!fenced && completed.type === "turn.completed" && completed.ok && completed.stopReason === "cancelled" && !state.stopAsked) {
         emit({ ...base(threadId, turnId), type: "runtime.error", message: engineClosedLine(input.displayName?.trim() || options.httpErrorLabel, null) });
         completed = { ...completed, ok: false, stopReason: "exit_before_result" };
       }
@@ -1182,8 +1320,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       for (const { steer } of state.staged.splice(0)) steer.resolve("uncertain");
       for (const session of sessions) session.close();
       active.delete(threadId);
-      if (!mcpTeardowns.pending(threadId, turnId)) { emit(completed); markEmitted(); }
-      else void mcpTeardowns.closed(threadId, turnId).then(() => { emit(completed); markEmitted(); });
+      // Lease mode (M5): the lease's refusal is the turn's one terminal; the driver emits none.
+      const emitCompleted = () => { if (!(fenced && fenced.closer === "lease")) emit(completed); markEmitted(); };
+      if (!mcpTeardowns.pending(threadId, turnId)) emitCompleted();
+      else void mcpTeardowns.closed(threadId, turnId).then(emitCompleted);
       markDone();
     };
     /** CHARGE-UNKNOWN-1018: set once a finished step of this turn reported no charge, so the summed charge is a lower bound. */
@@ -1218,6 +1358,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         settle(completedEvent(false, "error", total, denials));
       };
       const cancelled = () => settle(completedEvent(true, "cancelled", total, denials));
+      // The turn's ONE settle for a refused turn (the composite runs it first): a turn refusal ends memory-refused; a submission refusal
+      // keeps its terminal (nothing was written -> submission_refused; after tools the preserved FENCE_AFTER_TOOLS error, M9).
+      state.settleFenced = async () => {
+        if (state.fenced?.kind !== "submission") settle(completedEvent(false, "memory-refused", total, denials));
+        else if (!seenCalls.size) settle(completedEvent(false, "submission_refused", total, denials));
+        else fail(FENCE_AFTER_TOOLS);
+      };
       try {
         // s3: one mount per turn; every child is tracked from its spawn, before any await can lose it.
         let catalog: ChatToolCatalog = { definitions: [], routes: new Map(), dropped: [] };
@@ -1281,6 +1428,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 emitPlans(out.plans);
                 emitAnswerDelta(out.text);
               }, turn.providerRoute, turn.beforeSubmit, fluxSend, threadId, turn.notWritten, delivered, {
+                releaseBinding: turn.releaseBinding,
                 ...(toolsOn ? { tools: catalog.definitions } : {}),
                 prepareWrite: () => splice(state, messages),
                 onResponse: () => stagedAnswered(state),
@@ -1292,7 +1440,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               if (value instanceof UnsupportedToolsError && toolsOn && !sawOutput && !seenCalls.size) {
                 textOnlyModels.add(endpointUrl, model);
                 toolsOn = false;
-                for (const session of sessions) session.close();
+                for (const session of sessions) { session.retire(); session.close(); }
                 notice(TEXT_ONLY_NOTICE);
                 continue;
               }
@@ -1310,7 +1458,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               }
               // The submission fence refused this write: nothing was written. Before any call the harness may re-run the turn on
               // a reset session; after one it never does (s5.2, Astra r1 H1), so the turn ends with the plain line instead.
+              const refused = claimRefusal(state, refusalIn(value), "openai.fetch");
+              if (refused) {
+                // the lease is poked only for a refusal, after the claim (a driver win keeps the lease from interrupting)
+                turn.releaseBinding?.onLedgerRefused({ state: "checking", reason: "not-built" });
+                await finishRefusal(state, refused);
+                return;
+              }
               if (value instanceof SubmissionRefused) {
+                // claim FIRST (kind submission, never a lease R), then the one close; an unclassifiable refusal keeps today's terminal
+                const refused = claimRefusal(state, value.refusal, value.site ?? (seenCalls.size ? "openai.prompt.aftertools" : "openai.prompt"), value.site === "openai.steer" ? undefined : "submission");
+                if (refused) { await finishRefusal(state, refused); return; }
                 if (!seenCalls.size) settle(completedEvent(false, "submission_refused", total, denials));
                 else fail(FENCE_AFTER_TOOLS);
                 return;
@@ -1319,11 +1477,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               const outcome = error instanceof StreamOutcomeError ? error : null;
               // A Stop now arrives wrapped so its partial text survives (F6); it is still the user's Stop, never a failure.
               const aborted = error.name === "AbortError" || outcome?.stopReason === "cancelled" || abort.signal.aborted;
+              const decision = error instanceof ProviderHttpError || error instanceof StreamOutcomeError ? error.fluxDecision : undefined;
               const verdict = classifyError(error);
-              if (options.retryScale !== undefined && !aborted && !sawOutput && !seenCalls.size && verdict.transient && attempt < RETRY_MAX_ATTEMPTS - 1) {
-                const delayMs = computeBackoff(attempt++);
+              if ((decision || options.retryScale !== undefined) && !aborted && !sawOutput && !seenCalls.size && (decision ? !isTerminal(decision) && decision.action !== "PASS" : verdict.transient) && attempt < (decision?.action === "RETRY_ONCE" ? 1 : RETRY_MAX_ATTEMPTS - 1)) {
+                const delayMs = decision ? (typeof decision.wait === "number" ? decision.wait * 1000 : Math.min(20_000, 5_000 * 2 ** attempt)) : computeBackoff(attempt);
+                attempt++;
                 emit({ ...base(threadId, turnId), type: "turn.retrying", attempt, delayMs, reason: verdict.reason });
-                const waited = await interruptibleDelay(delayMs * options.retryScale, abort.signal).promise;
+                const waited = await interruptibleDelay(delayMs * (options.retryScale ?? 1), abort.signal).promise;
                 if (waited === "elapsed" && !abort.signal.aborted) continue;
                 // Stopped during the backoff: the user's Stop, not a failure, the shared cancelled state (STOP1).
                 cancelled();
@@ -1339,9 +1499,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 if (outcome.partial.usage && total) emit({ ...base(threadId, turnId), type: "thread.token-usage.updated", ...total });
               }
               const details = (error as { details?: unknown }).details;
-              const classified = error instanceof FluxBudgetReached ? undefined : classifyProviderError(error, error instanceof ProviderHttpError && error.flux);
+              // A Cloud credits refusal is already worded in full: the generic card for the bare 402 would replace it, and no desktop Flux path applies.
+              const cloudRefusal = (error as { fluxRefusal?: unknown }).fluxRefusal === true;
+              const classified = error instanceof FluxBudgetReached || cloudRefusal ? undefined : classifyProviderError(error, error instanceof ProviderHttpError && error.flux);
               // A budget stop keeps its own record: it is Murage's refusal, so no provider sentence is attached to it.
-              const providerError = error instanceof FluxBudgetReached ? error.providerError : classified ? withProviderSaid(classified, error) : undefined;
+              const providerError = error instanceof FluxBudgetReached ? error.providerError : outcome?.providerError ?? (classified ? withProviderSaid(classified, error) : undefined);
               if (!aborted) {
                 // s10: a size refusal after tool rounds says the steps already ran.
                 const message = seenCalls.size ? `${error.message} ${STEPS_ALREADY_RAN}` : error.message;
@@ -1349,9 +1511,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                   ...base(threadId, turnId),
                   type: "runtime.error",
                   message: scrub(message),
+                  ...(decision ? { fluxDecision: decision, httpStatus: error instanceof ProviderHttpError ? error.data.http_status : outcome?.httpStatus, gatewayResetsAt: (error as ProviderHttpError).gatewayResetsAt } : {}),
                   ...(typeof details === "string" && details ? { details: scrub(details) } : {}),
                   ...(providerError ? { providerError } : {}),
-                  ...(isFluxUrl(endpointUrl) ? fluxRefusalFields(fluxRefusalCode(error, details), Date.now(), error, details) : {}),
+                  ...(isFluxUrl(endpointUrl) && !cloudRefusal ? fluxRefusalFields(fluxRefusalCode(error, details), Date.now(), error, details) : {}),
                 });
               }
               // An abort is Murage stopping the turn (interruptTurn, stopAll): settled as cancelled like every other driver (STOP1).
@@ -1415,23 +1578,50 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               continue;
             }
             const outcome = await runCall(call);
+            if (state.fenced) return;
             if (outcome.denied) { deniedAny = true; denials.push(outcome.name); }
             if (outcome.ran) toolProgress = true;
-            messages.push({ role: "tool", tool_call_id: call.id, content: outcome.content });
+            // a Stop that landed during the call ends the turn as Stop: the interrupted result is not appended (the append is a write the Stop's own
+            // mount teardown refuses; a claim there would turn the user's Stop into memory-refused). A lease that won the abort attaches at settle (P1).
+            if (abort.signal.aborted) { cancelled(); return; }
+            try {
+              releaseNativeAnswer(turn.releaseBinding ?? null, "openai:tool-append", outcome.content,
+                () => { messages.push({ role: "tool", tool_call_id: call.id, content: outcome.content }); });
+            } catch (value) {
+              // OA3: the append's own claim; the rest of the batch is not run. Anything else goes to the backstop below.
+              const refused = claimRefusal(state, value, "openai.append");
+              if (!refused) throw value;
+              turn.releaseBinding?.onLedgerRefused({ state: "checking", reason: "not-built" });
+              await finishRefusal(state, refused);
+              return;
+            }
           }
           if (abort.signal.aborted) { cancelled(); return; }
         }
         fail(stoppedAfter(`${MAX_CHAT_ROUNDS} steps`));
       } catch (value) {
         // Nothing above should throw; if it does, the turn still settles once and its children are still stopped.
-        if (abort.signal.aborted) cancelled();
+        // LLD-openai: a lease refusal with no request of its own (thrown into the round task outside a fence call). The captured turn is
+        // the target, so the driver closes it; never seen in a fetch, append or decision refusal (each has its own claim).
+        const refused = claimRefusal(state, value, "openai.direct.1542");
+        if (refused) {
+          turn.releaseBinding?.onLedgerRefused({ state: "checking", reason: "not-built" });
+          await finishRefusal(state, refused);
+        } else if (abort.signal.aborted) cancelled();
         else fail("Murage stopped this turn after an unexpected error.", asError(value).message);
       }
     })();
     return { turnId };
   };
 
+  const sendTurn = (turn: SendTurnInput) => {
+    const binding = turn.releaseBinding;
+    return binding ? withUpstreamOwner({ budgets: checkedOpenTurns(binding.turn).map(member => member.budget!),
+      refuse: verdict => refuseConsumingTurn(binding, verdict) }, () => sendTurnInScope(turn)) : sendTurnInScope(turn);
+  };
+
   /** s6: one call through the central approval handler. The driver never decides allow or deny. */
+  const answerTransport = new RequestTransport();
   const runToolCall = async (
     call: ChatToolCall, catalog: ChatToolCatalog, state: TurnState, servers: Record<string, unknown> | null, turn: SendTurnInput,
     scrub: <T>(value: T) => T,
@@ -1439,7 +1629,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const { threadId, turnId } = state;
     const route = catalog.routes.get(call.function.name);
     let args: unknown;
-    try { args = call.function.arguments.trim() ? JSON.parse(call.function.arguments) : {}; } catch { args = undefined; }
+    try { args = call.function.arguments.trim() ? registerBusyloopPayloadSite("read", JSON.parse(call.function.arguments)) : {}; } catch { args = undefined; }
     // s6.1: refused without running and without a card.
     if (!route) return { content: JSON.stringify({ ok: false, result: `No tool named ${call.function.name.slice(0, 64)} is available this turn; nothing ran.` }), denied: false, ran: false, name: call.function.name };
     const name = `mcp__${route.server}__${route.tool}`;
@@ -1450,7 +1640,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const scoped = route.server === "computer" && !turn.integrations?.computer && turn.integrations?.localComputer?.scope === "local-computer";
     const toolInput = boundedToolInput(scrub(input));
     // s6.3: register BEFORE emitting (the server may answer synchronously inside the emit).
-    const decision = await new Promise<Decision>((resolve) => {
+    let decision = await new Promise<Decision>((resolve) => {
       state.pending.set(requestId, resolve);
       if (scoped) state.scoped.add(requestId);
       emit({
@@ -1463,6 +1653,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         ...(toolInput ? { toolInput } : {}),
         // the EXACT call the stop line, autoVerdict and grants read; never logged (runtime-event-out.ts loggedRuntimeEvent)
         toolCall: { name, input },
+        executionCwd: turn.cwd,
         toolIdentity: { namespace: "mcp", name: `${route.server}__${route.tool}` },
         mcpMounts: piMountRecords(turn, servers),
         toolEngine: "chat" as const,
@@ -1475,13 +1666,16 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         resolve({ behavior: "deny" });
       }
     });
+    // This engine executes MCP calls in this process: consumption of the
+    // decision by its tool loop is the delivery boundary.
+    answerTransport.confirm(threadId, requestId, Promise.resolve(true));
     if (decision.behavior !== "allow") {
       // the reason the server gave (a narrowing denial's own text, Rule 72) rides after the plain line
       const reason = decision.behavior === "deny" && decision.message?.trim() ? ` ${scrub(decision.message.trim()).slice(0, 2_000)}` : "";
       return { content: JSON.stringify({ ok: false, result: `${PERMISSION_DENIED}${reason}` }), denied: true, ran: false, name };
     }
     // s6.5: a narrowed call replaces the arguments that run, and the item shows it.
-    const runArgs = decision.updatedInput ?? input;
+    let runArgs = decision.updatedInput ?? input;
     const preview = scrub(runArgs);
     emit({
       ...base(threadId, turnId),
@@ -1497,11 +1691,21 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     let result: string;
     try {
       // s8: structured content blocks are scrubbed on their parsed values before the client serializes them
+      while((turn.permissionNow?.()??turn).noLimits===true&&!guardEngineRelease({threadId,turnId,requestId,providerInstanceId:options.input.instanceId},decision.updatedInput)){
+        if(state.abort.signal.aborted||!await answerTransport.reopenAfterDelivery(threadId,requestId))return {content:JSON.stringify({ok:false,result:PERMISSION_DENIED}),denied:true,ran:false,name};
+        decision=await new Promise<Decision>(resolve=>state.pending.set(requestId,resolve));
+        answerTransport.confirm(threadId,requestId,Promise.resolve(true));
+        if(decision.behavior!=='allow')return {content:JSON.stringify({ok:false,result:PERMISSION_DENIED}),denied:true,ran:false,name};
+        runArgs=decision.updatedInput??input;
+      }
       const answer = await route.session.callTool(route.tool, runArgs, { signal: state.abort.signal, scrub });
       ok = !answer.isError;
       // s8: scrub the complete text, then cap (UTF-8 boundary).
       const text = scrub(answer.text) + (answer.droppedImages ? `${answer.text ? "\n" : ""}${SCREENSHOT_NOT_SHOWN}` : "");
-      result = capUtf8(text, TOOL_RESULT_MAX_BYTES);
+      if (["web_read", "browser_read", "agent_browser_read"].includes(route.tool) && Buffer.byteLength(text, "utf8") > TOOL_RESULT_MAX_BYTES) {
+        ok = false;
+        result = "Web read output exceeds the transport limit. Retry with a smaller length, such as 4000. No partial page was returned.";
+      } else result = capUtf8(text, TOOL_RESULT_MAX_BYTES);
     } catch (error) {
       result = state.abort.signal.aborted ? TOOL_INTERRUPTED : error instanceof ChatMcpError ? error.message : "MCP request failed; inspect the configured integration";
     }
@@ -1526,7 +1730,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     await Promise.race([Promise.all(states.map((state) => state.done)), new Promise((resolve) => setTimeout(resolve, budget.maxMs).unref?.())]);
   };
 
-  return {
+  return withRequestDelivery({
     instanceId: input.instanceId,
     driverKind: options.driverKind,
     displayName: input.displayName,
@@ -1544,12 +1748,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       : { state: "unavailable", reason: options.unavailableReason },
     adapter: {
       provider: options.driverKind,
+      // Flux capture is explicit after the turn; local recall stays in the prompt.
       mcpToolSurface: options.tools === false ? NO_TOOL_SURFACE : CHAT_TOOL_SURFACE,
       capabilities: {
-        sessionModelSwitch: "in-session", textOnlyTurn: true, fluxEnvelope: true,
-        // s2 (Astra r1 M): the same MCP set Pi declares (no browser: buildMcpServers does not mount it), and steering.
+        sessionModelSwitch: "in-session", textOnlyTurn: true,
+        // The same MCP set Pi declares, including the built-in browser.
         ...(options.tools === false ? {} : {
-          agentsMcp: true, memoryMcp: true, composioMcp: true, customMcp: true, phoneMcp: true, computerMcp: true, localComputerMcp: true,
+          browserMcp: true, agentsMcp: true, memoryMcp: true, composioMcp: true, customMcp: true, phoneMcp: true, computerMcp: true, localComputerMcp: true,
           queueing: true,
         }),
       },
@@ -1568,7 +1773,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       sendTurn,
       interruptTurn: async (threadId, turnId) => {
         const state = active.get(threadId);
-        if (state) { state.stopAsked = true; await stopAndWait([state]); }
+        if (state && (!turnId || state.turnId === turnId)) {
+          // LLI-openai (MC63 ruling): no fenced check: stopAsked's one reader sits behind settle's !fenced guard (P1), and a refused turn settles from its claim.
+          state.stopAsked = true;
+          await stopAndWait([state]);
+        }
         return stopConfirmed(threadId, turnId);
       },
       awaitTurnTeardown: (threadId, turnId) => mcpTeardowns.wait(threadId, turnId, stopBudget(CLI_TERM_GRACE_MS)),
@@ -1579,7 +1788,16 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         if (!state || !answer) return "unavailable";
         state.pending.delete(requestId);
         const scoped = state.scoped.delete(requestId);
-        answer(decision);
+        try { releaseNativeAnswer(state.releaseBinding ?? null, "openai:decision", JSON.stringify(decision), () => answer(decision)); }
+        catch (error) {
+          // claim BEFORE the commit (request.resolved), then discharge the captured resolver; the winner closes
+          const refused = claimRefusal(state, error, "openai.decision");
+          if (!refused) throw error;
+          emit({ ...base(threadId, state.turnId), requestId, type: "request.resolved", behavior: "deny", source: "system", ...(scoped ? { approvalScope: "local-computer" as const } : {}) });
+          answer({ behavior: "deny" });
+          await finishRefusal(state, refused);
+          return "unavailable";
+        }
         emit({
           ...base(threadId, state.turnId),
           requestId,
@@ -1630,7 +1848,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       if (mounted.length) await Promise.race([Promise.all(mounted.map((state) => state.emitted)), new Promise((resolve) => setTimeout(resolve, stopBudget(CLI_TERM_GRACE_MS).maxMs).unref?.())]);
       listeners.clear();
     },
-  };
+  }, answerTransport);
 }
 
 /** CHARGE-UNKNOWN-1018: true once any finished step of the turn reported no charge (no usage at all, or usage without one). */

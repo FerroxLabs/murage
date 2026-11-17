@@ -1,3 +1,4 @@
+import { bindFixtureAdapter } from "../../testing/mcp-admission-fixture.ts";
 // STOP-FENCE (1.0.18) r3.2 tests. T27 is intentionally unused. Every driver test also asserts: no event after the final turn.completed, and a fresh send on
 // the thread then completes (`afterStop`). A "mutant" in a comment names the one change that turns the test red with all other code intact.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,10 +20,10 @@ vi.mock("../scoped-cli-home.ts", async (importOriginal) => {
   return { ...actual, awaitScopeStart: (...args: Parameters<typeof actual.awaitScopeStart>) => (scopeStart.impl ? scopeStart.impl() : actual.awaitScopeStart(...args)) };
 });
 // Counts real engine spawns (a pass-through): a child killed at once by a stop never writes its marker file, so "no spawn" is asserted here.
-const spawnSpy = vi.hoisted(() => ({ n: 0, last: null as unknown }));
+const spawnSpy = vi.hoisted(() => ({ n: 0, last: null as unknown, commands: [] as string[] }));
 vi.mock("../../procs.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../procs.ts")>();
-  return { ...actual, spawnCli: (...args: Parameters<typeof actual.spawnCli>) => { spawnSpy.n++; const child = actual.spawnCli(...args); if (!args[1].includes("--version")) spawnSpy.last = child; return child; } };
+  return { ...actual, spawnCli: (...args: Parameters<typeof actual.spawnCli>) => { spawnSpy.n++; spawnSpy.commands.push(args[0]); const child = actual.spawnCli(...args); if (!args[1].includes("--version")) spawnSpy.last = child; return child; } };
 });
 // Test hooks on three collaborators (all pass-through unless a test arms them): the prewarm gate's takeOver (counted, optionally held), applyProviderRoute (counted, optionally replaced), handedEngineEnv (counted, optionally held).
 const hooks = vi.hoisted(() => ({ takeOvers: 0, takeOverHold: null as null | Promise<void>, routeCalls: 0, routeImpl: null as null | ((...args: unknown[]) => unknown), handedCalls: 0, handedHold: null as null | Promise<void> }));
@@ -46,7 +47,7 @@ vi.mock("../../engine-env.ts", async (importOriginal) => {
 const engines: FakeEngine[] = [];
 const instances: ProviderInstance[] = [];
 const engineOf = (...args: Parameters<typeof makeFakeEngine>) => { const e = makeFakeEngine(...args); engines.push(e); return e; };
-beforeEach(() => { spawnSpy.n = 0; });
+beforeEach(() => { spawnSpy.n = 0; spawnSpy.commands = []; });
 afterEach(async () => {
   for (const instance of instances.splice(0)) await instance.dispose();
   for (const engine of engines.splice(0)) cleanupEngine(engine);
@@ -55,6 +56,7 @@ type Ev = { type: string; stopReason?: string; ok?: boolean; message?: string; t
 async function boot(engine: FakeEngine, extra: Parameters<typeof createFixture>[1] = {}) {
   ensureDirs();
   const instance = await createFixture(engine, extra);
+  bindFixtureAdapter(instance.adapter);
   instances.push(instance);
   const events: Ev[] = [];
   instance.adapter.onEvent((event) => { events.push(event as Ev); });
@@ -633,7 +635,7 @@ describe("stop-fence r3.2 prewarm and admission", () => {
   });
 });
 
-const agentsMcp = () => ({ agents: { command: process.execPath, args: ["--never-started"], env: { MURAGE_COMMS_TOKEN: `turn-${Math.random()}` } } }) as never;
+const agentsMcp = () => ({ agents: { command: process.execPath, args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname], env: { MURAGE_COMMS_TOKEN: `turn-${Math.random()}` } } }) as never;
 
 describe("stop-fence r3.2 pooled, reuse and reconnect", () => {
   afterEach(() => { for (const name of POOL_ENV) delete process.env[name]; delete process.env.MURAGE_PROVIDER_CLOSE_MS; delete process.env.MURAGE_MCP_RECONNECT_WAIT_MS; });
@@ -667,7 +669,7 @@ describe("stop-fence r3.2 pooled, reuse and reconnect", () => {
     process.env.MURAGE_ACP_POOL = "1"; process.env.MURAGE_ACP_POOL_IDLE_MS = "60000";
     const engine = engineOf(["session/load"], false, { nullOn: ["session/load"], reply: true });
     const { instance, events } = await boot(engine, { pooledSessions: true });
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t1", text: "one", model: "p/m", integrations: agentsMcp() });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t1", text: "one", model: "p/m" });
     await waitFor(() => expect(completions(events).length).toBe(1));
     await waitFor(() => expect(warmPool.idleCount()).toBe(1));
     const mark = events.length;
@@ -677,7 +679,9 @@ describe("stop-fence r3.2 pooled, reuse and reconnect", () => {
     engine.open("session_load");
     const { turnId } = await second;
     await tick(600);
-    expect(spawnSpy.n, "the reused process was not replaced by a new child").toBe(1);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: the mounted successor has a fresh process; reset still prevents every later fallback spawn.
+    expect(spawnSpy.commands.filter(command => command === engine.cli), "reset during load starts no third native process").toHaveLength(2);
+    expect(spawnSpy.n, "two native processes and the server-owned MCP peer").toBe(3);
     expect(types(events.slice(mark))).toEqual(STOPPED_PAIR);
     pairFor(events.slice(mark), turnId);
     expect(completions(events.slice(mark))[0]?.stopReason).toBe("cancelled");
@@ -692,7 +696,11 @@ describe("stop-fence r3.2 pooled, reuse and reconnect", () => {
     await send(instance, "t2"); // holds in session/prompt on a child that ignores SIGTERM: its close stays unconfirmed during the dispose
     await waitFor(() => expect(engine.hold("session/prompt")).toBe(true));
     const one = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t1", text: "one", model: "p/m", integrations: agentsMcp() });
-    await waitFor(() => expect(engine.methods().filter((method) => method === "session/load").length).toBeGreaterThan(0));
+    // MAIN RULING 1115-DIGEST-ADOPTED DR3: pending mounts refuse before load/prompt. Dispose while the stubborn sibling still needs teardown.
+    await waitFor(() => expect(events.some(event => event.threadId === "t1" && event.type === "runtime.error")).toBe(true));
+    expect(engine.methods()).toContain("_fixture/mcp_list");
+    expect(engine.methods()).not.toContain("session/load");
+    expect(engine.methods().filter(method => method === "session/prompt")).toHaveLength(1);
     const disposing = instance.dispose();
     await Promise.race([one.catch(() => undefined), tick(4000)]);
     await tick(800);

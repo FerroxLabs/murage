@@ -1,3 +1,6 @@
+import type { EngineTransport } from "../../shared/engine-transport.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { botFolderOrThrow } from "../bot-folder.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
@@ -8,15 +11,21 @@ import { botFolderOrThrow } from "../bot-folder.ts";
 // environment (never process.env stripped), is tracked by a ChildTeardown from the moment it exists, and is stopped by
 // markStopRequested then killCliTree. Nothing a server writes to stderr is ever read, and no server error text or stderr
 // reaches a caller: every failure carries one of the fixed ChatMcpError messages (section 8).
+import { RelayedMount } from "./cli-mount-relay.ts";
 import type { ChildProcess } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { admittedMcpMount, type AdmittedMcpMount } from "./mcp-mounts.ts";
 
 import { augmentedPath } from "../env-path.ts";
 import {
-  awaitCliTreeStopped, CLI_FORCE_WAIT_MS, CLI_TERM_GRACE_MS, cliStopDelivery, cliTreeStoppedSignal, engineJob, killCliTree, spawnCli,
+  awaitCliTreeStopped, CLI_FORCE_WAIT_MS, CLI_TERM_GRACE_MS, cliStopDelivery, cliTreeStoppedSignal, engineJob, killCliTree, markPerPairStop, spawnCli,
 } from "../procs.ts";
-import { ChildTeardown } from "./child-teardown.ts";
-import { descendantIdentitiesKeepingUnknown, processParentsAndArgs, type ProcessIdentities } from "./process-tree.ts";
+import { alreadyClosed, ChildTeardown } from "./child-teardown.ts";
+import { randomUUID } from "node:crypto";
+import { enrollUnprovenStop, mcpStopStore, mcpStopTargetDeps, planMcpSpawn, spawnPlanned, type McpSpawnPlan } from "./mcp-stop-runtime.ts";
+import type { StopRecord } from "./mcp-stop-proof.ts";
+import type { ProbeOutcome } from "./mcp-stop-recovery.ts";
+import { DesktopStopTarget, ProofBatch, WindowsStopTarget, captureTargets, type StopTarget } from "./mcp-stop-target.ts";
+import { HELPER_CAP_MS, type WarmHelper } from "./mcp-stop-helper.ts";
 
 export const CHAT_MCP_PROTOCOL_VERSION = "2025-06-18";
 /** One frame (one line) may hold at most this many bytes; a longer line kills the session. */
@@ -58,6 +67,8 @@ export interface ChatMcpSession {
   readonly teardown: ChildTeardown;
   callTool(name: string, args: Record<string, unknown>, opts: ChatMcpCallOptions): Promise<ChatMcpCallResult>;
   close(): void;
+  /** Retire ingress before intentionally removing a mount mid-turn. */
+  retire(): void;
   readonly closed: boolean;
 }
 export interface OpenChatMcpOptions {
@@ -68,7 +79,9 @@ export interface OpenChatMcpOptions {
    *  whose startup then fails. */
   onSpawn?(server: string, teardown: ChildTeardown): void;
   /** Test hook. Default: spawnCli under engineJob(). */
-  spawn?: (command: string, args: string[], env: Record<string, string>, cwd: string) => ChildProcess;
+  spawn?: (command: string, args: string[], env: Record<string, string>, cwd: string, plan?: McpSpawnPlan) => ChildProcess;
+  /** The stop-record owner key (the bot or thread); a run without one is its own owner. */
+  owner?: string;
 }
 
 export const SECRET_ENV_NAME = /key|token|password|secret|authorization|cookie/i;
@@ -133,10 +146,11 @@ function parseEntry(entry: unknown): Launch | null {
   return { command: entry.command, args: args as string[], env: entry.env };
 }
 
-const defaultSpawn = (command: string, args: string[], env: Record<string, string>, cwd: string): ChildProcess =>
-  spawnCli(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env }, engineJob());
+const defaultSpawn = (command: string, args: string[], env: Record<string, string>, cwd: string, plan?: McpSpawnPlan): ChildProcess =>
+  !env.MURAGE_RELEASE_INSTANCE
+    ? spawnCli(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env }, plan ? plan.job : engineJob())
+    : spawnCli(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe", "ipc"], env }, plan ? plan.job : engineJob());
 
-const noop = () => { /* drained */ };
 const validId = (id: unknown): boolean => typeof id === "number" || typeof id === "string" || id === null;
 
 interface Pending { resolve(value: unknown): void; reject(error: ChatMcpError): void }
@@ -148,177 +162,196 @@ interface RequestOptions { signal?: AbortSignal; timeoutMs?: number }
 export const CHAT_MCP_CANCEL_GRACE_MS = 1_000;
 /** H6: how long a stop waits for the descendant snapshot before it ends the server anyway. */
 export const CHAT_MCP_SNAPSHOT_CAP_MS = 1_000;
-/** H6: how long a descendant still running after the SIGKILL bound is re-checked for a late exit (its teardown stays unconfirmed). */
-const ESCAPED_LATE_WATCH_MS = 60_000;
-
+/** One live proof attempt of the stop (aborted, its helper child killed, and counted UNKNOWN at the cap). */
+export const CHAT_MCP_PROOF_CAP_MS = 5_000;
 const settleWithin = (work: Promise<unknown>, ms: number): Promise<void> => new Promise((resolve) => {
   const timer = setTimeout(resolve, ms);
   timer.unref?.();
   void work.then(() => { clearTimeout(timer); resolve(); }, () => { clearTimeout(timer); resolve(); });
 });
-/** False only when the OS says no such process (ESRCH); EPERM means it exists. */
-const pidExists = (pid: number): boolean => {
-  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
-};
+/** The startup walks that have settled (R8-C C2: a stop then sends its capture at once instead of a tick later). */
+const settledWalks = new WeakSet<Promise<void>>();
 const pause = (ms: number) => new Promise<void>((resolve) => { const timer = setTimeout(resolve, ms); timer.unref?.(); });
-/** Linux: a terminated process its parent has not reaped yet (state Z) holds nothing and counts as gone. */
-const linuxZombie = async (pid: number): Promise<boolean> => {
-  if (process.platform !== "linux") return false;
-  try {
-    const text = await readFile(`/proc/${pid}/stat`, "utf8");
-    return text.slice(text.lastIndexOf(")") + 2).startsWith("Z");
-  } catch { return false; }
-};
-
-/** H6 (POSIX; on Windows the engine job object holds every descendant, escaped or not). A server descendant that left the
- *  process group (setsid, a daemon) is beyond the group SIGTERM/SIGKILL killCliTree sends, so it would survive Stop and Quit.
- *  Every descendant seen while the server runs is remembered with its start identity (process-tree.ts descendantIdentities):
- *  after startup, after each answered call, and at the stop itself, BEFORE stdin ends or the group is signalled, while the
- *  parentage is still intact. At the stop each one still running as the same process (pid AND start identity, re-read through
- *  processParentsAndArgs) gets SIGTERM with the group, then SIGKILL after CLI_TERM_GRACE_MS. The server's ChildTeardown
- *  confirms only once the group is gone AND every remembered descendant is, so a survivor keeps the run owned and a shutdown
- *  dispose rejects unconfirmed rather than claiming success. A descendant already reparented away before any snapshot saw it
- *  cannot be found by parentage; it is observed only through the pipes it holds (root close). */
+/** H6, rebuilt on the MCP stop proof (mcp-stop-proof.ts, design V). The server's stop target is one durable record plus a platform proof:
+ *  Cloud the stored scope's cgroup, Windows the stored job, desktop every (pid, start) pair ever observed (the U1 union: the root at
+ *  RUNNING, one budgeted walk after startup and after each answered call, the pre-stop capture). The pre-stop capture happens BEFORE
+ *  stdin ends or anything is signalled (bounded by CHAT_MCP_SNAPSHOT_CAP_MS, with its read aborted at the cap); only a proof that
+ *  succeeds AFTER the kill says gone. A proof that cannot be obtained is UNKNOWN: the run stays owned and the stop is handed to the
+ *  bounded recovery (mcp-stop-recovery.ts), which releases it only on a later proof. Nothing here reads an empty process-list walk as a
+ *  verdict, ChatMcpDescendants.stop() never resolves true because the platform is win32, and no desktop path signals a process group. */
 export class ChatMcpDescendants {
-  readonly #root: number | undefined;
   readonly #active: boolean;
-  readonly #known: ProcessIdentities = new Map();
-  #frozen = false;
-  /** The stop's own snapshot gave no answer in time: what escaped is unknown, so nothing can confirm the tree gone (Astra code-r2). */
+  readonly #target: StopTarget | null;
+  /** The pre-stop capture did not complete: what escaped is unknown (it stays unknown after the kill, R2). */
   #blind = false;
-  /** Pids the latest #remaining probe read with their remembered identity: the only ones ever signalled. */
-  readonly #verified = new Set<number>();
   #inFlight: Promise<void> | null = null;
+  /** The startup walk (the first track()): the only walk a stop's capture waits on (R8 amendment B1). */
+  #startup: Promise<void> | null = null;
+  /** The abort of the running walk when it is a later one (after an answered call): the stop's capture ends it instead of waiting. */
+  #rewalk: AbortController | null = null;
+  /** The post-kill proofs of the stop this server's capture was shared with (R8 amendment B2): one helper per round for all of them. */
+  #proofs: ProofBatch | null = null;
   #ready: Promise<void> | null = null;
   #stop: Promise<boolean> | null = null;
   #gone = false;
   #resolveGone: (() => void) | null = null;
   #goneSignal: Promise<true> | null = null;
 
-  constructor(child: ChildProcess, platform: NodeJS.Platform = process.platform) {
-    this.#root = child.pid;
-    this.#active = platform !== "win32" && typeof child.pid === "number";
+  constructor(child: ChildProcess, platform: NodeJS.Platform = process.platform, target?: StopTarget) {
+    this.#active = typeof child.pid === "number";
+    this.#target = !this.#active ? null : target ?? defaultStopTarget(child.pid!, platform);
+    if (this.#target && platform !== "win32") markPerPairStop(child);
   }
 
-  /** False on Windows (the job holds the tree) and for a child the OS never created: nothing to track. */
+  /** False only for a child the OS never created: nothing to track. */
   get active(): boolean { return this.#active; }
+  /** The proof's record (tests and the relay read it). */
+  get target(): StopTarget | null { return this.#target; }
 
-  /** True when the probe answered (an empty answer included). */
-  #take(): Promise<boolean> {
-    const root = this.#root;
-    if (!this.#active || root === undefined) return Promise.resolve(true);
-    return descendantIdentitiesKeepingUnknown(root).then((found) => {
-      if (!found) return false;
-      if (this.#frozen) return true;
-      // an unreadable start is no identity: such a pid is never signalled, and nothing can later prove it gone, so the tree can no
-      // longer be confirmed (Grok code-r2)
-      for (const [pid, start] of found) {
-        if (pid === process.pid) continue;
-        if (start) this.#known.set(pid, start);
-        else this.#blind = true;
-      }
-      return true;
-    }, () => false);
+  #queued: Promise<void> | null = null;
+
+  /** Remember the server's current descendants (U1). The returned promise settles once an enumeration that STARTED AFTER this call has
+   *  persisted its result: a walk already running is followed by one more (coalesced), never reused for a later answer. */
+  track(): Promise<void> {
+    if (!this.#target || this.#ready) return Promise.resolve();
+    if (this.#inFlight) return this.#queued ??= this.#inFlight.then(() => { this.#queued = null; return this.#begin(); });
+    return this.#begin();
   }
 
-  /** Remember the server's current descendants (coalesced; never blocks a call). */
-  track(): void {
-    if (!this.#active || this.#ready || this.#inFlight) return;
-    this.#inFlight = this.#take().then(() => undefined).finally(() => { this.#inFlight = null; });
+  #begin(): Promise<void> {
+    if (!this.#target || this.#ready) return Promise.resolve();
+    const rewalk = this.#startup ? new AbortController() : null;
+    const run: Promise<void> = this.#target.track(rewalk?.signal).catch(() => undefined)
+      .finally(() => { if (this.#inFlight === run) { this.#inFlight = null; this.#rewalk = null; } });
+    this.#inFlight = run; this.#rewalk = rewalk;
+    if (!this.#startup) { this.#startup = run; void run.then(() => { settledWalks.add(run); }); }
+    return run;
   }
 
-  /** The stop's own snapshot, bounded: the group is signalled and stdin ended only once it settled (or its cap passed). */
-  ready(): Promise<void> {
-    if (!this.#active) return Promise.resolve();
-    return this.#ready ??= (() => {
-      let answered = false;
-      const snapshot = Promise.all([this.#inFlight, this.#take()]).then(([, ok]) => { answered = ok; });
-      return settleWithin(snapshot, CHAT_MCP_SNAPSHOT_CAP_MS).then(() => { if (!answered) this.#blind = true; });
-    })();
+  /** The stop's own capture, bounded: the group is signalled and stdin ended only once it settled (or its cap passed). At the cap the
+   *  capture's reads are aborted and the capture is unknown for good. `peers` are the other servers of the same stop (a relay's
+   *  children): the first ready() of that stop captures every peer not yet captured in ONE request (captureTargets: one helper child,
+   *  one enumeration, R8 as amended 2026-11-17) under ONE cap, after only the batch's startup walks (amendment B1),
+   *  and each peer's ready() is that shared capture. A peer whose answer is missing at the cap is blind exactly as a lone capture would be (fail closed: one stalled helper leaves every peer it covered owned). */
+  ready(peers: readonly ChatMcpDescendants[] = [], warm?: WarmHelper | null): Promise<void> {
+    if (!this.#target) return Promise.resolve();
+    if (this.#ready) return this.#ready;
+    const batch = [this, ...peers.filter((peer) => peer !== this && peer.#target && !peer.#ready)];
+    const controller = new AbortController();
+    const answered = batch.map(() => false);
+    // B1: wait only on the startup walks of the peers being stopped; a later walk still running is aborted (its helper killed, so it
+    // persists nothing after the capture), because the capture's own fresh enumeration supersedes it
+    // R8-C (C2): when every startup walk has settled the capture request is sent NOW, synchronously, at the stop request (not a tick later,
+    // after the stop loop); the warm helper (C1) then answers it while the rest of the stop request runs
+    for (const one of batch) one.#rewalk?.abort();
+    const startups = batch.map((one) => one.#startup).filter((walk): walk is Promise<void> => walk !== null && !settledWalks.has(walk));
+    // MC63 R-B: CHAT_MCP_SNAPSHOT_CAP_MS bounds the capture itself, so its clock starts only once the startup walks settled. The walk wait
+    // keeps the walk's own existing bound, HELPER_CAP_MS (a walk is one helper request, killed and answered null at that cap,
+    // mcp-stop-helper.ts); a walk still unsettled there fails closed: no capture is sent and every peer of the batch is blind
+    const captureNow = () => settleWithin(captureTargets(batch.map((one) => one.#target!), controller.signal, warm)
+      .then((oks) => { oks.forEach((ok, i) => { answered[i] = ok; }); }), CHAT_MCP_SNAPSHOT_CAP_MS);
+    let walked = !startups.length;
+    const captured = walked ? captureNow()
+      : settleWithin(Promise.all(startups).then(() => { walked = true; }), HELPER_CAP_MS).then(() => walked ? captureNow() : undefined);
+    const shared = captured.then(() => {
+      let blind = false;
+      batch.forEach((one, i) => { if (!answered[i]) { one.#blind = true; blind = true; } });
+      if (blind) controller.abort();
+    });
+    const proofs = new ProofBatch();
+    for (const one of batch) { one.#ready = shared; one.#proofs = proofs; }
+    return shared;
   }
 
-  /** Idempotent: true once every remembered descendant is gone; false at the SIGKILL bound (goneSignal reports a late exit). */
+  /** Idempotent: true once the platform proof says gone; false when the stop stays unproven (goneSignal reports a later proof). */
   stop(): Promise<boolean> {
-    if (!this.#active) return Promise.resolve(true);
-    return this.#stop ??= this.#run();
+    if (!this.#target) return Promise.resolve(true);
+    return this.#stop ??= this.#run(this.#target);
   }
 
-  /** Resolves whenever every remembered descendant is finally gone; never otherwise. */
+  /** Resolves whenever the stop is finally proven; never otherwise. */
   goneSignal(): Promise<true> {
-    if (!this.#active || this.#gone) return Promise.resolve(true);
+    if (!this.#target || this.#gone) return Promise.resolve(true);
     return this.#goneSignal ??= new Promise<true>((resolve) => { this.#resolveGone = () => resolve(true); });
   }
 
-  async #run(): Promise<boolean> {
+  async #run(target: StopTarget): Promise<boolean> {
     await this.ready();
-    this.#frozen = true;
-    if (!this.#blind && await this.#remaining().then((left) => left?.size === 0)) return this.#markGone();
-    await this.#signal("SIGTERM");
-    const termed = await this.#allGone(CLI_TERM_GRACE_MS);
-    if (termed && !this.#blind) return this.#markGone();
-    if (!termed) await this.#signal("SIGKILL");
+    await target.kill("SIGTERM").catch(() => undefined);
+    if (!this.#blind && await this.#waitGone(target, CLI_TERM_GRACE_MS)) return this.#markGone(target);
+    await target.kill("SIGKILL").catch(() => undefined);
     if (this.#blind) {
-      console.warn("[chat-mcp] the process list gave no answer before the MCP server was stopped, so an escaped descendant cannot be ruled out; the run stays owned");
-      return false;
-    }
-    if (await this.#allGone(CLI_FORCE_WAIT_MS)) return this.#markGone();
-    const pids = [...this.#known.keys()];
-    console.warn(`[chat-mcp] ${pids.length} escaped MCP descendant(s) still running after SIGKILL (pids ${pids.join(", ")}); the run stays owned`);
-    void this.#allGone(ESCAPED_LATE_WATCH_MS, 1_000).then((gone) => { if (gone) this.#markGone(); });
+      console.warn("[chat-mcp] the pre-stop capture gave no answer before the MCP server was stopped, so an escaped descendant cannot be ruled out; the run stays owned");
+    } else if (await this.#waitGone(target, CLI_FORCE_WAIT_MS)) return this.#markGone(target);
+    else console.warn("[chat-mcp] the MCP server's stop could not be proven after SIGKILL; the run stays owned and is re-proved with backoff");
+    void enrollUnprovenStop(target.record).then(() => { this.#markGone(target); });
     return false;
   }
 
-  #markGone(): true {
+  #markGone(target: StopTarget): true {
     this.#gone = true;
+    mcpStopStore()?.delete(target.record);
     this.#resolveGone?.();
     return true;
   }
 
-  /** The remembered descendants still running as themselves (pruning the rest); null when the probe gave no answer. */
-  async #remaining(): Promise<ProcessIdentities | null> {
-    if (!this.#known.size) return this.#known;
-    const rows = await processParentsAndArgs(this.#known.keys()).catch(() => null);
-    if (!rows) return null;
-    this.#verified.clear();
-    for (const [pid, start] of [...this.#known]) {
-      const row = rows.get(pid);
-      // a pid now running with another identity is a reused pid: ours is gone. A pid the probe left out, or whose identity it could
-      // not read, is gone only when the OS says so (ESRCH) or it is a zombie; otherwise it is kept, unconfirmed (Astra code-r3).
-      if (row?.start && row.start !== start) { this.#known.delete(pid); continue; }
-      if (row?.start === start && !(await linuxZombie(pid))) { this.#verified.add(pid); continue; }
-      if (!pidExists(pid) || await linuxZombie(pid)) this.#known.delete(pid);
-    }
-    return this.#known;
-  }
-
-  async #signal(signal: NodeJS.Signals): Promise<void> {
-    if (!(await this.#remaining())) return;
-    // only a pid whose identity this probe read and matched is signalled: an unreadable one may be a reused pid (Astra code-r4)
-    for (const pid of this.#verified) { try { process.kill(pid, signal); } catch { /* gone, or not ours */ } }
-  }
-
-  async #allGone(ms: number, every = 100): Promise<boolean> {
+  async #waitGone(target: StopTarget, ms: number, every = 100): Promise<boolean> {
     const deadline = Date.now() + ms;
     for (;;) {
-      const left = await this.#remaining();
-      if (left?.size === 0) return true;
+      // Each live proof sits under an encompassing budget (the stop's remaining wait, at most CHAT_MCP_PROOF_CAP_MS): at the cap its
+      // reads are aborted (the helper child is killed) and the attempt is UNKNOWN, so a stalled enumeration cannot hold the stop open.
+      const controller = new AbortController();
+      const left = Math.max(1, Math.min(CHAT_MCP_PROOF_CAP_MS, deadline - Date.now()));
+      const timer = setTimeout(() => controller.abort(), left);
+      timer.unref?.();
+      const outcome = await Promise.race([
+        (this.#proofs ? this.#proofs.prove(target, controller.signal) : target.prove(controller.signal)).catch((): ProbeOutcome => ({ v: "unknown", why: "the proof threw" })),
+        new Promise<ProbeOutcome>((resolve) => { controller.signal.addEventListener("abort", () => resolve({ v: "unknown", why: "the proof passed its cap" }), { once: true }); }),
+      ]).finally(() => clearTimeout(timer));
+      if (outcome.v === "gone") return true;
       if (Date.now() >= deadline) return false;
       await pause(Math.min(every, Math.max(0, deadline - Date.now())));
     }
   }
 }
 
+/** A target for a child built without a stop lifecycle (a test, a caller that never planned a record): an in-memory record, so the
+ *  same proof rules apply. win32 has no job record here, so it can never prove gone. */
+function defaultStopTarget(pid: number, platform: NodeJS.Platform): StopTarget {
+  const base: StopRecord = { version: 1, owner: `unplanned:${pid}`, generation: Date.now() * 1000, platform: "desktop", state: "RUNNING", desktop: { pairs: [], captureCompleted: false } };
+  if (platform === "win32") return new WindowsStopTarget({ ...base, platform: "windows", desktop: undefined }, { store: null });
+  const adhoc = new DesktopStopTarget(base, pid, platform === "darwin" ? "darwin" : "linux", { ...mcpStopTargetDeps(), store: null });
+  return adhoc;
+}
+
+/** The signal that ends an MCP server's root. Windows: the job (TerminateJobObject through killCliTree), never a pid. Elsewhere the root and
+ *  every descendant are ended by ChatMcpDescendants.stop(), one identity-verified signal per recorded pair (U3): a desktop path never signals a
+ *  process group, so a pgid shared with an unrelated process receives nothing. A child the proof does not track keeps the tree kill. */
+export function killMcpRoot(child: ChildProcess, descendants: ChatMcpDescendants): void {
+  if (process.platform === "win32" || !descendants.active) killCliTree(child);
+}
+
 /** The server's teardown: the group's confirmation (after the stop's snapshot) AND every remembered descendant gone. */
-function chatMcpTeardown(child: ChildProcess, descendants: ChatMcpDescendants): ChildTeardown {
+export function chatMcpTeardown(child: ChildProcess, descendants: ChatMcpDescendants): ChildTeardown {
+  // A POSIX proof cannot close inherited pipes held by a process outside the captured set.
+  const rootClosed = !descendants.target || process.platform === "win32" || child.pid === undefined || alreadyClosed(child)
+    ? Promise.resolve() : new Promise<void>(resolve => child.once("close", () => resolve()));
   return new ChildTeardown(
     child,
-    (target) => Promise.all([descendants.ready().then(() => awaitCliTreeStopped(target)), descendants.stop()]).then(([tree, rest]) => tree && rest),
+    // POSIX with a tracked target (U3/V5): the stop is descendants.stop() alone, one signal per recorded pair; the group is never signalled.
+    (target) => descendants.target && process.platform !== "win32"
+      ? descendants.ready().then(() => descendants.stop()).then(gone => gone ? rootClosed.then(() => true) : false)
+      : Promise.all([descendants.ready().then(() => awaitCliTreeStopped(target)), descendants.stop()]).then(([tree, rest]) => tree && rest),
     cliStopDelivery,
-    (target) => Promise.all([cliTreeStoppedSignal(target), descendants.goneSignal()]).then(() => true as const),
+    (target) => descendants.target && process.platform !== "win32"
+      ? descendants.goneSignal().then(() => rootClosed).then(() => true as const)
+      : Promise.all([cliTreeStoppedSignal(target), descendants.goneSignal()]).then(() => true as const),
   );
 }
 
-class ChatMcpConnection implements ChatMcpSession {
+export class ChatMcpConnection implements ChatMcpSession, EngineTransport {
+  readonly engineTransport = true as const;
+  readonly #mount: AdmittedMcpMount;
   readonly server: string;
   readonly teardown: ChildTeardown;
   readonly #child: ChildProcess;
@@ -326,28 +359,18 @@ class ChatMcpConnection implements ChatMcpSession {
   #closed = false;
   #nextId = 1;
   readonly #pending = new Map<number, Pending>();
-  #parts: Buffer[] = [];
-  #partsBytes = 0;
+  readonly #transport: RelayedMount;
   #frames = 0;
 
   readonly #descendants: ChatMcpDescendants;
 
-  constructor(server: string, child: ChildProcess, teardown: ChildTeardown, descendants: ChatMcpDescendants = new ChatMcpDescendants(child, "win32")) {
+  constructor(server: string, child: ChildProcess, teardown: ChildTeardown, descendants: ChatMcpDescendants, mount: AdmittedMcpMount) {
+    this.#mount = mount;
     this.server = server;
     this.#child = child;
     this.teardown = teardown;
     this.#descendants = descendants;
-    const { stdin, stdout, stderr } = child;
-    child.on("error", () => this.close());
-    // A reply already in the pipe can be reported after `exit`; the stream's own end closes at once.
-    child.once("exit", () => { const timer = setTimeout(() => this.close(), 50); timer.unref?.(); });
-    // stderr may carry credentials: drained and discarded, never read into anything.
-    if (stderr) { stderr.on("error", noop); stderr.resume(); }
-    if (!stdin || !stdout) { this.close(); return; }
-    stdin.on("error", () => this.close());
-    stdout.on("error", () => this.close());
-    stdout.on("end", () => this.close());
-    stdout.on("data", (chunk: Buffer | string) => this.#onData(typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk));
+    this.#transport = new RelayedMount(child, mount, frame => this.#acceptFrame(frame), error => { if (error !== undefined) this.retire(); this.close(); });
   }
 
   get tools(): ChatMcpToolDef[] { return this.#tools; }
@@ -355,7 +378,9 @@ class ChatMcpConnection implements ChatMcpSession {
   get closed(): boolean { return this.#closed; }
 
   /** Remember the server's current descendants (H6); called after startup and after each answered call. */
-  trackDescendants(): void { this.#descendants.track(); }
+  trackDescendants(): Promise<void> { return this.#descendants.track(); }
+
+  retire(): void { this.#mount.ingress.retire(); }
 
   /** Idempotent. Every pending request rejects; the child is marked stop-requested, then its whole tree is killed. On POSIX
    *  (H6) stdin ends and the group is signalled only after the stop's descendant snapshot (bounded by CHAT_MCP_SNAPSHOT_CAP_MS),
@@ -369,14 +394,15 @@ class ChatMcpConnection implements ChatMcpSession {
   #shutdown(graceMs: number): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#transport.retire();
+    this.#mount.close();
     const pending = [...this.#pending.values()];
     this.#pending.clear();
-    this.#parts = [];
-    this.#partsBytes = 0;
+
     const child = this.#child;
     const kill = () => {
       try { child.stdin?.end(); } catch { /* already closed */ }
-      try { killCliTree(child); } catch { /* already gone */ }
+      try { killMcpRoot(child, this.#descendants); } catch { /* already gone */ }
     };
     const requestStop = () => {
       this.teardown.markStopRequested();
@@ -408,7 +434,9 @@ class ChatMcpConnection implements ChatMcpSession {
   #write(message: Record<string, unknown>): boolean {
     if (this.#closed) return false;
     try {
-      this.#child.stdin?.write(`${JSON.stringify(message)}\n`);
+      const frame = JSON.stringify(message);
+      this.#transport.request(frame);
+      if (this.#closed) return false;
       return true;
     } catch {
       this.close();
@@ -439,7 +467,8 @@ class ChatMcpConnection implements ChatMcpSession {
       const stop = (kind: "aborted" | "timeout") => {
         if (!this.#pending.delete(id)) return;
         cleanup();
-        this.notify("notifications/cancelled", { requestId: id, reason: kind === "timeout" ? "timed out" : "cancelled" });
+        try { this.#mount.ingress.cancel(id, frame => { this.#child.stdin?.write(frame + "\n"); }); }
+        catch { this.#mount.ingress.seal(); }
         this.#shutdown(CHAT_MCP_CANCEL_GRACE_MS);
         reject(new ChatMcpError(kind));
       };
@@ -456,38 +485,17 @@ class ChatMcpConnection implements ChatMcpSession {
   async callTool(name: string, args: Record<string, unknown>, opts: ChatMcpCallOptions = {}): Promise<ChatMcpCallResult> {
     const timeoutMs = typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
       ? opts.timeoutMs : CHAT_MCP_CALL_TIMEOUT_MS;
-    const result = await this.request("tools/call", { name, arguments: args }, { signal: opts.signal, timeoutMs });
-    this.trackDescendants();
+    const result = await NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", this.request("tools/call", { name, arguments: args }, { signal: opts.signal, timeoutMs }));
+    await this.trackDescendants(); // U1: enumerated and persisted BEFORE the turn result returns
     return callResultOf(result, opts.scrub);
   }
 
-  #onData(chunk: Buffer): void {
-    let start = 0;
-    while (!this.#closed && start < chunk.length) {
-      const newline = chunk.indexOf(0x0a, start);
-      if (newline === -1) {
-        const rest = chunk.subarray(start);
-        if (this.#partsBytes + rest.length > CHAT_MCP_FRAME_CAP_BYTES) { this.close(); return; }
-        this.#parts.push(rest);
-        this.#partsBytes += rest.length;
-        return;
-      }
-      const piece = chunk.subarray(start, newline);
-      start = newline + 1;
-      if (this.#partsBytes + piece.length > CHAT_MCP_FRAME_CAP_BYTES) { this.close(); return; }
-      const line = this.#parts.length ? Buffer.concat([...this.#parts, piece]) : piece;
-      this.#parts = [];
-      this.#partsBytes = 0;
-      this.#onLine(line.toString("utf8"));
-    }
-  }
-
-  #onLine(text: string): void {
+  #acceptFrame(text: string): void {
     const line = text.trim();
     if (!line) return;
     if (++this.#frames > CHAT_MCP_MAX_FRAMES) { this.close(); return; }
     let message: unknown;
-    try { message = JSON.parse(line); } catch { this.close(); return; }
+    try { message = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { this.close(); return; }
     if (!isRecord(message) || message.jsonrpc !== "2.0") { this.close(); return; }
     const { id, method } = message;
     if (method !== undefined) {
@@ -495,7 +503,11 @@ class ChatMcpConnection implements ChatMcpSession {
       if (id === undefined) return; // a notification: nothing this client acts on
       if (!validId(id)) { this.close(); return; }
       // This client serves no server-initiated request (sampling, roots, elicitation, ping).
-      this.#write({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
+      // Ingress acceptance currently owns the SQLite writer. This reply is a
+      // distinct release: enqueue its fresh admission after that owner exits.
+      queueMicrotask(() => {
+        if (!this.#closed) this.#write({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
+      });
       return;
     }
     if (id === undefined || !validId(id) || ("result" in message) === ("error" in message)) { this.close(); return; }
@@ -535,20 +547,20 @@ function toolDefOf(raw: unknown): ChatMcpToolDef | null {
 }
 
 async function startSession(connection: ChatMcpConnection): Promise<ChatMcpToolDef[]> {
-  const init = await connection.request("initialize", {
+  const init = await NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", connection.request("initialize", {
     protocolVersion: CHAT_MCP_PROTOCOL_VERSION,
     capabilities: {},
     clientInfo: { name: "murage", version: "1" },
-  });
+  }));
   if (!isRecord(init)) throw new ChatMcpError("failed");
-  connection.notify("notifications/initialized");
+  NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", connection.notify("notifications/initialized"));
   const tools: ChatMcpToolDef[] = [];
   const names = new Set<string>();
   const cursors = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; ; page++) {
     if (page >= CHAT_MCP_MAX_LIST_PAGES) throw new ChatMcpError("failed");
-    const listed = await connection.request("tools/list", cursor === undefined ? undefined : { cursor });
+    const listed = await NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", connection.request("tools/list", cursor === undefined ? undefined : { cursor }));
     if (!isRecord(listed) || (listed.tools !== undefined && !Array.isArray(listed.tools))) throw new ChatMcpError("failed");
     for (const raw of (listed.tools as unknown[] | undefined) ?? []) {
       const tool = toolDefOf(raw);
@@ -572,24 +584,32 @@ export async function openChatMcpServers(
 ): Promise<{ sessions: ChatMcpSession[]; failed: string[] }> {
   const { signal } = options;
   if (signal?.aborted) return { sessions: [], failed: [] };
+  const admitted = new Map<string, AdmittedMcpMount>();
+  try { for (const [name, entry] of Object.entries(servers ?? {})) admitted.set(name, admittedMcpMount(entry)); }
+  catch (error) { for (const mount of admitted.values()) mount.close(); throw error; }
   const cwd = botFolderOrThrow(options);
-  const spawn = options.spawn ?? defaultSpawn;
+  const launchMcp = options.spawn ?? defaultSpawn;
   const startupMs = typeof options.startupMs === "number" && options.startupMs > 0 ? options.startupMs : CHAT_MCP_STARTUP_MS;
   const slots: Array<{ name: string; connection?: ChatMcpConnection }> = [];
   // Everything is spawned and reported synchronously, before the first await.
   for (const [name, entry] of Object.entries(servers ?? {})) {
+    const mount = admitted.get(name)!;
     const launch = parseEntry(entry);
-    if (!launch) { slots.push({ name }); continue; }
+    if (!launch) { mount.close(); slots.push({ name }); continue; }
     let child: ChildProcess;
+    let plan: McpSpawnPlan;
     try {
-      child = spawn(launch.command, launch.args, chatMcpChildEnv(launch.env), cwd);
+      plan = planMcpSpawn(options.owner ?? `chat-mcp:${randomUUID()}`, { cloud: false });
+      child = spawnPlanned(plan, (planned) => launchMcp(launch.command, launch.args, chatMcpChildEnv(launch.env), cwd, planned));
     } catch {
+      mount.ingress.retire();
+      mount.close();
       slots.push({ name });
       continue;
     }
-    const descendants = new ChatMcpDescendants(child);
+    const descendants = new ChatMcpDescendants(child, process.platform, plan.life.target(child.pid));
     const teardown = chatMcpTeardown(child, descendants);
-    const connection = new ChatMcpConnection(name, child, teardown, descendants);
+    const connection = new ChatMcpConnection(name, child, teardown, descendants, mount);
     try {
       options.onSpawn?.(name, teardown);
     } catch {
@@ -610,7 +630,7 @@ export async function openChatMcpServers(
       const timer = setTimeout(() => connection.close(), startupMs);
       try {
         connection.tools = await startSession(connection);
-        connection.trackDescendants();
+        await connection.trackDescendants();
         return !connection.closed;
       } catch {
         connection.close();

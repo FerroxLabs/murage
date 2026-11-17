@@ -1,13 +1,20 @@
+import "../shared/win-hide-child-process.mjs";
 import { createHash } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync, type BigIntStats } from "node:fs";
 import { win32 } from "node:path";
 import { nativeAuthenticodeIn, verifyWindowsBrowserSignatures, type NativeAuthenticode } from "./browser-windows-identity.ts";
-import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
+import { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 import { WINDOWS_BACKUP_RAW_SHA256 } from "../shared/windows-backup-tools.mjs";
+import { loadWindowsBackupSignedPins, type WindowsBackupSignedPin } from "../shared/windows-backup-signed-pins.mjs";
+import { verifySignedWindowsPe, type WindowsUnsignedPePin } from "../shared/windows-signed-pe.mjs";
 
 // Provenance pins only. These do not add Windows to platform admission.
 export { WINDOWS_BACKUP_RAW_SHA256 } from "../shared/windows-backup-tools.mjs";
 const fail = (): never => { throw new InstallationSnapshotError("AGE_TOOL_UNVERIFIED"); };
+/** Main-process restic admission uses this already bundled native verifier. */
+export async function verifyWindowsBackupPublisher(file:string,resources:string):Promise<void> {
+  await verifyWindowsBrowserSignatures([file], process.env.SystemRoot, nativeAuthenticodeIn(resources));
+}
 const regular = (stat: BigIntStats, maxBytes: number) => stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1n && stat.size > 0n && stat.size <= BigInt(maxBytes);
 const sameFile = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.nlink === b.nlink && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 function hashDescriptor(fd: number, maxBytes: number) {
@@ -22,6 +29,7 @@ function hashDescriptor(fd: number, maxBytes: number) {
 export interface WindowsBackupFileObservation {
   readonly sha256: string;
   assertUnchanged(): void;
+  assertSignedOriginal?(pin:WindowsUnsignedPePin):void;
   close(): void;
 }
 
@@ -43,7 +51,13 @@ export function observeWindowsBackupFile(path: string, maxBytes: number): Window
       if (!regular(held, maxBytes) || !regular(named, maxBytes) || !sameFile(before, held) || !sameFile(before, named)) fail();
       if (hashDescriptor(fd, maxBytes) !== sha256 || !sameFile(before, fstatSync(fd, { bigint: true })) || !sameFile(before, lstatSync(path, { bigint: true }))) fail();
     };
-    return { sha256, assertUnchanged, close };
+    const assertSignedOriginal = (pin:WindowsUnsignedPePin) => {
+      assertUnchanged();
+      const bytes = Buffer.alloc(Number(fstatSync(fd, { bigint: true }).size)); let offset = 0;
+      while (offset < bytes.length) { const count = readSync(fd, bytes, offset, bytes.length - offset, offset); if (!count) fail(); offset += count; }
+      verifySignedWindowsPe(bytes, pin); assertUnchanged();
+    };
+    return { sha256, assertUnchanged, assertSignedOriginal, close };
   } catch { close(); return fail(); }
 }
 
@@ -56,6 +70,7 @@ export interface WindowsBackupResourceDependencies {
   /** `native`: the app's own WinVerifyTrust check (murage-releases #1: no PowerShell); null refuses (no other check exists). */
   verifySignatures(files: string[], native: NativeAuthenticode | null): Promise<void>;
   nativeAuthenticode(resourcesPath: string): NativeAuthenticode | null;
+  signedPins(directory:string):Record<string,WindowsBackupSignedPin>|null;
 }
 const defaults: WindowsBackupResourceDependencies = {
   platform: process.platform, arch: process.arch,
@@ -67,6 +82,7 @@ const defaults: WindowsBackupResourceDependencies = {
   observeFile: observeWindowsBackupFile,
   verifySignatures: (files, native) => verifyWindowsBrowserSignatures(files, process.env.SystemRoot, native),
   nativeAuthenticode: nativeAuthenticodeIn,
+  signedPins: loadWindowsBackupSignedPins,
 };
 const equalPath = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 function canonicalDosPath(path: string) {
@@ -127,16 +143,29 @@ export function createWindowsBackupResourceResolver(
         { path: win32.join(tools, "age-keygen.exe"), max: 64 * 1024 ** 2, sha256: WINDOWS_BACKUP_RAW_SHA256.keygen },
         { path: win32.join(tools, "LICENSE"), max: 1024 ** 2, sha256: WINDOWS_BACKUP_RAW_SHA256.license },
       ];
+      const signedPins = io.signedPins(tools);
       step = "files";
       for (const file of files) {
         if (!equalPath(io.realpath(file.path), file.path)) fail();
         const observed = io.observeFile(file.path, file.max); opened.push(observed);
-        if (file.sha256 && observed.sha256 !== file.sha256) fail();
+        if (file.sha256) {
+          const pin = signedPins?.[win32.basename(file.path)];
+          if (signedPins && file.path.endsWith(".exe")) {
+            if (!pin) return fail();
+            if (pin.originalSha256 !== file.sha256 || observed.sha256 !== pin.sha256) return fail();
+            if (pin.sha256 !== file.sha256) {
+              const unsigned = pin.unsigned, assertSignedOriginal = observed.assertSignedOriginal;
+              if (!unsigned || unsigned.sha256 !== file.sha256 || !assertSignedOriginal) return fail();
+              assertSignedOriginal(unsigned);
+            }
+          } else if (observed.sha256 !== file.sha256) fail();
+        }
       }
       // Signature verifier is generic; its separate browser PE normalizer is not used.
-      // Raw upstream age/keygen bytes must remain untouched by Windows signing.
+      // GrokBuild ruling: age/keygen also carry production Authenticode signatures;
+      // signed-byte pins and original-payload verification both precede trust checks.
       step = "signatures";
-      await io.verifySignatures([app, executable], io.nativeAuthenticode(resources));
+      await io.verifySignatures([app, executable, win32.join(tools, "age.exe"), win32.join(tools, "age-keygen.exe")], io.nativeAuthenticode(resources));
       step = "files-changed";
       for (const observed of opened) observed.assertUnchanged();
       step = "folders-changed";

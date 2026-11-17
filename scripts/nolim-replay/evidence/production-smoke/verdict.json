@@ -1,0 +1,50 @@
+{
+  "mode": "fake-only candidate policy and final release",
+  "releaseGate": false,
+  "rows": [
+    {
+      "id": "ordinary",
+      "actor": "owner",
+      "level": "unlimited",
+      "expected": "RUN",
+      "complete": true,
+      "ended": true,
+      "actionProven": true,
+      "cards": [],
+      "refusals": [],
+      "cardCount": 0,
+      "nonwipeCardCount": 0,
+      "refusalCount": 0,
+      "questionCount": 0,
+      "errors": [],
+      "verdict": "PASS"
+    },
+    {
+      "id": "wipe",
+      "actor": "owner",
+      "level": "unlimited",
+      "expected": "CARD",
+      "why": "wipe",
+      "complete": true,
+      "ended": true,
+      "actionProven": true,
+      "cards": [
+        {
+          "why": "deny",
+          "evidence": []
+        }
+      ],
+      "refusals": [],
+      "cardCount": 1,
+      "nonwipeCardCount": 1,
+      "refusalCount": 0,
+      "questionCount": 0,
+      "errors": [
+        "card decision evidence does not match independent expectation"
+      ],
+      "verdict": "FAIL"
+    }
+  ],
+  "errors": [],
+  "verdict": "FAIL"
+}

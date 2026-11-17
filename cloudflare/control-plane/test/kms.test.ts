@@ -8,7 +8,7 @@ import { keyWrapperFor, stagingKeyWrapper } from "../src/key-wrapper";
 
 const ADMIN = "test-only-cloud-admin-token-with-no-real-access";
 const KEK = btoa("x".repeat(32));
-const ARN = "arn:aws:kms:eu-west-1:111122223333:key/11111111-2222-3333-4444-555555555555";
+const ARN = "arn:aws:kms:eu-west-1:149471050106:key/0c7fb20d-226b-4ccc-91c5-93fd414c1afb";
 const KMS_ENV = { AWS_KMS_KEY_ARN: ARN, AWS_KMS_REGION: "eu-west-1", AWS_ACCESS_KEY_ID: "AKIATESTONLY", AWS_SECRET_ACCESS_KEY: "test-only-secret" };
 
 /** In-memory stand-in for AWS KMS: checks the request shape and enforces encryption-context binding. */

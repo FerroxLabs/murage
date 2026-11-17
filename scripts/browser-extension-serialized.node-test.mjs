@@ -59,8 +59,10 @@ function collectors(f, hostile = false) {
   assert.equal(f.call(pageScripts.COMPOSED_HIT_TEST_SOURCE, f.target, 10, 10), true);
   assert.equal(f.call(pageScripts.COMPOSED_ACTIVE_SOURCE), f.target);
   check(() => assert.equal(typeof f.expression(pageScripts.presentedLinkExpression('https://fixture.test/next')), 'boolean'));
-  const html = f.expression(pageScripts.htmlSliceExpression(0, 200));
-  assert.ok(html.length > 0); assert.ok(f.expression(pageScripts.HTML_LENGTH_EXPRESSION) >= html.length);
+  const htmlLength = f.expression(pageScripts.HTML_LENGTH_EXPRESSION);
+  const html = f.expression(pageScripts.htmlSliceExpression(0, Math.min(200, htmlLength)));
+  assert.ok(html.length > 0); assert.ok(htmlLength >= html.length);
+  f.expression(pageScripts.HTML_RELEASE_EXPRESSION);
   const page = f.call(pagerSource, f.w.document.body)(0, 64);
   assert.equal(page.length, Math.min(page.total, 64));
   f.expression(BROWSER_DOCUMENT_GUARD_SOURCE);
@@ -514,4 +516,18 @@ test('R7 F6 a generic widget mask cannot cover an unlocated guard field', async 
     let called=false;f.w.__muragePresence={capture:()=>{called=true;return true;}};
     assert.equal(await f.expression(SENSITIVE_RECTS.replace('/*GUARD*/false','true')),false);assert.equal(called,false);
   } finally { f.close(); }
+});
+
+
+test('page HTML slices use one immutable capture', () => {
+  const f = fixture('<p>' + 'long line 中文 😀 '.repeat(12000) + 'Checkout</p>');
+  const original = f.w.document.documentElement.outerHTML;
+  const total = f.expression(pageScripts.HTML_LENGTH_EXPRESSION);
+  f.w.document.body.innerHTML = '<p>Changed after capture</p>';
+  let rebuilt = '';
+  for (let at = 0; at < total; at += 120000) rebuilt += f.expression(pageScripts.htmlSliceExpression(at, at + 120000));
+  assert.equal(rebuilt, original);
+  f.expression(pageScripts.HTML_RELEASE_EXPRESSION);
+  assert.throws(() => f.expression(pageScripts.htmlSliceExpression(0, 10)));
+  f.w.close();
 });

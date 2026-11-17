@@ -612,7 +612,8 @@ function resetFixture() {
   return { fx, other, foreign, reset, fallback, close: () => { other.close(); fx.close(); } };
 }
 
-describe("r3.6d reset accounting on every OS", () => {
+// These cases seed real FULL-synchronous files, including several seeds within one test.
+describe("r3.6d reset accounting on every OS", { timeout: 900_000 }, () => {
   it("reset charges foreign commits", () => {
     const fx = walStorm(500);
     const other = new DatabaseSync(dbFile(fx.db));
@@ -795,7 +796,7 @@ function copyFixture() {
   return { fx, first, second, look, lapse, append, snapshot, commit, close: () => { first.close(); second.close(); fx.close(); } };
 }
 
-describe("r3.6d copy landing marks", () => {
+describe("r3.6d copy landing marks", { timeout: 900_000 }, () => {
   it("ruling B two lapsed copies", () => {
     const f = copyFixture();
     try {

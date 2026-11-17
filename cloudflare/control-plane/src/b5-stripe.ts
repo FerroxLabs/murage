@@ -143,7 +143,7 @@ function subscriptionView(raw: Obj) {
   return { id: str(raw.id) ?? "", status: str(raw.status), cancel_at_period_end: typeof raw.cancel_at_period_end === "boolean" ? raw.cancel_at_period_end : null,
     trial_end: num(raw.trial_end), current_period_start: p.start, current_period_end: p.end,
     cancel_at: num(raw.cancel_at), pause_collection: str(rec(raw.pause_collection).behavior), billing_cycle_anchor: num(raw.billing_cycle_anchor),
-    customer: idOf(raw.customer), schedule: idOf(raw.schedule) };
+    customer: idOf(raw.customer), default_payment_method: idOf(raw.default_payment_method), schedule: idOf(raw.schedule) };
 }
 /** What the customer actually paid at checkout: Adaptive Pricing's presentment amount and currency when Stripe presented another currency,
  *  else the session's own amount (then the session currency IS the currency charged). The integration amounts stay for refund accounting. */
@@ -254,8 +254,13 @@ export interface StripeClient {
   /** Turns automatic collection on or off for an invoice. A draft with auto_advance=false stays a draft until it is finalized by hand
    *  (https://docs.stripe.com/invoicing/integration/automatic-advancement-collection). */
   setInvoiceAutoAdvance(id: string, autoAdvance: boolean, idempotencyKey: string): Promise<{ id: string; status?: string | null; auto_advance?: boolean | null }>;
-  /** Finalizes a draft invoice (its total is fixed from here on). */
-  finalizeInvoice(id: string, idempotencyKey: string): Promise<{ id: string; status?: string | null; amount_due?: number | null }>;
+  /** Finalizes a draft invoice (its total is fixed from here on). automatic_tax.status: Stripe Tax finished ("complete"); anything else means the tax is not known. */
+  finalizeInvoice(id: string, idempotencyKey: string): Promise<{ id: string; status?: string | null; amount_due?: number | null; total?: number | null; tax?: number | null;
+    automatic_tax?: { status?: string | null } | null }>;
+  /** A one-off draft invoice for auto top-up: no subscription, collection stays manual (auto_advance=false), Stripe Tax on, no pending items swept in. */
+  createInvoice(input: { customerId: string; attemptId: string }, idempotencyKey: string): Promise<{ id: string; status?: string | null }>;
+  /** One line on a draft invoice, tax exclusive (Stripe Tax adds the tax on top). */
+  addInvoiceItem(input: { customerId: string; invoiceId: string; amountCents: number; description: string; taxCode?: string | null }, idempotencyKey: string): Promise<{ id: string }>;
   /** Charges a finalized (open) invoice now. A card refusal is a 402. */
   /** Astra TAXCOUNTRY-8 (coordinator b): the charge names the payment method the customer AUTHORIZED (and its mandate, where that method
    *  needs one), never whatever default Stripe would pick; it is a merchant-initiated charge (off_session). */
@@ -293,6 +298,8 @@ export interface StripeClient {
   getSubscription(id: string): Promise<{ id: string; status: string | null; cancel_at_period_end?: boolean | null; current_period_start?: number | null;
     current_period_end?: number | null; trial_end?: number | null; cancel_at?: number | null; pause_collection?: string | null; billing_cycle_anchor?: number | null;
     customer?: string | null;
+    /** The payment method the subscription was set up with at checkout (the one the buyer consented to), when Stripe names one. */
+    default_payment_method?: string | null;
     /** The subscription schedule attached to it, if any (we never create one; the Dashboard or another tool can). */
     schedule?: string | null }>;
   /** Cloud checkout WP8 r1: pause payment collection (`keep_as_draft`: renewal invoices are created as drafts and nothing is charged) or resume
@@ -556,6 +563,10 @@ export function stripeClient(config: Pick<BillingConfig, "secretKey" | "apiVersi
       return idOf((r.data ?? []).find((p) => p.status !== "canceled")?.invoice ?? r.data?.[0]?.invoice);
     },
     setInvoiceAutoAdvance: (id, autoAdvance, key) => call("POST", `/v1/invoices/${encodeURIComponent(id)}`, { auto_advance: autoAdvance }, key),
+    createInvoice: (i, key) => call("POST", "/v1/invoices", { customer: i.customerId, auto_advance: false, collection_method: "charge_automatically",
+      "automatic_tax[enabled]": true, pending_invoice_items_behavior: "exclude", "metadata[topup_attempt]": i.attemptId }, key),
+    addInvoiceItem: (i, key) => call("POST", "/v1/invoiceitems", { customer: i.customerId, invoice: i.invoiceId, amount: i.amountCents, currency: "usd",
+      description: i.description, tax_behavior: "exclusive", ...(i.taxCode ? { tax_code: i.taxCode } : {}) }, key),
     finalizeInvoice: (id, key) => call("POST", `/v1/invoices/${encodeURIComponent(id)}/finalize`, { auto_advance: false }, key),
     payInvoice: (id, key, authorized) => call("POST", `/v1/invoices/${encodeURIComponent(id)}/pay`, { payment_method: authorized.paymentMethod,
       ...(authorized.mandate ? { mandate: authorized.mandate } : {}), off_session: "true" }, key),

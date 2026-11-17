@@ -1,3 +1,4 @@
+import type { ReleaseContext } from "./memory/release-transaction.ts";
 // Canonical harness contracts — ported from upstream
 // (apps/server/src/provider/ProviderDriver.ts, Services/ProviderAdapter.ts,
 // packages/contracts/src/{provider,providerInstance,providerRuntime}.ts),
@@ -58,6 +59,8 @@ export interface ModelSelection {
   connectionId?: string;
   /** Optional: no effort means no flag, and the CLI keeps its own default. */
   effort?: EffortLevel;
+  /** Native ACP thinking choice, scoped to the selected model. */
+  variant?: string;
 }
 
 // ── instance configuration envelope ────────────────────────────────────
@@ -139,6 +142,8 @@ export type RuntimeEvent = RuntimeEventBase &
       }
     | {
         type: "turn.completed";
+        readsComplete?: true;
+        helperRow?: import('./turn-settle.ts').HelperRow;
         ok: boolean;
         stopReason?: string | null;
         cost?: number | null;
@@ -277,7 +282,9 @@ export type RuntimeEvent = RuntimeEventBase &
         /** Additive: the identity the engine stamped on the tool (Fuigo's
          * `_meta["fuigo/tool"]`: namespace, name, kind). A title can be any
          * text; this cannot come from the model. */
-        toolIdentity?: { namespace: string; name: string; kind?: string };
+        toolIdentity?: { namespace: string; name: string; kind?: string } | import("../shared/tool-identity.ts").ToolIdentityWire;
+        /** Original engine ask; persisted server-side for driver-held reload comparison. */
+        identityFrame?: import("../shared/tool-identity.ts").EngineFrame;
         /** Additive (1.0.3), F4 (APP-GRANT-DESIGN-FINAL.AGREED-r10.md Rule 54):
          * the MCP servers this engine actually loads for this turn, each
          * recorded by the driver that mounted or enumerated it
@@ -291,7 +298,7 @@ export type RuntimeEvent = RuntimeEventBase &
          * contract table applies (server/drivers/contracts.ts). */
         toolEngine?: EngineKind;
         /** Additive (1.0.3), F5: a field the driver's contract needs was
-         * absent on the wire; the driver never substitutes one. */
+         * absent on the wire; retained fallback safety text does not prove that field. */
         toolInputMissing?: string;
         /** Additive (1.0.4, 09-1): the driver's own gate held this call as a
          * key file (Pi's gate resolves links itself); the rule it named. It
@@ -308,11 +315,19 @@ export type RuntimeEvent = RuntimeEventBase &
          * PowerShell (`powershell.exe -Command`, Codex and ACP on Windows),
          * so the gates read it as PowerShell whatever it starts with. */
         commandShell?: "pwsh";
+        /** Additive (X3 rev 3.2 section 1): the Claude turn's shell mode and its murage-exec env file (P-CLAUDE). */
+        execShellMode?: "murage-exec" | "powershell-inherit";
+        execFile?: string;
+        /** Additive (X3 rev 3.2 section 1): the ACP driver and its probed version (P-FUIGO's contract floor). */
+        shellDriver?: { kind: string; version: string | null };
         /** Additive (1.0.3), F12 (Rule 74): the exact environment the driver
          * handed the engine process, the names it removed, the command's
          * starting directory, the pinned shell form, and where the map came
          * from. Server-side only. */
         execEnv?: ExecEnv;
+        /** Actual local tool-process working directory, supplied by the driver
+         * when there is no shell environment record. Server-side only. */
+        executionCwd?: string;
         /** Additive (1.0.3, Astra #9): the value-free projection of
          * `execEnv` (names, shell form, capture, provenance, managed names;
          * shared/mount-identity.ts envInfoOf), the one part of the F12
@@ -326,6 +341,10 @@ export type RuntimeEvent = RuntimeEventBase &
       }
     | {
         type: "request.resolved";
+        /** S3 identifies posture retirement explicitly; S1 terminalizes the
+         * captured old request before S4 releases its generation. Absence keeps
+         * BASE source mapping. Never authorizes or acknowledges an answer. */
+        settlement?: "cancelled" | "expired" | "superseded";
         behavior: "allow" | "deny" | "answer";
         /** who decided: a person, auto mode, the ask's own timeout, the
          * harness (turn ended / settings changed), or nobody — the answerer
@@ -352,10 +371,10 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "turn.served-model"; routed: string; requested: string }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** Flux's refusal code (server/flux-refusal.ts), read from the raw error before its text is sanitised */ gatewayCode?: string; /** FLUX-BURN-COPY-1018: when Flux's hourly spend gate lifts (epoch ms), only from the retry_after its body carried */ gatewayResetsAt?: number; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
+    | { type: "runtime.error"; message: string; details?: string; /** The turn continues after this warning; it is not its terminal result. */ nonTerminal?: true; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** Flux's refusal code (server/flux-refusal.ts), read from the raw error before its text is sanitised */ gatewayCode?: string; fluxDecision?: import("../shared/flux-busyloop.ts").Decision; /** HTTP status retained before ACP display sanitisation. */ httpStatus?: number; /** FLUX-BURN-COPY-1018: when Flux's hourly spend gate lifts (epoch ms), only from the retry_after its body carried */ gatewayResetsAt?: number; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
   );
 
-export type RuntimeEventListener = (event: RuntimeEvent) => void;
+export type RuntimeEventListener = (event: RuntimeEvent, source?: SourceContext) => void;
 
 /** Close-confirmed stop (0.1.52 K0 contract for A2 / R1-T2). `true` only
  * after the provider child was observed to close; a requested kill or an
@@ -393,13 +412,34 @@ export interface BuiltEngineInput {
   sendTurn(input: BuiltSendTurnInput): Promise<TurnStartResult>;
   steer(threadId: ThreadId, prompt: import("./memory/lineage-types.ts").BuiltPrompt, beforeWrite?: () => void, interjectionId?: string): Promise<boolean | SteerDelivery>;
 }
+/** A prewarm's identity check, synchronous and in memory: throws (PrewarmRefused) when this launch may not resume `cursor` (null: a fresh
+ * session). Nothing is spawned then and the spare ends `lost fence:<reason>`. */
+export type PrewarmFence = (cursor: string | null) => void;
 export interface SendTurnInput {
+  /** Server-owned readiness of this ordinary conversation dispatch. */
+  recall?: import('./memory/recall-readiness.ts').RecallMode;
+  /** Server-only comparison facts, removed before the adapter receives the request. */
+  recallPrepared?: import('./memory/recall-readiness.ts').RecallPrepared;
+  /** Immutable admission identity and exact lease, propagated through relaunches.
+   * External engines cannot serialize this into authority for their own pipes.
+   * Absent only for non-consuming callers (probes or independently source-judged
+   * learning). Server conversation and proposal dispatch always supply it.
+   * Native callbacks capture that absence as null, never resolve a later turn. */
+  readonly releaseBinding?: import("./consuming-turn-response.ts").ConsumingTurnBinding;
+  /** Trusted driver proof: refusal before any process, session reuse or async setup. */
+  readonly admissionNotLaunched?: (notice?: import("../shared/send-notice.ts").NativeTurnNoticeCode) => void;
+  readonly mountAdmission?: import("./drivers/mcp-mounts.ts").McpMountAdmission;
+  /** Host-only provenance, never serialized into the provider request. */
+  sourceContext?: SourceContext;
   /** Routine, scheduled or memory work: not user activity. The warm pool
    * releases this turn's engine as soon as it finishes and never keeps it as a spare. */
   background?: boolean;
   /** Driver-internal: this is an intent warm (prewarm), not a turn. The engine is
    * started and parked idle; nothing is sent, no turn events are emitted. */
   prewarm?: boolean;
+  /** Driver-internal, on a prewarm only: the prewarm's fence (ProviderAdapter.prewarm), run with no await before the spawn on the cursor
+   * that launch resumes. Claude carries it as the prewarm's beforeSubmit instead. */
+  launchFence?: PrewarmFence;
   /** Load browser tools at turn start when the browser is the place. */
   preloadBrowserTools?: boolean;
   /** Inspection observes what the model receives. `mounts` is what the SYSTEM
@@ -407,6 +447,9 @@ export interface SendTurnInput {
    * the concrete per-turn mounts used for the message text and the per-turn
    * binding line that rides in front of it. */
   onToolSurface?: (surface: import("./murage-tool-surface.ts").McpToolSurface, mounts: import("./murage-tool-surface.ts").MurageToolMounts, body?: { mounts: import("./murage-tool-surface.ts").MurageToolMounts; binding: string; askRules?: string }) => void;
+  /** Validate setup before spawning a process that must await readiness before its prompt write.
+   * Releases no prompt and authorizes no later write: beforeSubmit still runs at that write. */
+  beforePrepare?: () => void;
   /** Server-only synchronous submission fence, the one validation contract
    * every adapter honours: called immediately before EVERY engine prompt
    * write of this turn (a relaunch's write too), with no await between the
@@ -414,14 +457,31 @@ export interface SendTurnInput {
    * every call; only its delivery bookkeeping is idempotent). On refusal
    * (it throws), write nothing. Before sendTurn resolved, either throw or
    * return the addressable turnId for cleanup; after it resolved, settle the
-   * turn failed without writing, and the server re-runs it once on a reset
-   * session. */
-  beforeSubmit?: () => void;
+   * turn failed without writing. Only a verified unwritten attempt may be rebuilt;
+   * a prior released or unknown submission must not be replayed automatically. */
+  beforeSubmit?: () => void | number;
+  /** Run the synchronous beforeSubmit checks during process preparation, without
+   * releasing a prompt. The driver must call beforeSubmit again at the actual
+   * write. Only the server's submission boundary supplies this scope. */
+  prepareSubmit?: (validate: () => void) => void;
+  /** Server-only: the attempt's state is settled unwritten (no withdrawal). Called right before the prompt's own fence so a refusal there is classified against it. */
+  attemptSettled?: (id: number | void) => void;
+  /** Server-only, explicit attempt API (1.0.19 D1): the id `beforeSubmit` returned names one submission attempt. `attemptWritten` (the bytes
+   * went out), `attemptUncertain` (a write failed partway, or any doubt: nothing rebuilds, nothing is withdrawn) and `attemptNotWritten`
+   * (proven zero bytes for that attempt only: the turn may rebuild once EVERY attempt is unwritten). The arg-less `notWritten` below is
+   * the legacy best-effort withdraw and never makes a released attempt retryable. */
+  attemptWritten?: (attempt: number | void) => void;
+  attemptUncertain?: (attempt: number | void) => void;
+  attemptNotWritten?: (attempt: number | void) => void;
   /** Server-only: the adapter says that the write the last `beforeSubmit` released did not happen (the process never started, the
    * connection failed before any answer, the write failed whole). BOTADDED-DESIGN-V3 r6 invariant I14 reads "released to the
    * engine's write", so the server withdraws the delivery bookkeeping that call made; a later write's `beforeSubmit` makes it again.
    * Optional and best effort: an adapter whose fence sits right before a write that cannot fail first need not call it. */
   notWritten?: () => void;
+  /** Server-only (H1-SENDLOCK): a learning call's gate. The adapter runs its prompt write as `fencedWrite(write)` (engine-input.ts
+   * fencedSubmit), after `beforeSubmit` and its own halt check, so the visibility check and the bytes leaving hold one write lock.
+   * `write` hands the prompt frame to the engine's stream synchronously; validation refuses before release. A sink failure after possible acceptance stays released. */
+  fencedWrite?: <R>(write: () => R, validate?: (context: ReleaseContext) => void, bytes?: number) => R;
   /** Server-authorized reference bundle; the shared adapter consumes it once. */
   memoryContext?: MemoryBundle;
   /** Flux memory envelope (lane 2.2), set by the memory adapter when this turn
@@ -449,6 +509,8 @@ export interface SendTurnInput {
   providerRoute?: import("./provider-routing.ts").ProviderTurnRoute;
   effort?: EffortLevel;
   fuigoResume?: import("./drivers/acp/fuigo-policy.ts").FuigoResumeContext;
+  /** Native ACP thinking choice, scoped to the selected model. */
+  variant?: string;
   resumeCursor?: unknown;
   /** Start without the previous native context, including a retained idle
    * process. Takes precedence over resumeCursor. Set whenever the harness
@@ -461,7 +523,10 @@ export interface SendTurnInput {
   sealed?: boolean;
   replayMetadata?: string;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
-  transcript?: Array<{ role: "user" | "assistant"; text: string;
+  ownerMessageId?: string;
+  /** The adapter reached its actual submission write. */
+  onEngineWrite?: () => void;
+  transcript?: Array<{ id?: string; role: "user" | "assistant"; text: string;
     /** Run header (turn-context.ts runHeaders): on the first reply of a run written on an engine, the line saying so. */
     header?: string }>;
   /** Bot persona (name/title/description) as a system prompt. */
@@ -565,6 +630,8 @@ export interface SendTurnInput {
    * the asks. When both stopLine and routeAsks are absent, the instance's
    * own setting stands. */
   stopLine?: true;
+  /** Route every No limits permission through the shared final decision gate. */
+  noLimits?: true;
   /** Ask and Auto turns must reach Murage's permission broker. For this turn
    * only, replace a skip-all instance setting with its asking mode; preserve
    * every other instance mode. Full access and No limits use stopLine above.
@@ -575,6 +642,8 @@ export interface SendTurnInput {
    * and plan, and every file change or command is refused before it runs (server/drivers/ask-stop.ts). Engines
    * that ask for every change ignore it. */
   askLevel?: true;
+  /** Server-owned live level reader. Never serialized to an engine or accepted from tool input. */
+  permissionNow?: () => Pick<SendTurnInput, "routeAsks" | "stopLine" | "askLevel" | "noLimits">;
   /* Cards carry no deadline (Sean 10-26, 10-29, LONGWORK H4): a card waits until the owner answers it or the turn stops,
    * on every engine. The one exception is this flag, set only by the registry decorator (harness/ask-note-adapter.ts)
    * on a turn nobody is at, a routine run or an unattended turn. There a question still ends with the 30 minute note:
@@ -632,23 +701,54 @@ export interface FolderTrustTurnInput {
 
 export interface TurnStartResult {
   turnId: TurnId;
+  /** X3 P-SPAWN (A:17-25): the folder this turn's engine process was handed at spawn, set from the exact variable
+   * passed to spawn. Absent when the driver does not return it: the shell record then starts unknown. */
+  spawnCwd?: string;
 }
 
 /** What `ProviderAdapter.holdIdle` returns: how to let the adapter keep or warm engines again, and whether every idle one is gone. */
 export interface IdleHold { release: () => void; confirmed: boolean }
 
-export interface ProviderAdapter {
+/** Transport acknowledgement for the r3.1 answer-id protocol. `already` means
+ * the SAME answerId was accepted; a different answerId is failed and never sent.
+ * A pending duplicate joins the original promise and cannot claim acceptance.
+ * A failed attempt can re-send once with the same answerId (A10a).
+ */
+export interface RequestDelivery { state: "accepted" | "already" | "failed" }
+export interface RequestAnswerOptions { answerId: string }
+export type GateTapEvent =
+  | { type: "posture"; threadId: string; generation: string; state: "requested" | "accepted" | "failed" | "interrupted"; level: "ask" | "auto" | "full" | "unlimited" }
+  | { type: "request"; generation: string; requestId: string; tool: string; inputHash: string }
+  | { type: "answer"; generation: string; requestId: string; answerId: string; state: RequestDelivery["state"] };
+
+/** Strict S3 capability carried through the live ProviderInstance registry. */
+export type DecisionProviderAdapter = Pick<ProviderAdapter<RequestDelivery>,
+  'respondToRequest' | 'interruptTurn' | 'onPostureChange' | 'gateTap'>;
+
+/** Existing adapters retain their BASE return type until S3 migrates them.
+ * S3 implements ProviderAdapter<RequestDelivery>; its fourth argument is
+ * required and its result cannot be mistaken for a legacy RequestOutcome. */
+export interface ProviderAdapter<Delivery extends RequestOutcome | RequestDelivery = RequestOutcome> {
+  onPostureChange?(threadId: ThreadId): Promise<void>;
+  gateTap?(event: GateTapEvent): void;
   readonly provider: DriverKind;
   readonly mcpToolSurface?: import("./murage-tool-surface.ts").McpToolSurface;
   readonly capabilities: {
     memoryDelivery?: "prefixed-reference" | "unavailable";
     memoryMcp?: boolean;
+    /** False when this transport has no qualified final ingress for MCP
+     * mounts on consuming turns. The registry withholds those tool surfaces;
+     * the adapter still refuses any explicit unsupported mount. */
+    consumingMcp?: boolean;
     /** True only for an adapter checked to write the turn's prompt bytes, and any steer bytes, only after `turn.beforeSubmit()` passes,
      * with no await between that check and the write, and to steer only after the prompt was sent. It does not say the engine holds
      * nothing: launch, session setup and MCP connects may run before and carry no memory frame. A refusal at acceptance with no write
      * released is then proof that the prompt was not submitted, and the turn is rebuilt rather than carded (DELETE-REVOKE-SCOPE (a),
      * turn-dispatch-guard.ts sealUnwritten). Unset means unknown: the card stands. */
     fencedWrites?: boolean;
+    /** True only for an adapter whose learning prompt write runs inside `turn.fencedWrite` (or, for its own one-shot runner, inside
+     * `gate.send`). withCliMemoryLearning refuses an instance without it: an engine that has not moved its write gets no CLI learning. */
+    fencedLearningWrite?: boolean;
     /** True when the driver sends `turn.fluxMemory` as request metadata on a Flux request. */
     fluxEnvelope?: boolean;
     sessionModelSwitch: "in-session" | "unsupported";
@@ -730,8 +830,8 @@ export interface ProviderAdapter {
   /** Intent warm: start this thread's engine from the spawn inputs of its last real
    * turn (held in memory only), park it idle and hold it for one activity window.
    * True when an engine was started; false when nothing was remembered, one is
-   * already live, or the thread is busy. Optional: drivers without a warm pool omit it. */
-  prewarm?(threadId: ThreadId): Promise<boolean>;
+   * already live, the thread is busy, or `fence` refused the launch. Optional: drivers without a warm pool omit it. */
+  prewarm?(threadId: ThreadId, opts?: { fence?: PrewarmFence }): Promise<boolean>;
   /** Request a stop. A driver that can observe teardown resolves with a
    * ProviderStopResult (A2); `void` is the legacy "requested, not observed". */
   interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void | ProviderStopResult>;
@@ -790,12 +890,15 @@ export interface ProviderAdapter {
      * on a question is an honest "no answer" (skipped), never a refusal. */
     decision: {
       behavior: "allow" | "deny" | "answer"; message?: string; answers?: QuestionAnswer[];
+      identityFrame?: unknown;
+      toolIdentity?: unknown;
       /** Rule 72: a narrowing denial; `message` is the reason the engine reads. */
       source?: "narrow";
       /** Rules 69e, 73d: the call as judged, or the narrowed call, to run in place of the one asked. */
       updatedInput?: Record<string, unknown>;
     },
-  ): Promise<RequestOutcome>;
+    ...delivery: Delivery extends RequestOutcome ? [options?: RequestAnswerOptions] : [options: RequestAnswerOptions]
+  ): Promise<Delivery>;
   /** Deliver a user message into the RUNNING turn on this thread. Resolves
    * false or "rejected" when there is no live turn to steer (the caller then
    * sends it as a normal turn), true or "delivered" when the turn took it, and
@@ -833,6 +936,8 @@ export interface ProviderSnapshot {
   /** Cloud home: the engine's sign-in should be renewed (Claude's token expires within 30 days or
    * is no longer accepted). The UI offers the sign-in again. */
   renewSignIn?: boolean;
+  /** Cloud home: some bot on this home has a sign-in for the engine. Home-level SETUP status only: it never means a given bot is signed in. */
+  setUpOnHome?: boolean;
 }
 
 // ── engine install descriptor ───────────────────────────────────────────
@@ -865,6 +970,8 @@ export interface EngineInstall {
 // `create` owns ALL per-instance state; two create calls share nothing.
 // Failures must reject, never throw synchronously — the registry downgrades
 // a rejection to an unavailable shadow snapshot.
+export interface ModelVariantOption { id: string; label: string }
+
 export interface ModelCatalog {
   default: string;
   /** "live" only when this catalog came from a successful list by the engine's
@@ -874,6 +981,7 @@ export interface ModelCatalog {
   options: Array<{
     id: string;
     label: string;
+    variants?: ModelVariantOption[];
     custom?: boolean;
     loaded?: boolean;
     /** upstream provider id (e.g. "zai", "nous") when the engine can report
@@ -885,7 +993,7 @@ export interface ModelCatalog {
      * back to a pattern table over the model id, then a conservative default. */
     contextWindow?: number;
     /** Local models only: the server this model is served by, already in the
-     * form the picker shows ("llama.cpp on seanbeast"). Spec V3. */
+     * form the picker shows ("llama.cpp on a local box"). Spec V3. */
     localServer?: string;
     /** Local models only: how the last Local models tool test came out, so the
      * picker can mark a model that answers but cannot call tools. Absent means
@@ -931,6 +1039,13 @@ export interface ProviderInstance {
   /** Refresh a live catalog without recreating the provider instance. */
   readonly refreshModels?: (options?: ModelRefreshOptions) => Promise<void>;
   readonly adapter: ProviderAdapter;
+  /** S3 exposes bound strict methods from the SAME engine session and dedup
+   * map as adapter. S4 uses this capability for DecisionTransport; absence
+   * means unavailable, never a cast or legacy outcome treated as acceptance.
+   * Keeps BASE callers and registry decorators source-compatible during waves.
+   * Legacy respondToRequest must bridge to this same send/dedup operation.
+   */
+  readonly decisionAdapter?: DecisionProviderAdapter;
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
   generateText?(prompt: string, botId?: string, cwd?: string): Promise<string>;
@@ -977,3 +1092,81 @@ export type AnyProviderDriver = ProviderDriver<any>;
 let eventCounter = 0;
 export const newEventId = () => `ev-${Date.now().toString(36)}-${(eventCounter++).toString(36)}`;
 export const newId = () => crypto.randomUUID();
+
+// L5a F1–F5. Capabilities are constructed only by the harness collector.
+export type TurnAdmission = Readonly<{ readonly __turnAdmission: unique symbol }>;
+export type AttachmentCapability = Readonly<{ readonly __attachment: unique symbol }>;
+export type SourceContext = Readonly<{ admission?: TurnAdmission; attachment: AttachmentCapability }>;
+export type HostEventId = string;
+export type HostInstanceId = string;
+export type HostThreadId = string;
+export type HostGeneration = number;
+export type HostTimestamp = number;
+export type HostStreamKey = string;
+export type HostRegionId = string;
+export type HostEmissionId = string;
+export type HostEnvelope = Readonly<{
+  eventId: HostEventId; instanceId: HostInstanceId; threadId: HostThreadId;
+  generation: HostGeneration; intakeOrdinal: number; createdAt: HostTimestamp;
+}>;
+export type ManifestVariant = `M${'01'|'02'|'03'|'04'|'05'|'06'|'07'|'08'|'09'|'10'|'11'|'12'|'13'|'14'|'15'|'16'|'17'|'18'|'19'|'20'|'21'|'22'|'23'|'24'|'25'|'26'|'27'|'28'|'29'}`;
+// Paths are produced by the finite schema, never by copying arbitrary input keys.
+export type ManifestPath = string;
+export type TrustedControlFacts = Readonly<Record<string, string | number | boolean>>;
+export type ScanResult = Readonly<{ text: string; detected: boolean; exhausted: boolean }>;
+export type TextCarrier = Readonly<{ path: ManifestPath; stream: HostStreamKey; mode: 'delta' | 'whole' | 'snapshot'; text: string }>;
+export type ManifestBatch = Readonly<{ envelope: HostEnvelope; variant: ManifestVariant; carriers: readonly TextCarrier[]; controls: TrustedControlFacts; terminal?: 'complete' | 'cancel' | 'exit' }>;
+export type SafeTextOperation = Readonly<{ path: ManifestPath; stream: HostStreamKey; regionId: HostRegionId; revision: number; op: 'append' | 'replace' | 'omit'; text: string; speech: 'append' | 'none' }>;
+export type PolicyDecision = Readonly<{ masked: boolean; exhausted: boolean; operations: readonly SafeTextOperation[] }>;
+export interface TurnTextPolicy {
+  admit(cap: TurnAdmission): void;
+  consume(cap: TurnAdmission | undefined, batch: ManifestBatch): PolicyDecision;
+  reset(cap: TurnAdmission | undefined, stream: HostStreamKey): PolicyDecision;
+  finish(cap: TurnAdmission | undefined, how: 'complete' | 'cancel' | 'exit'): PolicyDecision;
+  retire(cap: TurnAdmission): void;
+}
+export type DeepReadonly<T> = T extends (...args: never[]) => unknown ? T : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
+export type ExecutionEvent = DeepReadonly<RuntimeEvent>;
+export type AudienceOmitted = Readonly<{ type: 'audience.omitted'; eventId: HostEventId; threadId: HostThreadId; generation: HostGeneration; reason: 'redacted'; text: '«redacted»' }>;
+// Separately declared schema: no raw/execution payload or open-ended spread.
+export type AudienceRuntimeVariant = Readonly<{
+  eventId: string; threadId: string; providerInstanceId: string; createdAt: string;
+  generation: number; itemId?: string; regionId?: string; itemRevision?: number;
+  speechDisposition: 'append' | 'none';
+}> & (
+  | { type: 'turn.diagnostic'; category?: string; quietMs?: number }
+  | { type: 'session.started'; model?: string; sessionId?: string; replayPending?: boolean; sessionContract?: number }
+  | { type: 'turn.subtask'; subtasks: readonly Readonly<{ id: string; label: string; status?: string; startedAt?: number; endedAt?: number; toolCount?: number }>[] }
+  | { type: 'session.exited'; reason?: string }
+  | { type: 'turn.started' }
+  | { type: 'turn.retrying'; reason?: string; attempt?: number; delayMs?: number; maxAttempts?: number }
+  | { type: 'turn.completed'; ok?: boolean; stopReason?: string; denials?: readonly string[]; toolsUnavailable?: readonly string[]; cost?: number; charge?: number; chargePartial?: boolean; usage?: Readonly<{ input?: number; output?: number; cachedInput?: number }> }
+  | { type: 'item.started'; itemType: 'tool' | 'reasoning'; origin?: 'engine' | 'murage'; title?: string; summary?: string; spoken?: string; preview?: readonly Readonly<{ key: string; value: string }>[]; toolKind?: string; toolIdentity?: Readonly<{ namespace?: string; name?: string; kind?: string }> }
+  | { type: 'item.updated'; itemType: 'tool' | 'reasoning'; tokens?: number }
+  | { type: 'item.completed'; itemType: 'tool'; ok?: boolean; detail?: string; preview?: readonly Readonly<{ key: string; value: string }>[] }
+  | { type: 'item.completed'; itemType: 'assistant_text'; text: string }
+  | { type: 'item.completed'; itemType: 'assistant_image'; alt?: string }
+  | { type: 'content.delta'; streamKind: 'assistant_text' | 'reasoning_text'; delta: string }
+  | { type: 'content.reset'; streamKind: 'assistant_text' | 'reasoning_text' }
+  | { type: 'plan.updated'; entries: readonly Readonly<{ content: string; status?: string }>[] }
+  | { type: 'engine.commands'; commands: readonly import('../shared/audience-wire.ts').DisplayCommand[] }
+  | { type: 'steer.confirmed' }
+  | { type: 'question.async'; questions: readonly import('../shared/audience-wire.ts').DisplayQuestion[] }
+  | { type: 'request.opened'; requestType: 'permission' | 'question'; tool?: string; summary?: string; reason?: string; toolInput?: string; questions?: readonly import('../shared/audience-wire.ts').DisplayQuestion[]; choices?: readonly string[]; filePaths?: readonly string[]; toolResultDirs?: readonly string[] }
+  | { type: 'request.resolved'; behavior?: 'allow' | 'deny' | 'answer'; source?: 'user' | 'auto' | 'timeout' | 'system' | 'unavailable' | 'peer'; decidedBy?: string }
+  | { type: 'thread.token-usage.updated'; input?: number; output?: number; cachedInput?: number }
+  | { type: 'turn.served-model'; routed?: string; requested?: string }
+  | { type: 'runtime.error'; message: string; details?: string; errorKind?: string; engineCode?: string; gatewayCode?: string; localFailureEngine?: string }
+);
+export type AudienceEvent = AudienceRuntimeVariant | AudienceOmitted;
+export type AudienceEmission = Readonly<{ envelope: HostEnvelope; emissionId: HostEmissionId; event: DeepReadonly<AudienceEvent> }>;
+export type IntakeResult = Readonly<{ execution: ExecutionEvent; audience: readonly AudienceEmission[] }>;
+// PROVISIONAL INTERFACE: the frozen design names TrustedSendContext but leaves
+// its fields unspecified. Only the harness supplies these verified identities.
+export type TrustedSendContext = Readonly<{ attachment: AttachmentCapability; instanceId: string; threadId: string }>;
+export interface AudienceCollector {
+  admitNewTurn(host: TrustedSendContext): TurnAdmission;
+  intake(event: ExecutionEvent, source: SourceContext | undefined): IntakeResult;
+  cancel(cap: TurnAdmission): readonly AudienceEmission[];
+  detach(attachment: AttachmentCapability): readonly AudienceEmission[];
+}
