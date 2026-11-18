@@ -1,3 +1,4 @@
+// control: legacy cases retain their assertions unless individually labelled red-at-4df086541 below.
 // DRV: stdio client -> bounded HTTP response, with real durable owner cards.
 // Virtual time exercises 90-second answers without wall-clock sleeps or a live app.
 // C2 integration gate: both browser routes must retain { error, code } for
@@ -13,7 +14,16 @@ import { BrowserExtensionApprovals, type ApprovalBinding } from "../browser-exte
 import { WAITING_TEXT } from "../browser-extension-service.ts";
 import type { ApprovalBus } from "../peer-approval.ts";
 import type { Message } from "../store.ts";
+import * as producerQueues from "../narrow-denials.ts";
+import { serviceQueueFixture } from "../testing/service-queue-fixture.ts";
+import { flushApprovalPresentation } from "../testing/channel-approval-fixture.ts";
 import { runBrowserExtensionMcp } from "./browser-extension-mcp.ts";
+// control migration: retain the original virtual-clock deadlines; transport timeout is terminal.
+const releaseSink = vi.hoisted(() => ({ write: (_frame: string) => {}, lost: 0 }));
+vi.mock("../proxy-turn-release.ts", () => ({
+  releaseProxyFrame: async (_role: string, frame: string) => { releaseSink.write(frame + "\n"); },
+  reserveProxyUpstream: async () => {}, proxyUpstreamResponse: (_role: string, response: Response) => response, proxyTransportLost: () => { releaseSink.lost++; },
+}));
 import { privateTestDirectorySync } from "../testing/private-test-dir.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -23,6 +33,8 @@ afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); for (const close of 
 
 function bridge(response: (signal: AbortSignal) => Promise<Response>, method = "tools/call") {
   let stdout = "";
+  releaseSink.lost = 0;
+  releaseSink.write = frame => { stdout += frame; };
   let ready!: () => void;
   const started = new Promise<void>(resolve => { ready = resolve; });
   const done = runBrowserExtensionMcp({
@@ -41,7 +53,7 @@ function bridge(response: (signal: AbortSignal) => Promise<Response>, method = "
       });
     },
   });
-  return { started, done, reply: () => JSON.parse(stdout) };
+  return { started, done, reply: () => JSON.parse(stdout), output: () => stdout };
 }
 
 function clock() {
@@ -66,8 +78,19 @@ function cards() {
     appendMessage: (_thread: string, input: Partial<Message>) => { const message = { ...input, id: String(messages.length + 1) } as Message; messages.push(message); return message; },
     patchMessage: (_thread: string, id: string, patch: Partial<Message>) => { const message = messages.find(item => item.id === id)!; Object.assign(message, patch); return message; },
   };
-  const bus = { store, broadcast() {}, onApproval() {} } as unknown as ApprovalBus;
-  const make = () => new BrowserExtensionApprovals(bus, { file, valid: () => true });
+  const producer = serviceQueueFixture(store);
+  const bus = { store, broadcast() {}, onApproval() {}, authorityFor: producer.authorityFor } as unknown as ApprovalBus;
+  const queueFile = join(directory, "queue.json");
+  let queue: producerQueues.ProducerApprovalQueue;
+  const serviceQueue = producerQueues.serviceQueue;
+  vi.spyOn(producerQueues, "serviceQueue").mockImplementation(kind => kind === "browser" ? queue : serviceQueue(kind));
+  const make = () => {
+    // A restart reloads both durable stores and drops the old in-memory waiter.
+    queue = new producerQueues.ProducerApprovalQueue("browser", queueFile);
+    const approvals = new BrowserExtensionApprovals(bus, { file, valid: () => true });
+    producer.queue(queue);
+    return approvals;
+  };
   const approvals = make();
   const binding: ApprovalBinding = { generation: 1, documentEpoch: "1:1:https://fixture.test", targetDigest: "1".repeat(64), submissionDigest: "2".repeat(64), payloadDigest: "3".repeat(64), actionDigest: "4".repeat(64) };
   const ask = () => approvals.ask({ bot: { id: "bot", name: "Mira", color: "blue" }, threadId: "thread", bindingId: "binding", generation: 1, digest: "a".repeat(64), summary: "Click Next", waitMs: HUMAN_DECISION_MS, binding, kind: "action" });
@@ -82,6 +105,7 @@ it("an owner answer at 90 seconds completes on the original call", async () => {
     return Response.json({ content: [{ type: "text", text: answer === "allow" ? "Action completed" : "Action withheld" }] });
   });
   await client.started;
+  await flushApprovalPresentation();
   await vi.advanceTimersByTimeAsync(90_000);
   expect(f.approvals.resolve("thread", f.messages[0].card!.requestId!, "allow")).toBe(true);
   await client.done;
@@ -100,6 +124,7 @@ it("an unanswered card returns WAITING and remains answerable after a restart", 
     return Response.json({ error: WAITING_TEXT, code: "browser_extension_refused" }, { status: 409 });
   });
   await client.started;
+  await flushApprovalPresentation();
   await vi.advanceTimersByTimeAsync(HUMAN_DECISION_MS);
   await client.done;
   expect(client.reply().result).toMatchObject({ isError: true, code: "browser_extension_refused", content: [{ type: "text", text: WAITING_TEXT }] });
@@ -111,6 +136,7 @@ it("an unanswered card returns WAITING and remains answerable after a restart", 
   expect(restarted.consume({ bindingId: "binding", kind: "action", binding: f.binding })).toBe(false);
 });
 
+// red-at-4df086541: timeout previously became an ordinary recoverable tool error.
 it("the execution window ends once and a late response cannot replay the call", async () => {
   clock();
   let attempts = 0;
@@ -119,14 +145,17 @@ it("the execution window ends once and a late response cannot replay the call", 
     await new Promise(resolve => setTimeout(resolve, BROWSER_EXTENSION_CALL_TIMEOUT_MS + 1));
     return Response.json({ content: [{ type: "text", text: "Late action result" }] });
   });
+  const refused = expect(client.done).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
   await client.started;
   await vi.advanceTimersByTimeAsync(BROWSER_EXTENSION_CALL_TIMEOUT_MS);
-  await client.done;
-  expect(client.reply().result.isError).toBe(true);
-  expect(JSON.stringify(client.reply())).not.toContain("Late action result");
+  await refused;
+  expect(releaseSink.lost).toBe(1);
+  expect(client.output()).toBe("");
+  expect(client.output()).not.toContain("Late action result");
   await vi.advanceTimersByTimeAsync(1);
   expect(attempts).toBe(1);
-  expect(client.reply().result.isError).toBe(true);
+  expect(releaseSink.lost).toBe(1);
+  expect(client.output()).toBe("");
 });
 
 it.each(["browser_extension_refused", "browser_extension_stale_document", "browser_extension_uncertain", "uncertain"])("preserves %s for the client", async code => {

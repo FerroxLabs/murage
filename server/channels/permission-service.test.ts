@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { DiscordService } from "./discord/service.ts";
 import { SlackService } from "./slack/service.ts";
 import type { PermissionAction } from "./permission-approvals.ts";
+import { channelApprovalFixture } from "../testing/channel-approval-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const services: Array<DiscordService | SlackService> = [], roots: string[] = [];
@@ -20,8 +21,9 @@ function fixture(platform: "discord" | "slack") {
   const settlePermission = vi.fn(async () => {});
   const resolve = vi.fn(async () => { pending = false; return true; });
   const enqueue = vi.fn(() => ({ id: "run" }));
+  const approval = channelApprovalFixture({ id: "card", fingerprint: "original", summary: "Write fixture.txt" });
   const common = { dataDir, isCurrentChief: () => current,
-    approvals: { pending: () => pending ? [{ id: "card", fingerprint: "original", summary: "Write fixture.txt" }] : [], resolve },
+    approvals: { pending: () => pending ? [approval] : [], resolve },
     runs: () => ({ enqueue, result: () => ({ status: "completed", output: "hello" }) }), revokeRuns: async () => {} };
   const baseTransport = { sendPermission, settlePermission, onPermissionAction: (cb: (event: PermissionAction) => void) => { action = cb; },
     sendText: async () => ({ channel: dm, messageId: "98", ts: "98.1" }), stop: async () => {} };
@@ -42,7 +44,7 @@ function fixture(platform: "discord" | "slack") {
   };
   const event = (deny = false): PermissionAction => ({ provider: platform, applicationId: app, ...(discord ? {} : { teamId: "T1" }),
     userId: owner, channelId: dm, messageId: discord ? "99" : "99.1", actionId: sendPermission.mock.calls.at(-1)![0][deny ? "denyId" : "approveId"], ack: async () => {} });
-  return { service, emit, event, sendPermission, settlePermission, resolve, enqueue, action: (e: PermissionAction) => action(e), invalidate: () => { current = false; } };
+  return { service, emit, event, approval, sendPermission, settlePermission, resolve, enqueue, action: (e: PermissionAction) => action(e), invalidate: () => { current = false; } };
 }
 it.each(["discord", "slack"] as const)("%s pairs, publishes a permission, rejects chat approval and resolves only the owner button", async platform => {
   const f = fixture(platform); const pairing = await f.service.pair(); await f.emit("/pair " + pairing.code);
@@ -50,7 +52,7 @@ it.each(["discord", "slack"] as const)("%s pairs, publishes a permission, reject
   await f.emit("yes"); expect(f.resolve).not.toHaveBeenCalled(); expect(f.enqueue).not.toHaveBeenCalled();
   f.action({ ...f.event(), userId: "wrong" }); await flush(); expect(f.resolve).not.toHaveBeenCalled();
   f.action(f.event()); f.action(f.event()); await flush();
-  expect(f.resolve).toHaveBeenCalledExactlyOnceWith({ id: "card", fingerprint: "original", summary: "Write fixture.txt" }, "allow");
+  expect(f.resolve).toHaveBeenCalledExactlyOnceWith(f.approval, "allow");
   expect(f.settlePermission).toHaveBeenCalledTimes(1); expect(f.enqueue).not.toHaveBeenCalled();
 });
 it.each(["discord", "slack"] as const)("%s fences permission callbacks on Chief change and revoke", async platform => {

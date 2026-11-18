@@ -6,7 +6,7 @@
 import { test, expect, type Page, type Request } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -28,10 +28,11 @@ test.beforeAll(async () => {
     const store=new Store(()=>({instanceId:'verification',model:'sonnet'}));
     const bot=store.createBot({name:${JSON.stringify(BOT)}},{seedMessages:false});
     store.patchBot(bot.id,{computer:'off',browser:false,composio:false});
+    // Seed real owner rows: unproven user text is intentionally withheld by the display boundary.
     const ids=[];
     for(let i=0;i<${TOTAL};i++){
       const n=String(i).padStart(4,'0');
-      ids.push(store.appendMessage(bot.threadId,{role:i%2?'bot':'user',kind:'text',text:(i===${NEEDLE}?'needle-'+n+' ':'')+'Paging row '+n+'. '+'Filler so each row has some height. '.repeat(1+i%3)}).id);
+      ids.push(store.appendMessage(bot.threadId,{role:i%2?'bot':'user',kind:'text',...(i%2?{}:{origin:'desktop'}),text:(i===${NEEDLE}?'needle-'+n+' ':'')+'Paging row '+n+'. '+'Filler so each row has some height. '.repeat(1+i%3)}).id);
     }
     writeFileSync(join(process.env.MURAGE_DATA_DIR,'paging-ids.json'),JSON.stringify(ids));
   ` });
@@ -91,7 +92,7 @@ const row = (page: Page, index: number) => page.locator(`[data-mid="${ids[index]
 
 async function open(page: Page, requests: string[]) {
   page.on("request", (request: Request) => { if (request.url().includes("/api/")) requests.push(new URL(request.url()).pathname + new URL(request.url()).search); });
-  await page.addInitScript(() => localStorage.setItem("murage-email-gate", "skipped"));
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   const sidebar = await openSidebar(page);
   await sidebar.getByText(BOT, { exact: true }).click();

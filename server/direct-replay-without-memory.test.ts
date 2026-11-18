@@ -17,7 +17,8 @@ import { InternalCapabilities } from "./internal-capabilities.ts";
 import { ownerMemoryTicket, saveMemoryCandidate } from "./memory/authority.ts";
 import { captureSource } from "./memory/capture.ts";
 import { forgetMemory } from "./memory/forget.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "./testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import type { Message } from "./store.ts";
@@ -49,10 +50,12 @@ it("a direct reply made with memory the owner then forgot is withheld from the r
   const index = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
   // (memory active is the only case that skips the floor; a further condition may only narrow that skip, e.g. memory's last resort)
   // 1.0.18 TURNSTART r14: the loop is turnReplayInputs (memory/turn-replay-inputs.ts); the turn passes the floor only when memory is not active
-  expect(index).toMatch(/floor: memoryState\(\)\.mode === "active"(?: && [^?\n]+)? \? null\n\s+: \(rows\) => roomTranscriptWithoutMemory\(/);
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  expect(index).toMatch(/floor: directMemoryMode === "active"(?: && [^?\n]+)? \? null\n\s+: \(rows\) => roomTranscriptWithoutMemory\(/);
   expect(index).toContain("projectCardRun: Boolean(opts?.projectCardRun)");
   const loop = readFileSync(fileURLToPath(new URL("./memory/turn-replay-inputs.ts", import.meta.url)), "utf8");
-  expect(loop).toContain("replayFloor = floor ? floor(activeMessages) : undefined;");
+  expect(loop).toContain("const checked = floor(batch);");
+  expect(loop).toContain("messages.push(...(checked?.messages ?? batch));");
   const replayDeclaration = loop.split("\n").find(line => line.includes("replayableMessages = (projectCardRun"));
   expect(replayDeclaration).toContain("projectCardRun ? [] : (replayFloor?.messages ?? activeMessages)");
   // Astra r1 #5: an owner line answering the withheld reply quotes the withheld line

@@ -298,9 +298,9 @@ describe.skipIf(!built || !linux)("real addon (Linux): one file open for writing
     const file = join(dir, "f.jsonl");
     const fifo = join(dir, "pipe");
     writeFileSync(file, "x\n");
-    expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+    expect(spawnSync("mkfifo", [fifo], { windowsHide: true }).status).toBe(0);
     const ready = join(dir, "ready");
-    const writer = spawn("sh", ["-c", `exec 3>>"$F"; : > "$R"; sleep 30`], { env: { ...process.env, F: file, R: ready }, stdio: "ignore" });
+    const writer = spawn("sh", ["-c", `exec 3>>"$F"; : > "$R"; sleep 30`], { windowsHide: true, env: { ...process.env, F: file, R: ready }, stdio: "ignore" });
     children.push(writer);
     const end = Date.now() + 10_000;
     while (!existsSync(ready) && Date.now() < end) sleepMs(5);

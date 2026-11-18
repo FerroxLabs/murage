@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "swarm-labels-and-existing-backup-copy",
+  "date": "2026-11-13",
+  "base": "7c9ce6fe3e783b19a9cda1969d7aa9de676ec356",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "stepup/en:label.moveInGrok": {
+      "text": "Bring in Grok Bots from Downloads",
+      "en": "Bring in Grok Bots from Downloads",
+      "verdict": "pass",
+      "note": "Names the import action and the Downloads folder in ordinary words; keeps the Grok Bots product name."
+    },
+    "stepup/en:label.restoreBackup": {
+      "text": "Restore from an existing backup",
+      "en": "Restore from an existing backup",
+      "verdict": "pass",
+      "note": "Exact reuse of the existing backup restore action in this language; the confirmation names the same restore operation, with no backup path or secret shown."
+    },
+    "stepup/de:label.moveInGrok": {
+      "text": "Grok Bots aus Downloads importieren",
+      "en": "Bring in Grok Bots from Downloads",
+      "verdict": "pass",
+      "note": "Names the import action and the Downloads folder in ordinary words; keeps the Grok Bots product name."
+    },
+    "stepup/de:label.restoreBackup": {
+      "text": "Aus einem vorhandenen Backup wiederherstellen",
+      "en": "Restore from an existing backup",
+      "verdict": "pass",
+      "note": "Exact reuse of the existing backup restore action in this language; the confirmation names the same restore operation, with no backup path or secret shown."
+    },
+    "stepup/es:label.moveInGrok": {
+      "text": "Importar Grok Bots de Descargas",
+      "en": "Bring in Grok Bots from Downloads",
+      "verdict": "pass",
+      "note": "Names the import action and the Downloads folder in ordinary words; keeps the Grok Bots product name."
+    },
+    "stepup/es:label.restoreBackup": {
+      "text": "Restaurar desde una copia de seguridad existente",
+      "en": "Restore from an existing backup",
+      "verdict": "pass",
+      "note": "Exact reuse of the existing backup restore action in this language; the confirmation names the same restore operation, with no backup path or secret shown."
+    },
+    "stepup/fr:label.moveInGrok": {
+      "text": "Importer des Grok Bots depuis Téléchargements",
+      "en": "Bring in Grok Bots from Downloads",
+      "verdict": "pass",
+      "note": "Names the import action and the Downloads folder in ordinary words; keeps the Grok Bots product name."
+    },
+    "stepup/fr:label.restoreBackup": {
+      "text": "Restaurer à partir d'une sauvegarde existante",
+      "en": "Restore from an existing backup",
+      "verdict": "pass",
+      "note": "Exact reuse of the existing backup restore action in this language; the confirmation names the same restore operation, with no backup path or secret shown."
+    },
+    "stepup/hi:label.moveInGrok": {
+      "text": "Downloads से Grok Bots लाएँ",
+      "en": "Bring in Grok Bots from Downloads",
+      "verdict": "pass",
+      "note": "Names the import action and the Downloads folder in ordinary words; keeps the Grok Bots product name."
+    },
+    "stepup/hi:label.restoreBackup": {
+      "text": "किसी मौजूदा बैकअप से रीस्टोर करें",
+      "en": "Restore from an existing backup",
+      "verdict": "pass",
+      "note": "Exact reuse of the existing backup restore action in this language; the confirmation names the same restore operation, with no backup path or secret shown."
+    },
+    "stepup/ja:label.moveInGrok": {
+      "text": "ダウンロードからGrok Botsを取り込む",
+      "en": "Bring in Grok Bots from Downloads",
+      "verdict": "pass",
+      "note": "Names the import action and the Downloads folder in ordinary words; keeps the Grok Bots product name."
+    },
+    "stepup/ja:label.restoreBackup": {
+      "text": "既存のバックアップから復元",
+      "en": "Restore from an existing backup",
+      "verdict": "pass",
+      "note": "Exact reuse of the existing backup restore action in this language; the confirmation names the same restore operation, with no backup path or secret shown."
+    },
+    "stepup/pt-br:label.moveInGrok": {
+      "text": "Importar Grok Bots de Downloads",
+      "en": "Bring in Grok Bots from Downloads",
+      "verdict": "pass",
+      "note": "Names the import action and the Downloads folder in ordinary words; keeps the Grok Bots product name."
+    },
+    "stepup/pt-br:label.restoreBackup": {
+      "text": "Restaurar a partir de um backup existente",
+      "en": "Restore from an existing backup",
+      "verdict": "pass",
+      "note": "Exact reuse of the existing backup restore action in this language; the confirmation names the same restore operation, with no backup path or secret shown."
+    },
+    "stepup/zh:label.moveInGrok": {
+      "text": "从下载文件夹导入 Grok Bots",
+      "en": "Bring in Grok Bots from Downloads",
+      "verdict": "pass",
+      "note": "Names the import action and the Downloads folder in ordinary words; keeps the Grok Bots product name."
+    },
+    "stepup/zh:label.restoreBackup": {
+      "text": "从现有备份恢复",
+      "en": "Restore from an existing backup",
+      "verdict": "pass",
+      "note": "Exact reuse of the existing backup restore action in this language; the confirmation names the same restore operation, with no backup path or secret shown."
+    }
+  },
+  "files": {}
+}

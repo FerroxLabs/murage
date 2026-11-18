@@ -44,6 +44,9 @@ export interface BotCallsRuntimeDeps {
   senderOf(threadId: string, json: Record<string, unknown>): string | null;
   /** Starts the push outbox's timer: called once, after boot reconcile returned (5.5, 5.8). */
   startOutbox(): void;
+  /** When the marked turn's own rows ended (the max `at` of that turn's rows), null when it wrote nothing. Never a thread-wide read.
+   * May throw (TurnIndexNotReadyError, a lock): the row then stays NULL for a later sweep. */
+  turnEndedAt(threadId: string, turnId: string): number | null;
   now?: () => number;
   warn?: (hook: string, error: unknown) => void;
 }
@@ -71,6 +74,7 @@ export function createBotCallsRuntime(deps: BotCallsRuntimeDeps) {
   const world: DecideWorld = { ...deps.world, bootAt };
   /** Boot reconcile has returned: until then nothing sends and the fence says no (5.5). */
   let ready = false;
+  let armedAfter = 0;
   let sweepTimer: ReturnType<typeof setInterval> | null = null;
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -135,6 +139,18 @@ export function createBotCallsRuntime(deps: BotCallsRuntimeDeps) {
     if (!ready) return;
     const db = deps.db();
     const t = now();
+    // The durable NULL rows also recover a completion whose exact-key write met contention.
+    const armed = db.prepare("SELECT rowid AS seq, source_id, thread_id FROM bot_call_owed WHERE at IS NULL AND rowid>? ORDER BY rowid LIMIT 2")
+      .all(armedAfter) as Array<{ seq: number; source_id: string; thread_id: string }>;
+    for (const row of armed) {
+      armedAfter = Number(row.seq);
+      try {
+        if (deps.threadRunning(row.thread_id)) continue;
+        const ended = deps.turnEndedAt(row.thread_id, row.source_id);
+        settleTurnOwed(db, row.source_id, ended == null ? t : ended);
+      } catch (error) { warn("turn-recover", error); }
+    }
+    if (armed.length < 2) armedAfter = 0;
     const before = new Map((db.prepare("SELECT call_id, last_seen_at, backstop_at FROM bot_call_sessions WHERE ended_at IS NULL AND (last_seen_at < ? OR backstop_at <= ?)")
       .all(t - 60_000, t) as Array<{ call_id: string; backstop_at: number }>).map((r) => [r.call_id, Number(r.backstop_at) <= t ? "backstop" as const : "lost" as const]));
     for (const callId of sweepSessions(db, fx, t)) {

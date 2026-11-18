@@ -25,7 +25,7 @@ export function learningHistory(db:DatabaseSync,roster:MemoryRoster,input:{botId
   const composite=row.scope_kind==="bot"?/^(.+)#(team|project|room):(.+)$/.exec(owner):null;
   const destination=composite?(composite[2]==="team"?composite[3]:roster.groups.find(g=>g.id===composite[3])?.name??(composite[2]==="project"?"Project":"Room")):null;
   const scopeLabel=composite&&scopeBot?`${scopeBot.name??"Bot"} for ${destination}`:row.scope_kind==="workspace"?"Workspace":room?.name??scopeBot?.name??bot?.name??(row.scope_kind==="room"?"Room":row.scope_kind==="team"?"Team":row.scope_kind==="preferences"?"Your preferences":row.scope_kind==="bot"?"Bot":"Conversation");
-  return {...row,lesson:lessonForEvent(db,row),procedure:procedureForEvent(db,row),record:record?{...record,text:record.state==="deleted"?null:record.text}:null,scopeLabel,
+  return {...row,lesson:lessonForEvent(db,row),procedure:procedureForEvent(db,row),record:record?{...record,text:record.state==="deleted"||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1").get(record.id,record.version)?null:record.text}:null,scopeLabel,
    source:source&&source.state!=="deleted"?{threadId:source.thread_id,messageId:source.message_id,threadTitle:title??room?.name??bot?.name??"Conversation",botId:bot?.id??null,botName:bot?.name??null,roomName:room?.name??null}:null};
  }),nextCursor:rows.length>limit?JSON.stringify([Number(rows[limit-1].created_at),String(rows[limit-1].id)]):null};
 }
@@ -57,6 +57,8 @@ export function changeLearningEvent(db:DatabaseSync,eventId:string,action:"undo"
   if(priorId){
    const prior=db.prepare("SELECT * FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1").get(priorId);
    if(!prior||prior.version!==priorVersion||prior.state!=="superseded"||prior.owner_pinned===1)fail();
+   // B2 (spec r3 2.5): Undo never brings a forgotten record back
+   if(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? LIMIT 1").get(priorId))fail();
    if(db.prepare("SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=? AND (s.state!='active' OR s.revision!=e.source_revision)").get(priorId,priorVersion))fail();
    db.prepare("UPDATE memory_records SET state='active',valid_to=NULL WHERE id=? AND version=?").run(priorId,priorVersion);
    db.prepare("UPDATE memory_projection_receipts SET lexical_status='pending',embedding_status='pending' WHERE record_id=? AND record_version=?").run(priorId,priorVersion);

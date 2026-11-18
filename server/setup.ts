@@ -260,12 +260,19 @@ export function setupAgentsReading(instances: readonly SetupInstanceReading[]): 
  * it, and the card would otherwise have to hardcode per-engine copy — the
  * exact thing `EngineInstall` exists to prevent.
  */
-export function setupSignedOutReading(instances: readonly SetupInstanceReading[]): SetupAgentReading[] {
+/** The engine instances a visible (non-hidden) bot runs on. A signed-out one of these is owed on a Cloud home; Flux state does not matter. */
+export function setupOwedEngineIds(bots: readonly { hidden?: boolean; modelSelection: { instanceId: string } }[]): Set<string> {
+  return new Set(bots.filter((bot) => !bot.hidden).map((bot) => bot.modelSelection.instanceId));
+}
+
+export function setupSignedOutReading(instances: readonly SetupInstanceReading[], owedOnCloud: ReadonlySet<string> = new Set()): SetupAgentReading[] {
   return instances
     .filter((instance) => runnable(instance) && signedOut(instance))
     .map((instance) => ({
       ...reading(instance),
       ...(instance.install?.signInCommand ? { signInCommand: instance.install.signInCommand } : {}),
+      ...(instance.driverKind ? { driverKind: instance.driverKind } : {}),
+      ...(owedOnCloud.has(instance.instanceId) ? { owedOnCloud: true } : {}),
     }));
 }
 
@@ -354,10 +361,16 @@ export interface SetupThreadFacts {
    *  `refusal` is then never reported (an unfinished picture can hold an answered refusal) and `answered` is
    *  only what has been seen so far. Absent when the facts are complete. */
   known?: false;
+  /** The owner wrote a text message in this conversation. Read from the rows themselves, so exact whether or not the fill is done. */
+  ownerSpoke?: boolean;
+  /** The conversation holds at least one message of any kind. */
+  hasMessages?: boolean;
 }
 
 export interface SetupWorkspaceReading {
   bots: readonly SetupBotReading[];
+  /** Every channel, room and direct message with its tasks (the store's groups): a conversation lives here as well as in a bot's tasks. */
+  channels?: readonly { threadId: string; tasks?: readonly SetupTaskReading[] }[];
   /** The facts by index (the server). Preferred over `messagesFor`, which loads a whole conversation. */
   threadFacts?(threadId: string): SetupThreadFacts;
   messagesFor?(threadId: string): readonly SetupMessageReading[];
@@ -416,7 +429,13 @@ export function setupThreadFacts(messages: readonly SetupMessageReading[]): Setu
   for (const message of messages) {
     if (message.role === "bot" && message.kind === "text" && message.turnTerminal === true) answeredAt = Math.max(answeredAt, message.at ?? 0);
   }
-  return { answered: threadAnswered(messages), answeredAt, refusal: latestRefusal(messages) };
+  return {
+    answered: threadAnswered(messages),
+    answeredAt,
+    refusal: latestRefusal(messages),
+    ownerSpoke: messages.some((message) => message.role === "user" && message.kind === "text"),
+    hasMessages: messages.length > 0,
+  };
 }
 
 /** The workspace facts the checklist measures. Threads other than the
@@ -425,21 +444,23 @@ export function setupThreadFacts(messages: readonly SetupMessageReading[]): Setu
 export function readWorkspace(
   workspace: SetupWorkspaceReading,
   chiefBotId?: string,
-): Pick<SetupLiveState, "chiefInstanceId" | "chiefLocalModel" | "chiefAnsweredBy" | "chiefRefusal" | "chiefUsesFlux" | "crewSize" | "botReplyExists"> & { threadFactsUnknown?: true } {
+): Pick<SetupLiveState, "chiefInstanceId" | "chiefLocalModel" | "chiefAnsweredBy" | "chiefRefusal" | "chiefUsesFlux" | "crewSize" | "botReplyExists" | "ownerMessageExists" | "otherThreadHasMessages"> & { threadFactsUnknown?: true } {
   const chief = chiefBotId ? workspace.bots.find((bot) => bot.id === chiefBotId) : undefined;
   const chiefAnsweredBy = new Set<string>();
-  let botReplyExists = false, threadFactsUnknown = false;
+  let botReplyExists = false, threadFactsUnknown = false, ownerMessageExists = false, otherThreadHasMessages = false;
   let chiefRefusal: { at: number; refusal: SetupRefusalReading } | null = null;
   const factsFor = (threadId: string): SetupThreadFacts => workspace.threadFacts
     ? workspace.threadFacts(threadId)
     : setupThreadFacts(workspace.messagesFor?.(threadId) ?? []);
   for (const bot of workspace.bots) {
     const isChief = bot.id === chief?.id;
-    if (botReplyExists && !isChief) continue;
+    if (botReplyExists && ownerMessageExists && otherThreadHasMessages && !isChief) continue;
     const tasks: readonly SetupTaskReading[] = bot.tasks?.length ? bot.tasks : [{ threadId: bot.threadId }];
     for (const task of tasks) {
       const facts = factsFor(task.threadId);
       if (facts.known === false) threadFactsUnknown = true;
+      if (facts.ownerSpoke) ownerMessageExists = true;
+      if (facts.hasMessages && task.threadId !== chief?.threadId) otherThreadHasMessages = true;
       if (isChief) {
         const refusal = facts.refusal;
         if (refusal && (chiefRefusal === null || refusal.at >= chiefRefusal.at)) chiefRefusal = refusal;
@@ -452,6 +473,17 @@ export function readWorkspace(
       if (isChief && task.lastInstanceId) chiefAnsweredBy.add(task.lastInstanceId);
     }
   }
+  // A channel, room or direct message holds a conversation too, and one needs only one bot, so crewSize alone never sees it.
+  for (const channel of workspace.channels ?? []) {
+    if (ownerMessageExists && otherThreadHasMessages) break;
+    const threads = new Set([channel.threadId, ...(channel.tasks ?? []).map((task) => task.threadId)]);
+    for (const threadId of threads) {
+      const facts = factsFor(threadId);
+      if (facts.known === false) threadFactsUnknown = true;
+      if (facts.ownerSpoke) ownerMessageExists = true;
+      if (facts.hasMessages && threadId !== chief?.threadId) otherThreadHasMessages = true;
+    }
+  }
   const chiefLocal = chiefLocalModelOf(chief?.modelSelection);
   return {
     chiefInstanceId: chief?.modelSelection.instanceId ?? "",
@@ -461,6 +493,8 @@ export function readWorkspace(
     chiefUsesFlux: chief ? workspace.routesThroughFlux(chief.modelSelection.model) : false,
     crewSize: workspace.bots.filter((bot) => !bot.hidden && bot.id !== chief?.id).length,
     botReplyExists,
+    ownerMessageExists,
+    otherThreadHasMessages,
     ...(threadFactsUnknown ? { threadFactsUnknown: true as const } : {}),
   };
 }
@@ -551,6 +585,11 @@ export class SetupChecklist {
    *  so a step that became true while the app was closed is durable. */
   read(live: SetupLiveState): SetupState {
     return this.persist(deriveSetupState(this.state, live, this.now()));
+  }
+
+  /** The setup host gets help sooner until its first job finishes. Other chats keep the normal threshold. */
+  firstJobPending(botId: string): boolean {
+    return this.state.chiefBotId === botId && !this.state.steps.flow.done && !this.state.steps.flow.skipped;
   }
 
   chiefBotId(): string | undefined {

@@ -18,7 +18,6 @@ const ATTACHMENTS_DIR = join(DATA_DIR, "attachments");
 import { conversationImageAttachments } from "./image-reference-resolver.ts";
 import { imageReferences } from "./image-operations.ts";
 import { __resetMediaAssetsForTests, mediaAssetsRoute, type MediaAssetsDeps } from "./media-assets.ts";
-import { RoutineRequestService } from "./routine-requests.ts";
 import { RoutineManager } from "./routines.ts";
 import { Store } from "./store.ts";
 import { scopeRow } from "./memory/scope-id.ts";
@@ -26,6 +25,8 @@ import { database } from "./database.ts";
 import { expectSameReads, measureReads, refillThread } from "./testing/bounded-reads.ts";
 import { MEDIA_ROUTES, type MediaResolveResponse } from "../shared/media-assets.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { appendFixtureMessage } from "./testing/approval-card.ts";
+import { routineServiceFixture } from "./testing/service-queue-fixture.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const u32 = (value: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(value); return b; };
@@ -50,9 +51,10 @@ function rows(threadId: string, count: number) {
 /** [count rows][open request card][300 rows][answered request card][100 rows][image row][500 rows] */
 function build(threadId: string, count: number) {
   rows(threadId, count);
-  store.appendMessage(threadId, { role: "bot", kind: "options", text: "Allow?", card: { title: "Open request", options: ["Allow", "Deny"], requestId: "req-open" } } as never);
+  // The current writer requires a hash-bound approval for an open request card.
+  appendFixtureMessage(store, threadId, { role: "bot", kind: "options", text: "Allow?", card: { title: "Open request", options: ["Allow", "Deny"], requestId: "req-open" } } as never);
   rows(threadId, 300);
-  store.appendMessage(threadId, { role: "bot", kind: "options", text: "Allowed", card: { title: "Closed request", options: ["Allow", "Deny"], requestId: "req-closed", answered: "allow" } } as never);
+  appendFixtureMessage(store, threadId, { role: "bot", kind: "options", text: "Allowed", card: { title: "Closed request", options: ["Allow", "Deny"], requestId: "req-closed", answered: "allow" } } as never);
   rows(threadId, 100);
   store.appendMessage(threadId, { role: "bot", kind: "text", text: "", attachments: [{ kind: "image", path: join(ATTACHMENTS_DIR, IMAGE), mime: "image/png" }] });
   rows(threadId, 500);
@@ -184,7 +186,8 @@ const step = (name: string, run: () => Promise<void>) => { steps.push([name, run
   });
 
   step("resolves a routine request by its request id, the card open however far back", async () => {
-    const service = new RoutineRequestService({
+    // Proposals enter through the same verified owner claim and queue as a turn.
+    const service = routineServiceFixture({
       store: store as never,
       routines: new RoutineManager({ file: join(mkdtempSync(join(tmpdir(), "murage-bounded-routines-")), "routines.json"), now: () => Date.now(), botState: () => "ready", createTask: () => null, startTurn: async () => {} }),
       now: () => Date.now(), timeZone: () => "UTC", cloudReady: async () => ({ ready: true }), canPersist: () => ({ ok: true as const }),

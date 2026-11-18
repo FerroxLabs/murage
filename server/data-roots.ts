@@ -1,3 +1,5 @@
+import { isReadOnly } from "./read-only-start.ts";
+import { walkOwnedDirectories } from "./owned-directory-walk.ts";
 // The data-root model (designs/S5-DATADIR-PATHS.md r4.1 section 3, DR0-DR7).
 //
 // A root is a top-level DATA_DIR folder that may live on another disk through a symlink or a junction:
@@ -8,7 +10,7 @@
 // DR1: canonical() is applied only to the current candidate DATA_DIR/R. A recorded target and a boot
 // snapshot are FROZEN spellings: they are compared after lexical normalisation only, never resolved again.
 // DR3: the per-turn check is O(1) per root (one lstat, one realpath, one lstat of T), never proportional to history.
-import fs, { type Stats } from "node:fs";
+import fs, { type Stats } from "./counted-fs.ts";
 import { homedir as osHomedir } from "node:os";
 import { isAbsolute, join, parse, relative, sep } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -141,6 +143,7 @@ export class DataRoots {
   boot(options: { canonicalRoot?: string; now?: () => string; readOnly?: boolean } = {}): void {
     try { this.canonicalDataDir = canonical(this.dataDir); } catch { this.canonicalDataDir = this.dataDir; }
     try { this.home = canonical(dataRootSeams.homedir()); } catch { this.home = dataRootSeams.homedir(); }
+    this.readOnly = isReadOnly() || options.readOnly === true;
     const at = (options.now ?? (() => new Date().toISOString()))();
     if (options.readOnly) { this.readOnly = true; this.record = { schema: 1, root: this.dataDir, previous: [] }; }
     else this.loadAndRotateRecord(options.canonicalRoot ?? this.dataDir, at);
@@ -159,8 +162,8 @@ export class DataRoots {
     if (raw !== undefined) {
       existing = parseRecord(raw);
       if (!existing) {
-        try { fs.renameSync(this.recordPath, `${this.recordPath}.corrupt-${randomUUID()}`); } catch { /* the rewrite below replaces it */ }
-        this.log("data-root-record corrupt: renamed aside, rewritten without previous roots");
+        try { if (!this.readOnly) fs.renameSync(this.recordPath, `${this.recordPath}.corrupt-${randomUUID()}`); } catch { /* the rewrite below replaces it */ }
+        if (!this.readOnly) this.log("data-root-record corrupt: renamed aside, rewritten without previous roots");
       }
     }
     const next: RootRecordFile = existing ? { ...existing, previous: [...existing.previous] } : { schema: 1, root, previous: [] };
@@ -411,21 +414,11 @@ export class DataRoots {
       base = snapshot.canonical;
       walk = parts.slice(1);
     }
-    let at = base;
-    let stopped = false;
-    for (const part of walk) {
-      at = join(at, part);
-      if (stopped) continue;
-      let stat = lstatOrNull(at);
-      if (!stat) {
-        if (!options.create) { stopped = true; continue; }
-        try { dataRootSeams.mkdir(at); created.push(at); } catch (error) { if (errno(error) !== "EEXIST") throw error; }
-        stat = lstatOrNull(at);
-      }
-      if (!stat) throw new WorkspaceTreeError("not-a-folder", rootName);
-      if (stat.isSymbolicLink()) throw new WorkspaceTreeError("link-below-root", rootName);
-      if (!stat.isDirectory()) throw new WorkspaceTreeError("not-a-folder", rootName);
-    }
+    const at = walkOwnedDirectories(base, walk, {
+      create: options.create, lstat: lstatOrNull, mkdir: path => dataRootSeams.mkdir(path),
+      created: path => { created.push(path); },
+      refuse: code => { throw new WorkspaceTreeError(code, rootName); },
+    });
     return { lexical: lexicalPath, canonical: at, created };
   }
 

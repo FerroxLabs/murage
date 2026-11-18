@@ -38,6 +38,7 @@ afterEach(() => {
 describe("ACP engines that scope their home (Grok shown): version gate", () => {
   const support = (): AcpSupport => ({
     driverKind: "scopeVersionTest",
+    fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
     displayName: "Scope Test",
     models: { default: "m", options: [{ id: "m", label: "M" }] },
     defaultCli: FAKE_ACP,

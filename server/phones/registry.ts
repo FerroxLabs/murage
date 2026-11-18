@@ -34,6 +34,12 @@ export function initializePhones(db: DatabaseSync): void {
     body TEXT NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
+  // The ask mint's device-id opt-in, kept apart from the registration so a restart between mint and registration keeps it (Astra r3 finding 1).
+  db.exec(`CREATE TABLE IF NOT EXISTS phone_ask_optins (
+    device_id TEXT PRIMARY KEY,
+    opted_in INTEGER NOT NULL CHECK(opted_in IN (0,1))
+  )`);
+  backfillAskOptIns(db);
   db.exec(`CREATE TABLE IF NOT EXISTS phone_revocations (
     device_id TEXT PRIMARY KEY,
     revoked_at INTEGER NOT NULL,
@@ -45,6 +51,21 @@ export function initializePhones(db: DatabaseSync): void {
   const rows = readTombstone(path);
   const put = db.prepare("INSERT INTO phone_revocations (device_id, revoked_at, reason) VALUES (?, ?, ?) ON CONFLICT(device_id) DO NOTHING");
   for (const r of rows) put.run(r.device_id, r.revoked_at, r.reason);
+}
+
+/**
+ * Upgrade: a host that ran the earlier build kept the opt-in as a boolean `deviceIdOptIn` inside each stored registration. Copy every such
+ * boolean into phone_ask_optins. A row the table already holds is newer (it was written by a mint) and is never overwritten, so this is safe to
+ * run at every start. A registration whose body cannot be read, or holds anything but a boolean, is skipped. The old field stays in the stored
+ * body (a downgrade still finds it) and fromRow strips it from every result.
+ */
+function backfillAskOptIns(db: DatabaseSync): void {
+  const put = db.prepare("INSERT INTO phone_ask_optins (device_id, opted_in) VALUES (?, ?) ON CONFLICT(device_id) DO NOTHING");
+  for (const row of db.prepare("SELECT device_id, body FROM phone_registrations").all() as unknown as Array<{ device_id: string; body: string }>) {
+    let optedIn: unknown;
+    try { optedIn = (JSON.parse(row.body) as { deviceIdOptIn?: unknown } | null)?.deviceIdOptIn; } catch { continue; }
+    if (typeof optedIn === "boolean") put.run(row.device_id, optedIn ? 1 : 0);
+  }
 }
 
 export class PhoneRevocations {
@@ -79,11 +100,34 @@ export class PhoneRegistry {
   private readonly revocations: PhoneRevocations;
   private readonly db: DatabaseSync;
   private readonly now: () => number;
-
   constructor(db: DatabaseSync, now: () => number) {
     this.db = db;
     this.now = now;
     this.revocations = new PhoneRevocations(db, now);
+  }
+
+  /**
+   * Records whether this phone's latest ask mint opted in to its device id (request `want: ["deviceId"]`). It is stored in its own table,
+   * independent of registration, so it survives a restart that falls between the mint and the phone's first registration.
+   */
+  setDeviceIdOptIn(deviceId: string, optedIn: boolean): void {
+    this.db.prepare("INSERT INTO phone_ask_optins (device_id, opted_in) VALUES (?, ?) ON CONFLICT(device_id) DO UPDATE SET opted_in = excluded.opted_in").run(deviceId, optedIn ? 1 : 0);
+  }
+
+  /**
+   * Tri-state: true when this phone's latest ask mint opted in, false when it minted an ask token without opting in (paired before pin-at-pairing),
+   * undefined when this host has no record: the phone never minted an ask token, or it minted one before the host kept a record. This host
+   * cannot tell those apart (the mints are issued by the companion door, whose own device file is not readable here), so undefined means
+   * "unknown history", and the route reports it as the explicit "unknown" rather than leaving it out.
+   */
+  deviceIdOptIn(deviceId: string): boolean | undefined {
+    const row = this.db.prepare("SELECT opted_in FROM phone_ask_optins WHERE device_id = ?").get(deviceId) as { opted_in: number } | undefined;
+    return row === undefined ? undefined : row.opted_in === 1;
+  }
+
+  /** True only when the latest ask mint opted in. */
+  deviceIdOptedIn(deviceId: string): boolean {
+    return this.deviceIdOptIn(deviceId) === true;
   }
 
   put(deviceId: string, body: unknown): PutResult {
@@ -115,6 +159,7 @@ export class PhoneRegistry {
 
   remove(deviceId: string): void {
     this.db.prepare("DELETE FROM phone_registrations WHERE device_id = ?").run(deviceId);
+    this.db.prepare("DELETE FROM phone_ask_optins WHERE device_id = ?").run(deviceId);
   }
 
   /** Remove the registration and bar the device in ONE transaction. */
@@ -144,5 +189,7 @@ export class PhoneRegistry {
 interface Row { device_id: string; body: string; updated_at: number }
 
 function fromRow(row: Row): PhoneRegistration {
-  return { deviceId: row.device_id, ...(JSON.parse(row.body) as Omit<PhoneRegistration, "deviceId" | "updatedAt">), updatedAt: row.updated_at };
+  // A body written by the earlier build may still carry deviceIdOptIn; the upgrade copied it into phone_ask_optins, so it is never returned.
+  const { deviceIdOptIn: _legacyOptIn, ...body } = JSON.parse(row.body) as Omit<PhoneRegistration, "deviceId" | "updatedAt"> & { deviceIdOptIn?: unknown };
+  return { deviceId: row.device_id, ...body, updatedAt: row.updated_at };
 }

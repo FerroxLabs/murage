@@ -4,13 +4,13 @@
 // Lane msearch2 (1.0.2): owner search says "Showing the newest matches" only when a limit was really reached. On 77cb5d307 every search
 // of a memory over 20,000 records carried the notice, because the never-indexed kinds were read among the newest 20,000 records only and
 // any older record at all counted as "might have missed one".
+import { openTestIndex } from "./testing/open-index.ts";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
-import { MemoryIndex } from "./index.ts";
 import { closeMemoryIndexReader, memoryIndexReaderOpens } from "./index-reader.ts";
 import { OWNER_INDEX_MATCHES, OWNER_MANY_NOTICE, OWNER_NEWEST_NOTICE, OWNER_TAIL_WINDOW, ownerMemoryList, ownerSearchTrace, ownerSearchWork } from "./owner-list.ts";
 import { dropLegacyOwnerTailIndex, fillOwnerTailNow, fillOwnerTailSlice, startOwnerTailIndexBuild } from "./owner-tail-index.ts";
@@ -27,7 +27,7 @@ beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(
 
 /** `count` indexed records that all say "weekly" (three of them, the oldest among them, also "zephyrine"), plus, older than all of them,
  * a continuity brief and a rolled checkpoint version that say "zephyrine" and are never in the search index. */
-function seed(count: number, extra: (db: DatabaseSync, scope: string) => void = () => {}) {
+async function seed(count: number, extra: (db: DatabaseSync, scope: string) => void = () => {}) {
   reconcileMemoryRoster(roster);
   const scope = ensureScope("bot", "a");
   const rare = new Set([0, Math.floor(count / 2), count - 1]);
@@ -46,19 +46,21 @@ function seed(count: number, extra: (db: DatabaseSync, scope: string) => void = 
     }
   });
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  const made = new MemoryIndex(INDEX_PATH()); made.prepareModel("model"); made.close();
+  const made = await openTestIndex(INDEX_PATH()); made.prepareModel("model"); made.close();
   const index = new DatabaseSync(INDEX_PATH());
+  index.exec("INSERT INTO lexical(lexical,rank) VALUES('automerge',4)");
   index.exec("BEGIN");
   const entry = index.prepare("INSERT INTO entries VALUES(?,1,?,?)"), word = index.prepare("INSERT INTO lexical(id,version,text) VALUES(?,1,?)");
   for (let n = 0; n < count; n++) { const id = `rec-${String(n).padStart(7, "0")}`; entry.run(id, scope, text(n)); word.run(id, text(n)); }
   index.exec("COMMIT");
+  index.exec("INSERT INTO lexical(lexical,rank) VALUES('automerge',0); INSERT INTO lexical(lexical,rank) VALUES('crisismerge',1999)");
   index.close();
 }
 const ids = (rows: Array<Record<string, unknown>>) => rows.map(row => `${row.id}:${row.version}`).sort();
 
 describe("owner search: the notice only when a limit was reached", () => {
   it("100k records, a rare word: every match, the old continuity brief and checkpoint version included, and no notice", { timeout: 300_000 }, async () => {
-    seed(100_000);
+    await seed(100_000);
     const found = await ownerMemoryList({ botId: "a", query: "zephyrine" }, roster);
     expect(ids(found.rows)).toEqual(["brief-old:1", "cp-old:1", "rec-0000000:1", "rec-0050000:1", "rec-0099999:1"]);
     expect(found.coverageComplete).toBe(true);
@@ -66,7 +68,7 @@ describe("owner search: the notice only when a limit was reached", () => {
   });
 
   it("100k records, a common word: one bounded page, the count stops at 1,000+, the owner is told, and the next page carries on", { timeout: 300_000 }, async () => {
-    seed(100_000);
+    await seed(100_000);
     const before = { ...ownerSearchWork };
     const found = await ownerMemoryList({ botId: "a", query: "weekly" }, roster);
     const visited = ownerSearchWork.visited - before.visited;
@@ -85,17 +87,19 @@ describe("owner search: the notice only when a limit was reached", () => {
   });
 
   it("a match behind more ineligible matches than one page steps: the page says so, and the next page reaches it", { timeout: 300_000 }, async () => {
-    seed(10, (db) => {
+    await seed(10, (db) => {
       // OWNER_INDEX_MATCHES + 1000 newer records in a scope this bot cannot see, all saying the word
       const other = ensureScope("bot", "b");
       const record = db.prepare("INSERT INTO memory_records VALUES(?,1,?,'fact',?,'owner-statement','active',0,?,NULL,NULL,?)");
       for (let n = 0; n < OWNER_INDEX_MATCHES + 1000; n++) record.run(`other-${String(n).padStart(6, "0")}`, other, "zephyrine elsewhere", 500_000 + n, 500_000 + n);
     });
     const index = new DatabaseSync(INDEX_PATH());
+    index.exec("INSERT INTO lexical(lexical,rank) VALUES('automerge',4)");
     index.exec("BEGIN");
     const entry = index.prepare("INSERT INTO entries VALUES(?,1,'s',?)"), word = index.prepare("INSERT INTO lexical(id,version,text) VALUES(?,1,?)");
     for (let n = 0; n < OWNER_INDEX_MATCHES + 1000; n++) { const id = `other-${String(n).padStart(6, "0")}`; entry.run(id, "zephyrine elsewhere"); word.run(id, "zephyrine elsewhere"); }
-    index.exec("COMMIT"); index.close();
+    index.exec("COMMIT");
+    index.exec("INSERT INTO lexical(lexical,rank) VALUES('automerge',0); INSERT INTO lexical(lexical,rank) VALUES('crisismerge',1999)"); index.close();
     const first = await ownerMemoryList({ botId: "a", query: "zephyrine" }, roster);
     expect(first).toMatchObject({ coverageComplete: false, searchNotice: expect.stringContaining(OWNER_NEWEST_NOTICE) });
     expect(first.nextCursor).toBeDefined();
@@ -104,7 +108,7 @@ describe("owner search: the notice only when a limit was reached", () => {
   });
 
   it("a common word over 300k records never holds the loop past 50 ms, and reuses the one reader handle", { timeout: 600_000 }, async () => {
-    seed(300_000);
+    await seed(300_000);
     await ownerMemoryList({ botId: "a", query: "weekly" }, roster);
     const opens = memoryIndexReaderOpens();
     let last = performance.now(), longest = 0;
@@ -118,7 +122,7 @@ describe("owner search: the notice only when a limit was reached", () => {
   });
 
   it("continuity and checkpoint rows are never hidden: found past any window, with or without the owner-tail table (1.0.3: the key table's kind index answers)", { timeout: 300_000 }, async () => {
-    seed(30_000);
+    await seed(30_000);
     const db = database();
     dropOwnerTail(db);
     const before = await ownerMemoryList({ botId: "a", query: "zephyrine" }, roster);
@@ -134,7 +138,7 @@ describe("owner search: the notice only when a limit was reached", () => {
   });
 
   it("more never-indexed rows than the bound: the newest are read and the owner is told", { timeout: 300_000 }, async () => {
-    seed(10, (db, scope) => {
+    await seed(10, (db, scope) => {
       const record = db.prepare("INSERT INTO memory_records VALUES(?,1,?,'episode',?,'owner-statement','active',0,?,NULL,NULL,?)");
       // a slice past the bound: the search reads whole slices, so the bound is reached only when more remain after them
       for (let n = 0; n <= OWNER_TAIL_WINDOW + 1000; n++) record.run(`ep-${String(n).padStart(6, "0")}`, scope, `episode ${n}${n === OWNER_TAIL_WINDOW + 1000 ? " zephyrine" : ""}`, 10 + n, 10 + n);
@@ -147,7 +151,7 @@ describe("owner search: the notice only when a limit was reached", () => {
   it("the statements, and the rows they step, are the same at 20k and 500k records, and none reads the records table whole", { tags: ["nightly"], timeout: 900_000 }, async () => {
     const run = async (count: number) => {
       closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
-      seed(count);
+      await seed(count);
       const before = { ...ownerSearchWork };
       ownerSearchTrace.statements = []; ownerSearchTrace.on = true;
       try {
@@ -179,7 +183,7 @@ describe("owner search: the notice only when a limit was reached", () => {
 });
 
 describe("the owner-tail index", () => {
-  it("covers exactly the PIP kinds plus rolled checkpoints", () => {
+  it("covers exactly the PIP kinds plus rolled checkpoints", async () => {
     const kinds = /kind IN \(([^)]*)\)/.exec(OWNER_TAIL_KINDS_SQL)![1]!.split(",").map(kind => kind.trim().replace(/'/g, ""));
     expect(kinds).toEqual([...PIP_ALL_KINDS]);
   });
@@ -209,7 +213,7 @@ describe("the owner-tail index", () => {
   });
 
   it("an existing file is filled after start in slices that never hold the writers, waiting while the owner is in a turn", async () => {
-    seed(5_000);
+    await seed(5_000);
     const db = database();
     dropOwnerTail(db);
     let busy = true;
@@ -236,7 +240,7 @@ function tailRows(db: DatabaseSync) {
     .map(row => `${row.created_at}|${row.id}|${row.version}`);
 }
 /** `count` ordinary records plus every fifth one of an owner-tail kind (briefs and rolled checkpoints), all saying "zephyrine". */
-function seedTail(count: number) {
+async function seedTail(count: number) {
   reconcileMemoryRoster(roster);
   const scope = ensureScope("bot", "a");
   transaction(db => {
@@ -248,13 +252,13 @@ function seedTail(count: number) {
   });
   // an empty search index, so owner search takes its indexed path (and reads the never-indexed kinds through the owner-tail table)
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  new MemoryIndex(INDEX_PATH()).close();
+  (await openTestIndex(INDEX_PATH())).close();
   return scope;
 }
 
 describe("the owner-tail backfill", () => {
   it("a send's write during the backfill is never held more than 50 ms by it, and the writer gate is never taken", { tags: ["perf-budget"], timeout: 300_000 }, async () => {
-    seedTail(300_000);
+    await seedTail(300_000);
     const db = database();
     dropOwnerTail(db);
     const { awaitWriterGateForeground, writersHeldForIndexBuild } = await import("../database.ts");
@@ -303,7 +307,7 @@ describe("the owner-tail backfill", () => {
   });
 
   it("killed part way, it resumes after the last committed slice and ends with exactly the index's rows, changes made meanwhile included", { timeout: 300_000 }, async () => {
-    seedTail(50_000);
+    await seedTail(50_000);
     const db = database();
     dropOwnerTail(db);
     const first = startOwnerTailIndexBuild(db, { pauseMs: 1, targetMs: 1 });
@@ -333,7 +337,7 @@ describe("the owner-tail backfill", () => {
 
   it("owner search with the backfill done answers exactly as the index version did", { timeout: 300_000 }, async () => {
     // reference: a file whose table was kept by its triggers from the first record (the index's own answer: same rows, same order)
-    seedTail(30_000);
+    await seedTail(30_000);
     const db = database();
     db.exec(LEGACY_OWNER_TAIL_INDEX_SQL);
     expect(tailRows(db)).toEqual(throughLegacyIndex(db));
@@ -356,7 +360,7 @@ describe("the owner-tail backfill", () => {
   });
 
   it("a slice that meets a write lock held by another connection returns within 50 ms with no progress, restores the busy wait, and the build completes once the lock is gone", { timeout: 30_000, ...windowsPerfBudget() }, async () => {
-    seedTail(2_000);
+    await seedTail(2_000);
     const db = database();
     dropOwnerTail(db);
     const holder = new DatabaseSync(join(DATA_DIR, "messages.db"));
@@ -379,7 +383,7 @@ describe("the owner-tail backfill", () => {
   });
 
   it("the final slice does not drop the legacy index; the separate step does, only when the lock is free, and the table answers without it", async () => {
-    seedTail(500);
+    await seedTail(500);
     const db = database();
     dropOwnerTail(db);
     db.exec(LEGACY_OWNER_TAIL_INDEX_SQL);
@@ -401,7 +405,7 @@ describe("the owner-tail backfill", () => {
   });
 
   it("a started build on a file that is ready but still has the legacy index drops it in its own step", async () => {
-    seedTail(300);
+    await seedTail(300);
     const db = database();
     fillOwnerTailNow(db);
     db.exec(LEGACY_OWNER_TAIL_INDEX_SQL);

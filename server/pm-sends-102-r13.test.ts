@@ -17,6 +17,7 @@ import { roomRequest } from "./room-requests.ts";
 import { BACKFILL_NAME, OWED_FANOUT_SQL, OWED_SHARED_SQL, backfillRoomRequestOwed, initializeRoomRequestOwed, settleOwedFanouts, settleOwedSharedResults } from "./room-request-owed.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { serviceDecisionFixture } from "./testing/service-decision-fixture.ts";
 
 const faults = vi.hoisted(() => ({ saveImage: 0 }));
 vi.mock("./attachments.ts", async importOriginal => {
@@ -211,7 +212,10 @@ describe("a held provider job keeps its hold through polling and Files publicati
       return json({ contract: 1, kind: "image-job", id: "imgjob_42", status: "succeeded", data: [{ b64_json: PNG }] });
     });
     const store = new Store(() => ({ instanceId: "fixture", model: "fixture" })), bot = store.createBot();
-    const turn = () => ({ botId: bot.id, threadId: bot.threadId, generation: randomUUID(), signal: new AbortController().signal, assertActive: () => {} });
+    const turn = () => {
+      const identity = { botId: bot.id, threadId: bot.threadId, generation: randomUUID() };
+      return { ...identity, authority: serviceDecisionFixture(store, identity), signal: new AbortController().signal, assertActive: () => {} };
+    };
     const operations = new ImageOperations({ store, waiting: vi.fn() });
     let now = 0;
     const service = new ImageGenerationService({ resolveConnection: () => ({ id: "flux", provider: "flux", apiKey: "FAKE_R13", revision: "1" }), connectionIds: () => ["flux"], fetch: fetcher, fluxCatalogue: true, sleep: async ms => { now += ms; }, now: () => now });

@@ -17,7 +17,8 @@
 // the scope moves to a NEW login generation linked to the owner's current file (scoped-cli-home.ts, "Login generations").
 //
 // Every file operation goes through `LinkIo`, so the decision table is tested with an in-memory file system.
-import { linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 
 import { DATA_DIR } from "../config.ts";
 import { dataRoots } from "../data-roots.ts";

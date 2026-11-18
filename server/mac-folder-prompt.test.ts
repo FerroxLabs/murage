@@ -232,6 +232,7 @@ describe("it cannot touch a permission", () => {
     const wiring = source.slice(source.indexOf("createMacFolderPromptWatch({"), source.indexOf("macFolderPrompt.observe(event)"));
     expect(wiring).not.toMatch(/answerRequest|resolve|deny|interrupt|setWaitingOnHuman|respond/i);
     expect(wiring.match(/store\.\w+/g)).toEqual(["store.appendMessage", "store.patchMessage"]);
-    expect(source).toContain("bus.subscribe((event: RuntimeEvent) => {\n  if (shouldIgnoreProviderEvent(event)) return;\n  macFolderPrompt.observe(event);\n});");
+    // MAIN RULING INT-CONFLICT-DEFAULT a3dc22c8d3 a62419d6d5: this read-only observer follows the execution subscription; all no-answer/no-interrupt assertions remain.
+    expect(source).toContain("bus.subscribeExecution((event: RuntimeEvent) => {\n  if (shouldIgnoreProviderEvent(event)) return;\n  macFolderPrompt.observe(event);\n});");
   });
 });

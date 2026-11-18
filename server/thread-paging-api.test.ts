@@ -5,8 +5,6 @@
 // history is exactly the payload paging exists to avoid. A page also reaches
 // back to the oldest open request card, because the client renders the
 // approval strip from what it holds.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { openSse } from "./testing/sse.ts";
@@ -19,29 +17,53 @@ let fixture: VerificationServer, headers: Record<string, string>;
 let ids: { bot: string; long: string; short: string; group: string; groupLong: string; groupShort: string; card: string };
 
 beforeAll(async () => {
-  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
-    const {Store}=await import(${JSON.stringify(new URL("./store.ts", import.meta.url).href)});
-    const {writeFileSync}=await import('node:fs');const {join}=await import('node:path');
-    // An approval card written before the server starts is "left by a previous run": the start-up sweep retires it (orphaned), so it stops
-    // counting as open. A routine request card is open by design until the person answers, and the sweep leaves it alone.
-    const store=new Store(()=>({instanceId:'verification',model:'sonnet'}));
-    const bot=store.createBot({name:'Paging fixture'},{seedMessages:false});
-    const long=bot.threadId;let card='';
-    for(let i=0;i<${LONG};i++){
-      if(i===${CARD_AT})card=store.appendMessage(long,{role:'bot',kind:'options',card:{title:'Allow?',subtitle:'run ls',options:['Allow','Deny'],requestId:'paging-open-request',tool:'Bash',routineRequest:{version:1,requestId:'paging-open-request',botId:bot.id,threadId:long,createdAt:1,operation:{action:'delete',routineId:'paging-fixture',expectedUpdatedAt:1}}}}).id;
-      else store.appendMessage(long,{role:i%2?'bot':'user',kind:'text',text:'bot message '+i});
+  // Build the open card through its real owner authority and durable queue,
+  // then restart on that history so the paging/recovery assertions stay real.
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5: this authenticated owner fixture
+  // records desktop authorship on typed rows; unknown-origin history stays redacted.
+  const seedRoute = String.raw`
+    if (path === '/api/paging-fixture-seed' && method === 'POST') {
+      if (!mayApprove(req,url)) return json(res,403,{});
+      const bot=store.createBot({name:'Paging fixture'},{seedMessages:false});
+      const long=bot.threadId;let card='';
+      for(let i=0;i<${LONG};i++){
+        if(i===${CARD_AT}){
+          const proposed=await withOwnerDecisionAuthority(req,url,bot.id,long,authority=>routineRequests.propose({
+            botId:bot.id,threadId:long,authority,
+            proposal:{action:'create',routine:{name:'Paging routine',instructions:'Offline paging fixture',schedule:{type:'interval',everyMinutes:30}}},
+          }));
+          card=proposed.messageId;
+        }else store.appendMessage(long,{role:i%2?'bot':'user',kind:'text',text:'bot message '+i,origin:'desktop'});
+      }
+      const short=store.createTask(bot.id,'Short').threadId;
+      for(let i=0;i<3;i++)store.appendMessage(short,{role:'user',kind:'text',text:'short '+i,origin:'desktop'});
+      const group=store.createGroup('Paging room',[bot.id],false,undefined,{completed:true});
+      const groupLong=group.threadId;
+      for(let i=0;i<${LONG};i++)store.appendMessage(groupLong,{role:'user',kind:'text',text:'room message '+i,origin:'desktop'});
+      const groupShort=store.createGroupTask(group.id,'Quiet',true).threadId;
+      return json(res,200,{bot:bot.id,long,short,group:group.id,groupLong,groupShort,card});
     }
-    const short=store.createTask(bot.id,'Short').threadId;
-    for(let i=0;i<3;i++)store.appendMessage(short,{role:'user',kind:'text',text:'short '+i});
-    const group=store.createGroup('Paging room',[bot.id],false,undefined,{completed:true});
-    const groupLong=group.threadId;
-    for(let i=0;i<${LONG};i++)store.appendMessage(groupLong,{role:'user',kind:'text',text:'room message '+i});
-    const groupShort=store.createGroupTask(group.id,'Quiet',true).threadId;
-    writeFileSync(join(process.env.MURAGE_DATA_DIR,'paging-fixture.json'),JSON.stringify({bot:bot.id,long,short,group:group.id,groupLong,groupShort,card}));
+  `;
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+    const {registerHooks}=await import('node:module');
+    registerHooks({load(url,context,next){
+      const loaded=next(url,context);
+      if(!url.endsWith('/server/index.ts'))return loaded;
+      const source=String(loaded.source),anchor='    const accessRoute =';
+      if(!source.includes(anchor))throw Error('paging fixture route anchor missing');
+      return {...loaded,source:source.replace(anchor,${JSON.stringify(seedRoute)}+anchor)};
+    }});
   ` });
-  ids = JSON.parse(readFileSync(join(fixture.info.dataDir, "paging-fixture.json"), "utf8"));
-  const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
-  headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
+  const signIn = async () => {
+    const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
+    headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
+  };
+  await signIn();
+  const seeded = await fetch(`${fixture.info.url}/api/paging-fixture-seed`, { method: 'POST', headers });
+  expect(seeded.status).toBe(200);
+  ids = await seeded.json() as typeof ids;
+  await fixture.restart();
+  await signIn();
 }, 30000);
 afterAll(async () => { await fixture?.close(); });
 

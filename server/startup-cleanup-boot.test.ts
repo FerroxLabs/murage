@@ -42,6 +42,7 @@ async function boot(home: string, env: Record<string, string> = {}): Promise<{ c
   const base = `http://127.0.0.1:${port}`;
   const started = Date.now();
   const child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), ...env },
     stdio: ["ignore", "pipe", "pipe"],

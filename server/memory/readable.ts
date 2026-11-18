@@ -1,3 +1,5 @@
+import { RecallWorkBudget } from './recall-view-index.ts';
+import type { RecallViewHandle } from './recall-view.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -18,7 +20,7 @@
 import type { MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { database } from "../database.ts";
 import { humanMayReadRecord } from "../human-principals.ts";
-import { unsettledIntention } from "./checkpoints.ts";
+import { CURRENT_CHECKPOINT_SQL, unsettledIntention } from "./checkpoints.ts";
 import { isPipKind } from "./pip-kinds.ts";
 import { assertMemoryAccess, identityRecordReadable, type MemoryAccess } from "./policy.ts";
 import { derivationAncestryCurrent, recordRestsOnWithheldMessage, type LineageAllowance } from "./replay-lineage.ts";
@@ -40,13 +42,16 @@ export interface ReadableMemory {
 export interface MemoryReadOptions {
   /** What the read may spend on checking the lineage of the replies a record rests on (REQUIRED: a read with none does not compile). */
   allowance: LineageAllowance;
+  workBudget?: RecallWorkBudget;
   mode?: MemoryReadMode;
+  /** Search discovery selects current family heads; explicit citations keep their exact version. */
+  discovery?: boolean;
   /** A bot's own tools (memory_get, memory_search): owner-authored continuity reaches the bot only through the frame (PIP A1). */
   agent?: boolean;
   /** The reader's transcript rule (disclosures.ts readerWithheldMessage): a line it may not be shown is not read either. Left out, a reader
    * whose audience is not the owner gets readerWithheldMessage(access) (withReaderRule), so no caller can read past it by omission. null
    * says the caller judges each record it reads with that rule itself (bundle.ts buildMemoryBundle): the read does not judge it twice. */
-  withheldMessage?: ((threadId: string, messageId: string, allowance: LineageAllowance) => boolean) | null;
+  withheldMessage?: ((threadId: string, messageId: string, allowance: LineageAllowance, verdict?: { checking?: boolean }) => boolean) | null;
 }
 
 /** These read options with the reader's transcript rule filled in: a reader whose audience is not the owner and whose caller passed no
@@ -65,7 +70,7 @@ const RECORD_SQL: Record<MemoryReadMode, string> = {
   historical: "SELECT * FROM memory_records WHERE id=? AND version=? AND state IN ('active','archived','superseded')",
 };
 /** A source captured in a thread the owner excluded from memory (settings.ts configure: excludedThreadIds). */
-export const EXCLUDED_THREAD_SOURCE = (alias: string) => `EXISTS (SELECT 1 FROM memory_scope_bindings xb,json_each(xb.intent,'$.excludedThreadIds') xt WHERE xb.id='memory-owner-settings' AND xt.value=${alias}.thread_id)`;
+export const EXCLUDED_THREAD_SOURCE = (alias: string) => `EXISTS (SELECT 1 FROM memory_recall_excluded xt WHERE xt.thread_id=${alias}.thread_id)`;
 const FAILED_KINDS = new Set(["source", "fact", "checkpoint"]);
 /** Evidence handles read per page, and the rows one source lookup reads (the source, its version, its tombstone): what the
  * allowance pays for before each read. */
@@ -79,7 +84,7 @@ export function readableMemoryRecord(id: string, version: number, access: Memory
   // could not finish (a reply unproven, a walk not paid for): either way the answer is "not known now", the limit error, which every caller
   // takes as withheld for now and none writes down as a definite refusal (1.0.2 lineage-cold r3: a continuation check persisted such a
   // refusal as a revoked receipt, and the session reset on every later turn).
-  const reading = withReaderRule(access, options);
+  const reading = {...withReaderRule(access, options),workBudget:options.workBudget??new RecallWorkBudget()};
   const read = options.allowance.timed(() => readRecord(id, version, access, reading));
   if (typeof read === "string" && options.allowance.hit) throw new Error("MEMORY_REPLAY_LIMIT");
   return read;
@@ -88,7 +93,13 @@ function readRecord(id: string, version: number, access: MemoryAccess, options: 
   const mode = options.mode ?? "current";
   assertMemoryAccess(access);
   const db = database();
-  const row = db.prepare(RECORD_SQL[mode]).get(id, version);
+  if (options.workBudget) {
+    const size=db.prepare('SELECT octet_length(text) AS n FROM memory_records WHERE id=? AND version=?').get(id,version);
+    if(size && !options.workBudget.text(Number(size.n)))throw new Error('MEMORY_REPLAY_LIMIT');
+  }
+  const row = db.prepare(options.discovery
+    ? `${RECORD_SQL[mode].replace('memory_records WHERE','memory_records r WHERE')} AND ${CURRENT_CHECKPOINT_SQL}`
+    : RECORD_SQL[mode]).get(id, version);
   if (!row) return "MEMORY_RECORD_UNAVAILABLE";
   // forgotten (a record tombstone), or in a deleted bot's scope (deny.ts: refused from the deletion's commit, before its job marks it)
   if (db.prepare("SELECT 1 WHERE EXISTS(SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=?1 AND (revision IS NULL OR revision=?2)) OR EXISTS(SELECT 1 FROM memory_deny WHERE kind='scope' AND id=?3)").get(id, version, String(row.scope_id))) return "MEMORY_RECORD_UNAVAILABLE";
@@ -123,11 +134,21 @@ function readRecord(id: string, version: number, access: MemoryAccess, options: 
       EXISTS(SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=s.id AND (t.revision IS NULL OR t.revision=v.revision)) AS tombstoned,
       ${DENIED_SOURCE("s")} AS denied,${EXCLUDED_THREAD_SOURCE("s")} AS excluded
     FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=? WHERE s.id=?`);
+  let previousSource: string | undefined, previousRevision: number | undefined;
+  let source: ReturnType<typeof sourceRead.get>;
   for (const handle of evidence) {
-    // the source, its version and its tombstone: paid for before the lookup
-    allowance.reserveRows("", SOURCE_LOOKUP_ROWS);
-    allowance.spendRows("", SOURCE_LOOKUP_ROWS);
-    const source = sourceRead.get(handle.revision, handle.sourceId);
+    // Evidence is ordered by source/revision, so one paid lookup serves all its spans inside this synchronous read.
+    if(handle.sourceId!==previousSource || handle.revision!==previousRevision) {
+      // the source, its version and its tombstone: paid for before the lookup
+      allowance.reserveRows("", SOURCE_LOOKUP_ROWS);
+      allowance.spendRows("", SOURCE_LOOKUP_ROWS);
+      if(options.workBudget) {
+        const size=db.prepare('SELECT octet_length(payload) AS n FROM memory_source_versions WHERE source_id=? AND revision=?').get(handle.sourceId,handle.revision);
+        if(size && !options.workBudget.text(Number(size.n)))throw new Error('MEMORY_REPLAY_LIMIT');
+      }
+      source = sourceRead.get(handle.revision, handle.sourceId);
+      previousSource=handle.sourceId;previousRevision=handle.revision;
+    }
     if (!source || Number(source.tombstoned) || Number(source.denied)) return "MEMORY_EVIDENCE_UNAVAILABLE";
     // A thread the owner excluded from memory is not read in any mode: excluding it retires its sources, and history (which reads
     // retired sources) would otherwise still bring its words back.
@@ -189,15 +210,23 @@ export function writetimeRecordRefusal(db: ReturnType<typeof database>, record: 
  * the owner's own audience, for whom a mark of an audience-only revoke (a flipped receipt, or the coalesced audience row) is not a
  * refusal: it binds audience readers only (deny-read.ts), so the owner keeps a record marked at its write under a flip (DRAIN-104 2.11).
  * Every other reader, and a caller that does not say, keeps every mark as a refusal, as before. */
-export function plausiblyReadable(refs: ReadonlyArray<{ id: string; version: number }>, scopeIds: readonly string[], mode: MemoryReadMode = "current", ownerReader = false): Set<string> {
+export function plausiblyReadable(refs: ReadonlyArray<{ id: string; version: number }>, scopeIds: readonly string[] | RecallViewHandle, mode: MemoryReadMode = "current", ownerReader = false): Set<string> {
   const survivors = new Set<string>();
   if (!refs.length) return survivors;
   const states = mode === "current" ? "('active')" : mode === "disclosed" ? "('active','archived')" : "('active','archived','superseded')";
   const sourceBad = mode === "historical" ? "s.state='deleted'" : "(s.state!='active' OR s.revision!=e.source_revision)";
+  const view=Array.isArray(scopeIds)?undefined:scopeIds as RecallViewHandle;
+  // Real recall pages raw references first. Evidence is read only by readRecord's paid, paged allowance.
+  if(view) {
+    const rows=database().prepare(`SELECT r.id,r.version FROM json_each(?) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]') WHERE r.state IN ${states}`)
+      .all(JSON.stringify(refs.map(ref=>[ref.id,ref.version])));
+    for(const row of rows)survivors.add(`${row.id}:${row.version}`);return survivors;
+  }
+  const membership='r.scope_id IN (SELECT value FROM json_each(?2))';
   const rows = database().prepare(`SELECT r.id,r.version FROM json_each(?1) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]')
     WHERE r.state IN ${states}
       ${mode === "historical" ? "AND NOT EXISTS (SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.claim_status='provisional')" : ""}
-      AND (r.scope_id NOT IN (SELECT value FROM json_each(?2)) OR (
+      AND (NOT (${membership}) OR (
         NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=r.id AND (t.revision IS NULL OR t.revision=r.version))
         AND NOT EXISTS (SELECT 1 FROM memory_deny_memory dm WHERE dm.kind='record' AND dm.id=r.id AND dm.version IN (0,r.version)
           ${ownerReader ? `AND dm.revoke_id NOT IN (SELECT revoke_id FROM memory_revoke_audience) AND dm.revoke_id<>${AUDIENCE_COALESCED}` : ""})
@@ -207,7 +236,7 @@ export function plausiblyReadable(refs: ReadonlyArray<{ id: string; version: num
           WHERE e.record_id=r.id AND e.record_version=r.version AND (s.id IS NULL OR v.source_id IS NULL OR ${sourceBad} OR ${DENIED_SOURCE("s")}
             OR ${EXCLUDED_THREAD_SOURCE("s")}
             OR EXISTS (SELECT 1 FROM memory_tombstones st WHERE st.target_type='source' AND st.target_id=s.id AND (st.revision IS NULL OR st.revision=v.revision))))))`)
-    .all(JSON.stringify(refs.map(ref => [ref.id, ref.version])), JSON.stringify(scopeIds));
+    .all(JSON.stringify(refs.map(ref => [ref.id, ref.version])),JSON.stringify(scopeIds));
   for (const row of rows) survivors.add(`${row.id}:${row.version}`);
   return survivors;
 }

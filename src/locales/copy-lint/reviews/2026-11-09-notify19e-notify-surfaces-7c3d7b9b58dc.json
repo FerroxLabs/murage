@@ -1,0 +1,2695 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-sonnet-notify19e",
+  "date": "2026-11-09",
+  "base": "cc2f135d1",
+  "scope": "notify19e-slices-s4c-s6-s7-s8-s9-s10",
+  "strings": {
+    "en:pill.title": {
+      "text": "Murage requests",
+      "en": "Murage requests",
+      "verdict": "pass"
+    },
+    "en:pill.capsule": {
+      "text": "{bot} · {count}",
+      "en": "{bot} · {count}",
+      "verdict": "pass"
+    },
+    "en:pill.waiting": {
+      "text": "Waiting for you",
+      "en": "Waiting for you",
+      "verdict": "pass"
+    },
+    "en:pill.collapse": {
+      "text": "Collapse",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "en:pill.requests": {
+      "text": "Pending requests",
+      "en": "Pending requests",
+      "verdict": "pass"
+    },
+    "en:pill.open": {
+      "text": "Open in Murage",
+      "en": "Open in Murage",
+      "verdict": "pass"
+    },
+    "en:pill.finished": {
+      "text": "A task has finished.",
+      "en": "A task has finished.",
+      "verdict": "pass"
+    },
+    "en:pill.loading": {
+      "text": "Loading…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "en:pill.loadError": {
+      "text": "Could not load requests. Open Murage to continue.",
+      "en": "Could not load requests. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "en:notifyMe.shortcut.record": {
+      "text": "Record a shortcut",
+      "en": "Record a shortcut",
+      "verdict": "pass"
+    },
+    "en:notifyMe.shortcut.cancel": {
+      "text": "Cancel recording",
+      "en": "Cancel recording",
+      "verdict": "pass"
+    },
+    "en:notifyMe.shortcut.recording": {
+      "text": "Press a key combination. Escape cancels.",
+      "en": "Press a key combination. Escape cancels.",
+      "verdict": "pass"
+    },
+    "en:notifyMe.shortcut.clear": {
+      "text": "Clear",
+      "en": "Clear",
+      "verdict": "pass"
+    },
+    "en:notifyMe.shortcut.current": {
+      "text": "Current shortcut: {key}",
+      "en": "Current shortcut: {key}",
+      "verdict": "pass"
+    },
+    "en:notifyMe.shortcut.taken": {
+      "text": "That key is already used by another app.",
+      "en": "That key is already used by another app.",
+      "verdict": "pass"
+    },
+    "en:notifyMe.shortcut.unsupported": {
+      "text": "Your desktop does not offer GlobalShortcuts, which this keyboard shortcut needs.",
+      "en": "Your desktop does not offer GlobalShortcuts, which this keyboard shortcut needs.",
+      "verdict": "pass"
+    },
+    "en:notifyMe.shortcut.invalid": {
+      "text": "Use a key such as Ctrl, Alt or Shift together with another key.",
+      "en": "Use a key such as Ctrl, Alt or Shift together with another key.",
+      "verdict": "pass"
+    },
+    "en:notifyMe.shortcut.errorSave": {
+      "text": "Could not save that shortcut. Try again.",
+      "en": "Could not save that shortcut. Try again.",
+      "verdict": "pass"
+    },
+    "en:nativeBanner.allow": {
+      "text": "Allow",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "en:nativeBanner.deny": {
+      "text": "Deny",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "en:nativeBanner.reply": {
+      "text": "Reply",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "en:badgeSurfaces.newChief": {
+      "text": "New task for Chief",
+      "en": "New task for Chief",
+      "verdict": "pass"
+    },
+    "en:badgeSurfaces.openNeedsYou": {
+      "text": "Open Needs you",
+      "en": "Open Needs you",
+      "verdict": "pass"
+    },
+    "en:badgeSurfaces.pauseAutomations": {
+      "text": "Pause automations",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "en:badgeSurfaces.needsYouCount": {
+      "text": "Needs you: {count}",
+      "en": "Needs you: {count}",
+      "verdict": "pass"
+    },
+    "en:trayPanel.title": {
+      "text": "Quick panel",
+      "en": "Quick panel",
+      "verdict": "pass"
+    },
+    "en:trayPanel.needsYou": {
+      "text": "Needs you",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "en:trayPanel.willRun": {
+      "text": "Will run",
+      "en": "Will run",
+      "verdict": "pass"
+    },
+    "en:trayPanel.requestWaiting": {
+      "text": "A request is waiting in Murage.",
+      "en": "A request is waiting in Murage.",
+      "verdict": "pass"
+    },
+    "en:trayPanel.level": {
+      "text": "Level: {level}",
+      "en": "Level: {level}",
+      "verdict": "pass"
+    },
+    "en:trayPanel.allow": {
+      "text": "Allow",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "en:trayPanel.deny": {
+      "text": "Deny",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "en:trayPanel.reply": {
+      "text": "Reply",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "en:trayPanel.open": {
+      "text": "Open",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "en:trayPanel.replyLabel": {
+      "text": "Your reply",
+      "en": "Your reply",
+      "verdict": "pass"
+    },
+    "en:trayPanel.remaining": {
+      "text": "Characters left: {count}",
+      "en": "Characters left: {count}",
+      "verdict": "pass"
+    },
+    "en:trayPanel.sendReply": {
+      "text": "Send reply",
+      "en": "Send reply",
+      "verdict": "pass"
+    },
+    "en:trayPanel.refusedLocked": {
+      "text": "Unlock your computer to allow this.",
+      "en": "Unlock your computer to allow this.",
+      "verdict": "pass"
+    },
+    "en:trayPanel.refusedCard": {
+      "text": "That request changed. Open it in Murage.",
+      "en": "That request changed. Open it in Murage.",
+      "verdict": "pass"
+    },
+    "en:trayPanel.refusedOpen": {
+      "text": "Open it in Murage to answer.",
+      "en": "Open it in Murage to answer.",
+      "verdict": "pass"
+    },
+    "en:trayPanel.loading": {
+      "text": "Loading…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "en:trayPanel.loadError": {
+      "text": "Could not load the quick panel. Open Murage to continue.",
+      "en": "Could not load the quick panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "en:trayPanel.noRequests": {
+      "text": "Nothing needs you right now.",
+      "en": "Nothing needs you right now.",
+      "verdict": "pass"
+    },
+    "en:trayPanel.running": {
+      "text": "Running",
+      "en": "Running",
+      "verdict": "pass"
+    },
+    "en:trayPanel.receipts": {
+      "text": "Latest receipts",
+      "en": "Latest receipts",
+      "verdict": "pass"
+    },
+    "en:trayPanel.empty": {
+      "text": "Nothing here right now.",
+      "en": "Nothing here right now.",
+      "verdict": "pass"
+    },
+    "en:trayPanel.talkChief": {
+      "text": "Talk to your Chief",
+      "en": "Talk to your Chief",
+      "verdict": "pass"
+    },
+    "en:trayPanel.send": {
+      "text": "Send",
+      "en": "Send",
+      "verdict": "pass"
+    },
+    "en:trayPanel.sent": {
+      "text": "Sent to your Chief.",
+      "en": "Sent to your Chief.",
+      "verdict": "pass"
+    },
+    "en:trayPanel.openMurage": {
+      "text": "Open Murage",
+      "en": "Open Murage",
+      "verdict": "pass"
+    },
+    "en:trayPanel.pause": {
+      "text": "Pause automations",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "en:trayPanel.paused": {
+      "text": "Automations paused.",
+      "en": "Automations paused.",
+      "verdict": "pass"
+    },
+    "en:float.pin": {
+      "text": "Pin to screen edge",
+      "en": "Pin to screen edge",
+      "verdict": "pass"
+    },
+    "en:float.hideHour": {
+      "text": "Hide for an hour",
+      "en": "Hide for an hour",
+      "verdict": "pass"
+    },
+    "en:float.wayland": {
+      "text": "Needs an X11 session: Wayland cannot keep it on top.",
+      "en": "Needs an X11 session: Wayland cannot keep it on top.",
+      "verdict": "pass"
+    },
+    "en:float.bubble": {
+      "text": "Pinned bot",
+      "en": "Pinned bot",
+      "verdict": "pass"
+    },
+    "en:float.dock": {
+      "text": "Bot dock",
+      "en": "Bot dock",
+      "verdict": "pass"
+    },
+    "en:float.bot": {
+      "text": "Your bot",
+      "en": "Your bot",
+      "verdict": "pass"
+    },
+    "en:float.openBot": {
+      "text": "Open {name}",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "en:float.needsYou": {
+      "text": "Needs you",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "en:float.working": {
+      "text": "Working",
+      "en": "Working",
+      "verdict": "pass"
+    },
+    "en:float.idle": {
+      "text": "Idle",
+      "en": "Idle",
+      "verdict": "pass"
+    },
+    "en:float.chat": {
+      "text": "Message your pinned bot",
+      "en": "Message your pinned bot",
+      "verdict": "pass"
+    },
+    "en:float.sent": {
+      "text": "Message sent.",
+      "en": "Message sent.",
+      "verdict": "pass"
+    },
+    "en:float.collapse": {
+      "text": "Collapse",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "en:float.error": {
+      "text": "Could not update this panel. Open Murage to continue.",
+      "en": "Could not update this panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "en:float.pinError": {
+      "text": "Could not pin this bot. Try again.",
+      "en": "Could not pin this bot. Try again.",
+      "verdict": "pass"
+    },
+    "de:pill.title": {
+      "text": "Murage-Anfragen",
+      "en": "Murage requests",
+      "verdict": "pass"
+    },
+    "de:pill.capsule": {
+      "text": "{bot} · {count}",
+      "en": "{bot} · {count}",
+      "verdict": "pass"
+    },
+    "de:pill.waiting": {
+      "text": "Wartet auf dich",
+      "en": "Waiting for you",
+      "verdict": "pass"
+    },
+    "de:pill.collapse": {
+      "text": "Einklappen",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "de:pill.requests": {
+      "text": "Offene Anfragen",
+      "en": "Pending requests",
+      "verdict": "pass"
+    },
+    "de:pill.open": {
+      "text": "In Murage öffnen",
+      "en": "Open in Murage",
+      "verdict": "pass"
+    },
+    "de:pill.finished": {
+      "text": "Eine Aufgabe ist abgeschlossen.",
+      "en": "A task has finished.",
+      "verdict": "pass"
+    },
+    "de:pill.loading": {
+      "text": "Wird geladen…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "de:pill.loadError": {
+      "text": "Anfragen konnten nicht geladen werden. Öffne Murage, um fortzufahren.",
+      "en": "Could not load requests. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "de:notifyMe.shortcut.record": {
+      "text": "Tastenkombination aufnehmen",
+      "en": "Record a shortcut",
+      "verdict": "pass"
+    },
+    "de:notifyMe.shortcut.cancel": {
+      "text": "Aufnahme abbrechen",
+      "en": "Cancel recording",
+      "verdict": "pass"
+    },
+    "de:notifyMe.shortcut.recording": {
+      "text": "Drücke eine Tastenkombination. Escape bricht ab.",
+      "en": "Press a key combination. Escape cancels.",
+      "verdict": "pass"
+    },
+    "de:notifyMe.shortcut.clear": {
+      "text": "Löschen",
+      "en": "Clear",
+      "verdict": "pass"
+    },
+    "de:notifyMe.shortcut.current": {
+      "text": "Aktuelle Tastenkombination: {key}",
+      "en": "Current shortcut: {key}",
+      "verdict": "pass"
+    },
+    "de:notifyMe.shortcut.taken": {
+      "text": "Diese Tastenkombination wird bereits von einer anderen App verwendet.",
+      "en": "That key is already used by another app.",
+      "verdict": "pass"
+    },
+    "de:notifyMe.shortcut.unsupported": {
+      "text": "Dein Desktop bietet kein GlobalShortcuts an, das für dieses Tastenkürzel benötigt wird.",
+      "en": "Your desktop does not offer GlobalShortcuts, which this keyboard shortcut needs.",
+      "verdict": "pass"
+    },
+    "de:notifyMe.shortcut.invalid": {
+      "text": "Verwende eine Taste wie Strg, Alt oder Umschalt zusammen mit einer weiteren Taste.",
+      "en": "Use a key such as Ctrl, Alt or Shift together with another key.",
+      "verdict": "pass"
+    },
+    "de:notifyMe.shortcut.errorSave": {
+      "text": "Die Tastenkombination konnte nicht gespeichert werden. Versuch es noch einmal.",
+      "en": "Could not save that shortcut. Try again.",
+      "verdict": "pass"
+    },
+    "de:nativeBanner.allow": {
+      "text": "Erlauben",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "de:nativeBanner.deny": {
+      "text": "Ablehnen",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "de:nativeBanner.reply": {
+      "text": "Antworten",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "de:badgeSurfaces.newChief": {
+      "text": "Neue Aufgabe für Chief",
+      "en": "New task for Chief",
+      "verdict": "pass"
+    },
+    "de:badgeSurfaces.openNeedsYou": {
+      "text": "„Braucht dich“ öffnen",
+      "en": "Open Needs you",
+      "verdict": "pass"
+    },
+    "de:badgeSurfaces.pauseAutomations": {
+      "text": "Automatisierungen pausieren",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "de:badgeSurfaces.needsYouCount": {
+      "text": "Braucht dich: {count}",
+      "en": "Needs you: {count}",
+      "verdict": "pass"
+    },
+    "de:trayPanel.title": {
+      "text": "Schnellansicht",
+      "en": "Quick panel",
+      "verdict": "pass"
+    },
+    "de:trayPanel.needsYou": {
+      "text": "Braucht dich",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "de:trayPanel.willRun": {
+      "text": "Wird ausgeführt",
+      "en": "Will run",
+      "verdict": "pass"
+    },
+    "de:trayPanel.requestWaiting": {
+      "text": "Eine Anfrage wartet in Murage.",
+      "en": "A request is waiting in Murage.",
+      "verdict": "pass"
+    },
+    "de:trayPanel.level": {
+      "text": "Stufe: {level}",
+      "en": "Level: {level}",
+      "verdict": "pass"
+    },
+    "de:trayPanel.allow": {
+      "text": "Erlauben",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "de:trayPanel.deny": {
+      "text": "Ablehnen",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "de:trayPanel.reply": {
+      "text": "Antworten",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "de:trayPanel.open": {
+      "text": "Öffnen",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "de:trayPanel.replyLabel": {
+      "text": "Deine Antwort",
+      "en": "Your reply",
+      "verdict": "pass"
+    },
+    "de:trayPanel.remaining": {
+      "text": "Verbleibende Zeichen: {count}",
+      "en": "Characters left: {count}",
+      "verdict": "pass"
+    },
+    "de:trayPanel.sendReply": {
+      "text": "Antwort senden",
+      "en": "Send reply",
+      "verdict": "pass"
+    },
+    "de:trayPanel.refusedLocked": {
+      "text": "Entsperre deinen Computer, um dies zu erlauben.",
+      "en": "Unlock your computer to allow this.",
+      "verdict": "pass"
+    },
+    "de:trayPanel.refusedCard": {
+      "text": "Diese Anfrage hat sich geändert. Öffne sie in Murage.",
+      "en": "That request changed. Open it in Murage.",
+      "verdict": "pass"
+    },
+    "de:trayPanel.refusedOpen": {
+      "text": "Öffne sie in Murage, um zu antworten.",
+      "en": "Open it in Murage to answer.",
+      "verdict": "pass"
+    },
+    "de:trayPanel.loading": {
+      "text": "Wird geladen…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "de:trayPanel.loadError": {
+      "text": "Die Schnellansicht konnte nicht geladen werden. Öffne Murage, um fortzufahren.",
+      "en": "Could not load the quick panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "de:trayPanel.noRequests": {
+      "text": "Gerade braucht dich niemand.",
+      "en": "Nothing needs you right now.",
+      "verdict": "pass"
+    },
+    "de:trayPanel.running": {
+      "text": "In Arbeit",
+      "en": "Running",
+      "verdict": "pass"
+    },
+    "de:trayPanel.receipts": {
+      "text": "Letzte Aktivitätsberichte",
+      "en": "Latest receipts",
+      "verdict": "pass"
+    },
+    "de:trayPanel.empty": {
+      "text": "Hier gibt es gerade nichts.",
+      "en": "Nothing here right now.",
+      "verdict": "pass"
+    },
+    "de:trayPanel.talkChief": {
+      "text": "Sprich mit deinem Chief",
+      "en": "Talk to your Chief",
+      "verdict": "pass"
+    },
+    "de:trayPanel.send": {
+      "text": "Senden",
+      "en": "Send",
+      "verdict": "pass"
+    },
+    "de:trayPanel.sent": {
+      "text": "An deinen Chief gesendet.",
+      "en": "Sent to your Chief.",
+      "verdict": "pass"
+    },
+    "de:trayPanel.openMurage": {
+      "text": "Murage öffnen",
+      "en": "Open Murage",
+      "verdict": "pass"
+    },
+    "de:trayPanel.pause": {
+      "text": "Automatisierungen pausieren",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "de:trayPanel.paused": {
+      "text": "Automatisierungen pausiert.",
+      "en": "Automations paused.",
+      "verdict": "pass"
+    },
+    "de:float.pin": {
+      "text": "Am Bildschirmrand anheften",
+      "en": "Pin to screen edge",
+      "verdict": "pass"
+    },
+    "de:float.hideHour": {
+      "text": "Eine Stunde ausblenden",
+      "en": "Hide for an hour",
+      "verdict": "pass"
+    },
+    "de:float.wayland": {
+      "text": "Benötigt eine X11-Sitzung: Wayland kann es nicht im Vordergrund halten.",
+      "en": "Needs an X11 session: Wayland cannot keep it on top.",
+      "verdict": "pass"
+    },
+    "de:float.bubble": {
+      "text": "Angehefteter Bot",
+      "en": "Pinned bot",
+      "verdict": "pass"
+    },
+    "de:float.dock": {
+      "text": "Bot-Leiste",
+      "en": "Bot dock",
+      "verdict": "pass"
+    },
+    "de:float.bot": {
+      "text": "Dein Bot",
+      "en": "Your bot",
+      "verdict": "pass"
+    },
+    "de:float.openBot": {
+      "text": "{name} öffnen",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "de:float.needsYou": {
+      "text": "Braucht dich",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "de:float.working": {
+      "text": "Arbeitet",
+      "en": "Working",
+      "verdict": "pass"
+    },
+    "de:float.idle": {
+      "text": "Inaktiv",
+      "en": "Idle",
+      "verdict": "pass"
+    },
+    "de:float.chat": {
+      "text": "Nachricht an deinen angehefteten Bot",
+      "en": "Message your pinned bot",
+      "verdict": "pass"
+    },
+    "de:float.sent": {
+      "text": "Nachricht gesendet.",
+      "en": "Message sent.",
+      "verdict": "pass"
+    },
+    "de:float.collapse": {
+      "text": "Einklappen",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "de:float.error": {
+      "text": "Dieses Fenster konnte nicht aktualisiert werden. Öffne Murage, um fortzufahren.",
+      "en": "Could not update this panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "de:float.pinError": {
+      "text": "Dieser Bot konnte nicht angeheftet werden. Versuche es erneut.",
+      "en": "Could not pin this bot. Try again.",
+      "verdict": "pass"
+    },
+    "es:pill.title": {
+      "text": "Solicitudes de Murage",
+      "en": "Murage requests",
+      "verdict": "pass"
+    },
+    "es:pill.capsule": {
+      "text": "{bot} · {count}",
+      "en": "{bot} · {count}",
+      "verdict": "pass"
+    },
+    "es:pill.waiting": {
+      "text": "A la espera de tu intervención",
+      "en": "Waiting for you",
+      "verdict": "pass"
+    },
+    "es:pill.collapse": {
+      "text": "Contraer",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "es:pill.requests": {
+      "text": "Solicitudes pendientes",
+      "en": "Pending requests",
+      "verdict": "pass"
+    },
+    "es:pill.open": {
+      "text": "Abrir en Murage",
+      "en": "Open in Murage",
+      "verdict": "pass"
+    },
+    "es:pill.finished": {
+      "text": "Una tarea ha terminado.",
+      "en": "A task has finished.",
+      "verdict": "pass"
+    },
+    "es:pill.loading": {
+      "text": "Cargando…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "es:pill.loadError": {
+      "text": "No se pudieron cargar las solicitudes. Abre Murage para continuar.",
+      "en": "Could not load requests. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "es:notifyMe.shortcut.record": {
+      "text": "Registrar un atajo",
+      "en": "Record a shortcut",
+      "verdict": "pass"
+    },
+    "es:notifyMe.shortcut.cancel": {
+      "text": "Cancelar registro",
+      "en": "Cancel recording",
+      "verdict": "pass"
+    },
+    "es:notifyMe.shortcut.recording": {
+      "text": "Pulsa una combinación de teclas. Escape cancela.",
+      "en": "Press a key combination. Escape cancels.",
+      "verdict": "pass"
+    },
+    "es:notifyMe.shortcut.clear": {
+      "text": "Borrar",
+      "en": "Clear",
+      "verdict": "pass"
+    },
+    "es:notifyMe.shortcut.current": {
+      "text": "Atajo actual: {key}",
+      "en": "Current shortcut: {key}",
+      "verdict": "pass"
+    },
+    "es:notifyMe.shortcut.taken": {
+      "text": "Otra app ya usa esa combinación de teclas.",
+      "en": "That key is already used by another app.",
+      "verdict": "pass"
+    },
+    "es:notifyMe.shortcut.unsupported": {
+      "text": "Tu escritorio no ofrece GlobalShortcuts, que este atajo de teclado necesita.",
+      "en": "Your desktop does not offer GlobalShortcuts, which this keyboard shortcut needs.",
+      "verdict": "pass"
+    },
+    "es:notifyMe.shortcut.invalid": {
+      "text": "Usa una tecla como Ctrl, Alt o Mayús junto con otra tecla.",
+      "en": "Use a key such as Ctrl, Alt or Shift together with another key.",
+      "verdict": "pass"
+    },
+    "es:notifyMe.shortcut.errorSave": {
+      "text": "No se pudo guardar ese atajo. Inténtalo de nuevo.",
+      "en": "Could not save that shortcut. Try again.",
+      "verdict": "pass"
+    },
+    "es:nativeBanner.allow": {
+      "text": "Permitir",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "es:nativeBanner.deny": {
+      "text": "Denegar",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "es:nativeBanner.reply": {
+      "text": "Responder",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "es:badgeSurfaces.newChief": {
+      "text": "Nueva tarea para Chief",
+      "en": "New task for Chief",
+      "verdict": "pass"
+    },
+    "es:badgeSurfaces.openNeedsYou": {
+      "text": "Abrir «Te necesita»",
+      "en": "Open Needs you",
+      "verdict": "pass"
+    },
+    "es:badgeSurfaces.pauseAutomations": {
+      "text": "Pausar automatizaciones",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "es:badgeSurfaces.needsYouCount": {
+      "text": "Te necesita: {count}",
+      "en": "Needs you: {count}",
+      "verdict": "pass"
+    },
+    "es:trayPanel.title": {
+      "text": "Panel rápido",
+      "en": "Quick panel",
+      "verdict": "pass"
+    },
+    "es:trayPanel.needsYou": {
+      "text": "Te necesita",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "es:trayPanel.willRun": {
+      "text": "Se ejecutará",
+      "en": "Will run",
+      "verdict": "pass"
+    },
+    "es:trayPanel.requestWaiting": {
+      "text": "Hay una solicitud pendiente en Murage.",
+      "en": "A request is waiting in Murage.",
+      "verdict": "pass"
+    },
+    "es:trayPanel.level": {
+      "text": "Nivel: {level}",
+      "en": "Level: {level}",
+      "verdict": "pass"
+    },
+    "es:trayPanel.allow": {
+      "text": "Permitir",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "es:trayPanel.deny": {
+      "text": "Denegar",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "es:trayPanel.reply": {
+      "text": "Responder",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "es:trayPanel.open": {
+      "text": "Abrir",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "es:trayPanel.replyLabel": {
+      "text": "Tu respuesta",
+      "en": "Your reply",
+      "verdict": "pass"
+    },
+    "es:trayPanel.remaining": {
+      "text": "Caracteres restantes: {count}",
+      "en": "Characters left: {count}",
+      "verdict": "pass"
+    },
+    "es:trayPanel.sendReply": {
+      "text": "Enviar respuesta",
+      "en": "Send reply",
+      "verdict": "pass"
+    },
+    "es:trayPanel.refusedLocked": {
+      "text": "Desbloquea tu ordenador para permitir esto.",
+      "en": "Unlock your computer to allow this.",
+      "verdict": "pass"
+    },
+    "es:trayPanel.refusedCard": {
+      "text": "Esa solicitud ha cambiado. Ábrela en Murage.",
+      "en": "That request changed. Open it in Murage.",
+      "verdict": "pass"
+    },
+    "es:trayPanel.refusedOpen": {
+      "text": "Ábrela en Murage para responder.",
+      "en": "Open it in Murage to answer.",
+      "verdict": "pass"
+    },
+    "es:trayPanel.loading": {
+      "text": "Cargando…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "es:trayPanel.loadError": {
+      "text": "No se pudo cargar el panel rápido. Abre Murage para continuar.",
+      "en": "Could not load the quick panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "es:trayPanel.noRequests": {
+      "text": "Nada necesita tu atención ahora.",
+      "en": "Nothing needs you right now.",
+      "verdict": "pass"
+    },
+    "es:trayPanel.running": {
+      "text": "En curso",
+      "en": "Running",
+      "verdict": "pass"
+    },
+    "es:trayPanel.receipts": {
+      "text": "Últimos informes de actividad",
+      "en": "Latest receipts",
+      "verdict": "pass"
+    },
+    "es:trayPanel.empty": {
+      "text": "No hay nada aquí por ahora.",
+      "en": "Nothing here right now.",
+      "verdict": "pass"
+    },
+    "es:trayPanel.talkChief": {
+      "text": "Habla con tu Chief",
+      "en": "Talk to your Chief",
+      "verdict": "pass"
+    },
+    "es:trayPanel.send": {
+      "text": "Enviar",
+      "en": "Send",
+      "verdict": "pass"
+    },
+    "es:trayPanel.sent": {
+      "text": "Enviado a tu Chief.",
+      "en": "Sent to your Chief.",
+      "verdict": "pass"
+    },
+    "es:trayPanel.openMurage": {
+      "text": "Abrir Murage",
+      "en": "Open Murage",
+      "verdict": "pass"
+    },
+    "es:trayPanel.pause": {
+      "text": "Pausar automatizaciones",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "es:trayPanel.paused": {
+      "text": "Automatizaciones en pausa.",
+      "en": "Automations paused.",
+      "verdict": "pass"
+    },
+    "es:float.pin": {
+      "text": "Fijar al borde de la pantalla",
+      "en": "Pin to screen edge",
+      "verdict": "pass"
+    },
+    "es:float.hideHour": {
+      "text": "Ocultar durante una hora",
+      "en": "Hide for an hour",
+      "verdict": "pass"
+    },
+    "es:float.wayland": {
+      "text": "Se necesita un escritorio X11: Wayland no puede mantener este panel por encima de las demás ventanas.",
+      "en": "Needs an X11 session: Wayland cannot keep it on top.",
+      "verdict": "pass"
+    },
+    "es:float.bubble": {
+      "text": "Bot fijado",
+      "en": "Pinned bot",
+      "verdict": "pass"
+    },
+    "es:float.dock": {
+      "text": "Barra de bots",
+      "en": "Bot dock",
+      "verdict": "pass"
+    },
+    "es:float.bot": {
+      "text": "Tu bot",
+      "en": "Your bot",
+      "verdict": "pass"
+    },
+    "es:float.openBot": {
+      "text": "Abrir {name}",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "es:float.needsYou": {
+      "text": "Te necesita",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "es:float.working": {
+      "text": "Trabajando",
+      "en": "Working",
+      "verdict": "pass"
+    },
+    "es:float.idle": {
+      "text": "Inactivo",
+      "en": "Idle",
+      "verdict": "pass"
+    },
+    "es:float.chat": {
+      "text": "Envía un mensaje a tu bot fijado",
+      "en": "Message your pinned bot",
+      "verdict": "pass"
+    },
+    "es:float.sent": {
+      "text": "Mensaje enviado.",
+      "en": "Message sent.",
+      "verdict": "pass"
+    },
+    "es:float.collapse": {
+      "text": "Contraer",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "es:float.error": {
+      "text": "No se pudo actualizar este panel. Abre Murage para continuar.",
+      "en": "Could not update this panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "es:float.pinError": {
+      "text": "No se pudo fijar este bot. Inténtalo de nuevo.",
+      "en": "Could not pin this bot. Try again.",
+      "verdict": "pass"
+    },
+    "fr:pill.title": {
+      "text": "Demandes Murage",
+      "en": "Murage requests",
+      "verdict": "pass"
+    },
+    "fr:pill.capsule": {
+      "text": "{bot} · {count}",
+      "en": "{bot} · {count}",
+      "verdict": "pass"
+    },
+    "fr:pill.waiting": {
+      "text": "En attente de ton intervention",
+      "en": "Waiting for you",
+      "verdict": "pass"
+    },
+    "fr:pill.collapse": {
+      "text": "Réduire",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "fr:pill.requests": {
+      "text": "Demandes en attente",
+      "en": "Pending requests",
+      "verdict": "pass"
+    },
+    "fr:pill.open": {
+      "text": "Ouvrir dans Murage",
+      "en": "Open in Murage",
+      "verdict": "pass"
+    },
+    "fr:pill.finished": {
+      "text": "Une tâche est terminée.",
+      "en": "A task has finished.",
+      "verdict": "pass"
+    },
+    "fr:pill.loading": {
+      "text": "Chargement…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "fr:pill.loadError": {
+      "text": "Impossible de charger les demandes. Ouvre Murage pour continuer.",
+      "en": "Could not load requests. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "fr:notifyMe.shortcut.record": {
+      "text": "Enregistrer un raccourci",
+      "en": "Record a shortcut",
+      "verdict": "pass"
+    },
+    "fr:notifyMe.shortcut.cancel": {
+      "text": "Annuler l’enregistrement",
+      "en": "Cancel recording",
+      "verdict": "pass"
+    },
+    "fr:notifyMe.shortcut.recording": {
+      "text": "Appuie sur une combinaison de touches. Échap annule.",
+      "en": "Press a key combination. Escape cancels.",
+      "verdict": "pass"
+    },
+    "fr:notifyMe.shortcut.clear": {
+      "text": "Effacer",
+      "en": "Clear",
+      "verdict": "pass"
+    },
+    "fr:notifyMe.shortcut.current": {
+      "text": "Raccourci actuel : {key}",
+      "en": "Current shortcut: {key}",
+      "verdict": "pass"
+    },
+    "fr:notifyMe.shortcut.taken": {
+      "text": "Cette combinaison de touches est déjà utilisée par une autre app.",
+      "en": "That key is already used by another app.",
+      "verdict": "pass"
+    },
+    "fr:notifyMe.shortcut.unsupported": {
+      "text": "Ton environnement de bureau ne propose pas GlobalShortcuts, dont ce raccourci clavier a besoin.",
+      "en": "Your desktop does not offer GlobalShortcuts, which this keyboard shortcut needs.",
+      "verdict": "pass"
+    },
+    "fr:notifyMe.shortcut.invalid": {
+      "text": "Utilise une touche comme Ctrl, Alt ou Maj avec une autre touche.",
+      "en": "Use a key such as Ctrl, Alt or Shift together with another key.",
+      "verdict": "pass"
+    },
+    "fr:notifyMe.shortcut.errorSave": {
+      "text": "Impossible d’enregistrer ce raccourci. Réessaie.",
+      "en": "Could not save that shortcut. Try again.",
+      "verdict": "pass"
+    },
+    "fr:nativeBanner.allow": {
+      "text": "Autoriser",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "fr:nativeBanner.deny": {
+      "text": "Refuser",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "fr:nativeBanner.reply": {
+      "text": "Répondre",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "fr:badgeSurfaces.newChief": {
+      "text": "Nouvelle tâche pour Chief",
+      "en": "New task for Chief",
+      "verdict": "pass"
+    },
+    "fr:badgeSurfaces.openNeedsYou": {
+      "text": "Ouvrir « Besoin de toi »",
+      "en": "Open Needs you",
+      "verdict": "pass"
+    },
+    "fr:badgeSurfaces.pauseAutomations": {
+      "text": "Mettre les automatisations en pause",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "fr:badgeSurfaces.needsYouCount": {
+      "text": "Besoin de toi : {count}",
+      "en": "Needs you: {count}",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.title": {
+      "text": "Panneau rapide",
+      "en": "Quick panel",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.needsYou": {
+      "text": "Besoin de toi",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.willRun": {
+      "text": "À exécuter",
+      "en": "Will run",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.requestWaiting": {
+      "text": "Une demande attend dans Murage.",
+      "en": "A request is waiting in Murage.",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.level": {
+      "text": "Niveau : {level}",
+      "en": "Level: {level}",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.allow": {
+      "text": "Autoriser",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.deny": {
+      "text": "Refuser",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.reply": {
+      "text": "Répondre",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.open": {
+      "text": "Ouvrir",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.replyLabel": {
+      "text": "Ta réponse",
+      "en": "Your reply",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.remaining": {
+      "text": "Caractères restants : {count}",
+      "en": "Characters left: {count}",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.sendReply": {
+      "text": "Envoyer la réponse",
+      "en": "Send reply",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.refusedLocked": {
+      "text": "Déverrouille ton ordinateur pour autoriser ceci.",
+      "en": "Unlock your computer to allow this.",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.refusedCard": {
+      "text": "Cette demande a changé. Ouvre-la dans Murage.",
+      "en": "That request changed. Open it in Murage.",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.refusedOpen": {
+      "text": "Ouvre-la dans Murage pour répondre.",
+      "en": "Open it in Murage to answer.",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.loading": {
+      "text": "Chargement…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.loadError": {
+      "text": "Impossible de charger le panneau rapide. Ouvre Murage pour continuer.",
+      "en": "Could not load the quick panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.noRequests": {
+      "text": "Rien ne demande ton attention pour le moment.",
+      "en": "Nothing needs you right now.",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.running": {
+      "text": "En cours",
+      "en": "Running",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.receipts": {
+      "text": "Derniers comptes rendus d’activité",
+      "en": "Latest receipts",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.empty": {
+      "text": "Rien ici pour le moment.",
+      "en": "Nothing here right now.",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.talkChief": {
+      "text": "Parle à ton Chief",
+      "en": "Talk to your Chief",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.send": {
+      "text": "Envoyer",
+      "en": "Send",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.sent": {
+      "text": "Envoyé à ton Chief.",
+      "en": "Sent to your Chief.",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.openMurage": {
+      "text": "Ouvrir Murage",
+      "en": "Open Murage",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.pause": {
+      "text": "Mettre les automatisations en pause",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "fr:trayPanel.paused": {
+      "text": "Automatisations en pause.",
+      "en": "Automations paused.",
+      "verdict": "pass"
+    },
+    "fr:float.pin": {
+      "text": "Épingler au bord de l’écran",
+      "en": "Pin to screen edge",
+      "verdict": "pass"
+    },
+    "fr:float.hideHour": {
+      "text": "Masquer pendant une heure",
+      "en": "Hide for an hour",
+      "verdict": "pass"
+    },
+    "fr:float.wayland": {
+      "text": "Nécessite une session X11 : Wayland ne peut pas le garder au premier plan.",
+      "en": "Needs an X11 session: Wayland cannot keep it on top.",
+      "verdict": "pass"
+    },
+    "fr:float.bubble": {
+      "text": "Bot épinglé",
+      "en": "Pinned bot",
+      "verdict": "pass"
+    },
+    "fr:float.dock": {
+      "text": "Barre des bots",
+      "en": "Bot dock",
+      "verdict": "pass"
+    },
+    "fr:float.bot": {
+      "text": "Ton bot",
+      "en": "Your bot",
+      "verdict": "pass"
+    },
+    "fr:float.openBot": {
+      "text": "Ouvrir {name}",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "fr:float.needsYou": {
+      "text": "A besoin de toi",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "fr:float.working": {
+      "text": "Au travail",
+      "en": "Working",
+      "verdict": "pass"
+    },
+    "fr:float.idle": {
+      "text": "Inactif",
+      "en": "Idle",
+      "verdict": "pass"
+    },
+    "fr:float.chat": {
+      "text": "Écris à ton bot épinglé",
+      "en": "Message your pinned bot",
+      "verdict": "pass"
+    },
+    "fr:float.sent": {
+      "text": "Message envoyé.",
+      "en": "Message sent.",
+      "verdict": "pass"
+    },
+    "fr:float.collapse": {
+      "text": "Réduire",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "fr:float.error": {
+      "text": "Impossible de mettre à jour ce panneau. Ouvre Murage pour continuer.",
+      "en": "Could not update this panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "fr:float.pinError": {
+      "text": "Impossible d’épingler ce bot. Réessaie.",
+      "en": "Could not pin this bot. Try again.",
+      "verdict": "pass"
+    },
+    "hi:pill.title": {
+      "text": "Murage के अनुरोध",
+      "en": "Murage requests",
+      "verdict": "pass"
+    },
+    "hi:pill.capsule": {
+      "text": "{bot} · {count}",
+      "en": "{bot} · {count}",
+      "verdict": "pass"
+    },
+    "hi:pill.waiting": {
+      "text": "आपके इंतज़ार में",
+      "en": "Waiting for you",
+      "verdict": "pass"
+    },
+    "hi:pill.collapse": {
+      "text": "समेटें",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "hi:pill.requests": {
+      "text": "लंबित अनुरोध",
+      "en": "Pending requests",
+      "verdict": "pass"
+    },
+    "hi:pill.open": {
+      "text": "Murage में खोलें",
+      "en": "Open in Murage",
+      "verdict": "pass"
+    },
+    "hi:pill.finished": {
+      "text": "एक काम पूरा हो गया है।",
+      "en": "A task has finished.",
+      "verdict": "pass"
+    },
+    "hi:pill.loading": {
+      "text": "लोड हो रहा है…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "hi:pill.loadError": {
+      "text": "अनुरोध लोड नहीं हो सके। जारी रखने के लिए Murage खोलें।",
+      "en": "Could not load requests. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "hi:notifyMe.shortcut.record": {
+      "text": "शॉर्टकट रिकॉर्ड करें",
+      "en": "Record a shortcut",
+      "verdict": "pass"
+    },
+    "hi:notifyMe.shortcut.cancel": {
+      "text": "रिकॉर्डिंग रद्द करें",
+      "en": "Cancel recording",
+      "verdict": "pass"
+    },
+    "hi:notifyMe.shortcut.recording": {
+      "text": "एक साथ कई कुंजियाँ दबाएँ। रद्द करने के लिए Escape दबाएँ।",
+      "en": "Press a key combination. Escape cancels.",
+      "verdict": "pass"
+    },
+    "hi:notifyMe.shortcut.clear": {
+      "text": "हटाएँ",
+      "en": "Clear",
+      "verdict": "pass"
+    },
+    "hi:notifyMe.shortcut.current": {
+      "text": "मौजूदा शॉर्टकट: {key}",
+      "en": "Current shortcut: {key}",
+      "verdict": "pass"
+    },
+    "hi:notifyMe.shortcut.taken": {
+      "text": "यह कुंजी संयोजन पहले से किसी दूसरे ऐप में इस्तेमाल हो रहा है।",
+      "en": "That key is already used by another app.",
+      "verdict": "pass"
+    },
+    "hi:notifyMe.shortcut.unsupported": {
+      "text": "आपके डेस्कटॉप पर GlobalShortcuts उपलब्ध नहीं है, जिसकी इस कीबोर्ड शॉर्टकट को ज़रूरत है।",
+      "en": "Your desktop does not offer GlobalShortcuts, which this keyboard shortcut needs.",
+      "verdict": "pass"
+    },
+    "hi:notifyMe.shortcut.invalid": {
+      "text": "Ctrl, Alt या Shift जैसी किसी कुंजी का इस्तेमाल किसी दूसरी कुंजी के साथ करें।",
+      "en": "Use a key such as Ctrl, Alt or Shift together with another key.",
+      "verdict": "pass"
+    },
+    "hi:notifyMe.shortcut.errorSave": {
+      "text": "यह शॉर्टकट सहेजा नहीं जा सका। फिर कोशिश करें।",
+      "en": "Could not save that shortcut. Try again.",
+      "verdict": "pass"
+    },
+    "hi:nativeBanner.allow": {
+      "text": "अनुमति दें",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "hi:nativeBanner.deny": {
+      "text": "मना करें",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "hi:nativeBanner.reply": {
+      "text": "जवाब दें",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "hi:badgeSurfaces.newChief": {
+      "text": "Chief के लिए नया काम",
+      "en": "New task for Chief",
+      "verdict": "pass"
+    },
+    "hi:badgeSurfaces.openNeedsYou": {
+      "text": "“आपकी ज़रूरत है” खोलें",
+      "en": "Open Needs you",
+      "verdict": "pass"
+    },
+    "hi:badgeSurfaces.pauseAutomations": {
+      "text": "ऑटोमेशन रोकें",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "hi:badgeSurfaces.needsYouCount": {
+      "text": "आपकी ज़रूरत है: {count}",
+      "en": "Needs you: {count}",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.title": {
+      "text": "त्वरित पैनल",
+      "en": "Quick panel",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.needsYou": {
+      "text": "आपकी ज़रूरत है",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.willRun": {
+      "text": "यह चलेगा",
+      "en": "Will run",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.requestWaiting": {
+      "text": "Murage में एक अनुरोध इंतज़ार कर रहा है।",
+      "en": "A request is waiting in Murage.",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.level": {
+      "text": "स्तर: {level}",
+      "en": "Level: {level}",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.allow": {
+      "text": "अनुमति दें",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.deny": {
+      "text": "मना करें",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.reply": {
+      "text": "जवाब दें",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.open": {
+      "text": "खोलें",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.replyLabel": {
+      "text": "आपका जवाब",
+      "en": "Your reply",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.remaining": {
+      "text": "बाकी अक्षर: {count}",
+      "en": "Characters left: {count}",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.sendReply": {
+      "text": "जवाब भेजें",
+      "en": "Send reply",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.refusedLocked": {
+      "text": "इसकी अनुमति देने के लिए अपना कंप्यूटर अनलॉक करें।",
+      "en": "Unlock your computer to allow this.",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.refusedCard": {
+      "text": "वह अनुरोध बदल गया है। उसे Murage में खोलें।",
+      "en": "That request changed. Open it in Murage.",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.refusedOpen": {
+      "text": "जवाब देने के लिए उसे Murage में खोलें।",
+      "en": "Open it in Murage to answer.",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.loading": {
+      "text": "लोड हो रहा है…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.loadError": {
+      "text": "त्वरित पैनल लोड नहीं हो सका। आगे बढ़ने के लिए Murage खोलें।",
+      "en": "Could not load the quick panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.noRequests": {
+      "text": "अभी किसी काम में आपकी ज़रूरत नहीं है।",
+      "en": "Nothing needs you right now.",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.running": {
+      "text": "काम चल रहा है",
+      "en": "Running",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.receipts": {
+      "text": "हाल के कामों का विवरण",
+      "en": "Latest receipts",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.empty": {
+      "text": "अभी यहाँ कुछ नहीं है।",
+      "en": "Nothing here right now.",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.talkChief": {
+      "text": "अपने Chief से बात करें",
+      "en": "Talk to your Chief",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.send": {
+      "text": "भेजें",
+      "en": "Send",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.sent": {
+      "text": "आपके Chief को भेज दिया गया।",
+      "en": "Sent to your Chief.",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.openMurage": {
+      "text": "Murage खोलें",
+      "en": "Open Murage",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.pause": {
+      "text": "ऑटोमेशन रोकें",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "hi:trayPanel.paused": {
+      "text": "ऑटोमेशन रोक दिए गए हैं।",
+      "en": "Automations paused.",
+      "verdict": "pass"
+    },
+    "hi:float.pin": {
+      "text": "स्क्रीन के किनारे पर पिन करें",
+      "en": "Pin to screen edge",
+      "verdict": "pass"
+    },
+    "hi:float.hideHour": {
+      "text": "एक घंटे के लिए छिपाएँ",
+      "en": "Hide for an hour",
+      "verdict": "pass"
+    },
+    "hi:float.wayland": {
+      "text": "X11 सत्र चाहिए: Wayland इसे सबसे ऊपर नहीं रख सकता।",
+      "en": "Needs an X11 session: Wayland cannot keep it on top.",
+      "verdict": "pass"
+    },
+    "hi:float.bubble": {
+      "text": "पिन किया गया बॉट",
+      "en": "Pinned bot",
+      "verdict": "pass"
+    },
+    "hi:float.dock": {
+      "text": "बॉट पट्टी",
+      "en": "Bot dock",
+      "verdict": "pass"
+    },
+    "hi:float.bot": {
+      "text": "आपका बॉट",
+      "en": "Your bot",
+      "verdict": "pass"
+    },
+    "hi:float.openBot": {
+      "text": "{name} खोलें",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "hi:float.needsYou": {
+      "text": "आपकी ज़रूरत है",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "hi:float.working": {
+      "text": "काम कर रहा है",
+      "en": "Working",
+      "verdict": "pass"
+    },
+    "hi:float.idle": {
+      "text": "निष्क्रिय",
+      "en": "Idle",
+      "verdict": "pass"
+    },
+    "hi:float.chat": {
+      "text": "अपने पिन किए गए बॉट को संदेश भेजें",
+      "en": "Message your pinned bot",
+      "verdict": "pass"
+    },
+    "hi:float.sent": {
+      "text": "संदेश भेज दिया गया।",
+      "en": "Message sent.",
+      "verdict": "pass"
+    },
+    "hi:float.collapse": {
+      "text": "समेटें",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "hi:float.error": {
+      "text": "यह पैनल अपडेट नहीं हो सका। जारी रखने के लिए Murage खोलें।",
+      "en": "Could not update this panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "hi:float.pinError": {
+      "text": "यह बॉट पिन नहीं हो सका। फिर से कोशिश करें।",
+      "en": "Could not pin this bot. Try again.",
+      "verdict": "pass"
+    },
+    "ja:pill.title": {
+      "text": "Murageのリクエスト",
+      "en": "Murage requests",
+      "verdict": "pass"
+    },
+    "ja:pill.capsule": {
+      "text": "{bot} · {count}",
+      "en": "{bot} · {count}",
+      "verdict": "pass"
+    },
+    "ja:pill.waiting": {
+      "text": "対応待ち",
+      "en": "Waiting for you",
+      "verdict": "pass"
+    },
+    "ja:pill.collapse": {
+      "text": "折りたたむ",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "ja:pill.requests": {
+      "text": "保留中のリクエスト",
+      "en": "Pending requests",
+      "verdict": "pass"
+    },
+    "ja:pill.open": {
+      "text": "Murageで開く",
+      "en": "Open in Murage",
+      "verdict": "pass"
+    },
+    "ja:pill.finished": {
+      "text": "タスクが完了しました。",
+      "en": "A task has finished.",
+      "verdict": "pass"
+    },
+    "ja:pill.loading": {
+      "text": "読み込み中…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "ja:pill.loadError": {
+      "text": "リクエストを読み込めませんでした。Murageを開いて続けてください。",
+      "en": "Could not load requests. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "ja:notifyMe.shortcut.record": {
+      "text": "ショートカットを記録",
+      "en": "Record a shortcut",
+      "verdict": "pass"
+    },
+    "ja:notifyMe.shortcut.cancel": {
+      "text": "記録をキャンセル",
+      "en": "Cancel recording",
+      "verdict": "pass"
+    },
+    "ja:notifyMe.shortcut.recording": {
+      "text": "キーの組み合わせを押してください。Escapeでキャンセルできます。",
+      "en": "Press a key combination. Escape cancels.",
+      "verdict": "pass"
+    },
+    "ja:notifyMe.shortcut.clear": {
+      "text": "クリア",
+      "en": "Clear",
+      "verdict": "pass"
+    },
+    "ja:notifyMe.shortcut.current": {
+      "text": "現在のショートカット: {key}",
+      "en": "Current shortcut: {key}",
+      "verdict": "pass"
+    },
+    "ja:notifyMe.shortcut.taken": {
+      "text": "このキーの組み合わせは別のアプリで使用されています。",
+      "en": "That key is already used by another app.",
+      "verdict": "pass"
+    },
+    "ja:notifyMe.shortcut.unsupported": {
+      "text": "このキーボードショートカットに必要なGlobalShortcutsは、お使いのデスクトップでは利用できません。",
+      "en": "Your desktop does not offer GlobalShortcuts, which this keyboard shortcut needs.",
+      "verdict": "pass"
+    },
+    "ja:notifyMe.shortcut.invalid": {
+      "text": "Ctrl、Alt、Shiftなどのキーを別のキーと組み合わせて使ってください。",
+      "en": "Use a key such as Ctrl, Alt or Shift together with another key.",
+      "verdict": "pass"
+    },
+    "ja:notifyMe.shortcut.errorSave": {
+      "text": "ショートカットを保存できませんでした。もう一度試してください。",
+      "en": "Could not save that shortcut. Try again.",
+      "verdict": "pass"
+    },
+    "ja:nativeBanner.allow": {
+      "text": "許可",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "ja:nativeBanner.deny": {
+      "text": "拒否",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "ja:nativeBanner.reply": {
+      "text": "返信",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "ja:badgeSurfaces.newChief": {
+      "text": "Chiefに新しいタスクを依頼",
+      "en": "New task for Chief",
+      "verdict": "pass"
+    },
+    "ja:badgeSurfaces.openNeedsYou": {
+      "text": "「対応待ち」を開く",
+      "en": "Open Needs you",
+      "verdict": "pass"
+    },
+    "ja:badgeSurfaces.pauseAutomations": {
+      "text": "自動処理を一時停止",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "ja:badgeSurfaces.needsYouCount": {
+      "text": "対応待ち: {count}",
+      "en": "Needs you: {count}",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.title": {
+      "text": "クイックパネル",
+      "en": "Quick panel",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.needsYou": {
+      "text": "対応待ち",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.willRun": {
+      "text": "実行する内容",
+      "en": "Will run",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.requestWaiting": {
+      "text": "Murageでリクエストが待っています。",
+      "en": "A request is waiting in Murage.",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.level": {
+      "text": "レベル：{level}",
+      "en": "Level: {level}",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.allow": {
+      "text": "許可",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.deny": {
+      "text": "拒否",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.reply": {
+      "text": "返信",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.open": {
+      "text": "開く",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.replyLabel": {
+      "text": "返信内容",
+      "en": "Your reply",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.remaining": {
+      "text": "残り文字数: {count}",
+      "en": "Characters left: {count}",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.sendReply": {
+      "text": "返信を送信",
+      "en": "Send reply",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.refusedLocked": {
+      "text": "許可するにはコンピューターのロックを解除してください。",
+      "en": "Unlock your computer to allow this.",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.refusedCard": {
+      "text": "リクエストが変更されました。Murageで開いてください。",
+      "en": "That request changed. Open it in Murage.",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.refusedOpen": {
+      "text": "回答するにはMurageで開いてください。",
+      "en": "Open it in Murage to answer.",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.loading": {
+      "text": "読み込み中…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.loadError": {
+      "text": "クイックパネルを読み込めませんでした。Murageを開いて続けてください。",
+      "en": "Could not load the quick panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.noRequests": {
+      "text": "今は対応が必要なものはありません。",
+      "en": "Nothing needs you right now.",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.running": {
+      "text": "実行中",
+      "en": "Running",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.receipts": {
+      "text": "最近の実行記録",
+      "en": "Latest receipts",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.empty": {
+      "text": "今は何もありません。",
+      "en": "Nothing here right now.",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.talkChief": {
+      "text": "Chiefに話しかける",
+      "en": "Talk to your Chief",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.send": {
+      "text": "送信",
+      "en": "Send",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.sent": {
+      "text": "Chiefに送信しました。",
+      "en": "Sent to your Chief.",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.openMurage": {
+      "text": "Murageを開く",
+      "en": "Open Murage",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.pause": {
+      "text": "自動処理を一時停止",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "ja:trayPanel.paused": {
+      "text": "自動処理を一時停止しました。",
+      "en": "Automations paused.",
+      "verdict": "pass"
+    },
+    "ja:float.pin": {
+      "text": "画面の端に固定",
+      "en": "Pin to screen edge",
+      "verdict": "pass"
+    },
+    "ja:float.hideHour": {
+      "text": "1時間非表示にする",
+      "en": "Hide for an hour",
+      "verdict": "pass"
+    },
+    "ja:float.wayland": {
+      "text": "X11セッションが必要です。Waylandでは最前面に表示し続けられません。",
+      "en": "Needs an X11 session: Wayland cannot keep it on top.",
+      "verdict": "pass"
+    },
+    "ja:float.bubble": {
+      "text": "固定したボット",
+      "en": "Pinned bot",
+      "verdict": "pass"
+    },
+    "ja:float.dock": {
+      "text": "ボットドック",
+      "en": "Bot dock",
+      "verdict": "pass"
+    },
+    "ja:float.bot": {
+      "text": "あなたのボット",
+      "en": "Your bot",
+      "verdict": "pass"
+    },
+    "ja:float.openBot": {
+      "text": "{name}を開く",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "ja:float.needsYou": {
+      "text": "対応待ち",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "ja:float.working": {
+      "text": "作業中",
+      "en": "Working",
+      "verdict": "pass"
+    },
+    "ja:float.idle": {
+      "text": "待機中",
+      "en": "Idle",
+      "verdict": "pass"
+    },
+    "ja:float.chat": {
+      "text": "固定したボットにメッセージを送る",
+      "en": "Message your pinned bot",
+      "verdict": "pass"
+    },
+    "ja:float.sent": {
+      "text": "メッセージを送信しました。",
+      "en": "Message sent.",
+      "verdict": "pass"
+    },
+    "ja:float.collapse": {
+      "text": "折りたたむ",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "ja:float.error": {
+      "text": "このパネルを更新できませんでした。Murageを開いて続行してください。",
+      "en": "Could not update this panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "ja:float.pinError": {
+      "text": "このボットを固定できませんでした。もう一度お試しください。",
+      "en": "Could not pin this bot. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:pill.title": {
+      "text": "Solicitações do Murage",
+      "en": "Murage requests",
+      "verdict": "pass"
+    },
+    "pt-br:pill.capsule": {
+      "text": "{bot} · {count}",
+      "en": "{bot} · {count}",
+      "verdict": "pass"
+    },
+    "pt-br:pill.waiting": {
+      "text": "Aguardando você",
+      "en": "Waiting for you",
+      "verdict": "pass"
+    },
+    "pt-br:pill.collapse": {
+      "text": "Recolher",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "pt-br:pill.requests": {
+      "text": "Solicitações pendentes",
+      "en": "Pending requests",
+      "verdict": "pass"
+    },
+    "pt-br:pill.open": {
+      "text": "Abrir no Murage",
+      "en": "Open in Murage",
+      "verdict": "pass"
+    },
+    "pt-br:pill.finished": {
+      "text": "Uma tarefa foi concluída.",
+      "en": "A task has finished.",
+      "verdict": "pass"
+    },
+    "pt-br:pill.loading": {
+      "text": "Carregando…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "pt-br:pill.loadError": {
+      "text": "Não foi possível carregar as solicitações. Abra o Murage para continuar.",
+      "en": "Could not load requests. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "pt-br:notifyMe.shortcut.record": {
+      "text": "Gravar um atalho",
+      "en": "Record a shortcut",
+      "verdict": "pass"
+    },
+    "pt-br:notifyMe.shortcut.cancel": {
+      "text": "Cancelar gravação",
+      "en": "Cancel recording",
+      "verdict": "pass"
+    },
+    "pt-br:notifyMe.shortcut.recording": {
+      "text": "Pressione uma combinação de teclas. Escape cancela.",
+      "en": "Press a key combination. Escape cancels.",
+      "verdict": "pass"
+    },
+    "pt-br:notifyMe.shortcut.clear": {
+      "text": "Limpar",
+      "en": "Clear",
+      "verdict": "pass"
+    },
+    "pt-br:notifyMe.shortcut.current": {
+      "text": "Atalho atual: {key}",
+      "en": "Current shortcut: {key}",
+      "verdict": "pass"
+    },
+    "pt-br:notifyMe.shortcut.taken": {
+      "text": "Essa combinação de teclas já está sendo usada por outro app.",
+      "en": "That key is already used by another app.",
+      "verdict": "pass"
+    },
+    "pt-br:notifyMe.shortcut.unsupported": {
+      "text": "Seu ambiente de trabalho não oferece GlobalShortcuts, que este atalho de teclado precisa para funcionar.",
+      "en": "Your desktop does not offer GlobalShortcuts, which this keyboard shortcut needs.",
+      "verdict": "pass"
+    },
+    "pt-br:notifyMe.shortcut.invalid": {
+      "text": "Use uma tecla como Ctrl, Alt ou Shift junto com outra tecla.",
+      "en": "Use a key such as Ctrl, Alt or Shift together with another key.",
+      "verdict": "pass"
+    },
+    "pt-br:notifyMe.shortcut.errorSave": {
+      "text": "Não foi possível salvar esse atalho. Tente de novo.",
+      "en": "Could not save that shortcut. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:nativeBanner.allow": {
+      "text": "Permitir",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "pt-br:nativeBanner.deny": {
+      "text": "Negar",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "pt-br:nativeBanner.reply": {
+      "text": "Responder",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "pt-br:badgeSurfaces.newChief": {
+      "text": "Nova tarefa para Chief",
+      "en": "New task for Chief",
+      "verdict": "pass"
+    },
+    "pt-br:badgeSurfaces.openNeedsYou": {
+      "text": "Abrir “Precisa de você”",
+      "en": "Open Needs you",
+      "verdict": "pass"
+    },
+    "pt-br:badgeSurfaces.pauseAutomations": {
+      "text": "Pausar automações",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "pt-br:badgeSurfaces.needsYouCount": {
+      "text": "Precisa de você: {count}",
+      "en": "Needs you: {count}",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.title": {
+      "text": "Painel rápido",
+      "en": "Quick panel",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.needsYou": {
+      "text": "Precisa de você",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.willRun": {
+      "text": "Será executado",
+      "en": "Will run",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.requestWaiting": {
+      "text": "Há uma solicitação aguardando no Murage.",
+      "en": "A request is waiting in Murage.",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.level": {
+      "text": "Nível: {level}",
+      "en": "Level: {level}",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.allow": {
+      "text": "Permitir",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.deny": {
+      "text": "Negar",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.reply": {
+      "text": "Responder",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.open": {
+      "text": "Abrir",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.replyLabel": {
+      "text": "Sua resposta",
+      "en": "Your reply",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.remaining": {
+      "text": "Caracteres restantes: {count}",
+      "en": "Characters left: {count}",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.sendReply": {
+      "text": "Enviar resposta",
+      "en": "Send reply",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.refusedLocked": {
+      "text": "Desbloqueie seu computador para permitir isso.",
+      "en": "Unlock your computer to allow this.",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.refusedCard": {
+      "text": "Essa solicitação mudou. Abra no Murage.",
+      "en": "That request changed. Open it in Murage.",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.refusedOpen": {
+      "text": "Abra no Murage para responder.",
+      "en": "Open it in Murage to answer.",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.loading": {
+      "text": "Carregando…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.loadError": {
+      "text": "Não foi possível carregar o painel rápido. Abra o Murage para continuar.",
+      "en": "Could not load the quick panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.noRequests": {
+      "text": "Nada precisa de você agora.",
+      "en": "Nothing needs you right now.",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.running": {
+      "text": "Em andamento",
+      "en": "Running",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.receipts": {
+      "text": "Comprovantes recentes",
+      "en": "Latest receipts",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.empty": {
+      "text": "Nada por aqui no momento.",
+      "en": "Nothing here right now.",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.talkChief": {
+      "text": "Fale com seu Chief",
+      "en": "Talk to your Chief",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.send": {
+      "text": "Enviar",
+      "en": "Send",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.sent": {
+      "text": "Enviado ao seu Chief.",
+      "en": "Sent to your Chief.",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.openMurage": {
+      "text": "Abrir Murage",
+      "en": "Open Murage",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.pause": {
+      "text": "Pausar automações",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "pt-br:trayPanel.paused": {
+      "text": "Automações pausadas.",
+      "en": "Automations paused.",
+      "verdict": "pass"
+    },
+    "pt-br:float.pin": {
+      "text": "Fixar na borda da tela",
+      "en": "Pin to screen edge",
+      "verdict": "pass"
+    },
+    "pt-br:float.hideHour": {
+      "text": "Ocultar por uma hora",
+      "en": "Hide for an hour",
+      "verdict": "pass"
+    },
+    "pt-br:float.wayland": {
+      "text": "Precisa de uma sessão X11: o Wayland não consegue manter a janela no topo.",
+      "en": "Needs an X11 session: Wayland cannot keep it on top.",
+      "verdict": "pass"
+    },
+    "pt-br:float.bubble": {
+      "text": "Bot fixado",
+      "en": "Pinned bot",
+      "verdict": "pass"
+    },
+    "pt-br:float.dock": {
+      "text": "Barra de bots",
+      "en": "Bot dock",
+      "verdict": "pass"
+    },
+    "pt-br:float.bot": {
+      "text": "Seu bot",
+      "en": "Your bot",
+      "verdict": "pass"
+    },
+    "pt-br:float.openBot": {
+      "text": "Abrir {name}",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "pt-br:float.needsYou": {
+      "text": "Precisa de você",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "pt-br:float.working": {
+      "text": "Trabalhando",
+      "en": "Working",
+      "verdict": "pass"
+    },
+    "pt-br:float.idle": {
+      "text": "Inativo",
+      "en": "Idle",
+      "verdict": "pass"
+    },
+    "pt-br:float.chat": {
+      "text": "Envie uma mensagem ao seu bot fixado",
+      "en": "Message your pinned bot",
+      "verdict": "pass"
+    },
+    "pt-br:float.sent": {
+      "text": "Mensagem enviada.",
+      "en": "Message sent.",
+      "verdict": "pass"
+    },
+    "pt-br:float.collapse": {
+      "text": "Recolher",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "pt-br:float.error": {
+      "text": "Não foi possível atualizar este painel. Abra o Murage para continuar.",
+      "en": "Could not update this panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "pt-br:float.pinError": {
+      "text": "Não foi possível fixar este bot. Tente novamente.",
+      "en": "Could not pin this bot. Try again.",
+      "verdict": "pass"
+    },
+    "zh:pill.title": {
+      "text": "Murage 请求",
+      "en": "Murage requests",
+      "verdict": "pass"
+    },
+    "zh:pill.capsule": {
+      "text": "{bot} · {count}",
+      "en": "{bot} · {count}",
+      "verdict": "pass"
+    },
+    "zh:pill.waiting": {
+      "text": "等待你处理",
+      "en": "Waiting for you",
+      "verdict": "pass"
+    },
+    "zh:pill.collapse": {
+      "text": "收起",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "zh:pill.requests": {
+      "text": "待处理请求",
+      "en": "Pending requests",
+      "verdict": "pass"
+    },
+    "zh:pill.open": {
+      "text": "在 Murage 中打开",
+      "en": "Open in Murage",
+      "verdict": "pass"
+    },
+    "zh:pill.finished": {
+      "text": "一项任务已完成。",
+      "en": "A task has finished.",
+      "verdict": "pass"
+    },
+    "zh:pill.loading": {
+      "text": "正在加载…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "zh:pill.loadError": {
+      "text": "无法加载请求。请打开 Murage 继续。",
+      "en": "Could not load requests. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "zh:notifyMe.shortcut.record": {
+      "text": "录制快捷键",
+      "en": "Record a shortcut",
+      "verdict": "pass"
+    },
+    "zh:notifyMe.shortcut.cancel": {
+      "text": "取消录制",
+      "en": "Cancel recording",
+      "verdict": "pass"
+    },
+    "zh:notifyMe.shortcut.recording": {
+      "text": "按下组合键。按 Escape 取消。",
+      "en": "Press a key combination. Escape cancels.",
+      "verdict": "pass"
+    },
+    "zh:notifyMe.shortcut.clear": {
+      "text": "清除",
+      "en": "Clear",
+      "verdict": "pass"
+    },
+    "zh:notifyMe.shortcut.current": {
+      "text": "当前快捷键：{key}",
+      "en": "Current shortcut: {key}",
+      "verdict": "pass"
+    },
+    "zh:notifyMe.shortcut.taken": {
+      "text": "其他应用已在使用这个组合键。",
+      "en": "That key is already used by another app.",
+      "verdict": "pass"
+    },
+    "zh:notifyMe.shortcut.unsupported": {
+      "text": "你的桌面环境不提供此键盘快捷键所需的 GlobalShortcuts。",
+      "en": "Your desktop does not offer GlobalShortcuts, which this keyboard shortcut needs.",
+      "verdict": "pass"
+    },
+    "zh:notifyMe.shortcut.invalid": {
+      "text": "请将 Ctrl、Alt 或 Shift 等按键与另一个按键一起使用。",
+      "en": "Use a key such as Ctrl, Alt or Shift together with another key.",
+      "verdict": "pass"
+    },
+    "zh:notifyMe.shortcut.errorSave": {
+      "text": "无法保存此快捷键。请重试。",
+      "en": "Could not save that shortcut. Try again.",
+      "verdict": "pass"
+    },
+    "zh:nativeBanner.allow": {
+      "text": "允许",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "zh:nativeBanner.deny": {
+      "text": "拒绝",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "zh:nativeBanner.reply": {
+      "text": "回复",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "zh:badgeSurfaces.newChief": {
+      "text": "给Chief分配新任务",
+      "en": "New task for Chief",
+      "verdict": "pass"
+    },
+    "zh:badgeSurfaces.openNeedsYou": {
+      "text": "打开“需要你处理”",
+      "en": "Open Needs you",
+      "verdict": "pass"
+    },
+    "zh:badgeSurfaces.pauseAutomations": {
+      "text": "暂停自动化",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "zh:badgeSurfaces.needsYouCount": {
+      "text": "需要你处理：{count}",
+      "en": "Needs you: {count}",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.title": {
+      "text": "快捷面板",
+      "en": "Quick panel",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.needsYou": {
+      "text": "需要你处理",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.willRun": {
+      "text": "将运行",
+      "en": "Will run",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.requestWaiting": {
+      "text": "Murage 中有一个请求等待处理。",
+      "en": "A request is waiting in Murage.",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.level": {
+      "text": "级别：{level}",
+      "en": "Level: {level}",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.allow": {
+      "text": "允许",
+      "en": "Allow",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.deny": {
+      "text": "拒绝",
+      "en": "Deny",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.reply": {
+      "text": "回复",
+      "en": "Reply",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.open": {
+      "text": "打开",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.replyLabel": {
+      "text": "你的回复",
+      "en": "Your reply",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.remaining": {
+      "text": "剩余字符数：{count}",
+      "en": "Characters left: {count}",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.sendReply": {
+      "text": "发送回复",
+      "en": "Send reply",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.refusedLocked": {
+      "text": "请解锁电脑以允许此操作。",
+      "en": "Unlock your computer to allow this.",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.refusedCard": {
+      "text": "该请求已更改。请在 Murage 中打开。",
+      "en": "That request changed. Open it in Murage.",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.refusedOpen": {
+      "text": "请在 Murage 中打开并答复。",
+      "en": "Open it in Murage to answer.",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.loading": {
+      "text": "正在加载…",
+      "en": "Loading…",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.loadError": {
+      "text": "无法加载快捷面板。请打开 Murage 以继续。",
+      "en": "Could not load the quick panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.noRequests": {
+      "text": "目前没有需要你处理的事项。",
+      "en": "Nothing needs you right now.",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.running": {
+      "text": "正在运行",
+      "en": "Running",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.receipts": {
+      "text": "最近的执行记录",
+      "en": "Latest receipts",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.empty": {
+      "text": "目前没有内容。",
+      "en": "Nothing here right now.",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.talkChief": {
+      "text": "与你的 Chief 交谈",
+      "en": "Talk to your Chief",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.send": {
+      "text": "发送",
+      "en": "Send",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.sent": {
+      "text": "已发送给你的 Chief。",
+      "en": "Sent to your Chief.",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.openMurage": {
+      "text": "打开 Murage",
+      "en": "Open Murage",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.pause": {
+      "text": "暂停自动化",
+      "en": "Pause automations",
+      "verdict": "pass"
+    },
+    "zh:trayPanel.paused": {
+      "text": "自动化已暂停。",
+      "en": "Automations paused.",
+      "verdict": "pass"
+    },
+    "zh:float.pin": {
+      "text": "固定到屏幕边缘",
+      "en": "Pin to screen edge",
+      "verdict": "pass"
+    },
+    "zh:float.hideHour": {
+      "text": "隐藏一小时",
+      "en": "Hide for an hour",
+      "verdict": "pass"
+    },
+    "zh:float.wayland": {
+      "text": "需要 X11 会话：Wayland 无法让它保持置顶。",
+      "en": "Needs an X11 session: Wayland cannot keep it on top.",
+      "verdict": "pass"
+    },
+    "zh:float.bubble": {
+      "text": "已固定的机器人",
+      "en": "Pinned bot",
+      "verdict": "pass"
+    },
+    "zh:float.dock": {
+      "text": "机器人停靠栏",
+      "en": "Bot dock",
+      "verdict": "pass"
+    },
+    "zh:float.bot": {
+      "text": "你的机器人",
+      "en": "Your bot",
+      "verdict": "pass"
+    },
+    "zh:float.openBot": {
+      "text": "打开{name}",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "zh:float.needsYou": {
+      "text": "需要你处理",
+      "en": "Needs you",
+      "verdict": "pass"
+    },
+    "zh:float.working": {
+      "text": "工作中",
+      "en": "Working",
+      "verdict": "pass"
+    },
+    "zh:float.idle": {
+      "text": "空闲",
+      "en": "Idle",
+      "verdict": "pass"
+    },
+    "zh:float.chat": {
+      "text": "给固定的机器人发消息",
+      "en": "Message your pinned bot",
+      "verdict": "pass"
+    },
+    "zh:float.sent": {
+      "text": "消息已发送。",
+      "en": "Message sent.",
+      "verdict": "pass"
+    },
+    "zh:float.collapse": {
+      "text": "收起",
+      "en": "Collapse",
+      "verdict": "pass"
+    },
+    "zh:float.error": {
+      "text": "无法更新此面板。请打开 Murage 继续。",
+      "en": "Could not update this panel. Open Murage to continue.",
+      "verdict": "pass"
+    },
+    "zh:float.pinError": {
+      "text": "无法固定此机器人。请重试。",
+      "en": "Could not pin this bot. Try again.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

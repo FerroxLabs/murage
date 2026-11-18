@@ -1,0 +1,35 @@
+COMMAND node_modules/.bin/vitest run server/decision/budget.test.ts -t M36
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/budget.test.ts (7 tests | 1 failed | 6 skipped) 19ms
+   ↓ A12a M64 50MB content hashes stably without an unbounded clone; depth/key bounds
+   ↓ R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives
+   ↓ A12a prune walks settled index in batches of 500
+   ↓ M64 projection never calls structuredClone before enforcing bounds
+   × M36 one cumulative reader budget covers outer scripts and all nested executables 15ms
+   ↓ A12a UTF-8 byte bounds apply to content heads, values and oversized keys
+   ↓ A12a content heads share the same one MB registration budget
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  07:40:45
+   Duration  9.09s (transform 7.18s, setup 8.48s, import 443ms, tests 19ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/budget.test.ts > M36 one cumulative reader budget covers outer scripts and all nested executables
+AssertionError: expected [ 'home' ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/decision/budget.test.ts:20:265
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

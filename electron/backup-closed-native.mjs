@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import {execFile} from "node:child_process";
 import {userInfo} from "node:os";
 import {lstatSync,mkdirSync,realpathSync,unlinkSync,writeFileSync} from "node:fs";
@@ -39,7 +40,7 @@ export function selectedMacJobEnabled(stdout,label){
 function defaultRun({executable,args,input,timeoutMs=10000,home}){
   return new Promise((resolve,reject)=>{
     const env={HOME:home,PATH:"/usr/bin:/bin",LANG:"C",LC_ALL:"C"};for(const key of ["XDG_RUNTIME_DIR","DBUS_SESSION_BUS_ADDRESS"])if(typeof process.env[key]==="string")env[key]=process.env[key];
-    const child=execFile(executable,args,{env,encoding:"utf8",timeout:timeoutMs,maxBuffer:LIMIT,windowsHide:true},(error,stdout)=>{
+    const child=execFile(executable,[...args],withHideInherit({env,encoding:"utf8",timeout:timeoutMs,maxBuffer:LIMIT,windowsHide:true}),(error,stdout)=>{
       if(error&&(error.killed||typeof error.code!=="number")){reject(Object.assign(new Error("Closed backup native command unavailable."),{code:"CLOSED_NATIVE_UNAVAILABLE"}));return;}
       resolve({code:error?.code??0,stdout});
     });

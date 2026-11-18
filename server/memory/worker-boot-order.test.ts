@@ -1,5 +1,6 @@
 // Boot order: the memory worker's tick is started by the listen callback, after the port is open, and not
 // at module level before it (index.ts is too large to import under test, so the order is read from the source).
+// 1cd49da8c2 moved it to the first runAfterListen step, after the first health answer.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -19,5 +20,9 @@ it("memoryWorker.start() for boot is inside the server.listen callback", () => {
   expect(before).toEqual([]);
   const first = starts.find(at => at > listen)!;
   expect(first).toBeGreaterThan(listen);
-  expect(source.slice(listen, first).split("\n").length, "within the listen callback's first lines").toBeLessThanOrEqual(12);
+  const steps = source.indexOf("void runAfterListen([", listen);
+  expect(steps).toBeGreaterThan(listen);
+  const prefix = source.slice(steps, first).replace(/\/\/[^\n]*/g, "");
+  expect(prefix).toMatch(/^void runAfterListen\(\[\s*\{ name: "memoryWorker", run: \(\) => \{\s*$/);
+  expect(source.slice(first, source.indexOf('name: "botCalls"', first))).toMatch(/^\s*(?:if \(!homeExecutionGate \|\| homeExecutionGate\.open\(\)\) )?memoryWorker\.start\(\);\s*\} \},/);
 });

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// @ts-expect-error The isolated replay harness is JavaScript test support.
+import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
 // Fake of the codex CLI's `app-server` JSON-RPC surface, for driver
 // tests. Speaks newline-delimited JSON-RPC on stdio: answers the
 // initialize/thread/turn handshake, then plays a scripted turn. Like the
@@ -15,6 +17,11 @@
 //                     with FAKE_CODEX_ASYNC_QUESTION_ONCE, a marker path, only the first turn asks) |
 //                     logged-in-stdout | logged-out | status-fails | unauthorized
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
+//   FAKE_CODEX_DUMP_ON_TERM  "1": the dump is flushed synchronously in the SIGTERM handler, then the default signal exit is re-raised, so
+//                     the dump is complete before the kill is acknowledged (no race between the dump and the stop)
+//   FAKE_CODEX_EXIT_ON_FILE  path: once that file exists the process writes transient stderr (non-transient when the file says "fatal") and exits 1 (a crash the test times, e.g. after a claim)
+//   FAKE_CODEX_OVERSIZE_ON_FILE  path: once that file exists the process writes one valid frame over the size limit (a late overflow the test times)
+//   FAKE_CODEX_COMPLETE_ON_FILE  path: once that file exists the process ends its turn with a clean turn/completed (a late end the test times)
 //   FAKE_CUSTOM_TOOL_SERVER / FAKE_CUSTOM_TOOL_LOG  every turn calls the first tool
 //                     of that owner server (fake-custom-tool.ts)
 //   FAKE_CODEX_MCP_SERVER / FAKE_CODEX_MCP_TOOL  the server and tool an
@@ -73,7 +80,9 @@ import { join } from "node:path";
 import { writeFileAtomic } from "../atomic.ts";
 import { logProposalTurn, proposalFrom, proposalReply, proposeThroughMcp } from "./fake-mcp-propose.ts";
 import { fakeReviewReply } from "./fake-review.ts";
+import { replayWebRead, replayCommands } from "./fake-web-read.ts";
 import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
+import { fixtureRequested } from "./fixture-request.ts";
 
 /** project-propose mode's approval requests, answered by id. */
 const proposalAsks = new Map<number, (result: any) => void>();
@@ -148,6 +157,18 @@ const countLaunch = (): number => {
   return launched;
 };
 const TRANSIENT_STDERR = "Error: connection reset by peer\n";
+if (process.env.FAKE_CODEX_COMPLETE_ON_FILE) {
+  const trigger = process.env.FAKE_CODEX_COMPLETE_ON_FILE;
+  const timer = setInterval(() => { if (existsSync(trigger)) { clearInterval(timer); notify("turn/completed", { turn: { id: nativeTurnId, status: "completed", items: [], error: null } }); } }, 20);
+}
+if (process.env.FAKE_CODEX_OVERSIZE_ON_FILE) {
+  const trigger = process.env.FAKE_CODEX_OVERSIZE_ON_FILE;
+  const timer = setInterval(() => { if (existsSync(trigger)) { clearInterval(timer); notify("item/agentMessage/delta", { itemId: "big", delta: fixtureOversizeText() }); } }, 20);
+}
+if (process.env.FAKE_CODEX_EXIT_ON_FILE) {
+  const trigger = process.env.FAKE_CODEX_EXIT_ON_FILE;
+  setInterval(() => { if (existsSync(trigger)) process.stderr.write(readFileSync(trigger, "utf8").trim() === "fatal" ? "fatal: invalid configuration\n" : TRANSIENT_STDERR, () => process.exit(1)); }, 20);
+}
 
 if (process.argv[2] === "--version") {
   // FAKE_CODEX_VERSION_LOG counts probes; FAKE_CODEX_VERSION overrides the version, "fail" makes the probe fail.
@@ -186,18 +207,28 @@ async function playSubagents(ask: (id: number, method: string, params: Record<st
   notify("item/started", { item: collab("pendingInit", "inProgress") });
   notify("item/completed", { item: collab("running", "completed") });
   notify("item/completed", { item: { id: "m1", type: "agentMessage", text: "Three helpers are reading." } });
-  notify("turn/completed", { turn: { status: "completed" } });
+  // with FAKE_CODEX_COMPLETE_ON_FILE the parent's clean end waits for that file (a late end while the helpers are still open)
+  if (!process.env.FAKE_CODEX_COMPLETE_ON_FILE) notify("turn/completed", { turn: { status: "completed" } });
   const asks = Number(process.env.FAKE_CODEX_BG_ASKS ?? "2");
   for (let i = 0; i < asks; i += 1) {
     out({ jsonrpc: "2.0", method: "item/started", params: { threadId: "child-1", turnId: "child-turn", item: { id: `c${i}`, type: "commandExecution", command: "cat file" } } });
     const asked = ask(9500 + i, "item/commandExecution/requestApproval", { threadId: "child-1", turnId: "child-turn", itemId: `c${i}`, command: `cat /outside/cwd/file-${i}.md` });
     // FAKE_CODEX_BG_NO_WAIT: the helper finishes with its ask still open (a cell it yielded itself)
     if (process.env.FAKE_CODEX_BG_NO_WAIT === "1") { void asked; continue; }
-    const answer = await asked;
-    bgLog(`verdict:${answer?.decision ?? JSON.stringify(answer)}`);
+    // The Stop race must progress independently of a protocol answer: Stop
+    // revokes every writer, including a denial for this already-open ask.
+    const stopGate = process.env.FAKE_CODEX_BG_STOP_GATE;
+    const result = stopGate
+      ? await Promise.race([asked.then(answer => ({ answer })), waitForGate(stopGate, 60_000).then(() => ({ stopped: true as const }))])
+      : { answer: await asked };
+    if ("stopped" in result) break;
+    bgLog(`verdict:${result.answer?.decision ?? JSON.stringify(result.answer)}`);
   }
   if (process.env.FAKE_CODEX_BG_HOLD === "1") { bgLog("held"); return; }
-  for (const id of kids) out({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: id, turn: { id: "child-turn", status: "completed", items: [], error: null } } });
+  const botcreate = process.env.FAKE_CODEX_BOTCREATE;
+  if (botcreate === 'read-event') out({ jsonrpc: '2.0', method: 'item/started', params: { threadId: kids[0], item: { id: 'read', type: 'webSearch', query: 'fixture' } } });
+  if (botcreate === 'plus-other-mark') notify('item/started', { item: { id: 'parent-read', type: 'webSearch', query: 'fixture' } });
+  for (const id of kids) out({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: id, turn: { id: "child-turn", status: "completed", ...(botcreate === 'torn-row' ? {} : { items: botcreate === 'row-outside-read' ? [{ id: 'read', type: 'webSearch', query: 'fixture' }] : [] }), error: null } } });
   if (process.env.FAKE_CODEX_BG_WAKE === "1") {
     await new Promise(resolve => setTimeout(resolve, 30));
     out({ jsonrpc: "2.0", method: "turn/started", params: { threadId: nativeThreadId, turn: { id: "turn-2", status: "inProgress", items: [], error: null } } });
@@ -208,14 +239,22 @@ async function playSubagents(ask: (id: number, method: string, params: Record<st
 }
 
 if (process.argv[2] === "app-server" && process.env.FAKE_CODEX_SPAWN_LOG) appendFileSync(process.env.FAKE_CODEX_SPAWN_LOG, `${process.pid}\n`);
+if (process.argv[2] === "app-server" && process.env.FAKE_CODEX_GATED_SPAWN_LOG && process.env.MURAGE_CODEX_HOOK_ENV) appendFileSync(process.env.FAKE_CODEX_GATED_SPAWN_LOG, `${process.pid}\n`);
 const warmMode = process.env.FAKE_CODEX_WARM === "1";
 let turnSeq = 0;
 const accumulated = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+// Thread usage survives the S1 process boundary, as a resumed CLI conversation does.
+const usagePath = (thread: unknown) => process.env.FAKE_CODEX_USAGE_DIR && typeof thread === "string"
+  ? join(process.env.FAKE_CODEX_USAGE_DIR, createHash("sha256").update(thread).digest("hex") + ".json") : undefined;
 const calls: Array<{ method: string; params: unknown }> = [];
 let decision: unknown = null;
 /** What each PreToolUse hook run answered, for the tests (id, tool name, input, verdict, reason), and whether the turn was interrupted. */
 const hookLog: Array<{ id: string; name: string; input: unknown; verdict: string; reason?: string }> = [];
 let interrupted = false;
+if (process.env.FAKE_CODEX_IGNORE_TERM === "1") {
+  process.on("SIGTERM", () => {});
+  setInterval(() => {}, 60_000);
+}
 
 // FAKE_CODEX_SKILLS_BATCHED holds every line from the skills/list answer
 // through turn/completed and writes them in ONE chunk, the way a busy pipe
@@ -253,18 +292,7 @@ const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
 const FIXTURE_TOOL_IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const FIXTURE_SCREEN_IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const fixtureLargeImageBase64 = () => Buffer.alloc(10 * 1024 * 1024, 7).toString("base64");
-// Markers count only on the prompt's last line (the current request): the
-// harness replays earlier messages into a fresh process's prompt, and an old
-// marker there must not re-trigger a fixture on a later, ordinary turn.
-// A room turn's prompt is the room transcript followed by the harness's
-// "(Reply to the conversation above as NAME.)" trailer, so its current request
-// is the last transcript line before that trailer.
-const ROOM_REPLY_TRAILER = /^\(Reply to the conversation above as .+\.\)$/;
-const fixtureRequested = (text: string, marker: string) => {
-  const lines = text.trimEnd().split("\n");
-  if (lines.length > 1 && ROOM_REPLY_TRAILER.test(lines.at(-1) ?? "")) { lines.pop(); while (lines.length > 1 && !lines.at(-1)?.trim()) lines.pop(); }
-  return (lines.pop() ?? "").includes(marker);
-};
+// Markers count only on the prompt's last line (fixture-request.ts): old replayed markers must not re-trigger a fixture.
 
 /** The credential file the mounted agents server would read this turn, as the proxy reads it. */
 const readMountedCredFile = () => {
@@ -282,6 +310,10 @@ const dump = () => {
     );
   }
 };
+
+if (process.env.FAKE_CODEX_DUMP_ON_TERM === "1") {
+  process.once("SIGTERM", () => { dump(); process.kill(process.pid, "SIGTERM"); });
+}
 
 if (mode === "late-output") {
   process.on("SIGTERM", () => {
@@ -321,6 +353,8 @@ const finishTurn = () => {
   notify("item/completed", { item: { id: "m1", type: "agentMessage", text: "done from fake codex" } });
   if (warmMode) {
     accumulated.inputTokens += 7; accumulated.cachedInputTokens += 4; accumulated.outputTokens += 3;
+    const path = usagePath(nativeThreadId);
+    if (path) writeFileAtomic(path, JSON.stringify(accumulated));
     notify("thread/tokenUsage/updated", { tokenUsage: { total: { ...accumulated } } });
   } else notify("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 7, cachedInputTokens: 4, outputTokens: 3 } } });
   if (process.env.FAKE_CODEX_ROLLOUT) {
@@ -401,7 +435,7 @@ const runFakeHooks = async (event: string, payload: Record<string, unknown>): Pr
   for (const hook of readFakeHooks().filter((h) => h.event === event && trustOf(h, state) === "trusted")) {
     const outcome = await new Promise<HookResult>((resolve) => {
       // as Codex 0.153.3 does: `%COMSPEC% /C <command>` with the command escaped as one ordinary argument (inner quotes become \")
-      const child = spawn(process.platform === "win32" ? process.env.COMSPEC ?? "cmd.exe" : "sh", [process.platform === "win32" ? "/C" : "-c", hook.command], { env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(process.platform === "win32" ? process.env.COMSPEC ?? "cmd.exe" : "sh", [process.platform === "win32" ? "/C" : "-c", hook.command], { env: process.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "", stderr = "";
       child.stdout.on("data", (d) => { stdout += d; });
       child.stderr.on("data", (d) => { stderr += d; });
@@ -430,6 +464,8 @@ const runFakeHooks = async (event: string, payload: Record<string, unknown>): Pr
 let sessionStartedFor = "";
 /** The SessionStart handlers run when the first turn of a session begins, after the turn/start answer (rig: Codex 0.129.0, 0.163.0). */
 //   FAKE_CODEX_SESSION_DELAY_MS  the SessionStart handlers run this long after the turn begins (a late proof)
+//   FAKE_CODEX_COMPLETE_BEFORE_SESSION  "1": gated, the turn ends clean before the SessionStart handlers run (no tool call)
+//   FAKE_CODEX_REQUEST_AFTER_COMPLETE  "1": gated, turn/completed and an approval request in one write, then the SessionStart handlers (CX2S O2)
 //   FAKE_CODEX_SESSION_LOG       a line is appended each time the SessionStart handlers run (counted across processes)
 //   FAKE_CODEX_INTERRUPT_DELAY_MS  turn/interrupt is answered this long after it arrives (the interrupt stays pending)
 //   FAKE_CODEX_EARLY_ITEM        a reasoning item starts before the SessionStart handlers run
@@ -442,25 +478,34 @@ const fakeSessionStart = async () => {
   if (process.env.FAKE_CODEX_SESSION_LOG) appendFileSync(process.env.FAKE_CODEX_SESSION_LOG, `${process.pid} SessionStart\n`);
   await runFakeHooks("SessionStart", { source: "startup" });
 };
-type FakeCall = { concurrent?: boolean; delayMs?: number; runAnyway?: boolean; kind: string; id: string; command?: string; cwd?: string; patch?: string; server?: string; tool?: string; input?: unknown; name?: string; hook?: boolean; escalate?: boolean };
+type FakeCall = { hookId?: string; helper?: boolean; hookTurnId?: string; concurrent?: boolean; delayMs?: number; runAnyway?: boolean; kind: string; id: string; command?: string; cwd?: string; patch?: string; server?: string; tool?: string; input?: unknown; name?: string; hook?: boolean; escalate?: boolean };
 const hookNameOf = (call: FakeCall) => call.kind === "shell" ? "Bash" : call.kind === "mcp" ? `mcp__${call.server}__${call.tool}` : call.kind === "other" ? String(call.name) : call.kind;
 const hookInputOf = (call: FakeCall): unknown => call.kind === "shell" ? { command: call.command } : call.kind === "apply_patch" ? { command: call.patch } : call.kind === "mcp" ? (call.input ?? {}) : (call.input ?? {});
 /** One tool call: the hook first (when it is live and the call is not marked to skip it), then item/started and item/completed.
  *  A denied or blocked call never starts. Returns whether it ran. */
 const playFakeCall = async (call: FakeCall): Promise<boolean> => {
+  const callTurn = call.helper ? 'helper-turn' : nativeTurnId;
+  const toolNotify = (method: string, params: Record<string, unknown>) => call.helper
+    ? out({ jsonrpc: "2.0", method, params: { threadId: "hook-helper", turnId: callTurn, ...params } }) : notify(method, params);
+  if (call.helper) {
+    notify("item/started", { item: { id: "spawn-hook-helper", type: "collabAgentToolCall", tool: "spawnAgent", receiverThreadIds: ["hook-helper"], agentsStates: { "hook-helper": { status: "running", message: null } } } });
+    toolNotify("turn/started", { turn: { id: callTurn, status: "inProgress" } });
+  }
+  const finishHelper = () => { if (call.helper) toolNotify("turn/completed", { turn: { id: callTurn, status: "completed" } }); };
+  dump();
   if (hooksOn() && call.hook !== false && onRequestPolicy()) {
-    const verdict = await runFakeHooks("PreToolUse", { turn_id: nativeTurnId, tool_name: hookNameOf(call), tool_input: hookInputOf(call), tool_use_id: call.id, cwd: call.cwd ?? process.cwd() });
+    const verdict = await runFakeHooks("PreToolUse", { turn_id: call.hookTurnId ?? callTurn, tool_name: hookNameOf(call), tool_input: hookInputOf(call), tool_use_id: call.hookId ?? call.id, cwd: call.cwd ?? process.cwd() });
     hookLog.push({ id: call.id, name: hookNameOf(call), input: hookInputOf(call), verdict: verdict.kind, ...(verdict.reason !== undefined ? { reason: verdict.reason } : {}) });
     if ((verdict.kind === "deny" || verdict.kind === "block") && !call.runAnyway) {
-      notify("item/completed", { item: { id: call.id, type: call.kind === "shell" ? "commandExecution" : "fileChange", status: "declined", aggregatedOutput: verdict.reason ?? "" } });
-      return false;
+      toolNotify("item/completed", { item: { id: call.id, type: call.kind === "shell" ? "commandExecution" : "fileChange", status: "declined", aggregatedOutput: verdict.reason ?? "" } });
+      finishHelper(); return false;
     }
   }
   const started = call.kind === "shell" ? { id: call.id, type: "commandExecution", command: call.command, cwd: call.cwd ?? process.cwd() }
     : call.kind === "apply_patch" ? { id: call.id, type: "fileChange", changes: [{ path: (/\*\*\* (?:Add|Update|Delete) File: (.+)/.exec(call.patch ?? "")?.[1]) ?? "file", kind: "update" }] }
     : call.kind === "mcp" ? { id: call.id, type: "mcpToolCall", server: call.server, tool: call.tool }
     : null;
-  if (started) notify("item/started", { item: started });
+  if (started) toolNotify("item/started", { item: started });
   if (call.escalate && started) {
     const answer = await new Promise<any>((resolve) => {
       proposalAsks.set(7000, resolve);
@@ -468,9 +513,10 @@ const playFakeCall = async (call: FakeCall): Promise<boolean> => {
         params: { threadId: nativeThreadId, turnId: nativeTurnId, itemId: call.id, ...(call.command ? { command: call.command } : {}), cwd: call.cwd ?? process.cwd(), reason: "needs to leave the sandbox" } });
     });
     decision = answer;
-    if (answer?.decision !== "accept") { notify("item/completed", { item: { id: call.id, type: started.type, status: "declined" } }); return false; }
+    if (answer?.decision !== "accept") { toolNotify("item/completed", { item: { id: call.id, type: started.type, status: "declined" } }); finishHelper(); return false; }
   }
-  if (started) notify("item/completed", { item: { id: call.id, type: started.type, status: "completed", exitCode: 0, aggregatedOutput: "" } });
+  if (started) toolNotify("item/completed", { item: { id: call.id, type: started.type, status: "completed", exitCode: 0, aggregatedOutput: "" } });
+  finishHelper();
   return true;
 };
 const playScriptedTurn = async () => {
@@ -605,6 +651,8 @@ process.stdin.on("data", (chunk) => {
         break;
       case "thread/resume": {
         noteExecutionPolicy(msg.params);
+        const path = usagePath(msg.params?.threadId);
+        if (path && existsSync(path)) Object.assign(accumulated, JSON.parse(readFileSync(path, "utf8")));
         // the effective model and provider, as ThreadResumeResponse requires them (codex 0.163 schema)
         const resumeAnswer = (threadId: unknown) => ({
           thread: { id: threadId, ...(process.env.FAKE_CODEX_ROLLOUT ? { path: process.env.FAKE_CODEX_ROLLOUT } : {}) },
@@ -625,6 +673,7 @@ process.stdin.on("data", (chunk) => {
         break;
       }
       case "thread/start":
+        Object.assign(accumulated, { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 });
         noteExecutionPolicy(msg.params);
         if (process.env.FAKE_CODEX_LAUNCH_CRASHES || process.env.FAKE_CODEX_LAUNCH_KILLS || process.env.FAKE_CODEX_LAUNCH_SILENT) {
           const launched = countLaunch();
@@ -757,6 +806,12 @@ process.stdin.on("data", (chunk) => {
           process.stdout.write(frames.map((frame) => JSON.stringify(frame)).join("\n") + "\n");
           break;
         }
+        if (mode === "flux-revoked-rpc" || mode === "flux-revoked-notice") {
+          const error = {code:-32603,message:"Rate limit",data:{http_status:429,body:{error:{state:"key_revoked",message:"Rate limit"}}}};
+          if (mode === "flux-revoked-rpc") out({jsonrpc:"2.0",id:msg.id,error});
+          else {out({jsonrpc:"2.0",id:msg.id,result:turnResult()});notify("error",error);notify("turn/completed",{turn:{status:"failed",error}});}
+          break;
+        }
         if (mode === "transient-503") {
           out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "provider returned 503: upstream capacity exceeded" } });
           break;
@@ -838,6 +893,30 @@ process.stdin.on("data", (chunk) => {
         }
         // FAKE_CUSTOM_TOOL_SERVER (fake-custom-tool.ts): call the first tool of
         // that owner server, started from its -c mcp_servers overrides.
+        const browserReplay = promptText.includes("__fixture_browser_read__:");
+        const webReplay = /__fixture_(?:web|browser)_read__:(http:\/\/127\.0\.0\.1:\d+\/sales)/.exec(promptText);
+        if (webReplay) {
+          void (async () => {
+            let seq = 0;
+            try {
+              const launch = mountedServer(browserReplay ? "browser" : "agents"); if (!launch) throw Error("Replay tool mount missing");
+              await (browserReplay ? replayBrowserRead : replayWebRead)(launch, webReplay[1], (input: any, output: unknown) => {
+                const item = { id: `web-${++seq}`, type: "mcpToolCall", server: browserReplay ? "browser" : "agents", tool: browserReplay ? input.name : "web_read", arguments: input };
+                notify("item/started", { item: { ...item, status: "inProgress" } });
+                notify("item/completed", { item: { ...item, result: output, status: "completed" } });
+              });
+              await replayCommands(promptText, async (command, i) => {
+                const answer: any = await new Promise(resolve => {
+                  proposalAsks.set(9700 + i, resolve);
+                  out({ jsonrpc: "2.0", id: 9700 + i, method: "item/commandExecution/requestApproval", params: { threadId: nativeThreadId, turnId: nativeTurnId, itemId: `shell-${i}`, command } });
+                });
+                if (!["accept", "acceptForSession"].includes(answer?.decision)) throw Error(`Replay shell refused: ${JSON.stringify(answer)}`);
+              }, (command, output, i) => notify("item/completed", { item: { id: `shell-${i}`, type: "commandExecution", command, aggregatedOutput: output, exitCode: 0, status: "completed" } }));
+              notify("item/completed", { item: { id: "replay-result", type: "agentMessage", text: "Replay completed" } });
+            } catch (error) { notify("item/completed", { item: { id: "replay-result", type: "agentMessage", text: `Replay failed: ${String(error)}` } }); }
+            notify("turn/completed", { turn: { status: "completed" } });
+          })(); break;
+        }
         const customServer = customToolServer(promptText);
         if (customServer) {
           const launch = mountedServer(customServer);
@@ -933,6 +1012,25 @@ process.stdin.on("data", (chunk) => {
         if (onRequestPolicy() && hooksOn() && !["mcp-elicitation", "form-elicitation", "user-input"].includes(mode)) {
           const approvalMode = mode === "approval" || mode === "windows-command";
           void (async () => {
+            // FAKE_CODEX_REQUEST_BEFORE_SESSION "1": FAKE_CODEX_APPROVAL (or the default shell ask) is sent BEFORE the SessionStart handlers run, so
+            // a gated driver holds it on its liveness proof; the answer ends the turn (id 100 handler above) and the calls below are skipped
+            // FAKE_CODEX_COMPLETE_BEFORE_SESSION "1": the turn ends clean BEFORE the SessionStart handlers run (a gated driver's clean end waits on a late proof)
+            if (process.env.FAKE_CODEX_COMPLETE_BEFORE_SESSION === "1") { finishTurn(); await fakeSessionStart(); return; }
+            // FAKE_CODEX_REQUEST_AFTER_COMPLETE "1" (CX2S probe O2): turn/completed and an approval request in ONE write, then the late SessionStart
+            if (process.env.FAKE_CODEX_REQUEST_AFTER_COMPLETE === "1") {
+              process.stdout.write([notification("turn/completed", { turn: { status: "completed" } }),
+                { jsonrpc: "2.0", id: 4545, method: "item/commandExecution/requestApproval", params: { threadId: nativeThreadId, turnId: nativeTurnId, itemId: "after-complete", command: "rm -rf scratch" } },
+              ].map((message) => JSON.stringify(message)).join("\n") + "\n");
+              await fakeSessionStart();
+              return;
+            }
+            if (process.env.FAKE_CODEX_REQUEST_BEFORE_SESSION === "1") {
+              const early = process.env.FAKE_CODEX_APPROVAL ? JSON.parse(process.env.FAKE_CODEX_APPROVAL) : null;
+              dump();
+              out({ jsonrpc: "2.0", id: 100, method: early?.method ?? "execCommandApproval", params: early?.params ?? { command: "rm -rf scratch" } });
+              await fakeSessionStart();
+              return;
+            }
             await fakeSessionStart();
             await playFakeCall({ kind: "shell", id: "i1", command: approvalMode && mode !== "windows-command" ? "rm -rf scratch" : command, escalate: approvalMode && escalationAsks() });
             notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
@@ -1040,7 +1138,13 @@ process.stdin.on("data", (chunk) => {
           const approvalCommand = mode === "windows-command" ? command : "rm -rf scratch";
           // FAKE_CODEX_APPROVAL = {method, params} replaces the default legacy shell ask
           const custom = process.env.FAKE_CODEX_APPROVAL ? JSON.parse(process.env.FAKE_CODEX_APPROVAL) : null;
+          dump();
           out({ jsonrpc: "2.0", id: 100, method: custom?.method ?? "execCommandApproval", params: custom?.params ?? { command: approvalCommand } });
+          if (process.env.FAKE_CODEX_STOP_RESULT_GATE) {
+            void waitForGate(process.env.FAKE_CODEX_STOP_RESULT_GATE, 60_000).then(() => {
+              notify("turn/completed", { turn: { status: "completed" } });
+            });
+          }
           // turn continues from the approval response handler above
         } else {
           finishTurn();

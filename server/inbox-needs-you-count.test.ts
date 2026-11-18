@@ -8,7 +8,7 @@
 // (or 'needs-you' when its run limit comes first) and its run card in the
 // conversation the routine reports to was counted as owed beside the approval
 // card itself. These run the real projection against real rows. The rule is
-// applied when counting and listing only: the stored layout stays 4.
+// applied when counting and listing; question classification uses layout 5.
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -163,18 +163,18 @@ function walk(db: DatabaseSync, query: InboxQuery, size: number): string[] {
   return out;
 }
 
-it("1. the layout stays 4: the inbox objects are the 1.0.2 objects, and nothing is named _5", () => {
+it("1. layout 5 matches the question-aware inbox schema, and nothing is named _4", () => {
   const db = fixture();
-  expect(db.prepare("SELECT cursor FROM inbox_projection_state WHERE name='layout'").get()).toEqual({ cursor: 4 });
-  expect(db.prepare("SELECT name FROM sqlite_schema WHERE name LIKE '%\\_5' ESCAPE '\\'").all()).toEqual([]);
+  expect(db.prepare("SELECT cursor FROM inbox_projection_state WHERE name='layout'").get()).toEqual({ cursor: 5 });
+  expect(db.prepare("SELECT name FROM sqlite_schema WHERE name LIKE '%\\_4' ESCAPE '\\'").all()).toEqual([]);
   type Obj = { type: string; name: string; tbl_name: string; sql: string | null };
   const fold = (rows: Obj[]) => rows.filter(isInboxProjectionObject).map(row => [row.type, row.name, row.tbl_name, (row.sql ?? "").replace(/\s+/g, " ").trim()].join("|")).sort();
-  const fresh102 = (JSON.parse(readFileSync(join(import.meta.dirname, "testing", "schema-1.0.2-fresh.json"), "utf8")) as { objects: Obj[] }).objects;
+  const expectedV5 = (JSON.parse(readFileSync(join(import.meta.dirname, "testing", "inbox-v5-schema.json"), "utf8")) as { objects: Obj[] }).objects;
   const ours = db.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema").all() as unknown as Obj[];
-  expect(fold(ours)).toEqual(fold(fresh102));
+  expect(fold(ours)).toEqual(fold(expectedV5));
 });
 
-it("2. a filled layout 4 file reopens with no retire and no refill", () => {
+it("2. a filled layout 5 file reopens with no retire and no refill", () => {
   const first = fixture();
   const file = (first.prepare("PRAGMA database_list").get() as { file: string }).file;
   put(first, "routine-run", question("q", "req-q"));
@@ -183,7 +183,7 @@ it("2. a filled layout 4 file reopens with no retire and no refill", () => {
   fillInboxProjection(first);
   expect(inboxProjectionReady(first)).toBe(true);
   const markers = first.prepare("SELECT name,done,cursor FROM inbox_projection_state ORDER BY name").all();
-  expect(markers).toContainEqual({ name: "layout", done: expect.anything(), cursor: 4 });
+  expect(markers).toContainEqual({ name: "layout", done: expect.anything(), cursor: 5 });
   expect(markers.find(row => (row as { name: string }).name === "inbox")).toMatchObject({ done: 1 });
   const items = first.prepare("SELECT source_key, rowid FROM inbox_items ORDER BY source_key").all();
   expect(items.length).toBe(52);
@@ -394,11 +394,11 @@ it("8. query plans: the correction read walks the decisions partial index; the p
   const correction = seen.find(sql => sql.includes("GROUP BY thread_id, live, snoozed_until"))!;
   const lines = plan(correction).filter(line => line.includes("inbox_items"));
   expect(lines.length).toBeGreaterThan(0);
-  for (const line of lines) expect(line).toMatch(/inbox_items USING (COVERING )?INDEX inbox_items_v_decisions_4/);
+  for (const line of lines) expect(line).toMatch(/inbox_items USING (COVERING )?INDEX inbox_items_v_decisions_5/);
   const pageSql = seen.find(sql => sql.includes("LIMIT ? OFFSET ?"))!;
   const pageLines = plan(pageSql).filter(line => / inbox_items( |$)/.test(line) && !line.includes("json_each"));
   expect(pageLines.length).toBeGreaterThan(0);
-  for (const line of pageLines) expect(line).toMatch(/inbox_items USING (COVERING )?INDEX inbox_items_l_decisions_4/);
+  for (const line of pageLines) expect(line).toMatch(/inbox_items USING (COVERING )?INDEX inbox_items_l_decisions_5/);
 });
 
 it("10. a project room across a restart, from the state the restart path leaves on disk", () => {

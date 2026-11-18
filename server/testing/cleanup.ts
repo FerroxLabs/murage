@@ -144,6 +144,13 @@ function admit(dir: string): { path: string } {
     return assertSafeToWipe(dir);
   } catch (error) {
     if (!(error instanceof SafeWipeRefused) || !/not under the OS temp directory/.test(error.message)) throw error;
+    // server/testing/setup.ts moves TMPDIR into a per-worker folder; a folder made directly under the
+    // real OS temp (short socket paths) is still OS temp, with every other safe-wipe rule unchanged.
+    const osTmpdir = (globalThis as Record<symbol, unknown>)[Symbol.for("murage.test.osTmpdir")];
+    if (typeof osTmpdir === "string" && osTmpdir) {
+      try { return assertSafeToWipe(dir, { tmpdir: osTmpdir }); }
+      catch (retry) { if (!(retry instanceof SafeWipeRefused) || !/not under the OS temp directory/.test(retry.message)) throw retry; }
+    }
     return assertSafeToWipe(dir, { within: process.cwd() });
   }
 }

@@ -1,3 +1,4 @@
+import { createChatsReaderAuthority } from "../../shared/chats-reader-proof.ts";
 // What a paired device is allowed to ask for.
 //
 // The default is deny, and that direction is the whole point: the sidecar
@@ -49,6 +50,8 @@ export interface RouteRequest {
   method: string;
   /** Whether the credential on the request resolved to a paired device. */
   authenticated: boolean;
+  /** Browser session may read the chats index (demo sessions never may). Omission fails closed. */
+  chatsReader?: boolean;
   /** Which door it came in at. No default: every caller states it. */
   surface: Surface;
 }
@@ -108,10 +111,21 @@ export function callSourceHeaders(method: string, path: string, value: unknown):
   return isCallSourceRoute(method, path) && typeof value === "string" && /^[\w-]{1,64}$/.test(value) ? { "x-murage-call-id": value } : {};
 }
 
+/** L8 receipt reads and explicit owner actions. The dispatcher checks the
+ * exact conversation again; the proxy's path match never grants that subject. */
+const TURN_STATE_ROUTES = [
+  { method: "GET", path: /^\/api\/bots\/[\w-]+\/turn-state$/ },
+  { method: "POST", path: /^\/api\/(?:bots|groups)\/[\w-]+\/send-actions$/ },
+  { method: "DELETE", path: /^\/api\/(?:bots|groups)\/[\w-]+\/queue\/[\w-]+$/ },
+] as const;
+const turnStateProof = (method: string, path: string) =>
+  TURN_STATE_ROUTES.some(route => route.method === method && route.path.test(path));
+
 /** Routes the harness answers only when the sidecar proves it forwarded them:
  *  the Inbox (C2), a call's two routes (C9), an image upload, and presence. */
 export function needsLaunchProof(method: string, path: string): boolean {
   return (
+    turnStateProof(method, path) ||
     isInboxRoute(method, path) ||
     (method === "POST" && CALL_ROUTE.test(path)) ||
     isImageUpload(method, path) ||
@@ -146,6 +160,8 @@ export const OWNER_VOICE_ROUTES = [
  * the owner's relay. A paired
  * device is the owner, so the door vouches for these too. */
 export const OWNER_DECISION_ROUTES = [
+  { method: "GET", path: /^\/api\/memory\/learning-usage$/ },
+  ...TURN_STATE_ROUTES,
   // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
   { method: "GET", path: /^\/api\/terms$/ },
   { method: "POST", path: /^\/api\/terms\/accept$/ },
@@ -272,6 +288,25 @@ export function browserProofHeaders(method: string, path: string, token: string 
   return usable && OWNER_BROWSER_ONLY_ROUTES.some((route) => route.method === method && route.path.test(path)) ? { "x-murage-companion-token": token } : {};
 }
 
+/** COMPANION-CHATS-1019: a read capability only, separate from owner-acting proof. */
+export const BROWSER_CHATS_READS = [
+  { method: "GET", path: /^\/api\/chats$/ },
+  { method: "GET", path: /^\/api\/search$/ },
+] as const;
+export function chatsReaderHeaders(method: string, path: string, token: string | undefined): Record<string, string> {
+  const usable = typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
+  return usable && (BROWSER_CHATS_READS.some(route => route.method === method && route.path.test(path)) || method === "GET" && path === "/api/events")
+    ? { "x-murage-chats-reader": createChatsReaderAuthority(token).mint()! } : {};
+}
+
+/** Both doors use the harness's URLSearchParams/Number parsing, including first-value semantics. */
+export function chatsSearchBounded(search: string | undefined): boolean {
+  const params = new URLSearchParams(search);
+  const q = params.get("q")?.trim() ?? "";
+  const limit = Number(params.get("limit") ?? "40");
+  return params.get("view") === "chats" && q.length >= 3 && q.length <= 500 && Number.isInteger(limit) && limit >= 1 && limit <= 40;
+}
+
 /** The device door's launch proof: everything `launchProofHeaders` adds,
  * plus the owner's reads above. */
 export function deviceProofHeaders(method: string, path: string, token: string | undefined): Record<string, string> {
@@ -301,6 +336,8 @@ export function isRoutineWrite(method: string, path: string): boolean {
  * fails to match and is denied rather than forwarded — the failure mode of
  * a strict pattern is a closed door, which is the one to have. */
 const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  { method: "GET", path: /^\/api\/memory\/learning-usage$/ },
+  ...TURN_STATE_ROUTES,
   ...CALL_SOURCE_ROUTES.map(path => ({ method: "POST", path })),
   // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
   { method: "GET", path: /^\/api\/terms$/ },
@@ -356,7 +393,7 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // the older tasks the roster window leaves out: a page of them, one by its thread, and whose a thread is
   { method: "GET", path: /^\/api\/(?:bots|groups)\/[\w-]+\/tasks(?:\/[\w-]+)?$/ },
   // All chats on the paired phone: a page of the owner's chats from the task records, titles and times only (no transcript); the harness lists
-  // what the phone's sidebar shows. The browser door does not get it.
+  // what the phone's sidebar shows. The browser has a separate, chats-only capability below.
   { method: "GET", path: /^\/api\/chats$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/owner$/ },
   // Paired-safe profile subset. The harness route itself rejects fields
@@ -553,10 +590,13 @@ export const BROWSER_DENIED: ReadonlyArray<{ method: string; path: RegExp }> = [
  * Plain `GET /api/search` stays absent on both surfaces. The harness scopes
  * it to visible threads for any non-desktop surface
  * (`server/index.ts:6350-6351`), which fixes the leak, but nothing yet bounds
- * the query — `?q=e` against a LIKE scan is still a bulk read of every
- * visible transcript dressed as a search. Adding it wants the query bound
- * from plan-security §5 first. */
+ * plain query. Both doors admit only bounded `view=chats` searches in
+ * denyReason; the browser additionally requires a non-demo session. */
 const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  { method: "GET", path: /^\/api\/memory\/learning-usage$/ },
+  ...TURN_STATE_ROUTES,
+  // COMPANION-CHATS-1019: eligibility and page bound checked before this allowlist.
+  { method: "GET", path: /^\/api\/chats$/ },
   ...CALL_SOURCE_ROUTES.map(path => ({ method: "POST", path })),
   // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
   { method: "GET", path: /^\/api\/terms$/ },
@@ -770,7 +810,7 @@ const EXPLAINED: ReadonlyArray<{ path: RegExp; error: string }> = [
  * is what keeps a stolen token from mapping the API. An allowlist rather than
  * a blocklist is the property this whole module exists for, and the one that
  * quietly stopped being true once before. */
-export function denyReason({ path, method, authenticated, surface, search }: RouteRequest): Denial | null {
+export function denyReason({ path, method, authenticated, surface, search, chatsReader }: RouteRequest): Denial | null {
   // The execution routes, refused before anything can allow them. First, so
   // that no present or future entry in BROWSER_ALLOWED can reach them.
   if (surface === "browser" && BROWSER_DENIED.some((r) => r.method === method && r.path.test(path))) {
@@ -796,12 +836,13 @@ export function denyReason({ path, method, authenticated, surface, search }: Rou
       : { status: 401, error: "pair this device from Phone settings in Murage on your computer" };
   }
 
-  if (surface === "device" && method === "GET" && path === "/api/search") {
-    const params = new URLSearchParams(search);
-    const q = params.get("q")?.trim() ?? "";
-    const limit = Number(params.get("limit") ?? "40");
-    if (params.get("view") === "chats" && q.length >= 3 && q.length <= 500 && Number.isInteger(limit) && limit >= 1 && limit <= 40) return null;
+  if (surface === "browser" && BROWSER_CHATS_READS.some(route => route.method === method && route.path.test(path))) {
+    const limit = Number(new URLSearchParams(search).get("limit") ?? "50"); // CHAT_PAGE_SIZE
+    if (chatsReader !== true || path === "/api/chats" && (!Number.isInteger(limit) || limit < 1 || limit > 50)) {
+      return { status: 404, error: `no route: ${method} ${path}` };
+    }
   }
+  if ((surface === "device" || surface === "browser") && method === "GET" && path === "/api/search" && chatsSearchBounded(search)) return null;
   const allowed = surface === "browser" ? BROWSER_ALLOWED : DEVICE_ALLOWED;
   if (allowed.some((route) => route.method === method && route.path.test(path))) return null;
 

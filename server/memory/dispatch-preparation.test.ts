@@ -1,3 +1,5 @@
+// MAIN RULING RULINGS-1019-RECALL-1116 R7-10.
+import { checkpointHead, checkpointSnapshot, assertCheckpointRetained } from './testing/checkpoint-head-fixture.ts';
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
@@ -11,20 +13,24 @@ import { captureSource } from "./capture.ts";
 import { captureWork } from "./chunks.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
-import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { buildMemoryBundle, supersededThreadCheckpoint } from "./bundle.ts";
 import { threadCheckpointId } from "./checkpoints.ts";
 import { buildMemoryBundleAfterReset, MemoryDispatchReceipt } from "./dispatch.ts";
 import { forgetMemory } from "./forget.ts";
 import { drainRevokeMarker, INLINE_REVOCATION } from "./memory-revocation.ts";
-import { archiveMemoryRecord } from "./retention.ts";
+import { archiveMemoryRecord, restoreArchivedMemoryRecord } from "./retention.ts";
 import { continuationMemoryRevoked, filterMemoryReplay } from "./disclosures.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import type { MemoryAccess } from "./policy.ts";
+import { startLiveSession } from "./testing/live-session-fixture.ts";
 import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
+import { testThreadNo, WritetimeFixture } from "./testing/writetime-fixture.ts";
 // 1.0.2: the receipt binds its session through the legacy session-root row here (no index.ts turn writes the write-time session row), which the read-time judge reads.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -38,9 +44,11 @@ function fixture(){
   const token=registry.mint({botId:"bot",threadId,generation,depth:0,kind:"memory",skillAuthoring:false});
   return {registry,access:memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster)};
 }
+// A stored message always has its write-time line row in a running server; the fixtures store messages directly, so they add the row the retained-session proof reads.
+function lineRow(thread:string,messageId:string){const db=database();db.prepare("INSERT INTO memory_line_lineage(thread_no,lsn,message_id,turn_lsn,mem_lsn,footprint) VALUES(?,(SELECT coalesce(max(lsn),0)+1 FROM memory_line_lineage),?,NULL,NULL,NULL)").run(testThreadNo(db,thread),messageId);}
 function capture(text:string){
   const sourceId=`message:${threadId}:${randomUUID()}`;
-  { const anchorId = randomUUID(); storeAnchorMessage(database(), threadId, anchorId, text); captureSource(database(),{id:sourceId,threadId,messageId:anchorId,kind:"text",speaker:"owner",outcome:"recorded",text}); }
+  { const anchorId = randomUUID(); storeAnchorMessage(database(), threadId, anchorId, text); lineRow(threadId,anchorId); captureSource(database(),{id:sourceId,threadId,messageId:anchorId,kind:"text",speaker:"owner",outcome:"recorded",text}); }
   const work=claimMemoryJob("dispatch-reset-fixture");
   if(!work)throw Error("No actual capture job");
   publishMemoryWork(work,"dispatch-reset-fixture",captureWork(work));
@@ -50,7 +58,7 @@ function checkpoint(text:string){
   const {sourceId,jobId}=capture(text);
   const result=refreshMemoryCheckpoint(jobId);
   if(result.status!=="updated")throw Error(`Expected actual checkpoint publication: ${JSON.stringify(result)}`);
-  return {sourceId,id:result.checkpointId,version:result.version};
+  return {sourceId,family:threadCheckpointId(ensureScope("conversation",threadId),threadId),id:result.checkpointId,version:result.version};
 }
 
 // Until Q1-T5 §4.1 a selected checkpoint that rolled over before receipt
@@ -60,10 +68,15 @@ function checkpoint(text:string){
 // receipt prepares the version it selected and discloses exactly that.
 it("prepares a bundle whose own-thread checkpoint rolled over during reset as stale, not revoked",async()=>{
   const f=fixture(),first=checkpoint("Verified initial result.");
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  const saved=checkpointSnapshot(threadId);
   const before=await buildMemoryBundle("result",f.access,bridge, {allowance: LineageAllowance.tool()});
   expect(before.recordVersions).toContainEqual({id:first.id,version:first.version});
-  await Promise.resolve().then(()=>checkpoint("Verified later result."));
-  expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id,first.version)?.state).toBe("archived");
+  const next=await Promise.resolve().then(()=>checkpoint("Verified later result."));
+  // Q11: the rollover publishes a new member of the family, never a new version of the selected row.
+  expect(next).toMatchObject({id:`${first.family}:2`,version:1});
+  expect(next).toMatchObject(checkpointHead(threadId));
+  assertCheckpointRetained(saved);
   const receipt=new MemoryDispatchReceipt(before,f.access,"fixture");
   expect(()=>receipt.assertCurrent()).not.toThrow();
   expect(JSON.parse(String(database().prepare("SELECT record_versions FROM memory_disclosures WHERE bundle_id=?").get(before.bundleId)?.record_versions))).toContainEqual({id:first.id,version:first.version});
@@ -76,10 +89,13 @@ it("prepares a bundle whose own-thread checkpoint rolled over during reset as st
 // 36317693740, group-member-checkpoint-roll-api on every OS).
 it("keeps the thread's own checkpoint that rolls while recall runs",async()=>{
   const f=fixture(),first=checkpoint("Verified initial result.");
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  const saved=checkpointSnapshot(threadId);
   const rolling={search:async()=>{checkpoint("The turn's own prompt, captured during recall.");return {hits:[],vectorRows:0};}};
   const bundle=await buildMemoryBundle("result",f.access,rolling, {allowance: LineageAllowance.tool()});
-  expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id,first.version)?.state).toBe("archived");
-  expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
+  assertCheckpointRetained(saved);
+  expect(bundle.recordVersions).toContainEqual(checkpointHead(threadId));
+  expect(checkpointHead(threadId).id).not.toBe(first.id);
   expect(bundle.degradedReason).toBeUndefined();
   // Any other loss during recall is still dropped: an archived version with no successor.
   const g=fixture(),second=checkpoint("Another result.");
@@ -95,21 +111,35 @@ it("treats the thread's own checkpoint superseded inside the dispatch window as 
   expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
   const receipt=new MemoryDispatchReceipt(bundle,f.access,"fixture");
   receipt.assertCurrent();
+  // MAIN Q7 (a), trainred-b5-cj56: publication is append-only (MAIN RULING 1115-RECALL-R7), so the superseded head is retained whole and
+  // is stale by family-head succession, not archived
+  const saved=checkpointSnapshot(threadId);
   // The turn's own prompt capture completes in the worker while the provider is still starting.
-  expect(checkpoint("The turn's own prompt, captured meanwhile.")).toMatchObject({id:first.id,version:first.version+1});
-  expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id,first.version)?.state).toBe("archived");
+  const savedFirst=checkpointSnapshot(threadId);
+  const nextHead = checkpoint("The turn's own prompt, captured meanwhile.");
+  expect(nextHead).toMatchObject({id:`${first.family}:2`,version:1});
+  const head = database().prepare("SELECT * FROM memory_checkpoint_heads WHERE thread_id=?").get(threadId)!;
+  expect(nextHead).toMatchObject({id:head.record_id,version:1});
+  expect(nextHead.id).toBe(`${head.family_id}:${head.sequence}`);
+  expect(head.family_id).toBe(threadCheckpointId(String(database().prepare("SELECT id FROM memory_scopes WHERE kind='conversation' AND owner_key=?").get(threadId)!.id),threadId));
+  expect(database().prepare("SELECT id,version FROM memory_records WHERE id=? AND version=?").get(first.id,first.version)).toEqual({id:first.id,version:first.version});
+  assertCheckpointRetained(savedFirst);
+  assertCheckpointRetained(saved);
+  expect(saved.ref).toEqual({id:first.id,version:first.version});
+  expect(supersededThreadCheckpoint(first.id,first.version,f.access)).toBe(true);
   expect(()=>receipt.assertCurrent()).not.toThrow();
   let stopped=false;
   const guarded=await guardTurnDispatch(Promise.resolve({turnId:"accepted-provider"}),()=>false,async()=>{stopped=true;},()=>receipt.accepted());
   expect(guarded).toEqual({value:{turnId:"accepted-provider"},cancelled:false});
   expect(stopped).toBe(false);
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
-  receipt.sessionStarted("native");receipt.output("reply-1");receipt.completed(true);
+  receipt.sessionStarted("native",true,startLiveSession(f.access,"fixture","native"));receipt.output("reply-1");receipt.completed(true);
   // index.ts stamps the session a fresh start opens (S6 rule 26); no index.ts turn runs here
   stampFreshSession(database(),threadId,"fixture","native");
+  new WritetimeFixture(database()).reply(threadId,"reply-1",Number(database().prepare("SELECT coalesce(max(lsn),0)+1 AS n FROM memory_line_lineage").get()!.n));
   // The reply's own capture rolls the checkpoint again; the next turn still
   // replays this reply and may resume the native session.
-  expect(checkpoint("The reply, captured.")).toMatchObject({id:first.id,version:first.version+2});
+  expect(checkpoint("The reply, captured.")).toMatchObject({id:`${first.family}:3`,version:1});
   const next=fixture();
   expect(filterMemoryReplay(LineageAllowance.tool(), threadId,[{id:"reply-1"}],next.access).map(message=>message.id)).toEqual(["reply-1"]);
   expect(continuationMemoryRevoked(LineageAllowance.tool(), threadId,"fixture","native",next.access)).toBe(false);
@@ -164,7 +194,10 @@ it("saves a checkpoint that lands in a forget's open window once the window clos
     const {jobId}=capture("After the forget.");
     expect(refreshMemoryCheckpoint(jobId)).toEqual({status:"deferred",reason:"evidence-checking"});
     expect(drainRevokeMarker(database()).pending).toBe(false);
-    expect(refreshMemoryCheckpoint(jobId)).toMatchObject({status:"updated",checkpointId:first.id});
+    // R7-10: append-only publication. The saved checkpoint is the family's next sequence at version 1, and the prior row is retained, not rewritten.
+    expect(refreshMemoryCheckpoint(jobId)).toMatchObject({status:"updated",checkpointId:`${first.family}:2`,version:1});
+    expect(checkpointHead(threadId).id).toBe(`${first.family}:2`);
+    expect(database().prepare("SELECT count(*) AS n FROM memory_records WHERE id=?").get(first.id)?.n).toBe(1);
   } finally { INLINE_REVOCATION.ms=inline; }
 });
 
@@ -185,7 +218,7 @@ it("discloses only the dispatched thread's own checkpoint, so a busy sibling rol
     const work=claimMemoryJob("dispatch-sibling-fixture");if(!work)throw Error("No actual capture job");
     publishMemoryWork(work,"dispatch-sibling-fixture",captureWork(work));
     const result=refreshMemoryCheckpoint(work.id);if(result.status!=="updated")throw Error(`Expected actual checkpoint publication: ${JSON.stringify(result)}`);
-    return {id:result.checkpointId,version:result.version};
+    return {family:threadCheckpointId(ensureScope("conversation",sibling),sibling),id:result.checkpointId,version:result.version};
   };
   const other=siblingCheckpoint("The sibling thread's working state.");
   const registry=new InternalCapabilities(),generation=registry.begin("bot",threadId);
@@ -196,7 +229,14 @@ it("discloses only the dispatched thread's own checkpoint, so a busy sibling rol
   expect(bundle.recordVersions.map(record=>record.id)).not.toContain(other.id);
   const receipt=new MemoryDispatchReceipt(bundle,access,"fixture");
   // The sibling keeps working while this turn waits and starts.
-  expect(siblingCheckpoint("The sibling moved on.")).toMatchObject({id:other.id,version:other.version+1});
+  const next = siblingCheckpoint("The sibling moved on.");
+  expect(next).toMatchObject({id:`${other.family}:2`,version:1});
+  const head = database().prepare("SELECT * FROM memory_checkpoint_heads WHERE thread_id=?").get(sibling)!;
+  expect(next).toMatchObject({id:head.record_id,version:1});
+  expect(next.id).toBe(`${head.family_id}:${head.sequence}`);
+  expect(head.family_id).toBe(threadCheckpointId(String(database().prepare("SELECT id FROM memory_scopes WHERE kind='conversation' AND owner_key=?").get(sibling)!.id),sibling));
+  expect(head.family_id).not.toBe(database().prepare("SELECT family_id FROM memory_checkpoint_heads WHERE thread_id=?").get(threadId)!.family_id);
+  expect(database().prepare("SELECT id,version FROM memory_records WHERE id=? AND version=?").get(other.id,other.version)).toEqual({id:other.id,version:other.version});
   expect(()=>receipt.accepted()).not.toThrow();
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
 });
@@ -214,7 +254,7 @@ it("keeps a sibling thread's checkpoint out of recall too, even when it matches 
     const work=claimMemoryJob("dispatch-sibling-recall-fixture");if(!work)throw Error("No actual capture job");
     publishMemoryWork(work,"dispatch-sibling-recall-fixture",captureWork(work));
     const result=refreshMemoryCheckpoint(work.id);if(result.status!=="updated")throw Error(`Expected actual checkpoint publication: ${JSON.stringify(result)}`);
-    return {id:result.checkpointId,version:result.version};
+    return {family:threadCheckpointId(ensureScope("conversation",sibling),sibling),id:result.checkpointId,version:result.version};
   };
   const other=siblingCheckpoint("The sibling thread's result is its working state.");
   const registry=new InternalCapabilities(),generation=registry.begin("bot",threadId);
@@ -224,7 +264,14 @@ it("keeps a sibling thread's checkpoint out of recall too, even when it matches 
   expect(bundle.recordVersions).toContainEqual({id:own.id,version:own.version});
   expect(bundle.recordVersions.map(record=>record.id)).not.toContain(other.id);
   const receipt=new MemoryDispatchReceipt(bundle,access,"fixture");
-  expect(siblingCheckpoint("The sibling moved on with another result.")).toMatchObject({id:other.id,version:other.version+1});
+  const next = siblingCheckpoint("The sibling moved on with another result.");
+  expect(next).toMatchObject({id:`${other.family}:2`,version:1});
+  const head = database().prepare("SELECT * FROM memory_checkpoint_heads WHERE thread_id=?").get(sibling)!;
+  expect(next).toMatchObject({id:head.record_id,version:1});
+  expect(next.id).toBe(`${head.family_id}:${head.sequence}`);
+  expect(head.family_id).toBe(threadCheckpointId(String(database().prepare("SELECT id FROM memory_scopes WHERE kind='conversation' AND owner_key=?").get(sibling)!.id),sibling));
+  expect(head.family_id).not.toBe(database().prepare("SELECT family_id FROM memory_checkpoint_heads WHERE thread_id=?").get(threadId)!.family_id);
+  expect(database().prepare("SELECT id,version FROM memory_records WHERE id=? AND version=?").get(other.id,other.version)).toEqual({id:other.id,version:other.version});
   expect(()=>receipt.accepted()).not.toThrow();
 });
 
@@ -257,26 +304,40 @@ function roomFixture(botId:string,thread:string){
 }
 function roomCheckpoint(thread:string,text:string,speaker="owner"){
   const sourceId=`message:${thread}:${randomUUID()}`;
-  { const anchorId = randomUUID(); storeAnchorMessage(database(), thread, anchorId, text); captureSource(database(),{id:sourceId,threadId:thread,messageId:anchorId,kind:"text",speaker,outcome:"recorded",text}); }
+  { const anchorId = randomUUID(); storeAnchorMessage(database(), thread, anchorId, text); lineRow(thread,anchorId); captureSource(database(),{id:sourceId,threadId:thread,messageId:anchorId,kind:"text",speaker,outcome:"recorded",text}); }
   const work=claimMemoryJob("dispatch-reset-fixture");
   if(!work)throw Error("No actual capture job");
   publishMemoryWork(work,"dispatch-reset-fixture",captureWork(work));
   const result=refreshMemoryCheckpoint(work.id);
   if(result.status!=="updated")throw Error(`Expected actual checkpoint publication: ${JSON.stringify(result)}`);
-  return {sourceId,id:result.checkpointId,version:result.version};
+  return {sourceId,family:threadCheckpointId(String(database().prepare("SELECT scope_id FROM memory_sources WHERE id=?").get(sourceId)!.scope_id),thread),id:result.checkpointId,version:result.version};
 }
 
 it("treats the room checkpoint superseded inside a member's dispatch window as stale: the member turn runs and its reply stays replayable for the next member",async()=>{
   reconcileMemoryRoster(roomRoster);
   const member=roomFixture("bot",roomThread),first=roomCheckpoint(roomThread,"Room evidence.");
-  expect(first.id).toBe(threadCheckpointId(String(database().prepare("SELECT id FROM memory_scopes WHERE kind='conversation' AND owner_key=?").get(roomThread)!.id),roomThread));
+  const head = database().prepare("SELECT * FROM memory_checkpoint_heads WHERE thread_id=?").get(roomThread)!;
+  expect(head.family_id).toBe(threadCheckpointId(String(database().prepare("SELECT id FROM memory_scopes WHERE kind='conversation' AND owner_key=?").get(roomThread)!.id),roomThread));
+  expect(first).toMatchObject({id:head.record_id,version:1});
+  expect(first.id).toBe(`${threadCheckpointId(ensureScope("conversation",roomThread),roomThread)}:1`);
+  expect(first.id).toBe(`${head.family_id}:${head.sequence}`);
   const bundle=await buildMemoryBundleAfterReset("evidence",member.access,bridge,async()=>{}, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
   const receipt=new MemoryDispatchReceipt(bundle,member.access,"fixture");
   receipt.assertCurrent();
+  // MAIN Q7 (a), trainred-b5-cj56: the superseded room head is retained whole (append-only publication) and stale by succession
+  const saved=checkpointSnapshot(roomThread);
   // The member's own prompt capture completes in the worker while the provider is still starting.
-  expect(roomCheckpoint(roomThread,"The member's prompt, captured meanwhile.")).toMatchObject({id:first.id,version:first.version+1});
-  expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id,first.version)?.state).toBe("archived");
+  const savedRoomFirst=checkpointSnapshot(roomThread);
+  const nextHead = roomCheckpoint(roomThread,"The member's prompt, captured meanwhile.");
+  expect(nextHead).toMatchObject({id:`${first.family}:2`,version:1});
+  const rolled = database().prepare("SELECT * FROM memory_checkpoint_heads WHERE thread_id=?").get(roomThread)!;
+  expect(nextHead).toMatchObject({id:rolled.record_id,version:1});
+  expect(nextHead.id).toBe(`${rolled.family_id}:${rolled.sequence}`);
+  expect(rolled.family_id).toBe(head.family_id);
+  assertCheckpointRetained(savedRoomFirst);
+  assertCheckpointRetained(saved);
+  expect(saved.ref).toEqual({id:first.id,version:first.version});
   expect(supersededThreadCheckpoint(first.id,first.version,member.access)).toBe(true);
   expect(()=>receipt.assertCurrent()).not.toThrow();
   let stopped=false;
@@ -284,12 +345,13 @@ it("treats the room checkpoint superseded inside a member's dispatch window as s
   expect(guarded).toEqual({value:{turnId:"accepted-provider"},cancelled:false});
   expect(stopped).toBe(false);
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
-  receipt.sessionStarted("native");receipt.output("member-reply");receipt.completed(true);
+  receipt.sessionStarted("native",true,startLiveSession(member.access,"fixture","native"));receipt.output("member-reply");receipt.completed(true);
   // index.ts stamps the session a fresh start opens (S6 rule 26); no index.ts turn runs here
   stampFreshSession(database(),roomThread,"fixture","native");
+  new WritetimeFixture(database()).reply(roomThread,"member-reply",Number(database().prepare("SELECT coalesce(max(lsn),0)+1 AS n FROM memory_line_lineage").get()!.n));
   // The reply's capture rolls the room checkpoint again; the next turn in the
   // room — by this member or by the other one — still replays that reply.
-  expect(roomCheckpoint(roomThread,"The member's reply, captured.","bot")).toMatchObject({id:first.id,version:first.version+2});
+  expect(roomCheckpoint(roomThread,"The member's reply, captured.","bot")).toMatchObject({id:`${first.family}:3`,version:1});
   for(const botId of ["bot","other"]){
     const next=roomFixture(botId,roomThread);
     expect(filterMemoryReplay(LineageAllowance.tool(), roomThread,[{id:"member-reply"}],next.access).map(message=>message.id)).toEqual(["member-reply"]);
@@ -328,9 +390,10 @@ it("recognizes exactly the dispatched room's checkpoint for a member turn",()=>{
 
 it("keeps owner revocation of a disclosed room checkpoint fail-closed for the member turn",async()=>{
   reconcileMemoryRoster(roomRoster);
-  const prepared=async(text:string)=>{
-    const member=roomFixture("bot",roomThread),first=roomCheckpoint(roomThread,text),bundle=await buildMemoryBundle("evidence",member.access,bridge, {allowance: LineageAllowance.tool()});
-    expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  const prepared=async(text:string,thread:string=roomThread)=>{
+    const member=roomFixture("bot",thread),first=roomCheckpoint(thread,text),bundle=await buildMemoryBundle("evidence",member.access,bridge, {allowance: LineageAllowance.tool()});
+    expect(bundle.recordVersions).toContainEqual(checkpointHead(thread));
     return {first,receipt:new MemoryDispatchReceipt(bundle,member.access,"fixture")};
   };
   // An owner forget of the room evidence moves the deletion epoch.
@@ -345,22 +408,27 @@ it("keeps owner revocation of a disclosed room checkpoint fail-closed for the me
     archiveMemoryRecord(ownerMemoryTicket(),first.id,first.version);
     expect(()=>receipt.assertCurrent()).toThrow("MEMORY_RECORD_UNAVAILABLE");
     expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");
-    // An owner archive opens the same window as a forget.
-    drainRevokeMarker(database());}
+    // Restore through the owner action before the independent no-successor scenario.
+    drainRevokeMarker(database());
+    restoreArchivedMemoryRecord(ownerMemoryTicket(),first.id,first.version);}
   // Archived without a successor is not supersession.
-  {const {first,receipt}=await prepared("Archived room checkpoint, no successor.");
+  {const {first,receipt}=await prepared("Archived room checkpoint, no successor.",roomTaskThread);
     database().prepare("UPDATE memory_records SET state='archived' WHERE id=? AND version=?").run(first.id,first.version);
     expect(()=>receipt.assertCurrent()).toThrow("MEMORY_RECORD_UNAVAILABLE");
     expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
 });
 
 it("builds after checkpoint rollover during reset and prepares the current version without a provider retry",async()=>{
-  const f=fixture(),first=checkpoint("Verified initial result.");let resets=0;
+  const f=fixture(),first=checkpoint("Verified initial result.");
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  const saved=checkpointSnapshot(threadId);let resets=0;
   const bundle=await buildMemoryBundleAfterReset("result",f.access,bridge,async()=>{
     resets++;await Promise.resolve();checkpoint("Verified later result.");
   }, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(resets).toBe(1);
-  expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version+1});
+  assertCheckpointRetained(saved);
+  expect(bundle.recordVersions).toContainEqual(checkpointHead(threadId));
+  expect(checkpointHead(threadId)).not.toEqual(first);
   expect(bundle.recordVersions).not.toContainEqual({id:first.id,version:first.version});
   const receipt=new MemoryDispatchReceipt(bundle,f.access,"fixture");
   expect(()=>receipt.assertCurrent()).not.toThrow();
@@ -422,7 +490,7 @@ it("filters the transcript of a resumed direct turn before dispatch, not only a 
   expect(resumed).toBeLessThan(bundle);
   const branch=direct.slice(resumed,bundle);
   expect(branch).toContain("filterDirectReplay(allowance,threadId,activeMessages,access,skipTranscript,replayOptions)");
-  expect(branch).toMatch(/transcript=replayLines\(botViewer\(bot\.id\),activeMessages,replayed,/);
+  expect(branch).toMatch(/transcript=await replayLinesInSlices\(botViewer\(bot\.id\),activeMessages,replayed,/);
 });
 
 it("retires an accepted provider and awaits interruption when true forgetting invalidates its memory receipt",async()=>{
@@ -443,4 +511,48 @@ it("retires an accepted provider and awaits interruption when true forgetting in
   expect(retired.has("accepted-provider")).toBe(true);expect(released).toBe(false);
   finishStop();await failure;expect(released).toBe(true);
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).not.toBe("delivered");
+});
+
+// A thread's own checkpoint roll is not a revocation, but everything the owner can withdraw still revokes the same live session.
+// A running server stores each message with its write-time line row and opens a native session through its live birth; the fixtures do both.
+async function rolledSession(thread:string,access:()=>MemoryAccess,publish:(text:string)=>{sourceId:string;id:string;version:number},reply:string){
+  const held=access(),first=publish("Evidence."),bundle=await buildMemoryBundleAfterReset("evidence",held,bridge,async()=>{}, {allowance: LineageAllowance.tool(1_000_000_000)});
+  expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
+  const receipt=new MemoryDispatchReceipt(bundle,held,"fixture");
+  receipt.assertCurrent();publish("The turn's own prompt, captured meanwhile.");receipt.accepted();
+  receipt.sessionStarted("native",true,startLiveSession(held,"fixture","native"));receipt.output(reply);receipt.completed(true);
+  new WritetimeFixture(database()).reply(thread,reply,Number(database().prepare("SELECT coalesce(max(lsn),0)+1 AS n FROM memory_line_lineage").get()!.n));
+  publish("The reply, captured.");
+  const revoked=()=>continuationMemoryRevoked(LineageAllowance.tool(),thread,"fixture","native",access());
+  expect(revoked()).toBe(false);
+  return {first,bundle,revoked};
+}
+const directSession=()=>rolledSession(threadId,()=>fixture().access,checkpoint,"reply-1");
+const roomSession=(botId="bot")=>rolledSession(roomThread,()=>roomFixture(botId,roomThread).access,text=>roomCheckpoint(roomThread,text,"bot"),"member-reply");
+it("still revokes the session after its own checkpoint rolled when the owner forgets the evidence",async()=>{
+  const {first,revoked}=await directSession();
+  forgetMemory(ownerMemoryTicket(),{kind:"source",id:first.sourceId,revision:1});drainRevokeMarker(database());
+  expect(revoked()).toBe(true);
+});
+it("still revokes the session after its own checkpoint rolled when the live head is archived with no successor",async()=>{
+  const {revoked}=await directSession();
+  const head=checkpointHead(threadId);
+  archiveMemoryRecord(ownerMemoryTicket(),head.id,head.version);
+  expect(revoked()).toBe(true);
+});
+it("still revokes a room member session that cites another room's rolled checkpoint",async()=>{
+  reconcileMemoryRoster(roomRoster);
+  const {bundle,revoked}=await roomSession();
+  const elsewhere=roomCheckpoint(otherRoomThread,"Other room evidence.");roomCheckpoint(otherRoomThread,"Roll.");
+  // A second receipt of the same live session, as the session's next turn would record it, citing the other room's version.
+  const columns=(database().prepare("PRAGMA table_info(memory_disclosures)").all() as Array<{name:string}>).map(column=>column.name).filter(name=>name!=="rowid");
+  const values=columns.map(name=>name==="bundle_id"?"?1":name==="record_versions"?"?2":name);
+  database().prepare(`INSERT INTO memory_disclosures(${columns.join(",")}) SELECT ${values.join(",")} FROM memory_disclosures WHERE bundle_id=?3`).run(randomUUID(),JSON.stringify([{id:elsewhere.id,version:elsewhere.version}]),bundle.bundleId);
+  expect(revoked()).toBe(true);
+});
+it("never treats the live head of the thread's checkpoint family as superseded",async()=>{
+  const {first}=await directSession();
+  const head=checkpointHead(threadId),access=fixture().access;
+  expect(supersededThreadCheckpoint(first.id,first.version,access)).toBe(true);
+  expect(supersededThreadCheckpoint(head.id,head.version,access)).toBe(false);
 });

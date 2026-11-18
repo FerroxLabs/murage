@@ -64,6 +64,10 @@ export interface ServerSentinelOptions {
   /** Tests: no timers. */
   timers?: boolean;
   locate?: () => LocateResult;
+  /** A read-only start (a nearly full disk): nothing is published and the delivery ledger is never opened, so the start writes no health file. */
+  readOnly?: boolean;
+  /** The delivery ledger's generation is written by `beginDelivery()`, called after the database opened, not here: a start that dies at the open leaves the data dir as it found it. */
+  deferDelivery?: boolean;
 }
 
 export interface ServerSentinel {
@@ -71,6 +75,8 @@ export interface ServerSentinel {
   publisher: HealthPublisher | null;
   runtime: ProducerRuntime | null;
   delivery: HealthDelivery | null;
+  /** Opens the delivery ledger (a new owner generation). Once; a no-op when read-only. */
+  beginDelivery(): void;
   /** One delivery pass (the minute timer's body). */
   tick(): void;
   /** One statistics publication (the 15-minute timer's body). */
@@ -99,17 +105,18 @@ export function startServerSentinel(options: ServerSentinelOptions): ServerSenti
   let runtime: ProducerRuntime | null = null;
   let stats: StatsPublisher | null = null;
   let delivery: HealthDelivery | null = null;
+  let deliveryOpen = false;
   try {
     // The running server's data directory exists: one that does not resolve costs health coverage only.
     let canonical: string | null = null;
     try { canonical = realpathSync.native(options.dataDir); } catch { canonical = null; }
     installationId = canonical ? sentinelInstallationIdOf(canonical) : null;
-    if (installationId) {
+    if (installationId && !options.readOnly) {
       publisher = new HealthPublisher({ dataDir: options.dataDir, deferWhileCaptureActive: options.captureActive });
       runtime = startHealthProducer({ publisher, installationId });
       stats = new StatsPublisher({ publisher, installationId });
       delivery = new HealthDelivery({ dataDir: options.dataDir, installationId, now });
-      delivery.start();
+      if (!options.deferDelivery) { delivery.start(); deliveryOpen = true; }
     }
   } catch (error) {
     console.warn("health checks: setup did not finish; Murage runs as usual and Health reports waiting coverage", error instanceof Error ? error.name : "");
@@ -126,7 +133,7 @@ export function startServerSentinel(options: ServerSentinelOptions): ServerSenti
   let syncedRevision: number | null = null;
   let syncedAt = 0;
   const tick = () => {
-    if (!delivery || !installationId) return;
+    if (!delivery || !installationId || !deliveryOpen) return;
     try {
       const where = locate();
       if (!where.ok) return;
@@ -164,7 +171,9 @@ export function startServerSentinel(options: ServerSentinelOptions): ServerSenti
   }
 
   return {
-    installationId, publisher, runtime, delivery, tick, publishStats, locate,
+    installationId, publisher, runtime, delivery, tick,
+    beginDelivery() { if (!delivery || deliveryOpen) return; try { delivery.start(); deliveryOpen = true; } catch (error) { console.warn("health checks: delivery ledger did not open", error instanceof Error ? error.name : ""); } },
+    publishStats, locate,
     inbox(): HealthInbox {
       try {
         const where = locate();
@@ -174,7 +183,7 @@ export function startServerSentinel(options: ServerSentinelOptions): ServerSenti
         return inboxHealth(view ? "ready" : "waiting", view);
       } catch { return inboxHealth("unavailable", null); }
     },
-    digest(): HealthDigest | null { try { return delivery?.currentDigest() ?? null; } catch { return null; } },
+    digest(): HealthDigest | null { try { return deliveryOpen ? delivery?.currentDigest() ?? null : null; } catch { return null; } },
     async stop() {
       for (const timer of timers.splice(0)) { clearInterval(timer); clearTimeout(timer as unknown as ReturnType<typeof setTimeout>); }
       if (runtime) await stopHealthProducer(runtime);

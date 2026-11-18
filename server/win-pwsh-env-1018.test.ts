@@ -3,6 +3,9 @@
 //
 // WIN-PWSH-1018 H1 (M1): the Git Bash a Windows F12 record carries is found by the Claude driver's discovery (tool-discovery.ts), and
 // a generation that moves while it is being found makes the record stale (execEnvNow runs again, never returns the old record).
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fixturePlatformEnv } from "./testing/platform-fixtures.ts";
 import { describe, expect, it } from "vitest";
 import { attachGitBash, execEnvNow } from "./engine-env.ts";
 import { envGeneration, invalidateEnvCapture } from "./env-path.ts";
@@ -37,26 +40,31 @@ describe("WIN-PWSH-1018 H1: the F12 record's Git Bash", () => {
   it("a malformed gitBash is not trusted", () => {
     expect(isExecEnv({ ...record(), gitBash: 3 })).toBe(false);
   });
-  // the real pinned /bin/sh check, with a Windows-shaped discovery: POSIX only (on Windows the check is PowerShell's)
-  const hand = { env: { PATH: "/usr/bin:/bin", HOME: "/tmp", PAGER: "cat" }, absent: ["POSIXLY_CORRECT"], capture: "session" as const, ownerStartup: {}, pins: new Map() };
-  it.skipIf(process.platform === "win32")("execEnvNow runs again when the generation moves during discovery, and keeps the later record", async () => {
+  // Check the actual host shell, while keeping Git Bash discovery injected.
+  const windows = process.platform === "win32";
+  const cwd = windows ? tmpdir() : "/tmp";
+  const shell: readonly string[] = windows
+    ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-Command"]
+    : ["/bin/sh", "-c"];
+  const hand = { env: windows ? { ...fixturePlatformEnv(), PATH: process.env.PATH ?? "", HOME: cwd, USERPROFILE: cwd, PAGER: "cat" } as Record<string, string> : { PATH: "/usr/bin:/bin", HOME: "/tmp", PAGER: "cat" }, absent: ["POSIXLY_CORRECT"], capture: "session" as const, ownerStartup: {}, pins: new Map() };
+  it("execEnvNow runs again when the generation moves during discovery, and keeps the later record", async () => {
     let calls = 0;
-    const found = await execEnvNow("m1-retry", ["/bin/sh", "-c"], hand, "/tmp", { platform: "win32", discover: async () => { if (++calls === 1) invalidateEnvCapture("test: during discovery"); return "C:\\Program Files\\Git\\bin\\bash.exe"; } });
+    const found = await execEnvNow("m1-retry", shell, hand, cwd, { platform: "win32", discover: async () => { if (++calls === 1) invalidateEnvCapture("test: during discovery"); return "C:\\Program Files\\Git\\bin\\bash.exe"; } });
     expect(calls).toBe(2);
     expect(found).toMatchObject({ gitBash: "C:\\Program Files\\Git\\bin\\bash.exe" });
     expect(found.unread).toBeUndefined();
   });
-  it.skipIf(process.platform === "win32")("a generation that keeps moving during discovery ends as U20 changed-while-checked, never an old record", async () => {
+  it("a generation that keeps moving during discovery ends as U20 changed-while-checked, never an old record", async () => {
     let calls = 0;
-    const found = await execEnvNow("m1-exhaust", ["/bin/sh", "-c"], hand, "/tmp", { platform: "win32", discover: async () => { calls++; invalidateEnvCapture("test: during every discovery"); return "C:\\g\\bin\\bash.exe"; } });
+    const found = await execEnvNow("m1-exhaust", shell, hand, cwd, { platform: "win32", discover: async () => { calls++; invalidateEnvCapture("test: during every discovery"); return "C:\\g\\bin\\bash.exe"; } });
     expect(calls).toBe(4); // the first attempt and the three bounded reruns
     expect(found.env).toEqual({});
     expect(found.unread).toEqual({ code: "U20", cause: "the environment changed while it was being checked" });
     expect(found).not.toHaveProperty("gitBash");
   });
-  it.skipIf(process.platform === "win32")("discovery that finds nothing, or rejects, still returns the checked record without gitBash", async () => {
+  it("discovery that finds nothing, or rejects, still returns the checked record without gitBash", async () => {
     for (const discover of [async () => null, async () => { throw new Error("x"); }]) {
-      const found = await execEnvNow("m1-none", ["/bin/sh", "-c"], hand, "/tmp", { platform: "win32", discover });
+      const found = await execEnvNow("m1-none", shell, hand, cwd, { platform: "win32", discover });
       expect(found.unread).toBeUndefined();
       expect(found).not.toHaveProperty("gitBash");
     }

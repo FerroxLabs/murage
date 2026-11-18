@@ -1,3 +1,4 @@
+// secret-scan: fixture
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -55,6 +56,15 @@ describe("09-A3: a native Windows path to .env is a key file", () => {
     expect(env.re.test("C:\\work\\project\\.env")).toBe(true);
     expect(env.re.test("C:\\work\\project\\.env.local")).toBe(true);
   });
+  it("holds an env glob without treating longer ordinary basenames as env files", () => {
+    for (const text of ['.env*', '/project/.env*', '{"glob":".env*"}']) {
+      expect(sensitivePathRow(text, false), text).toBe("env-glob");
+    }
+    for (const text of [".env", "/project/.env.local"]) expect(sensitivePathRow(text, false), text).toBe("env");
+    for (const text of [".environment", ".envoy", "/project/env*", "/project/notes.env*"]) {
+      expect(sensitivePathRow(text, false), text).toBeNull();
+    }
+  });
 });
 
 describe("09-B1: environment dumps and $HOME profile reads are sensitive text and paths", () => {
@@ -93,5 +103,52 @@ describe("NOLIMITS-KEY-TEXT Part A rows", () => {
   it("sensitiveNameRow is the one row test", () => {
     expect(sensitiveNameRow(".env")).toBe("env");
     expect(sensitiveNameRow("config.toml")).toBeNull();
+  });
+});
+
+// Exercise an actual mkdtemp suffix and the config filename used by the launcher.
+it("holds generated Copilot launch credentials at the approval boundary", async () => {
+  const { CopilotMcpConfig } = await import("../server/drivers/acp/copilot-mcp-config.ts");
+  const files = await CopilotMcpConfig.create();
+  try {
+    const path = files.prepare("approval-fixture", []);
+    expect(sensitivePathRow(path, false)).toBe("murage-copilot-mcp");
+    expect(sensitiveNameRow(path)).toBe("murage-copilot-mcp");
+    for (const text of [path, `cat ${path}`, `printf x > ${path}`]) expect(looksSensitive(text)).toBe(true);
+  } finally { await files.dispose(); }
+});
+
+it('protects scoped Copilot launcher credentials across supported temporary roots', () => {
+  for (const path of ['/tmp/murage-copilot-mcp-Ab12Cd/012345.json', 'C:\\Temp\\murage-copilot-mcp-Ab12Cd\\012345.json']) {
+    expect(sensitivePathRow(path, false)).toBe('murage-copilot-mcp');
+    expect(sensitiveNameRow(path)).toBe('murage-copilot-mcp');
+    expect(looksSensitive(`cat ${path}`)).toBe(true);
+  }
+});
+
+describe("X3 file rows", () => {
+  it.each([
+    ["murage-cred", "/tmp/murage-cred-Ab12Cd/" + "a".repeat(32) + ".json.tmp"],
+    ["murage-mcp", "/tmp/murage-mcp-Ab12Cd/mcp.json"],
+    ["murage-pi-mcp", "/tmp/murage-pi-mcp-Ab12Cd/mcp.json"],
+    ["murage-claude-private", "/data/claude-private/" + "a".repeat(32) + ".json.new-123"],
+    ["murage-flux-hermes", "/data/flux-hermes-home/config.yaml.123.1234-abcd.tmp"],
+    ["murage-hook-env", "/data/native/codex-scope/a/hook-env/123-" + "a".repeat(16) + ".env"],
+    ["murage-render", "/tmp/murage-render-" + "a".repeat(16) + "/mcp.json"],
+  ])("%s matches its file", (id, path) => {
+    const row = SENSITIVE_PATHS.find(row => row.id === id);
+    expect(row?.re.test(path)).toBe(true);
+    expect(row?.re.test(path.replaceAll("/", "\\"))).toBe(true);
+    expect(row?.re.test(path + ".schema")).toBe(false);
+  });
+  const files = [".pi/agent/models.json", ".qwen/settings.json", ".factory/settings.json", ".factory/mcp.json", ".grok/config.toml", ".kimi-code/config.toml", ".kimi-code/credentials/kimi-code.json", ".gemini/config/mcp_config.json", ".hermes/config.yaml", ".hermes/profiles/work/config.yaml", ".config/opencode/opencode.json", ".config/opencode/opencode.jsonc", ".claude.json", ".agent-browser/sessions/work.json.enc", ".agent-browser/sessions/work.murage-storage.enc", ".qwen/oauth_creds.json"];
+  it.each(files)("owner home: %s", file => {
+    const row = SENSITIVE_PATHS.find(row => row.id === "owner-engine-config");
+    for (const home of ["~", "$HOME", "\${HOME}", "$USERPROFILE", "\${USERPROFILE}", "%USERPROFILE%", "$env:USERPROFILE", "\${env:USERPROFILE}", "/home/Jane Doe", "/Users/Jane Doe", "/root", "C:/Users/Jane Doe", "/c/Users/Jane Doe"]) {
+      expect(row?.re.test(home + "/" + file), home).toBe(true);
+      expect(row?.re.test((home + "/" + file).replaceAll("/", "\\")), home).toBe(true);
+    }
+    expect(row?.re.test("project/Users/x/" + file)).toBe(false);
+    expect(row?.re.test("project/" + file)).toBe(false);
   });
 });

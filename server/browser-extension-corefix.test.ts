@@ -1,3 +1,4 @@
+import * as meteredFs from "./counted-fs-promises.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Opus security review of the Murage for Chrome core (BATCH3-CORE-SECURITY-REVIEW.md): one red test per blocking finding.
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -23,8 +24,8 @@ vi.mock('../electron/browser-extension-windows.mjs', async (importOriginal) => {
 });
 /** Every atomic save fails (ENOSPC) until mockRestore. */
 function failAtomicWrites() {
-  const real = fs.writeFile.bind(fs);
-  const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); return (real as any)(file, ...rest); });
+  const real = meteredFs.writeFile;
+  const spy = vi.spyOn(meteredFs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); return (real as any)(file, ...rest); });
   windowsWriteFault.match = () => true;
   return { mockRestore: () => { windowsWriteFault.match = null; spy.mockRestore(); } };
 }
@@ -58,7 +59,9 @@ async function fixture(extra: Record<string, unknown> = {}) {
       let result: any = b;
       if (command.operation === 'cdp') {
         const { method, params } = command.params as any; let value: any = {};
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1, url: b.tabs[0].url }] };
         if (method === 'Page.getFrameTree') value = { frameTree: { frame: { id: 'frame', loaderId: 'L' } } };
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
         if (method === 'Page.createIsolatedWorld') value = { executionContextId: 7 };
         if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
         if (method === 'DOM.describeNode') value = { node: { backendNodeId: engineNode?.().backendNodeId ?? 12 } };

@@ -28,7 +28,8 @@ it("the pick becomes postTo; only a bot reply is quoted; no pick sends nothing e
 it("the pick rides BOTH send paths: the outbox delivery post and the direct post", () => {
   const store = readFileSync(join(import.meta.dirname, "../state/store.tsx"), "utf8");
   expect(store).toMatch(/api\(`\/api\/bots\/\$\{entry\.botId\}\/messages`[\s\S]{0,400}\.\.\.venuePostBody\(entry\)/);
-  expect(store).toMatch(/\.\.\.venuePostBody\(action\),\n\s+\.\.\.\(action\.outboxDraft/);
+  // MAIN RULING INT-CONFLICT-DEFAULT f47886d52fd / b0878ea635a: the typed-Stop noSteer field now sits between the unchanged venue pick and outbox draft.
+  expect(store).toMatch(/\.\.\.venuePostBody\(action\),\n\s+\.\.\.\(action\.noSteer \? \{ noSteer: true, account: stateRef\.current\.config\?\.profile\?\.email \} : \{\}\),\n\s+\.\.\.\(action\.outboxDraft/);
   expect(store).toMatch(/JSON\.stringify\(\{ text: action\.text, replyToId: action\.replyToId, threadId, sendId, \.\.\.venuePostBody\(action\) \}\)/);
   const composer = readFileSync(join(import.meta.dirname, "../components/Composer.tsx"), "utf8");
   expect(composer.match(/\.\.\.pickFields,/g)?.length).toBe(2);

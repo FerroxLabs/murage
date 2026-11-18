@@ -2,12 +2,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DatabaseSync } from "node:sqlite";
 import type { RoutineRun } from "../routines.ts";
+type OriginRun = Pick<RoutineRun,"threadId"|"triggerSource"|"manual"|"routineId"|"webhookId"|"telegramConnectionId"|"channelOrigin">;
+export type MemoryOriginLookup = (threadId: string) => ReadonlySet<string> | undefined;
 /** Bind metadata beside immutable source versions, preserving hashes and evidence revisions. */
-export function backfillMemoryOrigins(db:DatabaseSync,runs:Pick<RoutineRun,"threadId"|"triggerSource"|"manual"|"routineId"|"webhookId"|"telegramConnectionId"|"channelOrigin">[],limit=100){
+export function backfillMemoryOrigins(db:DatabaseSync,runs:readonly OriginRun[]|MemoryOriginLookup,limit=100){
  const marker="memory-origin-backfill",previous=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(marker);
  const progress=previous?JSON.parse(String(previous.intent)):{cursor:""};if(progress.done)return {done:true};
- const origins=new Map<string,Set<string>>();
- for(const run of runs){if(!run.threadId)continue;const kinds=origins.get(run.threadId)??new Set<string>();kinds.add(run.triggerSource??(run.manual?"manual":"schedule"));origins.set(run.threadId,kinds);}
+ let originFor:MemoryOriginLookup;
+ if(typeof runs==="function")originFor=runs;
+ else{
+  const origins=new Map<string,Set<string>>();
+  for(const run of runs){if(!run.threadId)continue;const kinds=origins.get(run.threadId)??new Set<string>();kinds.add(run.triggerSource??(run.manual?"manual":"schedule"));origins.set(run.threadId,kinds);}
+  originFor=threadId=>origins.get(threadId);
+ }
  // A row that already carries an origin (in its payload, or a binding from an earlier window)
  // is filtered where the data lives; its payload never reaches this function.
  const rows=db.prepare(`SELECT s.id,s.scope_id,s.thread_id FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision
@@ -15,7 +22,7 @@ export function backfillMemoryOrigins(db:DatabaseSync,runs:Pick<RoutineRun,"thre
   AND (json_extract(v.payload,'$.origin') IS NULL OR json_extract(v.payload,'$.origin') IN (0,''))
   AND NOT EXISTS(SELECT 1 FROM memory_scope_bindings b WHERE b.id='source-origin:'||s.id) ORDER BY s.id LIMIT ?`).all(progress.cursor,Math.min(500,Math.max(1,limit)));
  for(const row of rows){
-  const kinds=origins.get(String(row.thread_id));if(kinds?.size!==1)continue;
+  const kinds=originFor(String(row.thread_id));if(kinds?.size!==1)continue;
   const kind=[...kinds][0];if(!["schedule","manual","webhook","channel"].includes(kind))continue;
   db.prepare("INSERT OR IGNORE INTO memory_scope_bindings VALUES(?,?,'source-origin',?,0,'granted',?)").run(`source-origin:${row.id}`,row.scope_id,row.id,JSON.stringify({kind}));
  }

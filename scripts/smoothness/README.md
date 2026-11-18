@@ -1,5 +1,35 @@
 # Smoothness gate
 
+For the hub-only 1.0.19 launcher, pinned fake engines and product-drained fixture,
+see [G8 v7](G8-V7.md). `fixtures-v7.json` records whether that fixture is ready;
+the v7 launcher fails closed until it has a verified archive hash.
+
+Rig **5.10** acknowledges local-computer Auto, Full access and No limits on Linux,
+macOS and Windows. Every level setup rejects non-2xx PATCH/preview/apply responses,
+reads the exact measured conversation through `GET /api/bots/:id/tasks/:threadId`,
+and records `levelChanges` with requested/measured levels. Refused setup or a stale
+readback immediately saves a leg failure, aborts the scenario, stops the owned
+fixture server and blocks later scenarios. S1, S4, both S10 legs, S6 and S8 share
+this setter. The in-memory `level-fixture.mjs` executes the actual runner bodies;
+its tests are in `smooth-config.test.mjs`. They qualify the rig, not product behavior.
+
+Apply a rig to a product tip using the same overlay-commit recipe as
+`13c6d28b5d04` (do not merge the rig branch's older product tree):
+
+```sh
+RIG=<rig-commit>
+PRODUCT=<product-tip>
+GATE_WT=<new-gate-worktree>
+git worktree add --detach "$GATE_WT" "$PRODUCT"
+git -C "$GATE_WT" restore --source="$RIG" --staged --worktree -- scripts/smoothness
+git -C "$GATE_WT" -c user.name=ci -c user.email=ci@example.com commit -m "rig: smoothness gate files (rig $RIG) on $PRODUCT"
+GATE_SHA=$(git -C "$GATE_WT" rev-parse HEAD)
+```
+
+Run both gate legs against `GATE_SHA`, using the overlaid launchers and separate
+fixture copies as usual. The measured product code is the selected `PRODUCT`;
+the gate commit changes only `scripts/smoothness`.
+
 Set `SMOOTH_ROOM_PROOF=1` for a fake-engine room route proof (with `hz-smooth.sh`, pass `-e SMOOTH_ROOM_PROOF=1` among its extra Docker arguments); real engines refuse the leg as INVALID with a reason. After all four measured rounds and the tail reach DONE, three separate scripted Grok members in a second room each request one `git status` approval at Ask, answered through the normal room drain and thread respond route; a second message uses `slow-tool`, waits for roster `working=true`, sends one group interrupt and drains to DONE within 60 seconds. Controls and levels are restored in `finally`. Results retain `roomProofRequested` and `scenarios.room.proof` with card/interrupt evidence and `ok`; S3 measurements stop before proof setup, and proof failures still use the room settlement gate before later scenarios or cleanup. Requested proofs add required `S3.proof.respond` and `S3.proof.interrupt` rows; otherwise those rows are absent. `S3.drain` is INFO with measured rounds/tail and final settlement. These changes and their isolated fake-clock tests are authored only; runtime qualification has not been performed.
 
 Rig **5.9** immediately appends and fsyncs minimal `kind: first` failure evidence from SSE for runner-owned bot threads/tasks and group threads, including routine, delegated-worker and room-member turns, to `SMOOTH_OUT/failed-turns-<label>.jsonl`. Turn identities deduplicate first records; `turn()` appends richer `kind: enriched` records with the same key after transcript/native-trace reads. Results retain the unique failure count and latest 50 records. Pending enrichment is drained before resource deletion or server stop, bounded to 10 seconds total per boundary; timeouts are noted, journaled and saved. All retained failure diagnostics pass through secret redaction and accounting-value scrubbing; archived server logs use the same accounting keys, preserve originals and fail closed if filtering fails. Records retain only completion evidence, Murage error rows, RPC code/message and bounded traces, never full protocol frames or general conversation text. Output must be outside the data dir and checkout; launchers preserve JSONL before deleting copies, including orphaned runs. Journal write failures are noted. Only valid major.minor versions below 5.8, or files with neither version nor phase, retain legacy judging; malformed versions are INVALID and other files require finished cleanup with no leg failure. Control restoration ignores only ENOENT, verifies file contents/absence, and immediately saves a leg failure and blocks later scenarios on failure. These fixes and regression tests are authored only; no runtime qualification has been performed.
@@ -195,8 +225,187 @@ Rev 6 lane ownership uses a persistent per-label flock mutex and token-qualified
 
 The host keeper uses `/usr/local/bin/node` (Node 22); the real launcher passes `$R/node/bin/node` (Node 24) for both preservation calls. The follower uses its captured container ID, run ID and private log, verifies `run.id` after acquiring fresh ownership, and retains data on ambiguous state or preservation/removal failure. Its acquisition wait defaults to 3600 seconds with ten-second retries; `SMOOTH_FOLLOW_WAIT_SECONDS` may shorten that limit.
 
+For launchers that migrate and prebuild indexes on an isolated database copy, use
+`prebuild-before-listen.sh` at the server launch boundary. It loads the product
+checkout's `server/memory/schema.ts`, calls its `migrateMemorySchema` with the
+existing-file boot connection settings and product snapshot paths, then builds
+every `preListen` index from its optional-index registry. No migration SQL is
+maintained in the rig. A separate read-only connection verifies the product's
+current schema version and every index's name, table and SQL definition before
+running the supplied command. Starting and ending schema versions, build timing
+and verification results go to `prebuild.log` beside the database (override with
+`SMOOTH_PREBUILD_LOG`). Failed migrations also report the ending version.
+There is no fixed index count or `PREBUILD=0` fallback. A missing table, failed
+build, wrong schema version, missing index or incorrect definition exits 4 and
+never launches the command. Log-writing failures also prevent launch.
+
+```sh
+export SMOOTH_NODE="$R/node/bin/node" # the same absolute Node 24 executable used by the rig
+bash "$RIG/scripts/smoothness/prebuild-before-listen.sh" "$PRODUCT" "$RUN_DB" \
+  "$SMOOTH_NODE" "$RIG/scripts/smoothness/smooth.mjs"
+```
+
+The command inherits `SMOOTH_NODE`, so `keep-logs.sh` uses that same executable.
+If the keeper is called later by the parent launcher, keep the exported variable
+or pass `"$SMOOTH_NODE"` as its fourth argument. Replace an external launcher's
+old count guard and prebuilder invocation with this boundary; simply copying
+the helper does not update an external launcher. The product checkout must
+include its source dependencies and installed packages. The helper calls only
+the memory migration; other app initialization and background integrity work
+still belong to the subsequent product boot. An unsupported schema fails closed.
+The helper resolves the database's real path and refuses database/directory
+symlinks, escaping snapshot paths, and symlinked snapshot or SQLite sidecar
+targets (including dangling links) before opening SQLite.
+
+Run the fixture regression with Node 24 in an isolated container:
+
+```sh
+PREBUILD_TEST_PRODUCTS=/fixtures/product-a:/fixtures/product-b \
+  node --test scripts/smoothness/prebuild-index.node-test.mjs
+```
+
+The test creates temporary databases using each product's real migration and
+downgrade functions, at versions 12 and 13, with 10,000 records and 10,000 source
+versions each. It checks every exported preListen registration independently of
+discovery, migrates, builds and reopens them, tests deletion of each index and
+incorrect definitions, refuses launch after migration/build/verification failure,
+and archives a fixture log with the inherited Node. `prebuild-first-boot.mjs
+PRODUCT EVIDENCE` measures `PREBUILD=0` using the documented isolated verification
+launcher and the product's real `database()` boot path, retaining health, doctor,
+timing and server logs. It uses synthetic data and fake engines only.
+
+`prebuild-boot.node-test.mjs` compares separate copies of the same populated
+v12/v13 fixture through prebuild and the product's own `database()` open/close
+path. Run it in a network-none container alongside
+`prebuild-containment.node-test.mjs`, with the same `PREBUILD_TEST_PRODUCTS` and
+optional `PREBUILD_TEST_EVIDENCE` directory. Reports include the complete
+`sqlite_master` schema (excluding physical rootpage placement), row counts and
+SHA-256 content hashes for every table, including FTS shadow tables. Every
+difference is retained and must have a checked product-line explanation; v13
+must match exactly. The v12 exceptions cover boot-only eager/message indexes,
+empty app tables recreated after downgrade, the random count-cache epoch and
+the integrity-pass start timestamp. Unexpected objects or row changes fail.
+
 ALL ELD now begins at the first message send attempt, including preflight, room sends and failed attempts. Results and `debug/run-events-<runId>.jsonl` retain the same epoch, request ID and log offset. The two run-start ELD rows and the first-send delay remain informational. IO, home, stale, context and RSS keep their previous windows; S0 retains boot measurement. No send or no post-send readings leaves gated ELD unmeasured.
 
 Rig 8 Nov (MurageMain ruling): on real engines the three S3 room bots are set to Full access (setLevel full, as S5 does for its held bots) before the room is created, so S3.cards measures room smoothness and not Ask cards; the S3.cards bound (0) is unchanged and S4 keeps its own Ask and No limits levels. real-smooth.sh now exports TREE_SHA (the staged build sha, .smooth-sha or git rev-parse) so the gate header and results.json carry it instead of "tree ?".
 
 Rig 8 Nov (Sean approved Mac CPU row): on macOS S9.cpuTree is the judged CPU row at its 0.25 bound and S9.cpu (whole-machine top) is information only, labelled "whole machine, info only (macOS)". Linux (cgroup) and Windows keep S9.cpu judged. No bound changes.
+
+Source container runs provision the native relocation helper before measurement
+(`native-preflight.mjs`, called by `smooth.mjs` before server startup). A missing Linux helper is
+compiled from this checkout's `native/engine-exclusion/exclusion.c` with the
+fixture image's gcc and N-API headers, without network access. Its `build.json`
+records the source hash, binary hash, target, compiler and `fixtureOnly: true`.
+This artifact belongs to the Node fixture runtime; release packages continue to
+use `build-engine-exclusion.mjs` and its AlmaLinux glibc floor.
+
+To supply an existing build, set `SMOOTH_NATIVE_FROM` to a mounted directory
+containing `<platform>-<arch>/engine-exclusion.node` and `build.json`. For a
+standalone helper build/load proof, run
+`node scripts/smoothness/native-preflight.mjs`. macOS and Windows require an
+existing build (their build and packaging paths remain in the platform scripts).
+Every source leg verifies the receipt's source and binary hashes and optional
+`SMOOTH_ENGINE_EXCLUSION_SHA256`, then asks the product loader to open that exact
+file. The load probe must move a dangling link and refuse an occupied target.
+Missing, stale, unloadable or unsafe helpers refuse the leg before any turn.
+The result keeps `nativePreflight`. A preparation failure invalidates the leg
+through the existing refusal path, after superseding any previous PASS.
+
+The focused fake-engine regression is
+`pnpm exec vitest run scripts/smoothness/s5-relocation.test.mjs scripts/smoothness/native-preflight.test.mjs`.
+After provisioning the helper, it seeds three old-root pinned skill links in a
+fresh verification fixture, sends five turns and applies the unchanged
+`S5.firstText`, `S5.resumed` and `S5.failed` budgets. It retains bounded control
+results and the fixture log in `.planning/s5-evidence` (or `S5_EVIDENCE_DIR`).
+It does not qualify the full real-data idle/load gate.
+
+For the original S5 long-thread proof, run `s5-replay.mjs` inside the isolated,
+network-disabled test container, with the preserved drained archive and private
+manifest (archive SHA-256, bot, thread, original message count, all 12 link names
+and targets, source HEAD, and `supportHashes`). Export the five fake-engine
+files from the original overlay, the two prebuild helpers from its rig and its
+verified `cage/` files into the support directory; the manifest pins their hashes. No private fixture data
+belongs in Git.
+
+```
+node scripts/smoothness/s5-replay.mjs ARCHIVE MANIFEST PINNED_SUPPORT OUTPUT
+S5_REPLAY_MANIFEST=MANIFEST S5_REPLAY_RESULTS=OUTPUT/s5-replay-results.json pnpm exec vitest run scripts/smoothness/s5-replay.test.mjs --maxWorkers=1
+```
+
+The replay verifies the archive, history count and every old-root link before
+launching the unchanged rig with `SMOOTH_SCENARIOS=longThread` and fake engines.
+It retains the input proof, original-history hashes before and after, all three
+row verdicts, prebuild and server logs, raw rig results and native helper. Its
+selected task's Mac working-folder pin is adapted to the copied desk and that
+path change is recorded separately; its history and skill links are preserved.
+The temporary source/data copies are removed afterward. This is S5-only evidence;
+the full idle/load release gate still requires both complete legs.
+### Required nightly real engines
+
+`nightly.yml` builds a packaged Linux app from its exact checkout, with
+`murageSourceSha` in the package metadata, then runs Claude, Codex, Gemini,
+Fuigo and OpenCode in the build host job containers (at most two engine legs at once).
+Dispatch Nightly on the RC branch before release. The release gate requires the
+newest run for that **exact SHA**, all five named engine jobs and their explicit
+verdict steps green, each completed within 72 hours. A newer incomplete or red
+run cannot borrow an older pass. Slow-nightly history retains its existing
+ancestor check; real-engine evidence is checked separately and rechecked after
+waiting for CI.
+
+The runner must already provide a Node 24 Linux packaging image through
+`MURAGE_REAL_ENGINE_IMAGE` (repository variable), including pnpm build tools,
+Python/native dependencies used by `package:linux:dir`, Electron runtime
+libraries and zsh. Without configuration the job uses `node:24-bookworm` and
+fails closed when prerequisites are unavailable. No host tools or engines are
+installed by these jobs. The existing engine binaries and their runtime
+support must be in the image or `MURAGE_REAL_ENGINE_BIN` (default
+`/opt/murage-gate/bin`, mounted read-only as `/engines`).
+
+`MURAGE_REAL_ENGINE_HOME` (default `/opt/murage-gate/home`) is a **dedicated gate
+account home**, mounted read-only as `/engine-home`. Existing credentials are
+used in place; no login, credential copy or synthetic auth file is performed.
+Expected existing credentials are:
+
+- Claude: `CLAUDE_CODE_OAUTH_TOKEN` secret, or `.claude/.credentials.json`.
+- Codex: `.codex/auth.json` (an `OPENAI_API_KEY` does not substitute for the
+  product's native account login).
+- Gemini: `GEMINI_API_KEY` or `GOOGLE_API_KEY` secret.
+- Fuigo: `FUIGO_API_KEY` secret, or `.fuigo/auth.json`.
+- OpenCode: `.local/share/opencode/auth.json` (the packaged fixture deliberately
+  retains the product's exclusion of ambient `OPENCODE_API_KEY`).
+
+Only populated, existing secrets are consumed. Missing binaries/auth print
+`REAL-ENGINE: NOT RUN (<engine>: <missing>)`, write a NOT-RUN verdict and exit
+nonzero. An unavailable engine instance also reports NOT-RUN. Presence is only
+preflight; it never counts as a passing turn.
+
+`zsh scripts/smoothness/hz-smooth.sh --nightly-real-engine <engine>` runs the
+local container leg. It requires `GITHUB_SHA` (or `TREE_SHA`), `SMOOTH_APP_DIR`
+and `SMOOTH_OUT`. It creates fresh data and bot folders inside the ephemeral
+container, starts the packaged server, proves its isolated data path and owner
+auth, observes and answers a real shell approval, requires a live steer and its
+transcript row, interrupts the active turn, and requires a completed provider
+reply afterward. `budgets.json` supplies the cold boot, server-exit and
+`realEngineRows` limits, including the existing 10-second Stop bound. The
+full day-shaped fake-data budget is still the manual hz leg; this smaller
+nightly proof does not claim those unrelated scenarios ran.
+
+The probe consumes public execution cards by `requestHandle` and submits
+`action: allow` to the selected task. It waits for the exact send's
+`turn-state` receipt to report `stopped` or `completed`; public event streams
+and journals deliberately omit native turn identifiers and stop reasons.
+Recovery must also appear as a `bot` reply in that task's public messages.
+
+The only override is the gate script's **`REAL_ENGINE_EXPLICIT_WAIVER` input**,
+empty/off by default. It requires `GITHUB_EVENT_NAME=workflow_dispatch` and
+`<full RC SHA>: <reviewed reason>`. It emits a warning, records the reason in
+the step summary, and sets `real_engine_waived=true`. `CI_WAIVER` cannot waive
+real engines. The release workflow does not expose this escape hatch today;
+a release owner must explicitly wire the named input if a waiver is needed.
+No engine waiver changes the full CI, slow nightly or native-addon gates.
+
+Artifacts contain only verdicts and numeric budget evidence. Detailed logs and
+isolated fixture files stay in the job container; do not upload credential-bearing
+homes or arbitrary provider output. This job does not claim the separate T30
+venue-post scenario passed merely by setting `MURAGE_T30_RESULT`.

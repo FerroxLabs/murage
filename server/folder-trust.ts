@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-open.ts";
 
 import { dataRoots, ownedPath } from "./data-roots.ts";
 import type { Partition } from "./execution-audience.ts";
@@ -321,6 +321,8 @@ export interface FolderTrustScan {
 }
 
 export interface FolderTrustScanOptions {
+  /** Settings must report grants effective for the running trust protocol. */
+  trustGeneration?: 1 | 2;
   /** The Fuigo home whose `trusted_folders.toml` the engine will read for
    * this turn (`fuigoHomeFromEnv`); null/undefined = do not consult one —
    * a provider-routed turn runs under a per-turn temporary FUIGO_HOME that
@@ -352,8 +354,10 @@ export function scanFolderTrustSources(folder: string, options: FolderTrustScanO
   for (const dir of dirs) for (const name of SKILL_DIRS) if (isDir(join(dir, name))) hit(name);
   for (const dir of dirs) for (const name of CONFIG_FILES) if (isFile(join(dir, name))) hit(name);
   for (const dir of dirs) for (const name of CONFIG_DIRS) if (isDir(join(dir, name))) hit(name);
-  const upstream = options.fuigoHome ? upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome), folder, options) : null;
-  return { key, folder: start, sources, ...(upstream === true ? { upstreamTrusted: true as const } : upstream === false ? { upstreamDeclined: true as const } : {}) };
+  const upstream = options.fuigoHome ? upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome, options.trustGeneration), folder, options) : null;
+  // Legacy grants on generation 2 are ineffective, but they are not a stored no.
+  const declined = upstream === false && (options.trustGeneration !== 2 || (options.fuigoHome && upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome), folder, options) === false));
+  return { key, folder: start, sources, ...(upstream === true ? { upstreamTrusted: true as const } : declined ? { upstreamDeclined: true as const } : {}) };
 }
 
 // ── the user's own Fuigo trust store (read-only) ─────────────────────────
@@ -465,8 +469,9 @@ function tomlTrusted(value: string): boolean | null {
  * own reader treats a document its parser rejects: Murage must never trust
  * a folder the engine would not, or the turn would run untrusted with no
  * card and no chip. Returns null for an unparseable document. */
-export function parseUpstreamTrustedFolders(text: string): Map<string, boolean> | null {
+export function parseUpstreamTrustedFolders(text: string, generation: 1 | 2 = 1): Map<string, boolean> | null {
   const folders = new Map<string, boolean>();
+  const consents = new Map<string, number>();
   // table state: null = root, "folders" = inside [folders], {key} = inside [folders."key"]
   let table: null | "folders" | { key: string } | "other" = null;
   const set = (key: string, trusted: boolean | null) => {
@@ -512,8 +517,8 @@ export function parseUpstreamTrustedFolders(text: string): Map<string, boolean> 
     if (typeof table === "object") {
       if (lhs === "trusted") { if (!set(table.key, tomlTrusted(rhs))) return null; continue; }
       if (lhs === "decided_at") { if (!/^-?\d+$/.test(rhs)) return null; continue; }
-      // Fuigo 1.0.35 stamps every grant with `consent = <n>`; 1.0.34 ignores it, and so does this reader (R7)
-      if (lhs === "consent") { if (!/^\d+$/.test(rhs)) return null; continue; }
+      // Generation 2 requires consent 2; generation 1 keeps the legacy trusted flag semantics.
+      if (lhs === "consent") { if (!/^\d+$/.test(rhs)) return null; consents.set(table.key, Number(rhs)); continue; }
       return null;
     }
     // inside [folders]: `"key" = { trusted = true, decided_at = 1 }` or `"key".trusted = true`
@@ -527,7 +532,7 @@ export function parseUpstreamTrustedFolders(text: string): Map<string, boolean> 
         if (!m) return null;
         if (m[1] === "trusted") { trusted = tomlTrusted(m[2]!); if (trusted === null) return null; }
         else if (m[1] === "decided_at") { if (!/^-?\d+$/.test(m[2]!.trim())) return null; }
-        else if (m[1] === "consent") { if (!/^\d+$/.test(m[2]!.trim())) return null; }
+        else if (m[1] === "consent") { if (!/^\d+$/.test(m[2]!.trim())) return null; consents.set(key.value, Number(m[2])); }
         else return null;
       }
       if (trusted === null) return null;
@@ -536,9 +541,10 @@ export function parseUpstreamTrustedFolders(text: string): Map<string, boolean> 
     }
     if (after === ".trusted") { if (!set(key.value, tomlTrusted(rhs))) return null; continue; }
     if (after === ".decided_at") { if (!/^-?\d+$/.test(rhs)) return null; continue; }
-    if (after === ".consent") { if (!/^\d+$/.test(rhs)) return null; continue; }
+    if (after === ".consent") { if (!/^\d+$/.test(rhs)) return null; consents.set(key.value, Number(rhs)); continue; }
     return null;
   }
+  if (generation === 2) for (const [key, trusted] of folders) if (trusted && consents.get(key) !== 2) folders.set(key, false);
   return folders;
 }
 
@@ -546,7 +552,7 @@ export function parseUpstreamTrustedFolders(text: string): Map<string, boolean> 
  * `<fuigoHome>/trusted_folders.toml`. Missing, unreadable or unparseable →
  * empty (the engine's own rule). Read fresh every time: the engine re-reads
  * per session, and standalone Fuigo may have written it a moment ago. */
-export function readUpstreamTrustedFolders(fuigoHome: string): Map<string, boolean> {
+export function readUpstreamTrustedFolders(fuigoHome: string, generation: 1 | 2 = 1): Map<string, boolean> {
   let text: string;
   try {
     text = readFileSync(join(fuigoHome, UPSTREAM_TRUST_FILE), "utf8");
@@ -554,7 +560,7 @@ export function readUpstreamTrustedFolders(fuigoHome: string): Map<string, boole
     return new Map();
   }
   if (!text.trim()) return new Map();
-  return parseUpstreamTrustedFolders(text) ?? new Map();
+  return parseUpstreamTrustedFolders(text, generation) ?? new Map();
 }
 
 export interface UpstreamTrustFile {
@@ -923,8 +929,15 @@ export class FolderTrustStore {
     // a consent-2 trust. A plain picker record may refresh. FOLDER-PICK-KEEPS-CONSENT.
     const held = source === "picker" ? this.folders.get(key) : undefined;
     if (held && (held.decision === "reject" || held.consent === 2)) return key;
+    const previous = this.folders.get(key);
     this.folders.set(key, { decision, decidedAt: Date.now(), source, folder: canonicalFolder(folder), ...(options.consent === 2 ? { consent: 2 as const } : {}) });
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      if (previous) this.folders.set(key, previous);
+      else this.folders.delete(key);
+      throw error;
+    }
     return key;
   }
 

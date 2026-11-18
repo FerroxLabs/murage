@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// D6 behaviour witnesses (rev8): W-relative-override and W-same-file. The stand-in "addon" is a CommonJS file named engine-exclusion.node: require() runs an unknown
+// extension as JavaScript, so the loader's real code path (candidates, privateCopy, usable, require of the copy) runs unmodified.
+import { createHash } from "node:crypto";
+import fs, { mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, basename, dirname, relative, isAbsolute } from "node:path";
+import Module, { syncBuiltinESMExports } from "node:module";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { ADDON_VERSION, HANDLE_FUNCTIONS, WINDOWS_NATIVE_FUNCTIONS, addonIsUsable, loadIoMeterAddon, overrideAllowed } from "./engine-exclusion.ts";
+import { safeWipeSync } from "./testing/safe-wipe.mjs";
+
+const standIn = (hooks: boolean) => `const f = () => 0; module.exports = { version: () => ${ADDON_VERSION}, lock: f, processes: f, renameNoReplace: f, writers: f, fullSync: f, ioMeterAdd: f, ioMeterTotal: f, ioMeterBytes: f${hooks ? ", anchorTestStall: f" : ""} }; for (const name of ${JSON.stringify([...HANDLE_FUNCTIONS, ...WINDOWS_NATIVE_FUNCTIONS])}) module.exports[name] ??= f;`;
+const saved = { ...process.env }, cwd = process.cwd();
+let dir = "";
+const copies = new Set<string>();
+const exts = (Module as unknown as { _extensions: Record<string, (m: { exports: unknown; _compile(c: string, f: string): void }, f: string) => void> })._extensions;
+const nativeLoader = exts[".node"];
+// the stand-ins are JavaScript: the test lets the loader treat a .node file as JavaScript for its own duration only
+beforeEach(() => { exts[".node"] = (m, f) => { if (dirname(f) !== dir) copies.add(dirname(f)); m._compile(readFileSync(f, "utf8"), f); }; dir = realpathSync(mkdtempSync(join(tmpdir(), "meter-copy-"))); delete process.env.MURAGE_RESOURCES_PATH; delete process.env.OMB_RESOURCES_PATH; delete process.env.MURAGE_PACKAGED; process.env.NODE_ENV = "test"; });
+afterEach(() => { exts[".node"] = nativeLoader!; process.chdir(cwd); for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); for (const copy of copies) safeWipeSync(copy, { tmpdir: dirname(copy) }); copies.clear(); safeWipeSync(dir, { tmpdir: dirname(dir) }); });
+
+it("W-relative-override: a relative override path under the test gate is resolved, loads, and keeps its exemption", () => {
+  expect(overrideAllowed()).toBe(true);
+  writeFileSync(join(dir, "stand-in.node"), standIn(true));
+  process.chdir(dir); process.env.MURAGE_ENGINE_EXCLUSION_PATH = "  ./stand-in.node  ";
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  try {
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    expect(addonIsUsable(Module.createRequire(import.meta.url)(join(dir, "stand-in.node")), true), "the copy fixture supplies every Windows export").toBe(true);
+    const loaded = loadIoMeterAddon();
+    expect(loaded, "the relative override resolved against cwd, loaded, and kept the test-hook exemption").not.toBeNull();
+    expect(basename(loaded!.path)).toBe("engine-exclusion.node");
+  } finally { Object.defineProperty(process, "platform", platform); }
+});
+it("W-relative-override: the same hook-bearing file from any non-override location is refused", () => {
+  writeFileSync(join(dir, "engine-exclusion.node"), standIn(true));
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = join(dir, "engine-exclusion.node");
+  expect(loadIoMeterAddon(), "the same hook-bearing file loads through the test override").not.toBeNull();
+  process.env.MURAGE_RESOURCES_PATH = dir; delete process.env.MURAGE_ENGINE_EXCLUSION_PATH;
+  expect(loadIoMeterAddon()).toBeNull();
+});
+it("W-same-file: the parent publishes the sha256 and dev/ino of the private 0600 copy", () => {
+  const src = join(dir, "stand-in.node"); writeFileSync(src, standIn(false));
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = src;
+  const loaded = loadIoMeterAddon()!;
+  expect(loaded).not.toBeNull();
+  const { path, id } = loaded;
+  expect(path, "the copy, never the candidate").not.toBe(src);
+  expect(id.sha256).toBe(createHash("sha256").update(readFileSync(src)).digest("hex"));
+  expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(id.sha256);
+  const st = statSync(path);
+  expect([st.dev, st.ino, st.size]).toEqual([id.dev, id.ino, id.size]);
+  if (process.platform !== "win32") { expect(st.mode & 0o777).toBe(0o600); expect(statSync(dirname(path)).mode & 0o777).toBe(0o700); }
+  expect(realpathSync(path)).toBe(path);
+  expect(dirname(path).startsWith(dir), "outside the candidate's directory").toBe(false);
+});
+it("W-same-file: a file symlink (POSIX) or directory junction (Windows) candidate is skipped, never followed", () => {
+  const realDir = join(dir, "real"); mkdirSync(realDir);
+  const real = join(realDir, "stand-in.node"); writeFileSync(real, standIn(false));
+  let link = join(dir, "link.node");
+  if (process.platform === "win32") {
+    const alias = join(dir, "junction"); symlinkSync(realDir, alias, "junction"); link = join(alias, "stand-in.node");
+  } else symlinkSync(real, link);
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = real;
+  expect(loadIoMeterAddon(), "the same file by its plain path loads before alias refusal").not.toBeNull();
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = link;
+  expect(loadIoMeterAddon()).toBeNull();
+});
+it("W-same-file: a candidate reached through a symlinked directory or Windows junction is skipped, never followed", () => {
+  const realDir = join(dir, "real-dir"); mkdirSync(realDir); writeFileSync(join(realDir, "stand-in.node"), standIn(false));
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = join(realDir, "stand-in.node");
+  expect(loadIoMeterAddon(), "the same file by its real path loads").not.toBeNull();
+  symlinkSync(realDir, join(dir, "link-dir"), process.platform === "win32" ? "junction" : "dir");
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = join(dir, "link-dir", "stand-in.node");
+  expect(loadIoMeterAddon(), "the same file through a symlinked directory is refused").toBeNull();
+});
+it.skipIf(process.platform === "win32")("P5g: TMPDIR inside the data folder still yields a private copy outside every protected directory", () => {
+  const data = join(dir, "data"); mkdirSync(join(data, "tmp"), { recursive: true });
+  const src = join(dir, "stand-in.node"); writeFileSync(src, standIn(false));
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = src;
+  process.env.MURAGE_DATA_DIR = realpathSync(data);
+  process.env.TMPDIR = realpathSync(join(data, "tmp"));
+  const loaded = loadIoMeterAddon();
+  expect(loaded, "a TMPDIR inside the data folder must not refuse the meter: the copy goes to another temporary folder").not.toBeNull();
+  const copyDir = realpathSync(dirname(loaded!.path));
+  const protectedRoots = [process.cwd(), realpathSync(data), join(process.cwd(), "server")];
+  for (const root of protectedRoots) {
+    const rel = relative(root, copyDir);
+    expect(rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)), `the copy directory ${copyDir} sits outside ${root}`).toBe(false);
+  }
+  expect(copyDir.startsWith(realpathSync(join(data, "tmp")))).toBe(false);
+  expect(statSync(loaded!.path).mode & 0o777).toBe(0o600);
+});
+
+// W-copy-identity: the loader executes only bytes it has read back from the private copy and hashed. The copy is written in full whatever
+// count each write returns, and a copy whose bytes on disk differ from the hashed candidate is never executed.
+function withCopyWrites<T>(edit: (bytes: Uint8Array, offset: number, length: number) => { bytes: Uint8Array; offset: number; length: number; claim?: number }, run: () => T): T {
+  const real = fs.writeSync;
+  fs.writeSync = ((fd: number, buffer: Uint8Array, offset?: number, length?: number, position?: number | null) => {
+    let target = "";
+    try { target = fs.readlinkSync(`/proc/self/fd/${fd}`); } catch { /* not a copy */ }
+    if (!basename(dirname(target)).startsWith("murage-meter-") || !ArrayBuffer.isView(buffer)) return Reflect.apply(real, fs, [fd, buffer, offset, length, position]);
+    const e = edit(buffer, offset ?? 0, length ?? buffer.byteLength - (offset ?? 0));
+    const n = real(fd, e.bytes, e.offset, e.length, position ?? null);
+    return e.claim ?? n;
+  }) as typeof fs.writeSync;
+  syncBuiltinESMExports();
+  try { return run(); } finally { fs.writeSync = real; syncBuiltinESMExports(); }
+}
+it.skipIf(process.platform !== "linux")("W-copy-identity: a short write of the private copy is completed, so the copy holds the hashed bytes and loads", () => {
+  const src = join(dir, "stand-in.node"); writeFileSync(src, standIn(false));
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = src;
+  const loaded = withCopyWrites((bytes, offset, length) => ({ bytes, offset, length: Math.min(length, 64) }), () => loadIoMeterAddon());
+  expect(loaded, "a partial write count is a progress report, not the end of the copy").not.toBeNull();
+  expect(createHash("sha256").update(readFileSync(loaded!.path)).digest("hex")).toBe(createHash("sha256").update(readFileSync(src)).digest("hex"));
+});
+it.skipIf(process.platform !== "linux")("W-copy-identity: a copy whose bytes on disk differ from the hashed candidate is never executed", () => {
+  // Same length on purpose: only the bytes differ, so the hash comparison (not the size check) is what refuses the copy.
+  const prefix = `globalThis[Symbol.for("murage.test.meter-copy-foreign")] = true; `;
+  const src = join(dir, "stand-in.node"); writeFileSync(src, `${standIn(false)}//${"x".repeat(prefix.length - 2)}`);
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = src;
+  const key = Symbol.for("murage.test.meter-copy-foreign");
+  const foreign = Buffer.from(`${prefix}${standIn(false)}`);
+  expect(foreign.length).toBe(statSync(src).size);
+  const flag = globalThis as typeof globalThis & { [key]?: boolean };
+  delete flag[key];
+  const loaded = withCopyWrites((_bytes, _offset, length) => ({ bytes: foreign, offset: 0, length: foreign.length, claim: length }), () => loadIoMeterAddon());
+  expect(flag[key], "bytes that were never hashed must not run").toBeUndefined();
+  expect(loaded).toBeNull();
+  delete flag[key];
+});
+// The copy is process-private scratch: it is read back through the page cache and removed at exit, so it takes no durability barrier.
+// A barrier here ran inside the first durable write that loads the meter, and a directory that refuses fsync left the meter unloadable.
+function withObservedSync<T>(refuseDirectories: boolean, run: () => T): { result: T; synced: string[] } {
+  const real = fs.fsyncSync, synced: string[] = [];
+  fs.fsyncSync = ((fd: number) => {
+    const directory = fs.fstatSync(fd).isDirectory();
+    synced.push(directory ? "directory" : "file");
+    if (directory && refuseDirectories) throw Object.assign(new Error("fixture EINVAL"), { code: "EINVAL" });
+    return real(fd);
+  }) as typeof fs.fsyncSync;
+  syncBuiltinESMExports();
+  try { return { result: run(), synced }; } finally { fs.fsyncSync = real; syncBuiltinESMExports(); }
+}
+it("W-copy-barrier: making the private copy issues no file or directory sync of its own", () => {
+  const src = join(dir, "stand-in.node"); writeFileSync(src, standIn(false));
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = src;
+  const { result, synced } = withObservedSync(false, () => loadIoMeterAddon());
+  expect(result, "the meter loads").not.toBeNull();
+  expect(synced, "the caller's durable write owns every barrier it observes").toEqual([]);
+});
+it("W-copy-barrier: a temporary directory that refuses directory sync still yields a loaded meter with the published identity", () => {
+  const src = join(dir, "stand-in.node"); writeFileSync(src, standIn(false));
+  process.env.MURAGE_ENGINE_EXCLUSION_PATH = src;
+  const { result } = withObservedSync(true, () => loadIoMeterAddon());
+  expect(result, "EINVAL from a directory sync must not make the meter unloadable").not.toBeNull();
+  expect(createHash("sha256").update(readFileSync(result!.path)).digest("hex")).toBe(result!.id.sha256);
+  expect(result!.id.sha256).toBe(createHash("sha256").update(readFileSync(src)).digest("hex"));
+});

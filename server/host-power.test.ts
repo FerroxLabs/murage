@@ -6,19 +6,21 @@ import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // S4 power, docs/designs/S4-POWER-STRUCTURAL-108.md revision 4.1, section 10. No test powers a machine: nothing here calls
 // reboot, shutdown, pmset, ExitWindowsEx, SetSuspendState or a power Apple event, and the bus checks connect only to the stub.
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+// The shared setup can load procs before these dependency mocks are installed.
+vi.hoisted(() => vi.resetModules());
 const cloud = vi.hoisted(() => ({ marker: "murage-cloud-marker" }));
 // The addon procs.ts asks for the Windows privilege removal: the real lookup unless a test puts a stand-in here.
-const addonState = vi.hoisted(() => ({ addon: undefined as unknown }));
+const addonState = vi.hoisted(() => ({ addon: undefined as unknown, blocked: false }));
 vi.mock("./engine-exclusion.ts", async (original) => {
   const actual = await original<typeof import("./engine-exclusion.ts")>();
-  return { ...actual, loadExclusionAddon: () => (addonState.addon === undefined ? actual.loadExclusionAddon() : addonState.addon) };
+  return { ...actual, exclusionAddonBlockedByWindows: () => addonState.blocked, loadExclusionAddon: () => (addonState.addon === undefined ? actual.loadExclusionAddon() : addonState.addon) };
 });
 vi.mock("./cloud-home/turn-process.ts", async (original) => {
   const actual = await original<typeof import("./cloud-home/turn-process.ts")>();
@@ -29,12 +31,12 @@ vi.mock("./cloud-home/turn-process.ts", async (original) => {
 });
 
 import {
-  BWRAP_ARGS_FD, BWRAP_ENVIRONMENT, BWRAP_STATUS_FD, bwrapEngineStarted, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_MESSAGE_LINUX_MAC, HOST_POWER_MESSAGE_WINDOWS, HOST_POWER_TEST_UNWRAPPED, POWER_FILTER_SHA256, SEATBELT_POWER_PROFILE,
+  BWRAP_ARGS_FD, BWRAP_ENVIRONMENT, BWRAP_STATUS_FD, bwrapEngineStarted, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_MESSAGE_LINUX_MAC, HOST_POWER_MESSAGE_WINDOWS, HOST_POWER_TEST_UNWRAPPED, POWER_FILTER_SHA256, SEATBELT_POWER_PROFILE, NO_LIMITS_SEATBELT_POWER_PROFILE,
   bwrapOptions, bwrapEarlyExitMessage, closePowerFilter, HOST_POWER_MESSAGE_LONG_TMPDIR, hostPowerDeps, hostPowerStubBase, openPowerFilter, planHostPower, sessionBusPaths, startHostPowerStub, stopHostPowerStubForTests,
   HOST_POWER_GAP_NOTICE, HOST_POWER_UNWRAPPED_DRIVERS, hostPowerGap, hostPowerGapNoticeDue, hostPowerProbeDeps, markHostPowerGapNoticeShown, noteHostPowerGap, probeHostPowerEnvironment, probeOptions, reprobeHostPowerEnvironment, resetHostPowerGapForTests, usernsDenied, usernsGapCause,
 } from "./host-power.ts";
 import { DRAFT_ONLY_ENGINE_LINE, draftOnlyQualifies } from "./draft-only.ts";
-import { awaitCliTreeStopped, cliTreeConfirmedStopped, cliTreeStoppedSignal, dropServerShutdownPrivileges, engineJob, engineProcessPid, engineWrapsHostPower, forceCliTreeStopped, hostPowerKeyField, hostPowerMessage, hostPowerRefused, killCliTree, resetShutdownDropForTests, spawnCli } from "./procs.ts";
+import { awaitCliTreeStopped, cliTreeConfirmedStopped, cliTreeStoppedSignal, dropServerShutdownPrivileges, engineExecutableMissing, engineJob, engineProcessPid, engineWrapsHostPower, forceCliTreeStopped, hostPowerKeyField, hostPowerMessage, hostPowerRefused, killCliTree, resetShutdownDropForTests, spawnCli } from "./procs.ts";
 import { diffWarmKey, warmKey } from "./drivers/warm-key.ts";
 import { codexTurnPolicy } from "./drivers/codex-isolation.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -122,11 +124,12 @@ describe("where the block is applied (section 2)", () => {
     // STOP-NONACP 628bc2fab: the spawn now sits inside gate.launch(entry, () => spawnCli(...)); the job and thread arguments are unchanged
     expect(codex).toContain("}, engineJob({ posixHostPower: false }), undefined, threadId));");
     // ACP: Fuigo is not wrapped on Mac or Linux, every other ACP engine is.
-    expect(acp).toContain('const hostPowerOptions = { posixHostPower: support.driverKind !== "fuigoAgent" };');
+    expect(acp).toMatch(/const hostPowerOptions = \{ posixHostPower: support\.driverKind !== "fuigoAgent",\s+noLimits: .*powerSession \};/);
     expect(acp).toContain("}, engineJob(hostPowerOptions), undefined, threadId);"); // envfix c0f4afed4
     // Antigravity: the turn and the helper prompt pass engineJob() on every OS; Pi's turn too.
-    expect(antigravity.match(/engineJob\(\)/g)!.length).toBeGreaterThanOrEqual(2);
-    expect(pi).toContain("}, engineJob(), undefined, threadId);"); // envfix c0f4afed4
+    expect(antigravity).toContain("engineJob({ noLimits: noLimits(), powerSession })");
+    expect(antigravity.match(/engineJob\(/g)!.length).toBeGreaterThanOrEqual(2);
+    expect(pi).toContain("}, engineJob({ noLimits: (turn.permissionNow?.() ?? turn).noLimits === true, powerSession }), undefined, threadId);"); // envfix c0f4afed4
     // The block does not read the channel flag, and this phase does not edit auto-approve.ts.
     expect(source("host-power.ts")).not.toContain("fullAccessChannelMessages");
   });
@@ -336,6 +339,32 @@ describe("Linux plan (section 4)", () => {
 });
 
 describe("macOS plan (section 5)", () => {
+  it("E2 No limits falls back on a refused macOS profile once per session, lower levels stay wrapped", () => {
+    const sandboxExec = join(scratch(), "sandbox-exec");
+    writeFileSync(sandboxExec, "fixture");
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec });
+    const probe = vi.spyOn(hostPowerProbeDeps, "runSync").mockReturnValue({ code: 65, stderr: "sandbox-exec: profile rejected" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const session = {};
+    for (let i = 0; i < 3; i++) expect(planHostPower("muse", ["serve"], {}, scratch(), session)).toMatchObject({ kind: "unwrapped" });
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(probe.mock.calls[0]?.[1]).toEqual(["-p", NO_LIMITS_SEATBELT_POWER_PROFILE, "/usr/bin/true"]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(planHostPower("muse", ["serve"], {}, scratch())).toMatchObject({ kind: "seatbelt", args: ["-p", SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    probe.mockReturnValue({ code: 0, stderr: "" });
+    expect(planHostPower("muse", ["serve"], {}, scratch(), {})).toMatchObject({ kind: "seatbelt", args: ["-p", NO_LIMITS_SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    expect(NO_LIMITS_SEATBELT_POWER_PROFILE).not.toContain("appleevent-send");
+    expect(NO_LIMITS_SEATBELT_POWER_PROFILE).toContain("IOPMrootDomain");
+    expect(warn).toHaveBeenCalledTimes(1);
+    probe.mockRestore(); warn.mockRestore();
+  });
+
+  it("uses version-1 IOKit operations while retaining both power class filters", () => {
+    expect(SEATBELT_POWER_PROFILE).toContain('(version 1)');
+    expect(SEATBELT_POWER_PROFILE).not.toMatch(/iokit-open-(?:service|user-client)/);
+    expect(SEATBELT_POWER_PROFILE).toMatch(/\(deny iokit-open\s+\(iokit-registry-entry-class "IOPMrootDomain"\)\s+\(iokit-user-client-class "RootDomainUserClient"\)\)/);
+  });
+
   it("runs sandbox-exec -p with the fixed profile, the engine argv unchanged; a missing sandbox-exec is refused", () => {
     // A regular file the test makes stands in for /usr/bin/sandbox-exec, so the plan is checked on every OS the file runs on
     // (a fixed POSIX path like /bin/sh does not exist on Windows).
@@ -401,6 +430,55 @@ describe("spawnCli with the block (sections 2 and 8)", () => {
     child.stderr.on("data", (chunk) => { err += chunk; });
     child.on("close", (code) => end(code));
     try { child.stdin.end(); } catch { /* a refused launch's stand-in pipe */ }
+  });
+
+  it.skipIf(process.platform === "win32")("E2 native launch executes the fixture after a failed macOS power probe", async () => {
+    const wrapper = join(scratch(), "fake-seatbelt");
+    writeFileSync(wrapper, '#!/bin/sh\necho "sandbox-exec: profile rejected" >&2\nexit 65\n');
+    chmodSync(wrapper, 0o755);
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec: wrapper });
+    vi.spyOn(hostPowerProbeDeps, "runSync").mockReturnValue({ code: 65, stderr: "profile rejected" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cli = join(scratch(), "fake-muse");
+    writeFileSync(cli, '#!/bin/sh\necho fixture-ran\n'); chmodSync(cli, 0o755);
+    const session = {};
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    // engineJob's platform stays the host's; both POSIX platforms use the same marker.
+    for (let n = 0; n < 2; n++) {
+      const child = spawnCli(cli, [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, engineJob({ noLimits: true, powerSession: session }));
+      expect(await collect(child)).toMatchObject({ code: 0, out: "fixture-ran\n", errors: [] });
+      expect(hostPowerRefused(child)).toBe(false);
+      expect(await awaitCliTreeStopped(child)).toBe(true);
+    }
+    expect(warn.mock.calls.filter(([line]) => String(line).includes("No limits session"))).toHaveLength(1);
+    expect(Object.getOwnPropertyDescriptor(process, "platform")).toEqual(descriptor);
+    vi.restoreAllMocks();
+  });
+
+  it.skipIf(process.platform === "win32")("backs off repeated Seatbelt diagnostics to one warning until a successful launch", async () => {
+    // A shell stand-in only: never execute sandbox-exec on Linux.
+    const wrapper = join(scratch(), "fake-seatbelt");
+    const deny = () => { writeFileSync(wrapper, '#!/bin/sh\necho "sandbox-exec: invalid profile: unbound variable iokit-open-service sk-test-0123456789abcdefghijk **password**: hunter2\nTAILSECRET" >&2\nexit 1\n'); chmodSync(wrapper, 0o755); };
+    deny();
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec: wrapper });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cli = join(scratch(), "muse-diagnostic-fixture");
+    writeFileSync(cli, "#!/bin/sh\nexit 0\n"); chmodSync(cli, 0o755);
+    const launch = async () => {
+      const child = spawnCli(cli, [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+      await collect(child); return child;
+    };
+    for (let n = 0; n < 4; n++) expect(hostPowerRefused(await launch())).toBe(true);
+    const refusals = () => warn.mock.calls.filter(([line]) => String(line).includes(`engine launch refused for ${cli}`));
+    expect(refusals()).toHaveLength(1);
+    expect(refusals()[0][0]).toContain("invalid profile");
+    expect(refusals()[0][0]).not.toContain("sk-test-0123456789abcdefghijk");
+    expect(JSON.stringify(refusals())).not.toMatch(/hunter2|TAILSECRET/);
+    expect(String(refusals()[0][0]).length).toBeLessThan(1400);
+    writeFileSync(wrapper, '#!/bin/sh\nexit 0\n');
+    expect(hostPowerRefused(await launch())).toBe(false);
+    deny(); await launch();
+    expect(refusals()).toHaveLength(2);
   });
 
   it.skipIf(process.platform !== "linux")("a refused Linux launch has no pid, EPOWER and the sentence, and is not ECONTAIN", async () => {
@@ -768,21 +846,26 @@ describe("the real bwrap fixture (section 10)", () => {
     }, 30_000);
   }
 
-  it("reuses the caged ACP engine on turn two after an MCP restart, and rejects a matching-argv child of another MCP process", async (context) => {
+  // MAIN RULING 1115-ACP-MOUNTED-SINGLEUSE
+  it("uses a fresh caged ACP wrapper for each mounted turn and cleans matching-argv descendants", async (context) => {
     if (!shipped || root) {
-      console.info(`real-cage ACP reuse skipped: ${!shipped ? "shipped Linux cage is absent" : "host-power refuses a root test process"}`);
+      console.info(`real-cage mounted ACP skipped: ${!shipped ? "shipped Linux cage is absent" : "host-power refuses a root test process"}`);
       context.skip(); return;
     }
     await startHostPowerStub();
-    // The same shipped artifacts and install permissions as the lifecycle tests above.
-    const installed = scratch("murage-cage-acp-reuse-");
-    for (const name of ["bwrap", "murage-power.bpf", "manifest.json"]) {
-      copyFileSync(join(cage, name), join(installed, name));
-      chmodSync(join(installed, name), name === "bwrap" ? 0o555 : 0o444);
-    }
+    // CI grants userns to the shipped source path in its AppArmor profile.
+    // Relocating these same bytes to a temporary path loses that grant. Keep
+    // the real path and enforce the real non-writable helper checks throughout.
+    const installed = realpathSync(cage);
+    const modes = ["bwrap", "murage-power.bpf", "manifest.json"].map(name => {
+      const file = join(installed, name);
+      return { file, name, mode: statSync(file).mode & 0o777 };
+    });
+    try {
+    for (const { file, name } of modes) chmodSync(file, name === "bwrap" ? 0o555 : 0o444);
     Object.assign(hostPowerDeps, { helperDir: () => installed });
-    const [{ ensureDirs }, { createAcpDriver, resetAcpMcpReadinessForTests }, { recordEvents }, { warmPool }, procs] = await Promise.all([
-      import("./config.ts"), import("./drivers/acp/core.ts"), import("./testing/events.ts"), import("./drivers/warm-pool.ts"), import("./procs.ts"),
+    const [{ ensureDirs }, { createAcpDriver, resetAcpMcpReadinessForTests }, { recordAdmittedEvents: recordEvents }, { warmPool }, procs] = await Promise.all([
+      import("./config.ts"), import("./drivers/acp/core.ts"), import("./testing/admitted-events.ts"), import("./drivers/warm-pool.ts"), import("./procs.ts"),
     ]);
     ensureDirs(); // server/testing/setup.ts supplies the isolated home and data directory.
     const work = scratch("murage-caged-acp-");
@@ -791,9 +874,9 @@ describe("the real bwrap fixture (section 10)", () => {
     const readyGate = join(work, "release-mcp-ready"), nestedGate = join(work, "start-nested"), nestedPid = join(work, "nested.pid");
     const mcpScript = join(work, "mcp.cjs");
     writeFileSync(mcpScript, `
-      const {existsSync, writeFileSync} = require('node:fs');
+      const {existsSync, appendFileSync} = require('node:fs');
       if (process.env.MURAGE_FIXTURE_NESTED === '1') {
-        writeFileSync(${JSON.stringify(nestedPid)}, String(process.pid));
+        appendFileSync(${JSON.stringify(nestedPid)}, JSON.stringify({pid: process.pid, ppid: process.ppid}) + '\\n');
       } else if (existsSync(${JSON.stringify(nestedGate)})) {
         require('node:child_process').spawn(process.execPath, [__filename], {
           env: {...process.env, MURAGE_FIXTURE_NESTED: '1'}, stdio: 'ignore'
@@ -813,9 +896,9 @@ describe("the real bwrap fixture (section 10)", () => {
       defaultCli: process.execPath, nativeSource: "caged-pool.acp", loginNote: "never reached",
       spawnArgs: () => [fakeCli], pickAuthMethod: methods => methods[0]?.id ?? null,
       authFailure: "continue", isAuthenticated: () => true,
-      mcpReadyNotification: "_fuigo/mcp_initialized", pooledSessions: true,
+      mcpReadyNotification: "_fuigo/mcp_initialized", pooledSessions: true, fluxReach: () => "elsewhere" as const
     });
-    const wrappers: Array<ReturnType<typeof spawnCli>> = [];
+    const wrappers: Array<ReturnType<typeof spawnCli>> = [], mountWrappers: Array<ReturnType<typeof spawnCli>> = [];
     const stderr: string[] = [], info: string[] = [];
     const realSpawn = procs.spawnCli;
     // Observe handles without replacing the real spawn, wrapper, PID resolution or tree probes.
@@ -826,6 +909,7 @@ describe("the real bwrap fixture (section 10)", () => {
         stderr[index] = "";
         child.stderr.on("data", bytes => { stderr[index] += String(bytes); });
       }
+      if (args[0] === process.execPath && args[1][0] === mcpScript) mountWrappers.push(child);
       return child;
     });
     const infoSpy = vi.spyOn(console, "info").mockImplementation((...args) => { info.push(args.map(String).join(" ")); });
@@ -859,7 +943,7 @@ describe("the real bwrap fixture (section 10)", () => {
         throw error;
       }
     };
-    const memberFor = (namespacePid: number) => snapshot(wrappers[0].pid!).find(member => {
+    const memberFor = (wrapper: ReturnType<typeof spawnCli>, namespacePid: number) => snapshot(wrapper.pid!).find(member => {
       try {
         const pids = /^NSpid:\s+(.+)$/m.exec(readFileSync(`/proc/${member.pid}/status`, "utf8"))?.[1].trim().split(/\s+/).map(Number);
         return pids?.at(-1) === namespacePid;
@@ -877,45 +961,66 @@ describe("the real bwrap fixture (section 10)", () => {
     try {
       instance = await driver.create({ instanceId: "caged-pool", displayName: "Caged Pool Test", environment: {}, enabled: true, config: { cli: process.execPath, fullAuto: false } });
       recorder = recordEvents(instance.adapter);
-      let engine: Member | undefined, previousMcp: Member | undefined;
+      let previousEngine: Member | undefined, previousMcp: Member | undefined;
       for (const turn of [1, 2, 3]) {
         if (turn > 1) unlinkSync(readyGate);
         if (turn === 3) writeFileSync(nestedGate, "start");
         const { turnId } = await instance.adapter.sendTurn({
           threadId: "t-caged-pool", text: `turn ${turn}`, cwd: work,
           ...(turn > 1 ? { resumeCursor: "fake-acp-session" } : {}),
-          // Change only the server contract, so session/load restarts MCP on the warm engine.
+          // Rotate the integration contract on each single-use mounted turn.
           integrations: { agents: { command: process.execPath, args: [mcpScript], env: { MURAGE_FIXTURE_TURN: String(turn) } } },
         });
-        await expect.poll(() => lines(mcpLog).length >= turn || recorder!.events.some(event => event.type === "turn.completed" && event.turnId === turnId), { timeout: 10_000 }).toBe(true);
-        const wrapper = wrappers[0];
+        const mcpLaunches = 2 * turn - 1; // cold session/load starts and replaces its fixture MCP child
+        await expect.poll(() => lines(mcpLog).length >= mcpLaunches || recorder!.events.some(event => event.type === "turn.completed" && event.turnId === turnId), { timeout: 10_000 }).toBe(true);
+        const wrapper = wrappers[turn - 1];
         if (turn === 1 && wrapper && hostPowerRefused(wrapper) && USERNS_EPERM.test(stderr[0])) {
-          console.warn("real-cage ACP reuse skipped: kernel denies this user's user namespace");
+          console.warn("real-cage mounted ACP skipped: kernel denies this user's user namespace");
           context.skip(); return;
         }
-        expect(wrappers).toHaveLength(1); // includes turn two before reconciliation: no cold acquisition
-        expect(spawnSpy.mock.calls.find(args => args[1][0] === fakeCli)?.[3]).toEqual({ hostPower: true });
-        expect(hostPowerRefused(wrapper), stderr[0]).toBe(false);
-        expect(readFileSync(`/proc/${wrapper.pid}/cmdline`, "utf8").split("\0")[0]).toBe(join(installed, "bwrap"));
-        expect(lines(mcpLog)).toHaveLength(turn);
+        expect(wrappers).toHaveLength(turn); // every mounted generation acquires a fresh wrapper
+        for (const args of spawnSpy.mock.calls.filter(args => args[1][0] === fakeCli)) expect(args[3]).toEqual({ hostPower: true });
+        expect(hostPowerRefused(wrapper), stderr[turn - 1]).toBe(false);
+        expect(lines(mcpLog), JSON.stringify({ stderr, info, events: recorder.events, exitCode: wrapper.exitCode, signalCode: wrapper.signalCode, gap: hostPowerGap() })).toHaveLength(mcpLaunches);
+        expect(readFileSync(`/proc/${wrapper.pid}/cmdline`, "utf8").split("\0")[0]).toBe(realpathSync(join(cage, "bwrap")));
         const currentEngine = stat(engineProcessPid(wrapper)!);
         expect(currentEngine).not.toBeNull();
         expect(currentEngine!.pid).not.toBe(wrapper.pid);
-        if (!engine) engine = currentEngine!;
-        expect(currentEngine).toMatchObject({ pid: engine.pid, start: engine.start });
-        expect(memberFor(Number(lines(spawnLog)[0]))).toMatchObject({ pid: engine.pid, start: engine.start });
+        const engine = currentEngine!;
+        if (previousEngine) {
+          expect(engine.pid).not.toBe(previousEngine.pid);
+          expect(gone(previousEngine)).toBe(true);
+          expect(wrapper).not.toBe(wrappers[turn - 2]);
+        }
+        expect(memberFor(wrapper, Number(lines(spawnLog).at(-1)))).toMatchObject({ pid: engine.pid, start: engine.start });
         const mcpNamespacePid = Number(lines(mcpLog).at(-1));
-        await expect.poll(() => memberFor(mcpNamespacePid), { timeout: 5_000 }).toBeDefined();
-        const mcp = memberFor(mcpNamespacePid)!;
-        expect(mcp.ppid).toBe(engine.pid);
-        expect(mcp.ppid).not.toBe(wrapper.pid);
+        await expect.poll(() => memberFor(wrapper, mcpNamespacePid), { timeout: 5_000 }).toBeDefined();
+        const shim = memberFor(wrapper, mcpNamespacePid)!;
+        expect(shim.ppid).toBe(engine.pid);
+        expect(shim.ppid).not.toBe(wrapper.pid);
+        const shimScript = fileURLToPath(new URL("./drivers/cli-mount-shim.ts", import.meta.url));
+        expect(readFileSync(`/proc/${shim.pid}/cmdline`, "utf8").replace(/\0/g, " ").trim()).toBe(`${process.execPath} ${shimScript} --server agents`);
+        // A mounted integration runs in its own cage, behind the native shim.
+        expect(mountWrappers).toHaveLength(turn);
+        const mountWrapper = mountWrappers[turn - 1];
+        expect(hostPowerRefused(mountWrapper)).toBe(false);
+        expect(readFileSync(`/proc/${mountWrapper.pid}/cmdline`, "utf8").split("\0")[0]).toBe(realpathSync(join(cage, "bwrap")));
+        for (const args of spawnSpy.mock.calls.filter(args => args[1][0] === mcpScript)) expect(args[3]).toEqual({ hostPower: true });
+        const mcp = stat(engineProcessPid(mountWrapper)!)!;
+        expect(mcp).not.toBeNull();
+        expect(mcp.pid).not.toBe(engine.pid);
+        expect(mcp.pid).not.toBe(mountWrapper.pid);
+        snapshot(mountWrapper.pid!);
+        expect(readFileSync(`/proc/${mcp.pid}/cmdline`, "utf8").replace(/\0/g, " ").trim()).toBe(`${process.execPath} ${mcpScript}`);
         if (previousMcp) {
           expect(mcp.pid).not.toBe(previousMcp.pid);
           await expect.poll(() => gone(previousMcp!), { timeout: 5_000 }).toBe(true);
         }
         if (turn === 3) {
           await expect.poll(() => lines(nestedPid).length, { timeout: 5_000 }).toBe(1);
-          const nested = memberFor(Number(lines(nestedPid)[0]))!;
+          const nestedMember = () => memberFor(mountWrapper, (JSON.parse(lines(nestedPid)[0]) as { pid: number }).pid);
+          await expect.poll(nestedMember, { timeout: 5_000 }).toBeDefined();
+          const nested = nestedMember()!;
           expect(nested).toBeDefined();
           expect(nested.ppid).toBe(mcp.pid);
           expect(nested.ppid).not.toBe(engine.pid);
@@ -925,34 +1030,30 @@ describe("the real bwrap fixture (section 10)", () => {
         writeFileSync(readyGate, "ready");
         expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === turnId)).toMatchObject({ ok: true, stopReason: null });
         expect(calls("session/prompt")).toHaveLength(turn);
-        if (turn < 3) {
-          expect(wrappers).toHaveLength(1);
-          expect(engineProcessPid(wrapper)).toBe(engine.pid);
-          expect(lines(spawnLog)).toHaveLength(1);
-          expect(calls("initialize")).toHaveLength(1);
-          expect(calls("authenticate")).toHaveLength(1);
-          expect(calls("session/new")).toHaveLength(1);
-          expect(calls("session/load")).toHaveLength(turn - 1);
-          if (turn === 2) expect(calls("session/load")[0]).toMatchObject({ noReplay: true });
-          expect(info.some(line => /reason=(pre-prompt-leftover|post-turn-descendant)/.test(line))).toBe(false);
-          expect(warmPool.idleCount()).toBe(1);
-        } else {
-          // The pool.test.ts observable: the same turn closes the leftover tree and starts fresh.
-          expect(info.some(line => line.includes("acp close thread=t-caged-pool reason=pre-prompt-leftover"))).toBe(true);
-          expect(wrappers).toHaveLength(2);
-          expect(lines(spawnLog)).toHaveLength(2); // namespace PID 2 may occur twice; count actual launches
-          expect(calls("initialize")).toHaveLength(2);
-          expect(engineProcessPid(wrappers[1])).not.toBe(engine.pid);
-          expect(await awaitCliTreeStopped(wrapper)).toBe(true);
-          expect(gone(engine)).toBe(true);
-        }
+        await expect(instance.adapter.awaitTurnTeardown!("t-caged-pool", turnId)).resolves.toEqual({ closeConfirmed: true });
+        expect(wrappers).toHaveLength(turn);
+        expect(lines(spawnLog)).toHaveLength(turn); // namespace PID 2 may repeat; count actual launches
+        expect(calls("initialize")).toHaveLength(turn);
+        expect(calls("authenticate")).toHaveLength(turn);
+        expect(calls("session/new")).toHaveLength(1);
+        expect(calls("session/load")).toHaveLength(turn - 1);
+        if (turn === 2) expect(calls("session/load")[0]).toMatchObject({ noReplay: true });
+        expect(info.some(line => /reason=(pre-prompt-leftover|post-turn-descendant)/.test(line))).toBe(false);
+        expect(warmPool.idleCount()).toBe(0);
+        expect(await awaitCliTreeStopped(wrapper)).toBe(true);
+        expect(await awaitCliTreeStopped(mountWrapper)).toBe(true);
+        expect(gone(engine)).toBe(true);
+        expect(gone(mcp)).toBe(true);
+        // Even the matching-argv grandchild is never retained as a trusted idle server.
+        expect([...observed.values()].every(gone)).toBe(true);
+        previousEngine = engine;
         previousMcp = mcp;
       }
     } finally {
       try { await instance?.dispose(); }
       finally {
         try {
-          const stopped = await Promise.all(wrappers.map(wrapper => forceCliTreeStopped(wrapper)));
+          const stopped = await Promise.all([...wrappers, ...mountWrappers].map(wrapper => forceCliTreeStopped(wrapper)));
           expect(stopped.every(Boolean)).toBe(true);
           expect([...observed.values()].every(gone)).toBe(true);
         } finally {
@@ -962,6 +1063,143 @@ describe("the real bwrap fixture (section 10)", () => {
         }
       }
     }
+    } finally { for (const { file, mode } of modes) chmodSync(file, mode); }
+  }, 90_000);
+
+  // MAIN RULING 1115-ACP-MOUNTED-SINGLEUSE
+  it("reuses one caged ACP wrapper across three non-mounted turns with no integrations", async (context) => {
+    if (!shipped || root) {
+      console.info(`real-cage non-mounted ACP skipped: ${!shipped ? "shipped Linux cage is absent" : "host-power refuses a root test process"}`);
+      context.skip(); return;
+    }
+    await startHostPowerStub();
+    const installed = realpathSync(cage);
+    const modes = ["bwrap", "murage-power.bpf", "manifest.json"].map(name => {
+      const file = join(installed, name);
+      return { file, name, mode: statSync(file).mode & 0o777 };
+    });
+    try {
+      for (const { file, name } of modes) chmodSync(file, name === "bwrap" ? 0o555 : 0o444);
+      Object.assign(hostPowerDeps, { helperDir: () => installed });
+      const [{ ensureDirs }, { createAcpDriver, resetAcpMcpReadinessForTests }, { recordAdmittedEvents: recordEvents }, { warmPool }, procs] = await Promise.all([
+        import("./config.ts"), import("./drivers/acp/core.ts"), import("./testing/admitted-events.ts"), import("./drivers/warm-pool.ts"), import("./procs.ts"),
+      ]);
+      ensureDirs();
+      const work = scratch("murage-caged-acp-unmounted-");
+      const fakeCli = fileURLToPath(new URL("./testing/fake-acp-cli.ts", import.meta.url));
+      const spawnLog = join(work, "spawns.log"), rpcLog = join(work, "rpc.log"), gate = join(work, "release-prompt");
+      for (const [name, value] of Object.entries({
+        MURAGE_ACP_POOL: "1", MURAGE_ACP_CROSS_THREAD_SPARE: "0",
+        FAKE_ACP_SPAWN_LOG: spawnLog, FAKE_ACP_RPC_LOG: rpcLog,
+        FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: gate,
+      })) vi.stubEnv(name, value);
+      const driver = createAcpDriver({
+        driverKind: "cagedPoolTest", displayName: "Caged Pool Test",
+        models: { default: "m-one", options: [{ id: "m-one", label: "One" }] },
+        defaultCli: process.execPath, nativeSource: "caged-pool.acp", loginNote: "never reached",
+        spawnArgs: () => [fakeCli], pickAuthMethod: methods => methods[0]?.id ?? null,
+        authFailure: "continue", isAuthenticated: () => true,
+        mcpReadyNotification: "_fuigo/mcp_initialized", pooledSessions: true, fluxReach: () => "elsewhere" as const,
+      });
+      const wrappers: Array<ReturnType<typeof spawnCli>> = [];
+      const stderr: string[] = [], info: string[] = [];
+      const realSpawn = procs.spawnCli;
+      const spawnSpy = vi.spyOn(procs, "spawnCli").mockImplementation((...args) => {
+        const child = realSpawn(...args);
+        if (args[0] === process.execPath && args[1][0] === fakeCli) {
+          const index = wrappers.push(child) - 1;
+          stderr[index] = "";
+          child.stderr.on("data", bytes => { stderr[index] += String(bytes); });
+        }
+        return child;
+      });
+      const infoSpy = vi.spyOn(console, "info").mockImplementation((...args) => { info.push(args.map(String).join(" ")); });
+      const lines = (file: string) => existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
+      const calls = (method: string) => lines(rpcLog).map(line => JSON.parse(line) as { pid: number; method: string; noReplay?: true }).filter(row => row.method === method);
+      const stat = (pid: number) => {
+        try {
+          const text = readFileSync(`/proc/${pid}/stat`, "utf8");
+          const fields = text.slice(text.lastIndexOf(")") + 2).split(" ");
+          return { pid, start: fields[19], state: fields[0] };
+        } catch (error) {
+          if (["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) return null;
+          throw error;
+        }
+      };
+      type Member = NonNullable<ReturnType<typeof stat>>;
+      const observed = new Map<number, Member>();
+      const snapshot = (pid: number): void => {
+        const children = new Set(readdirSync(`/proc/${pid}/task`).flatMap(task =>
+          readFileSync(`/proc/${pid}/task/${task}/children`, "utf8").trim().split(/\s+/).filter(Boolean).map(Number)));
+        for (const pid of children) {
+          const member = stat(pid);
+          if (member) { observed.set(pid, member); snapshot(pid); }
+        }
+      };
+      const gone = (member: Member) => {
+        const current = stat(member.pid);
+        return !current || current.start !== member.start || ["Z", "X"].includes(current.state);
+      };
+      let instance: Awaited<ReturnType<typeof driver.create>> | undefined;
+      let recorder: ReturnType<typeof recordEvents> | undefined;
+      try {
+        instance = await driver.create({ instanceId: "caged-unmounted-pool", displayName: "Caged Pool Test", environment: {}, enabled: true, config: { cli: process.execPath, fullAuto: false } });
+        recorder = recordEvents(instance.adapter);
+        let engine: Member | undefined;
+        for (const turn of [1, 2, 3]) {
+          if (turn > 1) unlinkSync(gate);
+          // No integrations: this is the poolable control. All three turns
+          // continue the same live native session without re-establishing it.
+          const input = { threadId: "t-caged-unmounted-pool", text: `turn ${turn}`, cwd: work,
+            ...(turn > 1 ? { resumeCursor: "fake-acp-session" } : {}) };
+          expect("integrations" in input).toBe(false);
+          const { turnId } = await instance.adapter.sendTurn(input);
+          await expect.poll(() => calls("session/prompt").length >= turn || recorder!.events.some(event => event.type === "turn.completed" && event.turnId === turnId), { timeout: 10_000 }).toBe(true);
+          const wrapper = wrappers[0];
+          if (turn === 1 && wrapper && hostPowerRefused(wrapper) && USERNS_EPERM.test(stderr[0])) {
+            console.warn("real-cage non-mounted ACP skipped: kernel denies this user's user namespace");
+            context.skip(); return;
+          }
+          expect(wrappers).toHaveLength(1);
+          expect(spawnSpy.mock.calls.find(args => args[1][0] === fakeCli)?.[3]).toEqual({ hostPower: true });
+          expect(hostPowerRefused(wrapper), stderr[0]).toBe(false);
+          expect(readFileSync(`/proc/${wrapper.pid}/cmdline`, "utf8").split("\0")[0]).toBe(realpathSync(join(cage, "bwrap")));
+          const current = stat(engineProcessPid(wrapper)!);
+          expect(current).not.toBeNull();
+          expect(current!.pid).not.toBe(wrapper.pid);
+          engine ??= current!;
+          expect(current).toMatchObject({ pid: engine.pid, start: engine.start });
+          snapshot(wrapper.pid!);
+          expect(observed.get(engine.pid)).toMatchObject({ pid: engine.pid, start: engine.start });
+          writeFileSync(gate, "ready");
+          expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === turnId)).toMatchObject({ ok: true, stopReason: null });
+          await expect(instance.adapter.awaitTurnTeardown!(input.threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+          expect(warmPool.idleCount()).toBe(1);
+          expect(wrappers).toHaveLength(1);
+          expect(engineProcessPid(wrapper)).toBe(engine.pid);
+          expect(gone(engine)).toBe(false);
+          expect(lines(spawnLog)).toHaveLength(1);
+          expect(calls("initialize")).toHaveLength(1);
+          expect(calls("authenticate")).toHaveLength(1);
+          expect(calls("session/new")).toHaveLength(1);
+          expect(calls("session/load")).toHaveLength(0);
+          expect(calls("session/prompt")).toHaveLength(turn);
+          expect(info.some(line => /reason=(pre-prompt-leftover|post-turn-descendant)/.test(line))).toBe(false);
+        }
+      } finally {
+        try { await instance?.dispose(); }
+        finally {
+          try {
+            expect((await Promise.all(wrappers.map(wrapper => forceCliTreeStopped(wrapper)))).every(Boolean)).toBe(true);
+            expect([...observed.values()].every(gone)).toBe(true);
+            expect(warmPool.idleCount()).toBe(0);
+          } finally {
+            recorder?.stop(); resetAcpMcpReadinessForTests();
+            spawnSpy.mockRestore(); infoSpy.mockRestore(); vi.unstubAllEnvs();
+          }
+        }
+      }
+    } finally { for (const { file, mode } of modes) chmodSync(file, mode); }
   }, 90_000);
 
   it.skipIf(!required && (!shipped || root))("reads its cwd, opens the minimal /dev, runs a redirection and node, receives the turn env, and cannot reach the system bus", async (context) => {
@@ -1001,20 +1239,32 @@ describe("the real bwrap fixture (section 10)", () => {
     Object.assign(hostPowerDeps, { helperDir: () => realpathSync(cage), writable: () => false });
     const run = (command: string, args: string[]) => {
       const child = spawnCli(command, args, { cwd: scratch(), stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH } }, { hostPower: true });
-      return new Promise<{ child: typeof child; code: number | null; err: string }>((resolve) => {
+      return new Promise<{ child: typeof child; code: number | null; err: string; errors: string[] }>((resolve) => {
         let err = "";
-        child.on("error", () => {});
+        const errors: string[] = [];
+        child.on("error", (error: NodeJS.ErrnoException) => { errors.push(error.code ?? ""); });
         child.stdout.on("data", () => {}); child.stderr.on("data", (c) => { err += c; });
-        child.on("close", (code) => resolve({ child, code, err }));
+        child.on("close", (code) => resolve({ child, code, err, errors }));
         try { child.stdin.end(); } catch { /* closed */ }
       });
     };
     const ran = await run("/bin/sh", ["-c", "exit 3"]);
     if (!required && hostPowerRefused(ran.child) && USERNS_EPERM.test(ran.err)) { context.skip(); return; }
     expect({ code: ran.code, refused: hostPowerRefused(ran.child), err: ran.err }).toEqual({ code: 3, refused: false, err: "" });
+    // 4da61ffa45 resolves absent executables before planning the cage.
     const missing = await run("/nonexistent/murage-engine", []);
-    expect(missing.err).toMatch(/^bwrap: execvp \/nonexistent\/murage-engine/);
-    expect(hostPowerRefused(missing.child)).toBe(true);
+    expect({ pid: missing.child.pid, code: missing.code, err: missing.err, errors: missing.errors,
+      missing: engineExecutableMissing(missing.child), refused: hostPowerRefused(missing.child) })
+      .toEqual({ pid: undefined, code: -2, err: "", errors: ["ENOENT"], missing: true, refused: false });
+    // An executable can pass that presence check yet fail exec inside bwrap:
+    // its shebang interpreter does not exist. Keep the real negative-exec proof.
+    const broken = join(scratch(), "broken-engine");
+    writeFileSync(broken, "#!/nonexistent/murage-interpreter\n");
+    chmodSync(broken, 0o755);
+    const failed = await run(broken, []);
+    expect(failed.err.startsWith(`bwrap: execvp ${broken}:`)).toBe(true);
+    expect(engineExecutableMissing(failed.child)).toBe(false);
+    expect(hostPowerRefused(failed.child)).toBe(true);
   });
 });
 
@@ -1307,7 +1557,7 @@ describe("environment gap: the turn runs without the block (1.0.9)", () => {
     expect([...HOST_POWER_UNWRAPPED_DRIVERS].sort()).toEqual(["claudeAgent", "codex", "fuigoAgent"]);
     expect(source("drivers/claude.ts")).toContain("engineJob({ posixHostPower: false })");
     expect(source("drivers/codex.ts")).toContain("engineJob({ posixHostPower: false })");
-    expect(source("drivers/acp/core.ts")).toContain('{ posixHostPower: support.driverKind !== "fuigoAgent" }');
+    expect(source("drivers/acp/core.ts")).toContain('{ posixHostPower: support.driverKind !== "fuigoAgent",');
     expect(source("index.ts")).toContain("!HOST_POWER_UNWRAPPED_DRIVERS.has(instance.driverKind) && hostPowerGapNoticeDue(");
   });
 
@@ -1321,3 +1571,20 @@ describe("environment gap: the turn runs without the block (1.0.9)", () => {
 
 // Adapter turns in this suite use an isolated durable store.
 useOutsideStoreFixture();
+
+
+it("SAC explains the Windows component block in the refused turn card without reinstall advice", async () => {
+  resetShutdownDropForTests();
+  addonState.addon = null; addonState.blocked = true;
+  try {
+    const child = asPlatform("win32", () => spawnCli(process.execPath, ["-e", ""], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true }));
+    expect(child.pid).toBeUndefined();
+    const errors: NodeJS.ErrnoException[] = [];
+    child.on("error", error => errors.push(error));
+    await new Promise(resolve => child.on("close", resolve));
+    const message = "Windows blocked a Murage component, so this turn was not started. Update Murage to the fixed version, then try again.";
+    expect(errors.map(error => [error.code, error.message])).toEqual([[HOST_POWER_CODE, message]]);
+    expect(asPlatform("win32", () => hostPowerMessage())).toBe(message);
+    expect(hostPowerRefused(child)).toBe(true);
+  } finally { addonState.addon = undefined; addonState.blocked = false; resetShutdownDropForTests(); }
+});

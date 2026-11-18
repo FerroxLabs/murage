@@ -1,0 +1,13 @@
+# Exactly the 11 native Windows qualification cases; MAIN runs scripts/win-signal-native.ps1.
+# file<TAB>full test name (including describe)
+server/channels/signal/process-host.test.ts	Signal child host T-MODES real Windows DACLs protect fresh and rotated logs (requires Windows runner)
+server/channels/signal/storage.test.ts	real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) T-WIN-CLM returns identical owner, attributes and DACL in full and constrained language
+server/channels/signal/storage.test.ts	real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) T-WIN-INHERIT repairs a real explicit Everyone grant and an inherited key DACL
+server/channels/signal/storage.test.ts	real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) T-WIN-REPARSE refuses a real junction link without enumerating its target
+server/channels/signal/storage.test.ts	real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) T-WIN-REPARSE refuses a real dir link without enumerating its target
+server/channels/signal/storage.test.ts	real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) T-WIN-REPARSE refuses a real file link without enumerating its target
+server/channels/signal/storage.test.ts	real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) T-WIN-REPARSE refuses a real non-link reparse tag with ordinary lstat; kills symlink-only checks
+server/channels/signal/storage.test.ts	real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) T-WIN-OWNER rejects real foreign-owned key with an accepted DACL; kills DACL-only checks and setowner repair
+server/channels/signal/storage.test.ts	real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) T-WIN-OWNER rejects real foreign-owned auth with an accepted DACL; kills DACL-only checks and setowner repair
+server/channels/signal/storage.test.ts	real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) T-WIN-OWNER rejects real foreign-owned signal with an accepted DACL; kills DACL-only checks and setowner repair
+server/channels/signal/storage.test.ts	real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) T-WIN-OWNER rejects real foreign-owned data with an accepted DACL; kills DACL-only checks and setowner repair
