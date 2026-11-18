@@ -28,6 +28,7 @@ type Run = { status: number | null; stderr: string; stdout: string };
 const wipe = (target: string, env: Record<string, string | undefined> = {}, cwd = scratch): Run => {
   const { HOME = FAKE_HOME, ...rest } = env;
   const result = spawnSync("bash", ["-c", 'source "$0" && safe_wipe "$1"', SCRIPT, target], {
+    windowsHide: true,
     cwd,
     env: { PATH: process.env.PATH, HOME, TMPDIR: tmpdir(), ...rest },
     encoding: "utf8",
@@ -114,7 +115,7 @@ describe("scripts/safe-wipe.sh refuses", () => {
 
   it("a symlink under scratch that points at a protected directory", () => {
     const link = join(scratch, "link-scratch");
-    spawnSync("ln", ["-s", join(FAKE_HOME, ".murage"), link]);
+    spawnSync("ln", ["-s", join(FAKE_HOME, ".murage"), link], { windowsHide: true });
     refuses(link, /Murage data directory/);
   });
 

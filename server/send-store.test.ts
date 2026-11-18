@@ -492,3 +492,11 @@ describe("round 5: a transition and its visible effect are committed together", 
     expect(sendNoticeLine("lateRefused")).toEqual({ role: "bot", kind: "activity", tool: { name: "send-notice:lateRefused", ok: false, notice: true }, murageLine: true });
   });
 });
+
+it("ISO-14: persisted isolation is queue-only and survives an explicit replacement", () => {
+  const row = sendStore.accept({ kind: "bot", ownerId: "iso-bot", threadId: "iso-thread", text: "question", fingerprint: "question", sendId: "iso-send", isolated: true }).row;
+  expect(sendStore.bySeq(row.seq)).toMatchObject({ isolated: true, queueOnly: true });
+  sendStore.refuse(row.seq);
+  const replacement = sendStore.accept({ kind: "bot", ownerId: "iso-bot", threadId: "iso-thread", text: "question", fingerprint: "question", sendId: "iso-send", resend: true, actionId: "iso-press" });
+  expect(replacement.row).toMatchObject({ isolated: true, queueOnly: true, sendId: "r-iso-press" });
+});

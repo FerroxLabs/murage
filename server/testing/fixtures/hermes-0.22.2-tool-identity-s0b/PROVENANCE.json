@@ -1,0 +1,173 @@
+{
+  "job": "bld-toolid-s0b",
+  "slice": "S0b fixtures only",
+  "captured_utc": "2026-11-10T21:06:23.408273+00:00",
+  "murage": {
+    "version": "1.0.19",
+    "branch": "dev/1019-toolid-s0b",
+    "base": "5cf79747a20edc2103bf80b90ff5c265f461e7bc"
+  },
+  "hermes": {
+    "source_commit": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+    "archive_sha256": "616649f8ac7e3bb186999d000d77511e733b3930bd2b5921be4a85673320ef8b",
+    "source_files": {
+      "acp_adapter/tools.py": "62748aae2e944fb45929bb5dcd5bdc7bffa542f55da58162f3112d98fb9958b3",
+      "acp_adapter/events.py": "73dd3fe57bcc4350006cc93f62da3a7524bf24b07cd8a91fc40e3422a5584f88",
+      "acp_adapter/permissions.py": "03767ace43598102918f16d870626e464d16df491315a1624af5006915c4596d",
+      "acp_adapter/edit_approval.py": "981b396d8d50aafea89833553bb16ac2dcdb38b9a9b3c1ad321f23a01f0a63cd",
+      "acp_adapter/server.py": "90ff91783bf35d21c5c0ad15f9339fe949d00cf86cff2dc2dcd8730ba56b449f",
+      "acp_adapter/session.py": "edfe55d3496ffa0c4f4f72958d3e595323fb456b7a74090c0f861d07be505ecf",
+      "agent/display.py": "15348b9bca6cbe1eaf5daf294ad24018f92d719496c70c5dabce86092e4ca12e",
+      "model_tools.py": "fbb40d0058e3edd6c4e1608b8db9e922aaf38d2c9d0438c3811c6d6b01b45340",
+      "tools/approval.py": "aaf3c2956a7f031e4f61ee58536bedfb2b50901d7158ff03560ee5977f4049e2",
+      "tools/memory_tool.py": "3ac1975d5d34a8e0fd20ea538aa084fc48c5ba21e8b2da4f97f58a7bf3cafaab",
+      "hermes_cli/main.py": "88a7fc166d3bfaac082d44bbfc36c93b53c50f7508ca96e32206dc3f1edfaa82",
+      "hermes_cli/version_info.py": "2a422bbd2b32691d871b4fe550cd687be0bbb49989a76fedda8c00432d4944a9",
+      "scripts/write_install_stamp.py": "c3c6c75480be8cde57b64d05582200b8ef87015bfe056b4e787f15755a72a81f",
+      "pyproject.toml": "ff41b097147124ff2eb51a437d5f44eddea35104900c1c79c7edfb8b7352d901",
+      "agent/turn_tool_validation.py": "cd5e412e4311bc12238f7774b084d5440c91e40710eafdeaac7c1bfa2ddb0ac4",
+      "agent/agent_runtime_helpers.py": "295bd0adcb698ddeb87966f77a79ef1c8016702641db401bfe692ffb63e0dd49",
+      "agent/tool_executor.py": "6a24abd8bb5dfa518f215782eaace3aabf4b0c3c869d93856513604db6d4ac5c",
+      "tools/code_execution_tool.py": "b4915178f69f41b693d1ae4c379ce19df5af36b4b1e08d5854454bab4e5a5b98"
+    },
+    "install_stamp": "Copied S0-generated stamp; NOT evidence about the gate box",
+    "runtime": {
+      "version_stdout": "Hermes Agent v0.22.2 (2026.9.24) \u00b7 upstream d923a5eb\nInstall directory: /work/.s0b-runtime/hermes-agent-d923a5eb487a17c0a68801bba9ef0f56c81040a8\nInstall method: unknown\nPython: 3.14.10\nOpenAI SDK: 2.24.0\n",
+      "version_stderr": "",
+      "python_version": "3.14.10 (main, Nov  5 2026, 09:38:43) [GCC 12.2.0]",
+      "python_sha256": "18e5076d335579021f66100894222c763322c2a84c8eb78ad572e099b37de56f",
+      "cli_entry_sha256": "88a7fc166d3bfaac082d44bbfc36c93b53c50f7508ca96e32206dc3f1edfaa82",
+      "interfaces": [
+        "lo"
+      ],
+      "environment": {
+        "PATH": "/work/.s0b-runtime/python/bin:/usr/local/bin:/usr/bin:/bin",
+        "PYTHONHOME": "/work/.s0b-runtime/python",
+        "LD_LIBRARY_PATH": "/work/.s0b-runtime/python/lib",
+        "HOME": "/tmp/s0b-home",
+        "HERMES_HOME": "/tmp/s0b-home/hermes",
+        "PYTHONPATH": "/work/.s0b-runtime/deps:/work/.s0b-runtime/hermes-agent-d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "NO_COLOR": "1",
+        "HERMES_ACCEPT_HOOKS": "1",
+        "XAI_API_KEY": "s0-dummy-xai-not-a-credential",
+        "XAI_BASE_URL": "http://127.0.0.1:18080/v1"
+      },
+      "node_version": "v22.23.3",
+      "node_sha256": "fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48"
+    },
+    "source_check": {
+      "archive_sha256": "616649f8ac7e3bb186999d000d77511e733b3930bd2b5921be4a85673320ef8b",
+      "unmodified_files": 18605,
+      "unmodified_python_files": 8503,
+      "same_python_node_cli_hashes_as_S0": true,
+      "same_dependency_versions_as_S0": true,
+      "gate_box_equivalence": "not established"
+    },
+    "python_image": "python@sha256:3fe825da0a80fa8e2cd79baadeb76b03c0ddf3d6cdbc8346778a0208b9d6038c",
+    "node_image": "node@sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8"
+  },
+  "codex": {
+    "package": "@openai/codex-linux-x64 0.167.0",
+    "binary_origin": "public package installed at /usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+    "runtime": {
+      "version": "codex-cli 0.167.0",
+      "sha256": "cdcb45aaa01d0f14e298985e09465aebccd47f64ecd298aea44814af7b62bbda",
+      "interfaces": [
+        "lo"
+      ],
+      "environment": {
+        "HOME": "/work/.s0b-runtime/codex-home",
+        "CODEX_HOME": "/work/.s0b-runtime/codex-home",
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "NO_COLOR": "1"
+      }
+    },
+    "scope": "exec_command and shell-intercepted apply_patch deliver Bash; MCP delivers mcp__s0b__echo. No claim of direct apply_patch delivery or other Codex versions."
+  },
+  "capture": {
+    "wrapper": "<build-host>/tools/it-remote.sh",
+    "IT_JOB": "bld-toolid-s0b",
+    "IT_W": "<build-host>/swarm-b/toolid-s0b/wt",
+    "IT_ORIG": "<build-host>/tools/it-local-generic.sh",
+    "network": "none; runtime asserts only lo",
+    "model": "scripted loopback HTTP responses only",
+    "credentials": "No real credentials read, mounted, forwarded or used. Hermes config uses the S0 literal dummy values. Codex requires_openai_auth=false and has no API key.",
+    "preparation": "Cached S0 archive and Docker images; public PyPI wheels fetched by env -i pip download, installed with --no-index inside network-none container.",
+    "home": "Fresh fixture HOME and workspace, never user app/data",
+    "source": "Unmodified public Hermes; wrapper worktree is writable, all archived source files compared after capture",
+    "billing": "none",
+    "hermes_scenarios": 5,
+    "codex_model_calls": 3,
+    "real_engine_dispatch": true,
+    "vtq": false,
+    "container_image": "node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4"
+  },
+  "gates": {
+    "G1": {
+      "status": "CAPTURED",
+      "answer": "video_analyze: bare title, kind other, exact rawInput; failed missing-media completion"
+    },
+    "G2": {
+      "status": "FALLBACK_B_REQUIRED",
+      "answer": "memory: x fuzzy-repairs to registered memory, starts and saves without ask; zz has no start. Section 11 no-start premise is false; no arbitrary spoofed-title claim."
+    },
+    "G3": {
+      "status": "DESIGN_GAP",
+      "answer": "execute_code nested terminal produces hook and native dangerous-command asks without a terminal start; section 5.6 cannot bind it as written."
+    },
+    "G4": {
+      "status": "CAPTURED",
+      "answer": "exec_command -> Bash -> commandExecution; exec_command apply_patch heredoc -> Bash -> fileChange (same ID); namespaced MCP echo -> mcp__s0b__echo -> mcpToolCall"
+    },
+    "G5": {
+      "status": "OPEN",
+      "answer": "Gate installation/stamp not available; source and runtime equivalence to S0 proven, gate equivalence not established. R1 remains open."
+    }
+  },
+  "verification": {
+    "red": "red-missing-evidence.log; then red-g2-design-premise.log (one observed design-premise failure)",
+    "green_command": "python3 server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py",
+    "design_counterexample_command": "python3 server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/check-design-premise.py (expected exit 1)",
+    "source_command": "python3 server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify-source.py",
+    "application_workflow_claim": false,
+    "security": "gitleaks v8.21.2 detect --no-git, network-none wrapper container: no leaks; <build-host>/swarm-b/bld-toolid-s0b/security/gitleaks-report.json",
+    "artifact_result": "6 passing tests, 1 explicit G5 skip; G2 design premise remains failed, G3/G4 design gaps recorded",
+    "diagnostic_log_normalization": "Trailing whitespace trimmed in red-g2-design-premise.log for git whitespace check. ACP and Codex wire lines are unchanged."
+  },
+  "files": {
+    "README.md": "263c400c6869b60227220e1927b1293370fec180b55f31f204d289092173db77",
+    "ask-hook.cjs": "90783cc2dc5fe0f3fcd9711415f756325c0fefef3a8bd0a82b56a2e60f1f05c1",
+    "capture-codex.py": "d5cf1db284cdab42dfed6e65c6e5dea3984787e8e9cefd8d53dab8dc2fe36ee5",
+    "capture.py": "714a0b732743c3dbbb0ed77e76d12805565baaf63ccbf9e135c6f7733abb688b",
+    "check-design-premise.py": "0cfacf47cb4ec21cee4912c65e7219cdd076039902c7fa0ed67194c24d461cc7",
+    "codex-config.toml": "768a8536872f6e339f11ff217b646eaca5e25da119c02d2e6e2551c032992d4b",
+    "codex-features.txt": "cc2d57b10b9cc353869b60b025e60a609709ddcec8a77445605d5d14f64d8499",
+    "codex-frames.jsonl": "672d65595a239a9cfc48a0484ad4dce0b7c2301311d37e97988f7661f0476673",
+    "codex-hooks.jsonl": "7e558bb4cfdb69466f5f8f4fa1b40c56a07a63d14ad5b9f8e400c337f09078c1",
+    "codex-model-requests.jsonl": "a11a8dd7c214b88c4cd54915e2ea353cb748bc077cf0830a77089ea9f7d89c48",
+    "codex-model-responses.jsonl": "d68ee1d622688c37d809064fb999a2e6958281c4a819b1f9b09730c4b4960266",
+    "codex-runtime.json": "269f39f06eec47ea46a41cb82dd712144a37d396901f16e855ba9110f7160f1b",
+    "codex-stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "codex-workspace-after.json": "91b4b7797138c7239ce2624fb4dc91d12a56933b95f3df12cd66349a37073e47",
+    "config.json": "f490bbf70c9e74f7441e8601bc996b62424380ae332defe21128341f146ed43d",
+    "frames.jsonl": "bec20f5debaabf9323bc06ce5a0113299b32d3a6a8bae64898b4ed7d2e80a6de",
+    "free-tools.json": "42b04e8d946881cd942662567a5a3ffb41a1d42978cb832603e56097237f58d0",
+    "installed-packages.json": "16f60d6ede354828e230fc274b949b79547e3b5e226bedac64c3e591ea1f7cd4",
+    "mcp-stub.py": "0b6a4c90a539eec161ed1e037bbb0471b9d0f8bf9008631bbf29fbb3295488f9",
+    "model-requests.jsonl": "b65c18b786352b14ffc0efdd1e8c3bfce4a234c82d55dfed5bd2935c8ec03311",
+    "model-responses.jsonl": "cf5db01570f022bee91bfa1952b2d2ac72e811488a498b40dc1456361e462852",
+    "red-g2-design-premise.log": "d0544775ffe30636b1786d3f0e6222508000f7f40cd304cd6aa241b896d763dc",
+    "red-missing-evidence.log": "b1b446a31975da899c8f6125ac8ed922739ee1fa58187f2ff82bd6ca752300ef",
+    "requirements.txt": "86d2cee75be570c7f15bfc621bcff01681c3392455121c8fa003309301178624",
+    "run-capture.sh": "8bc1e6ed1417f5ca1ce9d8aa3bdd780d84fbbd599682c24ed74c5c2412e232a1",
+    "runtime.json": "4eda408b11a990468d3f1c95b7f6d42a7f316662a4958248e6b341efea74981e",
+    "scenarios.json": "cd52d4ba417dd8033e6f8dcbec7a5fa2825191da8a1c5d4c9dcaa9611cdc9ffb",
+    "source-check.json": "2e8e116ac342102ff4c2216f4e53b85422b7309514609c44e6dc8a33ce03a6d8",
+    "stderr.log": "7649f20e426b6d298d66e0052e82203a88cc31d669011f415ab1ef4360441161",
+    "verify-source.py": "fdb26dc2d7534665971fef81137db184eae03a9c19712cc352660f3821ec9684",
+    "verify.py": "d003c0f4502f64ecc5f707f54d401a9952666a4db16732b62b6bd4bcdd3e3722",
+    "wheel-inputs.json": "bf90023fe9e79096c50d0803a2cf0c88b567ced413840bb0e26ee15c11a667d7",
+    "workspace-after.json": "29959fda8e5f45383717c90435076df485b607453da1fb9c0403e2fa165f9235"
+  }
+}

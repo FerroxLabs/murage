@@ -6,9 +6,13 @@
 // a card for every connection whether or not the loaded list carries it.
 // server/app-catalog.ts holds the catalog itself.
 
+import { t } from "./i18n";
+import { catalogIdentity, collapseCatalogCards, type CatalogCardIdentity } from "../../shared/catalog-card-identity.ts";
+import type { LocaleKey } from "../locales";
+
 export type SignIn = "managed" | "own" | "none";
 
-export interface AppCard {
+export interface AppCard extends CatalogCardIdentity {
   slug: string;
   label: string;
   blurb: string;
@@ -27,9 +31,16 @@ export type CatalogFallbackReason =
 /** The whole catalog's size as people read it, rounded down so it stays
  * true for a while: 1,634 is "1,600+ apps". Null until the service said. */
 export function appCountLabel(total: number | null | undefined): string | null {
+  const parts = appCountParts(total);
+  return parts ? t(`plugins.appCount.${parts.form}` as LocaleKey, { count: parts.count }) : null;
+}
+
+/** The count and which plural form of the sentence it takes: one app, a few apps, or a rounded "1,600+". The words
+ * themselves live in the language packs (plugins.appCount.*, plugins.browseAll.*), so "1 apps" cannot happen. */
+export function appCountParts(total: number | null | undefined): { form: "one" | "other" | "plus"; count: string } | null {
   if (typeof total !== "number" || !Number.isFinite(total) || total < 1) return null;
-  if (total < 100) return `${Math.floor(total)} apps`;
-  return `${(Math.floor(total / 100) * 100).toLocaleString("en-US")}+ apps`;
+  if (total < 100) { const count = Math.floor(total); return { form: count === 1 ? "one" : "other", count: String(count) }; }
+  return { form: "plus", count: (Math.floor(total / 100) * 100).toLocaleString("en-US") };
 }
 
 /** The panel's one-line claim: the live count once the catalog has said it,
@@ -124,6 +135,18 @@ export function connectedCards(
     .filter(([slug, state]) => isConnection(slug, state))
     .map(([slug]) => index.get(slug) ?? monogramCard(slug))
     .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** Reconcile loaded cards with connected metadata, then apply the server's
+ * full-description identity and deterministic preference in the renderer. */
+export function collapseDuplicateCards<T extends Pick<AppCard, "slug" | "label" | "blurb"> & CatalogCardIdentity>(cards: readonly T[], connected: ReadonlySet<string> = new Set(), known: readonly T[] = []): T[] {
+  const identities = new Set(cards.map(catalogIdentity));
+  const slugs = new Set(cards.map(card => card.slug));
+  const candidates = [...cards];
+  for (const card of known) if (connected.has(card.slug) && !slugs.has(card.slug) && identities.has(catalogIdentity(card))) {
+    candidates.push(card); slugs.add(card.slug);
+  }
+  return collapseCatalogCards(candidates, connected);
 }
 
 /** Cards that match what is typed, for lists already on screen. */

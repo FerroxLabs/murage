@@ -1,0 +1,8 @@
+# RESOLVED: MAIN accepted this pair on 2026-11-11; applied to the scanner tool bundle.
+# SHA-256 pins of public SQL migrations 0139 and 0142, recomputed from their file bytes.
+generic-api-key cloudflare/control-plane/test/migrations-pinned.test.ts
+# Reviewed 2026-11-15, values not printed: fresh-start confirm requests carry a request-dedup idempotencyKey
+# (schema: opaque string, 16 to 128 chars). The test literals are made-up dedup labels and a digit/letter run,
+# not credentials; nothing authenticates with them.
+generic-api-key server/memory-gh18-fresh-start-api.test.ts
+generic-api-key shared/gh18-fresh-start-contract.test.ts

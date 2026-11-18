@@ -6,6 +6,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 vi.mock("./browser-windows-identity.ts", () => ({ verifyWindowsBrowserSignatures: vi.fn(async () => { throw new Error("Native signature calls are forbidden in this source fixture"); }), nativeAuthenticodeIn: vi.fn(() => null) }));
 import { createWindowsBackupResourceResolver, observeWindowsBackupFile, WINDOWS_BACKUP_RAW_SHA256, type WindowsBackupResourceDependencies } from "./windows-backup-resources.ts";
+import { unsignedWindowsPePin } from "../shared/windows-signed-pe.mjs";
+import { appendPeFixtureCertificate, unsignedPeFixture } from "../scripts/fixtures/windows-pe-signing.mjs";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
@@ -13,6 +15,20 @@ function localFile(bytes = "fixture-content") {
   const directory = mkdtempSync(join(tmpdir(), "murage-windows-resource-test-")); roots.push(directory);
   const path = join(directory, "resource"); writeFileSync(path, bytes); return { directory, path };
 }
+
+it("the held-file reader verifies the original payload in signed bytes without weakening file-change checks", () => {
+  const raw = unsignedPeFixture(), signed = appendPeFixtureCertificate(raw), f = localFile();
+  writeFileSync(f.path, signed);
+  // MAIN RULING 1115-WINSAC-C (GrokBuild): real code/resource sections need a larger fixture cap; retain explicit over-limit rejection.
+  expect(() => observeWindowsBackupFile(f.path, signed.length - 1)).toThrow();
+  const held = observeWindowsBackupFile(f.path, 2048), pin = unsignedWindowsPePin(raw);
+  try {
+    expect(held.sha256).toBe(createHash("sha256").update(signed).digest("hex"));
+    held.assertSignedOriginal!(pin); held.assertSignedOriginal!(pin);
+    const changed = Buffer.from(signed); changed[300] ^= 1; writeFileSync(f.path, changed);
+    expect(() => held.assertSignedOriginal!(pin)).toThrow();
+  } finally { held.close(); }
+});
 const app = "C:\\Installed\\Murage.exe", resources = "C:\\Installed\\resources", tools = win32.join(resources, "backup-tools", "x64"), helper = win32.join(tools, "murage-backup-age.exe");
 function directoryStat(ino: bigint, symbolic = false): BigIntStats {
   return { dev: 1n, ino, size: 0n, nlink: 1n, mtimeNs: 1n, ctimeNs: 1n, isDirectory: () => true, isFile: () => false, isSymbolicLink: () => symbolic } as BigIntStats;
@@ -35,7 +51,7 @@ function fixture() {
   const verifySignatures = vi.fn(async (_paths: string[], _native: unknown) => {});
   const nativeAuthenticode = vi.fn((_resources: string) => null as never);
   const io: WindowsBackupResourceDependencies = {
-    platform: "win32", arch: "x64", observeFile, verifySignatures, nativeAuthenticode,
+    platform: "win32", arch: "x64", observeFile, verifySignatures, nativeAuthenticode, signedPins: () => null,
     realpath: path => redirects.get(path) ?? path,
     lstat: path => { if (!ids.has(path)) ids.set(path, BigInt(ids.size + 1)); return directoryStat(ids.get(path)! + (path === replacedDirectory ? 100n : 0n), path === symbolicDirectory); },
   };
@@ -49,6 +65,10 @@ function fixture() {
 
 it("returns only the fixed helper after app/helper signatures and all raw pins", async () => {
   const f = fixture(); await expect(f.resolve()).resolves.toEqual({ executable: helper });
+  // Option A (Sean 2026-11-18T06:42Z): 1.0.19 signs as 1.0.18 shipped; controller-admitted signing + SAC qualification are the first post-release item.
+  // A package without signed-byte pins carries raw upstream age/keygen, held to their exact raw hashes (asserted by the
+  // observeFile order below and the mismatch tests); only the Murage-signed app and helper have a signature to check.
+  // With signed-byte pins all four are checked: "uses post-sign digest pins while retaining ... native-signature checks".
   expect(f.verifySignatures).toHaveBeenCalledExactlyOnceWith([app, helper], null);
   expect(f.observeFile.mock.calls.map(call => call[0])).toEqual([...f.entries.keys()]);
   expect([...f.entries.values()].every(entry => entry.closed)).toBe(true);
@@ -152,5 +172,40 @@ it("hands the app's own native check from its resources folder to the signature 
   f.nativeAuthenticode.mockReturnValue(native as never);
   await expect(f.resolve()).resolves.toEqual({ executable: helper });
   expect(f.nativeAuthenticode).toHaveBeenCalledExactlyOnceWith(resources);
+  // Option A (Sean 2026-11-18T06:42Z): raw-pinned package, so the app and helper; the signed-pin package below adds age/keygen.
   expect(f.verifySignatures).toHaveBeenCalledExactlyOnceWith([app, helper], native);
+  const pinned = fixture(); pinned.nativeAuthenticode.mockReturnValue(native as never);
+  pinned.observeFile.mockImplementation(((original) => (file: string, max: number) => ({ ...original(file, max), assertSignedOriginal() {} }))(pinned.observeFile.getMockImplementation()!) as never);
+  pinned.io.signedPins = () => Object.fromEntries(["age.exe", "age-keygen.exe"].map((name, i) => {
+    const raw = i === 0 ? WINDOWS_BACKUP_RAW_SHA256.age : WINDOWS_BACKUP_RAW_SHA256.keygen;
+    const digest = String(i + 1).repeat(64); pinned.entries.get(win32.join(tools, name))!.digest = digest;
+    return [name, { path: name, originalSha256: raw, sha256: digest, unsigned: { bytes: 512, sha256: raw, checksum: 0 } }];
+  })) as never;
+  await expect(pinned.resolve()).resolves.toEqual({ executable: helper });
+  expect(pinned.verifySignatures).toHaveBeenCalledExactlyOnceWith([app, helper, win32.join(tools, "age.exe"), win32.join(tools, "age-keygen.exe")], native);
+});
+
+it("uses post-sign digest pins while retaining original-payload and native-signature checks", async () => {
+  const f = fixture(), originalObserve = f.observeFile.getMockImplementation()!;
+  const assertSignedOriginal = vi.fn();
+  f.observeFile.mockImplementation((file, max) => ({ ...originalObserve(file, max), assertSignedOriginal }));
+  const pins = Object.fromEntries(["age.exe", "age-keygen.exe"].map((name, i) => {
+    const raw = i === 0 ? WINDOWS_BACKUP_RAW_SHA256.age : WINDOWS_BACKUP_RAW_SHA256.keygen;
+    const digest = String(i + 1).repeat(64); f.entries.get(win32.join(tools, name))!.digest = digest;
+    return [name, { path: name, originalSha256: raw, sha256: digest, unsigned: { bytes: 512, sha256: raw, checksum: 0 } }];
+  }));
+  f.io.signedPins = () => pins;
+  await expect(f.resolve()).resolves.toEqual({ executable: helper });
+  expect(assertSignedOriginal).toHaveBeenCalledTimes(2);
+  expect(f.verifySignatures).toHaveBeenCalledExactlyOnceWith([app, helper, win32.join(tools, "age.exe"), win32.join(tools, "age-keygen.exe")], null);
+  f.entries.get(win32.join(tools, "age.exe"))!.digest = "f".repeat(64);
+  await expect(f.resolve()).rejects.toMatchObject({ code: "AGE_TOOL_UNVERIFIED" });
+});
+
+it("refuses a signed pin with different provenance or an incomplete signed pin set", async () => {
+  const f = fixture(); f.io.signedPins = () => ({ "age.exe": { path: "age.exe", sha256: WINDOWS_BACKUP_RAW_SHA256.age, originalSha256: "f".repeat(64) } });
+  await expect(f.resolve()).rejects.toMatchObject({ code: "AGE_TOOL_UNVERIFIED" });
+  f.io.signedPins = () => ({});
+  await expect(f.resolve()).rejects.toMatchObject({ code: "AGE_TOOL_UNVERIFIED" });
+  expect(f.verifySignatures).not.toHaveBeenCalled();
 });

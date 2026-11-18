@@ -7,14 +7,14 @@ import { existsSync, readFileSync, readdirSync, mkdtempSync, statSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RoutineManager, type RoutineManagerOptions } from "./routines.ts";
+import { RoutineManager, ScopeEscape, type RoutineManagerOptions } from "./routines.ts";
 import { readRoutinesWithRuns, routineRunsDir } from "./routine-runs-journal.ts";
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { plainCopy, track, untracked } from "./tracked-state.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
+afterEach(async () => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 
 const START = new Date(2026, 9, 12, 8, 0, 0).getTime();
 const HOUR = 60 * 60_000, DAY = 24 * HOUR;
@@ -84,6 +84,46 @@ function expectOnDisk(f: Fixture) {
 
 /** Every public RoutineManager method, each driven once against the fixture. */
 const DRIVERS: Record<string, (f: Fixture) => unknown> = {
+  routineById: f => expect(f.m.routineById(f.a.id)?.id).toBe(f.a.id),
+  routineName: f => { expect(f.m.routineName(f.a.id)).toBe("A"); expect(f.m.routineName("missing-fixture-routine")).toBeUndefined(); },
+  chatRoutineOf: f => {
+    expect(f.m.chatRoutineOf(f.thread)).toEqual({ botId: "bot-a", routineId: f.a.id, routineName: "A" });
+    expect(f.m.chatRoutineOf(f.goalThread)).toEqual({ groupId: "group-1", routineId: f.g.id, routineName: "G" });
+    expect(f.m.chatRoutineOf("missing-fixture-thread")).toBeUndefined();
+  },
+  inboxRunOrder: f => expect(f.m.inboxRunOrder(f.running.id)).toBeTypeOf("number"),
+  inboxLatestRunId: f => expect(f.m.inboxLatestRunId(f.a.id)).toBe(f.running.id),
+  inboxRunAfter: f => expect(f.m.inboxRunAfter()?.id).toBeDefined(),
+  // S4 adds indexed readers and explicit lifecycle diagnostics; keep the complete public-method inventory.
+  hasLiveRuns: f => expect(f.m.hasLiveRuns()).toBe(true),
+  newestLiveRunInThread: f => expect(f.m.newestLiveRunInThread(f.thread)?.id).toBe(f.running.id),
+  runWithOpenCard: f => { f.m.cardOpened(f.thread, "indexed-card", "Approve"); expect(f.m.runWithOpenCard(f.thread, "indexed-card")?.id).toBe(f.running.id); },
+  latestRunsForOwner: f => expect(f.m.latestRunsForOwner("bot-a").get(f.a.id)?.id).toBe(f.running.id),
+  automationRunFor: f => expect(f.m.automationRunFor(f.thread)?.id).toBe(f.running.id),
+  memoryOriginKinds: f => expect(f.m.memoryOriginKinds()(f.thread)).toEqual(new Set(["manual"])),
+  runsForStartup: f => expect([...f.m.runsForStartup()].map(run => run.id).sort()).toEqual(f.m.listRuns().map(run => run.id).sort()),
+  verifyRunIndexes: f => expect(f.m.verifyRunIndexes()).toEqual([]),
+  verifyIndexes: f => expect(f.m.verifyIndexes()).toEqual([]),
+  rebuildRunIndexes: f => { f.m.rebuildRunIndexes(); expect(f.m.verifyRunIndexes()).toEqual([]); },
+  repairIndexes: f => { expect(f.m.repairIndexes()).toEqual([]); f.m.recoverPersistence(); expect(f.m.verifyIndexes()).toEqual([]); },
+  recoverPersistence: f => { f.m.recoverPersistence(); expect(f.m.verifyIndexes()).toEqual([]); },
+  rescheduleForZoneChangeStep: f => expect(f.m.rescheduleForZoneChangeStep().done).toBe(true),
+  routineRequestReceiptSnapshot: f => {
+    const snapshot=f.m.routineRequestReceiptSnapshot();
+    expect(snapshot).toEqual(plain(internals(f.m).routineRequestReceipts));
+    snapshot.splice(0);expect(f.m.routineRequestReceiptSnapshot()).toEqual(plain(internals(f.m).routineRequestReceipts));
+  },
+  inheritAllPermissions: f => {
+    f.m.inheritAllPermissions();
+    expect(f.m.listRoutines().every(r=>r.permissionExplicit===false&&r.permissionMode===undefined)).toBe(true);
+  },
+  latestRunForRoutine: f => {
+    const latest = f.m.latestRunForRoutine(f.a.id, 'bot-a')!;
+    expect(latest.id).toBe(f.running.id);
+    latest.status = 'cancelled';
+    expect(f.m.latestRunForRoutine(f.a.id)?.status).toBe('running');
+    expect(f.m.latestRunForRoutine(f.a.id, 'another-owner')).toBeUndefined();
+  },
   listRoutines: f => f.m.listRoutines(),
   listRuns: f => f.m.listRuns(),
   activeRunForBot: f => f.m.activeRunForBot("bot-a"),
@@ -212,12 +252,12 @@ function publicMethods(): string[] {
   const source = readFileSync(new URL("./routines.ts", import.meta.url), "utf8");
   const body = source.slice(source.indexOf("export class RoutineManager"));
   const names = new Set<string>();
-  for (const match of body.matchAll(/^ {2}(?:async )?([a-zA-Z_][a-zA-Z0-9_]*)\(/gm)) if (match[1] !== "constructor") names.add(match[1]!);
+  for (const match of body.matchAll(/^ {2}(?:async )?\*?([a-zA-Z_][a-zA-Z0-9_]*)\(/gm)) if (match[1] !== "constructor") names.add(match[1]!);
   return [...names].sort();
 }
 
 describe("every path that changes routine state reaches disk on the next save", () => {
-  it("drives every public RoutineManager method", () => {
+  it("drives every public RoutineManager method", async () => {
     const names = publicMethods();
     expect(names.length).toBeGreaterThan(40);
     expect(Object.keys(DRIVERS).sort()).toEqual(names);
@@ -264,7 +304,7 @@ describe("a change made off the hot paths survives a crash after one save", () =
     f.m.stop(); reloaded.stop();
   }, 30_000);
 
-  it("tracking never leaks a proxy into a copy, and reads never mark", () => {
+  it("tracking never leaks a proxy into a copy, and reads never mark", async () => {
     let writes = 0;
     const root = track({ a: { b: [1, { c: 2 }] }, d: "x" } as Record<string, any>, () => { writes += 1; });
     expect(root.a.b[1].c).toBe(2);
@@ -333,7 +373,7 @@ describe("preparing to reinstall 1.0.1 folds journal-only routine state into the
     m.stop();
 
     // the "Prepare to reinstall Murage 1.0.1" step (memory-downgrade); no memory database in this folder
-    expect(() => downgradeInstallationMemorySchema(dir, 6, { testOnlyBefore102: true })).toThrow("MEMORY_DATABASE_MISSING");
+    await expect(downgradeInstallationMemorySchema(dir, 6, { testOnlyBefore102: true })).rejects.toThrow("MEMORY_DATABASE_MISSING");
 
     const prepared = read101(dir);
     expect(prepared.routines[0]!.nextRunAt).toBe(cursor);
@@ -343,11 +383,143 @@ describe("preparing to reinstall 1.0.1 folds journal-only routine state into the
     // no 1.0.2-only lines remain for 1.0.1 to skip
     for (const name of readdirSync(routineRunsDir(dir))) expect(readFileSync(join(routineRunsDir(dir), name), "utf8")).not.toContain("$routine");
     // idempotent, and 1.0.2 starting again reads the same schedule
-    expect(() => downgradeInstallationMemorySchema(dir, 6, { testOnlyBefore102: true })).toThrow("MEMORY_DATABASE_MISSING");
+    await expect(downgradeInstallationMemorySchema(dir, 6, { testOnlyBefore102: true })).rejects.toThrow("MEMORY_DATABASE_MISSING");
     expect(read101(dir)).toEqual(prepared);
     const again = new RoutineManager(options(file, clock));
     expect(again.listRoutines()[0]!.nextRunAt).toBe(cursor);
     expect(again.listRuns().filter(item => item.routineId === routine.id)).toHaveLength(1);
     again.stop();
   }, 30_000);
+});
+
+it('M2 conversation lookup indexes misses and follows edits, deletion and reload',async()=>{
+ const f=await fixture();
+ const rows=internals(f.m).routines;
+ let walked=0;
+ const iterator=rows[Symbol.iterator].bind(rows);
+ rows[Symbol.iterator]=function*(){for(const row of iterator()){walked++;yield row;}return undefined;};
+ expect(f.m.routineForConversation(f.thread)?.routineId).toBe(f.a.id);
+ const firstWalk=walked;expect(firstWalk).toBeGreaterThan(0);
+ for(let i=0;i<100;i++) { expect(f.m.routineForConversation('ordinary-task-'+i)).toBeNull();expect(f.m.routineForConversation(f.thread)?.routineId).toBe(f.a.id); }
+ expect(walked).toBe(firstWalk);
+ f.m.update(f.a.id,{permissionMode:'ask'});
+ expect(f.m.routineForConversation(f.thread)).toMatchObject({permissionMode:'ask',permissionExplicit:true});
+ const reloaded=new RoutineManager(options(f.file,f.clock));
+ expect(reloaded.routineForConversation(f.thread)).toMatchObject({permissionMode:'ask',permissionExplicit:true});
+ f.m.remove(f.a.id);
+ expect(f.m.routineForConversation(f.thread)).toBeNull();
+});
+
+it('R5 run identity lookup avoids repeated history walks and keeps live validation through edits, removal and rollback',async()=>{
+ const f=await fixture(),rows=internals(f.m).runs;
+ let walked=0;
+ const iterator=rows[Symbol.iterator].bind(rows),find=rows.find.bind(rows);
+ rows[Symbol.iterator]=function*(){for(const row of iterator()){walked++;yield row;}return undefined;};
+ rows.find=(predicate:any,thisArg?:any)=>find((row,index,array)=>{walked++;return predicate.call(thisArg,row,index,array);});
+ expect(f.m.runById(f.running.id)?.id).toBe(f.running.id);
+ const initial=walked;expect(initial).toBeGreaterThan(0);
+ for(let i=0;i<100;i++){
+  expect(f.m.runById('missing-run-'+i)).toBeNull();
+  expect(f.m.runById(f.running.id)?.botId).toBe('bot-a');
+ }
+ expect(walked).toBe(initial);
+ const live=find(row=>row.id===f.running.id)!;
+ live.botId='different-owner';
+ expect(f.m.runById(f.running.id)?.botId).toBe('different-owner');
+ const copy=f.m.runById(f.running.id)!;copy.botId='copy-only';
+ expect(f.m.runById(f.running.id)?.botId).toBe('different-owner');
+ const mutate=f.m as unknown as {commitMutation(work:()=>void):void};
+ // The owner list is a guarded boundary whose every structural write is its own full commit, so inside one commit the store is replaced directly.
+ expect(()=>mutate.commitMutation(()=>{(f.m as unknown as {replaceStore(list:unknown[]):void}).replaceStore([]);throw Error('fixture rollback');})).toThrow('fixture rollback');
+ expect(f.m.runById(f.running.id)?.botId).toBe('different-owner');
+ // Remove the canonical row without a save (the owner list's splice is its own committed write): the reload below still reads the saved run.
+ (f.m as unknown as {removeRun(run:unknown,tombstone:boolean):void}).removeRun((f.m as unknown as {lookupRun(id:string):unknown}).lookupRun(f.running.id),false);
+ expect(f.m.runById(f.running.id)).toBeNull();
+ const reloaded=new RoutineManager(options(f.file,f.clock));
+ expect(reloaded.runById(f.running.id)?.botId).toBe('bot-a');
+ reloaded.stop();f.m.stop();
+});
+
+
+it('project approval routine lookup indexes hits and misses and follows edits, rollback, deletion and reload',async()=>{
+ const f=await fixture(), rows=internals(f.m).routines;
+ let walked=0;
+ const iterator=rows[Symbol.iterator].bind(rows);
+ rows[Symbol.iterator]=function*(){for(const row of iterator()){walked++;yield row;}return undefined;};
+ expect(f.m.routineById(f.a.id)?.botId).toBe('bot-a');
+ const initial=walked;expect(initial).toBeGreaterThan(0);
+ for(let i=0;i<100;i++){
+  expect(f.m.routineById('missing-'+i)).toBeNull();
+  expect(f.m.routineById(f.a.id)?.botId).toBe('bot-a');
+ }
+ expect(walked).toBe(initial);
+ const copy=f.m.routineById(f.a.id)!;copy.botId='copy-only';
+ expect(f.m.routineById(f.a.id)?.botId).toBe('bot-a');
+ f.m.update(f.a.id,{permissionMode:'ask'});
+ expect(f.m.routineById(f.a.id)).toMatchObject({permissionMode:'ask',permissionExplicit:true});
+ const mutate=f.m as unknown as {commitMutation(work:()=>void):void};
+ expect(()=>mutate.commitMutation(()=>{internals(f.m).routines.splice(0);throw Error('fixture rollback');})).toThrow('fixture rollback');
+ expect(f.m.routineById(f.a.id)).toMatchObject({permissionMode:'ask'});
+ const reloaded=new RoutineManager(options(f.file,f.clock));
+ expect(reloaded.routineById(f.a.id)).toMatchObject({permissionMode:'ask'});
+ f.m.remove(f.a.id);expect(f.m.routineById(f.a.id)).toBeNull();
+ reloaded.stop();f.m.stop();
+});
+
+it('R5 review run lookup stays incremental across alternating creation and dispatch lookup',async()=>{
+ const reads:number[]=[];
+ for(const size of [10,10_000]){
+  const f=await fixture();
+  const initial=internals(f.m).runs;
+  f.m.runs=[...initial,...Array.from({length:size-initial.length},(_,i)=>({...f.failing,id:'retained-'+i}))];
+  const rows=internals(f.m).runs;
+  expect(rows).toHaveLength(size);
+  let historyReads=0;
+  // Instrument the raw records without making instrumentation a persisted edit.
+  for(const run of rows){const raw=untracked(run),id=raw.id;Object.defineProperty(raw,'id',{configurable:true,get(){historyReads++;return id;}});}
+  expect(f.m.runById(f.running.id)?.botId).toBe('bot-a');
+  const before=historyReads;
+  for(let i=0;i<20;i++){
+   const added={...f.running,id:'review-run-'+i,botId:'new-owner-'+i};
+   expect(rows.push(added)).toBe(size+i+1);
+   expect(f.m.runById(added.id)?.botId).toBe(added.botId);
+   expect(f.m.runById('review-missing-'+i)).toBeNull();
+  }
+  reads.push(historyReads-before);
+  expect(historyReads-before).toBe(0);
+  const state=f.m.listRuns(),disk=readRoutinesWithRuns(f.file);
+  const files=()=>[f.file,...readdirSync(routineRunsDir(f.dir)).sort().map(name=>join(routineRunsDir(f.dir),name))].map(file=>[file,readFileSync(file,'utf8'),statSync(file).mtimeMs]);
+  const bytes=files(),length=rows.length;
+  // MAIN RULING 1116-ROUTINES Q1: duplicate rejection is atomic and typed.
+  expect(()=>rows.push({...f.running,id:'review-run-0',botId:'duplicate-owner'})).toThrow(ScopeEscape);
+  expect(rows).toHaveLength(length);expect(files()).toEqual(bytes);
+  expect(f.m.listRuns()).toEqual(state);expect(readRoutinesWithRuns(f.file)).toEqual(disk);
+  expect(f.m.runById('review-run-0')?.botId).toBe('new-owner-0');
+  const at=rows.findIndex(run=>run.id==='review-run-0');rows.splice(at,1);
+  expect(f.m.runById('review-run-0')).toBeNull();
+  rows.push({...f.running,id:'review-run-0',botId:'replacement-owner'});
+  const replacement=rows.find(run=>run.id==='review-run-0')!;replacement.id='renamed-review-run';
+  expect(f.m.runById('review-run-0')).toBeNull();
+  expect(f.m.runById('renamed-review-run')?.botId).toBe('replacement-owner');
+  expect(f.m.verifyRunIndexes()).toEqual([]);
+  f.m.stop();
+ }
+ expect(reads).toEqual([0,0]);
+});
+
+it('R5 review public run creation leaves dispatch lookups independent of retained history',async()=>{
+ const f=await fixture(),rows=internals(f.m).runs;
+ let retainedReads=0;
+ for(const run of rows){const id=run.id;Object.defineProperty(run,'id',{configurable:true,get(){retainedReads++;return id;}});}
+ expect(f.m.runById(f.running.id)?.id).toBe(f.running.id);
+ const created=new Set<string>();
+ for(let i=0;i<20;i++){
+  const run=f.m.runNow(f.a.id)!;expect(created.has(run.id)).toBe(false);created.add(run.id);
+  // Creation may save records. This measures only the following dispatch lookup.
+  const afterCreation=retainedReads;
+  expect(f.m.runById(run.id)?.routineId).toBe(f.a.id);
+  expect(f.m.runById('absent-after-create-'+i)).toBeNull();
+  expect(retainedReads-afterCreation).toBe(0);
+ }
+ f.m.stop();
 });

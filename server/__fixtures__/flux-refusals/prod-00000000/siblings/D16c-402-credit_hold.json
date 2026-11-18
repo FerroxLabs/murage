@@ -1,0 +1,11 @@
+{
+ "not_reachable_in_prod": true,
+ "code": "credit_hold",
+ "status": 402,
+ "reason": "Text exists only in _home_overflow_precall_gate, dispatched only when the key class is 'home' (flux_credit_state._home_dispatch :150-179). The home class is bound only after the Murage Cloud home-key gate admits a request (src/gateway.py:16877-16943, src/capability_key_scope.py:329-419), and both refuse a home key with 503 when CLOUD_HOME_GATE_ENABLED is false (src/cloud_home_keys.py:200-208, default false). Prod FIXTURE_FEATURE=false (busyloop-429/PROVENANCE.json not_reachable_in_prod, read 2026-11-10).",
+ "evidence": {
+  "fixture_3cab165d": "src/credit_state.py:5350 (also :5374), both in _home_overflow_precall_gate :5291 / home draw path",
+  "sentence_at_00000000": "Your credit is on hold. Please contact support."
+ },
+ "rendered": false
+}

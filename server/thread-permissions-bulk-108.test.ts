@@ -38,6 +38,18 @@ describe("108 raise-only preview", () => {
     expect(openRefreshPreview(permissionLevelPatch("no-limits"), base).previewId).not.toBe(id);
     expect(openRefreshPreview(bot, [...base].reverse()).previewId).toBe(id);
   });
+  it("keeps explicit lower conversations when the default changes to No limits", () => {
+    const store = new Store(() => STATE_ONLY_SELECTION), bot = store.createBot();
+    const lower = store.createTask(bot.id, "Explicit Ask", false)!;
+    store.patchTask(bot.id, lower.threadId, permissionLevelPatch("ask"));
+    const before = JSON.stringify(bot.tasks);
+    store.setPermissionLevel(bot.id, { flags: permissionLevelPatch("no-limits"), mirrorSoleTask: false });
+    expect(JSON.stringify(bot.tasks)).toBe(before);
+    expect(store.projectBotForTask(bot.id, bot.threadId)).toMatchObject(permissionLevelPatch("no-limits"));
+    expect(store.projectBotForTask(bot.id, lower.threadId)).toMatchObject(permissionLevelPatch("ask"));
+    const reopened = new Store(() => STATE_ONLY_SELECTION);
+    expect(reopened.projectBotForTask(bot.id, lower.threadId)).toMatchObject(permissionLevelPatch("ask"));
+  });
   it("persists once, keeps defaults and grants, publishes nothing on failure, and reopens the roster", () => {
     const store = new Store(() => STATE_ONLY_SELECTION), bot = store.createBot();
     const second = store.createTask(bot.id, "second", false)!;

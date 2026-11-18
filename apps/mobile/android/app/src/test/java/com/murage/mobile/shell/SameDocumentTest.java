@@ -5,7 +5,7 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 
 public class SameDocumentTest {
-    private static final String HOST = "https://mac.tailnet123.ts.net";
+    private static final String HOST = "https://mac.tail000000.ts.net";
 
     /** The device finding: a tap's "/#open=…" over a page already at "/". */
     @Test
@@ -26,7 +26,7 @@ public class SameDocumentTest {
     @Test
     public void anotherOriginOrNoPageIsANewDocument() {
         assertFalse(SameDocument.of(null, HOST + "/#open=b"));
-        assertFalse(SameDocument.of("https://other.tailnet123.ts.net/", HOST + "/#open=b"));
+        assertFalse(SameDocument.of("https://other.tail000000.ts.net/", HOST + "/#open=b"));
         assertFalse(SameDocument.of(HOST + ":8444/", HOST + "/#open=b"));
         assertFalse(SameDocument.of(HOST + "/", null));
     }
@@ -35,7 +35,7 @@ public class SameDocumentTest {
     @Test
     public void theReloadScriptQuotesTheTarget() {
         String script = SameDocument.reloadScript(HOST + "/#open=a'b\"c");
-        assertTrue(script, script.contains("history.replaceState(null, '', \"https://mac.tailnet123.ts.net/#open=a'b\\\"c\")"));
+        assertTrue(script, script.contains("history.replaceState(null, '', \"https://mac.tail000000.ts.net/#open=a'b\\\"c\")"));
         assertTrue(script, script.contains("location.reload()"));
         assertTrue(script, script.contains("return false"));
     }

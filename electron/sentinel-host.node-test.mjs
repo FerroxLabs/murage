@@ -3,7 +3,7 @@
 // file, the host-side heartbeat note, native page delivery through the adapter, move reconciliation, and quitting
 // that never unregisters. Needs `pnpm build:server` (dist-server/health/host-boundary.js).
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -14,7 +14,10 @@ import { sentinelInvocation } from "./sentinel-schedule.mjs";
 
 const POSIX_ONLY = process.platform === "win32" && "owner uid and mode checks are POSIX-only";
 const boundaryPath = path.join(import.meta.dirname, "..", "dist-server", "health", "host-boundary.js");
-const boundary = await import(pathToFileURL(boundaryPath).href);
+// Register every test before loading the packaged boundary. A bad build must
+// report the inner failing tests, rather than one whole-file import failure.
+let boundary;
+beforeEach(async () => { boundary = await import(pathToFileURL(boundaryPath).href); });
 // The producer's window clock is Date.now: a start and stop inside one millisecond have no window to flush.
 const settle = () => new Promise(resolve => setTimeout(resolve, 5));
 const roots = [];
@@ -256,7 +259,7 @@ test("electron/main.mjs: health/ is initialized after the data owner and before 
   const main = readFileSync(path.join(import.meta.dirname, "main.mjs"), "utf8");
   assert.match(main, /acquireDesktopDataOwner\(\);closedTrace\("owner"\);await initializeSentinelHost\(\{closed:true\}\);await initializeBackupScheduleHost\(\);/);
   assert.match(main, /if \(app\.isPackaged\) \{ acquireDesktopDataOwner\(\); await initializeSentinelHost\(\); \}\n\s*await initializeBackupScheduleHost\(\);/);
-  assert.match(main, /new BackupCoordinator\(\{stateDirectory,onCommitted:state=>\{sentinelHost\?\.backupCommitted\(state\);/);
+  assert.match(main, /new BackupCoordinator\(\{stateDirectory,restoreWindow:\(\)=>restoreWindowOpenOnDisk\(installation\),onCommitted:state=>\{sentinelHost\?\.backupCommitted\(state\);/);
   // A restart or an upgrade republishes the committed backup state once the backup host (its folder/key check) exists.
   const created = main.indexOf("backupScheduleHost=createBackupScheduleHost(");
   const republished = main.indexOf("sentinelHost?.backupCommitted(coordinator.committedState())");

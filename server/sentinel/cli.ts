@@ -1,3 +1,6 @@
+import "../../shared/win-hide-child-process.mjs";
+import {scannerIoReporter,scannerIoCycleSample,writeFileSync as scannerWriteFileSync} from "./io-meter.ts";
+import {SentinelFileWriter,receiptPathPresent} from "./file-receipts.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -13,7 +16,7 @@
 // network module (cli-imports.test.ts walks it). Registration readers are injected: lane C supplies the launchd,
 // Task Scheduler and systemd readers.
 import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HEALTH_LIMITS } from "../../shared/health-protocol.mjs";
 import { loadDescriptor, type SentinelDescriptor } from "./paths.ts";
@@ -140,21 +143,34 @@ const stopSignal = () => new Promise<void>(resolve => { process.once("SIGTERM", 
 
 /** The entry. Answers the process exit code. */
 export async function main(argv: readonly string[], deps: CliDeps = {}): Promise<number> {
-  const out = deps.out ?? ((line: string) => { process.stdout.write(`${line}\n`); });
+  const out = deps.out ?? ((line: string) => { scannerWriteFileSync(1,`${line}\n`); });
   const env = deps.env ?? process.env;
   const args = parseArgs(argv);
   if (!args) { out(JSON.stringify({ status: "usage" })); return EXIT.usage; }
   if (args.mode === "--check-install") {
-    const report = await checkInstall(args.descriptor, deps);
-    out(JSON.stringify(report));
-    return report.state === "proven" ? EXIT.ok : EXIT.notProven;
+    const loaded=loadDescriptor(args.descriptor,{create:false});
+    const read=()=>scannerIoCycleSample();
+    const fileMode=loaded.ok&&receiptPathPresent(join(loaded.value.installationRoot,"sentinel-io"));
+    const receipt=fileMode&&loaded.ok?SentinelFileWriter.begin(loaded.value,read,deps.now??Date.now):null;
+    if(fileMode&&!receipt)return EXIT.notProven;
+    try{
+      const report = await checkInstall(args.descriptor, deps);
+      out(JSON.stringify(report));
+      return report.state === "proven" ? EXIT.ok : EXIT.notProven;
+    }finally{receipt?.finish(read,true,deps.now??Date.now);}
   }
   const loaded = loadDescriptor(args.descriptor, { create: false });
   if (!loaded.ok) { out(JSON.stringify({ status: "descriptor-refused", reason: loaded.reason })); return EXIT.usage; }
   const descriptor = loaded.value;
   const now = deps.now ?? Date.now;
 
+  const fileMode=receiptPathPresent(join(descriptor.installationRoot,"sentinel-io"));
   if (args.mode === "--once" && env[CHILD_FLAG] === "1") {
+    // A role flag without a real receipt channel cannot create an unreported
+    // writable descendant inside another run's ACTIVE barrier.
+    if(fileMode&&(!process.send||!env.MURAGE_IO_GENERATION))return EXIT.unavailable;
+    const lease=fileMode?SentinelFileWriter.descendant(descriptor):null;
+    if(fileMode&&!lease)return EXIT.unavailable;
     // The supervised child: one scan in this process.
     try {
       const outcome = runScan({ ...(deps.scan ?? {}), descriptor });
@@ -163,14 +179,27 @@ export async function main(argv: readonly string[], deps: CliDeps = {}): Promise
     } catch {
       out(JSON.stringify({ status: "failed" }));
       return EXIT.failed;
-    }
+    } finally { lease?.close(); }
   }
 
   const spec = childSpec(args.descriptor, deps);
+  const runCycle=async()=>{
+    const read=()=>scannerIoCycleSample();
+    const writer=fileMode?SentinelFileWriter.begin(descriptor,read,now):null;
+    if(fileMode&&!writer)return {code:EXIT.alreadyRunning,signal:null,timedOut:false,spawnFailed:false};
+    let final=false,known=true;
+    try{
+      const result=await runChildScan(spec,{...(deps.deadlineMs!==undefined?{deadlineMs:deps.deadlineMs}:{}),...(deps.spawnChild?{spawnChild:deps.spawnChild}:{}),
+        onIo:reading=>{if(reading.final)final=true;},onIoUnknown:()=>{known=false;}});
+      if(isFailedAttempt(result))recordScanFailure(descriptor.outputRoot,now());
+      if(args.mode==="--once")out(JSON.stringify({status:result.timedOut?"deadline":"done",code:result.code}));
+      // The failure publication, output and closed stores are part of this cycle too.
+      writer?.finish(read,final&&known&&!isFailedAttempt(result),now);
+      return result;
+    }catch{writer?.close();return {code:EXIT.failed,signal:null,timedOut:false,spawnFailed:false};}
+  };
   if (args.mode === "--once") {
-    const result = await runChildScan(spec, { ...(deps.deadlineMs !== undefined ? { deadlineMs: deps.deadlineMs } : {}), ...(deps.spawnChild ? { spawnChild: deps.spawnChild } : {}) });
-    if (isFailedAttempt(result)) recordScanFailure(descriptor.outputRoot, now());
-    out(JSON.stringify({ status: result.timedOut ? "deadline" : "done", code: result.code }));
+    const result = await runCycle();
     return result.code ?? EXIT.failed;
   }
 
@@ -183,7 +212,7 @@ export async function main(argv: readonly string[], deps: CliDeps = {}): Promise
   const retired = new Promise<void>(resolve => { retire = resolve; });
   const supervisor = new WatchSupervisor({
     spec, installationId: descriptor.installationId, now, stillOwned, onRetire: () => retire(),
-    onFailure: at => recordScanFailure(descriptor.outputRoot, at),
+    runCycle,
     ...(deps.spawnChild ? { spawnChild: deps.spawnChild } : {}),
     ...(deps.deadlineMs !== undefined ? { deadlineMs: deps.deadlineMs } : {}),
     ...(deps.setTimer ? { setTimer: deps.setTimer } : {}),
@@ -203,5 +232,19 @@ export function invokedAsMain(argv1: string | undefined, moduleUrl: string = imp
 
 if (invokedAsMain(process.argv[1])) {
   scrubEnvironment(process.env);
-  void main(process.argv.slice(2)).then(code => { process.exitCode = code; });
+  const invocation=parseArgs(process.argv.slice(2));
+  const loaded=invocation?loadDescriptor(invocation.descriptor,{create:false}):null;
+  // Enrolled outer families use the file source exclusively. Internal scan
+  // children retain their final IPC receipts for the outer supervisor.
+  const fileOuter=loaded?.ok&&process.env[CHILD_FLAG]!=="1"&&receiptPathPresent(join(loaded.value.installationRoot,"sentinel-io"));
+  const reporter=fileOuter?undefined:scannerIoReporter();
+  const interval=reporter?setInterval(()=>reporter.report(),10_000):undefined;
+  interval?.unref();
+  void main(process.argv.slice(2)).then(async code => {
+    if(interval)clearInterval(interval);
+    // main has closed every scan/store and stopped its watcher before sealing.
+    await reporter?.finish();
+    process.exitCode=code;
+    if(process.connected)process.disconnect?.();
+  });
 }

@@ -50,6 +50,9 @@ it("realpath cache: stable reads make zero realpath calls and keep the key", () 
   const spy = vi.mocked(realpathSync); spy.mockClear();
   const before = f.read().key; expect(spy.mock.calls.length).toBeGreaterThan(0);
   for (let i = 0; i < 3; i++) {
+    // Parallel fixtures may change /tmp's directory timestamps without
+    // changing any component of this destination's actual path.
+    roots.push(mkdtempSync(join(dirname(f.root), "x4-neighbor-")));
     spy.mockClear(); expect(f.read().key).toBe(before); expect(spy).not.toHaveBeenCalled();
   }
 });

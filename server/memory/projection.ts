@@ -1,3 +1,5 @@
+import { pendingViewPage } from './recall-view-index.ts';
+import type { RecallViewHandle } from './recall-view.ts';
 import type { DatabaseSync } from "node:sqlite";
 import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import { RECORD_KEYS_TABLE, recordKeysPresent } from "./schema.ts";
@@ -18,7 +20,10 @@ const PENDING = `p.lexical_status IN ('pending','pending-archive','delete-pendin
  * A checkpoint archived with no successor (its thread lost its evidence) is still indexed, for historical search.
  * `table` qualifies the newer-version lookup (an attached authority database). */
 export function rolledCheckpointSql(alias:string,table="memory_records"):string{
-  return `(${alias}.kind='checkpoint' AND ${alias}.state!='active' AND EXISTS(SELECT 1 FROM ${table} rolled WHERE rolled.id=${alias}.id AND rolled.version>${alias}.version))`;
+  const members=table.replace(/memory_records$/,'memory_checkpoint_members'),heads=table.replace(/memory_records$/,'memory_checkpoint_heads');
+  // Append-only publications leave the authority row active. Selection retires
+  // only its derived index entry; exact citations keep the original record.
+  return `(${alias}.kind='checkpoint' AND ((${alias}.state!='active' AND EXISTS(SELECT 1 FROM ${table} rolled WHERE rolled.id=${alias}.id AND rolled.version>${alias}.version)) OR EXISTS(SELECT 1 FROM ${members} cm WHERE cm.record_id=${alias}.id AND NOT EXISTS(SELECT 1 FROM ${heads} ch WHERE ch.family_id=cm.family_id AND ch.record_id=${alias}.id AND ch.record_version=${alias}.version AND ch.state='active'))))`;
 }
 
 /** Only the removals an owner deletion owes (`delete-pending`): what is still projected with memory off or paused (memdel r2 High #2). */
@@ -40,7 +45,8 @@ export function pendingProjectionRefsIn(db:DatabaseSync,scopeIds:readonly string
 /** The next records after `after` (a receipt row id; 0 starts) in these scopes whose projection is still pending, in receipt
  * order, at most `limit`, with the row id to continue from. A reader's coverage is decided by walking this to the first record
  * it may read, however many it may not (search.ts), so the walk is keyed, never counted. */
-export function pendingProjectionRefsAfter(db:DatabaseSync,scopeIds:readonly string[],after:number,limit:number):Array<{id:string;version:number;rowid:number}> {
+export function pendingProjectionRefsAfter(db:DatabaseSync,scopeIds:readonly string[]|RecallViewHandle,after:number,limit:number):Array<{id:string;version:number;rowid:number}> {
+  if(!Array.isArray(scopeIds))return pendingViewPage(db,scopeIds as RecallViewHandle,after,limit);
   return db.prepare(`SELECT p.rowid AS rowid,r.id,r.version FROM memory_projection_receipts p
     JOIN memory_records r ON r.id=p.record_id AND r.version=p.record_version
     WHERE p.rowid>? AND ${PENDING} AND r.scope_id IN (SELECT value FROM json_each(?)) ORDER BY p.rowid LIMIT ?`).all(after,JSON.stringify(scopeIds),limit).map(row=>({id:String(row.id),version:Number(row.version),rowid:Number(row.rowid)}));

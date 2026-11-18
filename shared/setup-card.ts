@@ -50,6 +50,14 @@ export const SETUP_CARD_VARIANTS = [
   "jobs",
   /** flow: the chosen job, from what it needs through to its result. */
   "do-it",
+  /** flux: how would you like to be notified (1.0.19). NOT a step card: it
+   *  settles by its own record (`POST /api/setup/card`), never by a step. */
+  "notify",
+  /** chat: hire your first teammates (1.0.19). Settles by its own record. */
+  "hire",
+  /** detect: Grok Bot data was found on this computer (1.0.19). Settles by
+   *  its own record. */
+  "move-grok",
 
   // ── PARKED. Real, tested work that is no longer a first-run step. ──
   //
@@ -127,6 +135,21 @@ export const setupCardSchema = z.object({
   settled: z.boolean().optional(),
 }).strict();
 export type SetupCardData = z.infer<typeof setupCardSchema>;
+
+/**
+ * The three 1.0.19 cards that are not step cards. A finished or reopened step
+ * never settles or unsettles them (D4); only `POST /api/setup/card` settles.
+ * Each is appended with `answered: "setup"` on the option card so a 1.0.18
+ * renderer, which cannot read the variant, hides it instead of showing the
+ * generic onboarding card with a hide button and an answer box (guard 3).
+ */
+export const SETUP_OWN_RECORD_VARIANTS = ["notify", "hire", "move-grok"] as const;
+export const SETUP_OWN_RECORD_KEYS = ["flux:notify", "chat:hire", "detect:move-grok"] as const;
+export type SetupOwnRecordKey = (typeof SETUP_OWN_RECORD_KEYS)[number];
+
+export function isOwnRecordVariant(variant: SetupCardVariant): boolean {
+  return (SETUP_OWN_RECORD_VARIANTS as readonly string[]).includes(variant);
+}
 
 export function setupCardKey(step: SetupCardData["step"], variant: SetupCardVariant): string {
   return `${step}:${variant}`;

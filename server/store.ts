@@ -1,3 +1,13 @@
+import { isReadOnly, skippedAtStart } from "./read-only-start.ts";
+import { acknowledgeRecallRosterRevision as acknowledgeViewRosterRevision, prepareRosterRecallViews as prepareViewRoster, queueRecallRosterPreparation as queueViewRosterPreparation } from './memory/recall-view.ts';
+import { BotTurnState } from "./bot-turn-state.ts";
+import { permissionsForOrigin, explicitPermission, inheritedPermissions } from "./permission-inheritance.ts";
+import { BrowserModeStorage } from './browser-mode-storage.ts';
+import type { BrowserChoiceBot, DirectReservation } from './browser-mode-transition.ts';
+/** Typed inventory marker for a persistence boundary accepting whole permission-bearing records. */
+export type BotPermissionWrite<T> = T;
+import { canEmit, assertCardPatch, readRecord } from './decision/records.ts';
+import type { ApprovalRef, ApprovalView, PermissionCard, InfoCard } from './decision/types.ts';
 import { bumpChatsGen } from "./thread-summary.ts";
 import type { HeldContinuation } from "./external-context-delivery.ts";
 import type { AskerWakeSnapshot } from "./asker-wake.ts";
@@ -22,7 +32,7 @@ import { observeOwnerMessage, recordWeakSignal } from "./memory/outcomes.ts";
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
 import type { ConnectedAppAccess } from "../shared/bot-access.ts";
 import { mentionedPeers, mentionsEveryone } from "../shared/mention-boundary.ts";
@@ -31,10 +41,10 @@ import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { cancelCoalesced, flushCoalesced, scheduleCoalesced, tightenOwnerOnlyFile, writeFileAtomic } from "./atomic.ts";
+import { cancelCoalesced, flushCoalesced, hasPendingCoalesced, scheduleCoalesced, tightenOwnerOnlyFile, writeFileAtomic } from "./atomic.ts";
 import { readPersistedRecords } from "./persisted-state.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
-import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
+import { DATA_DIR, loadBrowserProfileIdAliases, loadConfig } from "./config.ts";
 import { clearFollowingPins, followCleanupDone, markFollowCleanupDone } from "./thread-follow-model.ts";
 import * as mdb from "./message-db.ts";
 import type { LineageRef } from "./memory/lineage-types.ts";
@@ -47,18 +57,22 @@ import { lineClassesOf } from "./line-classes.ts";
 import { LINE_BOT_EMPTY, LINE_REQUEST_CARD, LINE_TEXT } from "./branch-index.ts";
 import { branchTester, isPrepared as isThreadPrepared, prepareThread as prepareThreadRows } from "./branch-store.ts";
 import { grandfatheredHostComputerConsent, isHostComputerConsent, type HostComputerConsent } from "./host-computer-consent.ts";
-import { persistMemoryRoster, reconcileMemoryRoster } from "./memory/policy.ts";
+import { persistMemoryRoster, reconcileMemoryRoster, recallRosterMatchesPolicySteps } from "./memory/policy.ts";
 import { parseContinuityOptions, type ContinuityOptions } from "./memory/pip-types.ts";
 import { setMemoryCaptureRoster } from "./memory/capture-scope.ts";
-import { database, transaction } from "./database.ts";
+import { database, databaseGeneration, transaction } from "./database.ts";
+import { highLevelThreadMarked, markHighLevelThread, type HighLevelThreadMarkState } from "./highlevel/thread-marks.ts";
 import { afterCommit, inTxScope, onRollback } from "./tx-scope.ts";
+import { assertBotCreateRecovered, prepareBotCreateRollback, recoverBotCreates } from "./bot-create-rollback.ts";
 import { deleteProjectRows } from "./project-tables.ts";
 import { botDeletionKey, groupDeletionKey, recordOwnerDeletion, withdrawOwnerDeletion } from "./owner-deletions.ts";
+import { withdrawFluxForget } from "./flux-memory-spaces.ts";
 import { recordMemorySettlement, type MemoryTurnOutcome } from "./memory/settlement.ts";
 import { workspaceDir } from "./workspace.ts";
 import { newId, type CloudBackend, type EffortLevel, type ModelCatalog, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { fuigoBirthModel, fuigoUsable } from "./default-engine.ts";
 import { pickBotName, DEFAULT_BOT_COLOR } from "./names.ts";
+import { sanitizeDisplayTextUnit } from "./transcript-page.ts";
 import { redactSecretsForCard, redactSecretsInText } from "./redact.ts";
 import { checkStoredRow } from "./stored-row-check.ts";
 import { queueExternalUpdate } from "./external-context-delivery.ts";
@@ -106,10 +120,19 @@ export type EmberColor =
 export type EmberExpression = string;
 
 export interface OptionCardData {
+  writer?: import("../shared/own-write-card.ts").OwnWriteCardData;
+  botReviewId?: string;
+  botAuthority?: import('./bot-call-authority.ts').BotCardAuthority;
+  taskAllowSuggested?: { ownerWords: string };
+  approvalId?: string; requestRef?: string; actionHash?: string;
+  detail?: string; answeredAt?: number;
+  /** Original ask evidence; the live driver alone validates reloads. */
+  identityFrame?: import("../shared/tool-identity.ts").EngineFrame;
+  toolIdentity?: import("../shared/tool-identity.ts").ToolIdentityWire | { namespace: string; name: string; kind?: string };
   /** Optional owner-approved browser connection with one explicit continuation. */
   browserSetup?: import("../shared/browser-setup-card.ts").BrowserSetupCardData;
   /** A publish approval card (server/publish): never auto-approved, in any access mode. */
-  kind?: "publish" | "mcpEnable" | "email-send" | "email-trust-offer";
+  kind?: "publish" | "mcpEnable" | "email-send" | "email-trust-offer" | "own-write";
   publish?: import("../shared/publish-card.ts").PublishCardData;
   /** Bot email (1.0.9): the card is a view of its email_sends row (server/email/cards.ts); answered only through resolveEmailSend. */
   emailSend?: import("../shared/email-copy.ts").EmailCardPayload;
@@ -347,6 +370,10 @@ export function dropUnprovenShare<T extends { role?: string; kind?: string; orig
 }
 
 export interface Message {
+  /** Accepted choice still awaiting its durable failover application. */
+  limitApplication?: { approvalId: string; principal: string; rowId: string;
+    answer: Extract<import("./limit-continuation.ts").LimitCardAnswer, { kind: "engine" }> };
+
   /** Bot email (BOT-EMAIL-MURAGE-109 5.4): a bot text row written by a turn that read outside mail (or carried a row that did). Its words
    *  reach later readers fenced (kind email-derived), and automatic learning holds what rests on it for the owner. */
   externalContent?: "email";
@@ -375,7 +402,7 @@ export interface Message {
   /** On a hand-off's prompt: the sender's "Messaged" row it was handed over by (LINEAGE-DESIGN-S6 rules 6 and 7). The prompt's lineage is that one
    * line; a prompt without it (written before 1.0.3) keeps the asking conversation's prefix. */
   handoffOf?: { threadId: string; messageId: string };
-  automation?: { kind: "schedule"|"manual"|"webhook"|"channel"|"delegation"|"card"|"ask"|"message"|"room"; channel?: "telegram"|"slack"|"discord"|"whatsapp"; connectionId?: string; webhookId?: string; routineId?: string };
+  automation?: { kind: "schedule"|"manual"|"webhook"|"channel"|"delegation"|"card"|"ask"|"message"|"room"; channel?: "telegram"|"slack"|"discord"|"whatsapp"|"signal"; connectionId?: string; webhookId?: string; routineId?: string };
   id: string;
   /** Verified durable deliverable identities; raw paths never become download links. */
   artifactIds?: string[];
@@ -389,7 +416,11 @@ export interface Message {
    * Murage's private attachment directory; renderers receive only the
    * existing allowlisted /api/attachments URL. */
   attachments?: Array<{ kind: "image"; path: string; mime: string }>;
+  // Stored history includes legacy cards. The decision PermissionCard type is
+  // strict at creation; the database guard validates every actionable write.
   card?: OptionCardData;
+  /** Email lifecycle presentation; never an approval or execution input. */
+  emailDisplay?: import('../shared/email-copy.ts').EmailCardDisplay;
   connector?: ConnectorCardData;
   mcpSignIn?: McpSignInCardData;
   secret?: SecretRequestCardData;
@@ -406,7 +437,7 @@ export interface Message {
    * something — the UI offers setup instead of a retry that cannot work. */
   /** `summary` is a short read of what the call was for — the only thing that
    * tells two chips apart on engines that route every tool through a wrapper. */
-  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; /** 1.0.18: a Fuigo / Flux refusal that is not a limit (limit-continuation.ts gatewayBusy): the one card's copy. */ busy?: { engine: string; reason: import("./limit-continuation.ts").GatewayBusyReason; /** the hourly gate's reset time Flux sent (epoch ms) */ resetsAt?: number }; localFailure?: LocalSetupFailure; /** The engine a local failure is about (an engine-folder failure), for the localized line. */ localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
+  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; /** 1.0.18: a Fuigo / Flux refusal that is not a limit (limit-continuation.ts gatewayBusy): the one card's copy. */ busy?: import("./limit-continuation.ts").GatewayBusyFacts; localFailure?: LocalSetupFailure; /** The engine a local failure is about (an engine-folder failure), for the localized line. */ localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
     /** 1.0.18 U6 E15: the turn ended with this step still open, so it has no recorded end ("No result"). A late real completion replaces the tool and clears it. */
     unrecorded?: boolean;
     /** An image made without an approval card (server/image-approval.ts): what was asked for and the whole prompt, shown folded like the card's. */
@@ -433,7 +464,12 @@ export interface Message {
    * Written by the server in the message's own transaction; the chat shows a line under the message.
    * "without-memory" (DELEGATION-HOLD F5): the server's activity row saying a reply ran without remembered context. The chat and the room
    * show it as a quiet note with Settings > Tool calls off. */
-  memoryNote?: "export-paste" | "without-memory";
+  memoryNote?: "export-paste" | "without-memory" | "resend";
+  /** Resend rows: the message this offer is for (the user row the refused turn was answering), its conversation and, in a room, the member.
+   * Written by the server where the row is posted; Send again resolves exactly this message and offers nothing when it is not found. */
+  resendOf?: { messageId: string; threadId: string; botId?: string };
+  /** Resend rows: Send again was pressed (claimed once, server side, so a lost answer or a reload cannot offer it twice). */
+  resendUsed?: boolean;
   /** Provider turn that produced this message. Assistant output can arrive
    * in several pieces around tool calls; the UI uses this identity to keep
    * those pieces together without discarding them. */
@@ -786,6 +822,8 @@ export interface TaskRecord {
    * while fullAccess is on. Absent on every older record, which stays at
    * guarded Full access. */
   noLimits?: boolean;
+  /** Owner level choice; false/absent defaults can follow global No limits. */
+  permissionExplicit?: boolean;
   alwaysAllow?: string[];
   unread?: boolean;
   rewound?: boolean;
@@ -892,43 +930,47 @@ function boundRemovedText<T extends Partial<Message>>(message: T): T {
 }
 
 function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number }>(message: T): T {
-  message = boundRemovedText(checkStoredRow(message));
-  if (typeof message.text === "string") message = { ...message, text: renderMurageTools(message.text, NEUTRAL_TOOL_SURFACE, { agents: "agents", memory: "murage-memory", phone: "phone", browser: "browser" }) };
-  if (message.role !== "bot") return message;
+  message = checkStoredRow(message);
+  if (message.role !== "bot") {
+    message = boundRemovedText(message);
+    return typeof message.text === "string" ? { ...message, text: renderMurageTools(message.text, NEUTRAL_TOOL_SURFACE, { agents: "agents", memory: "murage-memory", phone: "phone", browser: "browser" }) } : message;
+  }
   const out = { ...message };
-  if (typeof out.text === "string") out.text = redactSecretsInText(out.text);
-  // `summary` is a short read of the tool's arguments and `spoken` is narrated
-  // from the raw title, so either can carry a credential into the transcript.
-  if (out.tool) {
-    out.tool = {
-      ...out.tool,
-      ...(out.tool.name ? { name: redactSecretsInText(out.tool.name) } : {}),
-      ...(out.tool.summary ? { summary: redactSecretsInText(out.tool.summary) } : {}),
-      ...(out.tool.spoken ? { spoken: redactSecretsInText(out.tool.spoken) } : {}),
-      ...(out.tool.errorDetails ? { errorDetails: redactSecretsInText(out.tool.errorDetails).slice(0, 4096) } : {}),
-    };
+  // Display fields form one unit before any leaf is shortened or rewritten.
+  // Approval grants, provider questions/options and tool arguments remain
+  // the original execution record; wireThread projects those on reads.
+  const textFields: Array<{ target: Record<string, unknown>; key: string; text: string }> = [];
+  const take = (target: Record<string, unknown>, keys: readonly string[]) => {
+    for (const key of keys) if (typeof target[key] === "string") textFields.push({ target, key, text: target[key] as string });
+  };
+  take(out as Record<string, unknown>, ["text", "removedText"]);
+  const displayFields = {
+    tool: ["name", "summary", "spoken", "errorDetails", "doneWhen"],
+    card: ["title", "subtitle", "summary", "held", "wants", "pushBody"],
+    routineRun: ["routineName", "summary", "error", "nextStep"],
+    goalRun: ["goal", "coordinatorName", "detail"],
+    connector: ["label", "description", "error"],
+    secret: ["label", "description", "placeholder", "error"],
+    mcpSignIn: ["name", "host", "bot", "title", "body", "phone", "error"],
+  } as const;
+  for (const [key, fields] of Object.entries(displayFields)) {
+    const value = (out as Record<string, unknown>)[key];
+    if (value && typeof value === "object") {
+      const copy = { ...value } as Record<string, unknown>;
+      (out as Record<string, unknown>)[key] = copy;
+      take(copy, fields);
+    }
   }
-  if (out.routineRun) {
-    const routineRun = { ...out.routineRun };
-    routineRun.routineName = redactSecretsInText(routineRun.routineName);
-    if (routineRun.summary) routineRun.summary = redactSecretsInText(routineRun.summary);
-    if (routineRun.error) routineRun.error = redactSecretsInText(routineRun.error);
-    out.routineRun = routineRun;
-  }
-  if (out.goalRun) {
-    out.goalRun = {
-      ...out.goalRun,
-      goal: redactSecretsInText(out.goalRun.goal),
-      coordinatorName: redactSecretsInText(out.goalRun.coordinatorName),
-      detail: out.goalRun.detail ? redactSecretsInText(out.goalRun.detail) : undefined,
-    };
-  }
+  const safe = sanitizeDisplayTextUnit(textFields.map(field => field.text));
+  textFields.forEach((field, i) => { field.target[field.key] = safe[i]; });
+  // The unit has already crossed the shared mask on its original bytes.
+  // Re-masking a generated marker can turn a scalar label into a wrapped
+  // label and swallow diagnostic prose. Only format and bound fields here.
+  if (typeof out.text === "string") out.text = renderMurageTools(out.text, NEUTRAL_TOOL_SURFACE, { agents: "agents", memory: "murage-memory", phone: "phone", browser: "browser" });
+  if (typeof out.removedText === "string") out.removedText = out.removedText.slice(0, 4096);
+  if (out.tool?.errorDetails) out.tool.errorDetails = out.tool.errorDetails.slice(0, 4096);
   if (out.card) {
     const card = { ...out.card } as OptionCardData & { summary?: string };
-    card.title = redactSecretsInText(card.title);
-    if (typeof card.subtitle === "string") card.subtitle = redactSecretsInText(card.subtitle);
-    if (typeof card.summary === "string") card.summary = redactSecretsInText(card.summary);
-    if (typeof card.held === "string") card.held = redactSecretsInText(card.held);
     // A connected-app card's rows carry the arguments the bot proposed
     // (1.0.4, 09-3): kept with the card, so scrubbed like its summary.
     const grantCard = card as { grantRequest?: { rows?: unknown } };
@@ -938,10 +980,6 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
         rows: grantCard.grantRequest.rows.map((row) => row && typeof row === "object" && "arguments" in row ? { ...row, arguments: redactSecretsForCard((row as { arguments: unknown }).arguments) } : row),
       };
     }
-    // The push text is built from the raw summary by whoever writes the card
-    // and goes to the lock screen, APNs/FCM and desktop notifications.
-    const pushCard = card as { pushBody?: unknown };
-    if (typeof pushCard.pushBody === "string") pushCard.pushBody = redactSecretsInText(pushCard.pushBody);
     // Routine definitions are executable bot-authored text stored behind the
     // visible summary. Scrub the durable payload too so nesting it on a card
     // cannot bypass the transcript's secret-redaction boundary.
@@ -1021,31 +1059,15 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
         warnings: card.skillRequest.warnings.map((warning) => redactSecretsInText(warning)),
       };
     }
-    out.card = card;
-  }
-  if (out.connector) {
-    out.connector = {
-      ...out.connector,
-      label: redactSecretsInText(out.connector.label),
-      description: redactSecretsInText(out.connector.description),
-      error: out.connector.error ? redactSecretsInText(out.connector.error) : undefined,
-    };
-  }
-  if (out.mcpSignIn) {
-    out.mcpSignIn = {
-      ...out.mcpSignIn,
-      error: out.mcpSignIn.error ? redactSecretsInText(out.mcpSignIn.error) : undefined,
-    };
-  }
-  if (out.secret) {
-    out.secret = {
-      ...out.secret,
-      label: redactSecretsInText(out.secret.label),
-      description: redactSecretsInText(out.secret.description),
-      error: out.secret.error ? redactSecretsInText(out.secret.error) : undefined,
-    };
+    out.card = card as Message['card'];
   }
   return out;
+}
+
+/** A patch is also a write boundary. Keep owner originals untouched while
+ * applying the same display-only field policy to loaded and unloaded bots. */
+function redactBotPatch<T extends Message>(message: T): T {
+  return message.role === "bot" ? redactBotAuthored(message) : boundRemovedText(checkStoredRow(message));
 }
 
 /** What changed, emitted by the store itself right after each write. The
@@ -1064,8 +1086,10 @@ export type StoreChange =
   | { type: "message.patch"; threadId: string; message: Message; /** patchMessage only: the message as it was. */ before?: Message }
   | { type: "thread"; threadId: string; activeLeafId: string }
   | { type: "thread.deleted"; threadId: string }
-  | { type: "bot"; botId: string }
+  | { type: "bot"; botId: string; usageDelta?: {before?:TaskUsage;after:TaskUsage} }
   | { type: "bot.deleted"; botId: string }
+  | { type: "workroot"; owner: string; botId?: string; paths: readonly string[] | null }
+  | { type: "workroot-reset" }
   | { type: "group"; groupId: string }
   | { type: "group.deleted"; groupId: string; /** The record just removed: the listener needs it to say who could see the room. */ group: GroupRecord };
 
@@ -1099,7 +1123,12 @@ function firstLineTitle(text: string): string {
   return line.length > 48 ? `${line.slice(0, 47)}…` : line;
 }
 
+export function inertBot(bot: { hidden?: boolean; staged?: unknown }): boolean { return bot.staged !== undefined; }
+
 export interface BotRecord {
+  staged?: import('./bot-staging-types.ts').StagedBot;
+  pendingHeldWork?: import('./bot-staging-types.ts').HeldBotWork[];
+  pendingRevision?: import('./bot-staging-types.ts').PendingBotRevision;
   sharedWith?: { mode: "none" | "list" | "all"; teams: Array<{ id: string; name: string }> };
   partitionedAt?: number;
   /** What this bot used per local calendar month (Settings, Usage). Upserted with each settled turn; bounded to a year. Months before 1.0.3 have no bucket. */
@@ -1150,6 +1179,8 @@ export interface BotRecord {
   sidebarHidden?: boolean;
   /** Durable replay refusal for the exact reviewed package import. */
   packageImportReceipt?: { reviewHash: string; archiveSha256: string; importId: string; selectionHash?: string;
+    /** The source agent's key in the package (1.0.19): how "already hired" is told from a rename. Optional; 1.0.18 keeps it. */
+    agentKey?: string;
     baseline?: ReturnType<typeof import("./package-import-comparison.ts").createPackageImportBaseline> };
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
@@ -1199,6 +1230,8 @@ export interface BotRecord {
    * still asks, on a turn the owner started only for its gate files. Counts only while fullAccess is on. Set only from the
    * desktop app, after its own one-time warning. Absent = guarded. */
   noLimits?: boolean;
+  /** Owner level choice; false/absent defaults can follow global No limits. */
+  permissionExplicit?: boolean;
   /** When the owner confirmed this bot's one-time No limits warning. */
   noLimitsAcknowledgedAt?: number;
   /** Full access also covers the owner's own Telegram, Slack and Discord
@@ -1336,6 +1369,14 @@ export interface BotRecord {
   /** Id of a named browser profile from config.browserProfiles; absent = the
    * bot's own private session. */
   browserProfile?: string;
+  /** Owner browser-selection fence; an absent revision is zero. */
+  selectionRevision?: number;
+  browserMode?: import('./browser-mode-policy.ts').BrowserMode;
+  browserSelectionRevision?: number;
+  browserSetupRevision?: number;
+  pendingBrowserChoice?: import('./browser-mode-transition.ts').BrowserChoice;
+  previousBrowserChoice?: import('./browser-mode-policy.ts').BrowserSelection;
+  browserRelease?: import('./browser-mode-transition.ts').BrowserRelease;
   /** Owner opt-in: this bot's browser attaches to the owner's own running
    * Chrome (signed in as them) instead of an isolated profile. Absent = off.
    * At most one bot holds the legacy inspect route; extension bindings are isolated. */
@@ -1405,8 +1446,8 @@ export type { ReachableBot };
  * "@New Bot 2" never half-matches "New Bot"), hidden bots skipped, results
  * deduped. The rule lives in shared/mention-boundary.ts so the composer's
  * preview routes the same way. Callers pre-filter the sender out of `peers`. */
-export function mentionedBots<T extends { name: string; hidden?: boolean }>(text: string, peers: T[]): T[] {
-  return mentionedPeers(text, peers);
+export function mentionedBots<T extends { name: string; hidden?: boolean; staged?: unknown }>(text: string, peers: T[]): T[] {
+  return mentionedPeers(text, peers.filter(peer => peer.hidden !== true && !inertBot(peer)));
 }
 
 /** Normalize persisted or API-provided routing. Old rooms did not have this
@@ -1448,7 +1489,7 @@ export function normalizeGroupDefaultResponder(
  * is a reference, not an address. Names match whole words, case-insensitively,
  * longest first; a multi-word name's first word also works as a short name
  * when no other member shares it. Hidden members are never addressed. */
-export function addressedMembers<T extends { name: string; hidden?: boolean }>(text: string, members: T[], onMatch?: (member: T, at: number) => void): T[] {
+export function addressedMembers<T extends { name: string; hidden?: boolean; staged?: unknown }>(text: string, members: T[], onMatch?: (member: T, at: number) => void): T[] {
   // A message can carry a part for each bot: "Moss: check the sensor" on one
   // line and "Sable, write it up" in a later sentence. Each part uses the
   // same vocative rule; "Sable wrote it" stays a reference.
@@ -1520,8 +1561,8 @@ function statementAboutMember(after: string, relative = false): boolean {
 /** Imperatives that end in -ed, not past tenses ("embed it", "shred them"). */
 const IMPERATIVE_ED = /^(?:embed|imbed|shed|shred|wed|bed|sled)$/;
 
-function addressedInPart<T extends { name: string; hidden?: boolean }>(text: string, members: T[], options: { trailing: boolean }): T[] {
-  const available = members.filter((member) => !member.hidden && member.name.trim());
+function addressedInPart<T extends { name: string; hidden?: boolean; staged?: unknown }>(text: string, members: T[], options: { trailing: boolean }): T[] {
+  const available = members.filter((member) => member.hidden !== true && !inertBot(member) && member.name.trim());
   const spoken = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
   const firstWord = (member: T) => spoken(member.name).split(" ")[0];
   const aliases: Array<{ alias: string; member: T }> = available.map((member) => ({ alias: spoken(member.name), member }));
@@ -1578,14 +1619,14 @@ function addressedInPart<T extends { name: string; hidden?: boolean }>(text: str
  * room policy chooses one member, everyone, or nobody. A bot's reply never
  * routes by plain name: bots are told to use their teammates' plain names to
  * refer to them and @Name only to summon them. */
-export function roomResponders<T extends { id: string; name: string; hidden?: boolean }>(
+export function roomResponders<T extends { id: string; name: string; hidden?: boolean; staged?: unknown }>(
   text: string,
   members: T[],
   defaultResponder: GroupDefaultResponder,
   replyToBotId?: string,
   options: { byName?: boolean; leadFirstBotId?: string } = {},
 ): T[] {
-  const available = members.filter((member) => !member.hidden);
+  const available = members.filter((member) => member.hidden !== true && !inertBot(member));
   const ordered = (list: T[]) => options.leadFirstBotId
     ? [...list.filter(m => m.id === options.leadFirstBotId), ...list.filter(m => m.id !== options.leadFirstBotId)] : list;
   if (mentionsEveryone(text)) return ordered(available);
@@ -1627,7 +1668,7 @@ const intakeOpeningQuestion = (): OptionCardData => ({
 /** Messages form a tree (forks appear when a message is edited); the
  * visible conversation is the path from the root to activeLeafId. */
 /** A bot's task array by thread (Store.taskIndex). */
-interface TaskThreadIndex { length: number; byThread: Map<string, { task: TaskRecord; index: number }>; desks: Map<string, TaskRecord[]> }
+interface TaskThreadIndex { unread: number; threadIds: string[]; length: number; byThread: Map<string, { task: TaskRecord; index: number }>; deskByThread: Map<string, TaskRecord>; desks: Map<string, TaskRecord[]> }
 /** One place a thread has in a room: the room's own thread (pos -1, the room is the holder) or its task at `pos` (that task holds). */
 interface RoomThreadPlace { group: GroupRecord; groupIndex: number; pos: number; task?: GroupTaskRecord }
 /** The rooms by thread (Store.groupThreadIndex): `byThread` the first room holding the thread, as a walk of every room found it;
@@ -1686,10 +1727,13 @@ export class RosterPostCommitError extends Error {
 /** Publish a staged record into the live one: keys the record no longer has are deleted, tasks are written into the existing objects by
  * threadId (a held task reference sees the change), new tasks are taken as they are. */
 function publishBotRecord(live: BotRecord, record: BotRecord): void {
-  for (const key of Object.keys(live) as (keyof BotRecord)[]) if (!Object.hasOwn(record, key)) delete live[key];
+  for (const key of Object.keys(live) as (keyof BotRecord)[]) if (key !== "tasks" && !Object.hasOwn(record, key)) delete live[key];
   const { tasks, ...rest } = record;
   Object.assign(live, rest);
-  if (!tasks) { delete live.tasks; return; }
+  // A metadata-only patch shares the task list. Keep it (and its indexes and
+  // held task objects) without walking or publishing the history again.
+  if (tasks === live.tasks) return;
+  if (!tasks) { live.tasks = undefined; return; }
   const byThread = new Map((live.tasks ?? []).map(task => [task.threadId, task]));
   live.tasks = tasks.map(next => {
     const held = byThread.get(next.threadId);
@@ -1710,9 +1754,18 @@ function ownerEngineWrite(record: BotRecord): Pick<BotRecord, "engineRev"> {
   return { engineRev: (record.engineRev ?? 0) + 1 };
 }
 
-function persistedBotsJson(bots: readonly BotRecord[]): string {
+/** Only the one-task unread mirror may accompany a cosmetic sidecar write. */
+function soleUnreadMirrorOnly(before: TaskRecord[] | undefined, after: TaskRecord[] | undefined): boolean {
+  if (before?.length !== 1 || after?.length !== 1 || before[0]!.threadId !== after[0]!.threadId) return false;
+  const a = before[0]!, b = after[0]!;
+  return [...new Set([...Reflect.ownKeys(a), ...Reflect.ownKeys(b)])].every(key => key === "unread"
+    || Object.hasOwn(a, key) === Object.hasOwn(b, key) && Object.is(Reflect.get(a, key), Reflect.get(b, key)));
+}
+
+function persistedBotsJson(bots: readonly BotRecord[], turnStateBase?: string): string {
   return JSON.stringify(bots.map(({ busy: _busy, activity: _activity, ...bot }) => ({
     ...bot,
+    ...(turnStateBase ? { turnStateBase } : {}),
     tasks: bot.tasks?.map(({ busy: _taskBusy, activity: _taskActivity, waitingFor: _taskWaitingFor, turnStartedAt: _taskTurnStartedAt, browserMounted: _taskBrowserMounted, ...task }) => task),
   })));
 }
@@ -1791,6 +1844,9 @@ export interface BirthDeps {
   /** r3 (MurageMain 11-02): desktop only. The first-launch engine probe's reading (pickDefaultEngine, which already leaves out a keyless
    * Fuigo), used for the FIRST bot when no Fuigo is usable, so a machine with Claude found and no key still has a Chief that answers. */
   firstBot?: () => ModelSelection;
+  /** Cloud home only: when no Fuigo is usable, the home-wide engine reading (an available engine signed in home-wide), as before the
+   * 1.0.15 merge; empty when nothing qualifies. Absent on a desktop, whose births are unchanged. */
+  homeFallback?: () => ModelSelection;
 }
 
 export interface SpeechStoreHooks {
@@ -1799,7 +1855,42 @@ export interface SpeechStoreHooks {
   settle(threadId: string, turnId: string, message: Message | null, outcome: MemoryTurnOutcome): void;
   deleted(threadId: string): void;
 }
+/** Producer owner: recall-s3. Consumer owner: recall-scope (S4 background hydration).
+ * Process-local proof of the complete roster/policy comparison under all three fences. */
+export interface RecallRosterCertificate {
+  readonly databaseGeneration: number;
+  readonly epoch: number;
+  readonly rosterRevision: number;
+}
+
+// Couple certification to the existing publication hooks, not presentation-only counter moves.
+const ACK_RECALL_ROSTER = Symbol('acknowledge-recall-roster');
+function prepareRosterRecallViews(roster: Store): void {
+  roster.queueRecallRosterCertification();
+  prepareViewRoster(roster);
+}
+function queueRecallRosterPreparation(roster: () => Store): void {
+  roster().queueRecallRosterCertification();
+  queueViewRosterPreparation(roster);
+}
+function acknowledgeRecallRosterRevision(roster: Store): void {
+  acknowledgeViewRosterRevision(roster);
+  roster[ACK_RECALL_ROSTER]();
+}
+
 export class Store {
+  /** Persist before exposing HighLevel tools. A failed write refuses the mount. */
+  markThreadHighLevel(_threadId: string): boolean {
+    const threadId = _threadId;
+    if (!this.botByThread(threadId) && !this.groupByThread(threadId)) return false;
+    try { return markHighLevelThread(database(), threadId); } catch { return false; }
+  }
+  /** A real, durable mark, not the F0 placeholder that marked every conversation. */
+  threadHighLevelMarked(_threadId: string): HighLevelThreadMarkState {
+    const threadId = _threadId;
+    try { return highLevelThreadMarked(database(), threadId); } catch { return "unreadable"; }
+  }
+
   private speechHooks?: SpeechStoreHooks;
   setSpeechHooks(hooks: SpeechStoreHooks): void { this.speechHooks = hooks; }
   private speechAttribute(threadId: string, message: Message): void {
@@ -1820,6 +1911,8 @@ export class Store {
   /** Per task array (an array is replaced on every add or remove; the length catches an in-place change): threadId -> first task with
    * that thread and its position, and a project's desk tasks by project (channelProjectDesk is set only when a task is created). */
   private taskThreadIndexes = new WeakMap<TaskRecord[], TaskThreadIndex>();
+  /** Non-enumerable metadata survives a transparent array view, but never JSON or structuredClone. */
+  private readonly taskListIndex = Symbol("taskListIndex");
   /** The rooms by thread, valid while the groups and their task arrays keep their shape (groupThreadIndex). */
   private groupThreadCache: { groups: GroupRecord[]; shape: unknown[]; index: GroupThreadIndex } | null = null;
   /** Loaded threads, least recently used first out (THREAD_CACHE_*). */
@@ -1872,16 +1965,170 @@ export class Store {
   private listeners = new Set<(change: StoreChange) => void>();
   private accessRoles = new Map<string, string>();
   private legacyActivities = new Map<string, BotActivity>();
+  private turnState = new BotTurnState(DATA_DIR);
+  private taskRevisions = new Map<string, number>();
+  private botRosterCounter = 0;
+  private memoryRosterCounter = 0;
+  /** Bot snapshot inputs, independent of room-only saves. */
+  get botRosterRevision(): number { return this.botRosterCounter; }
+  /** Moves before a structural roster edit; turn-state and state-only room writes leave it alone. */
+  get memoryRosterRevision(): number { return this.memoryRosterCounter; }
+  private botThreads = new WeakMap<BotRecord, { tasks: TaskRecord[] | undefined; length: number; thread: string; ids: string[]; rawIds: string[] }>();
+  threadIdsForBot(botId: string, includeActiveDuplicate = false): readonly string[] {
+    const bot = this.bot(botId); if (!bot) return [];
+    let held = this.botThreads.get(bot);
+    if (!held || held.tasks !== bot.tasks || held.length !== (bot.tasks?.length ?? 0) || held.thread !== bot.threadId) {
+      const rawIds = [bot.threadId, ...(this.taskIndex(bot.tasks)?.threadIds ?? [])];
+      held = { tasks: bot.tasks, length: bot.tasks?.length ?? 0, thread: bot.threadId, rawIds, ids: [...new Set(rawIds)] };
+      this.botThreads.set(bot, held);
+    }
+    return includeActiveDuplicate ? held.rawIds : held.ids;
+  }
+  taskRevision(botId: string): number { return this.taskRevisions.get(botId) ?? 0; }
+  private activityCounts = new WeakMap<TaskRecord[], { length: number; counts: Map<BotActivity, number>; busy: number; busyThreads: Map<string, number> }>();
 
   /** Workspace new-bot defaults (config newBots), applied by createBot. */
   private completeNewBotSelection: (selection: ModelSelection) => ModelSelection;
 
+  private readonly browserModes = new BrowserModeStorage(join(DATA_DIR, 'browser-modes.json'));
+  get chromeDirectReservation() { return this.browserModes.reservation; }
+  commitBrowserChoice(id: string, patch: Partial<BrowserChoiceBot>, reservation: DirectReservation | undefined): void {
+    const bot = this.bot(id); if (!bot) throw new Error('No such bot');
+    this.browserModes.commit(bot, patch, reservation);
+    this.emit({ type: 'bot', botId: id });
+  }
+  /** Profile deletion has already committed in config. Clear the authoritative
+   * selection before acknowledging its cleanup journal or allowing id reuse. */
+  clearBrowserProfile(id: string, profile: string): void {
+    const bot = this.bot(id); if (!bot) return;
+    const selected = bot.browserProfile === profile;
+    const pending = bot.pendingBrowserChoice?.mode === 'builtin' && bot.pendingBrowserChoice.profile === profile;
+    const previous = bot.previousBrowserChoice?.mode === 'builtin' && bot.previousBrowserChoice.profile === profile;
+    if (!selected && !pending && !previous) return;
+    const revision = (bot.selectionRevision ?? 0) + 1;
+    const patch: Partial<BrowserChoiceBot> = {
+      browserProfile: selected ? undefined : bot.browserProfile,
+      selectionRevision: revision, browserSelectionRevision: revision,
+      pendingBrowserChoice: undefined,
+      previousBrowserChoice: previous ? undefined : bot.previousBrowserChoice,
+    };
+    this.browserModes.commit(bot, patch, this.chromeDirectReservation);
+    this.saveBots();
+    this.emit({ type: 'bot', botId: id });
+  }
+  private ownerPermissionDefault: () => PermissionHolder;
   private memoryReady = true;
-  finishSharingBoot(): void { this.memoryReady = true; reconcileMemoryRoster(this, { unlessUnchanged: true }); }
+  // Producer owner: recall-s3. Consumer owner: recall-scope (S4 background hydration).
+  // This certificate is process-local. Durable roster_revision values never cross boots.
+  private certifiedRecallRoster?: Readonly<RecallRosterCertificate>;
+  private recallCertificationScheduled?: { generation: number; epoch: number; revision: number };
+  private recallCertificationAttempt = 0;
+
+  /** Constant-size live fence. Does not start work or open a closed database. */
+  recallRosterCertificate(): Readonly<RecallRosterCertificate> | undefined {
+    const held = this.certifiedRecallRoster;
+    if (!held || held.databaseGeneration !== databaseGeneration() || held.rosterRevision !== this.memoryRosterRevision) return undefined;
+    try {
+      const db = database(), row = db.prepare('SELECT epoch FROM memory_recall_epoch WHERE id=1').get();
+      if (held.databaseGeneration !== databaseGeneration() || !this.memoryReady || db.isTransaction || !row || Number(row.epoch) !== held.epoch || teamChangeOpen(db)) return undefined;
+      return held;
+    } catch { return undefined; }
+  }
+
+  /** Maintenance only: fence every suspension and final publication of the complete policy proof.
+   * A failed or interrupted proof publishes nothing and changes no durable data. */
+  *certifyRecallRosterSteps(): Generator<void, ReturnType<Store['recallRosterCertificate']>> {
+    const attempt = ++this.recallCertificationAttempt;
+    this.certifiedRecallRoster = undefined;
+    const db = database(), generation = databaseGeneration(), revision = this.memoryRosterRevision;
+    const row = db.prepare('SELECT epoch FROM memory_recall_epoch WHERE id=1').get();
+    if (!row) return undefined;
+    const epoch = Number(row.epoch);
+    const valid = () => {
+      if (attempt !== this.recallCertificationAttempt || generation !== databaseGeneration() || revision !== this.memoryRosterRevision || !this.memoryReady) return false;
+      try {
+        const current = db.prepare('SELECT epoch FROM memory_recall_epoch WHERE id=1').get();
+        return !db.isTransaction && !!current && Number(current.epoch) === epoch && !teamChangeOpen(db);
+      } catch { return false; }
+    };
+    if (!valid()) return undefined;
+    const proof = recallRosterMatchesPolicySteps(this);
+    try {
+      // Each externally yielded step is one bounded slice; no authority is retained across
+      // a suspension without checking all fences on both sides.
+      yield;
+      for (;;) {
+        if (!valid()) return undefined;
+        let item: IteratorResult<void, boolean> | undefined;
+        const until = performance.now() + 8;
+        for (let n = 0; n < 8192; n++) {
+          item = proof.next();
+          if (item.done || (n % 256 === 255 && performance.now() >= until)) break;
+        }
+        if (!valid()) return undefined;
+        if (item?.done) {
+          if (!item.value) return undefined;
+          yield;
+          if (!valid()) return undefined;
+          const certificate = Object.freeze({ databaseGeneration: generation, epoch, rosterRevision: revision });
+          this.certifiedRecallRoster = certificate;
+          return certificate;
+        }
+        yield;
+      }
+    } finally { proof.return(false); }
+  }
+
+  /** Called only at the existing unchanged-save acknowledgement: that writer has just
+   * proved the complete audience identical. Never refresh an expired authority fence. */
+  [ACK_RECALL_ROSTER](): void {
+    const held = this.certifiedRecallRoster;
+    if (!held || held.databaseGeneration !== databaseGeneration()) { this.queueRecallRosterCertification(); return; }
+    const db = database(), row = db.prepare('SELECT epoch FROM memory_recall_epoch WHERE id=1').get();
+    if (held.databaseGeneration === databaseGeneration() && this.memoryReady && !db.isTransaction && row && Number(row.epoch) === held.epoch && !teamChangeOpen(db)) {
+      this.certifiedRecallRoster = Object.freeze({ ...held, rosterRevision: this.memoryRosterRevision });
+    } else this.queueRecallRosterCertification();
+  }
+
+  /** Deduplicated structural/boot scheduling; no roster walk runs in a caller or turn. */
+  queueRecallRosterCertification(): void {
+    if (this.recallRosterCertificate()) return;
+    const generation = databaseGeneration(), revision = this.memoryRosterRevision;
+    const row = database().prepare('SELECT epoch FROM memory_recall_epoch WHERE id=1').get();
+    if (!row) return;
+    const epoch = Number(row.epoch), active = this.recallCertificationScheduled;
+    // Keep ownership through the ACTIVE proof, not just its queued callback. New authority
+    // supersedes old work; repeated demand for the same authority never restarts it.
+    if (active?.generation === generation && active.epoch === epoch && active.revision === revision) return;
+    const stamp = { generation, epoch, revision };
+    this.recallCertificationScheduled = stamp;
+    const clear = () => { if (this.recallCertificationScheduled === stamp) this.recallCertificationScheduled = undefined; };
+    setImmediate(() => {
+      if (generation !== databaseGeneration() || !this.memoryReady || this.recallCertificationScheduled !== stamp) { clear(); return; }
+      const steps = this.certifyRecallRosterSteps();
+      const advance = () => {
+        if (generation !== databaseGeneration() || this.recallCertificationScheduled !== stamp) { steps.return(undefined); clear(); return; }
+        try {
+          if (steps.next().done) { clear(); return; }
+          setImmediate(advance).unref();
+        } catch { steps.return(undefined); clear(); /* Uncertified until the next publication or explicit demand. */ }
+      };
+      advance();
+    }).unref();
+  }
+
+  finishSharingBoot(): void {
+    this.memoryReady = true;
+    reconcileMemoryRoster(this, { unlessUnchanged: true });
+    this.queueRecallRosterCertification();
+    prepareRosterRecallViews(this);
+  }
 
   // Standalone callers can load records and supply explicit selections without a
   // live engine registry. With no birth dependencies, automatic births stay empty.
-  constructor(birth: (() => ModelSelection) | BirthDeps = () => ({ instanceId: "", model: "" }), completeNewBotSelection: (selection: ModelSelection) => ModelSelection = (selection) => selection, deferMemoryReconcile = false) {
+  constructor(birth: (() => ModelSelection) | BirthDeps = () => ({ instanceId: "", model: "" }), completeNewBotSelection: (selection: ModelSelection) => ModelSelection = (selection) => selection, deferMemoryReconcile = false, ownerPermissionDefault: () => PermissionHolder = () => ({})) {
+    this.ownerPermissionDefault = ownerPermissionDefault;
+    if (!inTxScope()) recoverBotCreates(DATA_DIR);
     // A load reads the files: any deferred write from an earlier instance lands first.
     flushCoalesced();
     this.memoryReady = !deferMemoryReconcile;
@@ -1898,13 +2145,14 @@ export class Store {
     // Only an absent file is a fresh install; damaged state needs recovery.
     this.bots = readPersistedRecords<BotRecord>(BOTS_FILE);
     this.groups = readPersistedRecords<GroupRecord>(GROUPS_FILE);
+    const needsTurnCheckpoint = this.turnState.load(this.bots);
+    const browserModesMigrated = this.browserModes.load(this.bots);
     for (const bot of this.bots) this.accessRoles.set(bot.id, accessRoleBinding({ ...bot, accessRoleEpoch: 0 }));
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
-    let botsMigrated = false;
+    let botsMigrated = browserModesMigrated || needsTurnCheckpoint;
     const browserProfileAliases = loadBrowserProfileIdAliases();
     const chiefSectionsSeen = new Set<string>();
-    let userChromeSeen = false;
     let groupsMigrated = false;
     for (const b of this.bots) {
       // transient state never survives a restart — and if a previous
@@ -1920,28 +2168,9 @@ export class Store {
           botsMigrated = true;
         }
       }
-      // Malformed extension state must never become a legacy inspect opt-in.
-      if (b.browserTransport !== undefined && b.browserTransport !== "extension") {
-        delete b.browserTransport;
-        delete b.useMyChrome;
-        botsMigrated = true;
-      }
-      if (b.browserExtensionBrowser !== undefined && (b.browserTransport !== "extension" || !["chrome", "edge", "brave"].includes(b.browserExtensionBrowser))) {
-        delete b.browserExtensionBrowser;
-        botsMigrated = true;
-      }
-      if (b.browserExtensionProfileId !== undefined && (b.browserTransport !== "extension" || typeof b.browserExtensionProfileId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(b.browserExtensionProfileId))) {
-        delete b.browserExtensionProfileId;
-        delete b.useMyChrome;
-        botsMigrated = true;
-      }
-      // Only legacy inspect shares one browser-wide connection. Extension bots
-      // retain separate explicit tab grants across restart.
-      if (b.useMyChrome !== undefined && (b.useMyChrome !== true || (b.browserTransport !== "extension" && userChromeSeen))) {
-        delete b.useMyChrome;
-        botsMigrated = true;
-      }
-      if (b.useMyChrome && b.browserTransport !== "extension") userChromeSeen = true;
+      // BrowserModeStorage maps valid legacy records atomically before this
+      // sanitizer. Invalid opt-ins are removed; unknown modes and transports
+      // stay unchanged rather than being reclassified by transport.
       // "task" is the default and is stored as absent; anything unknown is dropped, never read as "full".
       if (b.browserApproval !== undefined && b.browserApproval !== "step" && b.browserApproval !== "full") {
         delete b.browserApproval;
@@ -1972,7 +2201,13 @@ export class Store {
       }
       // Keep the well-formed site records only.
       if (b.publishedSites !== undefined) {
-        const sites = readPublishedSites(b.publishedSites);
+        const permission = inheritedPermissions(b);
+        // At boot the live inheritance reader is installed after Store loads.
+        // Preserve followers' records from the saved default as well; this is
+        // data normalization, never authority to publish a site.
+        const startupDefault = !b.draftOnly && !explicitPermission(b) && (loadConfig().newBots?.permissionLevel === "no-limits"
+          || this.bots.some(bot => isWorkspaceChief(bot) && bot.autoApprove === true && bot.fullAccess === true && bot.noLimits === true));
+        const sites = readPublishedSites(b.publishedSites, startupDefault || !permission.draftOnly && permission.autoApprove === true && permission.fullAccess === true && permission.noLimits === true);
         if (JSON.stringify(sites) !== JSON.stringify(b.publishedSites)) {
           if (sites.length === 0) delete b.publishedSites; else b.publishedSites = sites;
           botsMigrated = true;
@@ -2153,7 +2388,8 @@ export class Store {
         item.state = "recovery"; item.error = "Authorize this saved continuation before it can run."; groupsMigrated = true;
       } else if (item.error && !item.state) { item.state = "authority"; groupsMigrated = true; }
     }
-    if (groupsMigrated) this.saveGroups();
+    // Boot tolerance: a read-only start keeps its migrations in memory; the next normal start makes them again and saves them.
+    if (groupsMigrated && !isReadOnly()) this.saveGroups();
     // bots saved before tasks existed have one endless thread; adopt it as
     // their first task so nothing is lost and nothing special-cases it
     for (const b of this.bots) {
@@ -2208,8 +2444,14 @@ export class Store {
     // 1.0.4 SL-K K1: once, drop every chat model that only copied its bot's (marker written after the save lands).
     const followCleanup = !followCleanupDone(DATA_DIR);
     if (followCleanup && clearFollowingPins(this.bots) > 0) botsMigrated = true;
-    if (botsMigrated) this.saveBots();
-    if (followCleanup) markFollowCleanupDone(DATA_DIR);
+    for (const bot of this.bots) {
+      for (const pending of [bot.staged, bot.pendingRevision]) {
+        if (pending?.reason === 'turn-open') { pending.reason = 'unsettled'; botsMigrated = true; }
+      }
+    }
+    if (botsMigrated && !isReadOnly()) this.saveBots();
+    // the marker says the cleanup's save landed; a read-only start saved nothing, so the next normal start repeats the (idempotent) cleanup
+    if (followCleanup && !isReadOnly()) markFollowCleanupDone(DATA_DIR);
     // Search reads SQLite directly, so migrate every known legacy transcript
     // at startup rather than waiting until the user happens to open it. Only
     // pending JSON files are touched; already-migrated threads stay lazy.
@@ -2231,16 +2473,19 @@ export class Store {
     if (unevaluated.length) {
       const evidence = mdb.threadsWithAllowedHostActions();
       for (const b of unevaluated) b.hostComputerConsent = grandfatheredHostComputerConsent(b, evidence);
-      this.saveBots();
+      if (!isReadOnly()) this.saveBots();   // a read-only start keeps the value in memory; the next normal start writes it
     }
-    if (this.memoryReady && !teamChangeOpen()) reconcileMemoryRoster(this);
+    if (isReadOnly()) skippedAtStart.push("store.memoryRoster");
+    else if (this.memoryReady && !teamChangeOpen()) reconcileMemoryRoster(this);
     // Capture reads the live roster: a room's threads and project desk
     // threads capture into the room's memory (memory/capture-scope.ts).
     setMemoryCaptureRoster(() => this);
     setExecutionStore(this);
-    if (!teamChangeOpen() && markPartitions(this)) this.saveGroups();
+    if (!teamChangeOpen() && markPartitions(this) && !isReadOnly()) this.saveGroups();
     // pending held work is found once from the records, so nothing saved before a restart waits on a write that never comes again
     this.pendingWork = this.scanPendingWork();
+    for (const bot of this.bots) { this.indexTaskAssignments(bot); this.taskActivityCounts(bot); this.threadIdsForBot(bot.id); }
+    if (!isReadOnly() && this.memoryReady && !teamChangeOpen()) prepareRosterRecallViews(this);
   }
 
   /** Persist bots.json. Immediate by default: the write is durable when this
@@ -2255,14 +2500,18 @@ export class Store {
    * the last-engine marker, or one turn's usage tally and its idempotency key
    * (banked in the same write, so they stay consistent). Messages live in
    * SQLite and are never in this file. */
-  private saveBots(bots: BotRecord[] = this.bots, options: { defer?: boolean } = {}) {
+  private saveBots(bots: BotPermissionWrite<BotRecord[]> = this.bots, options: { defer?: boolean } = {}) {
+    this.botRosterCounter++; this.memoryRosterCounter++;
     this.recordRevision++;
     if (options.defer && bots === this.bots) { scheduleCoalesced(BOTS_FILE, () => this.saveBotsNow()); return; }
     this.saveBotsNow(bots);
     if (bots === this.bots) cancelCoalesced(BOTS_FILE);
   }
 
-  private saveBotsNow(bots: BotRecord[] = this.bots) {
+  private saveBotsNow(bots: BotPermissionWrite<BotRecord[]> = this.bots) {
+    // a read-only start writes no roster file, at boot or at shutdown: the records stay in memory and the next normal start saves them
+    if (isReadOnly()) { if (!skippedAtStart.includes("store.saveBots")) skippedAtStart.push("store.saveBots"); return; }
+    assertBotCreateRecovered(DATA_DIR);
     // Role/config changes permanently revoke scoped grants. Write the revoked
     // candidate before publishing it so changing a role back cannot resurrect access.
     const { normalized, json } = this.rosterJson(bots);
@@ -2271,18 +2520,33 @@ export class Store {
     // there is nothing to write and no memory roster to re-persist.
     const mode = !this.memoryReady || teamChangeOpen() ? "plain" : "memory";
     const key = `${mode}\0${json}\0${this.groups.length ? JSON.stringify(this.groups.map(({ busyBotId: _b, turnStartedAt: _t, ...g }) => g)) : ""}`;
-    if (key === this.lastRosterKey && existsSync(BOTS_FILE)) { this.afterRosterSave(bots, normalized); return; }
+    if (key === this.lastRosterKey && existsSync(BOTS_FILE)) { this.afterRosterSave(bots, normalized, mode === "memory" && key === this.lastReconciledRosterKey); return; }
     // 1.0.14 FIRST-ENGINE-REPICK section 8: committed the moment bots.json is written; a later throw says the disk already holds `normalized`.
     let committed = false;
-    const write = () => { writeFileAtomic(BOTS_FILE, json, { mode: 0o600 }); committed = true; };
+    const base = randomUUID();
+    const write = () => {
+      writeFileAtomic(BOTS_FILE, persistedBotsJson(normalized, base), { mode: 0o600, syncDir: inTxScope() });
+      committed = true;
+      this.turnState.checkpoint(normalized, base);
+    };
     try {
-      if (mode === "plain") write(); else persistMemoryRoster({ bots: normalized, groups: this.groups }, write);
+      let audienceUnchanged=false;
+      if (mode === "plain") write(); else audienceUnchanged=persistMemoryRoster({ bots: normalized, groups: this.groups }, write);
       this.lastRosterKey = key;
-      this.afterRosterSave(bots, normalized);
+      if(mode === "memory")this.lastReconciledRosterKey=key;
+      this.afterRosterSave(bots, normalized, audienceUnchanged);
     } catch (error) {
       if (committed && !(error instanceof RosterPostCommitError)) throw new RosterPostCommitError(error, normalized);
       throw error;
     }
+  }
+
+  /** Producer owner: recall-scope-c owns bounded task deltas; consumer owner:
+   * nl-backup-b owns the shutdown checkpoint read by restart/legacy consumers.
+   * Fold only at this explicit boundary, after engine work has stopped. */
+  checkpointTurnState(): void {
+    this.saveBotsNow();
+    cancelCoalesced(BOTS_FILE);
   }
 
   /** The roster as bots.json holds it (normalized: a changed role bumps its epoch, the app access policy is derived). Reads only. */
@@ -2298,8 +2562,11 @@ export class Store {
 
   /** What the last roster save wrote (mode, bots.json, groups). */
   private lastRosterKey: string | undefined;
+  private lastReconciledRosterKey: string | undefined;
 
-  private afterRosterSave(bots: BotRecord[], normalized: BotRecord[]) {
+  private afterRosterSave(bots: BotRecord[], normalized: BotRecord[], audienceUnchanged = false) {
+    if(audienceUnchanged)acknowledgeRecallRosterRevision(this);
+    if (this.memoryReady && !teamChangeOpen() && !audienceUnchanged) queueRecallRosterPreparation(() => this);
     // The channels save against the roster being written, not the live one it replaces:
     // a stale label there would give a moved team's old name a fresh memory scope.
     if (!teamChangeOpen() && markPartitions({ bots: normalized, groups: this.groups })) this.saveGroupsNow(normalized);
@@ -2317,7 +2584,7 @@ export class Store {
 
   /** Prepare an additive import without changing memory or emitting events.
    * The caller durably commits all returned files before calling publish. */
-  preparePackageAddition(bots: BotRecord[], groups: GroupRecord[], options: { born?: ReadonlySet<string> } = {}) {
+  preparePackageAddition(bots: BotPermissionWrite<BotRecord[]>, groups: GroupRecord[], options: { born?: ReadonlySet<string> } = {}) {
     // 1.0.15 BIRTH-FUIGO P5: the import's bots with no owner pick are born here, once, inside the caller's synchronous commit: every one
     // gets a value copy of the one birth selection and the mark, in the records staged below (no later write).
     if (bots.some(bot => options.born?.has(bot.id))) {
@@ -2340,16 +2607,21 @@ export class Store {
     }
     const nextBots = [...this.bots, ...bots];
     const nextGroups = [...this.groups, ...groups];
+    const turnStateBase = randomUUID();
     return {
       files: new Map([
-        ["bots.json", Buffer.from(persistedBotsJson(nextBots))],
+        ["bots.json", Buffer.from(persistedBotsJson(nextBots, turnStateBase))],
         ["groups.json", Buffer.from(JSON.stringify(nextGroups.map(({ busyBotId: _busy, turnStartedAt: _turnStartedAt, ...group }) => group), null, 2))],
       ]),
       publish: () => {
+        this.botRosterCounter++; this.memoryRosterCounter++;
+        for (const bot of bots) this.indexTaskAssignments(bot);
         this.bots = nextBots; this.groups = nextGroups;
+        this.turnState.checkpoint(nextBots, turnStateBase);
         // a package's records come with whatever they hold: the pending set looks at their threads once
-        this.refreshPendingThreads([...bots.flatMap(bot => [bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)]), ...groups.flatMap(group => [group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])]);
+        try{this.refreshPendingThreads([...bots.flatMap(bot => [bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)]), ...groups.flatMap(group => [group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])]);
         if (this.memoryReady && !teamChangeOpen()) reconcileMemoryRoster(this);
+        }finally{this.emit({type:"workroot-reset"});}
         for (const bot of bots) this.emit({ type: "bot", botId: bot.id });
         for (const group of groups) this.emit({ type: "group", groupId: group.id });
       },
@@ -2359,17 +2631,19 @@ export class Store {
   markPartitions(): void { if (!teamChangeOpen() && markPartitions(this)) this.saveGroups(); }
 
   /** Persist groups.json; same contract as saveBots (immediate unless `defer`). */
-  private saveGroups(bots: BotRecord[] = this.bots, options: { defer?: boolean } = {}) {
+  private saveGroups(bots: BotPermissionWrite<BotRecord[]> = this.bots, options: { defer?: boolean; stateOnly?: boolean } = {}) {
+    if (!options.stateOnly) this.memoryRosterCounter++;
     this.recordRevision++; // a channel's tasks and members are records too (task-window.ts, shared-wire.ts)
-    if (options.defer && bots === this.bots) { scheduleCoalesced(GROUPS_FILE, () => this.saveGroupsNow()); return; }
-    this.saveGroupsNow(bots);
+    if (options.defer && bots === this.bots) { scheduleCoalesced(GROUPS_FILE, () => this.saveGroupsNow(this.bots, options.stateOnly)); return; }
+    this.saveGroupsNow(bots, options.stateOnly);
     if (bots === this.bots) cancelCoalesced(GROUPS_FILE);
   }
 
-  private saveGroupsNow(bots: BotRecord[] = this.bots) {
-    if (!teamChangeOpen()) markPartitions({ bots, groups: this.groups });
-    const write = () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, turnStartedAt: _turnStartedAt, ...g }) => g), null, 2), { mode: 0o600 });
-    if (!this.memoryReady || teamChangeOpen()) write(); else persistMemoryRoster({ bots, groups: this.groups }, write);
+  private saveGroupsNow(bots: BotPermissionWrite<BotRecord[]> = this.bots, stateOnly = false) {
+    assertBotCreateRecovered(DATA_DIR);
+    if (!stateOnly && !teamChangeOpen()) markPartitions({ bots, groups: this.groups });
+    const write = () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, turnStartedAt: _turnStartedAt, ...g }) => g), null, 2), { mode: 0o600, syncDir: inTxScope() });
+    if (stateOnly || !this.memoryReady || teamChangeOpen()) write(); else { const unchanged=persistMemoryRoster({ bots, groups: this.groups, botRosterRevision: this.botRosterRevision, memoryRosterRevision: this.memoryRosterRevision }, write); if(unchanged)acknowledgeRecallRosterRevision(this);else queueRecallRosterPreparation(() => this); }
   }
 
   // ── groups ────────────────────────────────────────────────────────────
@@ -2385,13 +2659,18 @@ export class Store {
    * records can be kept until it moves instead of rebuilt per broadcast (task-window.ts). */
   get revision(): number { return this.recordRevision; }
 
-  private emit(change: StoreChange) {
+  private emit(change: StoreChange, tasksChanged = true) {
+    if (change.type === "bot" && tasksChanged) this.taskRevisions.set(change.botId, this.taskRevision(change.botId) + 1);
+    if (change.type === "bot.deleted") this.taskRevisions.delete(change.botId);
     // A transcript message is not a record: it changes no bot, channel or task field (the unread count and activity those messages
     // cause emit their own bot or group change), so it leaves the revision, and anything kept by it, alone.
     if (change.type !== "message" && change.type !== "message.patch") this.recordRevision++;
     // Inside an open transaction nothing is announced until the outermost one commits; a rolled-back
     // write must never reach a listener or a client (see tx-scope.ts).
-    if (inTxScope()) { afterCommit(() => this.emit(change)); return; }
+    if (inTxScope()) { afterCommit(() => this.emit(change, tasksChanged)); return; }
+    if ((change.type === 'message' || change.type === 'message.patch') && !canEmit(database(), change.threadId, change.message, change.type === 'message.patch')) {
+      console.warn('card-emit-dropped', change.type); return;
+    }
     // every message write passes here (append, insert before or after, resend): the thread's last activity moves with it
     if (change.type === "message") { const was = this.lastActivity.get(change.threadId); if (was === undefined || was === null || change.message.at > was) this.lastActivity.set(change.threadId, change.message.at); }
     // A bot, task or room going idle releases its thread's pin (threadInFlight):
@@ -2402,7 +2681,7 @@ export class Store {
       const task = group?.threadId !== change.threadId && group?.tasks?.find(task => task.threadId === change.threadId);
       if (group && task) {
         task.unreadCount = (task.unreadCount ?? 0) + 1;
-        this.saveGroups(this.bots, { defer: true });
+        this.saveGroups(this.bots, { defer: true, stateOnly: true });
         this.emit({ type: "group", groupId: group.id });
       }
     }
@@ -2455,20 +2734,62 @@ export class Store {
     return index;
   }
 
-  /** A bot's task array by thread, built once per array (see taskThreadIndexes). */
+  private memoryThreadHolders: { revision: number; holders: Map<string, { kind: "bot" | "group" | "alias"; id: string }> } | undefined;
+  /** One indexed holder lookup per thread, including aliases. Built only after
+   * structural writes; cosmetic task-array replacements keep the audience. */
+  threadHolder(threadId: string): { kind: "bot" | "group" | "alias"; id: string } | null {
+    if (this.memoryThreadHolders?.revision !== this.memoryRosterRevision) {
+      const holders = new Map<string, { kind: "bot" | "group" | "alias"; id: string }>();
+      const add = (thread: string, kind: "bot" | "group", id: string) => {
+        const previous = holders.get(thread);
+        if (!previous) holders.set(thread, { kind, id });
+        else if (previous.kind !== kind || previous.id !== id) holders.set(thread, { kind: "alias", id: "" });
+      };
+      for (const bot of this.bots) {
+        add(bot.threadId, "bot", bot.id);
+        for (const thread of this.taskIndex(bot.tasks)?.threadIds ?? []) add(thread, "bot", bot.id);
+      }
+      for (const [thread, places] of this.groupThreadIndex().places) for (const place of places) add(thread, "group", place.group.id);
+      this.memoryThreadHolders = { revision: this.memoryRosterRevision, holders };
+    }
+    return this.memoryThreadHolders.holders.get(threadId) ?? null;
+  }
+
+  /** Task replacement is structural work. Prepare its index before publishing
+   * the list, so completion and admission never pay for a cold history lookup. */
+  private indexTaskAssignments(bot: BotRecord): void {
+    let tasks = bot.tasks;
+    this.taskIndex(tasks);
+    Object.defineProperty(bot, "tasks", {
+      configurable: true, enumerable: true,
+      get: () => tasks,
+      set: (next: TaskRecord[] | undefined) => {
+        this.taskIndex(next);
+        tasks = next;
+      },
+    });
+  }
+
+  /** Prepared at load/create/import and on task-list replacement. */
   private taskIndex(tasks: TaskRecord[] | undefined): TaskThreadIndex | undefined {
     if (!tasks) return undefined;
-    let index = this.taskThreadIndexes.get(tasks);
+    let index = this.taskThreadIndexes.get(tasks) ?? Reflect.get(tasks, this.taskListIndex) as TaskThreadIndex | undefined;
     if (!index || index.length !== tasks.length) {
-      const byThread = new Map<string, { task: TaskRecord; index: number }>(), desks = new Map<string, TaskRecord[]>();
+      const byThread = new Map<string, { task: TaskRecord; index: number }>(), deskByThread = new Map<string, TaskRecord>(), desks = new Map<string, TaskRecord[]>();
+      let unread = 0;
       tasks.forEach((task, i) => {
+        unread += Number(Boolean(task.unread));
         if (!byThread.has(task.threadId)) byThread.set(task.threadId, { task, index: i });
+        if(task.channelProjectDesk&&!deskByThread.has(task.threadId))deskByThread.set(task.threadId,task);
         const desk = task.channelProjectDesk?.groupId;
         if (desk) { const list = desks.get(desk); if (list) list.push(task); else desks.set(desk, [task]); }
       });
-      index = { length: tasks.length, byThread, desks };
-      this.taskThreadIndexes.set(tasks, index);
+      index = { unread, threadIds: [...byThread.keys()], length: tasks.length, byThread, deskByThread, desks };
+      // The symbol lets transparent views reuse the same prepared index. A new
+      // array has no metadata; a changed length still rebuilds legacy in-place edits.
+      Reflect.defineProperty(tasks, this.taskListIndex, { value: index, configurable: true });
     }
+    this.taskThreadIndexes.set(tasks, index);
     return index;
   }
 
@@ -2593,6 +2914,26 @@ export class Store {
     );
   }
 
+  /** Project work-root writers publish the committed paths explicitly. */
+  workRootsCommitted(groupId: string, paths: readonly string[]): void {
+    this.emit({type:"workroot",owner:`group:${groupId}`,paths});
+  }
+
+  private taskWorkRoot(botId: string, task: Pick<TaskRecord,"threadId"|"cwd">): void {
+    this.emit({type:"workroot",owner:`task:${botId}:${task.threadId}:cwd`,botId,paths:task.cwd?[task.cwd]:null});
+  }
+
+  private taskWorkRootDelta(botId:string,prior:readonly Pick<TaskRecord,"threadId"|"cwd">[],current:readonly Pick<TaskRecord,"threadId"|"cwd">[]):void {
+    const before=new Map(prior.map(task=>[task.threadId,task.cwd??null]));
+    for(const task of current){if(!before.has(task.threadId)||before.get(task.threadId)!==(task.cwd??null))this.taskWorkRoot(botId,task);before.delete(task.threadId);}
+    for(const [threadId]of before)this.taskWorkRoot(botId,{threadId,cwd:null});
+  }
+
+  private botWorkRoots(bot: BotRecord): void {
+    this.emit({type:"workroot",owner:`bot:${bot.id}:cwd`,botId:bot.id,paths:bot.cwd?[bot.cwd]:null});
+    for(const task of bot.tasks??[])this.taskWorkRoot(bot.id,task);
+  }
+
   patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "defaultResponder" | "bulletin" | "unread" | "busyBotId" | "cwd" | "pinnedMessageId" | "section" | "setupCompletedAt" | "setupSkippedAt" | "hidden" | "channelProject">>): GroupRecord | null {
     if (Object.hasOwn(patch, "section") || Object.hasOwn(patch, "memberIds")) assertSectionUnlocked();
     const group = this.group(id);
@@ -2614,7 +2955,7 @@ export class Store {
       group.memberIds,
       Boolean(group.dm),
     );
-    this.saveGroups();
+    this.saveGroups(this.bots, { stateOnly: Object.keys(patch).every(key => ["busyBotId", "unread"].includes(key)) });
     this.emit({ type: "group", groupId: group.id });
     return group;
   }
@@ -2656,6 +2997,7 @@ export class Store {
     for (const threadId of new Set([group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)])) {
       this.deleteThreadRecord(threadId);
     }
+    this.emit({type:"workroot",owner:`group:${id}`,paths:null});
     this.emit({ type: "group.deleted", groupId: id, group });
     return true;
   }
@@ -2681,6 +3023,11 @@ export class Store {
   /** A process restart cannot preserve an in-flight room orchestrator. Close
    * every durable working receipt before clients load it, including manual
    * goals that do not have a RoutineRun record to reconcile separately. */
+  /** Boot recoveries act on what the last process left; once this process serves, a working receipt may be its own. Called at listen: after it,
+   * the boot-only reconcile below changes nothing (boot tolerance: a recovery held back at the start is never drained later in the same run). */
+  closeBootRecoveries(): void { this.bootRecoveriesClosed = true; }
+  private bootRecoveriesClosed = false;
+
   reconcileInterruptedGroupGoals(
     resolve?: (
       runId: string,
@@ -2693,6 +3040,7 @@ export class Store {
     fallbackDetail = "Murage restarted before this goal finished.",
     fallbackFinishedAt = Date.now(),
   ): number {
+    if (this.bootRecoveriesClosed) return 0;
     const ownedThreadIds = new Set<string>();
     for (const group of this.groups) {
       ownedThreadIds.add(group.threadId);
@@ -2815,15 +3163,22 @@ export class Store {
   /** Patch one message by id without loading its thread. A thread already in memory goes through patchMessage (its cache stays right); otherwise one
    * row is read, merged and rewritten, and the same message.patch event goes out. Never hydrates a transcript, so a 20,000-row thread costs one row. */
   patchMessagePoint(threadId: string, messageId: string, patch: Partial<Message>): Message | null {
-    if (this.threads.has(threadId)) return this.patchMessage(threadId, messageId, patch);
+    if (this.threads.has(threadId)) {
+      const current = this.messageByIdPoint(threadId, messageId);
+      return current ? this.patchMessage(threadId, messageId, patch, undefined, current) : null;
+    }
     const current = mdb.readMessage(threadId, messageId);
     return current ? this.patchMessageRow(threadId, current, patch) : null;
   }
 
   /** Patch one message whose row is already in hand. A thread already in memory goes through patchMessage (its cache stays right); otherwise only that row is rewritten, so the transcript is never loaded. */
   private patchMessageRow(threadId: string, current: Message, patch: Partial<Message>): Message | null {
-    if (this.threads.has(threadId)) return this.patchMessage(threadId, current.id, patch);
-    const next = checkStoredRow({ ...current, ...boundRemovedText(patch), card: patch.card ?? current.card });
+    if (this.threads.has(threadId)) {
+      const point = this.messageByIdPoint(threadId, current.id);
+      return point ? this.patchMessage(threadId, current.id, patch, undefined, point) : null;
+    }
+    const next = checkStoredRow(redactBotPatch({ ...current, ...patch, card: patch.card ?? current.card }));
+    assertCardPatch(current, next);
     mdb.updateMessage(threadId, next);
     this.emit({ type: "message.patch", threadId, message: next, before: current });
     return next;
@@ -2913,6 +3268,15 @@ export class Store {
     this.saveGroups();
     this.emit({ type: "group", groupId });
     return group;
+  }
+
+  /** 1.0.19 L1: claim a resend row's Send again exactly once. Synchronous check-and-set: the first caller gets claimed true, every later one false. */
+  claimResend(threadId: string, messageId: string): { claimed: boolean } | null {
+    const existing = this.messageById(threadId, messageId);
+    if (!existing || existing.memoryNote !== "resend") return null;
+    if (existing.resendUsed) return { claimed: false };
+    this.patchMessage(threadId, messageId, { resendUsed: true });
+    return { claimed: true };
   }
 
   /** Toggle an emoji reaction on a message ("user" or a member botId). */
@@ -3122,11 +3486,27 @@ export class Store {
 
   /** One message of a thread by id: from memory when the thread is loaded,
    * otherwise a single indexed row. Never materializes the transcript. */
-  messageById(threadId: string, messageId: string): Message | undefined {
+  messageById(threadId: string, messageId: string, options?: { buildIndex: false }): Message | undefined {
     const loaded = this.threads.get(threadId);
-    if (loaded) return indexedMessage(loaded.messages, messageId);
+    if (loaded && options?.buildIndex !== false) return indexedMessage(loaded.messages, messageId);
+    if (options?.buildIndex === false) return this.messageByIdPoint(threadId, messageId, loaded);
     const row = mdb.readMessage(threadId, messageId);
     return row ? this.loadedMessages([row])[0] : undefined;
+  }
+
+  /** Shared point-read path for receipt reads and point patches. Never builds a history index. */
+  private messageByIdPoint(threadId: string, messageId: string, loaded = this.threads.get(threadId)): Message | undefined {
+    if (loaded) {
+      const messages = loaded.messages, index = messageIndexes.get(messages);
+      if (index && index.covered === messages.length && (index.covered === 0 || messages[index.covered - 1]?.id === index.lastId)) {
+        const at = index.ids.get(messageId);
+        if (at === undefined) return undefined;
+        if (messages[at]?.id === messageId) return messages[at];
+      }
+    }
+    // Resolve a legacy row's implicit parent before a synchronous point write reuses it.
+    const step = mdb.branchStep(threadId, messageId);
+    return step ? this.loadedMessages([step.message])[0] : undefined;
   }
 
   /** Messages of a thread by id (thread order when loaded, else the order
@@ -3153,12 +3533,9 @@ export class Store {
   }
 
   /** The first message written at or after `at`, else the newest one: a run's
-   * anchor in its thread. Answered from memory when the thread is loaded,
-   * otherwise from two indexed reads; a routine's transcript is not loaded to
-   * find one row. */
+   * anchor in its thread. The transactional storage-order index answers for
+   * both loaded and unloaded threads without walking a transcript. */
   firstMessageSince(threadId: string, at: number): Message | undefined {
-    const loaded = this.threads.get(threadId);
-    if (loaded) return loaded.messages.find((message) => message.at >= at) ?? loaded.messages.at(-1);
     const row = mdb.firstMessageSince(threadId, at);
     return row ? this.loadedMessages([row])[0] : undefined;
   }
@@ -3430,15 +3807,48 @@ export class Store {
   /** The thread's open request cards, read through the card index (never the
    * thread's rows), with the answerable cards of a run that died (orphaned). A loaded thread's copies are returned for those it holds. */
   openRequestCardRows(threadId: string): Message[] {
+    return this.openRequestCardRowsStatus(threadId).rows;
+  }
+
+  /** The same rows, with whether the read is COMPLETE (Rev 3.3 V1): the index answered exactly AND the open-card part (before the orphan
+   *  merge) is under the sweep limit. The merged length never establishes completeness. `limit` is for tests that need a saturated index. */
+  openRequestCardRowsStatus(threadId: string, limit: number = OPEN_CARD_SWEEP_LIMIT): { rows: Message[]; complete: boolean } {
     const loaded = this.threads.get(threadId);
-    const open = mdb.openRequestCards(threadId, OPEN_CARD_SWEEP_LIMIT).reverse()
+    const status = mdb.openRequestCardsStatus(threadId, limit);
+    const complete = !status.incomplete && status.cards.length < limit;
+    const open = status.cards.reverse()
       .map(({ message }) => loaded?.messages.find((row) => row.id === message.id) ?? message);
     // a card the start retired (its run died) is out of the open-card list but still answerable: it counts as open here (keyed family "orphaned")
     const seen = new Set(open.map((row) => row.id));
     const orphaned = (loaded ? loaded.messages.filter((row) => row.card?.orphaned && row.card.requestId && !row.card.answered && !row.card.dismissed) : mdb.keyedCardRows(threadId, "orphaned"))
       .filter((row) => !seen.has(row.id));
-    return orphaned.length ? [...orphaned, ...open].sort((a, b) => a.at - b.at) : open;
+    return { rows: orphaned.length ? [...orphaned, ...open].sort((a, b) => a.at - b.at) : open, complete };
   }
+
+  /** Rev 3.3 X2: the open cards (and answerable orphaned cards) of this thread for these request ids, ONE query, no sweep or history limit. */
+  openCardsForRequests(threadId: string, requestIds: readonly string[]): { found: Map<string, Message>; unknown: boolean } {
+    const loaded = this.threads.get(threadId);
+    const got = mdb.openCardsForRequests(threadId, requestIds);
+    if (got.unknown) return { found: new Map(), unknown: true };
+    const found = new Map<string, Message>();
+    for (const [id, message] of got.found) found.set(id, loaded?.messages.find((row) => row.id === message.id) ?? message);
+    const wanted = new Set(requestIds);
+    const orphaned = loaded ? loaded.messages.filter((row) => row.card?.orphaned) : mdb.keyedCardRows(threadId, "orphaned");
+    for (const row of orphaned) {
+      const id = row.card?.requestId;
+      if (id && wanted.has(id) && !found.has(id) && !row.card?.answered && !row.card?.dismissed) found.set(id, row);
+    }
+    return { found, unknown: false };
+  }
+  /** The one-id form of openCardsForRequests: found, authoritatively absent, or unknown (the index cannot say). */
+  openCardForRequest(threadId: string, requestId: string): { found: Message } | { absent: true } | { unknown: true } {
+    const got = this.openCardsForRequests(threadId, [requestId]);
+    if (got.unknown) return { unknown: true };
+    const row = got.found.get(requestId);
+    return row ? { found: row } : { absent: true };
+  }
+  /** One bounded (250 ms) walker step for this thread's card index; "ready" when it answers exactly. */
+  prepareOpenCardIndex(threadId: string): "ready" | "pending" | "failed" { return mdb.prepareOpenCardIndex(threadId); }
 
   /** The threads that hold an open request card or an answerable orphaned card (mdb.threadsWithOpenCards), or null while the card
    * lists are still being filled after an upgrade. */
@@ -3793,11 +4203,13 @@ export class Store {
       const kept = settledTurnHelpers(helpers);
       const next = message ? { ...message, turnTerminal: true, ...(kept.length ? { turnHelpers: kept } : {}) } : null;
       transaction(db => {
+        // A stopped reply must be refused by capture before its terminal patch.
+        if (outcome !== "completed") recordMemorySettlement(threadId,turnId,outcome,{ onlyTurn: true });
         if (next) {
           mdb.updateMessage(threadId,next);
           if (outcome === "cancelled") bumpChatsGen(db);
         }
-        recordMemorySettlement(threadId,turnId,outcome);
+        if (outcome === "completed") recordMemorySettlement(threadId,turnId,outcome,{ onlyTurn: true });
         this.speechHooks?.settle(threadId, turnId, next, outcome);
       });
       if (next) {
@@ -3850,13 +4262,13 @@ export class Store {
   /** `within` runs in the same transaction as the insert (links the message must not exist without); if it throws, nothing
    * is written, cached or announced. A `stableId` that already names a stored row returns that row (a redelivered event). */
   appendMessage(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void, reply?: ProviderReply,
-    lineage?: readonly LineageRef[]): Message {
+    lineage?: readonly LineageRef[], began?: number): Message {
     input = this.boundPostTo(threadId, input);
     return this.writing(threadId, () => {
       // A thread that is not loaded is not loaded to add one row (a screen
       // frame prunes the newest frames, read by index).
       if (!this.threads.has(threadId)) {
-        const appended = this.appendUnloaded(threadId, input, stableId, within, lineage);
+        const appended = this.appendUnloaded(threadId, input, stableId, within, lineage, began);
         if (appended) return appended;
       }
       const t = this.thread(threadId);
@@ -3867,7 +4279,7 @@ export class Store {
       // Runtime proof of the one dispatch path: a hand-off's prompt id is written only in the transaction that moves its row to started (handoff-stamp.ts).
       this.speechAttribute(threadId, full);
       const inside = () => { this.speechAccepted(threadId, full); within?.(full); };
-      mdb.appendMessage(threadId, full, isHandoffPromptId(full.id) ? guardHandoffPrompt(database, full.id, inside) : inside, reply, lineage);
+      mdb.appendMessage(threadId, full, isHandoffPromptId(full.id) ? guardHandoffPrompt(database, full.id, inside) : inside, reply, lineage, began);
       t.messages.push(full);
       t.activeLeafId = full.id;
       this.grew(threadId, t, messageBytes(full));
@@ -3890,12 +4302,36 @@ export class Store {
     });
   }
 
+  /** Presentation may retain host-generated action IDs only from a matching service record. */
+  displayHostRequestId(threadId: string, message: unknown): string | undefined {
+    if (!message || typeof message !== 'object') return undefined;
+    const row = message as Message, card = row.card;
+    if (!card?.approvalId || !card.requestId || !/^(?:image-[0-9a-f-]{36}|highlevel-hla_[0-9a-f-]{36}|limit-[0-9a-f-]{36})$/.test(card.requestId)) return undefined;
+    const record = readRecord(database(), card.approvalId);
+    return record?.source_kind === 'service' && record.thread_id === threadId && record.chat_message_id === row.id
+      && (!card.requestId.startsWith('limit-') || record.queue_kind === 'event-limit' && card.tool === 'murage_limit_offer')
+      && record.request_id === card.requestId && canEmit(database(), threadId, row, false) ? card.requestId : undefined;
+  }
+
+  /** Decision core is the sole producer of action-bearing permission fields. */
+  appendApprovalCard(threadId: string, ref: ApprovalRef, view: ApprovalView): Message {
+    const record = readRecord(database(), ref.approvalId);
+    if (!record || record.thread_id !== threadId) throw new Error('approval-record-missing');
+    const action = JSON.parse(record.evidence).action;
+    const card = { ...action, title: view.title, subtitle: view.subtitle, ...(view.detail ? {detail:view.detail} : {}) } as PermissionCard;
+    // A room's durable request belongs to its requesting member, even when a
+    // different member is the room's current or default responder.
+    const requester=this.groupByThread(threadId)?this.bot(record.bot_id):undefined;
+    const line={role:'bot' as const,kind:'options' as const,card,...(requester?{from:{botId:requester.id,name:requester.name,color:requester.color}}:{}),...(view.turnId?{turnId:view.turnId}:{}),...(record.source_kind==='engine'&&view.engine?{engine:view.engine}:{}),...(action.answerAsSend&&action.from?{from:action.from}:{})};
+    return this.appendMessage(threadId,record.source_kind==='service'?murageLine(line):line,record.chat_message_id,undefined,undefined,view.parents,view.began);
+  }
+
   /** appendMessage for a thread that is not loaded: the same row, leaf, events
    * and owner-message follow-up, from the stored branch head and the newest
    * APPEND_TAIL_ROWS rows, never the transcript. Null for a thread with no
    * rows, which takes the full path (its one-time legacy import). */
   private appendUnloaded(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void,
-    lineage?: readonly LineageRef[]): Message | null {
+    lineage?: readonly LineageRef[], began?: number): Message | null {
     const leaf = mdb.readActiveLeafOrNewest(threadId);
     if (leaf === null) return null;
     if (stableId) { const held = mdb.storedMessage(threadId, stableId); if (held) return held; }
@@ -3905,7 +4341,7 @@ export class Store {
     const recent = owner ? this.newestMessages(threadId, APPEND_TAIL_ROWS).messages : [];
     const full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: leaf, ...redactBotAuthored(message) };
     this.speechAttribute(threadId, full);
-    mdb.appendMessage(threadId, full, () => { this.speechAccepted(threadId, full); within?.(full); }, undefined, lineage);
+    mdb.appendMessage(threadId, full, () => { this.speechAccepted(threadId, full); within?.(full); }, undefined, lineage, began);
     if (full.kind === "screen") {
       for (const pruned of this.pruneScreenFrames({ messages: this.newestFrames(threadId) }, 4)) {
         mdb.updateMessage(threadId, pruned);
@@ -4188,29 +4624,45 @@ export class Store {
   }
 
   /** `within` runs in the same transaction as the patch (another row that must change with this message, or not at all); it runs even when the message is
-   * gone (the other change is still owed), and if it throws nothing is written, cached or announced. */
-  patchMessage(threadId: string, messageId: string, requested: Partial<Message>, within?: () => void): Message | null {
+   * gone (the other change is still owed), and if it throws nothing is written, cached or announced.
+   * `current` may reuse a point read made in this synchronous operation; callers must not retain it across another write or await. */
+  patchMessage(threadId: string, messageId: string, requested: Partial<Message>, within?: () => void, current?: Message): Message | null {
     // `via` is stamped when the line is written and never changes after.
     const { via: _via, ...patch } = requested;
     return this.writing(threadId, () => {
-      // A thread that is not loaded is not loaded to change one row: the row
-      // is read by its key and written back, as a loaded patch writes it.
-      if (!this.threads.has(threadId)) {
+      const loaded = this.threads.get(threadId);
+      const messages = loaded?.messages;
+      // Ordinary edits preserve the loaded transcript and its byte accounting.
+      // Receipt recovery supplies its point-read row to avoid building a cold
+      // history index; that path can still invalidate the cold cache below.
+      if (messages && current === undefined) indexedMessage(messages, messageId);
+      const index = messages && messageIndexes.get(messages);
+      // Only a complete warm index can locate a cached row without walking
+      // history. A cold recovery cache is invalidated after a successful point write;
+      // later point reads/appends keep using SQLite without reloading it.
+      const warm = messages && index && index.covered === messages.length
+        && (index.covered === 0 || messages[index.covered - 1]?.id === index.lastId);
+      const idx = warm ? index.ids.get(messageId) : undefined;
+      if (!warm || (idx !== undefined && messages![idx]?.id !== messageId)) {
         // read as a load reads it: a legacy row is chained to the row stored before it
-        const step = mdb.branchStep(threadId, messageId);
+        const step = current?.id === messageId
+          ? { message: current, parent: current.parentId ?? null }
+          : mdb.branchStep(threadId, messageId);
         // the message is gone: the other change is still owed, as on a loaded thread (no conversation is made for it)
         if (!step) { if (within) transaction(() => within()); return null; }
         const before = checkStoredRow({ ...step.message, parentId: step.parent });
-        const next = checkStoredRow({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
+        const next = redactBotPatch({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
         // `within` joins this write too: a card settled with the send it became (QW Q1) is one transaction on an unloaded thread as well
+        assertCardPatch(before, next);
         mdb.updateMessage(threadId, next, within);
+        if (loaded) this.threads.delete(threadId);
         this.emit({ type: "message.patch", threadId, message: next, before });
         return next;
       }
-      const t = this.thread(threadId);
-      const idx = t.messages.findIndex((m) => m.id === messageId);
-      if (idx === -1) { if (within) transaction(() => within()); return null; }
-      const next = checkStoredRow({ ...t.messages[idx], ...boundRemovedText(patch), card: patch.card ?? t.messages[idx].card });
+      const t = loaded!;
+      if (idx === undefined) { if (within) transaction(() => within()); return null; }
+      const next = checkStoredRow(redactBotPatch({ ...t.messages[idx], ...patch, card: patch.card ?? t.messages[idx].card }));
+      assertCardPatch(t.messages[idx], next);
       // SQLite is the durable source of truth. Persist before changing memory so
       // a failed write cannot make this process believe a card was answered
       // while a restart would still show it as pending.
@@ -4222,6 +4674,9 @@ export class Store {
       return next;
     });
   }
+
+  activeBot(id: string): BotRecord | null { const bot = this.bot(id); return bot && !inertBot(bot) ? bot : null; }
+  activeBots(): BotRecord[] { return this.bots.filter(bot => !inertBot(bot)); }
 
   bot(id: string) {
     return this.bots.find((b) => b.id === id) ?? null;
@@ -4242,9 +4697,12 @@ export class Store {
        * with a first-person greeting the user never asked for. */
       seedMessages?: boolean;
       beforeCreate?: (id: string) => void;
+      staged?: BotRecord["staged"];
       /** A bot made by a caller that proved nothing (route-policy.ts): no
        *  computer, browser or connected apps until the owner turns them on. */
       noAccess?: boolean;
+      /** The computer the new bot starts on (config computer.defaultForNewBots, resolved by the caller). Never beats noAccess. */
+      computer?: BotRecord["computer"];
       /** 1.0.14 FIRST-ENGINE-REPICK: Murage chose the engine (no owner selection). Trusted callers only, never from a request body. */
       engineAutoPicked?: true;
     } = {},
@@ -4257,7 +4715,7 @@ export class Store {
     // bot's released state) must never come back, so the guard may throw and nothing is created.
     const id = newId();
     this.botIdGuard?.(id);
-    opts.beforeCreate?.(id);
+    if (!opts.staged) opts.beforeCreate?.(id);
     const bot: BotRecord = {
       id,
       threadId: newId(),
@@ -4270,51 +4728,62 @@ export class Store {
       ...(profile.mascotBody ? { mascotBody: profile.mascotBody } : {}),
       unread: false,
       // 1.0.15 BIRTH-FUIGO: no owner pick means birth decides, here, in the same tick as the write (section 5: one condition, one place).
-      modelSelection: this.completeNewBotSelection(born ? this.birthSelection() : profile.modelSelection!),
+      modelSelection: this.completeNewBotSelection(born || opts.staged ? this.birthSelection() : profile.modelSelection!),
       resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,
       createdAt: Date.now(),
       // a new bot has done nothing yet: Auto asks before it first uses this computer
       hostComputerConsent: "ask",
+      ...(!opts.noAccess ? this.ownerPermissionDefault() : {}),
     };
     if (section) bot.section = section;
     bot.voice = pickDefaultVoice(this.bots);
     bot.voiceAssigned = true;
+    if (opts.computer && !opts.noAccess) bot.computer = opts.computer;
     if (opts.noAccess) { bot.computer = "off"; bot.browser = false; bot.composio = false; }
     // The one mark write (BIRTH-FUIGO section 5): a born bot, or a trusted caller's explicit mark (R3b), in the record saved below.
     if (born || opts.engineAutoPicked === true) bot.engineAutoPicked = true;
-    bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,autoApprove:false,alwaysAllow:[],unread:false }];
-    // All or nothing: the roster (bots.json and its memory binding), the announcement and the opening lines land together. The write lock
-    // is taken first (BEGIN IMMEDIATE), so a busy database refuses before anything changes; any later failure rolls the rows back, the
-    // announcements never go out (tx-scope.ts), and the roster is written again without the bot. A caller that retries after an error
-    // makes one bot, never two.
+    bot.tasks = [{ permissionExplicit:false, threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,autoApprove:bot.autoApprove===true,fullAccess:bot.fullAccess===true,noLimits:bot.noLimits===true,alwaysAllow:[],unread:false }];
+    if (opts.staged) {
+      bot.staged = structuredClone(opts.staged);
+      if (profile.modelSelection) bot.staged.intended.modelSelection = structuredClone(profile.modelSelection);
+      bot.autoApprove = false; bot.fullAccess = false; bot.noLimits = false; bot.alwaysAllow = [];
+      bot.approvePeerComms = false; bot.computer = "off"; bot.composio = false;
+      for (const task of bot.tasks) { task.autoApprove = false; task.fullAccess = false; task.noLimits = false; task.alwaysAllow = []; }
+    }
+    this.indexTaskAssignments(bot);
+    // Hold the SQLite writer lock before journaling the original file bytes. Failed creates and interrupted transactions restore
+    // those bytes; messages, memory bindings and announcements commit together, so a retry makes exactly one bot.
     transaction(() => {
+      const pendingBots = hasPendingCoalesced(BOTS_FILE), pendingGroups = hasPendingCoalesced(GROUPS_FILE);
+      onRollback(() => this.withdrawCreatedBot(bot.id, pendingBots, pendingGroups));
+      prepareBotCreateRollback(DATA_DIR);
       this.bots.unshift(bot);
-      onRollback(() => this.withdrawCreatedBot(bot.id));
       this.saveBots();
       // Announce the owner before its onboarding transcript. SSE clients need
       // the bot/thread mapping before they can place either message.
+      this.botWorkRoots(bot);
       this.emit({ type: "bot", botId: bot.id });
+      if (opts.staged) opts.beforeCreate?.(id);
       if (opts.seedMessages !== false) {
         this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "text", text: openingLine(name) }));
-        this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "options", card: intakeOpeningQuestion() }));
+        this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "options", card: intakeOpeningQuestion() as InfoCard }));
       }
     }, { op: "createBot" });
     return bot;
   }
 
-  /** createBot's rollback: the bot leaves the live roster and bots.json is written again from it, FILE ONLY: the memory binding and every
-   * other row rolled back with the transaction, and nothing here writes to the database (an enclosing transaction that rolls back several
-   * creates rewrites the file for each, newest first). The last-save key is cleared, and a deferred save of the live roster follows, so
-   * a write that failed here, or a change the failed save had carried, still reaches disk and a restart never brings the bot back. */
-  private withdrawCreatedBot(botId: string) {
+  /** The journal restores first; then withdraw the live record and reinstate any save that predated this create. */
+  private withdrawCreatedBot(botId: string, pendingBots: boolean, pendingGroups: boolean) {
     const at = this.bots.findIndex(b => b.id === botId);
-    if (at === -1) return;
-    this.bots.splice(at, 1);
-    this.accessRoles.delete(botId);
-    this.lastRosterKey = undefined;
-    try { writeFileAtomic(BOTS_FILE, this.rosterJson(this.bots).json, { mode: 0o600 }); }
-    catch (error) { console.error("store: could not rewrite the roster after a failed bot create", error); }
-    scheduleCoalesced(BOTS_FILE, () => this.saveBotsNow());
+    if (at !== -1) {
+      this.botRosterCounter++; this.memoryRosterCounter++;
+      this.bots.splice(at, 1);
+      this.accessRoles.delete(botId);
+      this.lastRosterKey = undefined;
+      this.lastReconciledRosterKey = undefined;
+    }
+    if (pendingBots) scheduleCoalesced(BOTS_FILE, () => this.saveBotsNow());
+    if (pendingGroups) scheduleCoalesced(GROUPS_FILE, () => this.saveGroupsNow());
   }
 
   /** Remove a bot for good: its record, every task transcript, its
@@ -4382,9 +4851,10 @@ export class Store {
   releaseBotState?: (id: string) => void;
   /** Bot email (BOT-EMAIL-MURAGE-109 2.6): the email removal intent rides the deletion proof's transaction (record), is withdrawn in the
    * rollback when saveBots fails (withdraw), and is committed once saveBots returned (commit). Never waits on the network. */
-  emailDeletion?: { record: (id: string) => void; withdraw: (id: string) => void; commit: (id: string) => void };
+  emailDeletion?: { record: (id: string) => void; withdraw: (id: string) => void; commit: (id: string, emailConfirm?: string) => void };
 
-  deleteBot(id: string): boolean {
+  /** `emailConfirm` (r3.1 section 6) is the confirmation token the owner saw with the address text; only the single-bot DELETE route passes it. */
+  deleteBot(id: string, options: { emailConfirm?: string } = {}): boolean {
     const bot = this.bot(id);
     if (!bot) return false;
     // Before any change: if the launcher still holds this bot's state the error propagates and the bot stays.
@@ -4399,17 +4869,29 @@ export class Store {
     // The owner's deletion of every conversation of this bot is recorded durably BEFORE the registry forgets the bot:
     // a crash between the two leaves proof for each thread's sends and room requests instead of orphans nobody can purge.
     const botThreadIds = [...new Set([bot.threadId, ...(bot.tasks ?? []).map((t) => t.threadId)])];
-    transaction((db) => { for (const threadId of botThreadIds) recordOwnerDeletion(db, threadId); recordOwnerDeletion(db, botDeletionKey(id)); this.emailDeletion?.record(id); });
+    // ...with the Flux tombstones and forgets of every conversation and of the bot's space, all under ONE attempt token, the
+    // bot:<id> record included (flux-memory-spaces.ts). Only the records THIS attempt wrote are noted: a conversation deleted earlier
+    // keeps its record and its tombstone when this save fails (FLUX-SPACES-CAPTURE-FORGET-106 R4.8).
+    const fluxAttempt = randomUUID();
+    let recorded: string[] = [];
+    transaction((db) => {
+      recorded = [];
+      const now = Date.now();
+      for (const key of [...botThreadIds, botDeletionKey(id)]) if (recordOwnerDeletion(db, key, now, fluxAttempt)) recorded.push(key);
+      this.emailDeletion?.record(id);
+    });
     try {
       this.saveBots(nextBots);
     } catch (error) {
       for (const group of seated) Object.assign(group, priorSeats.get(group.id));
-      // the bot is still there: its conversations were not deleted, so the proof written above is withdrawn
-      try { transaction((db) => { for (const threadId of botThreadIds) withdrawOwnerDeletion(db, threadId); withdrawOwnerDeletion(db, botDeletionKey(id)); this.emailDeletion?.withdraw(id); }); } catch (e) { console.error("store: could not withdraw deletion record", e); }
+      // the bot is still there: its conversations were not deleted, so the proof THIS attempt wrote is withdrawn (and only the Flux
+      // rows this attempt wrote: a record, tombstone or forget an earlier deletion wrote stays)
+      try { transaction((db) => { for (const key of recorded) withdrawOwnerDeletion(db, key); withdrawFluxForget(db, fluxAttempt); this.emailDeletion?.withdraw(id); }); } catch (e) { console.error("store: could not withdraw deletion record", e); }
       throw error;
     }
-    try { this.emailDeletion?.commit(id); } catch (e) { console.error("store: email removal intent stays for boot", e); }
+    try { this.emailDeletion?.commit(id, options.emailConfirm); } catch (e) { console.error("store: email removal intent stays for boot", e); }
     this.bots = nextBots;
+    this.browserModes.remove(id);
     this.refreshPendingThreads(botThreadIds);
     this.pruneMessageAllow(id);
     transaction(db => captureBotDeletion(db, id));
@@ -4450,6 +4932,7 @@ export class Store {
       rmSync(join(DATA_DIR, "checkpoints", id), { recursive: true, force: true });
     } catch {}
     for (const group of seated) this.emit({ type: "group", groupId: group.id });
+    this.emit({type:"workroot",owner:`bot:${id}:*`,botId:id,paths:null});
     this.emit({ type: "bot.deleted", botId: id });
     return true;
   }
@@ -4457,7 +4940,15 @@ export class Store {
   patchBot(id: string, patch: Partial<BotRecord>, options: {preserveTaskSettings?:boolean} = {}): BotRecord | null {
     const bot = this.bot(id);
     if (!bot) return null;
+    if (bot.staged) {
+      // Review alone can activate this record or assign its intended privileges.
+      patch = { ...patch, staged: bot.staged, autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [], chiefOfStaff: false,
+        ...(patch.tasks ? { tasks: patch.tasks.map(t => ({ ...t, autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [] })) } : {}) };
+    }
     // 1.0.14 FIRST-ENGINE-REPICK section 3: the mark and the engine revision are never written through a patch.
+    // Cloud home only (server/cloud-home/engine-repick.ts): Murage's own move onto Fuigo carries the mark with the selection, so the
+    // bot stays Murage-picked. The mark itself is still stripped below and only re-set after the owner-write clear.
+    const cloudMurageMove = process.env.MURAGE_CLOUD_ROLE === "home" && patch.engineAutoPicked === true && Object.hasOwn(patch, "modelSelection");
     if (Object.hasOwn(patch, "engineAutoPicked") || Object.hasOwn(patch, "engineRev")) { const { engineAutoPicked: _m, engineRev: _r, ...kept } = patch; patch = kept; }
     // An owner engine write (the bot's selection, or a task's own pick in a tasks array) clears the mark and moves engineRev.
     // Astra 1015 H1: an explicit selection write is the owner's choice even when the value is the same one.
@@ -4478,14 +4969,15 @@ export class Store {
     const continuityChanged = (bot.continuity === true || patch.continuity === true) && ["continuity", "continuityOptions", "modelSelection"].some(key => Object.hasOwn(patch, key) && JSON.stringify(bot[key as keyof BotRecord]) !== JSON.stringify(patch[key as keyof BotRecord]));
     const continuityGeneration = bot.continuityGeneration ?? 0;
     const levelBefore = permissionLevel(bot);
-    // 1.0.15 Astra M2 (section 8): the patch is staged on a copy (the bot and each task copied one level deep; every step below sets
-    // top-level fields only), committed, and only then published into the live record and its held task objects.
-    const next: BotRecord = { ...bot, ...(bot.tasks ? { tasks: bot.tasks.map(task => ({ ...task })) } : {}) };
+    // Stage the bot before committing. Task edits below replace the list and
+    // copy the task they edit; an unrelated patch keeps the task list shared.
+    const next: BotRecord = { ...bot };
     Object.assign(next, patch);
     if (patch.resumeCursors && Object.keys(patch.resumeCursors).length === 0) {
       next.resumePolicies = undefined; next.replayPending = undefined;
     }
     if (engineWrite) { delete next.engineAutoPicked; Object.assign(next, ownerEngineWrite(next)); }
+    if (cloudMurageMove) next.engineAutoPicked = true;
     // an internal caller's level move counts like any other (the routes' level writes use setPermissionLevel)
     if (permissionLevel(next) !== levelBefore) Object.assign(next, levelMove(next, levelBefore));
     if (continuityChanged) next.continuityGeneration = continuityGeneration + 1;
@@ -4496,23 +4988,71 @@ export class Store {
       return team && task.title === workThreadTitle(formerName, team) ? { ...task, title: workThreadTitle(next.name, team) } : task;
     });
     if (partitionedAt !== undefined) next.partitionedAt = partitionedAt;
-    if(next.tasks?.length===1){
+    const mirroredKeys = (["autoApprove", "fullAccess", "noLimits", "alwaysAllow", "unread", "rewound", "pinnedMessageId", "resumeCursors"] as const)
+      .filter(key => Object.hasOwn(patch, key) && (!options.preserveTaskSettings || !["autoApprove", "fullAccess", "noLimits", "alwaysAllow"].includes(key)));
+    if(next.tasks?.length===1 && mirroredKeys.length){
       const task={...next.tasks[0]!},taskLevel=permissionLevel(task);
       // 1.0.4 SL-K K1: the model is no longer mirrored onto the one task (it follows the bot unless picked); the permission mirror stays.
-      for(const key of ["autoApprove","fullAccess","noLimits","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key)&&(!options.preserveTaskSettings||!["autoApprove","fullAccess","noLimits","alwaysAllow"].includes(key)))Object.assign(task,{[key]:structuredClone(patch[key])});
+      for(const key of mirroredKeys)Object.assign(task,{[key]:structuredClone(patch[key])});
       if(Object.hasOwn(patch,"resumeCursors") && Object.keys(task.resumeCursors).length===0){task.resumePolicies=undefined;task.replayPending=undefined;}
       if(permissionLevel(task)!==taskLevel)Object.assign(task,levelMove(task,taskLevel));
       next.tasks=[task];
     }
-    this.commitStagedBots(new Map([[bot, next]]));
-    this.emit({ type: "bot", botId: id });
+    if ((bot.staged || bot.pendingRevision) && ['name', 'title', 'description', 'section', 'chiefOfStaff', 'hidden', 'modelSelection', 'autoApprove', 'fullAccess', 'noLimits', 'alwaysAllow', 'tasks'].some(key => Object.hasOwn(patch, key))) {
+      if (next.staged) next.staged = { ...next.staged, rev: next.staged.rev + 1 };
+      if (next.pendingRevision) next.pendingRevision = { ...next.pendingRevision, rev: next.pendingRevision.rev + 1 };
+    }
+    if (next.staged) {
+      Object.assign(next, { autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [] }); delete next.chiefOfStaff;
+      if (next.tasks !== bot.tasks || !bot.staged) next.tasks = next.tasks?.map(task => ({ ...task, autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [] }));
+    }
+    const priorRootTasks=Object.hasOwn(patch,"tasks")?bot.tasks?.map(({threadId,cwd})=>({threadId,cwd})):undefined;
+    const priorCwd=bot.cwd;
+    const publishRoots=()=>{
+      const live=this.bot(id);if(!live)return;
+      if(Object.hasOwn(patch,"cwd")&&priorCwd!==live.cwd)this.emit({type:"workroot",owner:`bot:${id}:cwd`,botId:id,paths:live.cwd?[live.cwd]:null});
+      if(priorRootTasks)this.taskWorkRootDelta(id,priorRootTasks,live.tasks??[]);
+    };
+    const tasksChanged = next.tasks !== bot.tasks;
+    const unreadOnly = Object.keys(patch).length === 1 && Object.hasOwn(patch, "unread") && this.turnState.has(bot)
+      && (next.tasks === bot.tasks || soleUnreadMirrorOnly(bot.tasks, next.tasks));
+    try {
+      if (unreadOnly) {
+        this.turnState.write(next);
+        this.lastRosterKey = undefined;
+        publishBotRecord(bot, next);
+      } else this.commitStagedBots(new Map([[bot, next]]));
+    } catch(error) { if(error instanceof RosterPostCommitError)publishRoots();throw error; }
+    publishRoots();
+    this.emit({ type: "bot", botId: id }, tasksChanged);
     return bot;
   }
 
   /** 1.0.15 Astra M2, section 8's commit boundary for a staged roster write: bots.json is written first. A failure before the commit
    * restores recordRevision and leaves every live record as it was. Once committed, each live record takes its staged record, or after
    * a RosterPostCommitError the normalized record bots.json holds (with its event), and the error is rethrown. */
-  private commitStagedBots(staged: Map<BotRecord, BotRecord>): void {
+  commitBotReview(candidates: BotPermissionWrite<ReadonlyMap<string, BotRecord>>): void {
+    const staged = new Map<BotRecord, BotRecord>();
+    for (const [id, candidate] of candidates) {
+      const current = this.bot(id);
+      if (!current || candidate.id !== id) throw new Error("This bot changed. Read it again and retry.");
+      const next = structuredClone(candidate);
+      if (permissionLevel(next) !== permissionLevel(current)) Object.assign(next, levelMove(next, permissionLevel(current)));
+      for (const task of next.tasks ?? []) {
+        const old = current.tasks?.find(t => t.threadId === task.threadId);
+        if (old && permissionLevel(old) !== permissionLevel(task)) Object.assign(task, levelMove(task, permissionLevel(old)));
+      }
+      if (selectionChanged(next.modelSelection, current.modelSelection)) {
+        delete next.engineAutoPicked; Object.assign(next, ownerEngineWrite(current));
+      }
+      staged.set(current, next);
+    }
+    if (!staged.size) return;
+    this.commitStagedBots(staged);
+    for (const bot of staged.keys()) this.emit({ type: "bot", botId: bot.id });
+  }
+
+  private commitStagedBots(staged: BotPermissionWrite<Map<BotRecord, BotRecord>>): void {
     const revision = this.recordRevision;
     try { this.saveBots(this.bots.map(current => staged.get(current) ?? current)); }
     catch (error) {
@@ -4525,25 +5065,37 @@ export class Store {
 
   /** 1.0.13 UX-TRUST-L1B: a level change. The next file is written first and the live record moves only once that returned, so a failed
    * write leaves the old level, revision and no event. Level flags, acknowledgements and the revision travel in one write. With `ifRev`
-   * a different revision answers null and writes nothing. `mirrorSoleTask` keeps a legacy PATCH's one-conversation mirror in this write;
-   * a PATCH of the default alone never sets it, so the conversation stays out of the change. */
-  setPermissionLevel(botId: string, change: { flags: Pick<BotRecord, "autoApprove" | "fullAccess" | "noLimits">; acknowledgements?: Pick<BotRecord, "fullAccessAcknowledgedAt" | "noLimitsAcknowledgedAt">; ifRev?: number; routinesId?: string; mirrorSoleTask?: boolean }): BotRecord | null {
+   * a different revision answers null and writes nothing. An explicitly requested sole-conversation mirror moves in the same
+   * write. Other conversations retain their choices; implicit owner threads read the live default at the next tool call. */
+  setPermissionLevel(botId: string, change: BotPermissionWrite<{ flags: Pick<BotRecord, "autoApprove" | "fullAccess" | "noLimits">; acknowledgements?: Pick<BotRecord, "fullAccessAcknowledgedAt" | "noLimitsAcknowledgedAt">; ifRev?: number; routinesId?: string; mirrorSoleTask?: boolean; keepTaskPermissionThreads?: readonly string[] }>): BotRecord | null {
     const bot = this.bot(botId);
-    if (!bot || (change.ifRev !== undefined && change.ifRev !== (bot.permissionRev ?? 0))) return null;
-    const next = { ...change.acknowledgements, ...change.flags, ...levelMove(bot, permissionLevel(bot), change.routinesId) };
+    if (!bot || bot.staged || (change.ifRev !== undefined && change.ifRev !== (bot.permissionRev ?? 0))) return null;
+    const next = { permissionExplicit: true, ...change.acknowledgements, ...change.flags, ...levelMove(bot, permissionLevel(bot), change.routinesId) };
     const sole = change.mirrorSoleTask && bot.tasks?.length === 1 ? bot.tasks[0] : undefined;
-    const soleNext = sole && { ...change.flags, ...(permissionLevel({ ...sole, ...change.flags }) !== permissionLevel(sole) ? levelMove(sole, permissionLevel(sole)) : {}) };
+    const soleNext = sole && { permissionExplicit: true, ...change.flags, ...(permissionLevel({ ...sole, ...change.flags }) !== permissionLevel(sole) ? levelMove(sole, permissionLevel(sole)) : {}) };
+    // Defaults do not rewrite conversation choices. Implicit owner threads
+    // inherit No limits through projectBotForTask; explicit lower levels move
+    // only through the owner's reviewed conversation apply or task edit.
+    const keepTaskPermissions = new Set(change.keepTaskPermissionThreads ?? []);
+    const tasks = (bot.tasks ?? []).map(task => task === sole && !keepTaskPermissions.has(task.threadId) ? {...task,...soleNext} : task);
     const revision = this.recordRevision;
-    try { this.saveBots(this.bots.map(current => current === bot ? { ...bot, ...next, ...(sole ? { tasks: [{ ...sole, ...soleNext }] } : {}) } : current)); }
+    try { this.saveBots(this.bots.map(current => current === bot ? { ...bot, ...next, tasks } : current)); }
     catch (error) {
       // 1.0.14 section 8 (GrokBuild R2b M3): bots.json holds the new level, so the live record shows it too; the caller still sees the throw.
       if (error instanceof RosterPostCommitError) { this.publishCommitted(bot, error.normalized); this.emit({ type: "bot", botId }); throw error; }
       this.recordRevision = revision; throw error;
     }
     Object.assign(bot, next);
-    if (sole) Object.assign(sole, soleNext);
+    bot.tasks = tasks;
     this.emit({ type: "bot", botId });
     return bot;
+  }
+
+  /** Owner action from Settings: all records follow the current default. */
+  inheritAllPermissions(): void {
+    this.saveBots(this.bots.map(bot => ({...bot, permissionExplicit:false,
+      tasks:bot.tasks?.map(task=>({...task,permissionExplicit:false}))})));
+    for(const bot of this.bots){bot.permissionExplicit=false;for(const task of bot.tasks??[])task.permissionExplicit=false;this.emit({type:"bot",botId:bot.id});}
   }
 
   /** A13-FIX-DESIGN C1 (Rule 81b): remember an approved set on the bot's
@@ -4553,7 +5105,7 @@ export class Store {
    * not added twice; past the cap nothing is saved. Returns the keys it
    * added to each, so the caller can take back exactly those. Called only by
    * the approval choke point (server/index.ts rememberAndAnswer). */
-  rememberBotGrants(botId: string, taskThreadId: string | undefined, keys: readonly string[], options: { grantSchema?: 2 } = {}): { bot: BotRecord; added: { bot: string[]; task: string[] } } {
+  rememberBotGrants(botId: string, taskThreadId: string | undefined, keys: BotPermissionWrite<readonly string[]>, options: { grantSchema?: 2 } = {}): { bot: BotRecord; added: { bot: string[]; task: string[] } } {
     const { bot, task, added } = this.planBotGrants(botId, taskThreadId, keys);
     return this.stageBotGrants(bot, task, [...(bot.alwaysAllow ?? []), ...added.bot], task ? [...(task.alwaysAllow ?? []), ...added.task] : undefined, options.grantSchema, added);
   }
@@ -4565,6 +5117,7 @@ export class Store {
   planBotGrants(botId: string, taskThreadId: string | undefined, keys: readonly string[]): { bot: BotRecord; task: TaskRecord | undefined; added: { bot: string[]; task: string[] } } {
     const bot = this.bot(botId);
     if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+    if (bot.staged) throw Object.assign(new Error("Review this bot before adding approvals."), { status: 409 });
     const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
     if (taskThreadId !== undefined && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
     // UX-TRUST-MOMENTS-1012 2.3.3: a key durableGrantAllowed refuses (a payment) is never saved, whoever asks
@@ -4582,9 +5135,10 @@ export class Store {
    * exactly what that save added, by holder: `bot` from the bot's defaults,
    * `task` from the one task it was saved on, nothing anywhere else. One
    * durable write, staged like rememberBotGrants. Returns what it removed. */
-  removeBotGrants(botId: string, taskThreadId: string | undefined, keys: { bot: readonly string[]; task: readonly string[] }): { bot: BotRecord; removed: { bot: string[]; task: string[] } } {
+  removeBotGrants(botId: string, taskThreadId: string | undefined, keys: BotPermissionWrite<{ bot: readonly string[]; task: readonly string[] }>): { bot: BotRecord; removed: { bot: string[]; task: string[] } } {
     const bot = this.bot(botId);
     if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+    if (bot.staged) throw Object.assign(new Error("Review this bot before adding approvals."), { status: 409 });
     const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
     if (keys.task.length && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
     const fromBot = (bot.alwaysAllow ?? []).filter((key) => keys.bot.includes(key));
@@ -4623,7 +5177,7 @@ export class Store {
   ): { ok: true; bots: BotRecord[] } | { ok: false; reason: "unavailable" | "chief-conflict" } {
     const ids = [...new Set(botIds)];
     const targets = ids.map((id) => this.bot(id));
-    if (targets.some((bot) => !bot || bot.hidden)) return { ok: false, reason: "unavailable" };
+    if (targets.some((bot) => !bot || bot.hidden === true || inertBot(bot))) return { ok: false, reason: "unavailable" };
 
     assertSectionUnlocked();
     for (const bot of targets) if (bot) assertHomeMove(bot, section);
@@ -4719,20 +5273,26 @@ export class Store {
     if ((this.legacyActivities.get(botId)??"idle")===activity) return bot;
     this.legacyActivities.set(botId,activity);
     this.refreshBotActivity(bot);
-    this.emit({ type: "bot", botId });
+    this.emit({ type: "bot", botId }, false);
     return bot;
   }
 
   setTaskActivity(botId:string,threadId:string,activity:BotActivity):BotRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);
     if(!bot||!task)return null;
+    const counts=this.taskActivityCounts(bot),previous=task.activity??"idle";
+    counts.set(previous,(counts.get(previous)??0)-1);counts.set(activity,(counts.get(activity)??0)+1);
     const wasBusy=Boolean(task.busy);
     task.activity=activity;task.busy=ACTIVITY_BUSY.has(activity);if(activity!=="working")delete task.waitingFor;
+    if (wasBusy !== task.busy) {
+      const held = this.activityCounts.get(bot.tasks!)!, delta = task.busy ? 1 : -1;
+      held.busy += delta; held.busyThreads.set(threadId, (held.busyThreads.get(threadId) ?? 0) + delta);
+    }
     // The turn's start is its first busy transition: an approval parked on
     // waiting-on-you keeps the anchor, and only idle clears it.
     if(task.busy&&!wasBusy)task.turnStartedAt=Date.now();else if(!task.busy){delete task.turnStartedAt;delete task.browserMounted;}
     this.refreshBotActivity(bot);
-    this.emit({type:"bot",botId});return bot;
+    this.emit({type:"bot",botId},bot.threadId!==threadId);return bot;
   }
 
   /** Runtime-only: whether this task's running turn has the browser mounted. */
@@ -4740,7 +5300,7 @@ export class Store {
     const task=this.taskByThread(botId,threadId);
     if(!task||Boolean(task.browserMounted)===mounted)return;
     if(mounted)task.browserMounted=true;else delete task.browserMounted;
-    this.emit({type:"bot",botId});
+    this.emit({type:"bot",botId},false);
   }
 
   /** Runtime-only waiting marker for a busy task; cleared by any non-working
@@ -4751,11 +5311,31 @@ export class Store {
     const next=waitingFor&&task.activity==="working"?{...waitingFor}:undefined;
     if(JSON.stringify(task.waitingFor)===JSON.stringify(next))return;
     if(next)task.waitingFor=next;else delete task.waitingFor;
-    this.emit({type:"bot",botId});
+    this.emit({type:"bot",botId},false);
+  }
+  private taskActivityCounts(bot: BotRecord): Map<BotActivity, number> {
+    const tasks = bot.tasks;
+    if (!tasks) return new Map();
+    let held = this.activityCounts.get(tasks);
+    if (!held || held.length !== tasks.length) {
+      const counts = new Map<BotActivity, number>(), busyThreads = new Map<string, number>(); let busy = 0;
+      for (const task of tasks) {
+        const value = task.activity ?? "idle"; counts.set(value, (counts.get(value) ?? 0) + 1);
+        if (task.busy) { busy++; busyThreads.set(task.threadId, (busyThreads.get(task.threadId) ?? 0) + 1); }
+      }
+      held = { length: tasks.length, counts, busy, busyThreads }; this.activityCounts.set(tasks, held);
+    }
+    return held.counts;
+  }
+  hasBusyTask(botId: string, exceptThreadId?: string): boolean {
+    const bot = this.bot(botId); if (!bot?.tasks) return false;
+    this.taskActivityCounts(bot);
+    const held = this.activityCounts.get(bot.tasks)!;
+    return held.busy - (exceptThreadId === undefined ? 0 : held.busyThreads.get(exceptThreadId) ?? 0) > 0;
   }
   private refreshBotActivity(bot:BotRecord){
-    const values=[this.legacyActivities.get(bot.id),...(bot.tasks??[]).map(task=>task.activity)];
-    bot.activity=(["waiting-on-you","no-signal","working","dead"] as const).find(value=>values.includes(value))??"idle";
+    const counts=this.taskActivityCounts(bot),legacy=this.legacyActivities.get(bot.id);
+    bot.activity=(["waiting-on-you","no-signal","working","dead"] as const).find(value=>legacy===value||(counts.get(value)??0)>0)??"idle";
     bot.busy=ACTIVITY_BUSY.has(bot.activity);
   }
 
@@ -4784,7 +5364,7 @@ export class Store {
    * The injected dependency owns login evidence and native catalogue selection. */
   birthSelection(): ModelSelection {
     if (typeof this.birth === "function") return this.birth();
-    const visible = this.bots.filter(bot => !bot.hidden);
+    const visible = this.activeBots().filter(bot => bot.hidden !== true);
     // the oldest visible bot by createdAt (createBot unshifts, a package import appends: array order is not age; Astra lane M1)
     const oldest = visible.reduce<BotRecord | null>((best, bot) => (best === null || bot.createdAt <= best.createdAt ? bot : best), null);
     const source = this.workspaceChief() ?? oldest;
@@ -4803,11 +5383,15 @@ export class Store {
       const allFuigo = this.birth.fuigo().map(instance => instance.instanceId);
       if (probed.instanceId !== "" && probed.model !== "" && !allFuigo.includes(probed.instanceId) && this.birth.eligible(probed.instanceId)) return structuredClone(probed);
     }
+    if (this.birth.homeFallback) {
+      const home = this.birth.homeFallback();
+      if (home.instanceId !== "" && home.model !== "") return structuredClone(home);
+    }
     return { instanceId: "", model: "" };
   }
 
   workspaceChief(): BotRecord | null {
-    return this.bots.find((bot) => !bot.hidden && isWorkspaceChief(bot)) ?? null;
+    return this.bots.find((bot) => bot.hidden !== true && !inertBot(bot) && isWorkspaceChief(bot)) ?? null;
   }
 
   setChiefOfStaff(
@@ -4820,7 +5404,7 @@ export class Store {
     canLead?: (bot: BotRecord) => boolean,
   ): BotRecord[] | null {
     const selected = id ? this.bot(id) : null;
-    if (id && !selected) return null;
+    if (id && (!selected || selected.staged)) return null;
     const formerChief = scope === "workspace" && id
       ? this.bots.find((bot) => bot.id !== id && bot.chiefOfStaff === true && bot.chiefScope === "workspace")
       : undefined;
@@ -4941,13 +5525,14 @@ export class Store {
     const held = task?.resumeCursors[instanceId];
     if (!task || held === undefined || String(held) !== cursor) return;
     this.writeResumeSeal(task, instanceId, cursor, sealStart);
-    this.saveBots(this.bots, { defer: true });
+    this.saveTaskTurnState(this.bot(botId)!, task);
   }
 
   setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number, sealStart?: number, fuigo?: { policy: { root: string; sha256: string }; replayPending?: boolean }) {
     if (!this.applyResumeCursor(botId, instanceId, cursor, threadId, audience, contract, plainToolNames, incarnation, sealStart, fuigo)) return;
-    this.saveBots(this.bots, { defer: true });
-    this.emit({ type: "bot", botId });
+    const bot=this.bot(botId)!, task=threadId?this.taskByThread(botId,threadId):this.activeTask(botId);
+    if(task)this.saveTaskTurnState(bot,task);
+    this.emit({ type: "bot", botId },false);
   }
 
   /** Clears many resume cursors at once (the one-time keep-all repair, index.ts): each is the same change as
@@ -5051,7 +5636,7 @@ export class Store {
     task.replayPending = rest;
     const bot = this.bot(botId);
     if (bot?.threadId === threadId) bot.replayPending = structuredClone(rest);
-    this.saveBots(this.bots, { defer: true });
+    this.saveTaskTurnState(this.bot(botId)!, task);
   }
 
   /** Record which instance just took a turn on this task. Called at
@@ -5061,16 +5646,19 @@ export class Store {
     const task = this.taskByThread(botId, threadId);
     if (!task || task.lastInstanceId === instanceId) return;
     task.lastInstanceId = instanceId;
-    this.saveBots(this.bots, { defer: true });
+    this.saveTaskTurnState(this.bot(botId)!, task);
   }
 
   /** Thread recall seal (design S1, r11 23b): bump this task's
    * `sealGeneration` and save the roster with the immediate save, which
    * throws when the write fails. The caller releases nothing on a throw. The
-   * in-memory bump stays either way: the seal never decreases. */
+   * standalone failed save retains the conservative in-memory seal. A staged
+   * response owns a rollback hook for its unaccepted seal and roster write. */
   sealThread(botId: string, threadId: string): number {
     const task = this.taskByThread(botId, threadId);
     if (!task) throw new Error("thread recall: no task for this thread");
+    const previous = task.sealGeneration;
+    onRollback(() => { task.sealGeneration = previous; this.saveBots(); });
     task.sealGeneration = (task.sealGeneration ?? 0) + 1;
     this.saveBots();
     return task.sealGeneration;
@@ -5318,6 +5906,7 @@ export class Store {
     const task = this.taskByThread(botId, threadId);
     if (!task) return null;
     if (turnKey && task.usageTurnKeys?.includes(turnKey)) return task.usage ?? null;
+    const previousUsage=task.usage;
     const prev: TaskUsage = { input: 0, output: 0, costUsd: null, turns: 0, ...task.usage };
     const cost = typeof turn.costUsd === "number" && Number.isFinite(turn.costUsd) ? turn.costUsd : null;
     const prevCost = typeof prev.costUsd === "number" ? prev.costUsd : null;
@@ -5342,8 +5931,8 @@ export class Store {
     // The month's bucket: one small upsert in the same deferred write, nothing that grows with history.
     const owner = this.bots.find(candidate => candidate.id === botId);
     if (owner) { owner.usageMonths ??= {}; bumpUsageMonth(owner.usageMonths, turn); bumpRoutineUsage(owner, routine, turn); }
-    this.saveBots(this.bots, { defer: true });
-    this.emit({ type: "bot", botId });
+    this.saveTaskTurnState(this.bot(botId)!, task);
+    this.emit({ type: "bot", botId, usageDelta:{before:previousUsage,after:task.usage} },false);
     return task.usage;
   }
 
@@ -5359,8 +5948,12 @@ export class Store {
     owner.usageMonths ??= {};
     bumpUsageMonth(owner.usageMonths, turn);
     bumpRoutineUsage(owner, routine, turn);
-    this.saveBots(this.bots, { defer: true });
-    this.emit({ type: "bot", botId });
+    if (this.turnState.has(owner)) {
+      this.recordRevision++;
+      this.turnState.stage(owner);
+      scheduleCoalesced(this.turnState.file(), () => { this.turnState.flush(); this.lastRosterKey = undefined; });
+    } else this.saveBots(this.bots, { defer: true });
+    this.emit({ type: "bot", botId }, false);
     return true;
   }
 
@@ -5376,6 +5969,7 @@ export class Store {
       if (task.cwd !== null) {
         task.cwd = null;
         this.saveBots();
+        this.taskWorkRoot(botId,task);
         this.emit({ type: "bot", botId });
       }
       return null;
@@ -5385,7 +5979,8 @@ export class Store {
       // the bot's own folder is the owner's choice; the fallback desk is Murage's
       if (task.cwd !== null && bot.cwd && task.cwd === bot.cwd) task.cwdOwnerSet = true;
       this.saveBots();
-      this.emit({ type: "bot", botId });
+      this.taskWorkRoot(botId,task);
+        this.emit({ type: "bot", botId });
     }
     return task.cwd;
   }
@@ -5488,6 +6083,19 @@ export class Store {
     return this.taskByThread(bot.id, threadId)?.phoneUsedAt !== undefined;
   }
 
+  /** Uses the structural index; explicit admission never copies sibling task IDs. */
+  directTaskTargets(botId: string) {
+    const bot = this.bot(botId), index = this.taskIndex(bot?.tasks);
+    return { length: bot?.tasks?.length ?? 0, sole: index?.threadIds[0], has: (id: string) => Boolean(index?.byThread.has(id)) };
+  }
+  private saveTaskTurnState(bot: BotRecord, task: TaskRecord): void {
+    this.turnState.writeTask(bot, task);
+    this.recordRevision++;
+    this.lastRosterKey = undefined;
+  }
+  deskTaskByThread(botId:string,threadId:string):TaskRecord|undefined {
+    return this.taskIndex(this.bot(botId)?.tasks)?.deskByThread.get(threadId);
+  }
   taskByThread(botId: string, threadId: string): TaskRecord | undefined {
     return this.taskIndex(this.bot(botId)?.tasks)?.byThread.get(threadId)?.task;
   }
@@ -5496,7 +6104,12 @@ export class Store {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     // the thread's human, read once for the whole projection (it was asked five times)
     const owner=withBindingScope(()=>isWorkspaceOwner(threadHumanPrincipal(threadId)));
-    return {...bot,...(!owner?{computer:"off" as const,browser:false,composio:false}:{}),threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),resumePolicies:structuredClone(task.resumePolicies),replayPending:structuredClone(task.replayPending),autoApprove:owner&&(task.autoApprove??false),fullAccess:owner&&task.autoApprove===true&&task.fullAccess===true,noLimits:owner&&task.autoApprove===true&&task.fullAccess===true&&task.noLimits===true,alwaysAllow:owner?structuredClone(task.alwaysAllow??[]):[],unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
+    const guestLevel = permissionsForOrigin(bot, false);
+    const taskExplicit=explicitPermission(task),effectiveBot=inheritedPermissions(bot);
+    const botNoLimits=effectiveBot.autoApprove===true&&effectiveBot.fullAccess===true&&effectiveBot.noLimits===true;
+    const copiedNoLimits=task.autoApprove===true&&task.fullAccess===true&&task.noLimits===true;
+    const level=owner?(!taskExplicit&&(botNoLimits||copiedNoLimits)?effectiveBot:task):guestLevel;
+    return {...bot,permissionExplicit:owner?(taskExplicit||explicitPermission(bot)):true,permissionRev:task.permissionRev??bot.permissionRev,...(!owner?{computer:"off" as const,browser:false,composio:false}:{}),threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),resumePolicies:structuredClone(task.resumePolicies),replayPending:structuredClone(task.replayPending),autoApprove:level.autoApprove===true,fullAccess:level.autoApprove===true&&level.fullAccess===true,noLimits:level.autoApprove===true&&level.fullAccess===true&&level.noLimits===true,alwaysAllow:owner?structuredClone(task.alwaysAllow??[]):[],unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
   }
   /** Host-only, write-once procedural admission. Never accepted in API patches. */
   pinTaskProcedures(botId:string, threadId:string, pin:ProcedurePin):ProcedurePin {
@@ -5540,10 +6153,12 @@ export class Store {
 
   patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd"|"cwdOwnerSet"|"link"|"linkAuto"|"effortSent"|"limitFailover">>&{pinned?:boolean}):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
+    if (bot.staged) patch = { ...patch, autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [] };
     const {pinned,...rest}=patch;
     // UX-TRUST-MOMENTS-1012 2.3.3: never a payment kept for good, whoever writes the list
     if(rest.alwaysAllow)rest.alwaysAllow=withoutRefusedGrants(rest.alwaysAllow).kept;
     const next:TaskRecord={...task,...structuredClone(rest)};
+    if (["autoApprove","fullAccess","noLimits"].some(key => Object.hasOwn(patch,key))) next.permissionExplicit = true;
     if(permissionLevel(next)!==permissionLevel(task))Object.assign(next,levelMove(task,permissionLevel(task)));
     // 1.0.4 SL-K: an explicit undefined removes the field (a chat returns to following its bot; a failover marker or effort record ends)
     for(const key of ["modelSelection","effortSent","limitFailover","cwdOwnerSet"] as const)if(Object.hasOwn(patch,key)&&patch[key]===undefined)delete next[key];
@@ -5572,12 +6187,19 @@ export class Store {
     const adopted=adopts?{modelSelection:structuredClone(patch.modelSelection!)}:{};
     // Bot learning (B1): an edit or branch switch rewound the conversation, a weak negative.
     if(patch.rewound===true&&task.rewound!==true){try{recordWeakSignal(database(),{botId:bot.id,threadId,action:"rewind",targetMessageId:this.activeLeaf(threadId)},bot);}catch{/* optional */}}
-    const tasks=bot.tasks!.map(candidate=>candidate===task?next:candidate);
+
     const mirrors=bot.threadId===threadId?{resumeCursors:{...next.resumeCursors},resumePolicies:structuredClone(next.resumePolicies),replayPending:structuredClone(next.replayPending),rewound:next.rewound,pinnedMessageId:next.pinnedMessageId}:{};
     // 1.0.14 FIRST-ENGINE-REPICK: a task's own pick set or removed (adoption included) is an owner engine write: mark cleared, engineRev moved.
     const engineWrite=Object.hasOwn(patch,"modelSelection");
-    const candidate:BotRecord={...bot,...mirrors,...adopted,tasks,unread:tasks.some(task=>task.unread),...(engineWrite?ownerEngineWrite(bot):{})};
-    if(engineWrite)delete candidate.engineAutoPicked;
+    const index=this.taskIndex(bot.tasks)!;
+    const unreadCount=index.unread+Number(Boolean(next.unread))-Number(Boolean(task.unread));
+    const cosmetic=Object.keys(patch).every(key=>["unread","pinnedMessageId","pinned","title","link","linkAuto"].includes(key))&&!adopts;
+    const tasks=cosmetic?bot.tasks!:bot.tasks!.map(candidate=>candidate===task?next:candidate);
+    const candidate:BotRecord={...bot,...mirrors,...adopted,tasks,unread:unreadCount>0,...(engineWrite?ownerEngineWrite(bot):{})};
+    // Cloud home: a chat's own pick is not the bot's engine, so the Murage-picked mark stays and the Fuigo repick still moves an untouched
+    // default; the first pick (adoption) still clears it. A desktop clears the mark on any owner engine write.
+    const keepCloudMark=process.env.MURAGE_CLOUD_ROLE==="home"&&!adopts;
+    if(engineWrite&&!keepCloudMark)delete candidate.engineAutoPicked;
     // Only cosmetic keys may be deferred. Approval, access and model keys are
     // security or routing state and keep their immediate, throwing write, and
     // so does `rewound`: lost on a crash, the next turn would resume a provider
@@ -5586,19 +6208,23 @@ export class Store {
     // (an explicit undefined, the pin, a reset effort record) leaves it too,
     // the same as the saved roster: Object.assign alone would keep the old value.
     const dropRemoved=()=>{for(const key of Object.keys(task) as (keyof TaskRecord)[])if(!Object.hasOwn(next,key))delete (task as Partial<TaskRecord>)[key];if(!next.pinned)delete task.pinned;};
-    const cosmetic=Object.keys(patch).every(key=>["unread","pinnedMessageId","pinned","title","link","linkAuto"].includes(key))&&!adopts;
     if(cosmetic){
+      // The generation-fenced task file is durable before publishing any live state.
+      this.saveTaskTurnState(candidate,next);
       Object.assign(task,next);dropRemoved();Object.assign(bot,mirrors,{unread:candidate.unread});
-      this.saveBots(this.bots,{defer:true});
+      index.unread=unreadCount;
     }else{
     const revision=this.recordRevision;
     try{this.saveBots(this.bots.map(current=>current===bot?candidate:current));}
-    catch(error){if(!(error instanceof RosterPostCommitError)){this.recordRevision=revision;throw error;}this.publishCommitted(bot, error.normalized);this.emit({type:"bot",botId});throw error;}
+    catch(error){if(!(error instanceof RosterPostCommitError)){this.recordRevision=revision;throw error;}this.publishCommitted(bot, error.normalized);if(Object.hasOwn(patch,"cwd"))this.taskWorkRoot(botId,this.taskByThread(botId,threadId)??{threadId,cwd:null});this.emit({type:"bot",botId});throw error;}
     // Astra 1015 M3: a removed key (a chat back to following its bot, an ended failover) leaves the live task too (dropRemoved).
     Object.assign(task,next);dropRemoved();Object.assign(bot,mirrors,adopted,{unread:candidate.unread});
-    if(engineWrite){delete bot.engineAutoPicked;bot.engineRev=candidate.engineRev;}
+    index.unread=unreadCount;
+    if(engineWrite){if(!keepCloudMark)delete bot.engineAutoPicked;bot.engineRev=candidate.engineRev;}
     }
-    this.emit({type:"bot",botId});return task;
+    if(Object.hasOwn(patch,"cwd"))this.taskWorkRoot(botId,next);
+    const changesSelection=Object.hasOwn(patch,"unread")||Object.hasOwn(patch,"pinned");
+    this.emit({type:"bot",botId},!cosmetic||changesSelection&&bot.threadId!==threadId);return task;
   }
 
   /** Persist one candidate roster before publishing any changed task or event. */
@@ -5609,7 +6235,7 @@ export class Store {
     const selected = new Set(threadIds), changed = new Map<TaskRecord, TaskRecord>();
     const tasks = (bot.tasks ?? []).map(task => {
       if (!selected.has(task.threadId) || rank(task) >= rank(patch)) return task;
-      const next = { ...task, autoApprove: patch.autoApprove, fullAccess: patch.fullAccess, noLimits: patch.noLimits, ...levelMove(task, permissionLevel(task)) };
+      const next = { ...task, permissionExplicit: true, autoApprove: patch.autoApprove, fullAccess: patch.fullAccess, noLimits: patch.noLimits, ...levelMove(task, permissionLevel(task)) };
       changed.set(task, next); return next;
     });
     if (!changed.size) return [];
@@ -5668,7 +6294,7 @@ export class Store {
    * detached routine tasks use the owner's defaults. */
   createTask(botId: string, title?: string, activate = true, channelProjectDesk?: TaskRecord["channelProjectDesk"], preparedThreadId?: string, sharedWork?: TaskRecord["sharedWork"]): TaskRecord | null {
     const bot = this.bot(botId);
-    if (!bot) return null;
+    if (!bot || inertBot(bot)) return null;
     const task: TaskRecord = {
       threadId: preparedThreadId ?? newId(),
       title: title?.trim().slice(0,80) || UNTITLED_TASK,
@@ -5677,7 +6303,7 @@ export class Store {
       createdAt: Date.now(),
       resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,
       // 1.0.4 SL-K K1: born following the bot's model (no copy)
-      autoApprove:bot.autoApprove===true,fullAccess:bot.autoApprove===true&&bot.fullAccess===true,noLimits:bot.autoApprove===true&&bot.fullAccess===true&&bot.noLimits===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
+      permissionExplicit:false,autoApprove:bot.autoApprove===true,fullAccess:bot.autoApprove===true&&bot.fullAccess===true,noLimits:bot.autoApprove===true&&bot.fullAccess===true&&bot.noLimits===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
     };
     bot.tasks = [task, ...(bot.tasks ?? [])];
     if (activate) {
@@ -5686,6 +6312,7 @@ export class Store {
       bot.resumePolicies = undefined; bot.replayPending = undefined; // legacy mirror follows the active task
     }
     this.saveBots();
+    this.taskWorkRoot(botId,task);
     this.emit({ type: "bot", botId });
     return task;
   }
@@ -5767,7 +6394,13 @@ export class Store {
       bot.rewound = next.rewound;
       bot.pinnedMessageId = next.pinnedMessageId;
     }
-    this.saveBots();
+    try{this.saveBots();}
+    catch(error){
+      if(error instanceof RosterPostCommitError)this.publishCommitted(bot,error.normalized);
+      this.taskWorkRoot(botId,this.taskByThread(botId,threadId)??{threadId,cwd:null});
+      throw error;
+    }
+    this.taskWorkRoot(botId,this.taskByThread(botId,threadId)??{threadId,cwd:null});
     this.emit({ type: "bot", botId });
     return bot;
   }
@@ -5792,7 +6425,10 @@ export class Store {
   /** After a RosterPostCommitError: the live bot takes the normalized record bots.json now holds. */
   private publishCommitted(live: BotRecord, normalized: BotRecord[]): void {
     const record = normalized.find(candidate => candidate.id === live.id);
-    if (record) publishBotRecord(live, structuredClone(record));
+    if (record) {
+      const { tasks, ...rest } = record;
+      publishBotRecord(live, { ...structuredClone(rest), tasks: tasks === live.tasks ? tasks : structuredClone(tasks) });
+    }
   }
 
   /** 1.0.14 FIRST-ENGINE-REPICK section 8: the one automatic engine writer, and the owner taps. Synchronous: "stale" and nothing written

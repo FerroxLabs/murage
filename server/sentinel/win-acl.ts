@@ -83,13 +83,51 @@ const system32 = (env: NodeJS.ProcessEnv, tool: string) => win32.join(env.System
 
 export const defaultRunner: ToolRunner = (file, args) => execFileSync(file, [...args], { encoding: "utf8", windowsHide: true, timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] });
 
-/** The current user's SID from `whoami /user /fo csv /nh`. */
-export function currentUserSid(run: ToolRunner = defaultRunner, env: NodeJS.ProcessEnv = process.env): string | null {
+// A process token's user SID is stable. Partition injected runners so independent
+// native-tool fixtures cannot share identity evidence; never cache a failed read.
+export const nativeUserSidScope = {};
+const userSids = new WeakMap<object,string>();
+/** The current user's SID from `whoami /user /fo csv /nh`, once per process. */
+export function currentUserSid(run: ToolRunner = defaultRunner, env: NodeJS.ProcessEnv = process.env, scope:object=run===defaultRunner?nativeUserSidScope:run): string | null {
+  const cached=userSids.get(scope);if(cached){userSids.set(run,cached);return cached;}
   try {
     const out = run(system32(env, "whoami.exe"), ["/user", "/fo", "csv", "/nh"]);
     const sid = /"(S-1-[0-9-]+)"/.exec(out)?.[1] ?? null;
-    return sid && SID.test(sid) ? sid : null;
+    if(!sid||!SID.test(sid))return null;
+    userSids.set(scope,sid);userSids.set(run,sid);return sid;
   } catch { return null; }
+}
+
+/** Whether files made inside a folder inherit owner-only access. Every allow entry is the owner or a root-like account, the owner has one, and each of them
+ * passes to new files and folders (OI and CI): its own, or one inherited from an owner-only parent (flags ID, OI, CI). Anything unreadable is "unknown". */
+export function inheritableOwnerOnlyVerdict(text: string, userSid: string): AclVerdict {
+  if (!SID.test(userSid)) return "unknown";
+  const sddl = text.split(/\r?\n/).map(line => line.trim()).find(line => /^(?:O:|G:|D:)/.test(line) && line.includes("D:")) ?? "";
+  const start = sddl.indexOf("D:");
+  const match = start < 0 ? null : /^D:([A-Z]*)((?:\([^()]*\))*)(?:S:.*)?$/.exec(sddl.slice(start));
+  if (!match) return "unknown";
+  const allow: Array<{ sid: string; flags: string }> = [];
+  for (const m of (match[2] ?? "").matchAll(/\(([^()]*)\)/g)) {
+    const ace = (m[1] ?? "").split(";");
+    if (ace.length !== 6 || !DACL_ACE_TYPES.has(ace[0]!)) return "unknown";
+    if (ace[0] === "A" || ace[0] === "OA") allow.push({ sid: accountSid(ace[5]!), flags: ace[1] ?? "" });
+  }
+  const owner = (sid: string) => sid === userSid || (RID_500.test(userSid) && sid === LOCAL_ADMINISTRATOR);
+  if (!allow.some(ace => owner(ace.sid))) return "unknown";
+  if (!allow.every(ace => owner(ace.sid) || ROOT_LIKE.has(ace.sid))) return "broad";
+  return allow.every(ace => ace.flags.includes("OI") && ace.flags.includes("CI")) ? "owner-only" : "broad";
+}
+
+/** Reads a folder's DACL via `icacls /save` and answers whether new files inside it inherit owner-only access. */
+export function windowsDirectoryInheritCheck(path: string, run: ToolRunner = defaultRunner, env: NodeJS.ProcessEnv = process.env): AclVerdict {
+  const sid = currentUserSid(run, env);
+  if (!sid) return "unknown";
+  const out = win32.join(tmpdir(), `murage-sentinel-acl-${randomBytes(8).toString("hex")}.txt`);
+  try {
+    run(system32(env, "icacls.exe"), [path, "/save", out, "/q"]);
+    return inheritableOwnerOnlyVerdict(readFileSync(out).toString("utf16le").replace(/^\uFEFF/, ""), sid);
+  } catch { return "unknown"; }
+  finally { try { rmSync(out, { force: true }); } catch { /* best effort */ } }
 }
 
 /** Reads `path`'s DACL via `icacls /save` (UTF-16LE file) and answers the owner-only verdict. */
@@ -115,7 +153,7 @@ export function restrictArguments(path: string, sid: string, directory: boolean)
 
 /** Replaces `path`'s DACL with owner-only access (current user + SYSTEM, inheritance removed). True on success. A link
  * is never restricted (false). */
-export function windowsAclRestrict(path: string, run: ToolRunner = defaultRunner, env: NodeJS.ProcessEnv = process.env, kind: (path: string) => Stats = lstatSync): boolean {
+export function windowsAclRestrict(path: string, run: ToolRunner = defaultRunner, env: NodeJS.ProcessEnv = process.env, kind: (path: string) => Pick<Stats, 'isSymbolicLink' | 'isDirectory' | 'isFile'> = lstatSync): boolean {
   let directory: boolean;
   try {
     const stat = kind(path);

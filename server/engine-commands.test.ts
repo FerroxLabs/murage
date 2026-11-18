@@ -104,3 +104,30 @@ describe("OpenClaw in the engine tables", () => {
     expect(engineCommandLabel("openclawAgent")).toBe("OpenClaw");
   });
 });
+
+describe('R2 command handles', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'murage-command-handles-')); });
+  afterEach(async () => { await removeTempDir(dir); });
+  it.each(['restart', 'reconnect'])('execution.handle-%s-command', async () => {
+    const { displayEngineCommands, resolveCommandHandle } = await import('./engine-commands.ts');
+    const cache = new EngineCommandCache(dir);
+    cache.record('bot-1', 'codex', [{ name: 'plugin:DoThing', description: '**password**: NEVER_DISPLAY\nTAILSECRET', hint: 'args' }]);
+    const first = displayEngineCommands(cache, 'bot-1', 'codex');
+    const restarted = new EngineCommandCache(dir);
+    expect(displayEngineCommands(restarted, 'bot-1', 'codex')).toEqual(first);
+    expect(first.commands[0].handle).toMatch(/^c\.[0-9a-f]{16}\.0$/);
+    expect(JSON.stringify(first)).not.toContain('NEVER_DISPLAY');
+    expect(JSON.stringify(first)).not.toContain('TAILSECRET');
+    expect(resolveCommandHandle(restarted, 'bot-1', 'codex', first.commands[0].handle, '  exact\n args  ')).toEqual({ ok: true, command: { name: 'plugin:DoThing', args: '  exact\n args  ' } });
+  });
+  it('execution.handle-stale-provider-command', async () => {
+    const { displayEngineCommands, resolveCommandHandle } = await import('./engine-commands.ts');
+    const cache = new EngineCommandCache(dir);
+    cache.record('bot-1', 'codex', [{ name: 'review' }]);
+    const old = displayEngineCommands(cache, 'bot-1', 'codex').commands[0].handle;
+    cache.record('bot-1', 'codex', [{ name: 'compact' }]);
+    expect(resolveCommandHandle(cache, 'bot-1', 'codex', old, '')).toMatchObject({ ok: false, status: 409, error: 'command_list_changed' });
+    expect(resolveCommandHandle(cache, 'bot-1', 'fuigoAgent', old, '')).toMatchObject({ ok: false, status: 409 });
+  });
+});

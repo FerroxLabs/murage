@@ -13,6 +13,8 @@ import { closeDatabase } from "./database.ts";
 import { resetRetainedSessionCursors } from "./installation-memory-downgrade.ts";
 import { cursorStartedBelowSeal, dispatchSealStart, sessionTainted, Store, threadSealed } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+// Producer owner: recall-scope-c (durable task state). Consumer owner: r2-thread-seal (seal fixtures).
+import { readBotRecords } from "./bot-turn-state.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 const fresh = () => new Store(() => ({ instanceId: "engine-one", model: "one", effort: "medium", connectionId: "account-one" }));
@@ -40,6 +42,25 @@ it("the seal survives a restart, keeps the pre-seal cursor in place, and a new c
   expect(restored.taskByThread(bot.id, thread)?.sealGeneration).toBe(1);
   expect(restored.taskByThread(bot.id, thread)?.resumeCursors).toEqual({ "engine-one": "pre-seal-session" });
   expect(threadSealed(restored.taskByThread(bot.id, second.threadId))).toBe(false);
+});
+
+it("a cursor and its accepted seal binding survive a crash before any roster checkpoint", () => {
+  const store = fresh(), bot = store.createBot(), thread = bot.threadId;
+  store.sealThread(bot.id, thread);
+  store.setResumeCursor(bot.id, "engine-one", "clean-session", thread);
+  store.bindResumeSeal(bot.id, "engine-one", thread, "clean-session", 1);
+  // No orderly shutdown or coalesced flush: the checkpoint alone still has no cursor.
+  expect(onDisk(bot.id, thread).resumeCursors["engine-one"]).toBeUndefined();
+  const durable = readBotRecords(DATA_DIR).find(row => row.id === bot.id)!.tasks!.find(task => task.threadId === thread)!;
+  expect(durable.resumeCursors["engine-one"]).toBe("clean-session");
+  expect(durable.resumeSeals?.["engine-one"]).toEqual({ cursor: "clean-session", generation: 1 });
+  expect(sessionTainted(durable, "engine-one")).toBe(false);
+  const restored = fresh().taskByThread(bot.id, thread)!;
+  expect(restored.resumeSeals?.["engine-one"]).toEqual({ cursor: "clean-session", generation: 1 });
+  expect(sessionTainted(restored, "engine-one")).toBe(false);
+  // A later release still makes that exact durable pair unsafe after another crash.
+  store.sealThread(bot.id, thread);
+  expect(sessionTainted(fresh().taskByThread(bot.id, thread), "engine-one")).toBe(true);
 });
 
 it("a patch from the API cannot clear or lower the seal", () => {

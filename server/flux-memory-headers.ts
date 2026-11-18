@@ -1,3 +1,4 @@
+import { fluxRouteFor } from "../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -222,7 +223,8 @@ export type FluxAudienceClass = "owner" | "non-owner" | "background" | "prewarm"
 
 export interface FluxMemoryContext {
   audience: FluxAudienceClass;
-  /** The bot is "Asks me first" (Phase 1): owner turn, but off/off. */
+  /** Off/off for an "ask first" owner turn. No dispatch sets it: an "Ask me before it changes anything" bot is kept out of Flux
+   * Memory by the capture itself (flux-memory-capture.ts asksFirst, FLUX-SPACES-CAPTURE-FORGET-106 section 4), and recall is not a change. */
   asksFirst?: boolean;
   /** The thread holds a bank, card or id number (flux-capture-hold.ts): capture off, inject on. */
   numberHold?: boolean;
@@ -308,7 +310,10 @@ export function fluxMemoryDecision(
 
 function decisionOf(context: FluxMemoryContext, settings: FluxMemorySettings, capture: "on" | "off", inject: "on" | "off", reason: FluxMemoryReason): FluxMemoryDecision {
   const headers: Record<string, string> = { [FLUX_MEMORY_APP_HEADER]: FLUX_MEMORY_APP };
-  if (capture === "off") headers[FLUX_MEMORY_CAPTURE_HEADER] = "off";
+  // Explicit-only capture: FluxMain's proxy captures a proxied request by default unless told off, into a space Murage's thread forget
+  // and bot shred never name. So every Flux-routed request says capture off, on every engine; a capture-on turn is captured only by
+  // Murage's own explicit POST to the bot's space (flux-memory-capture.ts, gated on `capture` below).
+  headers[FLUX_MEMORY_CAPTURE_HEADER] = "off";
   if (inject === "off") headers[FLUX_MEMORY_INJECT_HEADER] = "off";
   if (settings.spaces && context.spaces) {
     if (capture === "on" && context.spaces.write) headers[FLUX_MEMORY_SPACE_HEADER] = context.spaces.write;
@@ -417,7 +422,7 @@ export type FluxHeaderMechanism =
 
 export interface FluxEngineHeaderSupport {
   mechanism: FluxHeaderMechanism;
-  /** "unsupported" blocks Flux routing on non-owner and background threads. */
+  /** "unsupported" blocks Flux routing for every audience. */
   support: "supported" | "unsupported";
   /** How far the mechanism is verified: "code" = read in the engine source or docs and pinned by a Murage test;
    *  a live echo canary (F-ECHO) is still the rollout gate for every engine. */
@@ -441,20 +446,28 @@ export const FLUX_ENGINE_HEADERS: Readonly<Record<string, FluxEngineHeaderSuppor
 export const FLUX_HEADER_REFUSAL = "This engine cannot carry Flux Memory choices for this conversation, so it does not use Flux here.";
 
 export function fluxHeaderRefusal(engine: DriverKind, decision: FluxMemoryDecision): string | null {
-  if (decision.capture === "on" && decision.inject === "on") return null;
+  // Explicit-only capture: every decision's headers say capture off (decisionOf), the owner's included, so an engine
+  // that cannot carry them is refused on every Flux turn. `decision` is kept for the log and future carriers.
+  void decision;
   const entry = FLUX_ENGINE_HEADERS[engine];
   if (entry?.support === "supported") return null;
   try { console.warn(`[flux] header-unsupported engine=${engine}`); } catch { /* ignore */ }
   return FLUX_HEADER_REFUSAL;
 }
 
+/** U05 (1.0.4): env names an engine reads as the host it sends model requests to. */
+const ENGINE_HOST_ENV = /(?:BASE_URL|API_BASE|API_URL|ENDPOINT)$/;
+
+/** U05: whether an engine's launch env sends its model requests to Flux (a base URL or model host
+ * set to a Flux Router address), so the turn reaches Flux whatever its pick is called. */
+export function envReachesFlux(env: Record<string, string | undefined>): boolean {
+  return Object.entries(env).some(([name, value]) => typeof value === "string" && ENGINE_HOST_ENV.test(name.toUpperCase()) && isFluxUrl(value.trim()));
+}
+
 /** Whether a URL is a Flux Router host (so the memory headers belong on it). */
 export function isFluxUrl(url: string | URL | undefined | null): boolean {
-  if (!url) return false;
-  try {
-    const host = new URL(String(url)).hostname.toLowerCase().replace(/\.$/, "");
-    return host === "api.fluxrouter.ai" || host.endsWith(".fluxrouter.ai");
-  } catch { return false; }
+  return fluxRouteFor(url).routed;
+
 }
 
 // ----------------------------------------------------------- call sites ----

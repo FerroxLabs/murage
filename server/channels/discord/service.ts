@@ -156,7 +156,8 @@ export class DiscordService {
     await transport.start(raw => {
       void this.receive(raw, generation).catch(async () => {
         if (generation !== this.generation) return;
-        await this.stop().catch(() => {}); this.state = "blocked"; this.error = "intake-failed";
+        const stopping = this.stop().catch(() => {}); this.state = "blocked"; this.error = "intake-failed";
+        await stopping;
       });
     }, state => {
       if (generation !== this.generation) return;
@@ -208,7 +209,7 @@ export class DiscordService {
     const generation = this.generation;
     this.timer = setTimeout(() => { if (generation === this.generation) void this.resume(); }, this.nextRetryAt - this.now()); this.timer.unref?.();
   }
-  async stop() { this.live = false; this.authorised = false; this.generation++; clearTimeout(this.timer); this.approvals?.clear(); this.ledger?.stop(); this.state = "idle"; await this.transport?.stop(); }
+  async stop() { this.live = false; this.authorised = false; this.state = "idle"; this.generation++; clearTimeout(this.timer); this.approvals?.clear(); await this.ledger?.stop(); await this.transport?.stop(); }
   async pause() {
     await this.disable(false);
   }

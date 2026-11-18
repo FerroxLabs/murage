@@ -2,11 +2,12 @@
 // code is spelled in the person's language from the packs, English when a pack
 // has not caught up.
 import { t } from "@/lib/i18n";
-import { isSendNoticeCode, sendNoticeCode, type SendNoticeCode } from "../../shared/send-notice.ts";
+import { isSendNoticeCode, SEND_NOTICE_ENGLISH, sendNoticeCode, type SendNoticeCode } from "../../shared/send-notice.ts";
 
 export { sendNoticeCode };
 
 export function sendNoticeText(code: SendNoticeCode): string {
+  if (code === "toolTurnRefused" || code === "stepTurnRefused") return SEND_NOTICE_ENGLISH[code];
   return t(`sendNotice.${code}`);
 }
 

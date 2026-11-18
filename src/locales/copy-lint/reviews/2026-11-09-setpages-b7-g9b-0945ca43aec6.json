@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sonnet-b7",
+  "date": "2026-11-09",
+  "base": "59121e1bb",
+  "scope": "setpages-b7-g9b",
+  "strings": {
+    "fr:settings.connections.noteManaged": {
+      "text": "Les bots peuvent utiliser Gmail, Slack, Notion et plus encore. Choisis une app ci-dessous pour la connecter.",
+      "en": "Let bots use Gmail, Slack, Notion and more. Pick an app below to connect it.",
+      "verdict": "pass"
+    },
+    "fr:settings.usage.learningUnavailable": {
+      "text": "Rien n’a encore été compté, car tes bots n’ont pas encore commencé à apprendre de tes discussions.",
+      "en": "Nothing has been counted yet, because your bots have not started learning from your chats.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

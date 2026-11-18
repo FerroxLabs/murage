@@ -1,3 +1,5 @@
+// control: retain the isolated turn and mount admission used by server dispatch.
+import { bindFixtureAdapter } from "../../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 import { createServer } from "node:http";
@@ -17,6 +19,7 @@ const fake = join(import.meta.dirname, "../../testing/fake-grok-provider-cli.ts"
 const baseRoute: ProviderTurnRoute = { connectionId: "fixture-flux", revision: "revision-one", preset: "flux", protocol: "openai", baseUrl: "http://127.0.0.1:49999/v1", apiKey: "fake-selected-key", model: "vendor/pinned-model-v2" };
 const threadPath = (threadId: string) => join(DATA_DIR, "native/grok-provider-context", createHash("sha256").update(threadId).digest("hex"));
 async function turn(instance: ProviderInstance, input: SendTurnInput) {
+  bindFixtureAdapter(instance.adapter);
   const events = recordEvents(instance.adapter);
   try {
     const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), ...input });
@@ -37,7 +40,7 @@ async function fixture() {
   let instance: ProviderInstance | undefined;
   const create = async (environment = {}, cli = fake) => {
     instance = await GrokAgentDriver.create({ instanceId: "fixture-grok", displayName: "Grok fixture", enabled: true,
-      environment: { HOME: home, USERPROFILE: home, GROK_HOME: native, GROK_CODE_XAI_API_KEY: "native-fallback-canary", FAKE_GROK_DUMP: dump, ...environment }, config: GrokAgentDriver.decodeConfig({ cli, fullAuto: false }) }); return instance;
+      environment: { HOME: home, USERPROFILE: home, GROK_HOME: native, GROK_CODE_XAI_API_KEY: "native-fallback-canary", FAKE_GROK_DUMP: dump, FAKE_ACP_MCP_LIST: "all:ready", ...environment }, config: GrokAgentDriver.decodeConfig({ cli, fullAuto: false }) }); return instance;
   };
   return { home, native, threadId, route, received, create, dump: () => JSON.parse(readFileSync(dump, "utf8")),
     dispose: async () => { await instance?.dispose(); instance = undefined; },
@@ -83,7 +86,7 @@ it("uses arbitrary selected catalog models through actual fake ACP and loopback,
   try {
     let instance = await f.create();
     const first = await turn(instance, { threadId: f.threadId, text: "first", model: f.route.model, providerRoute: f.route,
-      integrations: { agents: { command: "node", args: ["fixture-tools"], env: {} } } });
+      integrations: { agents: { serverName: "fixture-tools", command: "node", args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-tools"], env: {} } } });
     expect(first.completed).toMatchObject({ ok: true }); const one = f.dump(), retained = one.grokHome;
     expect(one.calls.some((c: any) => c.method === "authenticate")).toBe(false); expect(one.nativeFallback).toBeNull();
     const slug = one.argv[one.argv.indexOf("-m") + 1]; expect(slug).toMatch(/^murage_/); expect(one.argv.indexOf("-m")).toBeGreaterThan(one.argv.indexOf("agent"));
@@ -131,6 +134,7 @@ it("preserves permission denial and cancellation on routed Grok ACP turns", asyn
   try {
     for (const mode of ["permission", "hang"]) {
       const instance = await f.create({ FAKE_ACP_MODE: mode }, join(import.meta.dirname, "../../testing/fake-acp-cli.ts"));
+      bindFixtureAdapter(instance.adapter);
       const events = recordEvents(instance.adapter);
       try {
         const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: f.threadId, text: "fixture only", model: f.route.model, providerRoute: f.route });

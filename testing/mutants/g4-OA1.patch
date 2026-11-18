@@ -1,0 +1,13 @@
+diff --git a/server/drivers/openai-chat.ts b/server/drivers/openai-chat.ts
+index 3048c60c77..5ff039c9f4 100644
+--- a/server/drivers/openai-chat.ts
++++ b/server/drivers/openai-chat.ts
+@@ -1764,7 +1764,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
+         try { releaseNativeAnswer(state.releaseBinding ?? null, "openai:decision", JSON.stringify(decision), () => answer(decision)); }
+         catch (error) {
+           // claim BEFORE the commit (request.resolved), then discharge the captured resolver; the winner closes
+-          const refused = claimRefusal(state, error, "openai.decision");
++          const refused = undefined;
+           if (!refused) throw error;
+           emit({ ...base(threadId, state.turnId), requestId, type: "request.resolved", behavior: "deny", source: "system", ...(scoped ? { approvalScope: "local-computer" as const } : {}) });
+           answer({ behavior: "deny" });

@@ -1,0 +1,132 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`G-NL Full access twins remain unchanged 1`] = `
+[
+  {
+    "id": "F1 outside-turn",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access",
+    },
+  },
+  {
+    "id": "F2 unread unmodeled",
+    "verdict": {
+      "approve": null,
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held",
+      "reason": "value-path",
+      "rule": "unreadable",
+      "source": "always-ask",
+    },
+  },
+  {
+    "id": "F2 unread reader-failed",
+    "verdict": {
+      "approve": null,
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held",
+      "reason": "tokenizer",
+      "rule": "unreadable",
+      "source": "always-ask",
+    },
+  },
+  {
+    "id": "F2 unread tokenizer",
+    "verdict": {
+      "approve": null,
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held",
+      "reason": "tokenizer",
+      "rule": "unreadable",
+      "source": "always-ask",
+    },
+  },
+  {
+    "id": "F3 key-row",
+    "verdict": {
+      "approve": null,
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+      "source": "sensitive-guard",
+    },
+  },
+  {
+    "id": "F3 protected-path",
+    "verdict": {
+      "approve": null,
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+      "reason": "protected-path",
+      "rule": "protected-path",
+      "source": "always-ask",
+    },
+  },
+  {
+    "id": "F3 sensitive-guard",
+    "verdict": {
+      "approve": null,
+      "rule": "(^|[\\s/\\\\"'])\\.env(\\.|$|["'\\s])",
+      "source": "sensitive-guard",
+    },
+  },
+  {
+    "id": "F3 home-glob",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access",
+    },
+  },
+  {
+    "id": "F4 truncated",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access",
+    },
+  },
+  {
+    "id": "F4 U19",
+    "verdict": {
+      "approve": null,
+      "rule": "This command changes a setting Murage fixes so engines never ask for input: PAGER is set, removed or named on this line, so Murage's pin may not hold",
+      "source": "unread-call",
+    },
+  },
+  {
+    "id": "F4 U20",
+    "verdict": {
+      "approve": null,
+      "rule": "Murage could not check the shell environment: tokenizer",
+      "source": "unread-call",
+    },
+  },
+  {
+    "id": "F5 refusal",
+    "verdict": {
+      "approve": null,
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+      "reason": "protected-path",
+      "rule": "protected-path",
+      "source": "always-ask",
+    },
+  },
+  {
+    "id": "F5 stop-line",
+    "verdict": {
+      "approve": null,
+      "note": "new recipient",
+      "rule": "message",
+      "source": "stop-line",
+    },
+  },
+  {
+    "id": "F6 no-grant",
+    "verdict": {
+      "approve": null,
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held",
+      "reason": "value-path",
+      "rule": "unreadable",
+      "source": "always-ask",
+    },
+  },
+]
+`;

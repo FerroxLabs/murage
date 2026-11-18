@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -10,6 +10,8 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { pollWhileProgressing } from "./testing/progress-poll.ts";
 import { redactSecrets } from "./redact.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
+import { memoryVerificationMeter } from "./testing/memory-verification-fixture.ts";
 
 /** A goal run is finished once it leaves "working". Each turn taken buys another
  * idle window; `maxMs` stays inside the test's own timeout. */
@@ -214,13 +216,43 @@ beforeAll(async () => {
       },
     },
   }));
+  // Observe the real dispatch and exact child's close receipt without changing either.
+  const observer = join(home, "routine-observer.mjs");
+  writeFileSync(observer, `
+    import { appendFileSync } from 'node:fs';
+    import { ClaudeDriver } from ${JSON.stringify(pathToFileURL(join(SERVER_DIR, "drivers/claude.ts")).href)};
+    const create = ClaudeDriver.create;
+    ClaudeDriver.create = async function(input) {
+      const instance = await create.call(this, input);
+      if (input.instanceId !== 'routineGoal') return instance;
+      const adapter = instance.adapter, send = adapter.sendTurn.bind(adapter);
+      const log = row => appendFileSync(${JSON.stringify(join(home, "routine-lifecycle.jsonl"))}, JSON.stringify(row) + '\\n');
+      adapter.sendTurn = async turn => {
+        const result = await send(turn);
+        log({ threadId: turn.threadId, turnId: result.turnId, background: turn.background === true });
+        void (async () => {
+          const until = Date.now() + 15000;
+          while (Date.now() < until) {
+            const receipt = await adapter.awaitTurnTeardown(turn.threadId, result.turnId);
+            if (receipt.closeConfirmed) { log({ threadId: turn.threadId, turnId: result.turnId, closed: true }); return; }
+            await new Promise(resolve => setTimeout(resolve, 25));
+          }
+        })();
+        return result;
+      };
+      return instance;
+    };
+  `);
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+  child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", pathToFileURL(observer).href, join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...powerBlockTestEnv(),
+      MURAGE_ENGINE_EXCLUSION_PATH: memoryVerificationMeter(),
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(port),
@@ -269,7 +301,8 @@ describe("goal-driven channel runs", () => {
       setup: { bulletin: "", defaultResponder: { kind: "member", botId: lead.id } },
     })).body.group;
 
-    const sent = await api("POST", `/api/groups/${room.id}/messages`, {
+    // This row is an owner send; its public envelope requires the renderer proof.
+    const sent = await desktopApi("POST", `/api/groups/${room.id}/messages`, {
       text: "Produce and verify the launch draft",
       mode: "goal",
       sendId: "goal_send_1234567890",
@@ -1047,7 +1080,15 @@ describe("goal-driven channel runs", () => {
       const completedRun = calendar.runs.find((run: { id: string }) => run.id === runId);
       // the unattended team goal's member turn was dispatched as background work: its engine
       // earns no warm spare and the run renews no user activity
-      await expect.poll(() => stdout.includes(`warm pool evict engine=claude thread=${completedRun.threadId} reason=background turn`), { timeout: 5_000 }).toBe(true);
+      // MAIN RULING request ROOM-ROUTINE-SINGLE-USE-EVICTION: assert the
+      // current background/single-use contract through dispatch and exact close.
+      const lifecycle = () => readFileSync(join(home, "routine-lifecycle.jsonl"), "utf8").trim().split("\n")
+        .filter(Boolean).map(line => JSON.parse(line)).filter(row => row.threadId === completedRun.threadId);
+      await expect.poll(() => lifecycle().some(row => row.closed === true), { timeout: 5_000 }).toBe(true);
+      const dispatched = lifecycle().filter(row => Object.hasOwn(row, "background"));
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]).toMatchObject({ background: true, turnId: expect.any(String) });
+      expect(lifecycle().filter(row => row.closed)).toEqual([{ threadId: completedRun.threadId, turnId: dispatched[0].turnId, closed: true }]);
       const state = (await api("GET", "/api/bots?messages=0")).body;
       const backgroundRoom = state.groups.find((group: { id: string }) => group.id === room.id);
       expect(backgroundRoom.threadId).toBe(completedRun.threadId);
@@ -1159,7 +1200,8 @@ describe("goal-driven channel runs", () => {
     const firstSendId = "channel_queue_first_1234";
     const secondSendId = "channel_queue_second_123";
 
-    const first = await api("POST", `/api/groups/${room.id}/messages`, {
+    // Both queued sends carry the same owner proof, including their retries.
+    const first = await desktopApi("POST", `/api/groups/${room.id}/messages`, {
       text: "first request",
       sendId: firstSendId,
     });
@@ -1172,13 +1214,13 @@ describe("goal-driven channel runs", () => {
     }).toBe(true);
 
     const queuedBody = { text: "second request", sendId: secondSendId };
-    const queued = await api("POST", `/api/groups/${room.id}/messages`, queuedBody);
+    const queued = await desktopApi("POST", `/api/groups/${room.id}/messages`, queuedBody);
     expect(queued.status).toBe(202);
     expect(queued.body).toMatchObject({ queued: true, threadId: room.threadId });
     expect(queued.body.queueId).toEqual(expect.any(String));
     expect(queued.body.message).toBeUndefined();
 
-    const retryWhileQueued = await api("POST", `/api/groups/${room.id}/messages`, queuedBody);
+    const retryWhileQueued = await desktopApi("POST", `/api/groups/${room.id}/messages`, queuedBody);
     expect(retryWhileQueued.body).toMatchObject({ queued: true, queueId: queued.body.queueId });
 
     await expect.poll(async () => {
@@ -1207,7 +1249,7 @@ describe("goal-driven channel runs", () => {
     expect(secondReplyAt).toBeGreaterThan(secondUserAt);
     expect(current.messages[secondUserAt]).toMatchObject({ queueId: queued.body.queueId });
 
-    const retryAfterDrain = await api("POST", `/api/groups/${room.id}/messages`, queuedBody);
+    const retryAfterDrain = await desktopApi("POST", `/api/groups/${room.id}/messages`, queuedBody);
     expect(retryAfterDrain.body.message).toMatchObject({
       sendId: secondSendId,
       queueId: queued.body.queueId,

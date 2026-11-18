@@ -43,6 +43,10 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 /** Same shape as a send id (server/send-idempotency.ts). */
 const ID_16_80 = /^[A-Za-z0-9_-]{16,80}$/;
 const KEY_ID = /^[A-Za-z0-9_-]{43}$/;
+// The door's DEVICE_ID and FreshAuthGate's nonce/signature shapes.
+const DEVICE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+const safeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 /** 1 MB of text in UTF-8 bytes, the server's message ceiling (shared/message-limits.ts); characters bound it from above here. */
 const TEXT_MAX_CHARS = 1024 * 1024;
 
@@ -68,11 +72,52 @@ export const manifestSchema = z
   .refine((m) => m.items.every((it, i) => it.n === i + 1), { message: "items must be numbered 1..n in order" })
   .refine((m) => m.note !== undefined || m.text !== undefined || m.url !== undefined || m.items.length > 0, { message: "nothing to share" });
 
+export const askProofSchema = z.strictObject({
+  nonce: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  signature: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/),
+});
+
 export const askSchema = z.strictObject({
   askId: z.string().regex(ID_16_80),
   botId: text(128),
   text: text(TEXT_MAX_CHARS),
+  proof: z.union([z.literal("want"), askProofSchema]).optional(),
 });
+
+/** Persisted admission evidence, never an authority ticket. Drain checks its bindings and current liveness again. */
+export const askProofRecordSchema = z.strictObject({
+  v: z.literal(1),
+  deviceId: z.string().regex(DEVICE_ID),
+  generation: safeInteger,
+  keyId: z.string().regex(KEY_ID),
+  askId: z.string().regex(ID_16_80),
+  digest: z.string().regex(SHA256_HEX),
+  rawTextHash: z.string().regex(SHA256_HEX),
+  storedTextHash: z.string().regex(SHA256_HEX),
+  verifiedAt: safeInteger,
+});
+export type AskProofRecord = z.infer<typeof askProofRecordSchema>;
+
+export const askProofChallengeSchema = z.strictObject({
+  v: z.literal(1),
+  nonce: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  digest: z.string().regex(SHA256_HEX),
+  decision: z.literal("allow"),
+  expiresAt: safeInteger.min(1),
+});
+export type AskProofChallenge = z.infer<typeof askProofChallengeSchema>;
+
+/** Only the authenticated desktop companion may submit this body; unknown is a local timeout result, never an answer. */
+export const askLiveBodySchema = z.strictObject({
+  answers: z.array(z.discriminatedUnion("state", [
+    z.strictObject({
+      qid: z.string().regex(UUID_V4), deviceId: z.string().regex(DEVICE_ID), state: z.literal("live"),
+      keyId: z.string().regex(KEY_ID), generation: safeInteger,
+    }),
+    z.strictObject({ qid: z.string().regex(UUID_V4), deviceId: z.string().regex(DEVICE_ID), state: z.literal("not-live") }),
+  ])).min(1).max(64),
+});
+export type AskLiveBody = z.infer<typeof askLiveBodySchema>;
 
 /** Body of the existing bootstrap token route. scope is optional and a missing scope means "jobs" (Part 1 bodies stay valid). */
 export const tokenRequestSchema = z.strictObject({
@@ -97,4 +142,11 @@ export type ShareManifest = z.infer<typeof manifestSchema>;
 export type AskRequest = z.infer<typeof askSchema>;
 export type TargetsAnswer = z.infer<typeof targetsAnswerSchema>;
 export type ShareAnswer = { state: "sent"; threadId: string; messageId?: string; queueId?: string } | { error: string; code: ShareCode };
-export type AskAnswer = { state: "sent"; askId: string; threadId: string; id: string; notify: boolean } | { error: string; code: AskCode };
+export const askAnswerSchema = z.union([
+  z.strictObject({ state: z.literal("sent"), askId: z.string().regex(ID_16_80), threadId: text(128), id: text(128), notify: z.boolean(), proven: z.boolean() }),
+  z.strictObject({ state: z.literal("confirm"), deviceId: z.string().regex(DEVICE_ID), threadId: z.string().regex(DEVICE_ID), challenge: askProofChallengeSchema }),
+  z.strictObject({ state: z.literal("plain") }),
+  z.strictObject({ state: z.literal("proof_failed") }),
+  z.strictObject({ error: z.string(), code: z.enum(["conflict", "target_gone", "invalid", "revoked"]) }),
+]);
+export type AskAnswer = z.infer<typeof askAnswerSchema>;

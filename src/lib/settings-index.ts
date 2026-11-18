@@ -15,7 +15,8 @@ import { BOT_SETTINGS_SECTIONS, DESKTOP_ONLY_BOT_SETTINGS, type BotSettingsSecti
 import { SETTINGS_STUB_COPY } from "@/components/SettingsStub";
 import { t } from "./i18n";
 import { PEER_CONTACT_LABEL } from "./permission-mode";
-import { SETTINGS_CARDS, cardLabel } from "./settings-card-registry";
+import { SETTINGS_CARD_ALIASES, SETTINGS_CARDS, cardLabel, resolveSettingsCard } from "./settings-card-registry";
+import { isAdvancedOnlyCard } from "./settings-simple-cards";
 import type { SettingsCard, SettingsCardSurface } from "./settings-cards";
 import type { SettingsPage } from "./settings-pages";
 
@@ -67,12 +68,12 @@ const APP_GATES: Readonly<Record<string, SettingsGate>> = {
 const sectionLabel = (section: BotSettingsSection) => BOT_SETTINGS_SECTIONS.find((entry) => entry.id === section)!.label;
 
 // `keywords` by name: the copy rules know these are matched against what a person types and never shown.
-const bot = (section: BotSettingsSection, name: string, label: () => string, spec: { keywords: readonly string[]; surface?: SettingsCardSurface; gate?: SettingsGate }): BotIndexEntry => ({
+const bot = (section: BotSettingsSection, name: string, label: () => string, spec: { keywords: readonly string[]; advanced?: boolean; surface?: SettingsCardSurface; gate?: SettingsGate }): BotIndexEntry => ({
   id: `bot.${section}.${name}`,
   scope: "bot",
   section,
   anchor: `bot-setting-${name}`,
-  advanced: false,
+  advanced: spec.advanced ?? false,
   surface: spec.surface ?? (DESKTOP_ONLY_BOT_SETTINGS.has(section) ? "desktop" : "any"),
   words: spec.keywords,
   label,
@@ -93,15 +94,19 @@ export const BOT_SETTINGS_CARDS: readonly BotIndexEntry[] = [
   bot("learning", "learning", () => sectionLabel("learning"), { keywords: ["learning", "lessons", "feedback", "teach", "undo", "learn", "nudge", "suggestions"] }),
   bot("memory", "memory", () => t("settings.bot.memory.title"), { keywords: ["memory", "managed memory", "open memory", "remember", "recall", "facts", "forget", "sources", "delete", "erase", "wipe", "remove"] }),
   bot("memory", "notebook", () => t("settings.bot.notebook.title"), { keywords: ["notebook", "notes", "legacy notebook", "memory.md"] }),
-  bot("routines", "routines", () => sectionLabel("routines"), { keywords: ["routines", "routine", "schedule", "recurring", "automation", "paused", "calendar", "cron"] }),
+  bot("memory", "clear-revoked-marks", () => t("freshStart.label"), { advanced: true, surface: "desktop", keywords: ["start fresh", "clear revoked marks", "old memory blocks", "memory blocked", "bot refuses", "reply stuck", "recover memory"] }),
+  bot("routines", "routines", () => sectionLabel("routines"), { keywords: ["routines", "routine", "morning brief", "brief", "daily brief", "schedule", "recurring", "automation", "paused", "calendar", "cron"] }),
   bot("teams", "teams", () => sectionLabel("teams"), { keywords: ["teams", "shared", "sharing", "team notes", "client", "general notes", "copy"] }),
   bot("access", "apps", () => t("settings.bot.apps.title"), { keywords: ["connected apps", "apps", "integrations", "gmail", "notion", "mcp", "connections", "accounts", "api"] }),
   bot("access", "app-access", () => "App access and approvals", { keywords: ["app access", "access limits", "connected account", "manager", "limits"] }),
   bot("access", "phone", () => PHONE_CARD_COPY.title, { keywords: ["phone", "mobile", "iphone", "android", "phone tools", "sms", "texts", "paired phone"] }),
   bot("access", "phone-for-bots", () => t("settings.bot.phoneForBots.title"), { keywords: ["phone", "mobile", "pair", "pair my phone", "iphone", "android"] }),
-  bot("access", "browser", () => t("settings.bot.browser.title"), { keywords: ["browser", "web", "built-in browser", "browse", "chrome", "websites"] }),
+  bot("access", "browser", () => t("settings.bot.browser.title"), { keywords: ["browser", "web", "built-in browser", "browse", "websites"] }),
+  // Which browser the bot drives: its own, or the owner's Chrome (G9 gap check H5: "use my Chrome" lands here, on the
+  // choice itself, not on the built-in browser's permission switch above it).
+  bot("access", "browser-choice", () => t("browser.BrowserChoice.1"), { keywords: ["chrome", "my chrome", "use my chrome", "google chrome", "your chrome", "my browser", "browser choice", "logged in", "extension"] }),
   bot("access", "computer", () => t("settings.bot.computer.title"), { keywords: ["computer", "vm", "virtual machine", "cloud", "cloud computer", "local", "this computer", "vps", "server", "sandbox", "box", "where it runs", "ssh"], surface: "desktop" }),
-  bot("access", "folder", () => t("settings.bot.folder.title"), { keywords: ["working folder", "folder", "directory", "workspace", "files", "path", "project folder", "cwd"] }),
+  bot("access", "folder", () => t("settings.bot.folder.title"), { keywords: ["working folder", "folder", "read a folder", "directory", "workspace", "files", "path", "project folder", "cwd"] }),
   bot("access", "sites", () => t("publish.sites.title"), { keywords: ["published sites", "website", "websites", "sites", "publish", "take down", "online", "web page"] }),
   bot("email", "email", () => sectionLabel("email"), { keywords: ["email", "mail", "inbox", "address", "email address", "trusted contacts", "never email", "pause sending", "send", "agentmail"], gate: FLUX_EMAIL }),
   bot("model", "model", () => t("settings.bot.model.title"), { keywords: ["model", "engine", "ai", "provider", "llm", "claude", "gpt", "codex", "grok", "gemini", "fuigo", "openai"] }),
@@ -113,14 +118,24 @@ export const BOT_SETTINGS_CARDS: readonly BotIndexEntry[] = [
   bot("permissions", "images", () => t("botImages.title"), { keywords: ["images", "image", "image generation", "pictures", "draw", "generate", "photo"] }),
   bot("permissions", "always-allowed", () => "Always allowed", { keywords: ["always allow", "always allowed", "remembered approvals", "allowed commands", "grants", "remove"] }),
   bot("permissions", "review", () => t("settings.bot.review.title"), { keywords: ["review", "auto review", "shadow", "enforce", "routine approvals", "check"] }),
-  bot("voice", "voice", () => "Voice", { keywords: ["voice", "speech", "speak", "read aloud", "read replies aloud", "elevenlabs", "tts", "talk"] }),
+  // "change voice" is this row's own phrase (G9 click table): said as typed it finds the bot's Voice and not the app's
+  // "Voice notes and transcription", which would lead "voice" alone on the app-first tie-break.
+  bot("voice", "voice", () => "Voice", { keywords: ["voice", "change voice", "speech", "speak", "read aloud", "read replies aloud", "elevenlabs", "tts", "talk"] }),
   bot("voice", "notifications", () => t("settings.bot.notifications.title"), { keywords: ["notifications", "notify", "alerts", "alert", "sound", "ping", "badge"] }),
+  // Rendered by BotCallsSettings.tsx in the bot's Voice & alerts (SETTINGS-LOCKED-1019 gap 2).
+  bot("voice", "calls", () => t("settings.index.calls.label"), { keywords: ["calls", "call", "ring", "phone call", "urgent", "call me", "only urgent", "rearm"] }),
   bot("history", "history", () => sectionLabel("history"), { keywords: ["history", "conversations", "threads", "tasks", "past chats", "older"] }),
   bot("usage", "usage", () => t("usageCard.title"), { keywords: ["usage", "cost", "spend", "tokens", "billing", "this month", "turns"] }),
 ];
 
-/** The app cards as index entries; the card itself rides along for the openers that take a SettingsCard. */
-export const APP_SETTINGS_ENTRIES: readonly AppIndexEntry[] = SETTINGS_CARDS.map((card) => ({
+/** Merged rows remain searchable at their published addresses without becoming standalone page cards again. */
+export const MERGED_SETTINGS_ROWS: readonly SettingsCard[] = Object.entries(SETTINGS_CARD_ALIASES).map(([id, anchor]) => {
+  const owner = resolveSettingsCard(anchor)!;
+  return { ...owner, id, advanced: isAdvancedOnlyCard(owner.section, owner.id), words: [id.slice(id.indexOf(".") + 1).replaceAll("-", " ")] };
+});
+
+/** The app cards and retained rows as index entries, including their target for openers that take a SettingsCard. */
+export const APP_SETTINGS_ENTRIES: readonly AppIndexEntry[] = [...SETTINGS_CARDS, ...MERGED_SETTINGS_ROWS].map((card) => ({
   id: card.id,
   scope: "app",
   section: card.section,
@@ -132,6 +147,30 @@ export const APP_SETTINGS_ENTRIES: readonly AppIndexEntry[] = SETTINGS_CARDS.map
   card,
   ...(APP_GATES[card.id] ? { gate: APP_GATES[card.id] } : {}),
 }));
+
+/** A search row that explains where something lives outside Settings and opens it (SETTINGS-LOCKED-1019 section 6).
+ *  Not a control: kept out of SETTINGS_INDEX, so addresses, the concierge and the anchor gates never see it. */
+export interface ExplainerIndexEntry extends IndexFields {
+  scope: "explainer";
+  /** The store action Open dispatches. */
+  open: { type: "showNeedsYou"; tab: "approvals" };
+  /** The path parts shown under the label. */
+  path: () => string[];
+}
+
+export const SETTINGS_EXPLAINERS: readonly ExplainerIndexEntry[] = [
+  {
+    id: "explainer.approve-all",
+    scope: "explainer",
+    anchor: "approve-all",
+    advanced: false,
+    surface: "any",
+    words: ["approve all", "bulk approve", "approve everything", "approve them all", "approvals"],
+    label: () => t("settings.search.approveAll.label"),
+    path: () => [t("nav.needsYou"), t("settings.search.approveAll.path")],
+    open: { type: "showNeedsYou", tab: "approvals" },
+  },
+];
 
 /** One index, app first, then every bot control. Registry order is the ranker's tie-break. */
 export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [...APP_SETTINGS_ENTRIES, ...BOT_SETTINGS_CARDS];

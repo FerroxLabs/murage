@@ -1,7 +1,11 @@
+import "../../shared/win-hide-child-process.mjs";
+import { dropSessionProofSchema, ensureSessionProofSchema } from './session-proof-schema.ts';
 // Offline helpers: no runtime configuration, Store or provider imports.
 import { existsSync, lstatSync } from "node:fs";
+import { mergeDestinationHighLevelMarks } from "../highlevel/thread-marks-restore.ts";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "../sqlite-open.ts";
+import { dropRecallViewSchema, ensureRecallViewSchema, ensureExternalRecallEpoch } from './recall-view-schema.ts';
 import { migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
 import { purgeForgottenEvolutionCopies } from "./evolution-forgetting.ts";
@@ -19,11 +23,13 @@ export { RECORD_TOMBSTONE_AFFECTED, RECORD_TOMBSTONE_REVOCATION_SCAN_TAIL };
 export function mergeOriginalMemoryDeletions(original: string, candidate: string) {
   const review=readRestoreReview(candidate);
   if(review?.version!==1||review.status!=="review-required"||!Array.isArray(review.modifications))throw new Error("INVALID_RESTORE_MEMORY_REVIEW");
+  const marksRetained=mergeDestinationHighLevelMarks(original,candidate);
   const result=mergeDestinationMemoryDeletions(original,candidate);
   // A connected-app action the original left unresolved keeps blocking its repeat in the restored installation.
   const ledger=mergeDestinationConnectedLedger(original,candidate);
   detachRestoredLedgerAccounts(candidate);
   const modifications=[...review.modifications,{component:"messages.db",action:`Current original memory ledger: ${result.history}; ${result.merged} tombstones retained before selection`},
+    ...(marksRetained?[{component:"messages.db",action:`${marksRetained} permanent HighLevel conversation marks retained before selection`}]:[]),
     ...(ledger.merged?[{component:"connected-app-ledger.db",action:`${ledger.merged} connected app records from the original installation kept, still marked as possibly sent`}]:[])];
   writeFileAtomic(join(candidate,RESTORE_REVIEW_FILE),JSON.stringify({...review,modifications})+"\n",{mode:0o600});
   return result;
@@ -158,13 +164,19 @@ export const RECORD_TOMBSTONE_REVOCATION_TAIL = `UPDATE memory_disclosures SET s
 
 /** Caller owns the surrounding offline restore transaction. */
 export function pauseRestoredMemory(db: DatabaseSync) {
+  // Recall rows and even an incomplete recall schema in a backup are disposable.
+  // Remove only the closed registered derived inventory, before validating authority.
+  dropSessionProofSchema(db); dropRecallViewSchema(db);
   if (!validateMemorySchema(db).size) return false;
+  ensureRecallViewSchema(db); ensureSessionProofSchema(db);
+  if (Number(db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE type='table' AND name IN ('team_identities','project_settings')").get()!.n)===2) ensureExternalRecallEpoch(db);
   db.exec("UPDATE memory_meta SET mode='paused',policy_revision=policy_revision+1 WHERE id=1;");
   parkRetiredLeasedJobs(db);
   db.prepare("UPDATE memory_jobs SET status='pending',lease_owner=NULL,lease_until=0,lease_generation=lease_generation+1 WHERE status='leased'").run();
   revokeAllDisclosures(db,"restore");
   db.prepare("UPDATE memory_projection_receipts SET lexical_status=CASE WHEN (SELECT r.state FROM memory_records r WHERE r.id=record_id AND r.version=record_version)='active' THEN 'pending' ELSE 'pending-archive' END,embedding_status='pending' WHERE lexical_status!='delete-pending'").run();
-  applyMemoryTombstones(db);return true;
+  applyMemoryTombstones(db);
+  return true;
 }
 
 /** Existing destination is held by the installation restore lease. */
@@ -173,16 +185,23 @@ export function mergeDestinationMemoryDeletions(destination: string, candidate: 
   if(!existsSync(original))return {merged:0,history:"backup-only"};
   const stat=lstatSync(original);
   if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1)throw new Error("UNSAFE_MEMORY_LEDGER");
-  let rows: Array<Record<string,unknown>>, denyRows: Array<Record<string,unknown>> = [], identity:string, epoch:number;
+  let rows: Array<Record<string,unknown>>, denyRows: Array<Record<string,unknown>> = [], exclusionRows: Array<Record<string,unknown>> = [], familyRows: Array<Record<string,unknown>> = [], identity:string, epoch:number;
   // A damaged or newer-schema destination is exactly the case the app tells
-  // people to restore for (audit A-2): the restore goes ahead, and the review
-  // says the destination's deletion ledger could not be read.
+  // people to restore for (audit A-2): memory salvage may proceed, and the review
+  // records that its deletion ledger could not be read. Installation replacement
+  // separately requires preservation of permanent HighLevel marks.
   try {
     const source=new DatabaseSync(original,{readOnly:true});
     try {
       if(!validateMemorySchema(source).size)return {merged:0,history:"legacy-destination"};
       rows=source.prepare("SELECT * FROM memory_tombstones").all();
       denyRows=source.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_deny'").get()?source.prepare("SELECT * FROM memory_deny").all():[];
+      // Exclusion producer: live family Forget (recall-s1s2k). Restore consumer: recall-fix-b.
+      // Transcript sources deliberately survive N2; record tombstones alone cannot stop a new publication identity.
+      if(source.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_checkpoint_exclusions'").get()) {
+        exclusionRows=source.prepare('SELECT * FROM memory_checkpoint_exclusions').all();
+        familyRows=source.prepare('SELECT h.* FROM memory_checkpoint_heads h WHERE EXISTS(SELECT 1 FROM memory_checkpoint_exclusions e WHERE e.family_id=h.family_id)').all();
+      }
       const meta=source.prepare("SELECT installation_id,deletion_epoch FROM memory_meta WHERE id=1").get()!;
       identity=String(meta.installation_id);epoch=Number(meta.deletion_epoch);
     } finally {source.close();}
@@ -202,6 +221,12 @@ export function mergeDestinationMemoryDeletions(destination: string, candidate: 
     // a deleted conversation's or bot's deny rows travel with the tombstones (the target was migrated above: the table exists)
     const deny=db.prepare("INSERT OR IGNORE INTO memory_deny(kind,id,epoch,created_at) VALUES(?,?,?,?)");
     for(const row of denyRows)deny.run(String(row.kind),String(row.id),Number(row.epoch),Number(row.created_at));
+    // Carry only family identity and its sequence watermark, never a positive head from the destination.
+    // The backup may predate the first publication, but exclusions still need their foreign-key parent.
+    const family=db.prepare("INSERT INTO memory_checkpoint_heads(family_id,scope_id,thread_id,sequence,state) VALUES(?,?,?,?,'forgotten') ON CONFLICT(family_id) DO UPDATE SET sequence=max(sequence,excluded.sequence)");
+    for(const row of familyRows)family.run(String(row.family_id),String(row.scope_id),String(row.thread_id),Number(row.sequence));
+    const exclusion=db.prepare('INSERT OR IGNORE INTO memory_checkpoint_exclusions(family_id,source_id,source_revision) VALUES(?,?,?)');
+    for(const row of exclusionRows)exclusion.run(String(row.family_id),String(row.source_id),Number(row.source_revision));
     db.prepare("UPDATE memory_meta SET installation_id=?,deletion_epoch=max(deletion_epoch,?),policy_revision=policy_revision+1 WHERE id=1").run(identity,epoch);
     pauseRestoredMemory(db);
     bumpWriteEpoch(db); // the candidate is a different file from any whose figures were cached

@@ -4,13 +4,13 @@
 // Search latency on the 60k fixture for the msearch round-3 fix (authorize before ranking). Off unless MEMORY_PERF=1.
 // The helper's answer is worked out once outside the timing (the helper is another process); what is timed is the main
 // thread's whole searchMemory: word index read, candidate checks, ranking, hydration. Prints one PERF line.
+import { openTestIndex } from "./testing/open-index.ts";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
 import { MemoryEligibility } from "./eligibility.ts";
-import { MemoryIndex } from "./index.ts";
 import { closeMemoryIndexReader } from "./index-reader.ts";
 import { searchMemory } from "./search.ts";
 import { accessFor } from "./testing/recall-fixture.ts";
@@ -20,13 +20,13 @@ import { LineageAllowance } from "./lineage-allowance.ts";
 const suite = perfEnabled() ? describe : describe.skip;
 const percentile = (values: number[], p: number) => { const sorted = [...values].sort((a, b) => a - b); return sorted.length ? sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)] : 0; };
 
-suite("msearch round 3: search latency on the 60k fixture", () => {
+suite("msearch round 3: search latency on the 60k fixture", async () => {
   beforeAll(() => { loadPerfFixture(perfShape()); }, 30 * 60_000);
   afterAll(() => { closeMemoryIndexReader(); closeDatabase(); });
 
   it("tool search p50 with the helper's answer in hand", async () => {
     const queries = perfQueries(60), { access } = accessFor();
-    const authority = new MemoryEligibility(join(DATA_DIR, "messages.db")), index = new MemoryIndex(join(DATA_DIR, "memory-index.db"));
+    const authority = new MemoryEligibility(join(DATA_DIR, "messages.db")), index = await openTestIndex(join(DATA_DIR, "memory-index.db"));
     const answers = new Map<string, Record<string, unknown>>();
     for (const query of queries) {
       const eligible = authority.read({ scopeIds: [...access.scopeIds], policyRevision: access.policyRevision, deletionEpoch: access.deletionEpoch, historical: false, cursor: "" });

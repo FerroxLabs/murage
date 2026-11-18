@@ -25,7 +25,7 @@ import type { Message, OptionCardData } from "@/state/store";
 import { approvalTitle } from "@/lib/pending-approval";
 import { t } from "@/lib/i18n";
 import { answersInOneTap, isQuestionCard, questionsForCard, type QuestionAnswer } from "../../shared/questions";
-import { QuestionCardView } from "./QuestionCard";
+import { QuestionCardView, questionDisplayAction } from "./QuestionCard";
 
 /** A request that is still open: nothing answered it, dismissed it, and the
  * bot has not stopped waiting. */
@@ -220,7 +220,7 @@ function useRequestAnswer(threadId: string, card: OptionCardData, botName: strin
     let failed = false;
     let failure = "";
     await decideWithFreshAuth(
-      (extra) => api(`/api/threads/${threadId}/respond`, { method: "POST", body: JSON.stringify({ requestId: card.requestId, ...body, ...extra }) }),
+      (extra) => api(`/api/threads/${threadId}/respond`, { method: "POST", body: JSON.stringify(body.requestHandle ? { ...body, ...extra } : { requestId: card.requestId, ...body, ...extra }) }),
       {
         threadId,
         requestId: card.requestId ?? "",
@@ -278,8 +278,12 @@ export function InboxRequestAnswer({
           botName={botName}
           busy={busy}
           error={error}
-          onSubmit={(answers: QuestionAnswer[]) => void respond({ behavior: "answer", answers })}
-          onSkip={() => void respond({ behavior: "skip" })}
+          onSubmit={(answers: QuestionAnswer[]) => void respond(card.requestHandle
+            ? questionDisplayAction(card, card.requestHandle.slice(2), answers)
+            : { behavior: "answer", answers })}
+          onSkip={() => void respond(card.requestHandle
+            ? { requestHandle: card.requestHandle, action: "skip" }
+            : { behavior: "skip" })}
           // A late answer needs the conversation's own composer; the Inbox
           // never sends a message on a bot's behalf.
           onSendAsMessage={() => setError("This question has expired. Open the request to send a late answer.")}

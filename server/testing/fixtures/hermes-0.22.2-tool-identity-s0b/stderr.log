@@ -1,0 +1,127 @@
+2026-11-10 20:58:25 [INFO] acp_adapter.entry: No .env found at /tmp/s0b-home/hermes/.env, using system env
+2026-11-10 20:58:25 [INFO] acp_adapter.entry: Starting hermes-agent ACP adapter
+2026-11-10 20:58:26 [INFO] hermes_cli.plugins: Plugin 'browser-browser-use' registered browser provider: browser-use
+2026-11-10 20:58:26 [INFO] hermes_cli.plugins: Plugin 'browser-browserbase' registered browser provider: browserbase
+2026-11-10 20:58:26 [INFO] hermes_cli.plugins: Plugin 'browser-firecrawl' registered browser provider: firecrawl
+2026-11-10 20:58:26 [INFO] acp_adapter.server: ACP client connected
+2026-11-10 20:58:27 [INFO] acp_adapter.server: Initialize from murage-s0-capture (protocol v1)
+2026-11-10 20:58:27 [INFO] run_agent: No .env file found. Using system environment variables.
+2026-11-10 20:58:27 [INFO] hermes_cli.plugins: Plugin 'deepinfra' registered image_gen provider: deepinfra
+2026-11-10 20:58:27 [INFO] hermes_cli.plugins: Plugin 'fal' registered image_gen provider: fal
+2026-11-10 20:58:27 [INFO] hermes_cli.plugins: Plugin 'krea' registered image_gen provider: krea
+2026-11-10 20:58:27 [INFO] hermes_cli.plugins: Plugin 'meta-ai-image-gen' registered image_gen provider: meta-ai
+2026-11-10 20:58:27 [INFO] hermes_cli.plugins: Plugin 'openai' registered image_gen provider: openai
+2026-11-10 20:58:27 [INFO] hermes_cli.plugins: Plugin 'openai-codex' registered image_gen provider: openai-codex
+2026-11-10 20:58:27 [INFO] hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: openrouter
+2026-11-10 20:58:27 [INFO] hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: nous
+2026-11-10 20:58:27 [INFO] hermes_cli.plugins: Plugin 'xai' registered image_gen provider: xai
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'deepinfra' registered video_gen provider: deepinfra
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'fal' registered video_gen provider: fal
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'openrouter' registered video_gen provider: openrouter
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'xai' registered video_gen provider: xai
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-brave-free' registered web provider: brave-free
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-ddgs' registered web provider: ddgs
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-exa' registered web provider: exa
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-firecrawl' registered web provider: firecrawl
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-keenable' registered web provider: keenable
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-openai-native' registered web provider: openai-native
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-parallel' registered web provider: parallel
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-perplexity' registered web provider: perplexity
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-searxng' registered web provider: searxng
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-tavily' registered web provider: tavily
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin 'web-xai' registered web provider: xai
+2026-11-10 20:58:28 [INFO] hermes_cli.plugins: Plugin discovery complete: 55 found, 51 enabled
+2026-11-10 20:58:31 [WARNING] hermes_state: state.db: linked SQLite 3.40.1 (interpreter /work/.s0b-runtime/python/bin/python3.14) is vulnerable to the WAL-reset corruption bug (https://sqlite.org/wal.html#walresetbug) — using journal_mode=DELETE instead of enabling WAL. Upgrade to SQLite 3.51.3+ (or backports 3.50.7 / 3.44.6); Hermes-managed installs can repair the embedded runtime with `hermes update`. See `hermes doctor`. This warning fires once per process per database.
+2026-11-10 20:58:31 [WARNING] acp_adapter.session: Background MCP discovery previously exited with no connected servers; retrying discovery thread
+2026-11-10 20:58:32 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=asyncio_0:135235917309632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:58:32 [INFO] tools.registry: check_fn check_react_requirements returned False; dependent tools will be unavailable this turn
+2026-11-10 20:58:33 [INFO] agent.auxiliary_client: Vision auto-detect: using main provider custom:s0 (s0-stub)
+2026-11-10 20:58:33 [INFO] agent.auxiliary_client: Vision auto-detect: using main provider custom:s0 (s0-stub)
+2026-11-10 20:58:33 [INFO] agent.credential_pool: credential pool: no available entries (all exhausted or empty)
+2026-11-10 20:58:33 [WARNING] hermes_cli.auth: Refusing non-HTTPS xAI base_url override 'http://127.0.0.1:18080/v1' (xai-oauth bearer would be sent in cleartext); falling back to https://api.x.ai/v1.
+2026-11-10 20:58:33 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:58:33 [WARNING] agent.model_metadata: Could not determine context length for model 's0-stub' (base_url=http://127.0.0.1:18080/v1) — falling back to 256,000 tokens. Set model.context_length in config.yaml to override.
+2026-11-10 20:58:33 [INFO] tools.tool_search: tool_search activated (tier 1): 14 core/visible tools kept, 15 deferred (~4875 tokens), listing full (budget ~4000 tokens)
+2026-11-10 20:58:33 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:58:33 [INFO] acp_adapter.session: Created ACP session 80575401-9699-4035-8b95-f24d92834d85 (cwd=/tmp/s0b-work)
+2026-11-10 20:58:36 [INFO] tools.mcp_tool: MCP server 's0' (stdio): registered 1 tool(s): mcp__s0__echo
+2026-11-10 20:58:36 [INFO] tools.mcp_tool: MCP: registered 1 tool(s) from 1 server(s)
+2026-11-10 20:58:36 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:58:36 [INFO] tools.tool_search: tool_search activated (tier 1): 14 core/visible tools kept, 16 deferred (~4923 tokens), listing full (budget ~4000 tokens)
+2026-11-10 20:58:36 [INFO] acp_adapter.server: Session 80575401-9699-4035-8b95-f24d92834d85: refreshed tool surface after ACP MCP registration (17 tools)
+2026-11-10 20:58:36 [INFO] acp_adapter.server: New session 80575401-9699-4035-8b95-f24d92834d85 (cwd=/tmp/s0b-work)
+2026-11-10 20:58:36 [INFO] hermes_cli.model_catalog: model catalog fetch failed (https://hermes-agent.nousresearch.com/docs/api/model-catalog.json): <urlopen error [Errno -3] Temporary failure in name resolution>
+2026-11-10 20:58:36 [INFO] hermes_cli.model_catalog: model catalog fetch failed (https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/static/api/model-catalog.json): <urlopen error [Errno -3] Temporary failure in name resolution>
+2026-11-10 20:58:36 [INFO] acp_adapter.server: Prompt on session 80575401-9699-4035-8b95-f24d92834d85: Run isolated fixture video-analyze
+2026-11-10 20:58:37 [WARNING] agent.relay_runtime: Hermes Relay runtime initialization failed
+Traceback (most recent call last):
+  File "/work/.s0b-runtime/hermes-agent-d923a5eb487a17c0a68801bba9ef0f56c81040a8/agent/relay_runtime.py", line 877, in for_profile
+    host = RelayRuntime(profile_key=key)
+  File "/work/.s0b-runtime/hermes-agent-d923a5eb487a17c0a68801bba9ef0f56c81040a8/agent/relay_runtime.py", line 403, in __init__
+    self.relay = relay or _load_nemo_relay()
+                          ~~~~~~~~~~~~~~~~^^
+  File "/work/.s0b-runtime/hermes-agent-d923a5eb487a17c0a68801bba9ef0f56c81040a8/agent/relay_runtime.py", line 1335, in _load_nemo_relay
+    return importlib.import_module("nemo_relay")
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/work/.s0b-runtime/python/lib/python3.14/importlib/__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1406, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1371, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1335, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'nemo_relay'
+2026-11-10 20:58:37 [INFO] agent.turn_context: conversation turn: session=80575401-9699-4035-8b95-f24d92834d85 model=s0-stub provider=custom platform=acp history=0 msg='Run isolated fixture video-analyze'
+2026-11-10 20:58:38 [INFO] run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-3 (<lambda>):135235600627392 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:58:38 [INFO] agent.conversation_loop: API call #1: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.8s id=s0-response
+2026-11-10 20:58:39 [INFO] tools.vision_tools: Analyzing video: /tmp/s0b-work/missing.mp4
+2026-11-10 20:58:39 [INFO] tools.vision_tools: User prompt: Fully describe and explain everything happening in this video, including visual content, motion, aud
+2026-11-10 20:58:39 [ERROR] tools.vision_tools: Error analyzing video: Invalid video source. Provide an HTTP/HTTPS URL or a valid local file path.
+Traceback (most recent call last):
+  File "/work/.s0b-runtime/hermes-agent-d923a5eb487a17c0a68801bba9ef0f56c81040a8/tools/vision_tools.py", line 858, in _run_analysis
+    analysis, scale_note = await stage(user_prompt, debug_call_data, temp_paths)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/.s0b-runtime/hermes-agent-d923a5eb487a17c0a68801bba9ef0f56c81040a8/tools/vision_tools.py", line 1125, in stage
+    temp_video_path = await _materialize_video(video_url, task_id, temp_paths)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/.s0b-runtime/hermes-agent-d923a5eb487a17c0a68801bba9ef0f56c81040a8/tools/vision_tools.py", line 1118, in _materialize_video
+    raise ValueError("Invalid video source. Provide an HTTP/HTTPS URL or a valid local file path.")
+ValueError: Invalid video source. Provide an HTTP/HTTPS URL or a valid local file path.
+2026-11-10 20:58:39 [WARNING] agent.tool_executor: Tool video_analyze returned error (0.05s): {
+  "success": false,
+  "error": "Error analyzing video: Invalid video source. Provide an HTTP/HTTPS URL or a valid local file path.",
+  "analysis": "There was a problem with the request and the video
+2026-11-10 20:58:39 [INFO] agent.conversation_loop: API call #2: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:58:39 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=1 last_msg_role=assistant response_len=20 session=80575401-9699-4035-8b95-f24d92834d85
+2026-11-10 20:58:39 [INFO] agent.auxiliary_client: Auxiliary auto-detect: using main provider custom (s0-stub)
+2026-11-10 20:58:39 [INFO] agent.auxiliary_client: Auxiliary title_generation: using custom (s0-stub) at http://127.0.0.1:18080/v1/
+2026-11-10 20:58:39 [INFO] acp_adapter.server: Prompt on session 80575401-9699-4035-8b95-f24d92834d85: Run isolated fixture unregistered-memory
+2026-11-10 20:58:39 [INFO] agent.turn_context: conversation turn: session=80575401-9699-4035-8b95-f24d92834d85 model=s0-stub provider=custom platform=acp history=4 msg='Run isolated fixture unregistered-memory'
+2026-11-10 20:58:39 [INFO] agent.conversation_loop: API call #3: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+🔧 Auto-repaired tool name: 'memory: x' -> 'memory'
+2026-11-10 20:58:39 [INFO] agent.tool_executor: tool memory completed (0.04s, 196 chars)
+2026-11-10 20:58:39 [INFO] agent.conversation_loop: API call #4: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:58:39 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=2 last_msg_role=assistant response_len=20 session=80575401-9699-4035-8b95-f24d92834d85
+2026-11-10 20:58:39 [INFO] acp_adapter.server: Prompt on session 80575401-9699-4035-8b95-f24d92834d85: Run isolated fixture unregistered-zz
+2026-11-10 20:58:39 [INFO] agent.turn_context: conversation turn: session=80575401-9699-4035-8b95-f24d92834d85 model=s0-stub provider=custom platform=acp history=8 msg='Run isolated fixture unregistered-zz'
+2026-11-10 20:58:39 [INFO] agent.conversation_loop: API call #5: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:58:39 [INFO] agent.conversation_loop: API call #6: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:58:39 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=3 last_msg_role=assistant response_len=20 session=80575401-9699-4035-8b95-f24d92834d85
+2026-11-10 20:58:39 [INFO] acp_adapter.server: Prompt on session 80575401-9699-4035-8b95-f24d92834d85: Run isolated fixture execute-code-plain
+2026-11-10 20:58:39 [INFO] agent.turn_context: conversation turn: session=80575401-9699-4035-8b95-f24d92834d85 model=s0-stub provider=custom platform=acp history=12 msg='Run isolated fixture execute-code-plain'
+2026-11-10 20:58:39 [INFO] agent.conversation_loop: API call #7: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:58:40 [INFO] agent.tool_executor: tool execute_code completed (0.36s, 311 chars)
+2026-11-10 20:58:40 [INFO] agent.conversation_loop: API call #8: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:58:40 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=1/9223372036854775807 tool_turns=4 last_msg_role=assistant response_len=20 session=80575401-9699-4035-8b95-f24d92834d85
+2026-11-10 20:58:40 [INFO] acp_adapter.server: Prompt on session 80575401-9699-4035-8b95-f24d92834d85: Run isolated fixture execute-code-terminal
+2026-11-10 20:58:40 [INFO] agent.turn_context: conversation turn: session=80575401-9699-4035-8b95-f24d92834d85 model=s0-stub provider=custom platform=acp history=16 msg='Run isolated fixture execute-code-terminal'
+2026-11-10 20:58:40 [INFO] agent.conversation_loop: API call #9: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:58:40 [INFO] tools.terminal_tool: Creating new local environment for task session:...
+2026-11-10 20:58:40 [INFO] tools.environments.base: Session snapshot created (session=df0d4d812da2, cwd=/tmp/s0b-work)
+2026-11-10 20:58:40 [INFO] tools.terminal_tool: local environment ready for task session:
+2026-11-10 20:58:40 [INFO] agent.auxiliary_client: Auxiliary auto-detect: using main provider custom (s0-stub)
+2026-11-10 20:58:40 [INFO] agent.auxiliary_client: Auxiliary approval: using custom (s0-stub) at http://127.0.0.1:18080/v1/
+2026-11-10 20:58:40 [INFO] agent.tool_executor: tool execute_code completed (0.53s, 455 chars)
+2026-11-10 20:58:40 [INFO] agent.conversation_loop: API call #10: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:58:40 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=1/9223372036854775807 tool_turns=5 last_msg_role=assistant response_len=20 session=80575401-9699-4035-8b95-f24d92834d85
+2026-11-10 20:58:40 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=bg-review:135235580700352 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:58:40 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.

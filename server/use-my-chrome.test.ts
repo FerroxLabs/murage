@@ -1,3 +1,5 @@
+import { readBrowserFailure } from "../shared/browser-choice-eligibility.ts";
+import { confirmedBrowserFields } from "./testing/browser-choice.ts";
 // "Use my Chrome": a per-bot opt-in that attaches ONE bot's browser to the
 // owner's already-running Google Chrome instead of its own isolated profile.
 //
@@ -16,7 +18,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { browserSessionId } from "./browser-engine.ts";
-import { BROWSER_UNAVAILABLE_PREFIX, USER_CHROME_ALLOW_REASON, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
+import { BROWSER_UNAVAILABLE_PREFIX, USER_CHROME_ALLOW_REASON } from "../shared/browser-unavailable.ts";
 import { USER_CHROME_SETUP_MESSAGE } from "./user-chrome.ts";
 // The warm engine carries per-turn tokens in a credential file; put them back inline as a proxy reads them.
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
@@ -41,6 +43,11 @@ const record = \`function record(kind, session, extra) {
   fs.writeFileSync(\${JSON.stringify(sessionLog)}, JSON.stringify(log));
 }\`;
 registerHooks({ load(url, context, nextLoad) {
+  // This native-session fixture represents Chrome already open and approved.
+  // Process/Allow observation is tested independently by browser-direct-readiness
+  // and browser-direct-owner-api; there is no real Chrome in this container.
+  if (url.endsWith('/browser-direct-readiness.ts')) return {format:'module',shortCircuit:true,source:
+    "import {readUserChromeEndpoint} from './user-chrome.ts'; export async function observeDirectReadiness(){return readUserChromeEndpoint()?'ready':'chrome_closed';} export function directConnectionState(proxy,endpoint){return proxy&&proxy.chromeEndpoint===endpoint?'allowed':'absent';}"};
   if (url.endsWith('/browser-native-relay.ts')) return { format: 'module', shortCircuit: true, source: \`
     import { createRequire } from 'node:module';
     const require = createRequire(import.meta.url);
@@ -75,7 +82,12 @@ registerHooks({ load(url, context, nextLoad) {
     }
   \` };
   if (url.endsWith('/browser-engine.ts')) {
-    const source = fs.readFileSync(new URL(url), 'utf8');
+    let source = fs.readFileSync(new URL(url), 'utf8');
+    // The native relay is synthetic, so host sandbox qualification is outside this fixture.
+    const hostStart = source.indexOf('export function browserHostRequiresSandboxBypass(');
+    const hostEnd = source.indexOf('export const engineNeedsOwnDialogAnswers', hostStart);
+    if (hostStart < 0 || hostEnd < 0) throw new Error('Browser host fixture anchor changed');
+    source = source.slice(0, hostStart) + 'export function browserHostRequiresSandboxBypass() { return false; }' + String.fromCharCode(10) + source.slice(hostEnd);
     const start = source.indexOf('export async function verifyAgentBrowserBinary(');
     const end = source.indexOf('export async function ensureChrome(', start);
     if (start < 0 || end < 0) throw new Error('Browser version fixture anchor changed');
@@ -98,6 +110,11 @@ let headers: Record<string, string> = {};
 type LogEntry = { kind: string; session: string; method?: string; env?: Record<string, string> };
 
 const api = async (method: string, path: string, body?: unknown) => {
+  if(method==='PATCH' && /^\/api\/bots\/[^/]+$/.test(path) && body && typeof body==='object' && ['useMyChrome','browserTransport','browserProfile'].some(k=>k in (body as Record<string,unknown>)) && (!('useMyChrome' in body)||typeof body.useMyChrome==='boolean')) {
+    const confirmed = await confirmedBrowserFields(fixture.info.url, headers, path, body);
+    const { baseRevision, ...legacy } = confirmed; body = legacy;
+  }
+
   const response = await fetch(fixture.info.url + path, {
     method, headers: { ...headers, "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -142,7 +159,8 @@ const browserRpc = (token: string) => fetch(`${fixture.info.url}/api/internal/un
 /** Drive one turn's browser and return the session it landed on. */
 const driven = async (bot: any, label: string, second: boolean) => {
   const mounted = mountedBrowser(await startTurn(bot, label, second));
-  expect(mounted, "expected a browser to be mounted").toBeTruthy();
+  const panel = mounted ? null : await api("GET", `/api/bots/${bot.id}/browser`);
+  expect(mounted, `expected a browser to be mounted: ${panel?.body?.problem ?? panel?.body?.error ?? "no panel problem"}`).toBeTruthy();
   const mark = sessionLog().length;
   expect((await browserRpc(mounted.env.MURAGE_CONTROL_TOKEN)).status).toBe(200);
   await expect.poll(() => sessionLog().slice(mark).some(entry => entry.kind === "request"), { timeout: 10_000 }).toBe(true);
@@ -287,7 +305,7 @@ it("returns a bot to its own isolated profile, and closes its Chrome session, wh
     const isolated = await driven(bot, "switch-isolated", true);
     expect(isolated).toBe(browserSessionId(bot.id, "", "original-installation"));
     expect(created(isolated)?.env).not.toHaveProperty("AGENT_BROWSER_CDP");
-  } finally { await stop(bot); disableRemoteDebugging(); }
+  } finally { await stop(bot); await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false }); disableRemoteDebugging(); }
 }, 60_000);
 
 it("closes a deleted bot's Chrome session and frees the opt-in for another bot", async () => {
@@ -300,7 +318,11 @@ it("closes a deleted bot's Chrome session and frees the opt-in for another bot",
     expect((await api("DELETE", `/api/bots/${bot.id}`)).status).toBe(200);
     expect(sessionLog().some(entry => entry.kind === "close" && entry.session === attached)).toBe(true);
     expect((await api("PATCH", `/api/bots/${next.id}`, { useMyChrome: true })).status).toBe(200);
-  } finally { await api("PATCH", `/api/bots/${next.id}`, { useMyChrome: false }); disableRemoteDebugging(); }
+  } finally {
+    await stop(bot);
+    await api("PATCH", `/api/bots/${next.id}`, { useMyChrome: false });
+    disableRemoteDebugging();
+  }
 }, 60_000);
 
 it("says plainly how to turn Chrome's remote debugging on when it is off", async () => {
@@ -325,7 +347,9 @@ it("runs a turn without the browser when the owner's Chrome is unreachable, and 
     await stop(bot);
     const [note, ...more] = await notes();
     expect(more).toEqual([]);
-    expect(note.tool).toEqual({ name: `${BROWSER_UNAVAILABLE_PREFIX} ${USER_CHROME_UNREACHABLE_REASON}`, ok: true });
+    // EP section 4: the unavailable row names the observed cause.
+    expect(note.tool.ok).toBe(true);
+    expect(readBrowserFailure(note.tool.name.slice(BROWSER_UNAVAILABLE_PREFIX.length + 1))).toMatchObject({code:'chrome_closed'});
     // One per turn: the next turn adds its own, not a pile.
     await startTurn(bot, "chrome unreachable second turn", false);
     await stop(bot);
@@ -396,31 +420,34 @@ const stageExtension = (present: boolean) => {
   writeFileSync(extensionBuildFile(), JSON.stringify({ version: 1, mode: "development", developmentId: "b".repeat(32) }));
 };
 
-it("sends \"Use my Chrome\" to Set up my browser while remote debugging listens and another bot holds it, never the one-bot 409 (1.0.15)", async () => {
+it("requires the direct reservation for auto when no extension profile is paired", async () => {
   enableRemoteDebugging(); stageExtension(true);
   const holder = await makeBot("Remote holder", "verification", { useMyChrome: true });
   const carrie = await makeBot("Carrie", "second");
   const fresh = await makeBot("Fresh picker", "second");
   try {
-    // Sean's 1.0.13 Mac: another bot holds remote debugging, the extension is installed but not set up.
+    // S134 4.1/4.5: an installed helper is not a paired profile. Auto
+    // proposes direct, and a holder blocks it rather than changing routes.
     const picked = await api("PATCH", `/api/bots/${carrie.id}`, { useMyChrome: true, browserTransport: "auto" });
-    expect(picked.status, JSON.stringify(picked.body)).toBe(200);
-    expect(picked.body.bot).toMatchObject({ useMyChrome: true, browserTransport: "extension" });
-    // Nobody holding it changes nothing: Murage for Chrome still comes first.
+    expect(picked.status, JSON.stringify(picked.body)).toBe(409);
+    expect(picked.body.code).toBe('direct_reserved');
+    expect((await state(carrie.id)).useMyChrome).toBeUndefined();
+    // Releasing the holder permits the exact same proposed direct route.
     expect((await api("PATCH", `/api/bots/${holder.id}`, { useMyChrome: false })).status).toBe(200);
     const alone = await api("PATCH", `/api/bots/${fresh.id}`, { useMyChrome: true, browserTransport: "auto" });
     expect(alone.status).toBe(200);
-    expect(alone.body.bot.browserTransport).toBe("extension");
-    // The explicit remote debugging request still holds one bot at a time.
-    expect((await api("PATCH", `/api/bots/${holder.id}`, { useMyChrome: true })).status).toBe(200);
-    expect((await api("PATCH", `/api/bots/${fresh.id}`, { useMyChrome: true, browserTransport: null })).status).toBe(409);
+    expect(alone.body.bot.browserMode).toBe('chrome-direct');
+    expect(alone.body.bot.browserTransport).toBeUndefined();
+    // Explicit direct cannot steal the new holder's reservation either.
+    expect((await api("PATCH", `/api/bots/${holder.id}`, { useMyChrome: true })).status).toBe(409);
+    expect((await state(fresh.id)).useMyChrome).toBe(true);
   } finally {
     for (const bot of [holder, carrie, fresh]) await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false });
     stageExtension(false); disableRemoteDebugging();
   }
 }, 60_000);
 
-it("uses remote debugging for \"auto\" only in a copy without Murage for Chrome, and sends a second bot to setup instead of a 409", async () => {
+it("auto without a paired profile chooses direct and refuses a second holder", async () => {
   stageExtension(false);
   // "auto" probes the port for real here, so something has to listen on it.
   const listener = createServer(socket => socket.destroy());
@@ -434,8 +461,9 @@ it("uses remote debugging for \"auto\" only in a copy without Murage for Chrome,
     expect(one.body.bot.useMyChrome).toBe(true);
     expect(one.body.bot.browserTransport).toBeUndefined();
     const two = await api("PATCH", `/api/bots/${second.id}`, { useMyChrome: true, browserTransport: "auto" });
-    expect(two.status, JSON.stringify(two.body)).toBe(200);
-    expect(two.body.bot.browserTransport).toBe("extension");
+    expect(two.status, JSON.stringify(two.body)).toBe(409);
+    expect(two.body.code).toBe('direct_reserved');
+    expect((await state(second.id)).useMyChrome).toBeUndefined();
   } finally {
     for (const bot of [first, second]) await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false });
     disableRemoteDebugging();
@@ -450,20 +478,22 @@ it("tells the owner which bot is working and what to do when a browser change wa
   try {
     await startTurn(bot, "busy-leave", true);
     await expect.poll(async () => (await state(bot.id))?.busy, { timeout: 15_000 }).toBe(true);
-    // The panel's "Busy leaver's own": a named reason, the fix, and the code that turns on its Stop button.
+    // S134 4.2/4.3: queue the reviewed choice, preserving the live snapshot.
     const left = await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false, browserProfile: null });
-    expect(left.status).toBe(409);
-    expect(left.body).toMatchObject({ error: "Busy leaver is working. Stop it, or wait for it to finish, then change its browser.", code: "bot_busy" });
+    expect(left.status).toBe(202);
+    expect(left.body.pending).toMatchObject({mode:'builtin'});
     expect((await state(bot.id)).useMyChrome).toBe(true);
     // The extension panel's own-browser payload gets the same answer.
     const viaExtension = await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false, browserTransport: null, browserExtensionProfileId: null });
-    expect(viaExtension.status).toBe(409);
-    expect(viaExtension.body).toMatchObject({ error: "Busy leaver is working. Stop it, or wait for it to finish, then change its browser connection.", code: "bot_busy" });
+    expect(viaExtension.status).toBe(202);
+    expect(viaExtension.body.pending).toMatchObject({mode:'builtin'});
+    expect((await state(bot.id)).useMyChrome).toBe(true);
     await startTurn(joiner, "busy-join", false);
     await expect.poll(async () => (await state(joiner.id))?.busy, { timeout: 15_000 }).toBe(true);
     const joined = await api("PATCH", `/api/bots/${joiner.id}`, { useMyChrome: true });
     expect(joined.status).toBe(409);
-    expect(joined.body).toMatchObject({ error: "Busy joiner is working. Stop it, or wait for it to finish, then change its browser.", code: "bot_busy" });
+    expect(joined.body.code).toBe('direct_reserved');
+    expect((await state(joiner.id)).useMyChrome).toBeUndefined();
     // Once stopped, leaving goes through.
     await stop(bot);
     expect((await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false, browserProfile: null })).status).toBe(200);

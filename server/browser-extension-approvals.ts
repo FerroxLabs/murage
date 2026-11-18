@@ -1,11 +1,13 @@
+import { writeFileSync as countedWriteFileSync } from "./counted-fs.ts";
+import { serviceQueue, waitForProducerApproval, answerProducerRequestSync, producerBase } from "./narrow-denials.ts";
+import { readApproval, readApprovalExecution } from "./decision/index.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
+import * as fs from "node:fs";
 import path from "node:path";
 import { createPrivateWindowsDirectory, readPrivateWindowsJson, writePrivateWindowsJson } from "../electron/browser-extension-windows.mjs";
 import type { ApprovalBus } from "./peer-approval.ts";
 import type { BotRecord } from "./store.ts";
-import { murageLine } from "./murage-line.ts";
 // A person decides in their own time (fifteen minutes on a card, then it stays open for 24 hours); the tool call's own deadline is separate.
 const MAX_WAIT_MS = 15 * 60_000, MAX_SUMMARY = 12000;
 export const BROWSER_EXTENSION_APPROVAL_TOOL = "browser_extension_action";
@@ -46,7 +48,7 @@ export type ApprovalsOptions = {
    * with the turn's inputs when they are revoked. */
   turnOf?: (threadId: string) => string | undefined;
 };
-const sameBinding = (a: ApprovalBinding, b: ApprovalBinding) => a.generation === b.generation && a.documentEpoch === b.documentEpoch && a.targetDigest === b.targetDigest
+const sameBinding = (a: ApprovalBinding, b: ApprovalBinding) => !!a && !!b && a.generation === b.generation && a.documentEpoch === b.documentEpoch && a.targetDigest === b.targetDigest
   && a.submissionDigest === b.submissionDigest && a.payloadDigest === b.payloadDigest && a.actionDigest === b.actionDigest;
 function readBinding(value: unknown): ApprovalBinding | undefined {
   const v = value as Record<string, unknown> | null;
@@ -63,6 +65,9 @@ export type BrowserExtensionApprovalRequest = {
   digest: string;
   /** Executor-produced, redacted human description, never model-authored instructions. */
   summary: string;
+  /** Actual structured action, captured by the executor; summary stays display-only. */
+  call?: {tool:string;input:unknown};
+  baseAsk?: boolean;
   /** What a push notification may say. Never typed text or field values. */
   pushSummary?: string;
   signal?: AbortSignal;
@@ -108,108 +113,174 @@ export class BrowserExtensionApprovals {
   /** Action cards saved by an earlier run. Their digests were keyed by that run's secret, so no action of this run can match them. */
   private restored = new Set<string>();
   private firing = new Set<Promise<void>>();
-  constructor(bus: ApprovalBus, options: ApprovalsOptions = {}) { this.bus = bus; this.options = options; this.load(); }
+  private continuationTimer?:ReturnType<typeof setImmediate>;
+  private readyContinuations=new Set<string>();
+  constructor(bus: ApprovalBus, options: ApprovalsOptions = {}) {
+    this.bus=bus;this.options=options;this.load();
+    const accept=(item:import('./decision/index.ts').PendingQueueApproval,answer:import('./decision/index.ts').ApprovalAnswer)=>{
+      const authority=readApproval(item.approvalId);
+      if(authority?.state!=='answered'){
+        if(answer.behavior!=='deny')throw new Error('approval-queue-conflict');
+        if(this.records.delete(item.ref)&&!this.save())throw new Error('approval-queue-delivery-unavailable');
+        return;
+      }
+      const record=this.records.get(item.ref);
+      if(!record){if(answer.behavior==='allow')throw new Error('approval-queue-delivery-unavailable');return;}
+      if(!authority||authority.threadId!==record.threadId||authority.botId!==record.botId||authority.chatMessageId!==record.messageId||authority.requestId!==record.requestId||authority.action.bindingId!==record.bindingId||!sameBinding(authority.action.binding as ApprovalBinding,record.binding)||!this.receiptKindMatches(record,authority.action)||record.expiresAt<=this.now()||!(this.options.valid?.({bindingId:record.bindingId,botId:record.botId,threadId:record.threadId,generation:record.binding.generation})??true))throw new Error('approval-queue-conflict');
+      record.status=answer.behavior==='allow'?'allowed':'denied';
+      if(!this.save())throw new Error('approval-queue-delivery-unavailable');
+      this.scheduleContinuations(record);
+    };
+    this.approvalQueue().registerDelivery(BROWSER_EXTENSION_APPROVAL_TOOL,accept,accept);
+    for(const record of this.records.values()){
+      this.restored.add(record.requestId);
+      if(record.status==='waiting')this.approvalQueue().resumeDelivery(record.requestId,accept);
+    }
+  }
   private now() { return this.options.now?.() ?? Date.now(); }
   /** Plain request: true only when the person allowed it inside the wait. */
   request(input: BrowserExtensionApprovalRequest): Promise<boolean> { return this.ask(input).then(state => state === "allow"); }
-  ask(input: BrowserExtensionApprovalRequest): Promise<ApprovalState> {
-    const waitMs = input.waitMs ?? 45000;
-    // A binding that would not read back from the file is not durable: the wait ends as it always did.
-    const durable = input.binding && this.options.file ? readBinding(input.binding) : undefined;
-    if (input.signal?.aborted) return Promise.resolve("cancelled");
-    if (durable) {
-      const same = [...this.records.values()].find(record => record.status === "waiting" && record.bindingId === input.bindingId && record.kind === (input.kind ?? "action") && sameBinding(record.binding, durable) && record.expiresAt > this.now());
-      if (same) return Promise.resolve("waiting");
-    }
-    if (![input.threadId, input.bindingId, input.bot.id].every(value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value)) || !Number.isSafeInteger(input.generation) || input.generation < 1 || !/^[a-f0-9]{64}$/.test(input.digest) || typeof input.summary !== "string" || !input.summary.trim() || input.summary.length > MAX_SUMMARY || !Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > MAX_WAIT_MS) return Promise.resolve("cancelled");
-    if (this.pending.size >= 256 || (durable && this.records.size >= MAX_RECORDS)) return Promise.resolve("cancelled");
-    // A restart gives approval digests a new secret, so a card from before it can never match this step. Close it and say why on the new one.
-    let summary = input.summary;
-    if (durable && (input.kind ?? "action") === "action") {
-      const old = [...this.records.values()].filter(record => this.restored.has(record.requestId) && record.bindingId === input.bindingId && record.kind === "action" && !sameBinding(record.binding, durable));
-      if (old.length) {
-        for (const record of old) { this.restored.delete(record.requestId); this.forget(record, true); }
-        summary = `Murage restarted since an earlier request on this task, so that one was closed. Please answer this new one.\n${summary}`;
-        if (summary.length > MAX_SUMMARY) summary = input.summary;
+  pendingApprovals() { return serviceQueue('browser').pendingApprovals(); }
+  approvalQueue() { return serviceQueue('browser'); }
+  async ask(input: BrowserExtensionApprovalRequest): Promise<ApprovalState> {
+    const waitMs=input.waitMs??45000;
+    if(input.signal?.aborted)return 'cancelled';
+    if(![input.threadId,input.bindingId,input.bot.id].every(value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(value))||!Number.isSafeInteger(input.generation)||input.generation<1||!HEX.test(input.digest)||input.binding&&!readBinding(input.binding)||!Number.isSafeInteger(waitMs)||waitMs<1||waitMs>MAX_WAIT_MS||!input.summary.trim()||input.summary.length>MAX_SUMMARY)return 'cancelled';
+    const durable=input.binding&&this.options.file?readBinding(input.binding):undefined;
+    if(durable){const same=[...this.records.values()].find(record=>record.status==='waiting'&&record.bindingId===input.bindingId&&record.kind===(input.kind??'action')&&sameBinding(record.binding,durable)&&record.expiresAt>this.now());if(same)return 'waiting';}
+    if(this.pending.size>=MAX_RECORDS||durable&&this.records.size>=MAX_RECORDS)return 'cancelled';
+    let summary=input.summary;
+    if(durable&&(input.kind??'action')==='action'){
+      const old=[...this.records.values()].filter(record=>this.restored.has(record.requestId)&&record.bindingId===input.bindingId&&record.kind==='action'&&!sameBinding(record.binding,durable));
+      if(old.length){
+        for(const record of old){this.restored.delete(record.requestId);this.forget(record,true);}
+        const notice=`Murage restarted since an earlier request on this task, so that one was closed. Please answer this new one.\n${summary}`;
+        if(notice.length<=MAX_SUMMARY)summary=notice;
       }
     }
-    // Every call owns a distinct card and continuation, including identical actions.
-    const requestId = "browser-" + randomUUID();
-    const turnId = this.options.turnOf?.(input.threadId);
-    const message = this.bus.store.appendMessage(input.threadId, murageLine({
-      role: "bot", kind: "options", turnId,
-      from: { botId: input.bot.id, name: input.bot.name, color: input.bot.color },
-      card: { title: input.title ?? (input.scope === "site" ? `${input.bot.name} wants to use this site` : `${input.bot.name} needs your approval`), subtitle: summary,
-        options: ["Allow", "Deny"], requestId, tool: BROWSER_EXTENSION_APPROVAL_TOOL, ...(input.pushSummary ? { pushBody: input.pushSummary.slice(0, 300) } : {}), ...(input.cardKind && input.scope !== "site" ? { browserCardKind: input.cardKind } : {}),
-        held: input.scope === "site" ? "Allow remembers site access for this browser task. You can revoke it in Browser settings. Sending, purchasing and other changes have separate approvals." : "Allow applies to this action once. Site access does not approve actions. Text marked \"From the page\" was written by the website, not by Murage or the bot." + (input.cardKind ? " Murage asks every time for this, in every mode." : "") },
-    }));
-    return new Promise<ApprovalState>(resolve => {
-      let settled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const aborted = () => finish(false, false);
-      const finish = (allow: boolean, user: boolean, waiting = false) => {
-        if (settled) return;
-        settled = true; this.pending.delete(requestId); clearTimeout(timer);
-        input.signal?.removeEventListener("abort", aborted);
-        // Missing/changed cards cannot authorize the waiting operation.
-        const current = this.bus.store.messageById(input.threadId, message.id)?.card;
-        const deliver = !!current && current.requestId === requestId && current.tool === BROWSER_EXTENSION_APPROVAL_TOOL && !current.answered && !current.dismissed;
-        if (waiting) {
-          // The wait ran out. The call returns WAITING; the card stays live and a private record keeps it answerable (spec 2.8).
-          if (!deliver || !durable) { resolve("cancelled"); return; }
-          const at = this.now();
-          this.records.set(requestId, { requestId, threadId: input.threadId, messageId: message.id, botId: input.bot.id, bindingId: input.bindingId, kind: input.kind ?? "action", binding: durable, createdAt: at, expiresAt: at + CARD_LIFETIME_MS, status: "waiting" });
-          if (!this.save()) { this.records.delete(requestId); this.dismiss(input.threadId, message.id); resolve("cancelled"); return; }
-          resolve("waiting"); return;
-        }
-        try {
-          if (deliver) this.bus.store.patchMessage(input.threadId, message.id, { card: { ...current, answered: user ? (allow ? "allow" : "deny") : "unavailable", dismissed: !user } });
-          resolve(!deliver ? "cancelled" : !user ? "cancelled" : allow ? "allow" : "deny");
-        } catch { resolve("cancelled"); }
-      };
-      this.pending.set(requestId, { threadId: input.threadId, bindingId: input.bindingId, generation: input.generation, digest: input.digest, botId: input.bot.id, requestId, messageId: message.id, finish: (allow, user) => finish(allow, user) });
-      timer = setTimeout(() => (durable ? finish(false, false, true) : finish(false, false)), waitMs); timer.unref?.();
-      input.signal?.addEventListener("abort", aborted, { once: true });
-      if (input.signal?.aborted) { aborted(); return; }
-      try { this.bus.onApproval?.(input.bot.id, input.threadId, requestId, message.id); } catch { /* Notification failure grants no authority. */ }
+    const requestId='browser-'+randomUUID();
+    let timedOut=false,shown=false,parked=false;
+    const controller=new AbortController();
+    const signal=controller.signal;
+    const aborted=()=>controller.abort();
+    input.signal?.addEventListener('abort',aborted,{once:true});
+    let item:import('./decision/index.ts').PendingQueueApproval|undefined;
+    let resume:ReturnType<NonNullable<ApprovalBus['onBrowserOwnerWait']>>;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const result=waitForProducerApproval(this.approvalQueue(),{
+      authority:this.bus.authorityFor?.(input.threadId,input.bot.id),ref:requestId,
+      tool:input.call?.tool??BROWSER_EXTENSION_APPROVAL_TOOL,input:input.call?.input??{binding:input.binding,scope:input.scope},
+      action:{requestId,tool:BROWSER_EXTENSION_APPROVAL_TOOL,options:['Allow','Deny'],approvalKind:input.kind??'action',binding:input.binding,bindingId:input.bindingId,generation:input.generation,
+        held:input.scope==='site'?'Allow remembers site access for this browser task. You can revoke it in Browser settings. Sending, purchasing and other changes have separate approvals.':'Allow applies to this action once. Site access does not approve actions. Text marked "From the page" was written by the website, not by Murage or the bot.',
+        ...(input.pushSummary?{pushBody:input.pushSummary.slice(0,300)}:{}),...(input.cardKind?{browserCardKind:input.cardKind}:{})},
+      view:{title:input.title??`${input.bot.name} needs your approval`,subtitle:summary,turnId:this.options.turnOf?.(input.threadId)},base:producerBase(input.baseAsk!==false),
+    },{signal,handoff:()=>parked,settled:response=>{
+      const record=this.records.get(requestId);if(!record)return;
+      record.status=response.behavior==='allow'?'allowed':'denied';
+    },presented:(_item,messageId)=>{
+      item=_item;
+      shown=true;
+      this.pending.set(requestId,{threadId:input.threadId,bindingId:input.bindingId,generation:input.generation,digest:input.digest,botId:input.bot.id,requestId,messageId,
+        finish:()=>this.cancelRequest(requestId)});
+      if(input.binding&&this.options.file){const at=this.now();this.records.set(requestId,{requestId,threadId:input.threadId,messageId,botId:input.bot.id,bindingId:input.bindingId,kind:input.kind??'action',binding:input.binding,createdAt:at,expiresAt:at+CARD_LIFETIME_MS,status:'waiting'});}
+      try { resume=this.bus.onBrowserOwnerWait?.(input.threadId,requestId); }
+      catch { controller.abort();return; }
+      try { this.bus.onApproval?.(input.bot.id,input.threadId,requestId,messageId); } catch { /* Notification failure grants no authority. */ }
+    }}).then(outcome=>{
+      this.pending.delete(requestId);
+      const record=this.records.get(requestId);
+      if(parked)return 'waiting' as const;
+      if(record){this.records.delete(requestId);if(this.options.file&&fs.existsSync(this.options.file))this.save();}
+      return outcome==='cancelled'?'cancelled' as const:outcome;
     });
+    const deadline=new Promise<ApprovalState>(resolve=>{timer=setTimeout(()=>{
+      timedOut=true;
+      if(shown&&durable&&item){
+        if(!this.save()){this.records.delete(requestId);controller.abort();resolve('cancelled');return;}
+        try {serviceQueue('browser').parkWaiter(item);parked=true;}
+        catch {console.warn('browser-approval-handoff-failed');controller.abort();resolve('cancelled');return;}
+        controller.abort();resolve('waiting');
+      }else{controller.abort();resolve('cancelled');}
+    },waitMs);timer.unref?.();});
+    try{
+      const outcome=await Promise.race([result,deadline]);
+      // The answer deadline ends before waiting to reacquire browser ownership.
+      if(!timedOut)clearTimeout(timer);
+      if(outcome==='cancelled'&&item){const record=readApproval(item.approvalId);if(record)this.displayAnswer(record.threadId,record.chatMessageId,'unavailable',true);}
+      await resume?.(false,input.signal);
+      return outcome;
+    }finally{
+      input.signal?.removeEventListener('abort',aborted);
+      if(!timedOut)clearTimeout(timer);
+      else if(!durable)this.cancelRequest(requestId);
+    }
   }
-  resolve(threadId: string, requestId: string, behavior: string | undefined): boolean {
-    if (behavior !== "allow" && behavior !== "deny") return false;
-    const pending = this.pending.get(requestId);
-    if (pending) { if (pending.threadId !== threadId) return false; pending.finish(behavior === "allow", true); return true; }
-    return this.answerLater(threadId, requestId, behavior);
+  resolve(threadId:string,requestId:string,behavior:string|undefined):boolean {
+    if(behavior!=='allow'&&behavior!=='deny')return false;
+    const item=this.pendingApprovals().find(item=>item.ref===requestId);
+    const record=item&&readApproval(item.approvalId);
+    if(!item||record?.threadId!==threadId||behavior!=='allow'&&behavior!=='deny')return false;
+    const card=this.bus.store.messageById(threadId,record.chatMessageId)?.card;
+    let valid=false;
+    try { valid=!this.unreadable&&!!card&&!card.answered&&!card.dismissed&&(this.options.valid?.({bindingId:String(item.call.approval.action.bindingId),botId:record.botId,threadId,generation:Number(item.call.approval.action.generation)})??true); } catch { /* A failed binding check cannot authorize. */ }
+    const durable=this.records.get(requestId);
+    if(!valid||durable&&durable.expiresAt<=this.now()){
+      if(durable)this.forget(durable,false);
+      this.cancelRequest(requestId);return false;
+    }
+    const accepted=answerProducerRequestSync(serviceQueue('browser'),threadId,requestId,behavior);
+    if(accepted){
+      this.displayAnswer(threadId,record.chatMessageId,behavior,false);
+      // The synchronous decision call has now committed delivery. Preserve
+      // immediate continuations without executing inside its pending callback.
+      if(durable)this.fire(durable);
+    }
+    return accepted;
+  }
+  /** The decision record settles first. Browser continuation readers retain
+   * their canonical allow/deny labels; these terminal display fields carry no
+   * action or execution authority. */
+  private displayAnswer(threadId:string,messageId:string,answered:string,dismissed:boolean):void {
+    const card=this.bus.store.messageById(threadId,messageId)?.card;
+    if(card)this.bus.store.patchMessagePoint(threadId,messageId,{card:{...card,answered,dismissed}});
+  }
+  private cancelRequest(requestId:string):void {
+    const item=this.pendingApprovals().find(item=>item.ref===requestId);
+    const record=item&&readApproval(item.approvalId);
+    if(!item||!record)return;
+    // stop() fences and terminalizes the registered decision synchronously,
+    // then awaits its cancellation delivery. Never close only the visible row.
+    void serviceQueue('browser').stop(item.approvalId).catch(()=>{console.warn('browser-approval-cancellation-failed');});
+    if(readApproval(item.approvalId)?.state!=='open')this.displayAnswer(record.threadId,record.chatMessageId,'unavailable',true);
   }
   /** Is this card live, in memory or saved? */
-  knows(requestId: string): boolean { return this.pending.has(requestId) || this.records.has(requestId); }
-  /** The owner answers a card whose call has already returned WAITING (or that survived a restart). */
-  private answerLater(threadId: string, requestId: string, behavior: "allow" | "deny"): boolean {
-    const record = this.records.get(requestId);
-    if (!record || record.threadId !== threadId || record.status !== "waiting") return false;
-    const card = this.cardOf(record);
-    if (!card || card.answered || card.dismissed) { this.forget(record, true); return false; }
-    // Expired, or the binding is not the one the card was raised for: the card closes and nothing runs.
-    let valid = false;
-    try { valid = this.now() < record.expiresAt && (this.options.valid?.({ bindingId: record.bindingId, botId: record.botId, threadId: record.threadId, generation: record.binding.generation }) ?? true); } catch { valid = false; }
-    if (!valid) { this.forget(record, true); return false; }
-    try { this.bus.store.patchMessage(record.threadId, record.messageId, { card: { ...card, answered: behavior, dismissed: false } }); } catch { this.forget(record, true); return false; }
-    record.status = behavior === "allow" ? "allowed" : "denied";
-    if (!this.save()) { this.forget(record, true); return false; }
-    this.fire(record);
-    return true;
-  }
+  knows(requestId: string): boolean { return !this.unreadable&&(this.pending.has(requestId)||this.records.get(requestId)?.status==='waiting'); }
   /** The first matching action uses the approval; it works once. Anything that differs in any binding field does not match. */
   consume(query: { bindingId: string; kind: ApprovalKind; binding: ApprovalBinding }): boolean {
     for (const record of [...this.records.values()]) {
-      if (record.status !== "allowed" || record.bindingId !== query.bindingId || record.kind !== query.kind) continue;
+      if (this.pending.has(record.requestId) || record.status !== "allowed" || record.bindingId !== query.bindingId || record.kind !== query.kind) continue;
       if (this.now() >= record.expiresAt) { this.forget(record, true); continue; }
       const card = this.cardOf(record);
-      if (!card || card.answered !== "allow" || card.dismissed) { this.forget(record, false); continue; }
+      const receipt = typeof card?.approvalId === "string" ? readApproval(card.approvalId) : undefined;
+      if (receipt?.delivery === "pending") continue;
+      const receiptBinding = readBinding(receipt?.action.binding);
+      let allowedReceipt = false;
+      try { allowedReceipt = !!receipt && readApprovalExecution(receipt.ref).answer?.behavior === "allow"; } catch { /* A missing receipt authorizes nothing. */ }
+      // Direct decision delivery leaves the canonical terminal card. The
+      // browser's older resolve API may keep its legacy display projection;
+      // either view still requires the same accepted durable decision.
+      const terminalAllow = card && (card.answered === "Allowed" && card.dismissed === true
+        || card.answered === "allow" && !card.dismissed);
+      if (!terminalAllow || !allowedReceipt || !receipt || receipt.state !== "answered" || receipt.delivery !== "accepted"
+        || receipt.threadId !== record.threadId || receipt.botId !== record.botId || receipt.chatMessageId !== record.messageId
+        || receipt.queue?.kind !== "browser" || receipt.queue.ref !== record.requestId
+        || receipt.action.bindingId !== record.bindingId || !this.receiptKindMatches(record,receipt.action)
+        || !receiptBinding || !sameBinding(receiptBinding, record.binding)) { this.forget(record, false); continue; }
       if (!sameBinding(record.binding, query.binding)) continue;
       let valid = false;
       try { valid = this.options.valid?.({ bindingId: record.bindingId, botId: record.botId, threadId: record.threadId, generation: record.binding.generation }) ?? true; } catch { valid = false; }
-      this.forget(record, false);
-      return valid;
+      const forgotten=this.forget(record, false);
+      return valid&&forgotten;
     }
     return false;
   }
@@ -240,11 +311,28 @@ export class BrowserExtensionApprovals {
     for (const record of [...this.records.values()]) if (record.status !== "waiting" && !record.continued && this.now() < record.expiresAt) this.fire(record);
     await Promise.allSettled([...this.firing]);
   }
+  private scheduleContinuations(record:DurableRecord):void {
+    this.readyContinuations.add(record.requestId);
+    if(this.continuationTimer)return;
+    // Queue acceptance is committed after the delivery callback returns. A
+    // continuation must never try to consume a still-pending delivery.
+    this.continuationTimer=setImmediate(()=>{
+      this.continuationTimer=undefined;
+      const ready=[...this.readyContinuations];this.readyContinuations.clear();
+      for(const id of ready){const record=this.records.get(id);if(record&&record.status!=='waiting')this.fire(record);}
+    });
+    this.continuationTimer.unref?.();
+  }
   private fire(record: DurableRecord): void {
+    this.readyContinuations.delete(record.requestId);
     const hook = this.options.onContinue;
-    if (!hook || record.continued) return;
+    // An answer inside the original wait resumes that call; only a parked
+    // request can start a separate continuation after durable acceptance.
+    if (!hook || this.pending.has(record.requestId) || record.continued || this.records.get(record.requestId)!==record) return;
+    const card=this.cardOf(record),authority=card?.approvalId?readApproval(card.approvalId):undefined;
+    if(!authority||authority.state!=='answered'||authority.delivery!=='accepted'||this.now()>=record.expiresAt)return;
     // Consume before dispatch: a lost response or a restart never replays the continuation.
-    record.continued = true; this.save();
+    record.continued = true; if(!this.save()){record.continued=false;return;}
     const info: ContinuationInfo = { requestId: record.requestId, botId: record.botId, threadId: record.threadId, bindingId: record.bindingId, kind: record.kind, decision: record.status === "allowed" ? "allow" : "deny" };
     const done = (async () => {
       let started: boolean | void = true;
@@ -266,7 +354,8 @@ export class BrowserExtensionApprovals {
       if (card?.tool !== BROWSER_EXTENSION_APPROVAL_TOOL || !card.requestId || card.answered || card.dismissed || this.pending.has(card.requestId)) continue;
       const record = this.records.get(card.requestId);
       if (record && !this.unreadable && record.messageId === message.id && record.threadId === threadId && record.status === "waiting") continue;
-      if (this.bus.store.patchMessage(threadId, message.id, { card: { ...card, answered: "unavailable", dismissed: true } })) count++;
+      if(card.approvalId){this.cancelRequest(card.requestId);count++;}
+      else if (this.bus.store.patchMessage(threadId, message.id, { card: { ...card, answered: "unavailable", dismissed: true } })) count++;
     }
     return count;
   }
@@ -274,16 +363,24 @@ export class BrowserExtensionApprovals {
     const card = this.bus.store.messageById(record.threadId, record.messageId)?.card;
     return card && card.requestId === record.requestId && card.tool === BROWSER_EXTENSION_APPROVAL_TOOL ? card : undefined;
   }
+  private receiptKindMatches(record: DurableRecord, action: Readonly<Record<string, unknown>>): boolean {
+    // The first durable format had action approvals only. A missing kind is
+    // compatible solely for a restored action record, never a site grant or
+    // a newly created approval. Every other receipt/binding check still applies.
+    return action.approvalKind === record.kind || this.restored.has(record.requestId)
+      && record.kind === "action" && !Object.hasOwn(action, "approvalKind");
+  }
   private dismiss(threadId: string, messageId: string) {
     try {
       const card = this.bus.store.messageById(threadId, messageId)?.card;
+      if(card?.approvalId&&card.requestId){this.cancelRequest(card.requestId);return;}
       if (card && !card.answered && !card.dismissed) this.bus.store.patchMessage(threadId, messageId, { card: { ...card, answered: "unavailable", dismissed: true } });
     } catch { /* a card that cannot be closed still authorizes nothing: the record is gone */ }
   }
   private forget(record: DurableRecord, closeCard: boolean) {
-    this.records.delete(record.requestId);
+    this.records.delete(record.requestId);this.restored.delete(record.requestId);
     if (closeCard) this.dismiss(record.threadId, record.messageId);
-    this.save();
+    return this.save();
   }
   private load(): void {
     const file = this.options.file; if (!file) return;
@@ -299,12 +396,12 @@ export class BrowserExtensionApprovals {
         const binding = readBinding(raw?.binding);
         if (!raw || typeof raw !== "object" || !binding || ![raw.requestId, raw.threadId, raw.messageId, raw.botId, raw.bindingId].every(v => typeof v === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(v))
           || (raw.kind !== "site" && raw.kind !== "action") || !["waiting", "allowed", "denied"].includes(raw.status as string)
-          || !Number.isSafeInteger(raw.createdAt) || !Number.isSafeInteger(raw.expiresAt) || (raw.expiresAt as number) - (raw.createdAt as number) > CARD_LIFETIME_MS || (raw.continued !== undefined && raw.continued !== true)) throw new Error("invalid_record");
+          || !Number.isSafeInteger(raw.createdAt) || !Number.isSafeInteger(raw.expiresAt) || (raw.expiresAt as number) - (raw.createdAt as number) > CARD_LIFETIME_MS || (raw.continued !== undefined && typeof raw.continued !== 'boolean')) throw new Error("invalid_record");
         loaded.set(raw.requestId as string, { requestId: raw.requestId as string, threadId: raw.threadId as string, messageId: raw.messageId as string, botId: raw.botId as string, bindingId: raw.bindingId as string,
           kind: raw.kind as ApprovalKind, binding, createdAt: raw.createdAt as number, expiresAt: raw.expiresAt as number, status: raw.status as RecordStatus, ...(raw.continued ? { continued: true } : {}) });
       }
       this.records = loaded;
-      this.restored = new Set([...loaded.values()].filter(record => record.kind === "action").map(record => record.requestId));
+      this.restored = new Set(loaded.keys());
     } catch { this.records = new Map(); this.unreadable = true; }
   }
   /** False when the file could not be written: the caller then treats the card as not durable. */
@@ -316,7 +413,7 @@ export class BrowserExtensionApprovals {
       if (win) createPrivateWindowsDirectory(path.dirname(file)); else fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
       if (win) { writePrivateWindowsJson(file, content); this.unreadable = false; return true; }
       const temp = `${file}.${randomUUID()}.tmp`;
-      try { fs.writeFileSync(temp, JSON.stringify(content), { mode: 0o600, flag: "wx" }); fs.renameSync(temp, file); }
+      try { countedWriteFileSync(temp, JSON.stringify(content), { mode: 0o600, flag: "wx" }); fs.renameSync(temp, file); }
       finally { fs.rmSync(temp, { force: true }); }
       this.unreadable = false; return true;
     } catch { return false; }

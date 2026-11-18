@@ -1,3 +1,4 @@
+import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -98,7 +99,7 @@ try { db && db.close(); } catch {}
 export function startExactCounts(file: string, cacheFile: string, shared: SharedArrayBuffer): { stop(): void } {
   let worker: Worker | null = null;
   try {
-    worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { file, cacheFile, shared } });
+    worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: { file, cacheFile, shared } });
     worker.on("error", () => { /* counting failed: no numbers are shown */ });
     worker.unref();
   } catch { worker = null; }

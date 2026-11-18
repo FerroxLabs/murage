@@ -20,6 +20,9 @@ import { roomRequest, insertRoomRequest, completeRequest, type RoomRequest } fro
 import { settleSharedWorkOwnerTurn, settleProjectUsage } from "./usage-ledger.ts";
 import { createSharedOwnerUsage, type SharedOwnerEvent } from "./shared-owner-usage.ts";
 import { requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
+import { serviceQueue } from "./narrow-denials.ts";
+import { serviceQueueFixture } from "./testing/service-queue-fixture.ts";
+import { flushApprovalPresentation } from "./testing/channel-approval-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 // A "restart" re-imports database.ts after vi.resetModules(), so the open handle can live in a newer module
 // instance than the static import. Close both: Windows will not delete a database file that is still open (EPERM).
@@ -242,8 +245,10 @@ it("R4d: a completion without a provider turn id never settles the newer generat
 it("R4 C (Astra r3 #1): Stop it now cancels the stopped request's approval card, so it can no longer be answered",async()=>{
  const f=fixture(),run=f.enqueue();if(!run.ok)throw Error("fixture");
  database().prepare("UPDATE room_requests SET state='waiting_owner',dispatched_at=2 WHERE id=?").run(run.request.id);
- const bus:ApprovalBus={store:f.store,broadcast:()=>{}};
+ const producer=serviceQueueFixture(f.store);producer.queue(serviceQueue("peer"));
+ const bus:ApprovalBus={store:f.store,broadcast:()=>{},authorityFor:producer.authorityFor};
  const sam=f.teams[0].bot,verdict=requestPeerApproval(bus,sam,f.iris,"CANARY_0","delegate_bot",sam.threadId,run.request.id);
+ await flushApprovalPresentation();
  const card=()=>f.store.messagesFor(sam.threadId).find(m=>m.card?.tool==="delegate_bot")!.card!;
  expect(card().answered).toBeUndefined();
  const closed:string[]=[];
@@ -258,10 +263,13 @@ it("R4 C (Astra r3 #1): Stop it now cancels the stopped request's approval card,
 it("R4 C: Let it finish leaves the finishing request's card open, and another request's card is never touched",async()=>{
  const f=fixture(),run=f.enqueue(),other=f.enqueue(1,"other");if(!run.ok||!other.ok)throw Error("fixture");
  database().prepare("UPDATE room_requests SET state='waiting_owner',dispatched_at=2 WHERE id IN (?,?)").run(run.request.id,other.request.id);
- const bus:ApprovalBus={store:f.store,broadcast:()=>{}};
+ const producer=serviceQueueFixture(f.store);producer.queue(serviceQueue("peer"));
+ const bus:ApprovalBus={store:f.store,broadcast:()=>{},authorityFor:producer.authorityFor};
  const sam=f.teams[0].bot,support=f.teams[1].bot;
  requestPeerApproval(bus,sam,f.iris,"CANARY_0","delegate_bot",sam.threadId,run.request.id);
+ await flushApprovalPresentation();
  requestPeerApproval(bus,support,f.iris,"CANARY_1","delegate_bot",support.threadId,other.request.id);
+ await flushApprovalPresentation();
  changeSharing(f.store,f.iris.id,{mode:"list",teams:[{id:f.teams[1].id,name:"Support"}]},"finish",{now:10});
  for(const bot of [sam,support])expect(f.store.messagesFor(bot.threadId).find(m=>m.card?.tool==="delegate_bot")!.card!.answered).toBeUndefined();
 });

@@ -1,0 +1,287 @@
+{
+ "guardLivesUntilEveryDeleteResolved#1": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-1-answered-by-non-delete"
+ },
+ "guardLivesUntilEveryDeleteResolved#2": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-2-answered-other-attempt"
+ },
+ "guardLivesUntilEveryDeleteResolved#3": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-3-answered-by-copy"
+ },
+ "guardLivesUntilEveryDeleteResolved#5": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-5-answered-uncertain"
+ },
+ "guardLivesUntilEveryDeleteResolved#6": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-6-delay-event-is-not-apply"
+ },
+ "guardLivesUntilEveryDeleteResolved#7": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-7-apply-event-no-closing-event"
+ },
+ "guardLivesUntilEveryDeleteResolved#8": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-8-apply-other-event"
+ },
+ "guardLivesUntilEveryDeleteResolved#9": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-9-event-not-closing"
+ },
+ "guardLivesUntilEveryDeleteResolved#10": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-10-closing-event-other-inbox"
+ },
+ "guardLivesUntilEveryDeleteResolved#11": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-11-closing-event-flux-reason"
+ },
+ "guardLivesUntilEveryDeleteResolved#12": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-12-not-found-from-non-get"
+ },
+ "guardLivesUntilEveryDeleteResolved#13": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-13-not-found-other-inbox"
+ },
+ "guardLivesUntilEveryDeleteResolved#14": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-14-not-found-lost-answer"
+ },
+ "guardLivesUntilEveryDeleteResolved#15": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-15-get-answered-ok"
+ },
+ "guardLivesUntilEveryDeleteResolved#17": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-17-closing-event-shrinks-list"
+ },
+ "guardLivesUntilEveryDeleteResolved#18": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-18-swap-installs-archive-guard"
+ },
+ "guardLivesUntilEveryDeleteResolved#19": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-19-prep-reapplies-carry-guard"
+ },
+ "guardLivesUntilEveryDeleteResolved#21": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-21-guard-rewritten-after-purge"
+ },
+ "guardLivesUntilEveryDeleteResolved#23": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-23-guard-moves-with-succeeding-keep"
+ },
+ "guardLivesUntilEveryDeleteResolved#24": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-24-guard-moves-no-keep"
+ },
+ "guardLivesUntilEveryDeleteResolved#25": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-25-other-keep-succeeds-now"
+ },
+ "guardLivesUntilEveryDeleteResolved#26": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-26-keep-succeeded-earlier"
+ },
+ "guardLivesUntilEveryDeleteResolved#27": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-27-new-keep-guard-new-content"
+ },
+ "guardLivesUntilEveryDeleteResolved#29": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-29-window-rewritten"
+ },
+ "guardLivesUntilEveryDeleteResolved#33": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-33-attempt-dropped-unresolved"
+ },
+ "guardLivesUntilEveryDeleteResolved#36": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-36-swap-drops-guard-carry-holds-it"
+ },
+ "guardLivesUntilEveryDeleteResolved#37": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-37-keep-authority-is-not-remove"
+ },
+ "guardLivesUntilEveryDeleteResolved#38": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-38-remove-authority-other-inbox"
+ },
+ "guardLivesUntilEveryDeleteResolved#39": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-39-remove-authority-invalid"
+ },
+ "guardLivesUntilEveryDeleteResolved#40": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-40-delay-event-is-not-apply-purge"
+ },
+ "guardLivesUntilEveryDeleteResolved#42": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-42-purge-event-not-the-applied-one"
+ },
+ "guardLivesUntilEveryDeleteResolved#44": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-44-purge-event-other-inbox"
+ },
+ "guardLivesUntilEveryDeleteResolved#48": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-48-two-unanswered-one-closing"
+ },
+ "guardLivesUntilEveryDeleteResolved#49": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-49-single-unanswered-no-closing-event"
+ },
+ "guardLivesUntilEveryDeleteResolved#50": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-50-single-unanswered-guard-released"
+ },
+ "guardLivesUntilEveryDeleteResolved#51": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-51-held-get-does-not-block"
+ },
+ "guardLivesUntilEveryDeleteResolved#52": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-52-held-delete-other-inbox"
+ },
+ "guardLivesUntilEveryDeleteResolved#54": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-54-held-copy-tolerated-when-key-honoured"
+ },
+ "guardLivesUntilEveryDeleteResolved#55": {
+  "verdict": "KILLED",
+  "witness": "cm-guardLivesUntilEveryDeleteResolved-55-unlisted-delete-still-held"
+ },
+ "viewMintsScopedTokens#3": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-3-token-shows-fewer-keys"
+ },
+ "viewMintsScopedTokens#4": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-4-token-shows-other-key"
+ },
+ "viewMintsScopedTokens#5": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-5-disabled-action-needs-no-token"
+ },
+ "viewMintsScopedTokens#7": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-7-bot-row-remove-needs-token"
+ },
+ "viewMintsScopedTokens#8": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-8-parked-row-keep-needs-token"
+ },
+ "viewMintsScopedTokens#10": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-10-token-never-minted"
+ },
+ "viewMintsScopedTokens#11": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-11-token-from-earlier-step"
+ },
+ "viewMintsScopedTokens#12": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-12-token-from-other-process"
+ },
+ "viewMintsScopedTokens#13": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-13-token-from-other-epoch"
+ },
+ "viewMintsScopedTokens#14": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-14-token-for-other-principal"
+ },
+ "viewMintsScopedTokens#17": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-17-token-shows-other-inbox"
+ },
+ "viewMintsScopedTokens#20": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-20-b-token-for-no-binding"
+ },
+ "viewMintsScopedTokens#21": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-21-b-token-for-other-bot"
+ },
+ "viewMintsScopedTokens#22": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-22-b-token-stale-generation"
+ },
+ "viewMintsScopedTokens#24": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-24-b-token-other-address"
+ },
+ "viewMintsScopedTokens#25": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-25-park-token-for-no-park"
+ },
+ "viewMintsScopedTokens#26": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "viewMintsScopedTokens (invariants.current.ts:1883-1884): p is defined as `t.park ? next.local.parks[t.park.parkId] : undefined`, so whenever !t.park holds p is undefined and the first operand `!p` on line 1892 is already true. The `!t.park` operand can therefore never change the verdict of the || chain (it only narrows the type for the later p.parkRev / t.park.parkRev use)."
+ },
+ "viewMintsScopedTokens#27": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-27-park-token-stale-revision"
+ },
+ "viewMintsScopedTokens#28": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-28-park-token-other-target"
+ },
+ "viewMintsScopedTokens#30": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-30-park-token-other-address"
+ },
+ "viewMintsScopedTokens#31": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-31-token-minted-for-no-action"
+ },
+ "carryImmutable#6": {
+  "verdict": "KILLED",
+  "witness": "cm-carryImmutable-6-capture-with-no-armed-job"
+ },
+ "carryImmutable#8": {
+  "verdict": "KILLED",
+  "witness": "cm-carryImmutable-8-capture-stamped-for-other-job"
+ },
+ "carryImmutable#11": {
+  "verdict": "KILLED",
+  "witness": "cm-carryImmutable-11-armed-job-tick-rewrites-carry"
+ },
+ "carryImmutable#12": {
+  "verdict": "KILLED",
+  "witness": "cm-carryImmutable-12-capture-after-armed-phase-rewrites-carry"
+ },
+ "viewMintsScopedTokens#15": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-11-token-from-earlier-step"
+ },
+ "viewMintsScopedTokens#23": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-21-b-token-for-other-bot"
+ },
+ "viewMintsScopedTokens#29": {
+  "verdict": "KILLED",
+  "witness": "cm-viewMintsScopedTokens-27-park-token-stale-revision"
+ },
+ "carryImmutable#3": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-carryImmutable-3-capture-deletes-carry",
+  "by": "outgoingCapturedBeforeSwap",
+  "byLine": 1717,
+  "argument": "line 2340 `next.carry` operand: removing it only changes a step whose next.carry is null while prev.carry is set. The only such step the mutant can fail is an armed job's capture (it reads next.carry.jobId and throws); every other path returns OK on a prev carry. A step that deletes the carry before its prep committed is rejected by outgoingCapturedBeforeSwap 'carry deleted before its prep committed', so no legal history separates the clause."
+ },
+ "carryImmutable#4": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-carryImmutable-4-capture-leaves-other-jobs-carry",
+  "by": "restoreJobMatchesReality",
+  "byLine": 2223,
+  "argument": "line 2340 `!same(prev.carry, next.carry)` operand: removing it makes an UNCHANGED carry be judged for provenance on an armed job's capture (next.carry.jobId !== armedJob.id). That differs only when a carry that belongs to another job sits unchanged beside the armed job, and restoreJobMatchesReality (carry.jobId !== job.id) rejects that state, so no accepted history separates it. A must-accept witness cannot exist."
+ }
+}

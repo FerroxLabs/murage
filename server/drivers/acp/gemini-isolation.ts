@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -41,10 +42,12 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { memoDeps, pathExists, readText } from "../isolation-cache.ts";
+import { linkNoLimitsState } from "../no-limits-state.ts";
 import { registerScopeReconstructor, scopeEngineHome, scopeSourceOf, scopedCliHomeRoot, scopedCliRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
 
 /** Linked into a bot's scope even before they exist: Gemini's login files. */
 export const GEMINI_LOGIN_ENTRIES = ["oauth_creds.json", "google_accounts.json", "gemini-credentials.json"] as const;
+const sandboxEnvironmentPins = new WeakMap<object, string | undefined>();
 /** Copied (never linked), so Gemini's own writes to them stay in the bot's scope. */
 const GEMINI_COPIED_ENTRIES = ["trustedFolders.json"] as const;
 /** settings.json keys that load or run the owner's own servers and commands. */
@@ -76,7 +79,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** The owner's settings without anything that starts their servers or commands, or filters Murage's. */
-export function filterGeminiSettings(settings: Record<string, unknown>): Record<string, unknown> {
+export function filterGeminiSettings(settings: Record<string, unknown>, noLimits = false): Record<string, unknown> {
   const filtered: Record<string, unknown> = { ...settings };
   for (const key of GEMINI_PERSONAL_SETTINGS_KEYS) delete filtered[key];
   for (const [section, key] of GEMINI_PERSONAL_NESTED_KEYS) {
@@ -90,6 +93,18 @@ export function filterGeminiSettings(settings: Record<string, unknown>): Record<
   if (isRecord(tools) && Array.isArray(tools.exclude)) {
     filtered.tools = { ...tools, exclude: tools.exclude.filter((name) => typeof name !== "string" || !name.startsWith("mcp_")) };
   }
+  // Keep native search; page fetches use the mounted Murage web_read tool.
+  const ownedTools = isRecord(filtered.tools) ? filtered.tools : {};
+  const excluded = !noLimits && Array.isArray(ownedTools.exclude) ? ownedTools.exclude : [];
+  filtered.tools = { ...ownedTools, exclude: [...new Set([...excluded, "web_fetch"])] };
+  if (noLimits) {
+    // Personal auto-allow rules must not bypass Murage's wipe verdict.
+    delete (filtered.tools as Record<string, unknown>).allowed;
+    filtered.general = { ...(isRecord(filtered.general) ? filtered.general : {}), defaultApprovalMode: "default" };
+    filtered.tools = { ...(filtered.tools as Record<string, unknown>), sandbox: false };
+    const security = isRecord(filtered.security) ? filtered.security : {};
+    filtered.security = { ...security, folderTrust: { enabled: false }, toolSandboxing: false };
+  }
   for (const section of ["mcp", "tools", "context"]) {
     if (isRecord(filtered[section]) && !Object.keys(filtered[section] as object).length) delete filtered[section];
   }
@@ -98,7 +113,7 @@ export function filterGeminiSettings(settings: Record<string, unknown>): Record<
 
 function readSettings(path: string): Record<string, unknown> | null {
   try {
-    const parsed: unknown = JSON.parse(readText(path));
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(readText(path)));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
@@ -107,11 +122,11 @@ function readSettings(path: string): Record<string, unknown> | null {
 
 /** The scoped home for this owner setup (the folder that holds their `.gemini`) and bot, built or refreshed. Always built: with no
  *  `.gemini` yet the scope starts with empty settings and no login links, so a first bot turn writes only into the scope. */
-function geminiScopeSpec(realGemini: string, botId?: string): ScopedCliHomeSpec {
+function geminiScopeSpec(realGemini: string, botId?: string, noLimits = false): ScopedCliHomeSpec {
   const settingsPath = join(realGemini, "settings.json");
   // An unreadable or absent settings.json is not copied: the scope gets empty settings, never the owner's own file.
   return {
-    kind: "gemini",
+    kind: noLimits ? "gemini-no-limits" : "gemini",
     realHome: realGemini,
     subdir: ".gemini",
     botId,
@@ -119,7 +134,7 @@ function geminiScopeSpec(realGemini: string, botId?: string): ScopedCliHomeSpec 
     loginWrites: "in-place",
     linkOnlyWithFolder: true,
     generated: () => {
-      const out: Record<string, string> = { "settings.json": `${JSON.stringify(filterGeminiSettings(readSettings(settingsPath) ?? {}), null, 2)}\n` };
+      const out: Record<string, string> = { "settings.json": `${JSON.stringify(filterGeminiSettings(readSettings(settingsPath) ?? {}, noLimits), null, 2)}\n` };
       for (const name of GEMINI_COPIED_ENTRIES) {
         const path = join(realGemini, name);
         try { out[name] = readText(path); } catch { pathExists(path); }
@@ -128,19 +143,20 @@ function geminiScopeSpec(realGemini: string, botId?: string): ScopedCliHomeSpec 
     },
   };
 }
+registerScopeReconstructor("gemini-no-limits", ({ realHome, botId }) => geminiScopeSpec(realHome, botId, true));
 registerScopeReconstructor("gemini", ({ realHome, botId }) => geminiScopeSpec(realHome, botId));
 
-function scopedGeminiRoot(sourceHome: string, botId?: string): string {
+function scopedGeminiRoot(sourceHome: string, botId?: string, noLimits = false): string {
   const realGemini = join(sourceHome, ".gemini");
   pathExists(realGemini); // rebuilt when the owner's folder appears: the login links are added then
-  return scopedCliRoot(geminiScopeSpec(realGemini, botId));
+  return scopedCliRoot(geminiScopeSpec(realGemini, botId, noLimits));
 }
 
 /** The folder that holds the owner's `.gemini`: the home their environment names for Gemini (GEMINI_CLI_HOME, Gemini's own documented
  *  setting), else their HOME. A home already scoped by Murage (a probe's shared scope) answers with the owner folder it was built from. */
 function ownerGeminiHome(env: Record<string, string | undefined>): string {
   const current = env.GEMINI_CLI_HOME;
-  if (current && current.startsWith(scopedCliHomeRoot("gemini"))) {
+  if (current && (current.startsWith(scopedCliHomeRoot("gemini")) || current.startsWith(scopedCliHomeRoot("gemini-no-limits")))) {
     const built = scopeSourceOf(current);
     if (built) return dirname(built);
   } else if (current) {
@@ -158,15 +174,30 @@ function ownerGeminiHome(env: Record<string, string | undefined>): string {
  * place for a bot (the turn path retries contention and rejects the turn before any spawn). Without it (the model-list probe
  * that shares the env transform) a failure is logged and the probe goes on.
  */
-export function isolateGeminiFromPersonalSetup(env: Record<string, string | undefined>, botId?: string, strict = false): void {
+export function isolateGeminiFromPersonalSetup(env: Record<string, string | undefined>, botId?: string, strict = false, noLimits = false): void {
   try {
+    if (!noLimits && sandboxEnvironmentPins.has(env)) {
+      const original = sandboxEnvironmentPins.get(env);
+      if (original === undefined) delete env.GEMINI_SANDBOX; else env.GEMINI_SANDBOX = original;
+      sandboxEnvironmentPins.delete(env);
+    }
     const current = env.GEMINI_CLI_HOME;
     const ours = Boolean(current) && current!.startsWith(scopedCliHomeRoot("gemini"));
     if (ours && !(botId || strict)) return; // already scoped for a probe
     const source = ownerGeminiHome(env);
-    const root = memoDeps("gemini-isolate", JSON.stringify([source, botId ?? null]), () => scopedGeminiRoot(source, botId));
+    const root = memoDeps("gemini-isolate", JSON.stringify([source, botId ?? null, noLimits]), () => scopedGeminiRoot(source, botId, noLimits));
     // The scope is worked out once per owner setup; the path an engine is launched with (its current login generation) is resolved at EVERY launch.
-    env.GEMINI_CLI_HOME = scopeEngineHome("gemini", root);
+    env.GEMINI_CLI_HOME = scopeEngineHome(noLimits ? "gemini-no-limits" : "gemini", root);
+    if (noLimits) {
+      // Gemini keeps each bot's native chats under tmp/<workspace>/chats.
+      // Reuse that bot's lower-level state, without importing other bots or
+      // the owner's personal instructions, hooks and policies.
+      const lower = scopeEngineHome("gemini", scopedGeminiRoot(source, botId));
+      linkNoLimitsState(join(env.GEMINI_CLI_HOME, ".gemini"), join(lower, ".gemini"), ["tmp"]);
+      // Gemini gives this environment variable precedence over settings.json.
+      if (!sandboxEnvironmentPins.has(env)) sandboxEnvironmentPins.set(env, env.GEMINI_SANDBOX);
+      env.GEMINI_SANDBOX = "false";
+    }
   } catch (error) {
     if (strict) throw error;
     console.warn(`gemini isolation skipped: ${(error as Error).message}`);

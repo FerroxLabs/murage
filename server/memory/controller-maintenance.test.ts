@@ -1,3 +1,4 @@
+import {settleFixtureIndexGrant} from "./testing/helper-permits.ts";
 // R2: the parking maintenance decision sits on a path every dispatch reaches,
 // projection batches included, so a projection queue that never empties cannot
 // starve it. The real MemoryWorkerController runs with a stand-in worker.
@@ -26,10 +27,11 @@ let controller: MemoryWorkerController, internals: Internals, batches: number;
 beforeEach(() => {
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetParkReconcile();
   calls.maintenance = 0; batches = 0;
-  controller = new MemoryWorkerController();
+  // These cycles measure steady-state fairness after the startup copy hold.
+  controller = new MemoryWorkerController({startHoldMs:0});
   internals = controller as unknown as Internals;
   internals.child = { kill() {}, on() {}, send: (message: any) => {
-    if (message.type === "index") { batches++; internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
+    if (message.type === "index") { settleFixtureIndexGrant(message,event=>internals.onWorkerMessage(internals.child,event)); batches++; internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
   } };
   internals.ready = true;
 });

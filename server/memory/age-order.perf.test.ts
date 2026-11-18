@@ -5,6 +5,7 @@
 // or browse runs over 50 ms, on every fixture the design names (a sparse scope of 50 records, a common word across the years, two
 // conjunctive common words, 64 KB documents, mode F mid-fill and mode R), and the p95 is reported. Runs on the build host rig only
 // (MEMORY_PERF_LANE2=1): the fixture takes minutes to write.
+import { openTestIndex } from "./testing/open-index.ts";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,7 +13,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { AGE_FILL_BELOW, LEXICAL_GENERATION, LEXICAL_ROWIDS } from "./age-index.ts";
-import { MemoryIndex } from "./index.ts";
 import { closeMemoryIndexReader } from "./index-reader.ts";
 import { ownerMemoryList, ownerSearchTrace, ownerSearchWork, type OwnerListInput } from "./owner-list.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
@@ -28,9 +28,9 @@ const WORDS = ["pipeline", "renewals", "hiring", "weekly", "client", "report", "
 const STATES = ["active", "active", "active", "candidate", "archived", "superseded"];
 const list = (input: OwnerListInput) => ownerMemoryList(input, roster);
 
-suite("1,000,000 records: no statement over 50 ms", () => {
+suite("1,000,000 records: no statement over 50 ms", async () => {
   let scope = "", sparse = "", first = 0;
-  beforeAll(() => {
+  beforeAll(async () => {
     closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster);
     const db = database();
     scope = ensureScope("bot", "a"); sparse = ensureScope("bot", "sparse");
@@ -58,7 +58,7 @@ suite("1,000,000 records: no statement over 50 ms", () => {
     // the index in age order, written as the helper writes it
     const indexed = performance.now();
     for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-    new MemoryIndex(INDEX_PATH()).close();
+    (await openTestIndex(INDEX_PATH())).close();
     const raw = new DatabaseSync(INDEX_PATH());
     raw.exec("BEGIN");
     const entry = raw.prepare("INSERT INTO entries VALUES(?,1,?,?)"), word = raw.prepare("INSERT INTO lexical(rowid,id,version,text) VALUES(?,?,1,?)"), key = raw.prepare("INSERT INTO lexical_keys VALUES(?,1,?)");
@@ -127,7 +127,7 @@ suite("1,000,000 records: no statement over 50 ms", () => {
     raw.prepare("INSERT OR REPLACE INTO index_meta VALUES(?,?)").run(AGE_FILL_BELOW, String(half));
     raw.exec("COMMIT");
     raw.close();
-    for (const [label, input, pages] of cases.filter(([, input]) => input.query)) {
+    for (const [label, input, pages] of cases.filter(async ([, input]) => input.query)) {
       const { max, p95 } = await measure(`F ${label}`, input, pages);
       expect(p95).toBeLessThanOrEqual(50);
       expect(max).toBeLessThanOrEqual(50);

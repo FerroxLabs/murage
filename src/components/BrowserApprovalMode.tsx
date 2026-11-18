@@ -40,7 +40,7 @@ export function FullPermissiveDialog({ botName, typed, pending, error, onTyped, 
   </div>;
 }
 
-type ViewProps = { botName: string; mode: ApprovalMode; /** Setup step 3: the cards and the floor line only, no heading or action check. */ compact?: boolean; actionCheck: ActionCheck; phone: boolean; pending: boolean; error: string; dialogOpen: boolean; typed: string; checkerAvailable?: boolean; checkerReason?: string; checkerFallback?: boolean;
+type ViewProps = { botName: string; mode: ApprovalMode; /** Setup step 3: the cards and the floor line only, no heading or action check. */ compact?: boolean; actionCheck: ActionCheck | undefined; phone: boolean; pending: boolean; error: string; dialogOpen: boolean; typed: string; checkerAvailable?: boolean; checkerReason?: string; checkerFallback?: boolean;
   /** The stored mode is unknown (a read failed, or a save was not confirmed): no mode is shown as the bot's, only Try again. */ onReread?: () => void;
   onMode: (mode: "step" | "task") => void; onOpenFull: () => void; onTyped: (value: string) => void; onConfirmFull: () => void; onCancelFull: () => void; onTurnOff: () => void; onActionCheck: (value: ActionCheck) => void };
 export function BrowserApprovalModeView({ botName, mode, compact = false, actionCheck, phone, pending, error, dialogOpen, typed, checkerAvailable = true, checkerReason, checkerFallback = false, onReread, onMode, onOpenFull, onTyped, onConfirmFull, onCancelFull, onTurnOff, onActionCheck }: ViewProps) {
@@ -81,7 +81,7 @@ type Botish = Pick<Bot, "id" | "name">;
  * hears every mode the server accepted. */
 export function useBrowserApprovalMode(bot: Botish, phone: boolean, onApplied?: (mode: ApprovalMode) => void) {
   const [mode, setMode] = useState<ApprovalMode>("task");
-  const [actionCheck, setCheckState] = useState<ActionCheck>("flux");
+  const [actionCheck, setCheckState] = useState<ActionCheck>();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const [pending, setPending] = useState(false);
@@ -99,7 +99,7 @@ export function useBrowserApprovalMode(bot: Botish, phone: boolean, onApplied?: 
     void readApprovalMode(api, bot.id).then(result => {
       if (!alive) return;
       if (result.read === "failed") { setRead("failed"); setAvailable(false); setReason(t("browserExt.checker.reasonUnavailable")); return; }
-      setMode(result.mode); setRead("known"); setCheckState(result.actionCheck ?? "flux"); applyAvailability(result);
+      setMode(result.mode); setRead("known"); setCheckState(result.actionCheck); applyAvailability(result);
     });
     return () => { alive = false; };
   }, [bot.id, attempt]);

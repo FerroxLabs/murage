@@ -1,0 +1,7 @@
+# cloud monorepo b0ea88d32 (package.json 1.0.12; identical through 1.0.17 f28a6bad8) src/lib/first-run-copy.ts:208-213; newsConsentText('hello') = heading + a newline + emailHelper (src/lib/news-consent.ts:40-47, c97a556be)
+      heading: "Hello",
+      nameLabel: "Your name",
+      namePlaceholder: "What should I call you?",
+      emailLabel: "Your email (optional)",
+      emailPlaceholder: "you@example.com",
+      emailHelper: "For your setup guide and news. Nothing else.",

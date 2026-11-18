@@ -143,6 +143,6 @@ describe("PhonePayCard", () => {
   });
 
   it("shows on a confirmed remote surface only", () => {
-    expect(read("../SettingsModal.tsx")).toContain("{desktop === false && <PhonePayCard />}");
+    expect(read("../settings/pages/GeneralPage.tsx")).toContain("{desktop === false && <PhonePayCard />}");
   });
 });

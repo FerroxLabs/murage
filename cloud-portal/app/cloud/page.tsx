@@ -64,9 +64,10 @@ export default async function MyCloud({ searchParams }: { searchParams: Promise<
             <input type="hidden" name="docCloudTerms" value={terms.current.cloudTerms} />
             <input type="hidden" name="docTermsOfService" value={terms.current.termsOfService} />
             <input type="hidden" name="docPrivacyPolicy" value={terms.current.privacyPolicy} />
+            <input type="hidden" name="screenVersion" value={terms.screenVersion} />
             <label className="consent">
               <input type="checkbox" name="termsAccepted" />
-              <span>I have read and agree to the updated <a href={`${config.siteUrl}/cloud-terms`} target="_blank" rel="noreferrer">Murage Cloud terms</a>,
+              <span>I confirm I am 18 or older, and I have read and agree to the updated <a href={`${config.siteUrl}/cloud-terms`} target="_blank" rel="noreferrer">Murage Cloud terms</a>,
                 the <a href={`${config.siteUrl}/terms-of-service`} target="_blank" rel="noreferrer">Terms of Service</a> and
                 the <a href={`${config.siteUrl}/privacy-policy`} target="_blank" rel="noreferrer">Privacy Policy</a></span>
             </label>

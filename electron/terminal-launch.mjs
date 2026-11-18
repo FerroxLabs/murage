@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { execFile, spawn } from "node:child_process";
 import { lstatSync } from "node:fs";
 import { win32 } from "node:path";
@@ -21,16 +22,19 @@ export function userTerminalEnv(env = process.env) {
 }
 export const systemRootOf = (env) => typeof env.SystemRoot === "string" && WINDOWS_ROOT.test(env.SystemRoot) ? env.SystemRoot.replace(/\\+$/, "") : "C:\\Windows";
 /** The launch for a new terminal window: [executable, args, options, kind], Windows Terminal first, else a PowerShell console window.
- * kind "wt" is awaited through its exit callback; kind "user_terminal" is the PowerShell fallback (see openWindowsTerminal). */
+ * Both use a hidden cmd starter whose exit can be awaited without retaining the terminal's pipes. */
 export function windowsTerminalLaunches(env = process.env, exists) {
   const out = [];
   const clean = userTerminalEnv(env);
   const wt = windowsTerminalAlias(env, exists);
-  if (wt) out.push([wt, [], { timeout: 15_000, env: clean }, "wt"]);
   const root = systemRootOf(env);
   const cmd = win32.join(root, "System32", "cmd.exe");
   const powershell = win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const profile = typeof env.USERPROFILE === "string" && WINDOWS_ROOT.test(env.USERPROFILE) ? env.USERPROFILE : undefined;
+  // Windows Terminal honors STARTUPINFO's show state, including SW_HIDE. Hide
+  // only the cmd helper; start gives the explicitly requested GUI its normal
+  // show state. The validated alias path cannot contain cmd metacharacters.
+  if (wt) out.push([cmd, ["/d", "/c", `start "" "${wt}"`], { windowsHide: true, windowsVerbatimArguments: true, stdio: "ignore", env: clean }, "wt"]);
   // user_terminal (server/no-powershell-spawn.allowlist.json): the ONE place Murage opens PowerShell, and only when the person asked
   // for a terminal (Open terminal) and Windows Terminal is missing. cmd's `start` gives it a console window of its own (conhost); its
   // argv is exactly powershell.exe -NoExit: no -Command, -File, -EncodedCommand or script text. It starts in the person's home folder
@@ -39,21 +43,16 @@ export function windowsTerminalLaunches(env = process.env, exists) {
   out.push([cmd, ["/d", "/c", `start "" "${powershell}" -NoExit`], { windowsHide: true, windowsVerbatimArguments: true, stdio: "ignore", env: clean, ...(profile ? { cwd: profile } : {}) }, "user_terminal"]);
   return out;
 }
-/** Awaits each launch: Windows Terminal through its exit callback, the PowerShell window through cmd's exit (its stdio is ignored, so
- * the window it starts holds no pipe of ours open). */
-async function openWindowsTerminal(env, run, start, exists) {
-  for (const [executable, args, options, kind] of windowsTerminalLaunches(env, exists)) {
+/** Awaits cmd's exit; the window it starts holds no pipe of ours open. */
+async function openWindowsTerminal(env, start = spawn, exists) {
+  for (const [executable, args, options] of windowsTerminalLaunches(env, exists)) {
     const ok = await new Promise((resolve) => {
-      if (kind === "user_terminal") {
-        let child;
-        try { child = start(executable, args, options); } catch { resolve(false); return; }
-        const timer = setTimeout(() => resolve(false), 15_000);
-        child.once("error", () => { clearTimeout(timer); resolve(false); });
-        child.once("exit", (code) => { clearTimeout(timer); resolve(code === 0); });
-        child.unref?.();
-        return;
-      }
-      try { run(executable, args, options, (error) => resolve(!error)); } catch { resolve(false); }
+      let child;
+      try { child = start(executable, [...args], withHideInherit({ ...options, windowsHide: true })); } catch { resolve(false); return; }
+      const timer = setTimeout(() => resolve(false), 15_000);
+      child.once("error", () => { clearTimeout(timer); resolve(false); });
+      child.once("exit", (code) => { clearTimeout(timer); resolve(code === 0); });
+      child.unref?.();
     });
     if (ok) return true;
   }
@@ -65,7 +64,7 @@ function launch(executable, args, options, run = execFile) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = run(executable, args, options);
+      child = run(executable, [...args], withHideInherit(options));
     } catch {
       resolve(false);
       return;
@@ -105,11 +104,11 @@ export async function openBlankTerminal(platform = process.platform, run = execF
     // the App Execution Alias every Windows 11 and a current Windows 10 has) opens their default profile in a new window, PowerShell
     // on a stock install. Without it, a PowerShell console window (MurageMain: the shown commands are PowerShell, so never cmd).
     // Both are awaited, so a launcher that failed is not reported as a window.
-    return openWindowsTerminal(env, run, start, exists);
+    return openWindowsTerminal(env, (file, args, options) => start(file, [...args], withHideInherit(options)), exists);
   }
   if (platform === "linux") {
     for (const terminal of ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"]) {
-      if (await launch(terminal, [], undefined, run)) return true;
+      if (await launch(terminal, [], undefined, (file, args, options, callback) => run(file, [...args], withHideInherit(options), callback))) return true;
     }
   }
   return false;

@@ -17,6 +17,7 @@
     <p class="location"><span>Murage data folder</span><br><code id="location">Checking...</code></p>
     <div id="error" role="alert" hidden></div>
     <p id="status" role="status" aria-live="polite"></p>
+    <section id="one-time-step" hidden><button data-action="retry" class="primary">Open Murage again</button></section>
     <section id="encrypted-backup" aria-labelledby="encrypted-heading" hidden>
       <h2 id="encrypted-heading">Restore from a backup</h2>
       <p>A backup holds your settings, bots, conversations, files and channel history. It does not hold sign-ins to AI engines or messaging apps, the local VM, or folders outside Murage. A restore goes into a new folder and stays paused until you review it; you connect engines and messaging apps again afterwards.</p>
@@ -72,7 +73,7 @@
       <div class="actions">
         <button data-action="backup">Save an older-style .zip recovery file</button>
         <button data-action="rollback">Undo a restore</button>
-        <button data-action="retry">Retry startup</button>
+        <button data-action="retry" id="retry-startup">Retry startup</button>
         <button data-action="diagnostics">Open diagnostics folder</button>
       </div>
     </section>

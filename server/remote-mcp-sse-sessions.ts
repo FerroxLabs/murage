@@ -11,6 +11,8 @@
 // token cannot use it, it closes when the generation is revoked, and it closes
 // after a quiet spell.
 import { randomBytes } from "node:crypto";
+import { currentUpstreamAccounting, reserveUpstreamRequest, type UpstreamAccounting } from "./memory/upstream-reader.ts";
+import { reserveRelease } from "./memory/release-budget.ts";
 import type { Readable } from "node:stream";
 
 import { GuardedHttpError, guardedRequest, type GuardedRequestOptions, type GuardedStreamResponse } from "../shared/guarded-http.mjs";
@@ -28,7 +30,7 @@ export type SseSessionFailure = { ok: false; reason: McpProbeFailureReason; stat
 
 interface Pending {
   resolve: (frame: Frame | null) => void;
-  reject: (reason: McpProbeFailureReason) => void;
+  reject: (reason: unknown) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -42,6 +44,7 @@ interface Session {
   stream: GuardedStreamResponse;
   pending: Map<number | string, Pending>;
   closed: boolean;
+  accounting?: UpstreamAccounting;
 }
 
 /** 401 and 403 are sign-in problems; a 403 insufficient_scope is a step-up
@@ -150,12 +153,14 @@ export class RemoteSseSessions {
   private async connect(input: SseOpenInput): Promise<{ ok: true; sessionId: string } | SseSessionFailure> {
     let opened;
     try {
+      reserveUpstreamRequest(0);
       opened = await guardedRequest({
         url: input.url, method: "GET", kind: "sse", responseMode: "stream", mode: "request", confirmed: input.confirmed,
         signal: input.signal, resolver: input.resolver, totalMs: LIMITS.initializeRelayMs,
         headers: { accept: "text/event-stream", ...input.headers, ...(input.bearer ? { authorization: `Bearer ${input.bearer}` } : {}) },
       });
     } catch (error) {
+      if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
       return { ok: false, reason: reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable") };
     }
     if (opened.status !== 200 || !("stream" in opened)) {
@@ -163,19 +168,24 @@ export class RemoteSseSessions {
       return refusal(opened.status, opened.headers["www-authenticate"], input.bearer) ?? { ok: false, reason: "wrong-address", status: opened.status };
     }
     const stream = opened as unknown as GuardedStreamResponse;
-    const events = createSseReader(stream.stream as Readable, { idleMs: this.idleMs, maxEventBytes: LIMITS.sseEventBytes });
+    const accounting: UpstreamAccounting | undefined = currentUpstreamAccounting("sse");
+    const events = createSseReader(stream.stream as Readable, { idleMs: this.idleMs, maxEventBytes: LIMITS.sseEventBytes, accounting });
     let first;
+    let endpointTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       first = await Promise.race([
         events.next(),
         new Promise<never>((_, reject) => {
-          const timer = setTimeout(() => reject(new SseReaderError("idle-timeout")), LIMITS.initializeRelayMs);
-          timer.unref?.();
+          endpointTimer = setTimeout(() => reject(new SseReaderError("idle-timeout")), LIMITS.initializeRelayMs);
+          endpointTimer.unref?.();
         }),
       ]);
-    } catch {
+    } catch (error) {
       stream.close();
+      if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
       return { ok: false, reason: "no-answer" };
+    } finally {
+      clearTimeout(endpointTimer);
     }
     if (first.done || first.value.event !== "endpoint" || !isSameOriginEndpoint(input.url, first.value.data.trim())) {
       stream.close();
@@ -184,7 +194,7 @@ export class RemoteSseSessions {
     const id = randomBytes(12).toString("hex");
     const session: Session = {
       id, name: input.name, generation: input.generation, endpoint: new URL(first.value.data.trim(), input.url).href,
-      serverUrl: input.url, confirmed: input.confirmed, stream, pending: new Map(), closed: false,
+      serverUrl: input.url, confirmed: input.confirmed, stream, pending: new Map(), closed: false, accounting,
     };
     this.sessions.set(id, session);
     void this.pump(session, events);
@@ -193,7 +203,7 @@ export class RemoteSseSessions {
 
   /** Read answers off the stream until it ends, matching them to waiting calls. */
   private async pump(session: Session, events: AsyncGenerator<{ event: string; data: string }>): Promise<void> {
-    let reason: McpProbeFailureReason = "unreachable";
+    let reason: unknown = "unreachable";
     try {
       for (;;) {
         const next = await events.next();
@@ -215,13 +225,14 @@ export class RemoteSseSessions {
         }
       }
     } catch (error) {
-      reason = error instanceof SseReaderError && error.code === "idle-timeout" ? "no-answer" : "unreachable";
+      reason = (error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED" ? error
+        : error instanceof SseReaderError && error.code === "idle-timeout" ? "no-answer" : "unreachable";
     } finally {
       this.finish(session, reason);
     }
   }
 
-  private finish(session: Session, reason: McpProbeFailureReason): void {
+  private finish(session: Session, reason: unknown): void {
     if (session.closed) return;
     session.closed = true;
     this.sessions.delete(session.id);
@@ -264,6 +275,9 @@ export class RemoteSseSessions {
     }
     let response;
     try {
+      // The session retains its original generation even when the caller is
+      // resumed outside the opening async scope or under another owner.
+      if (session.accounting) reserveRelease(session.accounting.budgets, { attempts: 1, bytes: Buffer.byteLength(JSON.stringify(message)), work: 1 });
       response = await guardedRequest({
         url: session.endpoint, method: "POST", kind: "mcp", mode: "request", confirmed: session.confirmed,
         signal: input.signal, resolver: input.resolver, totalMs: input.timeoutMs, body: JSON.stringify(message),
@@ -271,6 +285,10 @@ export class RemoteSseSessions {
       });
     } catch (error) {
       forget();
+      if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") {
+        this.finish(session, error);
+        throw error;
+      }
       return { ok: false, reason: reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable") };
     }
     if (response.status >= 300) {
@@ -281,6 +299,7 @@ export class RemoteSseSessions {
     try {
       return { ok: true, frame: await waiting };
     } catch (why) {
+      if ((why as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw why;
       return { ok: false, reason: typeof why === "string" ? (why as McpProbeFailureReason) : "unreachable" };
     }
   }

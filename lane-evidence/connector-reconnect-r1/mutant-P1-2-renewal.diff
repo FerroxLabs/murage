@@ -1,0 +1,20 @@
+--- a/server/composio.ts
++++ b/server/composio.ts
+@@ -281,7 +281,7 @@
+     if (managedCredentialMark() !== before || nextOwner !== previousOwner) {
+       const previousWasFlux = previousFlux && previousOwner === backendFingerprint(previousProof ? "inventory-managed-owner" : "inventory-managed", previousFlux.url, previousProof || previousFlux.token);
+       const nextIsFlux = managedFluxAccess && nextOwner === backendFingerprint("inventory-managed-owner", managedFluxAccess.url, managedFluxOwner ?? "");
+-      const sameOwner = previousWasFlux && nextIsFlux && managedFluxOwner && previousFlux?.url === managedFluxAccess?.url
++      const sameOwner = false && previousWasFlux && nextIsFlux && managedFluxOwner && previousFlux?.url === managedFluxAccess?.url
+         && ((previousProof && previousProof === managedFluxOwner) || (!previousProof && previousFlux?.token === managedFluxAccess?.token));
+       if (sameOwner && previousOwner) {
+         const next = inventoryOwner({} as AppConfig);
+@@ -2192,7 +2192,7 @@
+   const legacyIdentityLive = legacy !== null && (claim === "none" || claim === "offered" || claim === "pending");
+   const access = flux && !legacyIdentityLive ? flux : legacy ?? flux ?? workerBrokerCredential();
+   const proof = managedFluxOwner === undefined ? process.env.MURAGE_FLUX_COMPOSIO_OWNER : managedFluxOwner;
+-  if (access && access === flux && typeof proof === "string" && /^[a-f0-9]{16}$/.test(proof)) {
++  if (false && access && access === flux && typeof proof === "string" && /^[a-f0-9]{16}$/.test(proof)) {
+     return backendFingerprint("inventory-managed-owner", access.url, proof);
+   }
+   return access ? backendFingerprint("inventory-managed", access.url, access.token) : null;

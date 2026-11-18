@@ -1,0 +1,30 @@
+diff --git a/server/drivers/acp/core.ts b/server/drivers/acp/core.ts
+index 81f2b5339b..288f630061 100644
+--- a/server/drivers/acp/core.ts
++++ b/server/drivers/acp/core.ts
+@@ -4394,6 +4394,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig>
+               resolve(!error);
+             });
+           });
++          const controlDoneB: ApprovalWriteCallback = error => { if (error) acpFenced(error, "acp.reply.control.b", requestProcess, { requestId: id as string | number | null, method: "fuigo/folder_trust/request" }); };
+           const trustAutoDone: ApprovalWriteCallback = error => { if (error) acpFenced(error, "acp.trust.auto", requestProcess, { requestId: id as string | number | null, method: "fuigo/folder_trust/request" }); };
+           const key: unknown = params.workspace;
+           if ((turn.permissionNow?.() ?? turn).noLimits === true) return reply("trust");
+@@ -4447,7 +4448,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig>
+             if (processReply || freshHomeThisTurn) {
+               if (live && kindsOk && !(insideNo && !declinesSeeded)) {
+                 markFolderTrustUnfit("folder-trust-card");
+-                NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", id, result: processReply ? { outcome: "trust", scope: "configAndCommands", duration: "process" } : { outcome: "trust", scope: "configAndCommands" } }, trustAutoDone));
++                NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", id, result: processReply ? { outcome: "trust", scope: "configAndCommands", duration: "process" } : { outcome: "trust", scope: "configAndCommands" } }));
+                 releaseTrustHold?.();
+                 return;
+               }
+@@ -4465,7 +4466,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig>
+             // digest does not carry a grant it holds.
+             if (support.folderTrustProcessReply?.(lastCliVersion) === true) {
+               markFolderTrustUnfit("folder-trust-card");
+-              NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", id, result: { outcome: "trust", scope: "configAndCommands", duration: "process" } }, trustAutoDone));
++              NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", id, result: { outcome: "trust", scope: "configAndCommands", duration: "process" } }));
+               releaseTrustHold?.();
+               if (!state.settled) noteFolderTrust(folderTrustChosenName(sources));
+               return;

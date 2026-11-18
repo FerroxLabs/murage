@@ -11,15 +11,24 @@
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { raiseLevel } from "./testing/raise-level.ts";
+import { fixtureMessageEvidence } from "./testing/display-fixture.ts";
 
 const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
 const PROMPT = "A red cube on a white table";
 const bank = JSON.stringify([{ id: "c-openai", preset: "openai", label: "Fixture OpenAI", enabled: true, key: "sk-proj-FAKE_IMAGE_AUTO", revision: "r1" }]);
 let fixture: VerificationServer, headers: Record<string, string>;
+const createdBots = new Set<string>();
+const observedImageHandles = new Map<string,string|null>();
 const call = async (method: string, path: string, body?: unknown, extra: Record<string, string> = headers) => {
+  const thread=path.match(/^\/api\/threads\/([^/]+)\/respond$/)?.[1];
+  const answer=body as {requestId?:unknown;behavior?:unknown}|undefined;
+  if(thread&&typeof answer?.requestId==='string'){
+    const handle=observedImageHandles.get(`${thread}:${answer.requestId}`);
+    if(handle){const {requestId:_native,behavior,...rest}=answer;body={...rest,requestHandle:handle,action:behavior};}
+  }
   const response = await fetch(fixture.info.url + path, { method, headers: { ...extra, ...(body === undefined ? {} : { "content-type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: response.status, body: await response.json().catch(() => null) as any };
 };
@@ -44,18 +53,44 @@ beforeAll(async () => {
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
 }, 60000);
 afterAll(async () => { await fixture?.close(); });
+afterEach(async () => {
+  if (!fixture) return;
+  // Each scenario finishes its own isolated work. A waiting image card from
+  // an earlier scenario must not hold the owner-first gate for webhook tests.
+  const runs = (await api('GET', '/api/routines')).body.runs ?? [];
+  for (const run of runs) if (createdBots.has(run.botId)) await api('POST', `/api/routine-runs/${run.id}/cancel`);
+  const bots = (await api('GET', '/api/bots?messages=0')).body.bots ?? [];
+  for (const bot of bots) if (createdBots.has(bot.id)) {
+    for (const threadId of new Set<string>([bot.threadId, ...(bot.tasks ?? []).map((task: any) => task.threadId)])) await api('POST', `/api/bots/${bot.id}/interrupt`, { threadId });
+  }
+  createdBots.clear();
+});
 
 async function makeBot(name: string, patch: Record<string, unknown> = {}) {
   const instance = (await api("GET", "/api/instances")).body.instances.find((entry: any) => entry.instanceId === "imager");
   const made = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "imager", model: instance.models.options[0]?.id || instance.models.default || "fixture-model" } });
   expect(made.status, JSON.stringify(made.body)).toBe(201);
   const bot = made.body.bot;
+  createdBots.add(bot.id);
   const flags = { computer: "off", browser: false, composio: false, ...patch };
   const set = patch.fullAccess === true || patch.noLimits === true ? await raiseLevel(api, bot.id, flags) : await api("PATCH", `/api/bots/${bot.id}`, flags);
   expect(set.status, JSON.stringify(set.body)).toBe(200);
   return bot as { id: string; threadId: string };
 }
-const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages`)).body.messages as any[];
+const messages = async (threadId: string) => {
+  const displayed=(await api("GET", `/api/threads/${threadId}/messages`)).body.messages as any[];
+  // MAIN RULING 2026-11-14 INT-CONFLICT-DEFAULT a62419d6d5/3ad2b8f428:
+  // preserve execution assertions and submit only a handle this HTTP view displayed.
+  const evidence=fixtureMessageEvidence(join(fixture.info.dataDir,"messages.db"),displayed);
+  for(let at=0;at<displayed.length;at++){
+    const id=evidence[at].card?.requestId,handle=displayed[at].card?.requestHandle;
+    if(typeof id!=='string'||typeof handle!=='string')continue;
+    const key=`${threadId}:${id}`;
+    if(!observedImageHandles.has(key))observedImageHandles.set(key,handle);
+    else if(observedImageHandles.get(key)!==handle)observedImageHandles.set(key,null);
+  }
+  return evidence;
+};
 const card = async (threadId: string) => (await messages(threadId)).find(message => message.card?.tool === "generate_image");
 const record = async (threadId: string) => (await messages(threadId)).find(message => message.tool?.imageRecord);
 const ask = (bot: { id: string; threadId: string }, extra?: Record<string, string>) => call("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "draw it" }, extra ?? headers);

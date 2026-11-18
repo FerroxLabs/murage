@@ -134,7 +134,7 @@ it("r9 (Astra r8 #2): the first check of a session resting on a large chained se
     }
   }
   console.log(`R9-COLD ${JSON.stringify(seen)}`);
-  for (const run of seen) { expect(run.check).toEqual({ bad: true, reason: "checking" }); expect(run.rows).toBeLessThan(20); }
+  for (const run of seen) { expect(run.check).toEqual({ bad: true, reason: "checking:root" }); expect(run.rows).toBeLessThan(20); } // MAIN RULING 1115-R5RUL-15 (GrokBuild)
   expect(seen[1]!.sqlRows).toBe(seen[0]!.sqlRows);
 });
 
@@ -143,7 +143,7 @@ it("r9 (Fable r8 #2): turns that fill the verdict cache between proof slices do 
   setVerdictLimitForTest(10_000);
   const db = database();
   bigSet(db, "big", 20_001); retain(db, "big");
-  expect(sessionCheck()).toEqual({ bad: true, reason: "checking" });
+  expect(sessionCheck()).toEqual({ bad: true, reason: "checking:root" }); // MAIN RULING 1115-R5RUL-17 (GrokBuild)
   const members: number[] = [];
   for (let slice = 0; slice < 20 && rootSetProofsPending(); slice++) {
     members.push(advanceRootSetProofs(4_000).members);
@@ -169,7 +169,7 @@ it("r9 (Astra r8 #3): a proof slice counts the members of sets nested under its 
   }
   bigSet(db, "big", 20_001, replies.map(id => ["C", id] as [string, string]));
   retain(db, "big");
-  expect(sessionCheck()).toEqual({ bad: true, reason: "checking" });
+  expect(sessionCheck()).toEqual({ bad: true, reason: "checking:root" }); // MAIN RULING 1115-R5RUL-16 (GrokBuild)
   const slices: Array<{ ms: number; walked: number; reported: number }> = [];
   for (let guard = 0; guard < 5_000 && rootSetProofsPending(); guard++) {
     resetRootSetWork();

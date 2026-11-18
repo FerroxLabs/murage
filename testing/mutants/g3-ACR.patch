@@ -1,0 +1,11 @@
+--- a/server/drivers/acp/core.ts
++++ b/server/drivers/acp/core.ts
+@@ -3868,7 +3868,7 @@
+               if (idleTimer) clearTimeout(idleTimer);
+               rpcPending.delete(id);
+               // The prompt's own refusal is classified by its caller (it settles first); every other rpc claims here, before it rejects.
+-              if (method !== "session/prompt") acpFenced(error, "acp.rpc", proc, { method });
++              // mutant
+               reject(error);
+             }, method === "session/prompt" && !steerWrite ? turn.beforeSubmit : beforeWrite, steerWrite));
+           });

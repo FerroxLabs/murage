@@ -24,10 +24,13 @@ const FULL: AutoApprover = { autoApprove: true, fullAccess: true };
 const NO_LIMITS: AutoApprover = { autoApprove: true, fullAccess: true, noLimits: true };
 const LEVELS: Array<[string, AutoApprover]> = [["Auto", AUTO], ["Full access", FULL], ["No limits", NO_LIMITS]];
 
-const verdict = (bot: AutoApprover, command: string) => {
+/** `owner`: the owner's own turn (stored origin). a39aa9f5c0 (Sean 2026-11-12 02:50Z): without a stored origin a No limits
+ * call is unproven and reads as an Ask bot, so the No limits relief below is asserted on the owner's turn. */
+const OWNER_TURN = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null } as const;
+const verdict = (bot: AutoApprover, command: string, owner = false) => {
   const call: GrantCall = { toolCall: { name: "shell", input: { command } }, toolKind: "execute", engine: "codex", commandShell: "pwsh" };
   const place: StopLinePlace = { cwd: CWD, home: "C:\\Users\\owner", roots: [CWD], knownRecipients: new Set(), realpath: (path) => (/^[a-z]:[\\/]|^\\\\/i.test(path) ? win32.normalize(path) : posix.normalize(path)) };
-  const context: AutoContext = { commandText: command, commandCwd: CWD, call, handedPins: new Map(), stopLine: classifyAsk({ ...call, tool: "shell", summary: command }, place) };
+  const context: AutoContext = { ...(owner ? OWNER_TURN : {}), commandText: command, commandCwd: CWD, call, handedPins: new Map(), stopLine: classifyAsk({ ...call, tool: "shell", summary: command }, place) };
   return autoVerdict(bot, "shell", command, context);
 };
 const rule = (command: string) => alwaysAskCommand(command, CWD, "command", "pwsh")?.rule ?? null;
@@ -90,7 +93,10 @@ describe("ordinary PowerShell reads run", () => {
     // Full access and No limits run it. Auto keeps its own prompt guard, which
     // reads a block with the POSIX reader (row NOLIMITS-PWSH-AUTO-PROMPT): the
     // always-ask card is what this row clears at every level
-    for (const bot of [FULL, NO_LIMITS]) expect(verdict(bot, command).approve, command).toBeTruthy();
+    expect(verdict(FULL, command).approve, command).toBeTruthy();
+    expect(verdict(NO_LIMITS, command, true), command).toMatchObject({ approve: "auto-approved shell (no limits)", source: "no-limits" });
+    // no stored origin: unproven, so No limits never runs more than an Ask bot (a39aa9f5c0)
+    expect(verdict(NO_LIMITS, command).approve, command).toBeNull();
     expect(verdict(AUTO, command).source).not.toBe("always-ask");
   });
 

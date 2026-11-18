@@ -1,7 +1,11 @@
+import { CONNECTOR_SAFE_READS, CONNECTOR_PROBE_INTERVAL_MS } from "../shared/connector-safe-reads.ts";
+import en from "../src/locales/en.json" with { type: "json" };
+import { channelReplyLanguage, channelReplyPacks } from "./channels/reply-text.ts";
 // Connected apps run through the Flux Router broker (and, for installs that
 // still hold a Worker identity, the legacy broker until it is claimed). No key
 // a person typed in is ever read here: a stored own key stays on disk, unused.
 import { toolSlugsOf, withScopeHint, type ScopeRoute } from "./connector-scope-hint.ts";
+import { composioFetch, composioAdmissionStatus, retryComposioRecovery, configureComposioLifecycle, applyComposioAdmissionStatus, resetComposioLifecycleForTests } from "./composio-lifecycle.ts";
 import { withForeignTimesNote } from "./connector-time-note.ts";
 import { ownerTimeZone } from "./owner-time-zone.ts";
 import { DATA_DIR, type AppConfig } from "./config.ts";
@@ -23,6 +27,10 @@ import {
   connectedAppRepeatNote,
   connectedAppToolId,
   connectedAppRequirements,
+  normalizedCallRows,
+  dispatchedCall,
+  accountsForRow as resolveAccountsForRow,
+  type ConnectedAppRequirement,
   isConnectedAppLookup,
   connectedAppUnknownText,
   connectedAppUnrecordedText,
@@ -46,16 +54,19 @@ import {
   waitForOperation,
   type ConnectedAppOperation,
   type OperationOutcome,
-  type RelayReply,
+  type RelayReply as BaseRelayReply,
 } from "./connected-app-operations.ts";
-import { classifyConnectedAppCall } from "../shared/connected-app-readonly.ts";
+type RelayReply = BaseRelayReply & { brokerFailure?: boolean; retryAfter?: string; upstreamStatus?: number };
+
+import { classifyConnectedAppCall, isVerifiedReadTool } from "../shared/connected-app-readonly.ts";
 import { SqliteOperationJournal, defaultJournalFile } from "./connected-app-journal.ts";
 import { devFluxTokenApplies, devFluxTokenInFlight, ensureDevFluxBrokerToken, readDevFluxTokenDocument, resetDevFluxTokenState } from "./flux-composio-dev-token.ts";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as net from "node:net";
-import { fluxRetryDelayMs } from "./flux-key-health.ts";
+import { SingleFlight, backoffDelayMs, isBackoffStatus, parseRetryAfterMs } from "./upstream-backoff.ts";
 import { z } from "zod";
-import { brokerTokenFingerprint } from "../electron/flux-composio-token.mjs";
+import { brokerTokenFingerprint, fluxKeyFingerprint } from "../electron/flux-composio-token.mjs";
+import { fluxKey } from "./flux-config.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import {
   clearInventory,
@@ -72,6 +83,7 @@ import {
 } from "./connected-inventory.ts";
 import {
   accountKeyOf,
+  connectorHealthStore,
   clearAllHealth,
   clearNeedsReconnect,
   healthMark,
@@ -83,16 +95,19 @@ import {
 import { handOverInitialTools } from "./connector-cache-harness.ts";
 import { INITIAL_GENERATION, INITIAL_TOOLS_ASK_HARNESS } from "./connector-cache.ts";
 import { catalogApp, knownApps, loadCatalog, type CatalogApp, type CatalogBackend, type CatalogView } from "./app-catalog.ts";
-import { isFluxHost, setFluxUsageHeaders } from "./flux-usage-tags.ts";
 
 export interface ConnectedAccountSummary {
+  checkState?: "unverified";
   id: string;
   alias?: string;
   status: string;
+  needsReconnect?: boolean;
   /** Why the provider ended a sign-in, and when it began: kept so a card can
    * say "expired" or "refused" instead of the provider's status word. */
   statusReason?: string;
   createdAt?: string;
+  /** Provider grant expiry in Unix milliseconds, independent of inventory status. */
+  expiresAt?: number;
 }
 
 export interface ConnectorServiceState {
@@ -119,6 +134,7 @@ const connectorServiceSchema = z.object({
     status: z.string(),
     statusReason: z.string().optional(),
     createdAt: z.string().optional(),
+    expiresAt: z.number().finite().optional(),
   })).optional(),
 });
 const connectorServicesResponseSchema = z.object({ services: z.record(z.string(), connectorServiceSchema).optional() });
@@ -143,6 +159,7 @@ export interface ComposioMcpIntegration {
 }
 
 interface IntegrationContext {
+  noLimits?: boolean;
   harnessUrl: string;
   commsToken: string;
   botId: string;
@@ -195,6 +212,7 @@ let managedBrokerAccess: { url: string; token: string } | null | undefined;
 // override turns it on) and the harness-only broker token minted from the
 // stored Flux key. `undefined` = no desktop message yet, read the env.
 let managedFluxBrokerUrl: string | undefined;
+let managedFluxOwner: string | null | undefined;
 let managedFluxAccess: { url: string; token: string } | null | undefined;
 let managedLegacyClaim: LegacyClaim | undefined;
 let managedAccountKind: AccountKind | null | undefined;
@@ -236,16 +254,21 @@ function normalizeManagedBrokerUrl(value: string): string {
  * that follows is the same install's re-mint, so the remembered list moves to
  * the new owner instead of being dropped (a rejection is not an owner change). */
 let tokenRejectedAwaitingReplacement = false;
+let healthOwnerAwaitingReplacement: string | null = null;
 
 /** Called after the managed credentials changed. */
 function credentialsChanged(): void {
   if (tokenRejectedAwaitingReplacement && inventoryOwner({} as AppConfig) !== null) {
     tokenRejectedAwaitingReplacement = false;
     toolResponseCache.clear();
-    rekeyInventory(inventoryOwner({} as AppConfig));
+    const nextOwner = inventoryOwner({} as AppConfig)!;
+    rekeyInventory(nextOwner);
+    if (healthOwnerAwaitingReplacement) connectorHealthStore().rekey(healthOwnerAwaitingReplacement, nextOwner);
+    healthOwnerAwaitingReplacement = null;
     return;
   }
   tokenRejectedAwaitingReplacement = false;
+  healthOwnerAwaitingReplacement = null;
   clearInventoryAndToolCache();
 }
 
@@ -257,13 +280,27 @@ let applyingBrokerMessage = false;
 
 export function applyManagedBrokerMessage(message: unknown): boolean {
   const before = managedCredentialMark();
+  const previousOwner = inventoryOwner({} as AppConfig);
+  const previousFlux = fluxBrokerCandidate();
+  const previousProof = managedFluxOwner === undefined ? process.env.MURAGE_FLUX_COMPOSIO_OWNER : managedFluxOwner;
   applyingBrokerMessage = true;
   try {
     return applyManagedBrokerMessageInner(message);
   } finally {
     applyingBrokerMessage = false;
-    // A new or removed token is a new owner: the old owner's list goes.
-    if (managedCredentialMark() !== before) credentialsChanged();
+    // A successful mint carries the fingerprint of the stored key that
+    // minted it. A matching fingerprint proves renewal, including at boot.
+    const nextOwner = inventoryOwner({} as AppConfig);
+    if (managedCredentialMark() !== before || nextOwner !== previousOwner) {
+      const previousWasFlux = previousFlux && previousOwner === backendFingerprint(previousProof ? "inventory-managed-owner" : "inventory-managed", previousFlux.url, previousProof || previousFlux.token);
+      const nextIsFlux = managedFluxAccess && nextOwner === backendFingerprint("inventory-managed-owner", managedFluxAccess.url, managedFluxOwner ?? "");
+      const sameOwner = previousWasFlux && nextIsFlux && managedFluxOwner && previousFlux?.url === managedFluxAccess?.url
+        && ((previousProof && previousProof === managedFluxOwner) || (!previousProof && previousFlux?.token === managedFluxAccess?.token));
+      if (sameOwner && previousOwner) {
+        const next = inventoryOwner({} as AppConfig);
+        if (next) { connectorHealthStore().rekey(previousOwner, next); rekeyInventory(next); toolResponseCache.clear(); }
+      } else credentialsChanged();
+    }
   }
 }
 
@@ -277,8 +314,10 @@ function applyManagedBrokerMessageInner(message: unknown): boolean {
     return false;
   }
   const data = parsed.data;
+  applyComposioAdmissionStatus(data.admission);
   setManagedBrokerAccess(data.access);
   if (Object.hasOwn(data, "fluxBrokerUrl") || Object.hasOwn(data, "fluxAccess")) {
+    managedFluxOwner = typeof data.fluxOwner === "string" && /^[a-f0-9]{16}$/.test(data.fluxOwner) ? data.fluxOwner : null;
     setFluxBrokerAccess(data.fluxAccess ?? null, typeof data.fluxBrokerUrl === "string" ? data.fluxBrokerUrl : "");
   }
   if (Object.hasOwn(data, "legacyClaim")) {
@@ -314,6 +353,7 @@ export function setFluxBrokerAccess(access: unknown, url: string): void {
   const before = managedCredentialMark();
   const nested = applyingBrokerMessage;
   try {
+    if (!nested) managedFluxOwner = null; // A bare replacement carries no same-owner proof.
     setFluxBrokerAccessInner(access, url);
   } finally {
     if (!nested && managedCredentialMark() !== before) credentialsChanged();
@@ -339,6 +379,7 @@ export function resetManagedBrokerState(): void {
   managedBrokerAccess = undefined;
   managedFluxBrokerUrl = undefined;
   managedFluxAccess = undefined;
+  managedFluxOwner = undefined;
   managedLegacyClaim = undefined;
   managedAccountKind = undefined;
   managedTokenError = undefined;
@@ -346,12 +387,16 @@ export function resetManagedBrokerState(): void {
   legacyMovedElsewhere = false;
   legacyRetiredObserved = false;
   unreachableLoggedAt.clear();
+  shopifyReconnectShown.clear();
   lastProbeCause = null;
   clearAllHealth();
+  idleProbeAt.clear();
   fluxReadiness = null;
   fluxReadinessProbe = null;
   fluxAccountStatus = null;
   fluxAccountStatusFailure = null;
+  resetComposioLifecycleForTests();
+  lastConnectorUseAt = -Infinity;
   devTokenRemintDue = false;
   devTokenRejectedFingerprint = undefined;
   tokenRejectedAwaitingReplacement = false;
@@ -437,6 +482,8 @@ function devFluxTokenEligible(url: string): boolean {
 function devFluxToken(url: string): { token?: string; accountKind?: AccountKind; tokenError?: string } {
   if (!devFluxTokenEligible(url)) return {};
   const document = readDevFluxTokenDocument();
+  const key = fluxKey();
+  if (!key || document.fluxComposioBrokerTokenKeyFingerprint !== fluxKeyFingerprint(key)) return { tokenError: document.fluxComposioTokenError };
   return {
     token: document.fluxComposioBrokerToken,
     accountKind: document.fluxComposioAccountKind,
@@ -507,8 +554,8 @@ let probeBackoffMs: readonly number[] = FLUX_PROBE_BACKOFF_MS;
 export function setFluxProbeBackoffMsForTests(ms?: readonly number[]): void {
   probeBackoffMs = ms ?? FLUX_PROBE_BACKOFF_MS;
 }
-/** The whole probe, every attempt and backoff: at most 14 s. */
-export const FLUX_PROBE_DEADLINE_MS = FLUX_PROBE_TIMEOUT_MS * (FLUX_PROBE_BACKOFF_MS.length + 1) + FLUX_PROBE_BACKOFF_MS.reduce((sum, ms) => sum + ms, 0);
+/** Three network attempts, including the authority's 30 s and 60 s transient floors. */
+export const FLUX_PROBE_DEADLINE_MS = FLUX_PROBE_TIMEOUT_MS * (FLUX_PROBE_BACKOFF_MS.length + 1) + 30_000 + 60_000;
 /** How long a turn's connector MOUNT waits on a readiness probe another request
  * already started, when there is no earlier ready answer to keep using.
  * Without the wait, the turn read the not-yet-updated cache, mounted no
@@ -544,7 +591,33 @@ async function settleWithin(promise: Promise<void>, ms: number): Promise<void> {
     if (timer) clearTimeout(timer);
   }
 }
-let fluxReadiness: { url: string; ready: boolean; at: number } | null = null;
+let fluxReadiness: { url: string; ready: boolean; at: number; retryAt?: number } | null = null;
+/** What Flux last said to the app's own background calls, per route family: a 429 or a 5xx
+ * opens it (exponential, jittered, Retry-After honoured) and every background caller waits. */
+configureComposioLifecycle(() => {
+  const flux = fluxBrokerCandidate(), legacy = workerBrokerCredential();
+  return { fluxBrokerUrl: fluxBrokerUrl(), legacyBrokerUrl: legacy?.url, legacyClaimed: legacyClaim().state === "claimed", prepareLegacy: false,
+    brokerCredentials: [flux, legacy].flatMap(access => access ? [{ url: access.url, tokenFingerprint: brokerTokenFingerprint(access.token) }] : []) };
+});
+const admissionFor = (family: "health" | "data" = "data") => {
+  const base = fluxBrokerUrl() || workerBrokerCredential()?.url;
+  return composioAdmissionStatus(base ? `${base}/${family === "health" ? "health" : "v1/mcp"}` : undefined);
+};
+const admissionHeld = () => admissionFor().outcome === "held";
+/** Whether a readiness answer is still the one to use (its own retry time when it has one). */
+function readinessFresh(cached: { ready: boolean; at: number; retryAt?: number }, now = Date.now()): boolean {
+  if (cached.retryAt !== undefined) return now < cached.retryAt;
+  return now - cached.at < (cached.ready ? FLUX_READY_TTL_MS : FLUX_NOT_READY_TTL_MS);
+}
+
+/** How long after the last connector use the app still counts as in use. Past it, nothing
+ * here asks Flux anything on its own (the background health pass, the allowance line). */
+export const CONNECTOR_IDLE_AFTER_MS = 30 * 60_000;
+let lastConnectorUseAt = -Infinity;
+/** A turn, a tool call, or a person opening Connected apps: the app is being used. */
+export function noteConnectorUse(): void { lastConnectorUseAt = Date.now(); }
+export function connectorRecentlyUsed(now = Date.now()): boolean { return now - lastConnectorUseAt < CONNECTOR_IDLE_AFTER_MS; }
+const flights = new SingleFlight();
 let fluxReadinessProbe: { url: string; promise: Promise<void>; deadline: number } | null = null;
 
 // Why connected apps read as unreachable. Every path that ends in "unreachable"
@@ -585,14 +658,31 @@ function logUnreachable(route: UnreachableRoute, cause: string): void {
 }
 
 async function probeFluxReadiness(url: string): Promise<void> {
+  const deadline = Date.now() + FLUX_PROBE_DEADLINE_MS;
   let ready = false;
   let cause: string | null = null;
+  let retryAt: number | undefined;
+  let limited = false;
   for (let attempt = 0; ; attempt++) {
     try {
-      const response = await fetch(`${url}/health`, { redirect: "error", signal: AbortSignal.timeout(FLUX_PROBE_TIMEOUT_MS) });
+      const response = await composioFetch(`${url}/health`, { redirect: "error", signal: AbortSignal.timeout(FLUX_PROBE_TIMEOUT_MS) });
+      if (response.headers.get("x-connected-apps-admission") === "held") {
+        retryAt = admissionFor("health").retryAt;
+        limited = true;
+        cause ??= `HTTP ${response.status}`;
+        void response.body?.cancel().catch(() => {});
+        break;
+      }
       const body = response.status === 200 ? await response.json().catch(() => null) : null;
       ready = body !== null && typeof body === "object" && (body as { ready?: unknown }).ready === true;
       cause = ready ? null : response.status === 200 ? "HTTP 200 health not ready" : `HTTP ${response.status}`;
+      if (!ready && isBackoffStatus(response.status)) {
+        const delay = Math.max(0, (admissionFor("health").retryAt ?? Date.now()) - Date.now());
+        limited = response.status === 429;
+        // Every HTTP refusal, including the first 5xx, supplies a retry deadline.
+        retryAt = Date.now() + delay;
+        void response.body?.cancel().catch(() => {});
+      }
       break;
     } catch (error) {
       // no answer at all (a connect timeout, a reset, a name lookup, the attempt's own timeout): try again. Any other
@@ -601,12 +691,21 @@ async function probeFluxReadiness(url: string): Promise<void> {
       cause = errorCause(error);
       const backoff = probeBackoffMs[attempt];
       if (backoff === undefined || !probeRetryable(error)) break;
-      await sleep(backoff);
+      retryAt = admissionFor("health").retryAt;
+      const delay = Math.max(backoff, (retryAt ?? Date.now()) - Date.now());
+      if (Date.now() + delay + FLUX_PROBE_TIMEOUT_MS > deadline) break;
+      await sleep(delay);
     }
   }
   lastProbeCause = cause;
   if (cause !== null) logUnreachable("readiness probe", cause);
-  if (fluxBrokerCandidate()?.url === url) fluxReadiness = { url, ready, at: Date.now() };
+  if (fluxBrokerCandidate()?.url === url) {
+    // A request limit says nothing about whether Flux is up: the last good answer stands (connected apps
+    // and their cached tools stay), and the next look is a backoff away instead of 20 s.
+    const previous = fluxReadiness;
+    const keep = limited && previous !== null && previous.url === url && previous.ready;
+    fluxReadiness = { url, ready: keep ? true : ready, at: Date.now(), ...(retryAt !== undefined ? { retryAt } : {}) };
+  }
 }
 
 /** Readiness must never be trusted past its lifetime by a reader that does
@@ -617,8 +716,7 @@ async function probeFluxReadiness(url: string): Promise<void> {
  * restart and nothing pressed. */
 function healReadiness(url: string): void {
   const cached = fluxReadiness;
-  const ttl = cached && cached.url === url ? (cached.ready ? FLUX_READY_TTL_MS : FLUX_NOT_READY_TTL_MS) : 0;
-  if (cached && cached.url === url && Date.now() - cached.at < ttl) return;
+  if (cached && cached.url === url && readinessFresh(cached)) return;
   if (fluxReadinessProbe && fluxReadinessProbe.url === url) return;
     void primeBrokerReadiness({ turn: true }).catch(() => {});
 }
@@ -635,10 +733,10 @@ export async function primeBrokerReadiness(options: { turn?: boolean; mount?: bo
   await primeDevFluxToken(options);
   const candidate = fluxBrokerCandidate();
   if (!candidate) return;
+  if (admissionFor("health").outcome === "held") return;
   const cached = fluxReadiness;
   if (cached && cached.url === candidate.url) {
-    const ttl = cached.ready ? FLUX_READY_TTL_MS : FLUX_NOT_READY_TTL_MS;
-    if (Date.now() - cached.at < ttl) return;
+    if (readinessFresh(cached)) return;
   }
   // 1.0.10 (A8): last-known-good. While a probe runs after a ready answer, that
   // answer stands (the synchronous read keeps it until the probe finishes), so a
@@ -685,6 +783,13 @@ async function primeDevFluxToken(options: { turn?: boolean }): Promise<void> {
   }
 }
 
+export async function retryConnectedAppsRecovery() {
+  await primeDevFluxToken({});
+  const result = await retryComposioRecovery();
+  return { outcome: result.outcome, reason: result.reason, attempted: result.attempted, reconnected: result.reconnected === true,
+    ...(result.retryAt === undefined ? {} : { retryAt: result.retryAt }), ...(result.status === undefined ? {} : { status: result.status }) };
+}
+
 /** `tokenFingerprint` names the token that was rejected (never the token), so
  * the desktop can tell the one held now from one already replaced; `code` is
  * what Flux said (revoked, or another device took over). */
@@ -699,7 +804,8 @@ async function responseCode(response: Response): Promise<string | undefined> {
   try {
     const body = (await response.clone().json()) as { code?: unknown } | null;
     return typeof body?.code === "string" ? body.code : undefined;
-  } catch {
+  } catch (error) {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
     return undefined;
   }
 }
@@ -716,10 +822,10 @@ async function responseCode(response: Response): Promise<string | undefined> {
  * It also has to stay honest about the OTHER way in. Somebody running their
  * own connected-apps key is a real and supported case, so the sentence still
  * says a key of their own will do, without naming whose key it is: the
- * catalogue is "500+ apps", named by example, everywhere a person can read it.
+ * catalog is named by example, everywhere a person can read it.
  */
 export const BROKER_UNAVAILABLE =
-  "Connected apps need Flux Router. Connect Flux Router and 500+ apps come with it, Gmail, Slack, Notion and GitHub among them. Your own connected-apps key works too, if you have one.";
+  "Connected apps need Flux Router. Connect Flux Router and your apps come with it, Gmail, Slack, Notion and GitHub among them. Your own connected-apps key works too, if you have one.";
 
 /** What a connector call says while connected apps cannot be reached at the
  * moment (a dropped connection, the service restarting) and a sign-in exists.
@@ -740,9 +846,11 @@ async function observeBrokerResponse(broker: BrokerAccess, response: Response, o
       return;
     }
     if (response.status === 404 || response.status === 503) {
-      // 404 is how the Flux broker answers while it is dark.
       logUnreachable(options.route ?? "panel", `HTTP ${response.status}`);
-      invalidateBrokerReadiness();
+      // A data-route 503 opens admission backoff, but does not contradict a healthy
+      // /health answer. Keep it so the mandatory post-probe inventory read can
+      // still discover an expired sign-in. A 404 says the broker itself is dark.
+      if (response.status === 404) invalidateBrokerReadiness();
     } else if (response.status === 401) {
       logUnreachable(options.route ?? "panel", "HTTP 401 token rejected");
       // EVERY 401 on a Flux data route says this token no longer works, whatever
@@ -755,6 +863,7 @@ async function observeBrokerResponse(broker: BrokerAccess, response: Response, o
       // panel still opens at once. Only the tool answers go.
       toolResponseCache.clear();
       invalidateInventory(inventoryOwner({} as AppConfig));
+      healthOwnerAwaitingReplacement = inventoryOwner({} as AppConfig);
       tokenRejectedAwaitingReplacement = true;
       const tokenFingerprint = brokerTokenFingerprint(broker.token);
       if (devFluxTokenEligible(broker.url)) {
@@ -891,7 +1000,8 @@ export function connectorMigration(cfg: AppConfig): ConnectorMigration {
 }
 
 // The last /v1/me from the Flux broker, for the free-allowance line.
-const FLUX_ACCOUNT_STATUS_TTL_MS = 60_000;
+// The allowance line moves slowly: ten minutes is plenty, and it is only asked for when a person is looking.
+const FLUX_ACCOUNT_STATUS_TTL_MS = 10 * 60_000;
 let fluxAccountStatus: { url: string; token: string; at: number; freeRunsRemainingToday: number | null } | null = null;
 let fluxAccountStatusFailure: { url: string; token: string; count: number; nextAt: number } | null = null;
 const fluxMeSchema = z.object({ freeRunsRemainingToday: z.number().int().min(0).nullable().optional() }).passthrough();
@@ -901,27 +1011,31 @@ const fluxMeSchema = z.object({ freeRunsRemainingToday: z.number().int().min(0).
 export async function refreshFluxAccountStatus(cfg: AppConfig): Promise<void> {
   const broker = activeBroker(cfg);
   if (broker?.kind !== "flux") return;
+  noteConnectorUse();
   const cached = fluxAccountStatus;
   if (cached && cached.url === broker.url && cached.token === broker.token && Date.now() - cached.at < FLUX_ACCOUNT_STATUS_TTL_MS) return;
-  // A failed ask is not repeated on every panel request: 1 minute, doubling to
-  // 1 hour, and after a 401 not at all until the broker token changes.
+  // A failed ask is not repeated on every panel request: it backs off exponentially with jitter, honours
+  // Retry-After, and after a 401 stops until the broker token changes.
   const failed = fluxAccountStatusFailure;
   if (failed && failed.url === broker.url && failed.token === broker.token && Date.now() < failed.nextAt) return;
-  const fail = (stop: boolean) => {
-    const same = failed && failed.url === broker.url && failed.token === broker.token;
-    const count = (same ? failed.count : 0) + 1;
-    fluxAccountStatusFailure = { url: broker.url, token: broker.token, count, nextAt: stop ? Number.POSITIVE_INFINITY : Date.now() + fluxRetryDelayMs(count) };
-  };
-  try {
-    const response = await brokerRequest(cfg, "/v1/me", { signal: AbortSignal.timeout(8_000) });
-    if (!response.ok) { void response.body?.cancel().catch(() => {}); fail(response.status === 401); return; }
-    const body = fluxMeSchema.safeParse(await response.json());
-    if (!body.success) { fail(false); return; }
-    fluxAccountStatusFailure = null;
-    fluxAccountStatus = { url: broker.url, token: broker.token, at: Date.now(), freeRunsRemainingToday: body.data.freeRunsRemainingToday ?? null };
-  } catch {
-    fail(false); // leave the previous answer, if any
-  }
+  // One /v1/me in flight however many panel requests ask at once.
+  return flights.run(`me|${broker.url}|${brokerTokenFingerprint(broker.token)}`, async () => {
+    const fail = (stop: boolean, retryAfter?: string | null) => {
+      const same = failed && failed.url === broker.url && failed.token === broker.token;
+      const count = (same ? failed.count : 0) + 1;
+      fluxAccountStatusFailure = { url: broker.url, token: broker.token, count, nextAt: stop ? Number.POSITIVE_INFINITY : Date.now() + backoffDelayMs(count + 1, parseRetryAfterMs(retryAfter)) }; // 1 min nominal, as before, then doubling
+    };
+    try {
+      const response = await brokerRequest(cfg, "/v1/me", { signal: AbortSignal.timeout(8_000) });
+      if (!response.ok) { void response.body?.cancel().catch(() => {}); fail(response.status === 401, response.headers.get("retry-after")); return; }
+      const body = fluxMeSchema.safeParse(await response.json());
+      if (!body.success) { fail(false); return; }
+      fluxAccountStatusFailure = null;
+      fluxAccountStatus = { url: broker.url, token: broker.token, at: Date.now(), freeRunsRemainingToday: body.data.freeRunsRemainingToday ?? null };
+    } catch {
+      fail(false); // leave the previous answer, if any
+    }
+  });
 }
 
 /** Refresh the allowance line without letting it hold up a route: waits at
@@ -960,6 +1074,7 @@ export function connectorPanelFields(cfg: AppConfig, fluxIsConfigured: boolean) 
     fluxBrokerEnabled: fluxBrokerEnabled(),
     freeRunsRemainingToday: freeRunsRemainingToday(cfg),
     ownKeyRetired: ownKeyRetired(cfg),
+    admission: composioAdmissionStatus(),
   };
 }
 
@@ -1109,7 +1224,7 @@ export function connectorSystemPrompt(access: ConnectorAccess): string {
     case "unconfigured":
       return " You have no connected-app tools this turn because this workspace has no connected-apps service set up: connected apps run through FluxRouter, and this workspace has not connected FluxRouter yet, so no bot here can reach connected apps. If the user asks for work in a connected service, say that connected apps are not set up in this workspace yet and point them at the Flux Router key in Models settings; do not claim a particular service failed or is disconnected.";
     case "unreachable":
-      return " You have no connected-app tools this turn because connected apps can't be reached right now. Connected apps are already working for this workspace and nothing is wrong with the user's connections; the service is briefly unreachable, usually for under a minute. If the user asks for work in a connected service, say that connected apps can't be reached right now, that this is usually brief, and that you can try again in a minute. Never tell them connected apps need to be set up or reconnected, and do not claim a particular service failed or is disconnected.";
+      return ` You have no connected-app tools this turn because ${unreachableSentence()} Connected apps are already working for this workspace. If the user asks for work in a connected service, report this scheduled retry time. Never tell them connected apps need to be set up or reconnected, and do not claim a particular service failed or is disconnected.`;
     case "engine":
       return " You have no connected-app tools this turn because the engine you are running on cannot mount connector tools. The workspace's connections may exist and be perfectly healthy, and another engine would reach them. If the user asks for work in a connected service, say that this bot's current engine cannot use connected apps and that switching its model/engine would; never tell them the service is disconnected.";
   }
@@ -1141,7 +1256,52 @@ export function requiredAppsSystemPrompt(
  * used to read the broker directly, which left every caller responsible for
  * gating itself — and a caller that forgot would have quietly spent the
  * broker owner's money on behalf of someone holding their own key. */
-async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): Promise<Response> {
+function admissionSentence(status = admissionFor()): string {
+  if (!status.retryAt) return "Connected apps are waiting to retry.";
+  const date = new Date(status.retryAt), now = new Date();
+  const zone = ownerTimeZone();
+  const localDay = (value: Date) => value.toLocaleDateString(undefined, { timeZone: zone });
+  const clock = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: zone });
+  const time = localDay(date) === localDay(now) ? clock : `${localDay(date)} ${clock}`;
+  const template = status.status === 429 ? en["connectedApps.rateLimitedUntil"] : en["connectedApps.retryAt"];
+  return template.replace("{time}", time);
+}
+
+function unreachableSentence(): string {
+  const status = composioAdmissionStatus();
+  return status.outcome === "held" ? `${BROKER_UNREACHABLE} ${admissionSentence(status)}` : BROKER_UNREACHABLE;
+}
+
+function brokerBackoffResponse(url?: string): Response | null {
+  const held = url ? composioAdmissionStatus(`${url}/v1/mcp`) : admissionFor();
+  const remaining = Math.max(0, (held.retryAt ?? 0) - Date.now());
+  return held.outcome === "held" ? Response.json({ error: admissionSentence(held), ...held }, {
+    status: held.status === 429 ? 429 : 503,
+    headers: { "retry-after": String(Math.ceil(remaining / 1000)), "x-connected-apps-admission": "held" },
+  }) : null;
+}
+
+export async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): Promise<Response> {
+  const read = (init?.method ?? "GET").toUpperCase() === "GET";
+  // Inventory owns generation-aware sharing, so its mandatory post-probe
+  // verification never joins an older ACTIVE fetch. Every attempt, including
+  // inventory and writes, is admitted by composioFetch at the transport.
+  if (read && path !== "/v1/connectors/connected") {
+    const key = `broker-read|${inventoryOwner(cfg)}|${path}`;
+    const held = await flights.run(key, async () => {
+      const response = await brokerRequestUpstream(cfg, path, init);
+      // Share bytes, not a tee'd stream: cancelling one cloned response otherwise
+      // waits forever for the unread original branch (catalog HTTP failures).
+      return { status: response.status, statusText: response.statusText,
+        headers: Array.from(response.headers), bytes: new Uint8Array(await response.arrayBuffer()) };
+    });
+    return new Response([204, 205, 304].includes(held.status) ? null : held.bytes.slice(),
+      { status: held.status, statusText: held.statusText, headers: held.headers });
+  }
+  return brokerRequestUpstream(cfg, path, init);
+}
+
+async function brokerRequestUpstream(cfg: AppConfig, path: string, init?: RequestInit): Promise<Response> {
   const broker = activeBroker(cfg);
   if (!broker) throw new Error(fluxSignedInButUnreachable(cfg) ? BROKER_UNREACHABLE : BROKER_UNAVAILABLE);
   const headers = new Headers(init?.headers);
@@ -1150,8 +1310,7 @@ async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): 
   headers.set("authorization", `Bearer ${broker.token}`);
   if (init?.body) headers.set("content-type", "application/json");
   // a broker on Flux Router: the usage tags say what the call is for (flux-usage-tags.ts)
-  if (isFluxHost(broker.url)) setFluxUsageHeaders(headers, { feature: "other" });
-  const response = await fetch(`${broker.url}${path}`, {
+  const response = await composioFetch(`${broker.url}${path}`, {
     ...init,
     headers,
     signal: init?.signal ?? AbortSignal.timeout(30_000),
@@ -1163,7 +1322,10 @@ async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): 
 }
 
 async function responseError(res: Response, fallback: string) {
-  const raw = await res.text().catch(() => "");
+  const raw = await res.text().catch(error => {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+    return "";
+  });
   try {
     const body = JSON.parse(raw);
     return String(body?.message ?? body?.error?.message ?? body?.error ?? fallback);
@@ -1185,7 +1347,7 @@ async function throwStatusFailure(res: Response, source: string): Promise<never>
   const detail = await responseError(res, "");
   console.warn(`connected apps: ${source} status check failed: HTTP ${res.status}${detail ? ` ${detail.slice(0, 300)}` : ""}`);
   const status = res.status >= 400 && res.status < 500 ? res.status : 502;
-  throw Object.assign(new Error(connectionStatusFailureSentence(res.status)), { status });
+  throw Object.assign(new Error(connectionStatusFailureSentence(res.status)), { status, retryAfter: res.headers.get("retry-after") });
 }
 
 async function throwBrokerError(res: Response, fallback: string): Promise<never> {
@@ -1405,6 +1567,7 @@ function rememberToolsList(owner: string, reply: RelayReply, revision: number | 
   }
 }
 
+/** What a tools/list answer says about asking again: a 429 or a 5xx opens the backoff (Retry-After honoured), a 200 closes it. */
 /** Test seam: the access revision of this install's connected apps changes (a connect or disconnect). */
 export function bumpAccessRevisionForTests(cfg: AppConfig): void {
   const owner = inventoryOwner(cfg);
@@ -1422,11 +1585,26 @@ function bundledProvisionalReply(id: JsonValue): RelayReply {
 }
 
 /** The same reply addressed to this request (a shared discovery answers several). */
-function replyWithId(reply: RelayReply, id: JsonValue): RelayReply {
-  if (reply.status !== 200 || !reply.contentType.includes("application/json")) return reply;
+function replyWithId(reply: RelayReply, id: JsonValue, sharedId?: unknown): RelayReply {
+  if (reply.status !== 200) return reply;
+  if (reply.contentType.includes("text/event-stream")) {
+    // Rewrite only the shared request's result/error, preserving foreign responses,
+    // notifications, SSE controls, and the event-stream content type.
+    const originalId = sharedId ?? replyMessage(reply)?.id;
+    if (originalId === undefined) return reply;
+    const text = new TextDecoder().decode(reply.bytes).replace(/^data:([^\r\n]*)/gm, (line, data: string) => {
+      try {
+        const frame = JSON.parse(data) as Record<string, JsonValue>;
+        if (frame.id !== originalId || (!("result" in frame) && !("error" in frame))) return line;
+        return `data: ${JSON.stringify({ ...frame, id })}`;
+      } catch { return line; }
+    });
+    return { ...reply, bytes: new TextEncoder().encode(text) };
+  }
+  if (!reply.contentType.includes("application/json")) return reply;
   try {
     const body = JSON.parse(new TextDecoder().decode(reply.bytes)) as Record<string, JsonValue>;
-    return jsonReply({ ...body, id });
+    return { ...reply, ...jsonReply({ ...body, id }) };
   } catch {
     return reply;
   }
@@ -1437,8 +1615,9 @@ export async function relayMcp(
   payload: JsonValue,
   transportSessionId?: string,
   beforeDispatch?: () => void,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; noRetry?: boolean; observe?: boolean } = {},
 ): Promise<RelayReply> {
+  if (options.observe !== false) noteConnectorUse(); // the health pass's own probes are not use
   if (!isToolsList(payload)) return relayMcpUpstream(cfg, payload, transportSessionId, beforeDispatch, false, options);
   const owner = inventoryOwner(cfg);
   if (!owner) return relayMcpUpstream(cfg, payload, transportSessionId, beforeDispatch, false, options);
@@ -1456,16 +1635,19 @@ export async function relayMcp(
   }
   if (held) {
     // Served now. One past its freshness refreshes behind, one refresh per revision at a time.
-    if (Date.now() - held.at >= TOOLS_LIST_TTL_MS && (!toolsListRefreshing.has(owner) || toolsListRefreshing.get(owner) !== revision)) {
+    // A refusal or fault (429, 5xx) backs the refresh off; the remembered list keeps being served meanwhile.
+    if (Date.now() - held.at >= TOOLS_LIST_TTL_MS && !admissionHeld() && (!toolsListRefreshing.has(owner) || toolsListRefreshing.get(owner) !== revision)) {
       toolsListRefreshing.set(owner, revision);
       void relayMcpUpstream(cfg, payload, undefined, beforeDispatch, true, options)
-        .then((reply) => { if (inventoryOwner(cfg) === owner) rememberToolsList(owner, reply, revision, epoch); }, () => {})
+        .then((reply) => { if (inventoryOwner(cfg) === owner) rememberToolsList(owner, reply, revision, epoch); }, () => {  })
         .finally(() => { if (toolsListRefreshing.get(owner) === revision) toolsListRefreshing.delete(owner); });
     }
     return jsonReply({ ...held.body, id });
   }
   const flightKey = `${owner}|${revision}|${epoch}`;
   let live = coldToolsListInFlight.get(flightKey);
+  // Nothing remembered and Flux just refused or failed: the standard tools answer now, with no new ask until the backoff ends.
+  if (!live && admissionHeld()) return bundledProvisionalReply(id);
   if (!live) {
     const started: Promise<RelayReply> = relayMcpUpstream(cfg, payload, transportSessionId, beforeDispatch, false, options).then((reply) => {
       if (inventoryOwner(cfg) === owner) rememberToolsList(owner, reply, revision, epoch);
@@ -1489,19 +1671,41 @@ export async function relayMcp(
   return bundledProvisionalReply(id);
 }
 
-async function relayMcpUpstream(
+export async function relayMcpUpstream(
+  cfg: AppConfig, payload: JsonValue, transportSessionId?: string, beforeDispatch?: () => void,
+  bypassCache = false, options: { timeoutMs?: number; noRetry?: boolean; observe?: boolean } = {},
+): Promise<RelayReply> {
+  const policy = toolCachePolicy(payload);
+  if (!policy || isToolsList(payload)) return dispatchMcpUpstream(cfg, payload, transportSessionId, beforeDispatch, bypassCache, options);
+  const owner = inventoryOwner(cfg);
+  const key = `discovery|${owner}|${connectionEpoch}|${inventoryVersion(owner)}|${transportSessionId ?? ""}|${policy.key}`;
+  const shared = await flights.run(key, async () => ({
+    reply: await dispatchMcpUpstream(cfg, payload, transportSessionId, beforeDispatch, bypassCache, options),
+    id: (payload as { id: JsonValue }).id,
+  }));
+  return replyWithId(shared.reply, (payload as { id: JsonValue }).id, shared.id);
+}
+
+async function dispatchMcpUpstream(
   cfg: AppConfig,
   payload: JsonValue,
   transportSessionId?: string,
   beforeDispatch?: () => void,
   bypassCache = false,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; noRetry?: boolean; observe?: boolean } = {},
 ): Promise<RelayReply> {
   // Every call re-checks readiness the way a turn start does (never waiting
   // on a probe already running), so a 503 earlier in this turn, which clears
   // it, is repaired here instead of failing every later call in the turn.
   await primeBrokerReadiness({ turn: true });
   const broker = activeBroker(cfg);
+  const gateReply = broker || fluxBrokerCandidate()
+    ? brokerBackoffResponse(broker?.url ?? fluxBrokerCandidate()?.url) : null;
+  if (gateReply) {
+    const answer = jsonRpcFailure(payload, unreachableSentence());
+    return { ...jsonReply(answer ?? { error: admissionSentence() }),
+      upstreamStatus: gateReply.status, retryAfter: gateReply.headers.get("retry-after")!, brokerFailure: true, delivery: "not-sent" };
+  }
   // The "did the configuration change under this call" check compares which
   // credential owns the call, not whether the broker is answering: a 503 that
   // clears readiness mid-call must not read as a configuration change.
@@ -1524,7 +1728,7 @@ async function relayMcpUpstream(
       logUnreachable("tool call", lastProbeCause ?? "no readiness answer");
       // Say it as the tool's own answer, in plain words, so the model relays
       // "briefly unreachable" rather than an error.
-      const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
+      const answer = jsonRpcFailure(payload, unreachableSentence());
       if (answer !== null) return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json", delivery: "not-sent" };
     }
     throw new Error(fluxSignedInButUnreachable(cfg) ? BROKER_UNREACHABLE : BROKER_UNAVAILABLE);
@@ -1545,16 +1749,16 @@ async function relayMcpUpstream(
   }
   const forwarded = transportSessionId && transportSessionBackends.get(transportSessionId) === identity ? transportSessionId : undefined;
   if (forwarded) headers.set("mcp-session-id", forwarded);
-  if (isFluxHost(url)) setFluxUsageHeaders(headers, { feature: "other" });
-  beforeDispatch?.();
   let response: Response;
   const body = JSON.stringify(payload);
+  let announced = false;
+  const announceDispatch = () => { if (!announced) { beforeDispatch?.(); announced = true; } };
   let tries = 0;
   try {
     for (;;) {
       tries++;
       try {
-        response = await fetch(url, {
+        response = await composioFetch(url, {
           method: "POST",
           headers,
           body,
@@ -1568,14 +1772,18 @@ async function relayMcpUpstream(
           signal: AbortSignal.timeout(options.timeoutMs ?? (connectedAppActionCall(payload)
             ? CONNECTED_APP_OPERATION_LIFETIME_MS
             : connectedAppCallTimeoutMs(payload) + CONNECTED_APP_RELAY_GRACE_MS)),
-        });
+        }, announceDispatch);
         break;
       } catch (error) {
         // 1.0.10 (A9): a call that never reached the broker (nothing was sent) is
         // tried twice more, 0.5 s then 1.5 s apart. A failure after the request
         // may have left is never sent again: its outcome is unknown.
         const backoff = TOOL_CALL_BACKOFF_MS[tries - 1];
-        if (broker?.kind === "flux" && error instanceof TypeError && neverConnected(error) && backoff !== undefined) { await sleep(backoff); continue; }
+        if (!options.noRetry && broker?.kind === "flux" && error instanceof TypeError && neverConnected(error) && backoff !== undefined) {
+          const retryAt = composioAdmissionStatus(url).retryAt;
+          await sleep(Math.max(backoff, (retryAt ?? Date.now()) - Date.now()));
+          continue;
+        }
         throw error;
       }
     }
@@ -1585,7 +1793,7 @@ async function relayMcpUpstream(
     if (broker?.kind === "flux" && error instanceof TypeError) {
       logUnreachable("tool call", tries > 1 ? `${errorCause(error)} after ${tries} tries` : errorCause(error));
       invalidateBrokerReadiness();
-      const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
+      const answer = jsonRpcFailure(payload, unreachableSentence());
       // Refused before anything left is "not sent"; a drop after the request
       // went out may have reached the app, so its outcome is unknown.
       const delivery = neverConnected(error) ? "not-sent" : "unknown";
@@ -1593,13 +1801,19 @@ async function relayMcpUpstream(
     }
     throw error;
   }
+  if (response.headers.get("x-connected-apps-admission") === "held") {
+    const answer = jsonRpcFailure(payload, admissionSentence(composioAdmissionStatus()));
+    void response.body?.cancel().catch(() => {});
+    return { ...jsonReply(answer ?? { error: admissionSentence(composioAdmissionStatus()) }), upstreamStatus: response.status,
+      retryAfter: response.headers.get("retry-after") ?? undefined, brokerFailure: true, delivery: "not-sent" };
+  }
   // fix round (Astra High 6): a redirect answer means the request reached a server that may have acted on it. It is
   // possibly delivered, never retried and never followed.
   if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
     await response.body?.cancel().catch(() => {});
     if (broker?.kind === "flux") logUnreachable("tool call", `HTTP ${response.status} redirect`);
-    const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
-    return { status: answer !== null ? 200 : 502, bytes: new TextEncoder().encode(JSON.stringify(answer ?? { error: "redirect" })), contentType: "application/json", delivery: "unknown" };
+    const answer = jsonRpcFailure(payload, unreachableSentence());
+    return { status: answer !== null ? 200 : 502, bytes: new TextEncoder().encode(JSON.stringify(answer ?? { error: "redirect" })), contentType: "application/json", brokerFailure: true, delivery: "unknown" };
   }
   // Read before any body is consumed: only the broker saying so, in so many
   // words, makes a 5xx "nothing was sent".
@@ -1621,11 +1835,11 @@ async function relayMcpUpstream(
       };
     }
     const unreachable = broker.kind === "flux" && (response.status === 503 || response.status === 404);
-    const plain = response.ok ? null : unreachable ? BROKER_UNREACHABLE : plainBrokerAnswer(cfg, broker, response.status, await responseCode(response));
+    const plain = response.ok ? null : unreachable ? unreachableSentence() : plainBrokerAnswer(cfg, broker, response.status, await responseCode(response));
     const answer = plain === null ? null : jsonRpcFailure(payload, plain);
     if (answer !== null) {
       await response.body?.cancel().catch(() => {});
-      return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json", delivery: refusal! };
+      return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json", brokerFailure: true, delivery: refusal!, upstreamStatus: response.status, retryAfter: response.headers.get("retry-after") ?? undefined };
     }
   }
   const declared = Number(response.headers.get("content-length") ?? "0");
@@ -1633,7 +1847,7 @@ async function relayMcpUpstream(
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("Connected-app response exceeded 20 MB");
   assertCurrent();
-  if (broker && response.ok) observeAppAnswer(cfg, payload, bytes);
+  if (broker && response.ok && options.observe !== false) await observeAppAnswer(cfg, payload, bytes, options.noRetry === true);
   if (cacheKey && cachePolicy && response.status === 200) rememberToolResponse(cacheKey, cachePolicy.ttlMs, response.headers.get("content-type"), bytes);
   if (forwarded) rememberTransportSession(forwarded, identity);
   const nextSession = response.headers.get("mcp-session-id") ?? undefined;
@@ -1645,18 +1859,23 @@ async function relayMcpUpstream(
     contentType: response.headers.get("content-type") ?? "application/json",
     transportSessionId: nextSession,
     ...(delivery ? { delivery } : {}),
+    ...(isBackoffStatus(response.status) ? { upstreamStatus: response.status, retryAfter: response.headers.get("retry-after") ?? undefined } : {}),
   };
 }
 
 // ── Which app needs signing in again ────────────────────────────────────
-// A tool call that comes back as an authorization failure marks THAT app
-// (connected-app-health.ts); a call to it that succeeds clears the mark. The
-// broker being dark, its token being rejected and a dropped connection are
-// whole-broker cases above and never mark an app. A 403 (a missing permission
-// scope, a policy refusal, from the app or from the broker) is not a sign-in
-// failure: signing in again would not change it, so it never marks an app
-// either; only a 401, a rejected or expired grant, or an explicit reconnect
-// signal does.
+// Inventory status identifies lapsed accounts. Structured upstream 401 also
+// identifies the selected account; a fixed credential preflight may use 403.
+// Flux project-key authentication and transport failures are broker outages.
+
+/** Shopify's connection can hold an offline token that expires, and refresh is not confirmed to work, so work nobody is
+ * watching (routines, scheduled or background turns, delegated work) uses the GraphQL actions only. Chat the owner is in
+ * keeps every Shopify action. Other apps are not touched. */
+const SHOPIFY_GRAPHQL_ACTION = /^SHOPIFY_GRAPH_?QL(_|$)/i;
+function unattendedShopifyRefused(tool: string): boolean {
+  return /^SHOPIFY_/i.test(tool) && !SHOPIFY_GRAPHQL_ACTION.test(tool);
+}
+const UNATTENDED_SHOPIFY_REFUSAL = "Shopify's older (REST) actions are not used in routines, scheduled or background turns, or delegated work, because the Shopify sign-in can expire without anyone there to notice. Nothing was sent to Shopify. Use the Shopify GraphQL actions (SHOPIFY_GRAPH_QL_QUERY) for this work, or ask the owner to run the REST action in a chat they are watching.";
 
 /** The tool slugs a request names, or none for a lookup or a non-call. */
 function toolsNamedBy(payload: JsonValue): string[] {
@@ -1672,22 +1891,79 @@ function toolsNamedBy(payload: JsonValue): string[] {
   return /^COMPOSIO_/.test(bare) ? [] : [bare];
 }
 
-function noteNeedsReconnect(cfg: AppConfig, slug: string, cause: string): void {
+function noteNeedsReconnect(cfg: AppConfig, slug: string, cause: string, accounts?: Array<{ id: string; alias?: string }>): void {
   const owner = inventoryOwner(cfg);
   if (!owner) return;
   const held = peekInventory(owner);
-  const fresh = markNeedsReconnect(owner, slug, cause, held?.[slug] ? accountKeyOf(held[slug]!.accounts) : null);
-  if (fresh) console.warn(`connected apps: ${safeCause(slug)} needs reconnecting: ${safeCause(cause)}`);
+  connectorHealthStore().batch(() => {
+    const fresh = markNeedsReconnect(owner, slug, cause, held?.[slug] ? accountKeyOf(held[slug]!.accounts) : null);
+    const previous = healthMark(owner, slug)?.accounts ?? [];
+    const selected = accounts ?? ((held?.[slug]?.accounts.length ?? 0) === 1 ? held![slug]!.accounts : []);
+    const merged = new Map(previous.map(a => [a.id, a]));
+    for (const { id, alias } of selected) merged.set(id, { id, ...(alias ? { alias } : {}) });
+    updateMark(owner, slug, { accounts: [...merged.values()] });
+    if (fresh) console.warn(`connected apps: ${safeCause(slug)} needs reconnecting: ${safeCause(cause)}`);
+  });
 }
 
-function observeAppAnswer(cfg: AppConfig, payload: JsonValue, bytes: Uint8Array): void {
+async function observeAppAnswer(cfg: AppConfig, payload: JsonValue, bytes: Uint8Array, probe: boolean): Promise<void> {
   const tools = toolsNamedBy(payload);
   if (!tools.length) return;
-  const requestId = (payload as { id?: unknown } | null)?.id;
-  const reading = readAppAnswer(tools, requestId, bytes);
   const owner = inventoryOwner(cfg);
-  for (const [slug, cause] of reading.failed) noteNeedsReconnect(cfg, slug, cause);
-  if (owner) for (const slug of reading.ok) if (!reading.failed.has(slug)) clearNeedsReconnect(owner, slug);
+  const reading = readAppAnswer(tools, (payload as { id?: unknown }).id, bytes);
+  if (reading.brokerAuth) return;
+  // Flux forwards provider failures without a stable error code. Refresh the
+  // authoritative account statuses on EVERY tool error, including generic ones.
+  if (reading.errors.size) {
+    try { await readConnectedInventory(cfg, { force: true, fresh: true }); }
+    catch { /* A failed inventory read is not proof of an account lapse. */ }
+  }
+  if (owner !== inventoryOwner(cfg)) return;
+  recordAppAnswer(cfg, payload, bytes, probe);
+}
+
+function accountsForRow(owner: string, slug: string, row: ConnectedAppRequirement): Array<{ id: string; alias?: string }> {
+  return resolveAccountsForRow(peekInventory(owner)?.[slug]?.accounts ?? [], healthMark(owner, slug)?.accounts ?? [], row);
+}
+
+function clearAccount(owner: string, slug: string, id: string): void {
+  connectorHealthStore().clearUnverified(owner, slug, id);
+  const mark = healthMark(owner, slug);
+  if (!mark) return;
+  const remaining = (mark.accounts ?? []).filter(account => account.id !== id);
+  if (remaining.length) updateMark(owner, slug, { accounts: remaining });
+  else clearNeedsReconnect(owner, slug);
+}
+
+function recordAppAnswer(cfg: AppConfig, payload: JsonValue, bytes: Uint8Array, probe: boolean): void {
+  const request = payload as { id?: unknown; params?: { name?: string; arguments?: unknown } };
+  const call = normalizedCallRows(request.params?.name ?? "", request.params?.arguments);
+  const owner = inventoryOwner(cfg);
+  // Scan-only requirements do not establish response row correspondence.
+  if (!owner || !call.complete) return;
+  const outcomes = new Map<string, { slug: string; account: { id: string; alias?: string }; failed?: string; ok: boolean; unknown: boolean }>();
+  for (const row of call.rows) {
+    const reading = readAppAnswer([row.tool], request.id, bytes, call.rows.length > 1 ? row.index : undefined);
+    if (reading.brokerAuth) return;
+    const slug = row.tool.split("_")[0]!.toLowerCase();
+    const status = reading.authStatus.get(slug);
+    const failed = status === 401 || (probe && status === 403) ? `HTTP ${status}` : undefined;
+    for (const account of accountsForRow(owner, slug, row)) {
+      const key = JSON.stringify([slug, account.id]);
+      const held = outcomes.get(key) ?? { slug, account, ok: false, unknown: false };
+      if (failed) held.failed = failed;
+      held.ok ||= reading.ok.has(slug);
+      held.unknown ||= reading.errors.has(slug) && !failed;
+      outcomes.set(key, held);
+    }
+  }
+  connectorHealthStore().batch(() => {
+    for (const { slug, account, failed, ok, unknown } of outcomes.values()) {
+      if (failed) noteNeedsReconnect(cfg, slug, failed, [account]);
+      else if (unknown) connectorHealthStore().setUnverified(owner, slug, account.id);
+      else if (ok) clearAccount(owner, slug, account.id);
+    }
+  });
 }
 
 /** The inventory with each app that needs signing in again marked so. A mark
@@ -1700,28 +1976,55 @@ function withAppHealth<T extends { connected: boolean; status?: string; needsRec
   cfg: AppConfig,
   owner: string | null,
   services: Record<string, T>,
+  authoritative = true,
 ): Record<string, T> {
   if (!owner) return services;
   const slugs = needsReconnectSlugs(owner);
-  if (!slugs.length) return services;
   const out = { ...services };
+  for (const [slug, service] of Object.entries(out)) {
+    out[slug] = { ...service, accounts: service.accounts?.map(account => ({ ...account,
+      ...(connectorHealthStore().unverified[JSON.stringify([owner, slug, account.id])] !== undefined ? { checkState: "unverified" as const } : {}),
+    })) };
+  }
   for (const slug of slugs) {
     const service = out[slug];
     const mark = healthMark(owner, slug);
-    if (!service || !mark) continue;
-    if (!service.connected) { clearNeedsReconnect(owner, slug); continue; }
+    if (!mark) continue;
+    if (!service) {
+      out[slug] = { connected: false, pending: false, status: "NEEDS_RECONNECT", needsReconnect: true,
+        accounts: (mark.accounts ?? []).map(account => ({ ...account, status: "EXPIRED" })) } as unknown as T;
+      continue;
+    }
+    // Disappearing accounts are not proof of a new sign-in.
     const key = accountKeyOf(service.accounts);
-    if (mark.accountKey === null) updateMark(owner, slug, { accountKey: key });
-    else if (key !== mark.accountKey) {
+    if (mark.accountKey === null) { if (authoritative) updateMark(owner, slug, { accountKey: key }); }
+    else if (authoritative && key !== mark.accountKey) {
       const before = new Set(mark.accountKey.split(",").filter(Boolean));
       const gained = key.split(",").some((id) => id !== "" && !before.has(id));
       const present = new Set((service.accounts ?? []).map((account) => account.id));
       const retire = gained ? (mark.replaces ?? []).filter((id) => present.has(id)) : [];
+      const active = new Set(key.split(",").filter(Boolean));
+      const remaining = (mark.accounts ?? []).filter(account => {
+        if (active.has(account.id) && !before.has(account.id)) return false;
+        if (gained && (!present.has(account.id) || mark.replaces?.includes(account.id))) return false;
+        return true;
+      });
+      if (!gained || remaining.length) {
+        if (remaining.length !== mark.accounts?.length) updateMark(owner, slug, { accounts: remaining });
+        out[slug] = { ...service, status: "NEEDS_RECONNECT", needsReconnect: true };
+        continue;
+      }
       clearNeedsReconnect(owner, slug);
       if (retire.length) void retireReplacedAccounts(cfg, slug, retire);
       continue;
     }
     out[slug] = { ...service, status: "NEEDS_RECONNECT", needsReconnect: true };
+  }
+  for (const slug of slugs) {
+    const service = out[slug];
+    if (!service) continue;
+    const failed = new Set(healthMark(owner, slug)?.accounts?.map(a => a.id) ?? []);
+    out[slug] = { ...service, accounts: service.accounts?.map(account => ({ ...account, needsReconnect: failed.has(account.id) })) };
   }
   return out;
 }
@@ -1752,14 +2055,24 @@ export function appsNeedingReconnect(cfg: AppConfig): Array<{ slug: string; labe
   const owner = inventoryOwner(cfg);
   if (!owner || !needsReconnectSlugs(owner).length) return [];
   const held = peekInventory(owner);
-  const services = held ? withAppHealth(cfg, owner, held as Record<string, InventoryServices[string] & { needsReconnect?: boolean }>) : {};
-  return Object.entries(services)
-    .filter(([, service]) => (service as { needsReconnect?: boolean }).needsReconnect)
-    .map(([slug, service]) => ({
-      slug,
-      label: reconnectLabel(slug),
-      accounts: (service.accounts ?? []).filter((account) => /^active$/i.test(account.status)).map((account) => ({ id: account.id, ...(account.alias ? { alias: account.alias } : {}) })),
-    }));
+  if (held) withAppHealth(cfg, owner, held);
+  return needsReconnectSlugs(owner).map(slug => ({
+    slug, label: reconnectLabel(slug),
+    accounts: healthMark(owner, slug)?.accounts ?? (held?.[slug]?.accounts ?? []).map(({ id, alias }) => ({ id, ...(alias ? { alias } : {}) })),
+  }));
+}
+
+/** Pending incidents survive a restart and do not depend on an inventory cache. */
+export function reconnectIncidents(cfg: AppConfig) {
+  const owner = inventoryOwner(cfg);
+  return owner ? appsNeedingReconnect(cfg).flatMap(app => {
+    const mark = healthMark(owner, app.slug)!;
+    return app.accounts.length ? app.accounts.map(account => {
+      const incident = mark.accountIncidents?.[account.id] ?? mark;
+      return { ...app, owner, ...mark, ...incident, notifiedAt: incident.notifiedAt,
+        accounts: [account], due: connectorHealthStore().due(owner, app.slug, account.id) };
+    }) : [{ ...app, owner, ...mark, due: connectorHealthStore().due(owner, app.slug) }];
+  }) : [];
 }
 
 /** What a bot is told when an app's sign-in no longer works: that app needs
@@ -1805,7 +2118,7 @@ function neverConnected(error: TypeError): boolean {
 }
 
 /** Codes the Flux broker answers a 503 with only when it turned the request
- * away before dispatching anything (flux-router 523958cb). */
+ * away before dispatching anything (the reviewed Flux router contract). */
 const FLUX_PRE_SEND_CODES = new Set(["apps_unavailable", "composio_unavailable", "capability_unavailable"]);
 
 /** What the broker's error body says about whether anything was dispatched. */
@@ -1816,7 +2129,8 @@ async function dispatchEvidence(response: Response): Promise<{ dispatched?: bool
       ...(body?.dispatched === false ? { dispatched: false } : {}),
       ...(typeof body?.code === "string" ? { code: body.code } : {}),
     };
-  } catch {
+  } catch (error) {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
     return {};
   }
 }
@@ -1878,6 +2192,32 @@ function textReply(id: unknown, text: string, isError = false): RelayReply {
   return jsonReply({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) } });
 }
 
+/** A filtered multi-call still answers the original request: remap only the
+ * broker's result envelopes, never indexes inside fetched application data. */
+function originalCallRowIndexes(content: unknown[], indexes: number[]): unknown[] {
+  const row = (value: unknown) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.tool_slug !== "string" && typeof entry.toolSlug !== "string") return value;
+    if (typeof entry.index !== "number" || !Number.isInteger(entry.index) || indexes[entry.index] === undefined) return value;
+    return { ...entry, index: indexes[entry.index] };
+  };
+  const envelope = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(row);
+    if (!value || typeof value !== "object") return value;
+    const top = value as Record<string, unknown>;
+    const data = top.data && typeof top.data === "object" && !Array.isArray(top.data) ? top.data as Record<string, unknown> : undefined;
+    return { ...(typeof top.tool_slug === "string" || typeof top.toolSlug === "string" ? row(top) as object : top),
+      ...(Array.isArray(top.results) ? { results: top.results.map(row) } : {}),
+      ...(Array.isArray(data?.results) ? { data: { ...data, results: data.results.map(row) } } : {}) };
+  };
+  return content.map(part => {
+    if (!part || typeof part !== "object" || typeof (part as { text?: unknown }).text !== "string") return part;
+    try { return { ...part, text: JSON.stringify(envelope(JSON.parse((part as { text: string }).text))) }; }
+    catch { return part; }
+  });
+}
+
 /** A kept answer handed to a later request: its id, with a note first. */
 function keptReply(op: ConnectedAppOperation, reply: RelayReply, id: unknown, now: number): RelayReply {
   const ago = Math.max(0, Math.round((now - op.startedAt) / 1000));
@@ -1921,7 +2261,12 @@ function withScopeRefusalNote(op: ConnectedAppOperation, reply: RelayReply): Rel
 
 /** What a request receives once an operation has an outcome. `first` is the
  * request that started it, which gets the broker's own bytes unchanged. */
+const operationReaderRefusals = new WeakMap<ConnectedAppOperation, unknown>();
+function assertOperationReader(op: ConnectedAppOperation): void {
+  if (operationReaderRefusals.has(op)) throw operationReaderRefusals.get(op);
+}
 function outcomeReply(op: ConnectedAppOperation, outcome: OperationOutcome, id: unknown, first: boolean): RelayReply {
+  assertOperationReader(op);
   if (outcome.kind === "answered") {
     connectedAppOperations.delivered(op);
     // The journal keeps the broker's raw answer; the note is added here, on the way to the bot, every time it is read.
@@ -1963,6 +2308,7 @@ async function statusReply(scope: string, id: unknown, args: unknown, waitMs: nu
   const handle = typeof input.handle === "string" ? input.handle.trim() : "";
   const op = handle ? connectedAppOperations.byHandle(scope, handle) : undefined;
   if (!op) return textReply(id, connectedAppNoRecordText(handle || "(none)"));
+  assertOperationReader(op);
   // The handle proves which bot asked, not that it may still see this: the
   // bot's grants as they are now must cover what the action used.
   authorizeStored?.(provenanceOf(op));
@@ -1999,6 +2345,12 @@ export async function relayConnectedAppCall(
   beforeDispatch: (() => void) | undefined,
   options: {
     botId: string; waitMs?: number; lifetimeMs?: number; statusWaitMs?: number;
+    scheduled?: boolean;
+    /** A routine, scheduled, background or delegated turn: nobody is there to see a failed call. */
+    unattended?: boolean;
+    noLimits?: boolean;
+    routineId?: string; routineRevision?: number;
+    onReconnect?: (message: string) => void;
     /** Throws when the bot may no longer use what a stored action used. */
     authorizeStored?: (used: ConnectedAppProvenance) => void;
     /** Called when an action's answer from the app is handed to the bot (first, joined or collected). */
@@ -2028,13 +2380,69 @@ export async function relayConnectedAppCall(
   }
   const action = connectedAppActionCall(payload);
   if (!action) return relayMcp(cfg, payload, transportSessionId, beforeDispatch);
+  beforeDispatch?.();
+  if (options.unattended && toolsNamedBy(payload).some(unattendedShopifyRefused)) {
+    return { ...textReply(action.id, UNATTENDED_SHOPIFY_REFUSAL, true), delivery: "not-sent" };
+  }
+  if (options.scheduled) {
+    const slugs = [...new Set(toolsNamedBy(payload).map(tool => tool.split("_")[0]!.toLowerCase()))];
+    if (slugs.length) await checkIdleConnectorHealth(cfg, slugs);
+    beforeDispatch?.();
+  }
+  const blocked = reconnectAppsForCall(cfg, payload);
+  if (!blocked.length && !appsNeedingReconnect(cfg).some(app => app.slug === "shopify")) shopifyReconnectShown.delete(inventoryOwner(cfg) ?? "none");
+  if (blocked.length) {
+    if (options.noLimits) {
+      const owner = inventoryOwner(cfg)!;
+      const normalized = normalizedCallRows(action.name, action.args);
+      const incidents = appsNeedingReconnect(cfg);
+      const failedRows = new Set<number>();
+      const lines = new Map<string, string>();
+      for (const row of normalized.rows) {
+        const slug = row.tool.split("_")[0]!.toLowerCase();
+        const incident = incidents.find(app => app.slug === slug);
+        if (!incident) continue;
+        for (const account of accountsForRow(owner, slug, row)) {
+          if (!incident.accounts.some(failed => failed.id === account.id)) continue;
+          failedRows.add(row.index);
+          lines.set(JSON.stringify([slug, account.id]), `Reconnect ${reconnectLabel(slug)} (${account.alias ?? account.id}) in App Settings → Connections → Connected apps.`);
+        }
+      }
+      const note = [...lines.values()].join("\n");
+      const call = dispatchedCall(action.name, action.args);
+      if (normalized.complete && call.rows.length > failedRows.size) {
+        // Keep the original wrapper and batch options, removing only rows for
+        // disconnected accounts. Healthy accounts still reach the broker.
+        const indexes = call.rows.map((_, index) => index).filter(index => !failedRows.has(index));
+        const body = { ...call.body, tools: indexes.map(index => call.rows[index]!) };
+        const args = action.args as Record<string, JsonValue>;
+        const inputKey = ["tool_input", "toolInput"].find(key => args[key] === call.body);
+        const arguments_ = inputKey ? { ...args, [inputKey]: body } : body;
+        const healthy = await relayConnectedAppCall(cfg, { ...message!, params: { ...params!, arguments: arguments_ } } as JsonValue, transportSessionId, beforeDispatch, options);
+        const answer = replyMessage(healthy, action.id);
+        if (answer?.result && typeof answer.result === "object") {
+          const result = answer.result as { content?: unknown[] };
+          return { ...healthy, ...jsonReply({ ...answer, result: { ...result, content: [{ type: "text", text: note }, ...originalCallRowIndexes(Array.isArray(result.content) ? result.content : [], indexes)] } }) };
+        }
+        // Preserve errors and delivery evidence when the healthy dispatch fails.
+        return { ...healthy, ...textReply(action.id, `${note}\n${new TextDecoder().decode(healthy.bytes)}`, Boolean(answer?.error)) };
+      }
+      return { ...textReply(action.id, note), delivery: "not-sent" };
+    }
+    const reconnectMessage = reconnectFailureText(blocked);
+    announceReconnect(cfg, blocked, reconnectMessage, options.onReconnect);
+    return { ...textReply(action.id, reconnectMessage + reconnectPromptFor(blocked.map(reconnectLabel)), true), delivery: "not-sent" };
+  }
   const waitMs = Math.max(0, Math.min(options.waitMs ?? CONNECTED_APP_ACTION_TIMEOUT_MS, CONNECTED_APP_ACTION_TIMEOUT_MS));
   // Identity is the tool and its effect-bearing arguments; the model's
   // commentary (`thought`, step labels) changes on every retry and is left out.
   const key = operationKey(connectedAppToolId(action.name), connectedAppEffectArgs(action.args));
   // Only a call whose every action is a verified read runs fresh each time;
   // writes, unknown tools, mixed batches and code tools keep the one-send guard.
-  const fresh = classifyConnectedAppCall(action.name, action.args) === "read";
+  const fresh = options.noLimits === true || classifyConnectedAppCall(action.name, action.args) === "read"
+    // A direct provider read names its entire operation too. It must be able
+    // to verify recovery immediately rather than replaying a cached auth error.
+    || isVerifiedReadTool(connectedAppToolId(action.name));
   const existing = fresh ? undefined : connectedAppOperations.blocking(scope, key);
   if (existing) {
     // Same tool, same arguments, same bot and account: never a second send.
@@ -2056,8 +2464,49 @@ export async function relayConnectedAppCall(
       // anything else that came back (foreign ids, empty, malformed) leaves the
       // outcome unknown, so repeats stay blocked until CHECK or run_again.
       async () => {
-        const reply = await relayMcp(cfg, payload, transportSessionId, () => { beforeDispatch?.(); sent = true; }, { timeoutMs: options.lifetimeMs ?? CONNECTED_APP_OPERATION_LIFETIME_MS });
+        try {
+        const reply = await relayMcp(cfg, payload, transportSessionId, () => {
+          beforeDispatch?.(); sent = true;
+          const owner = inventoryOwner(cfg);
+          if (options.scheduled && owner && options.routineId && options.routineRevision !== undefined) {
+            const slugs = [...new Set(toolsNamedBy(payload).map(tool => tool.split("_")[0]!.toLowerCase()))];
+            if (slugs.length) connectorHealthStore().learnRoutine(owner, options.routineId, options.routineRevision, slugs);
+          }
+        }, { timeoutMs: options.lifetimeMs ?? CONNECTED_APP_OPERATION_LIFETIME_MS });
+        const reading = readAppAnswer(toolsNamedBy(payload), action.id, reply.bytes);
+        const failed = reading.errors.size ? reconnectAppsForCall(cfg, payload) : [];
+        if (reading.brokerAuth) return { ...reply, ...textReply(action.id, BROKER_UNREACHABLE, true) };
+        if (failed.length) {
+          const text = options.noLimits
+            ? `${failed.map(reconnectLabel).join(', ')} is disconnected; turn it on in App Settings → Connections → Connected apps.`
+            : reconnectFailureText(failed);
+          // A signed-out capability is off at No limits: one status line,
+          // without the legacy tool-error flag or raw provider error blocks.
+          if (options.noLimits) {
+            const mixed = normalizedCallRows(action.name, action.args).rows.length > 1 ? replyMessage(reply, action.id) : undefined;
+            if (mixed?.result && typeof mixed.result === "object") {
+              const result = mixed.result as { content?: unknown[] };
+              // A disconnected row must not hide a connected account's answer.
+              return { ...reply, ...jsonReply({ ...mixed, result: { ...result, isError: false,
+                content: [{ type: "text", text }, ...(Array.isArray(result.content) ? result.content : [])] } }) };
+            }
+            return { ...reply, ...textReply(action.id, text) };
+          }
+          if (!options.noLimits) announceReconnect(cfg, failed, text, options.onReconnect);
+          const message = replyMessage(reply, action.id);
+          // Preserve mixed batch rows and their per-account attribution. The
+          // explicit error flag and plain note make failure visible to every engine.
+          if (message?.result && typeof message.result === "object") {
+            const result = message.result as { content?: unknown[] };
+            return { ...reply, ...jsonReply({ ...message, result: { ...result, isError: true, content: [{ type: "text", text }, ...(Array.isArray(result.content) ? result.content : [])] } }) };
+          }
+          return { ...reply, ...textReply(action.id, text, true) };
+        }
         return reply.delivery || answersRequest(reply, action.id) ? reply : { ...reply, delivery: "unknown" as const };
+        } catch (error) {
+          if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") operationReaderRefusals.set(op, error);
+          throw error;
+        }
       },
       () => sent,
       (() => {
@@ -2076,6 +2525,9 @@ export async function relayConnectedAppCall(
   // ran out, then a restart before any status check, still leaves its record (the same key is never kept twice).
   void op.done.then((settled) => reportAnswered(op, settled, options.onAnswered), () => undefined);
   const outcome = await waitForOperation(op, waitMs);
+  // The first wait may also outlast the bot's grants (a native HighLevel grant added meanwhile, HL-S2-WRITES (e)):
+  // look again before anything of the action is handed over, as the joined call does.
+  options.authorizeStored?.(provenanceOf(op));
   reportAnswered(op, outcome, options.onAnswered);
   return outcome ? outcomeReply(op, outcome, action.id, true) : textReply(action.id, connectedAppPendingText(op.label, op.handle, false));
 }
@@ -2093,30 +2545,193 @@ function inventoryOwner(_cfg: AppConfig): string | null {
   const claim = legacyClaim().state;
   const legacyIdentityLive = legacy !== null && (claim === "none" || claim === "offered" || claim === "pending");
   const access = flux && !legacyIdentityLive ? flux : legacy ?? flux ?? workerBrokerCredential();
+  const proof = managedFluxOwner === undefined ? process.env.MURAGE_FLUX_COMPOSIO_OWNER : managedFluxOwner;
+  if (access && access === flux && typeof proof === "string" && /^[a-f0-9]{16}$/.test(proof)) {
+    return backendFingerprint("inventory-managed-owner", access.url, proof);
+  }
   return access ? backendFingerprint("inventory-managed", access.url, access.token) : null;
 }
 
-function loadInventory(cfg: AppConfig, owner: string): () => Promise<InventoryServices> {
+function loadInventory(cfg: AppConfig, owner: string, signal?: AbortSignal): () => Promise<InventoryServices> {
   return async () => {
+    const version = inventoryVersion(owner);
     // A background refresh re-checks the broker first, so an outage that has
     // ended is noticed without anyone opening a panel.
     await primeBrokerReadiness({ turn: true });
     const services = await fetchConnectedServices(cfg);
     // The key or token may have changed while this was in flight: what came
     // back belongs to whoever owns the call NOW, so it is not this owner's.
-    if (inventoryOwner(cfg) !== owner) throw new Error("Connected-app configuration changed; retry the request");
+    if (signal?.aborted || inventoryOwner(cfg) !== owner) throw new Error("Connected-app configuration changed; retry the request");
+    // Let the cache settle/revalidate an invalidated fetch, without applying
+    // health decisions from its obsolete response.
+    if (inventoryVersion(owner) !== version) return services;
+    connectorHealthStore().batch(() => {
+      const previous = peekInventory(owner);
+      for (const key of Object.keys(connectorHealthStore().unverified)) {
+        const [heldOwner, slug, id] = JSON.parse(key) as [string, string, string];
+        if (heldOwner !== owner) continue;
+        const before = previous?.[slug]?.accounts.find(account => account.id === id);
+        const after = services[slug]?.accounts.find(account => account.id === id);
+        // A label edit is not credential recovery. Status/expiry/removal is.
+        if (before && (!after || before.status !== after.status || before.expiresAt !== after.expiresAt)) connectorHealthStore().clearUnverified(owner, slug, id);
+      }
+      for (const [slug, service] of Object.entries(services)) {
+        for (const account of service.accounts) if (account.expiresAt !== undefined && account.expiresAt <= Date.now()) account.status = "EXPIRED";
+        const failed = service.accounts.filter(a => !/^ACTIVE$/i.test(a.status));
+        if (failed.length || /^(EXPIRED|REVOKED|NEEDS_RECONNECT)$/i.test(service.status)) {
+          markNeedsReconnect(owner, slug, "sign-in no longer accepted", accountKeyOf(service.accounts));
+          const merged = new Map((healthMark(owner, slug)?.accounts ?? []).map(a => [a.id, a]));
+          for (const { id, alias } of failed.length ? failed : service.accounts) merged.set(id, { id, ...(alias ? { alias } : {}) });
+          updateMark(owner, slug, { accounts: [...merged.values()] });
+        }
+      }
+      withAppHealth(cfg, owner, services);
+    });
     return services;
   };
+}
+
+type PreflightOutcome = "stale" | "unknown" | "reconnect" | "healthy" | "outage";
+
+// Serialize post-probe refreshes so cache invalidation cannot make one
+// concurrent preflight join a fetch that began before its probe finished.
+let postProbeRefresh: Promise<unknown> = Promise.resolve();
+async function postProbeInventory(cfg: AppConfig, owner: string): Promise<InventoryRead> {
+  const abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { abort.abort(); reject(new Error("Inventory check timed out")); }, 5_000);
+  });
+  const work = postProbeRefresh.catch(() => {}).then(async () => {
+    if (abort.signal.aborted || inventoryOwner(cfg) !== owner) throw new Error("Stale inventory check");
+    invalidateInventory(owner);
+    return readConnectedInventory(cfg, { force: true, fresh: true, signal: abort.signal });
+  });
+  const bounded = Promise.race([work, deadline]);
+  postProbeRefresh = bounded.catch(() => {});
+  try { return await bounded; } finally { clearTimeout(timer); }
+}
+
+async function preflightAccount(cfg: AppConfig, owner: string, slug: string, account: { id: string; alias?: string }): Promise<PreflightOutcome> {
+  let outcome: "transport" | "http" | "brokerAuth" | "upstreamAuth" | "toolError" | "ok" = "transport";
+  let status: number | undefined;
+  const { tool, args } = CONNECTOR_SAFE_READS[slug]!;
+  const id = `health-${randomUUID()}`;
+  try {
+    const reply = await relayMcp(cfg, { jsonrpc: "2.0", id, method: "tools/call", params: {
+      name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { sync_response_to_workbench: false, tools: [{ tool_slug: tool, account: account.id, arguments: args }] },
+    } }, undefined, undefined, { timeoutMs: 5_000, noRetry: true, observe: false });
+    const reading = readAppAnswer([tool], id, reply.bytes);
+    status = reading.authStatus.get(slug);
+    outcome = reply.brokerFailure || reply.status < 200 || reply.status >= 300 ? "http"
+      : reading.brokerAuth ? "brokerAuth" : status === 401 || status === 403 ? "upstreamAuth"
+      : reading.errors.size || !reading.ok.has(slug) ? "toolError" : "ok";
+  } catch { /* Every probe outcome still requires the awaited refresh below. */ }
+  let read: InventoryRead | undefined;
+  try { read = await postProbeInventory(cfg, owner); }
+  catch { /* Uncertainty preserves the incident and cannot restore healthy UI. */ }
+  if (inventoryOwner(cfg) !== owner) return "stale";
+  const unknown = () => { connectorHealthStore().setUnverified(owner, slug, account.id); return "unknown" as const; };
+  if (!read?.services || read.revalidating) return unknown();
+  const current = read.services[slug]?.accounts.find(candidate => candidate.id === account.id);
+  if (!current || !/^active$/i.test(current.status)) {
+    noteNeedsReconnect(cfg, slug, current ? `status ${current.status}` : "account removed", [account]); return "reconnect";
+  }
+  if (outcome === "brokerAuth") return "outage";
+  if (outcome === "upstreamAuth") {
+    noteNeedsReconnect(cfg, slug, `HTTP ${status}`, [account]); return "reconnect";
+  }
+  if (outcome === "ok") { clearAccount(owner, slug, account.id); return "healthy"; }
+  return unknown();
+}
+
+// Scheduled work shares a durable hourly account budget and in-flight checks.
+const idleProbeAt = new Map<string, number>();
+const idleProbeFlights = new Map<string, Promise<void>>();
+export async function checkIdleConnectorHealth(cfg: AppConfig, toolkits: readonly string[]): Promise<void> {
+  if (!toolkits?.length) return;
+  const owner = inventoryOwner(cfg);
+  if (!owner) return;
+  const inventory = peekInventory(owner) ?? await connectedServices(cfg, { fresh: true });
+  if (inventoryOwner(cfg) !== owner) return;
+  const accounts = Object.entries(inventory).flatMap(([slug, service]) =>
+    toolkits.includes(slug) && CONNECTOR_SAFE_READS[slug]
+      ? service.accounts.filter(a => /^active$/i.test(a.status)).map(account => ({ slug, account, key: JSON.stringify([owner, slug, account.id]) })) : []);
+  const selected = accounts.filter(({ key }) => idleProbeFlights.has(key) || Date.now() - (idleProbeAt.get(key) ?? -Infinity) >= CONNECTOR_PROBE_INTERVAL_MS);
+  for (let offset = 0; offset < selected.length; offset += 4) await Promise.all(selected.slice(offset, offset + 4).map(({ slug, account, key }) => {
+    const flight = idleProbeFlights.get(key);
+    if (flight) return flight;
+    if (inventoryOwner(cfg) !== owner || Date.now() - (idleProbeAt.get(key) ?? -Infinity) < CONNECTOR_PROBE_INTERVAL_MS) return;
+    idleProbeAt.set(key, Date.now());
+    if (!connectorHealthStore().claimProbe(owner, slug, account.id, Date.now())) return;
+    const work = preflightAccount(cfg, owner, slug, account).then(() => {}).finally(() => { idleProbeFlights.delete(key); });
+    idleProbeFlights.set(key, work);
+    return work;
+  }));
+}
+
+/** The network half of the background health pass (the app calls it every five minutes). An install
+ * nobody is using makes NO request: no readiness probe, no inventory read, no account probes. Past
+ * the idle window only scheduled routines that use connected apps keep it going, and a pass never
+ * runs while Flux is refusing or failing the app's calls (429/5xx backoff). */
+export async function runConnectorHealthPass(cfg: AppConfig, scheduled: (now: number) => string[]): Promise<void> {
+  const now = Date.now();
+  const toolkits = scheduled(now);
+  if (!toolkits.length && !connectorRecentlyUsed(now)) return;
+  if (admissionHeld()) return;
+  await primeBrokerReadiness();
+  if (!configured(cfg)) return;
+  await connectedServices(cfg, { fresh: true });
+  if (toolkits.length) await checkIdleConnectorHealth(cfg, toolkits);
+}
+
+export function scheduledConnectorToolkits(cfg: AppConfig, routines: readonly { id: string; updatedAt: number; enabled: boolean; nextRunAt: number | null }[], now: number): string[] {
+  const owner = inventoryOwner(cfg);
+  return owner ? connectorHealthStore().scheduledToolkits(owner, routines, now) : [];
+}
+
+/** Guard and attribution resolve precisely the same normalized accounts. */
+function reconnectAppsForCall(cfg: AppConfig, payload: JsonValue): string[] {
+  const request = payload as { params?: { name?: string; arguments?: unknown } };
+  const { rows } = normalizedCallRows(request.params?.name ?? "", request.params?.arguments);
+  const owner = inventoryOwner(cfg);
+  if (!owner) return [];
+  return appsNeedingReconnect(cfg).filter(app => rows.some(row => {
+    if (row.tool.split("_")[0]?.toLowerCase() !== app.slug) return false;
+    return accountsForRow(owner, app.slug, row).some(account => app.accounts.some(failed => failed.id === account.id));
+  })).map(app => app.slug);
+}
+
+/** Shopify's reconnect line is shown once per outage: blocked repeats answer the model but add no second owner message. */
+const shopifyReconnectShown = new Set<string>();
+function announceReconnect(cfg: AppConfig, slugs: readonly string[], text: string, onReconnect?: (message: string) => void): void {
+  const owner = inventoryOwner(cfg) ?? "none";
+  const repeat = slugs.length > 0 && slugs.every(slug => slug === "shopify") && shopifyReconnectShown.has(owner);
+  if (slugs.includes("shopify")) shopifyReconnectShown.add(owner);
+  if (!repeat) onReconnect?.(text);
+}
+
+function reconnectFailureText(slugs: readonly string[]): string {
+  const pack = channelReplyPacks[channelReplyLanguage()];
+  return slugs.map(slug => {
+    const label = reconnectLabel(slug);
+    return `${(pack?.["connectorHealth.signIn"] || en["connectorHealth.signIn"]).replace("{connector}", label)}. ${(pack?.["connectorHealth.reconnectApp"] || en["connectorHealth.reconnectApp"]).replace("{connector}", label)}.`;
+  }).join(" ");
 }
 
 /** The remembered inventory, answered at once when there is one (stale ones
  * refresh behind it). With nothing remembered it waits up to `waitMs` and then
  * answers `services: null, revalidating: true`. */
-export async function connectedInventory(cfg: AppConfig, options: InventoryReadOptions = {}): Promise<InventoryRead> {
+export async function connectedInventory(cfg: AppConfig, options: InventoryReadOptions & { signal?: AbortSignal } = {}): Promise<InventoryRead> {
+  noteConnectorUse(); // a person or a turn asked; the app's own background reads use readConnectedInventory
+  return readConnectedInventory(cfg, options);
+}
+async function readConnectedInventory(cfg: AppConfig, options: InventoryReadOptions & { signal?: AbortSignal } = {}): Promise<InventoryRead> {
   const owner = inventoryOwner(cfg);
   if (!owner) throw new Error(BROKER_UNAVAILABLE);
-  const read = await readInventory(owner, loadInventory(cfg, owner), { waitMs: 3_000, ...options });
-  return read.services ? { ...read, services: withAppHealth(cfg, owner, read.services) } : read;
+  const read = await readInventory(owner, loadInventory(cfg, owner, options.signal), { waitMs: 3_000, ...options });
+  if (options.signal?.aborted || inventoryOwner(cfg) !== owner) throw new Error("Stale inventory check");
+  return read.services ? { ...read, services: withAppHealth(cfg, owner, read.services, !read.revalidating) } : read;
 }
 
 export type PanelInventory =
@@ -2129,12 +2744,22 @@ export type PanelInventory =
  * ever open, or the panel's own Retry (`force`), waits, and then for at most
  * three seconds. */
 export async function connectedPanelInventory(cfg: AppConfig, options: { force?: boolean } = {}): Promise<PanelInventory> {
+  noteConnectorUse();
   const owner = inventoryOwner(cfg);
   const remembered = owner !== null && hasInventory(owner);
   if (!remembered || options.force) await primeBrokerReadiness();
   const availability = connectorAvailability(cfg);
   if (!remembered && availability !== "configured") return { kind: "unavailable", availability };
   return { kind: "ok", read: await connectedInventory(cfg, { force: options.force }) };
+}
+
+/** The slugs the owner holds a connection on, from what is remembered (no broker call). The catalog never hides these as duplicates. */
+export function rememberedConnectedSlugs(cfg: AppConfig): Set<string> | null {
+  const owner = inventoryOwner(cfg);
+  if (!owner || !hasInventory(owner)) return null;
+  const held = peekInventory(owner);
+  if (held === null) return null;
+  return new Set(Object.entries(held).filter(([, state]) => state.connected || state.accounts?.length).map(([slug]) => slug));
 }
 
 /** True when a connected-apps list is already remembered, so a view can show it without a broker call. */
@@ -2149,7 +2774,7 @@ export async function connectedServices(cfg: AppConfig, options: { fresh?: boole
   const owner = inventoryOwner(cfg);
   if (!owner) throw new Error(BROKER_UNAVAILABLE);
   const read = await readInventory(owner, loadInventory(cfg, owner), { fresh: options.fresh });
-  return withAppHealth(cfg, owner, read.services ?? {});
+  return withAppHealth(cfg, owner, read.services ?? {}, !read.revalidating);
 }
 
 /** Something this app did may have changed the list: refetch it. `drop` for a
@@ -2208,6 +2833,7 @@ async function fetchConnectedServices(cfg: AppConfig): Promise<Record<string, Co
 }
 
 export async function connectionStatus(cfg: AppConfig, slugs: string[]) {
+  noteConnectorUse();
   const owner = inventoryOwner(cfg);
   const key = `${owner}|${[...slugs].sort().join(",")}`;
   const running = statusFlights.get(key);
@@ -2246,6 +2872,8 @@ export async function removeService(cfg: AppConfig, slug: string) {
   const response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}`, { method: "DELETE" });
   if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
   const answer = removalResponseSchema.parse(await response.json());
+  const owner = inventoryOwner(cfg);
+  if (owner) clearNeedsReconnect(owner, slug);
   invalidateConnected(cfg, { drop: true });
   connectionsRemoved();
   return answer;
@@ -2261,6 +2889,13 @@ export async function removeAccount(cfg: AppConfig, slug: string, accountId: str
   );
   if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
   const answer = removalResponseSchema.parse(await response.json());
+  const owner = inventoryOwner(cfg);
+  const mark = owner ? healthMark(owner, slug) : undefined;
+  if (owner && mark?.accounts) {
+    const remaining = mark.accounts.filter(account => account.id !== accountId);
+    if (remaining.length) updateMark(owner, slug, { accounts: remaining });
+    else clearNeedsReconnect(owner, slug);
+  }
   invalidateConnected(cfg, { drop: true });
   connectionsRemoved();
   return answer;
@@ -2305,7 +2940,7 @@ export async function authorizeService(cfg: AppConfig, slug: string, requestedAl
   if (owner && options.reconnect && validAccountId(options.reconnect) && healthMark(owner, slug)) {
     const services = await connectedServices(cfg, { fresh: true }).catch(() => null);
     const account = services?.[slug]?.accounts.find((entry) => entry.id === options.reconnect);
-    if (account && /^active$/i.test(account.status)) replaces = [account.id];
+    if (account) replaces = [account.id];
   }
   const post = (label: string | undefined) => {
     const request: RequestInit = { method: "POST" };

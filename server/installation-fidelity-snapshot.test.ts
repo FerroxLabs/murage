@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect,it } from "vitest";
 import { withOfflineInstallation } from "./installation-database-snapshot.ts";
+import { putState } from "./channels/delivery-ledger-test-support.ts";
 import { stageInstallationStateWhileOwned } from "./installation-state-snapshot.ts";
 import { inventoryFidelity } from "./installation-fidelity-snapshot.ts";
 import { backupFixture } from "./testing/backup-fixture.ts";
@@ -274,4 +275,28 @@ it("an outside change to the top level during a capture still stops it with SOUR
       expect(stage.assertSourceUnchanged).toThrow(/SOURCE_CHANGED/);
     });
   }finally{f.db.close();removeTempDirSync(f.parent);}
+});
+
+it("W-BACKUP: a channel delivery store is backed up through SQLite, with its uncheckpointed -wal content and no raw sidecars",async()=>{
+  const f=backupFixture();const dir=join(f.data,"channels","whatsapp","conn1");mkdirSync(dir,{recursive:true});
+  const file=join(dir,"chat.json"),dbFile=join(dir,"delivery-ledger.db");
+  putState(file,{version:1,bindingKey:"binding",recipient:"owner",tombstones:[],records:[]});
+  // A second writer keeps the -wal alive and uncheckpointed, as a running app would.
+  const hold=new DatabaseSync(dbFile);hold.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0");
+  hold.prepare("INSERT INTO delivery_ledger (ledger_key,binding_key,recipient) VALUES ('late','binding','owner')").run();
+  try{
+    expect(existsSync(`${dbFile}-wal`)).toBe(true);
+    await withOfflineInstallation(f.data,async installation=>{
+      const stage=await stageInstallationStateWhileOwned(installation,f.parent);
+      const inventory=await inventoryFidelity(installation,stage,selection);
+      const paths=inventory.sources.map(file=>file.path);
+      expect(paths).toContain("channels/whatsapp/conn1/delivery-ledger.db");
+      expect(paths.filter(path=>/delivery-ledger\.db-(wal|shm)$/.test(path))).toEqual([]);
+      const copy=inventory.sources.find(file=>file.path.endsWith("delivery-ledger.db"))!.source;
+      expect(copy).not.toBe(dbFile);
+      const staged=new DatabaseSync(copy,{readOnly:true});
+      try{expect(staged.prepare("SELECT ledger_key FROM delivery_ledger ORDER BY ledger_key").all()).toEqual([{ledger_key:"chat.json"},{ledger_key:"late"}]);}finally{staged.close();}
+      inventory.assertUnchanged();
+    });
+  }finally{hold.close();f.db.close();removeTempDirSync(f.parent);}
 });

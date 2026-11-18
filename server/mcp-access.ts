@@ -1,3 +1,4 @@
+import { isReadOnly } from "./read-only-start.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -18,7 +19,8 @@
 // as the companion's door header; approving a card or changing a setting still
 // needs the desktop or the paired phone.
 import { timingSafeEqual, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import type { IncomingHttpHeaders } from "node:http";
 import { join } from "node:path";
 
@@ -33,6 +35,7 @@ export function readOrCreateMcpAccessKey(dataDir: string): string | null {
       const existing = readFileSync(file, "utf8").trim();
       if (KEY.test(existing)) return existing;
     }
+    if (isReadOnly()) return null;
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     const created = randomBytes(32).toString("hex");
     writeFileSync(file, `${created}\n`, { mode: 0o600 });
@@ -47,6 +50,7 @@ export function readOrCreateMcpAccessKey(dataDir: string): string | null {
 /** Remove a standing key left by an earlier version. The packaged app keeps
  * none: scripts use a scoped grant instead (mcp-grants.ts). */
 export function removeMcpAccessKey(dataDir: string): void {
+  if (isReadOnly()) return;
   try { rmSync(join(dataDir, MCP_ACCESS_FILE), { force: true }); } catch { /* nothing to remove */ }
 }
 

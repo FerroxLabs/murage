@@ -39,8 +39,10 @@ vi.mock("node:fs", async importOriginal => {
   const fs = await importOriginal<typeof import("node:fs")>();
   return { ...fs, lstatSync: (...args: Parameters<typeof fs.lstatSync>) => String(args[0]) === snapshotFault.path && snapshotFault.stat ? snapshotFault.stat : fs.lstatSync(...args) };
 });
-vi.mock("node:fs/promises", async importOriginal => {
-  const fs = await importOriginal<typeof import("node:fs/promises")>();
+// Inject at the public counted boundary: its native filesystem capture must
+// remain intact, and the actual open still performs its normal accounting.
+vi.mock("./counted-fs-promises.ts", async importOriginal => {
+  const fs = await importOriginal<typeof import("./counted-fs-promises.ts")>();
   return { ...fs, open: async (...args: Parameters<typeof fs.open>) => {
     const handle = await fs.open(...args);
     if (String(args[0]) !== snapshotFault.path) return handle;
