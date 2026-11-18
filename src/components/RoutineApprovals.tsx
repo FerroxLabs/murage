@@ -14,9 +14,18 @@ import { PERMISSION_MODES } from "./PermissionModeMenu";
 import type { PermissionMode } from "@/lib/permission-mode";
 import type { Routine } from "@/lib/routines";
 
-export type RoutineLevelChoice = PermissionMode;
+export type RoutineLevelChoice = PermissionMode | "inherit";
+
+export function routineLevelChoice(routine?: Pick<Routine,"permissionMode"|"permissionExplicit">): RoutineLevelChoice {
+ return routine?.permissionExplicit === false ? "inherit" : routine?.permissionMode ?? "inherit";
+}
+
+export function routinePermissionPatch(choice:RoutineLevelChoice,routine?:Pick<Routine,"permissionMode"|"permissionExplicit">): {permissionMode?:RoutineLevelChoice} {
+ return routine && choice === routineLevelChoice(routine) ? {} : {permissionMode:choice};
+}
 
 export function routineLevelHelp(choice: RoutineLevelChoice): string {
+  if (choice === "inherit") return "Uses the bot’s current approval level.";
   const detail = PERMISSION_MODES.find((entry) => entry.mode === choice)!.detail;
   return `Every run of this routine: ${detail.charAt(0).toLowerCase()}${detail.slice(1).replace(/\.$/, "")}.`;
 }
@@ -24,6 +33,7 @@ export function routineLevelHelp(choice: RoutineLevelChoice): string {
 export function RoutineApprovalLevel({
   value,
   onChange,
+  botMode,
 }: {
   value: RoutineLevelChoice;
   onChange: (value: RoutineLevelChoice) => void;
@@ -40,10 +50,11 @@ export function RoutineApprovalLevel({
           onChange={(event) => onChange(event.target.value as RoutineLevelChoice)}
           className="rounded-lg border border-hairline/50 bg-panel px-3 py-2 text-[12px] text-ink outline-none focus:border-accent"
         >
+          <option value="inherit">Follow bot</option>
           {PERMISSION_MODES.map((entry) => <option key={entry.mode} value={entry.mode}>{entry.label}</option>)}
         </select>
       </label>
-      <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{routineLevelHelp(value)} Reading your keys always asks.</div>
+      <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{routineLevelHelp(value)} {value === "unlimited" || value === "inherit" && botMode === "unlimited" ? "Only wipes and catastrophes ask." : value === "inherit" ? "" : "Reading your keys always asks."}</div>
     </div>
   );
 }

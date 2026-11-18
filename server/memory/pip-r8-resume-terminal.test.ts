@@ -22,10 +22,11 @@ const T0 = 1_760_000_000_000, MIN = 60_000;
 const WORDS = "kept safe";
 const roster = { bots: [{ id: "moss", threadId: "private", tasks: [] as Array<{ threadId: string }> }], groups: [] as never[] };
 beforeEach(() => {
+  vi.spyOn(Date, "now").mockReturnValue(T0 + 60 * MIN);
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster); setMemoryMode("active"); setMemoryCaptureRoster(() => roster as never);
 });
-afterEach(() => { setMemoryCaptureRoster(null); pipReadHooks.between = undefined; });
+afterEach(() => { setMemoryCaptureRoster(null); pipReadHooks.between = undefined; vi.restoreAllMocks(); });
 
 const bindingRow = () => String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id='pip-reflect:moss'").get()?.intent ?? "");
 const family = () => readReflectState(database(), "moss").run?.families.lived;

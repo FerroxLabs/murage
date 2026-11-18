@@ -1,0 +1,262 @@
+[
+  {
+    "fixture": {
+      "url": "http://127.0.0.1:20952",
+      "pid": 255,
+      "dataDir": "/tmp/murage-verify-data-kdRajE",
+      "logPath": "/tmp/murage-verification-evidence/server-1794370284977-247.log"
+    }
+  },
+  {
+    "created": {
+      "success": true,
+      "bot": {
+        "id": "0f0a30d9-c292-4117-b02d-c6cba9f4b9c3",
+        "name": "Connector fixture",
+        "title": "",
+        "description": "",
+        "section": null,
+        "chiefOfStaff": false,
+        "modelSelection": {
+          "instanceId": "verification",
+          "model": "claude-sonnet-5-5"
+        },
+        "busy": false,
+        "unread": false,
+        "activeTaskId": "2e5f71e3-a651-4a0e-8d4c-e9dc5b35bfa1",
+        "tasks": [
+          {
+            "taskId": "2e5f71e3-a651-4a0e-8d4c-e9dc5b35bfa1",
+            "title": "New task",
+            "createdAt": 1794370288078,
+            "active": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "idleDiscovery": {
+      "apps": [
+        {
+          "slug": "buffer",
+          "label": "Buffer",
+          "accounts": [
+            {
+              "id": "fixture-buffer",
+              "alias": "work"
+            }
+          ],
+          "incidentId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7"
+        }
+      ],
+      "notifications": [
+        {
+          "kind": "connector-reconnect",
+          "botId": "341fb824-b036-47ab-8285-3a375de290d7",
+          "botName": "Ember",
+          "threadId": "9fade1c4-f7ac-41a9-bedd-41807360a41a",
+          "title": "Buffer needs you to sign in again",
+          "body": "Buffer",
+          "deliveryId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7",
+          "requestId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7",
+          "reconnect": {
+            "slug": "buffer",
+            "accountId": "fixture-buffer"
+          }
+        }
+      ]
+    },
+    "inventoryReads": 1,
+    "tray": {
+      "needsYou": 1,
+      "items": [
+        {
+          "id": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7",
+          "botId": "341fb824-b036-47ab-8285-3a375de290d7",
+          "botName": "Ember",
+          "summary": "Buffer needs you to sign in again",
+          "threadId": "9fade1c4-f7ac-41a9-bedd-41807360a41a",
+          "messageId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7",
+          "reconnectIncidentId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7",
+          "quick": false,
+          "outsideOk": {
+            "banner-mac": false,
+            "banner-win": false,
+            "banner-linux": false,
+            "menu": false,
+            "pill": false,
+            "flyout": false,
+            "bubble": false,
+            "dock": false
+          },
+          "display": {
+            "botName": "Ember",
+            "title": "Buffer needs you to sign in again",
+            "willRun": "Buffer needs you to sign in again"
+          }
+        }
+      ],
+      "working": [],
+      "bots": [
+        {
+          "id": "0f0a30d9-c292-4117-b02d-c6cba9f4b9c3",
+          "name": "Connector fixture",
+          "chief": false,
+          "tasksSeq": 1,
+          "tasksEpoch": "0d18fc99"
+        },
+        {
+          "id": "341fb824-b036-47ab-8285-3a375de290d7",
+          "name": "Ember",
+          "chief": false,
+          "tasksSeq": 0,
+          "tasksEpoch": "0d18fc99"
+        }
+      ],
+      "moreBots": false
+    }
+  },
+  {
+    "ownerPhone": {
+      "incidentId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7",
+      "slug": "buffer",
+      "label": "Buffer",
+      "accounts": [
+        {
+          "id": "fixture-buffer",
+          "alias": "work"
+        }
+      ]
+    },
+    "unauthorizedStatus": 404,
+    "wrongAccountStatus": 409,
+    "signIn": {
+      "url": "https://backend.composio.dev/auth/fixture"
+    },
+    "authorizations": 1
+  },
+  {
+    "restarted": {
+      "apps": [
+        {
+          "slug": "buffer",
+          "label": "Buffer",
+          "accounts": [
+            {
+              "id": "fixture-buffer",
+              "alias": "work"
+            }
+          ],
+          "incidentId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7"
+        }
+      ],
+      "notifications": [
+        {
+          "kind": "connector-reconnect",
+          "botId": "341fb824-b036-47ab-8285-3a375de290d7",
+          "botName": "Ember",
+          "threadId": "9fade1c4-f7ac-41a9-bedd-41807360a41a",
+          "title": "Buffer needs you to sign in again",
+          "body": "Buffer",
+          "deliveryId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7",
+          "requestId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7",
+          "reconnect": {
+            "slug": "buffer",
+            "accountId": "fixture-buffer"
+          }
+        }
+      ]
+    },
+    "missing": {
+      "apps": [
+        {
+          "slug": "buffer",
+          "label": "Buffer",
+          "accounts": [
+            {
+              "id": "fixture-buffer",
+              "alias": "work"
+            }
+          ],
+          "incidentId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7"
+        }
+      ],
+      "notifications": [
+        {
+          "kind": "connector-reconnect",
+          "botId": "341fb824-b036-47ab-8285-3a375de290d7",
+          "botName": "Ember",
+          "threadId": "9fade1c4-f7ac-41a9-bedd-41807360a41a",
+          "title": "Buffer needs you to sign in again",
+          "body": "Buffer",
+          "deliveryId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7",
+          "requestId": "b81aadd2-6819-4325-ac29-7ddb67ccdcf7",
+          "reconnect": {
+            "slug": "buffer",
+            "accountId": "fixture-buffer"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "verifiedRecovery": {
+      "apps": [],
+      "notifications": []
+    },
+    "recoveredTray": {
+      "needsYou": 0,
+      "items": [],
+      "working": [],
+      "bots": [
+        {
+          "id": "0f0a30d9-c292-4117-b02d-c6cba9f4b9c3",
+          "name": "Connector fixture",
+          "chief": false,
+          "tasksSeq": 0,
+          "tasksEpoch": "ceb0c874"
+        },
+        {
+          "id": "341fb824-b036-47ab-8285-3a375de290d7",
+          "name": "Ember",
+          "chief": false,
+          "tasksSeq": 0,
+          "tasksEpoch": "ceb0c874"
+        }
+      ],
+      "moreBots": false
+    }
+  },
+  {
+    "customConnectorTerminal": {
+      "apps": [
+        {
+          "slug": "mcp-fixturetool",
+          "label": "fixturetool",
+          "accounts": [],
+          "incidentId": "3fa7dff6-9e4d-43b5-a748-a4e319714b87"
+        }
+      ],
+      "notifications": [
+        {
+          "kind": "connector-reconnect",
+          "botId": "341fb824-b036-47ab-8285-3a375de290d7",
+          "botName": "Ember",
+          "threadId": "9fade1c4-f7ac-41a9-bedd-41807360a41a",
+          "title": "fixturetool needs you to sign in again",
+          "body": "fixturetool",
+          "deliveryId": "3fa7dff6-9e4d-43b5-a748-a4e319714b87",
+          "requestId": "3fa7dff6-9e4d-43b5-a748-a4e319714b87",
+          "reconnect": {
+            "slug": "mcp-fixturetool"
+          }
+        }
+      ]
+    },
+    "customConnectorRecovery": "newer sign-in wins over delayed terminal projection"
+  },
+  {
+    "finalLogPath": "/tmp/murage-verification-evidence/server-1794370306291-247.log"
+  }
+]

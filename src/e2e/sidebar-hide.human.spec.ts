@@ -1,6 +1,6 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +24,8 @@ test.beforeAll(async()=>{
   }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
 test.afterAll(async()=>{await server?.close();safeWipeSync(cache);});
-test('sidebar roster readability',async({page},testInfo)=>{
+for (const classicScrollbar of [false, true]) {
+test(classicScrollbar ? 'sidebar roster readability with Ubuntu 12px scrollbar' : 'sidebar roster readability',async({page},testInfo)=>{
   test.setTimeout(60000);
   await page.setViewportSize({width:1280,height:900});
   await page.addInitScript(()=>localStorage.setItem('murage.sidebarDensity','comfortable'));
@@ -47,6 +48,22 @@ test('sidebar roster readability',async({page},testInfo)=>{
     fixture.dispatch({type:'fixtureRoster',bots:fixture.state.bots,groups:fixture.state.groups});
   });
   await expect(page.getByText('Market Research Analyst',{exact:true})).toBeVisible();
+  if (classicScrollbar) {
+    // Reproduce issue #2's 209px pre-fix column in a 320px sidebar.
+    // Headless Chromium normally uses overlay scrollbars; a 12px gutter
+    // matches the reported geometry without changing the name/font,
+    // row styles, or sidebar width. Keep this case alongside the native layout.
+    await page.locator('[data-sidebar-bot-row="analyst"]').evaluate(element => {
+      let scroller = element.parentElement;
+      while (scroller && getComputedStyle(scroller).overflowY !== 'auto') scroller = scroller.parentElement;
+      if (!scroller) throw new Error('Sidebar roster scroller not found');
+      scroller.setAttribute('data-ubuntu-scrollbar-fixture', '');
+    });
+    await page.addStyleTag({content: `
+      [data-ubuntu-scrollbar-fixture] { overflow-y: scroll; scrollbar-width: auto; scrollbar-color: auto; scrollbar-gutter: stable; }
+      [data-ubuntu-scrollbar-fixture]::-webkit-scrollbar { width: 12px; }
+    `});
+  }
   await page.mouse.move(1200,850);
   await page.screenshot({path:testInfo.outputPath(process.env.SIDEBAR_BASELINE ? 'sidebar-before.png' : 'sidebar-after.png')});
   if(process.env.SIDEBAR_BASELINE)return;
@@ -59,6 +76,11 @@ test('sidebar roster readability',async({page},testInfo)=>{
   if(canHover){
     const metrics=await name.evaluate(element=>{const style=getComputedStyle(element);const column=element.closest('[data-sidebar-bot-row]')?.querySelector(':scope > .flex-1') as HTMLElement|null;return {scrollWidth:element.scrollWidth,clientWidth:element.clientWidth,width:element.getBoundingClientRect().width,available:column?.clientWidth,rowWidth:element.closest('[data-sidebar-bot-row]')?.getBoundingClientRect().width,fontFamily:style.fontFamily,fontSize:style.fontSize,fontWeight:style.fontWeight};});
     await testInfo.attach('desktop-name-metrics',{body:JSON.stringify(metrics),contentType:'application/json'});
+    if (classicScrollbar) {
+      const gutter = await page.locator('[data-ubuntu-scrollbar-fixture]').evaluate(element => element.getBoundingClientRect().width - element.clientWidth);
+      expect(gutter, 'The isolated Ubuntu case must reserve a real 12px scrollbar').toBe(12);
+      expect(metrics.rowWidth, '320px sidebar minus border, roster padding and scrollbar').toBe(291);
+    }
     // Keep the real desktop clipping gate; do not substitute a narrower font
     // or allow ellipsis merely because another platform's font is wider.
     expect(metrics.scrollWidth,JSON.stringify(metrics)).toBeLessThanOrEqual(metrics.clientWidth);
@@ -99,6 +121,7 @@ test('sidebar roster readability',async({page},testInfo)=>{
   await expect(page.getByRole('button',{name:'More actions for Market Research Analyst'})).toHaveCSS('opacity','1');
   await page.screenshot({path:testInfo.outputPath('sidebar-phone.png')});
 });
+}
 test('hide and restore the last Chief without archiving or changing the selected conversation',async({page},testInfo)=>{
   await page.setViewportSize({width:390,height:844});
   await page.route('**/api/config',route=>route.fulfill({json:{features:{}}}));

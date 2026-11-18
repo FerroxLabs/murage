@@ -65,7 +65,7 @@ export async function phoneOwnerRoute(service: () => PhoneCallService, req: Phon
     try { return { status: 200, body: { revision: await service().saveSettings(settings) } }; }
     catch (error) { return { status: 502, body: { error: (error as { code?: string }).code ?? "vendor_unavailable" } }; }
   }
-  if (path === PHONE_OWNER_PREFIX && method === "GET") { const s = service(); await s.reconcileAbandoned(); return { status: 200, body: { calls: s.recentOwnerCards(50) } }; }
+  if (path === PHONE_OWNER_PREFIX && method === "GET") { const s = service(); await s.refreshOwnerCalls(); return { status: 200, body: { calls: s.recentOwnerCards(50) } }; }
   const action = method === "POST" ? path.match(/^\/api\/phone-calls\/([A-Za-z0-9_-]{1,80})\/(cancel|share)$/) : null;
   if (action) {
     if (action[2] === "cancel") {

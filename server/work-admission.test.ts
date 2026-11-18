@@ -203,3 +203,17 @@ describe("PF owner-approved cards", () => {
       project: project({ goalId: "goal", goalState }) }))).toMatchObject({ admit: false, reason: "project_paused" });
   });
 });
+
+// UX-L2C-PAUSE r4: a hold on Flux work refuses the owner too (the project budget step exempts owners; this one must not).
+describe("work admission: spend hold", () => {
+  it("refuses an owner_direct start as spend_limit with retry never, and queues every other kind", () => {
+    const arbiter = createWorkAdmission(deps({ spendHold: () => ({ line: "You reached your $1,000 monthly limit." }) }));
+    expect(arbiter.admit(input({ kind: "owner_direct", priority: "owner", ownerOrigin: true, project: undefined, threadId: "own-t" })))
+      .toMatchObject({ admit: false, reason: "spend_limit", retry: "never", line: "You reached your $1,000 monthly limit." });
+    expect(arbiter.admit(input())).toMatchObject({ admit: false, reason: "spend_limit", retry: "queue" });
+  });
+  it("admits when there is no hold (pause off or the work is not on Flux)", () => {
+    expect(createWorkAdmission(deps({ spendHold: () => null })).admit(input()).admit).toBe(true);
+    expect(createWorkAdmission(deps()).admit(input()).admit).toBe(true);
+  });
+});

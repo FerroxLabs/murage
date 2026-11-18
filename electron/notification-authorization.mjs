@@ -31,5 +31,7 @@ export function createNotificationAuthorization({platform=process.platform,resou
    try{return await Promise.race([Promise.resolve().then(()=>binding().status()).then(value=>stopped||epoch!==generation?unavailable:decode(value)).catch(()=>unavailable),new Promise(resolve=>{timer=setTimeout(()=>resolve(unavailable),5000);timer.unref?.();})]);}finally{clearTimeout(timer);}
   },
   invalidate(){stopped=true;generation++;},
+  /** The same lstat-checked addon the permission calls use, for the banner exports (native/notification-authorization/banners.mm): never loaded after invalidate. */
+  addon(){if(platform!=="darwin"||stopped)throw Error("NOTIFICATION_AUTH_UNAVAILABLE");return binding();},
  };
 }

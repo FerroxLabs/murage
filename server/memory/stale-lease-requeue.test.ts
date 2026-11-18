@@ -23,7 +23,7 @@
 import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { closeDatabase, database, isDatabaseBusy } from "../database.ts";
 import { appendMessage } from "../message-db.ts";
 import { STALE_MEMORY_REQUEUE_LIMIT } from "./jobs.ts";
 import { setMemoryMode } from "./repository.ts";
@@ -38,18 +38,29 @@ import { removeTempDirSync } from "../testing/cleanup.ts";
 // controller then defers the job through failWork, as for a rejected
 // result), "pass" publishes as is. Everything else is the real jobs module
 // and the real forked worker.
-const state = vi.hoisted(() => ({ moveTimes: 0, script: [] as Array<"move" | "reject" | "pass">, requeueAlways: false, publications: [] as string[] }));
+const state = vi.hoisted(() => ({ moveTimes: 0, script: [] as Array<"move" | "reject" | "pass">, step: null as "move" | "reject" | "pass" | null, armed: false, requeueAlways: false, publications: [] as string[] }));
 vi.mock("./jobs.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./jobs.ts")>();
   return {
     ...actual,
     publishMemoryWork: (...args: Parameters<typeof actual.publishMemoryWork>) => {
-      const step = state.script.length ? state.script.shift()! : state.moveTimes > 0 ? "move" : "pass";
-      if (step === "move" && !state.script.length && state.moveTimes > 0) state.moveTimes -= 1;
-      if (step === "move") database().exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
-      if (step === "reject") { state.publications.push("rejected"); throw new Error("REJECTED_BY_TEST"); }
-      try { actual.publishMemoryWork(...args); state.publications.push(args[2].status === "deferred" ? `deferred:${args[2].reason}` : "ok"); }
-      catch (error) { state.publications.push(error instanceof Error ? error.message : String(error)); throw error; }
+      // A native admission retry is the same publication, not the next
+      // scripted authority change. Keep the injected move armed until the
+      // real publisher reaches its semantic result; all grants remain real.
+      if (!state.armed) {
+        if (state.step === null) {
+          state.step = state.script.length ? state.script.shift()! : state.moveTimes > 0 ? "move" : "pass";
+          if (state.step === "move" && !state.script.length && state.moveTimes > 0) state.moveTimes -= 1;
+        }
+        if (state.step === "move") database().exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
+        if (state.step === "reject") { state.step = null; state.publications.push("rejected"); throw new Error("REJECTED_BY_TEST"); }
+        state.armed = true;
+      }
+      try { actual.publishMemoryWork(...args); state.step = null; state.armed = false; state.publications.push(args[2].status === "deferred" ? `deferred:${args[2].reason}` : "ok"); }
+      catch (error) {
+        if (!isDatabaseBusy(error)) { state.step = null; state.armed = false; state.publications.push(error instanceof Error ? error.message : String(error)); }
+        throw error;
+      }
     },
     requeueStaleMemoryWork: (...args: Parameters<typeof actual.requeueStaleMemoryWork>) => state.requeueAlways || actual.requeueStaleMemoryWork(...args),
   };
@@ -60,7 +71,7 @@ const sourceRecords = () => database().prepare("SELECT count(*) AS n FROM memory
 const requeueLine = (count: number) => expect.stringMatching(new RegExp(`^\\[memory\\] worker result for job \\S+ was STALE_MEMORY_SOURCE \\(the authority moved while the job was leased\\); requeued for the next claim \\(stale requeue ${count} of ${STALE_MEMORY_REQUEUE_LIMIT}\\)$`));
 const stale = (n: number) => Array.from({ length: n }, () => "STALE_MEMORY_SOURCE");
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); state.moveTimes = 0; state.script.length = 0; state.requeueAlways = false; state.publications.length = 0; });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); state.moveTimes = 0; state.script.length = 0; state.step = null; state.armed = false; state.requeueAlways = false; state.publications.length = 0; });
 afterEach(() => { vi.restoreAllMocks(); });
 
 it("requeues a job whose publication was refused as stale and completes it on the next claim, without an attempt or a worker error", async () => {

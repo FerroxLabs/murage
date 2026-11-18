@@ -3,8 +3,12 @@
 // announces only after the filename step let it through is never removed (it may be the owner's: Chrome does not say which tab started
 // it); the bot is told it was kept. A download stopped at the filename step is cancelled and removed, and an item that is kept is never
 // reported as blocked.
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { fixture } from './browser-extension-test-fixture.mjs';
+
+beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+const grace = () => vi.advanceTimersByTimeAsync(3000);
 
 const ready = async (options = {}) => { const f = fixture({}, options); await f.init(); await f.navigate(); await f.command('cdp', { method: 'Page.enable', tabId: 1, navigationEpoch: 2 }); return f; };
 const page = { frameId: 'main-frame', guid: 'g9', url: 'https://allowed.test/late.zip', suggestedFilename: 'late.zip' };
@@ -19,6 +23,7 @@ const untouched = (f, id) => {
 const atFilenameStep = async (f, item, announced = page) => {
   const decided = f.runtime.downloadDetermining(item);
   await f.runtime.debuggerEvent({ tabId: 1 }, 'Page.downloadWillBegin', announced);
+  await grace();
   return decided;
 };
 
@@ -62,6 +67,7 @@ describe('a late page download leaves nothing saved when the bot is told it was 
     await f.runtime.debuggerEvent({ tabId: 1 }, 'Page.downloadWillBegin', page);
     expect(blockedNotices(f)).toHaveLength(1);
     await f.runtime.downloadCreated({ id: 33, url: page.url, finalUrl: page.url });
+    await grace();
     expect(f.api.downloads.cancel).toHaveBeenCalledWith(33);
   });
 });
@@ -600,6 +606,7 @@ describe('a kept file is remembered by address however it came to stay', () => {
     expect(blockedNotices(f)).toHaveLength(1);
     const item = { id: 180, url: page.url, finalUrl: page.url };
     await f.runtime.downloadCreated(item);
+    await grace();
     expect(f.api.downloads.erase).toHaveBeenCalledWith({ id: 180 });
     await f.runtime.downloadDetermining(item);
     // its file was removed: a later announcement of the address never claims a file may be there

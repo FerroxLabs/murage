@@ -74,3 +74,11 @@ describe("a failed turn marks the engine signed out; a good one clears it (item 
     expect(withInstanceMark("codex-2", { state: "available", authenticated: true, version: null } as never)).toMatchObject({ reason: SIGN_IN_REJECTED_REASON });
   });
 });
+
+it.each(['keyRefused', 'keyAccess', 'keyNotFound', 'accessUnknown', 'keyBudget', 'unresolved', 'keyRevoked'] as const)('A2.1 only keyRevoked sets the key mark: %s', reason => {
+  const bus = new EventBus(() => {}), { instance, emit } = fakeInstance('flux-key', { driverKind: 'claudeAgent' });
+  bus.attach([instance]);
+  emit({ provider: 'claudeAgent', type: 'runtime.error', message: 'API Error: 401 Unauthorized', providerError: { kind: 'authentication', httpStatus: 401 }, fluxDecision: { reason, action: 'STOP', wait: '-' } });
+  expect(instanceAuthFailed('flux-key')).toBe(reason === 'keyRevoked');
+  bus.detachAll();
+});

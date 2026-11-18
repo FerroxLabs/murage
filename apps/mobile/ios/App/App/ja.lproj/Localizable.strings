@@ -13,3 +13,12 @@
 "Ask a bot" = "ボットに聞く";
 "Open my chat" = "自分のチャットを開く";
 "From" = "送信元";
+"Send to %@ as you" = "あなたとして%@に送信";
+"Send this to %@ as you?" = "これをあなたとして%@に送信しますか？";
+"Confirm in Murage" = "Murageで確認";
+"Sent to %@ without your recent chat." = "最近のチャットなしで%@に送信しました。";
+"Sent to %@." = "%@に送信しました。";
+"Sent to %@ without your recent chat (it waited too long)." = "最近のチャットなしで%@に送信しました（待ち時間が長すぎました）。";
+"Sent to %@. Pair this phone again to include your recent chat." = "%@に送信しました。最近のチャットを含めるには、この電話を再ペアリングしてください。";
+"Pair this phone again so %@ can see your recent chat when you send from it." = "このスマートフォンをもう一度ペアリングすると、ここから送信したときに %@ が最近のチャットを見られます。";
+"Couldn't reach your computer. Check it's on and try again." = "コンピューターに接続できませんでした。電源が入っているか確認して、もう一度お試しください。";

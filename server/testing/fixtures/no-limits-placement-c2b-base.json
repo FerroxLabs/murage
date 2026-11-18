@@ -1,0 +1,5176 @@
+[
+  {
+    "text": "cp blob d",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:0:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:0",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp -- blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp blob plain d/",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:1",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:0:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "write",
+          "path": "d/plain",
+          "followFinal": true,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:0",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp -t d blob plain",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:3",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "write",
+          "path": "d/plain",
+          "followFinal": true,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp -td blob plain",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:2",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "single"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "write",
+          "path": "d/plain",
+          "followFinal": true,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp --target-directory=d blob plain",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:2",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "single"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "write",
+          "path": "d/plain",
+          "followFinal": true,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp --target-directory d blob plain",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:3",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "write",
+          "path": "d/plain",
+          "followFinal": true,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp -T blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "write",
+          "path": "d",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "cp --no-target-directory blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "write",
+          "path": "d",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "cp -b -S .old blob d",
+    "sources": [
+      {
+        "operandId": "source:3",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:3",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp --backup=numbered --suffix=.old blob d",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "mv blob d",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:0:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:0",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "mv -- blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "mv blob plain d/",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:1",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:0:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:0",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "mv -t d blob plain",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:3",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "mv -td blob plain",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:2",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "single"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "mv --target-directory=d blob plain",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:2",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "single"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "mv --target-directory d blob plain",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:3",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "mv -T blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "mv --no-target-directory blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "mv -b -S .old blob d",
+    "sources": [
+      {
+        "operandId": "source:3",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:3",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "mv --backup=numbered --suffix=.old blob d",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln blob d",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:0:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:0",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln -- blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln blob plain d/",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:1",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:0:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:0",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln -t d blob plain",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:3",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln -td blob plain",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:2",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "single"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln --target-directory=d blob plain",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:2",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "single"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln --target-directory d blob plain",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:3",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln -T blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "ln --no-target-directory blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "ln -b -S .old blob d",
+    "sources": [
+      {
+        "operandId": "source:3",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:3",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln --backup=numbered --suffix=.old blob d",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "install blob d",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:0:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:0",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "install -- blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "install blob plain d/",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:1",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:0:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:0",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "install -t d blob plain",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:3",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "install -td blob plain",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:2",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "single"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "install --target-directory=d blob plain",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:2",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "single"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "install --target-directory d blob plain",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      },
+      {
+        "operandId": "source:3",
+        "path": "plain",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "plain",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      },
+      {
+        "path": "d/plain",
+        "source": "plain",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "create-name",
+          "path": "d/plain",
+          "followFinal": false,
+          "source": "plain"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/plain",
+          "physical": "<root>/d/plain"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "install -T blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "install --no-target-directory blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "install -b -S .old blob d",
+    "sources": [
+      {
+        "operandId": "source:3",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:3",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "install --backup=numbered --suffix=.old blob d",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln blob",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": ".",
+          "quote": "single"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "."
+    ],
+    "destinations": [
+      {
+        "path": "./blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:0:destination",
+          "op": "create-name",
+          "path": "./blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/blob",
+          "physical": "<root>/blob"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "ln -snf blob linkdir",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "linkdir",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "linkdir"
+    ],
+    "destinations": [
+      {
+        "path": "linkdir",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "linkdir",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/linkdir",
+          "physical": "<root>/d"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "ln -sf blob linkdir",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "linkdir",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "linkdir"
+    ],
+    "destinations": [
+      {
+        "path": "linkdir/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "linkdir/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/linkdir/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/linkdir/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "linkdir",
+          "child": "linkdir/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "ln -snf -t linkdir blob",
+    "sources": [
+      {
+        "operandId": "source:3",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 3,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "linkdir",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "linkdir"
+    ],
+    "destinations": [
+      {
+        "path": "linkdir/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:3:destination",
+          "op": "create-name",
+          "path": "linkdir/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/linkdir/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/linkdir/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:3",
+          "directory": "linkdir",
+          "child": "linkdir/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp -s blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp -l blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp -a h d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "h",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "h",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/h",
+        "source": "h",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/h",
+          "followFinal": false,
+          "source": "h"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/h",
+          "physical": "<root>/d/h"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "cp --remove-destination blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "cp \"$source\" /etc",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "\u0001",
+        "unknown": true
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "var",
+              "name": "source",
+              "quote": "double"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "/etc",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "/etc"
+    ],
+    "destinations": [],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "/etc",
+        "physical": "/etc"
+      }
+    ]
+  },
+  {
+    "text": "cp blob \"$destination\"",
+    "sources": [
+      {
+        "operandId": "source:0",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 0,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "var",
+          "name": "destination",
+          "quote": "double"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "\u0001"
+    ],
+    "destinations": [],
+    "decisions": []
+  },
+  {
+    "text": "cp -L blob d",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "write-through",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "install -d -m 0700 -o fixture d safe",
+    "sources": [
+      {
+        "operandId": "source:5",
+        "path": "d",
+        "unknown": false
+      },
+      {
+        "operandId": "source:6",
+        "path": "safe",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 5,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "d",
+              "quote": "none"
+            }
+          ]
+        }
+      },
+      {
+        "index": 6,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "safe",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "directoryOperands": [
+      "d",
+      "safe"
+    ],
+    "destinations": [
+      {
+        "path": "d",
+        "semantics": "directory",
+        "followFinal": true,
+        "effect": {
+          "operandId": "directory:destination",
+          "op": "write",
+          "path": "d",
+          "followFinal": true
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      },
+      {
+        "path": "safe",
+        "semantics": "directory",
+        "followFinal": true,
+        "effect": {
+          "operandId": "directory:destination",
+          "op": "write",
+          "path": "safe",
+          "followFinal": true
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/safe",
+          "physical": "<root>/safe"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "install -m 0600 -o fixture -g fixture blob d",
+    "sources": [
+      {
+        "operandId": "source:6",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 6,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:6:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:6",
+          "directory": "d",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "rsync -rt src/ d/",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "src/",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "src/",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/",
+        "source": "src/",
+        "semantics": "contents",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/",
+          "followFinal": false,
+          "source": "src/"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      },
+      {
+        "path": "d/blob",
+        "source": "src/blob",
+        "semantics": "contents",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "src/blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "rsync -r src d/",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "src",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "src",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/src",
+        "source": "src",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/src",
+          "followFinal": false,
+          "source": "src"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/src",
+          "physical": "<root>/d/src"
+        }
+      },
+      {
+        "path": "d/src/blob",
+        "source": "src/blob",
+        "semantics": "contents",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/src/blob",
+          "followFinal": false,
+          "source": "src/blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/src/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/src/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d/",
+          "child": "d/src/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "rsync -r --inplace src/ d/",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "src/",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "src/",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/",
+        "source": "src/",
+        "semantics": "contents",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "write",
+          "path": "d/",
+          "followFinal": true,
+          "source": "src/"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d",
+          "physical": "<root>/d"
+        }
+      },
+      {
+        "path": "d/blob",
+        "source": "src/blob",
+        "semantics": "contents",
+        "followFinal": true,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "write",
+          "path": "d/blob",
+          "followFinal": true,
+          "source": "src/blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "direct-path",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts"
+      },
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "write-through"
+        }
+      }
+    ]
+  },
+  {
+    "text": "rsync --relative src d/",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "src",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "src",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/src",
+        "source": "src",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/src",
+          "followFinal": false,
+          "source": "src"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/src",
+          "physical": "<root>/d/src"
+        }
+      }
+    ],
+    "decisions": []
+  },
+  {
+    "text": "rsync -e \"sh -c true\" blob d/",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "rsync --backup-dir=safe --suffix=.old blob d/",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "rsync -T safe blob d/",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "rsync --link-dest=safe blob d/",
+    "sources": [
+      {
+        "operandId": "source:1",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 1,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:1:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:1",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  },
+  {
+    "text": "rsync --copy-dest safe blob d/",
+    "sources": [
+      {
+        "operandId": "source:2",
+        "path": "blob",
+        "unknown": false
+      }
+    ],
+    "sourceWords": [
+      {
+        "index": 2,
+        "word": {
+          "parts": [
+            {
+              "kind": "lit",
+              "text": "blob",
+              "quote": "none"
+            }
+          ]
+        }
+      }
+    ],
+    "destinationWord": {
+      "parts": [
+        {
+          "kind": "lit",
+          "text": "d/",
+          "quote": "none"
+        }
+      ]
+    },
+    "directoryOperands": [
+      "d/"
+    ],
+    "destinations": [
+      {
+        "path": "d/blob",
+        "source": "blob",
+        "semantics": "replace-entry",
+        "followFinal": false,
+        "effect": {
+          "operandId": "source:2:destination",
+          "op": "create-name",
+          "path": "d/blob",
+          "followFinal": false,
+          "source": "blob"
+        },
+        "observed": {
+          "kind": "known",
+          "lexical": "<root>/d/blob",
+          "physical": "/etc/hosts"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "reason": "effective-destination",
+        "lexical": "<root>/d/blob",
+        "physical": "/etc/hosts",
+        "placement": {
+          "sourceOperandId": "source:2",
+          "directory": "d/",
+          "child": "d/blob",
+          "semantics": "replace-entry"
+        }
+      }
+    ]
+  }
+]

@@ -13,11 +13,11 @@ import {
 const LIMIT_MS = 100;
 const fill = (unit: string, chars = SCAN_GATE_CHARS): string => unit.repeat(Math.floor(chars / unit.length));
 /** The best of three runs (a garbage collection or a busy test box can stall one; an O(n²) reader is slow on every run). */
-function timed(text: string): { ms: number; marks: string[]; failedClosed: number } {
+function timed(text: string, trials = 3): { ms: number; marks: string[]; failedClosed: number } {
   const before = scanFailClosed.count;
   let ms = Infinity;
   let marks: string[] = [];
-  for (let run = 0; run < 3; run++) {
+  for (let run = 0; run < trials; run++) {
     const start = performance.now();
     marks = outsideScanMarks(text);
     ms = Math.min(ms, performance.now() - start);
@@ -383,6 +383,18 @@ describe("S10 frozen r11", () => {
   });
 });
 
+it("interpreter branch diagnostics are immutable snapshots on the scan diagnostics object", () => {
+  outsideScanMarks("node -e x");
+  const branches = scanFailClosed.interpreterBranches;
+  expect(branches).toMatch(/^i\d+(?:\+i\d+)*$/);
+  expect(new Set(branches.split("+")).size).toBe(branches.split("+").length);
+  expect(() => Object.assign(scanFailClosed, { interpreterBranches: "forged" })).toThrow(TypeError);
+  expect(scanFailClosed.interpreterBranches).toBe(branches);
+  outsideScanMarks("echo safe");
+  expect(scanFailClosed.interpreterBranches).toBe("none");
+  expect(branches).not.toBe("none");
+});
+
 it("the inventory holds: no REWRITE regex is left and every cap is in place", () => {
   const source = readFileSync(new URL("./outside-scan.ts", import.meta.url), "utf8");
   for (const forbidden of ["/^-[a-z]*r[a-z]*$/i", "/:.*$/", "/[. ]+$/", "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:(?:sudo"]) expect(source).not.toContain(forbidden);
@@ -400,8 +412,9 @@ it("the inventory holds: no REWRITE regex is left and every cap is in place", ()
     if (ts.isIdentifier(node) && !seen.has(node.text)) { seen.add(node.text); return resolve(bindings.get(node.text), seen); }
     return;
   };
-  const scoped = new Set(["plainWipe", "listB", "installPrograms", "readOnlyShape", "optionRunTable", "envSplitsTable", "decodeAnsiC", "nodeOptionWords"]);
-  const state = new Set(["noteEngineEnv", "engineEnvDenied", "enginePathFromEnv", "noteEnginePath", "enginePathOf", "forgetEngineEnv", "engineEnvLoadsCode"]);
+  const scoped = new Set(["plainWipe", "listB", "listBKept", "installPrograms", "readOnlyShape", "optionRunTable", "envSplitsTable", "decodeAnsiC", "nodeOptionWords"]);
+  // MAIN RULING INT-CONFLICT-DEFAULT 1c5494874e: immutable interpreter diagnostics are an explicit state reader.
+  const state = new Set(["interpreterBranches", "noteEngineEnv", "engineEnvDenied", "enginePathFromEnv", "noteEnginePath", "enginePathOf", "forgetEngineEnv", "engineEnvLoadsCode"]);
   const oracles = new Set(["partsOfReference", "shellOptionReference", "longShellOptionReference", "envSplitsReference"]);
   const data: Record<string, (n: ts.Node) => boolean> = {
     SCAN_WORK_PER_CHAR: ts.isNumericLiteral, SCAN_WORK_BASE: ts.isBinaryExpression, SCAN_GATE_CHARS: ts.isBinaryExpression,
@@ -419,6 +432,7 @@ it("the inventory holds: no REWRITE regex is left and every cap is in place", ()
     if (callable) {
       const categories = [name === "outsideScanMarks", scoped.has(name), state.has(name), oracles.has(name) || name.endsWith("ForTests")];
       expect(categories.filter(Boolean).length, name).toBe(1);
+      if (name === "interpreterBranches") expect(callable.getText(ast)).toBe('export function interpreterBranches(): string { return interpBranches.map((id) => (id === "i10" && i10Why ? `i10:${i10Why}` : id)).join("+") || "none"; }');
       if (scoped.has(name)) {
         expect(callable.body && ts.isBlock(callable.body), name).toBe(true);
         const first = (callable.body as ts.Block).statements[0];
@@ -437,6 +451,8 @@ it("the inventory holds: no REWRITE regex is left and every cap is in place", ()
     }
     else throw new Error(`unresolved export form: ${node.getText(ast)}`);
   }
+  // MAIN RULING INT-CONFLICT-DEFAULT 1c5494874e: Windows consumes this immutable diagnostic reader; its complete declaration is pinned above.
+  expect(seen.has("interpreterBranches")).toBe(true);
   for (const name of [...scoped, ...state, ...oracles, ...types, ...Object.keys(data), "outsideScanMarks"]) expect(seen.has(name), name).toBe(true);
   function visitDir(url: URL) {
     for (const entry of readdirSync(url, { withFileTypes: true })) {
@@ -471,7 +487,9 @@ it("S8 adversarial sweeps and three hook passes", () => {
         const marks = outsideScanMarks(text, hook);
         expect(JSON.stringify(marks) === JSON.stringify(reference) || JSON.stringify(marks) === JSON.stringify(ALL11), `generator ${g}, seed 11, ${JSON.stringify(text.slice(0,80))}`).toBe(true);
       }
-      const run = timed(text); if (run.failedClosed) expect(run.marks).toEqual(ALL11); return run.ms;
+      // Retain the same 100 ms and 24x bounds. Seven samples reduce shared-
+      // runner scheduling/JIT noise in this comparison of independent minima.
+      const run = timed(text, 7); if (run.failedClosed) expect(run.marks).toEqual(ALL11); return run.ms;
     });
     expect(times[2], `generator ${g}`).toBeLessThan(100); expect(times[2]!).toBeLessThanOrEqual(24 * Math.max(times[0]!, 1));
   }

@@ -1,3 +1,4 @@
+import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -663,7 +664,7 @@ export function reclaimLineageSpaceInWorker(db: DatabaseSync, options: StartupSt
     };
     try {
       options.hold?.(true);
-      const worker = new Worker(RECLAIM_WORKER_SOURCE, { eval: true, workerData: { file, index: LEGACY_MEMBER_INDEX, minBytes: options.reclaimMinBytes ?? RECLAIM_MIN_BYTES, fraction: options.reclaimFraction ?? 0.2 } });
+      const worker = new Worker(windowsHidePrelude + RECLAIM_WORKER_SOURCE, { eval: true, workerData: { file, index: LEGACY_MEMBER_INDEX, minBytes: options.reclaimMinBytes ?? RECLAIM_MIN_BYTES, fraction: options.reclaimFraction ?? 0.2 } });
       worker.on("message", (message: { ok: boolean; vacuumed?: boolean; message?: string }) => finish(message.ok, Boolean(message.vacuumed), message.message));
       worker.on("error", (error: Error) => finish(false, false, error.message));
       worker.on("exit", () => finish(false, false, "the worker ended early"));

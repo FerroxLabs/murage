@@ -1,0 +1,61 @@
+{
+ "status": 402,
+ "headers": {
+  "date": "<HTTP-date>",
+  "server": "uvicorn",
+  "x-flux-alias": "deepseek-v4-flash",
+  "content-type": "application/json",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "connection": "close",
+  "content-length": "<n>",
+  "x-flux-hold-reason": "daily_cap"
+ },
+ "body": {
+  "error": {
+   "message": "Your daily spend cap is reached. It resets at midnight UTC. Top up at https://fluxrouter.ai/home/billing",
+   "type": "None",
+   "param": "None",
+   "code": "402"
+  }
+ },
+ "endpoint": "/v1/chat/completions",
+ "chat_branch": "flux-gate passthrough (:26090-26100)",
+ "per_endpoint": {
+  "/v1/responses": {
+   "status": 402,
+   "headers": {
+    "content-length": "173",
+    "content-type": "application/json"
+   },
+   "body": {
+    "error": {
+     "message": "Your daily spend cap is reached. It resets at midnight UTC. Top up at https://fluxrouter.ai/home/billing",
+     "type": "api_error",
+     "param": null,
+     "code": "402"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "/v1/messages": {
+   "status": 402,
+   "headers": {
+    "content-length": "174",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "invalid_request_error",
+     "message": "Your daily spend cap is reached. It resets at midnight UTC. Top up at https://fluxrouter.ai/home/billing"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  }
+ },
+ "notes": "Sibling of 16 (prepaid credit gate, ordinary account path). Plain-string message; machine code only in X-Flux-Hold-Reason on chat (dropped on /v1/messages and /v1/responses). No Retry-After. Exception built by calling the real flux_credit_state._cap_block_from_reservation in the pod where noted, then forge_hook._credit_402 (IM flag ON, prod). Reason/detail produced by the real _cap_block_from_reservation(daily_cap_microcents=0, estimate=1)."
+}

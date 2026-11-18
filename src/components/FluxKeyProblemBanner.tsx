@@ -11,6 +11,7 @@
 import { KeyRound } from "lucide-react";
 
 import { t } from "@/lib/i18n";
+import { isCloudHome } from "@/lib/cloud-workspace";
 import { useStore, type ConfigStatus } from "@/state/store";
 
 export function fluxKeyProblemNotice(flux: ConfigStatus["flux"] | undefined): string | null {
@@ -22,7 +23,9 @@ export function fluxKeyProblemNotice(flux: ConfigStatus["flux"] | undefined): st
 export function FluxKeyProblemBanner() {
   const { state, dispatch } = useStore();
   const text = fluxKeyProblemNotice(state.config?.flux);
-  if (!text) return null;
+  // A Cloud home's key is delivered for the customer: they never hold one, so "paste a current key" has nothing to ask of them.
+  // Credits trouble reaches them in plain words through the home's own Fuigo pause notice (server/cloud-home/copy.ts fluxPaused*).
+  if (!text || isCloudHome()) return null;
   return (
     <div role="status" aria-live="polite" className="flex flex-wrap items-center justify-center gap-2 bg-raised px-4 py-2 text-[13px] font-medium text-ink">
       <KeyRound size={14} className="shrink-0" aria-hidden="true" />

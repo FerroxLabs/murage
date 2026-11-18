@@ -12,7 +12,8 @@ const read = path => readFileSync(new URL(`../${path}`, import.meta.url), "utf8"
 describe("human specs that need a harness of their own run on it", () => {
   it("deals every isolated file to exactly one of six shards, each with a config that exists", () => {
     const all = isolatedSpecsForShard(e2e);
-    expect(all).toEqual(expect.arrayContaining(["setup-blocked.human.spec.ts", "setup-first-run.human.spec.ts", "first-run-every-path.human.spec.ts"]));
+    // MAIN RULING INT-CONFLICT-DEFAULT c24d4d9fef 835ce7e3d1: Needs you uses its dedicated fixture config and still reaches exactly one shard.
+    expect(all).toEqual(expect.arrayContaining(["setup-blocked.human.spec.ts", "setup-first-run.human.spec.ts", "first-run-every-path.human.spec.ts", "needsyou-fullwidth.human.spec.ts"]));
     for (const file of all) expect(existsSync(new URL(`../${isolatedConfigFor(file)}`, import.meta.url)), file).toBe(true);
     const dealt = [1, 2, 3, 4, 5, 6].flatMap(n => isolatedSpecsForShard(e2e, `${n}/6`));
     expect(dealt.sort()).toEqual(all);
@@ -31,7 +32,8 @@ describe("human specs that need a harness of their own run on it", () => {
 
   it("the seeded human config never runs them, and CI runs them with their own configs", () => {
     const config = read("playwright.config.ts");
-    for (const pattern of ['"**/first-run-*.human.spec.ts"', '"**/setup-first-run.human.spec.ts"', '"**/setup-blocked.human.spec.ts"']) expect(config).toContain(pattern);
+    // MAIN RULING INT-CONFLICT-DEFAULT c24d4d9fef 835ce7e3d1: the separate blocking isolated runner owns this spec.
+    for (const pattern of ['"**/first-run-*.human.spec.ts"', '"**/setup-first-run.human.spec.ts"', '"**/setup-blocked.human.spec.ts"', '"**/needsyou-fullwidth.human.spec.ts"']) expect(config).toContain(pattern);
     const ci = parse(read(".github/workflows/ci.yml"));
     const steps = ci.jobs.human.steps.map(step => step.run ?? "").join("\n");
     expect(steps).toContain('node scripts/run-isolated-human-specs.mjs --shard="$HUMAN_SHARD"');
@@ -54,6 +56,15 @@ describe("human specs that need a harness of their own run on it", () => {
     const nested = readdirSync(new URL("../src/e2e/", import.meta.url), { recursive: true, withFileTypes: true })
       .filter(entry => entry.isFile() && entry.name.endsWith(".human.spec.ts") && !entry.parentPath.replace(/[\\/]+$/, "").endsWith("e2e"));
     expect(nested.map(entry => entry.name)).toEqual([]);
+  });
+
+  it("runs Needs you with its own harness config in a scoped confirmation", () => {
+    const file = "needsyou-fullwidth.human.spec.ts";
+    expect(splitSelectedSpecs([`src/e2e/${file}`])).toEqual({ shared: [], isolated: [file] });
+    expect(isolatedRunArgs(file, "/scratch", ["--workers=1"])).toEqual([
+      "exec", "playwright", "test", "--config", "src/e2e/needsyou-fullwidth.config.ts", `src/e2e/${file}`,
+      "--output", join("/scratch", "isolated-results", "needsyou-fullwidth"), "--workers=1",
+    ]);
   });
 
   // The seeded step's failure evidence sits in the same scratch root: an

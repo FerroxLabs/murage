@@ -191,3 +191,8 @@ describe("EXT-RESTART FU-6: an extension older than 1.0.1 is told to update",()=
   for(const v of ["1.0.1","1.1","2.0.0","1.0.1.5",undefined,"","x.y"])expect(extensionNeedsUpdate(v)).toBe(false);
  });
 });
+it('EP setup skips installation only for the chosen browser or its exact connected profile',()=>{
+ const connectedElsewhere={...status,profiles:[{profileId:'chrome-profile',browser:'chrome'}]};
+ expect(setupProgress(connectedElsewhere,undefined,{added:false,picker:false,changing:false},true,'edge').step).toBe(1);
+ expect(setupProgress(connectedElsewhere,'chrome-profile',{added:false,picker:false,changing:false},true,'chrome').step).toBe('done');
+});

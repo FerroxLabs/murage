@@ -41,6 +41,15 @@ describe("shouldReview", () => {
     expect(shouldReview(context({ approvalScope: "local-computer" }))).toBe(false);
   });
 
+  it("reviews a Claude card whose frozen decision snapshot carries no scope as null", () => {
+    // the decision snapshot (decision/bounds.ts) stores an absent approvalScope
+    // as null; null and undefined both mean no scope, as in approve-all.ts
+    for (const mode of ["shadow", "enforce"] as const) {
+      expect(shouldReview(context({ mode, approvalScope: null }))).toBe(true);
+      expect(shouldReview(context({ mode, approvalScope: "local-computer" }))).toBe(false);
+    }
+  });
+
   it("excludes a scoped Pi host-control card from AI review whatever the grant outcome", () => {
     // pi.ts stamps local-computer scope on every permission ask of a
     // host-controlling turn (A7), so none of them reach the reviewer.

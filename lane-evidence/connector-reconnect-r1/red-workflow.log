@@ -1,0 +1,28 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connector-health-scheduled-workflow.test.ts (1 test | 1 failed) 352ms
+   × P2-6 scheduled Buffer work fails visibly while lapsed and safely continues after reconnect 346ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-health-scheduled-workflow.test.ts > P2-6 scheduled Buffer work fails visibly while lapsed and safely continues after reconnect
+Error: verification server exited before it was ready; see /tmp/murage-verification-evidence/server-1794367078871-41.log
+ ❯ ready scripts/control-murage.ts:515:15
+    513|       if (signal?.aborted) throw new ControlMurageError("verification …
+    514|       if (child.exitCode !== null || child.signalCode !== null) {
+    515|         throw new Error(`verification server exited before it was read…
+       |               ^
+    516|       }
+    517|       if (await probeVerificationHealth(url, 1_000, signal)) break;
+ ❯ launchVerificationServer scripts/control-murage.ts:523:5
+ ❯ server/connector-health-scheduled-workflow.test.ts:39:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  03:17:49
+   Duration  9.31s (transform 7.03s, setup 8.50s, import 310ms, tests 352ms, environment 0ms)
+

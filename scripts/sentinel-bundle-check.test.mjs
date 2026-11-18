@@ -2,6 +2,9 @@
 // their metafile import graph, and the bundled outputs run: the scanner entry answers on its own (ESM direct-run
 // guard), the host boundary exposes the producer and descriptor API, and the sealed statistics eval worker still builds
 // a generation once bundled (A1 note).
+import { windowsHideBundlePlugin } from "./windows-hide-bundle-plugin.mjs";
+import { windowsHideImport } from "../shared/win-hide-child-process.mjs";
+import { stageEntry } from "../electron/sentinel-schedule.mjs";
 import { build } from "esbuild";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, existsSync } from "node:fs";
@@ -77,7 +80,8 @@ describe("the real bundles", () => {
       absWorkingDir: ROOT,
       entryPoints: ["sentinel/cli.ts", "health/host-boundary.ts", "health/stats-publisher.ts"].map(entry => join(ROOT, "server", entry)),
       bundle: true, platform: "node", target: "node20", format: "esm", outbase: join(ROOT, "server"), outdir: out, write: false, metafile: true,
-      banner: { js: 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
+      plugins: [windowsHideBundlePlugin()],
+      banner: { js: windowsHideImport + 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
       external: ["@huggingface/transformers"], logLevel: "silent",
     });
     for (const file of result.outputFiles) { mkdirSync(dirname(file.path), { recursive: true }); writeFileSync(file.path, file.contents); }
@@ -90,6 +94,15 @@ describe("the real bundles", () => {
   it("keep the scanner's import graph clean", { timeout: 60_000 }, async () => {
     const { metafile } = await bundleOnce();
     expect(sentinelBundleProblems(metafile)).toEqual([]);
+  });
+
+  it("the copied scanner retains its content-addressed require preload outside the package", { timeout: 60_000 }, async () => {
+    await bundleOnce();
+    const outputRoot=temp('sentinel-relocated-');
+    const staged=stageEntry({outputRoot,source:join(outdir(),'sentinel','cli.js')});
+    const run=spawnSync(process.execPath,[staged.entry,'--help'],{encoding:'utf8',env:{},timeout:20000});
+    expect(run.status,run.stderr).toBe(2);
+    expect(run.stderr).not.toContain('ERR_MODULE_NOT_FOUND');
   });
 
   it("the bundled scanner entry runs by itself and answers usage for anything but its three service modes", { timeout: 60_000 }, async () => {

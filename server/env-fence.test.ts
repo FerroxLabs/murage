@@ -7,6 +7,7 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fixturePlatformEnv } from "./testing/platform-fixtures.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execChecks, gate, resetExecChecks } from "./testing/exec-check-spy.ts";
 import { execEnvHanded, execEnvNow, type HandedEnv } from "./engine-env.ts";
@@ -104,10 +105,10 @@ describe("the capture fence (Rule 74a)", () => {
 });
 
 describe("the check fence (Rule 74d)", () => {
-  const handed = (): HandedEnv => ({ env: { PATH: "/usr/bin:/bin", HOME: dir, PAGER: "cat" }, absent: ["POSIXLY_CORRECT"], capture: "session", ownerStartup: {}, pins: new Map() });
-  const shell = ["/bin/sh", "-c"] as const;
+  const handed = (): HandedEnv => ({ env: process.platform === "win32" ? { ...fixturePlatformEnv(), PATH: process.env.PATH ?? "", HOME: dir, USERPROFILE: dir, PAGER: "cat" } as Record<string, string> : { PATH: "/usr/bin:/bin", HOME: dir, PAGER: "cat" }, absent: ["POSIXLY_CORRECT"], capture: "session", ownerStartup: {}, pins: new Map() });
+  const shell: readonly string[] = process.platform === "win32" ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-Command"] : ["/bin/sh", "-c"];
 
-  it.skipIf(!posixShell)("checks once per generation, and again after an invalidation", async () => {
+  it("checks once per generation, and again after an invalidation", async () => {
     const map = handed();
     expect(await execEnvNow("s1", shell, map, dir)).toMatchObject({ env: map.env, absent: ["POSIXLY_CORRECT"], cwd: dir });
     await execEnvNow("s1", shell, map, dir);
@@ -117,7 +118,7 @@ describe("the check fence (Rule 74d)", () => {
     expect(execChecks.runs).toBe(2);
   });
 
-  it.skipIf(!posixShell)("a check awaiting across an invalidation is not reported: it runs again", async () => {
+  it("a check awaiting across an invalidation is not reported: it runs again", async () => {
     const map = handed();
     const held = gate();
     execChecks.hold = held.promise;
@@ -130,7 +131,7 @@ describe("the check fence (Rule 74d)", () => {
     expect(execChecks.runs).toBe(2);
   });
 
-  it.skipIf(!posixShell)("an environment that keeps changing holds U20 after three re-runs", async () => {
+  it("an environment that keeps changing holds U20 after three re-runs", async () => {
     const map = handed();
     execChecks.onRun = () => invalidateEnvCapture("changed again");
     const result = await execEnvNow("s3", shell, map, dir);

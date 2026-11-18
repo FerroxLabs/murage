@@ -1,3 +1,9 @@
+import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
+const sealedProxyRefusal = { jsonrpc: "2.0", id: null, error: {
+  code: -32099, message: LEDGER_REFUSAL_LINE,
+  data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true },
+} };
+// control migration: real bound proxy ingress; existing assertions retained.
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -5,7 +11,8 @@
 // only Stop (MCP cancel, the engine closing the tool) or the harness ending
 // the turn for silence ends it. A preload compresses any long deadline the
 // proxy might set to 300 ms, so a fixed clock shows up at once.
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnBoundProxy, boundProxyState } from "../testing/bound-proxy-fixture.ts";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -13,6 +20,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { readMcpCatalog } from "../mcp-listed.ts";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "host-computer-proxy.ts");
 
@@ -22,6 +30,7 @@ describe("host computer proxy", () => {
   let port = 0;
   let delayMs = 1_500;
   let received = 0;
+  let listReply: unknown = null; // when set, the harness answers with this body instead of a tool-call result
   const closed: IncomingMessage[] = [];
 
   beforeAll(async () => {
@@ -37,7 +46,7 @@ describe("host computer proxy", () => {
         received += 1;
         const timer = setTimeout(() => {
           res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify({ content: [{ type: "text", text: `done ${JSON.parse(body).method}` }] }));
+          res.end(JSON.stringify(listReply ?? { content: [{ type: "text", text: `done ${JSON.parse(body).method}` }] }));
         }, delayMs);
         res.on("close", () => {
           clearTimeout(timer);
@@ -54,14 +63,15 @@ describe("host computer proxy", () => {
     removeTempDirSync(dir);
   });
 
-  const start = () => {
-    const child = spawn(process.execPath, ["--experimental-strip-types", "--import", pathToFileURL(join(dir, "compress.mjs")).href, PROXY], {
+  const start = async (extraEnv: Record<string, string> = {}) => {
+    const child = await spawnBoundProxy("hostComputer", process.execPath, ["--experimental-strip-types", "--import", pathToFileURL(join(dir, "compress.mjs")).href, PROXY], {
       env: {
         ...process.env,
         MURAGE_CONTROL_URL: `http://127.0.0.1:${port}/api/internal/computer-control?botId=b1`,
         MURAGE_CONTROL_TOKEN: "t",
         MURAGE_BOT_ID: "b1",
         MURAGE_THREAD_ID: "th1",
+        ...extraEnv,
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -92,11 +102,11 @@ describe("host computer proxy", () => {
     }
     throw new Error(`no response for ${id}`);
   };
-  const exited = (child: ChildProcess) => new Promise<void>((r) => (child.exitCode !== null ? r() : child.once("exit", () => r())));
+  const exited = (child: ChildProcess) => new Promise<void>((r) => (child.exitCode !== null || child.signalCode !== null ? r() : child.once("exit", () => r())));
 
   it("waits out a slow action instead of giving up on a clock", async () => {
     delayMs = 1_500;
-    const { child, results, rpc } = start();
+    const { child, results, rpc } = await start();
     rpc({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "click", arguments: {} } });
     const res = await waitFor(results, 1);
     expect(res.result).toEqual({ content: [{ type: "text", text: "done tools/call" }] });
@@ -107,7 +117,7 @@ describe("host computer proxy", () => {
   it("Stop (MCP cancel) withdraws the action at once and answers nothing", async () => {
     delayMs = 60_000;
     const before = closed.length;
-    const { child, results, rpc } = start();
+    const { child, results, rpc } = await start();
     const seen = received;
     rpc({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "click", arguments: {} } });
     await expect.poll(() => received, { timeout: 10_000 }).toBe(seen + 1);
@@ -115,14 +125,36 @@ describe("host computer proxy", () => {
     await expect.poll(() => closed.length, { timeout: 5_000 }).toBe(before + 1);
     await new Promise((r) => setTimeout(r, 300));
     expect(results.has(2)).toBe(false);
-    child.stdin!.end();
     await exited(child);
+    // Design 12.1, lines 399–401: cancellation seals before teardown. An
+    // already terminated child has signalCode, not necessarily exitCode.
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be9 / 6a9dfe7db86: also require the authenticated fixed terminal receipt.
+    expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
+  }, 20_000);
+
+  it("c11-cancel hostComputer: a cancelled tools/list gets no answer and its chain leaves the active set, so the next list certifies", async () => {
+    const marker = join(dir, "generation.host");
+    delayMs = 200; listReply = { tools: [{ name: "host_click" }] };
+    try {
+      const { child, results, rpc } = await start({ MURAGE_MCP_LISTED_FILE: marker });
+      // the request and its withdrawal arrive together, before the proxy has started on it
+      child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id: 21, method: "tools/list" }) + "\n" + JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 21 } }) + "\n");
+      await new Promise((r) => setTimeout(r, 500));
+      rpc({ jsonrpc: "2.0", id: 22, method: "tools/list" });
+      const res = await waitFor(results, 22);
+      expect(res.result).toEqual({ tools: [{ name: "host_click" }] });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(results.has(21)).toBe(false);
+      expect(readMcpCatalog(marker)).toMatchObject({ complete: true, tools: ["host_click"] });
+      child.stdin!.end();
+      await exited(child);
+    } finally { listReply = null; }
   }, 20_000);
 
   it("the engine closing the tool withdraws the action in flight", async () => {
     delayMs = 60_000;
     const before = closed.length;
-    const { child, rpc } = start();
+    const { child, rpc } = await start();
     const seen = received;
     rpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "click", arguments: {} } });
     await expect.poll(() => received, { timeout: 10_000 }).toBe(seen + 1);

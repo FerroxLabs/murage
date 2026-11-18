@@ -51,6 +51,12 @@ export const DEFAULT_STEPUP_METHODS = ["totp", "mfa/webauthn"] as const;
 const MAX_TOKEN_LENGTH = 8192;
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const CLOCK_SKEW_SECONDS = 30;
+/** amr methods that prove a mailbox (GoTrue models/factor.go names), and second factors that cannot start a session alone.
+ *  The second wall of the one-code design (CLOUD-ONE-CODE-PROOF r6 section 1, F2): a Supabase token is accepted only when every
+ *  amr method is one of these or "oauth", and at least one is an email proof or "oauth". "oauth" stays allowed here because the
+ *  token hook's OAuth link guard governs it. Password, passkey, web3, sso, anonymous and a second factor alone are refused. */
+const AMR_EMAIL_PROOF = new Set(["otp", "magiclink", "email/signup", "email_change", "recovery", "invite"]);
+const AMR_SECOND_FACTOR = new Set(["totp", "mfa/phone", "mfa/webauthn", "mfa/recovery_code"]);
 const JWKS_TTL_MS = 10 * 60_000;
 const JWKS_MISS_REFETCH_MS = 60_000;
 /** A response to a redirect: manual mode hands back the 3xx itself (or an opaque redirect, status 0, outside Workers). */
@@ -223,6 +229,10 @@ export async function verifySupabaseToken(token: string, config: SupabaseAuthCon
   const appMeta = c.app_metadata as Record<string, unknown> | undefined;
   if (!appMeta || typeof appMeta !== "object" || appMeta.email_verified !== true) throw new TokenRejected("email_unverified");
   if (typeof c.aal !== "string") throw new TokenRejected("malformed");
+  const rawAmr = Array.isArray(c.amr) ? (c.amr as unknown[]) : [];
+  const amrMethods = rawAmr.map((e) => (e && typeof e === "object" && typeof (e as { method?: unknown }).method === "string" ? (e as { method: string }).method : null));
+  if (amrMethods.length === 0 || amrMethods.some((m) => m === null || !(AMR_EMAIL_PROOF.has(m) || AMR_SECOND_FACTOR.has(m) || m === "oauth"))
+      || !amrMethods.some((m) => m !== null && (AMR_EMAIL_PROOF.has(m) || m === "oauth"))) throw new TokenRejected("amr_method");
   const amr = Array.isArray(c.amr)
     ? (c.amr as unknown[]).flatMap((e) => {
       const m = e as { method?: unknown; timestamp?: unknown } | null;

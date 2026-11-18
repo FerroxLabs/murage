@@ -1,3 +1,4 @@
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 // The /api/events firehose, pinned at the wire.
 //
 // `sse-visibility.test.ts` covers the decision; this covers the wiring, and
@@ -15,7 +16,7 @@
 // something. That is the polarity on purpose: an unmarked stream — a door
 // added later that never heard of this file — gets the narrow feed, not the
 // firehose.
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -59,7 +60,8 @@ const api = async (
 ): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { ...(body ? { "content-type": "application/json" } : {}), ...extra },
+    // The forwarding proof alone does not identify an owner's ordinary send.
+    headers: { ...(body ? { "content-type": "application/json" } : {}), "x-murage-companion-token": process.env.MURAGE_TEST_DOOR_TOKEN ?? "", ...extra },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: res.status === 204 ? null : await res.json() };
@@ -85,6 +87,7 @@ posixOnly("the events stream is scoped per client", () => {
     const port = await freePortBlock([0, 1]);
     BASE = `http://127.0.0.1:${port}`;
     const env: NodeJS.ProcessEnv = {
+      ...powerBlockTestEnv(),
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(port),
@@ -97,7 +100,30 @@ posixOnly("the events stream is scoped per client", () => {
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
 
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    // Seed persisted staged records before the server loads its isolated store.
+    execFileSync(process.execPath, [...fakeEngineImportArgs(), "--input-type=module", "-e", `
+      const { Store } = await import(${JSON.stringify(new URL("./store.ts", import.meta.url).href)});
+      const { BotOutsideWrites } = await import(${JSON.stringify(new URL("./bot-outside-writes.ts", import.meta.url).href)});
+      const store = new Store(() => (${JSON.stringify(model)}));
+      const writes = new BotOutsideWrites(store, () => null);
+      for (const hidden of [false, true]) {
+        const bot = store.createBot({ name: hidden ? "Hidden staged fixture" : "Staged fixture" }, {
+          seedMessages: false,
+          staged: writes.staging("scope-fixture", "scope-thread", "scope-owner", "outside", {
+            autoApprove: false, fullAccess: false, noLimits: false, lead: false,
+          }),
+        });
+        store.patchBot(bot.id, { hidden });
+        // A migrated notice is already terminal; this fixture exercises send admission, not review-card issuance.
+        store.appendMessage(bot.threadId, { role: "bot", kind: "options", card: {
+          requestId: "bot-review-" + bot.id, botReviewId: bot.id, orphaned: true, options: ["Review"],
+        } });
+      }
+      store.createBot({ name: "Scope fixture" });
+    `], { cwd: join(SERVER_DIR, ".."), env });
+
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -158,6 +184,11 @@ posixOnly("the events stream is scoped per client", () => {
     // The desktop is unaffected.
     expect((await api("POST", `/api/threads/${bot.threadId}/messages/${messageId}/reactions`,
       { emoji: "🔥" }, desktop)).status).toBe(200);
+    // The replay witness must start a fresh turn, not queue behind this one or observe its reply.
+    await expect.poll(async () => {
+      const listed = await desktopApi("GET", "/api/bots?messages=0");
+      return listed.body.bots.find((candidate: any) => candidate.id === bot.id)?.busy;
+    }, { timeout: 20_000 }).toBe(false);
   });
 
   it(
@@ -193,11 +224,17 @@ posixOnly("the events stream is scoped per client", () => {
           (frame) => frame.kind === "message" && frame.threadId === secret.threadId && frame.message?.role === "bot",
           20_000,
         );
+        await desktop.until(
+          (frame) => frame.kind === "message" && frame.threadId === secret.threadId && frame.message?.role === "bot" && frame.message?.kind === "text",
+          20_000,
+        );
 
         // The barrier. Frames leave broadcast() in one order for every
         // client, so once the phone has this one, anything the hidden turn
         // emitted has already been offered to it and refused.
         expect((await api("POST", `/api/bots/${ordinary.id}/messages`, { text: "what is on today" })).status).toBe(202);
+        await expect.poll(() => phone!.frames.some((frame) => frame.kind === "message" && frame.threadId === ordinary.threadId),
+          { timeout: 20_000 }).toBe(true);
         await phone.until(
           (frame) => frame.kind === "message" && frame.threadId === ordinary.threadId && frame.message?.role === "user",
           20_000,
@@ -242,7 +279,15 @@ posixOnly("the events stream is scoped per client", () => {
         expect((await desktopApi("POST", `/api/bots/${secret.id}/messages`, { text: `and the vault code is ${HIDDEN}` })).status)
           .toBe(202);
         await witness.until(
+          (frame) => frame.kind === "message" && frame.threadId === secret.threadId && frame.message?.role === "user" && frame.message?.text?.includes(HIDDEN),
+          20_000,
+        );
+        await witness.until(
           (frame) => frame.kind === "message" && frame.threadId === secret.threadId && frame.message?.role === "bot",
+          20_000,
+        );
+        await witness.until(
+          (frame) => frame.kind === "message" && frame.threadId === secret.threadId && frame.message?.role === "bot" && frame.message?.kind === "text",
           20_000,
         );
       } finally {
@@ -266,4 +311,27 @@ posixOnly("the events stream is scoped per client", () => {
     },
     90_000,
   );
+  it("does not mint script access or confirm a hidden bot to a paired client", async () => {
+    const listed = await desktopApi("GET", "/api/bots?messages=0");
+    expect(listed.status).toBe(200);
+    const hidden = listed.body.bots.find((bot: any) => bot.hidden === true && bot.staged === undefined);
+    const visible = listed.body.bots.find((bot: any) => bot.hidden !== true && bot.staged === undefined);
+    expect(hidden).toBeTruthy();
+    expect(visible).toBeTruthy();
+    expect((await api("POST", "/api/mcp-grants", { botId: visible.id }, { "x-murage-companion": "1" })).status).toBe(201);
+    const refused = await api("POST", "/api/mcp-grants", { botId: hidden.id }, { "x-murage-companion": "1" });
+    expect(refused.status).toBe(404);
+    expect(JSON.stringify(refused.body)).not.toContain(hidden.name);
+  });
+
+  it.each(["Staged fixture", "Hidden staged fixture"])("refuses owner sends to %s with bot_staged", async (name) => {
+    const listed = await desktopApi("GET", "/api/bots");
+    expect(listed.status).toBe(200);
+    const bot = listed.body.bots.find((candidate: any) => candidate.name === name);
+    expect(bot?.staged).toBeDefined();
+    expect(bot.hidden === true).toBe(name === "Hidden staged fixture");
+    const refused = await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "stay staged" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe("bot_staged");
+  });
 });

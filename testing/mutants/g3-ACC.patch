@@ -1,0 +1,11 @@
+--- a/server/drivers/acp/core.ts
++++ b/server/drivers/acp/core.ts
+@@ -5364,7 +5364,7 @@
+             // typed facts without cancelling a turn the engine already ended.
+             if (terminal) return;
+             const cancelProcess = proc;
+-            NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } }, error => { if (error) acpFenced(error, "acp.cancel.flux", cancelProcess, { method: "session/cancel" }); }));
++            NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } }));
+             // A claimed turn is already settled by its owner: no cancel deadline is armed for it.
+             if (turnRef.fenced) return;
+             // Astra r4: an engine that never answers the cancel still ends this turn as the refusal, once.

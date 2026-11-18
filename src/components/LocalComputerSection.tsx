@@ -287,12 +287,14 @@ export function LocalComputerSection() {
             <button
               key={mode}
               type="button"
+              aria-pressed={(status?.mode ?? "shared") === mode}
+              data-selected={(status?.mode ?? "shared") === mode ? "true" : "false"}
               disabled={!status || policyPending}
               onClick={() => void savePolicy(mode, status?.max_instances ?? 2)}
               className={cn(
                 "flex-1 px-3 py-2 text-[13px] disabled:opacity-50",
                 index > 0 && "border-l border-hairline/40",
-                status?.mode === mode ? "bg-control text-ink" : "text-ink-secondary hover:text-ink",
+                (status?.mode ?? "shared") === mode ? "bg-accent/15 font-semibold text-accent-text" : "text-ink-secondary hover:text-ink",
               )}
             >
               {mode === "shared" ? "Shared" : "Per bot"}

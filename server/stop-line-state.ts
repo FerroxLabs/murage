@@ -15,7 +15,8 @@
 //   - Recipients: everyone a bot has already sent a message to, so the next
 //     message to them is a reply-in-kind rather than "someone new". Durable,
 //     one small JSON file per bot under the data dir, on this desktop only.
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { dirname, sep } from "node:path";
 
 import { joinReal, realDir, realPathInOrder } from "../shared/in-project.ts";

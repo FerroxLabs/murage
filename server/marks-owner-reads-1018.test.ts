@@ -14,7 +14,8 @@
 // Every other level and origin reads as NLH0 (R1): the plain read and the Full access verdict of each row are compared with the
 // answer NLH0 gave, pinned in testing/marks-nlh0-verdicts.json.
 import { describe, expect, it, vi } from "vitest";
-import { nlh0 } from "./testing/marks-nlh0.ts";
+import { nlh0, type Added } from "./testing/marks-nlh0.ts";
+import { expectNoLimitsOwnerOutcome, expectNoLimitsProtectedWrite } from "./testing/no-limits-1019.ts";
 
 process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
@@ -32,15 +33,35 @@ const turn = (command: string, cwd: string | undefined = "/w") => ({ commandText
   fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null }) as unknown as Parameters<typeof autoVerdict>[3];
 const read = (command: string, cwd: string | undefined = "/w") => ownerMarks(() => alwaysAskCommand(command, cwd));
 const owner = (command: string, cwd?: string) => autoVerdict(NO_LIMITS, "Bash", command, turn(command, cwd));
+// T4-E: exact direct Full-access additions, including the confirmed Stage 0 value.
+const T4_FULL: Record<string, Added> = {
+  "R=ls; R=rm; $R -rf ~": {"reason": "delete-home"},
+  "R=rm; $R -rf ~": {"reason": "delete-home"},
+  "bash -c 'cp x \"$1\"' y /etc/hosts": {"reason": "protected-path"},
+  "bash -c 'exec \"$@\"' x rm -rf /home": {"reason": "delete-system-folder"},
+  "bash -c 'mytool \"$0\"' /usr": {"reason": "protected-path"},
+  "bash -c 'rm -rf \"$0\"' /usr": {"reason": "delete-system-folder"},
+  "cat <<EOF > notes.md\nhi\nEOF\ncat <<EOT\nx\nEOT\nrm -rf /usr": {"reason": "delete-system-folder"},
+  "cat <<EOF > notes.md\nhi\nEOF\nrm -rf ~": {"reason": "delete-home"},
+  "f(){ mytool \"$1\"; }; f /": {"reason": "protected-path"},
+  "f(){ rm -rf \"$1\"; }; f /": {"reason": "delete-root"},
+  "f(){ rm -rf \"$1\"; }; touch out; f /": {"reason": "delete-root"},
+  "means-it-N5|node -e \"require('child_process').execSync('rm -rf /')\"": {"reason": "unreadable"},
+  "means-it-N5|python3 -c \"import os; os.system('rm -rf /')\"": {"reason": "unreadable"},
+  "rm -rf ~": {"reason": "delete-home"},
+  "unknownprog /": {"reason": "protected-path"},
+  "bash -c \"$X\" /usr": {"reason": "value-path"},
+};
 /** The other levels: NLH0's answer, pinned (R1). */
 const asNlh0 = (id: string, command: string) => {
   nlh0(`owner-reads|${id}|read`, alwaysAskCommand(command, "/w"));
-  nlh0(`owner-reads|${id}|full`, autoVerdict(FULL, "Bash", command, turn(command)));
+  nlh0(`owner-reads|${id}|full`, autoVerdict(FULL, "Bash", command, turn(command)), undefined, T4_FULL[id]);
 };
 const runs = (command: string, cwd?: string) => { expect(read(command, cwd), command).toBeNull(); expect(owner(command, cwd), command).toMatchObject({ source: "no-limits" }); expect(owner(command, cwd).approve).toBeTruthy(); };
 const denies = (command: string, rule: string, cwd?: string) => {
   expect(read(command, cwd), command).toMatchObject({ classification: "deny", rule });
-  expect(owner(command, cwd), command).toMatchObject({ approve: null, source: "always-ask", classification: "deny", rule });
+  // NOLIM 1.0.19: the reader's rule is asserted above; the owner's No limits turn runs a non-wipe deny row, a wipe row keeps its card
+  expectNoLimitsOwnerOutcome(owner(command, cwd), command, read(command, cwd)?.rule, command);
 };
 
 describe("G3 M-LS-F: ls -r and ls -f are read flags (N6)", () => {
@@ -70,7 +91,11 @@ describe("G3 M-SHELL-C: a shell's -c script is read with its positionals bound (
     ["bash -c \"$X\" /usr", "protected-path"],
   ])("%s denies by the command's own position", (command, rule) => {
     asNlh0(command, command);
-    denies(command, rule);
+    if (command === "bash -c 'cp x \"$1\"' y /etc/hosts") {
+      expect(read(command), command).toMatchObject({ classification: "deny", rule });
+      // S1-B3 RULING (MAIN 2026-11-11 09:30Z): the bound destination is a protected write.
+      expectNoLimitsProtectedWrite(owner(command), command);
+    } else denies(command, rule);
   });
 });
 
@@ -149,7 +174,7 @@ describe("MARKS R1 (marks-accepted-additions-1018 rows): the same texts outside 
 
 describe("MARKS R1 (nolimits-means-it N5 rows): the same texts outside the owner's No limits turn read as NLH0", () => {
   it.each([`python3 -c "import os; os.system('rm -rf /')"`, `node -e "require('child_process').execSync('rm -rf /')"`])("%s", (command) => {
-    nlh0(`owner-reads|means-it-N5|${command}|read`, alwaysAskCommand(command, "/w"));
-    nlh0(`owner-reads|means-it-N5|${command}|full`, autoVerdict(FULL, "Bash", command, turn(command)));
+    nlh0(`owner-reads|means-it-N5|${command}|read`, alwaysAskCommand(command, "/w"), undefined, { namedCatastrophe: true });
+    nlh0(`owner-reads|means-it-N5|${command}|full`, autoVerdict(FULL, "Bash", command, turn(command)), undefined, T4_FULL[`means-it-N5|${command}`]);
   });
 });

@@ -22,6 +22,7 @@
 // else: no stored event, no chip (section 12a, rule 1).
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { insertScope } from "./scope-insert.ts";
 import type { BotLearning } from "../bot-learning.ts";
 import {
   KEEP_WINDOW_MS, KEPT_CHIP_TURNS, chipClause, groupOf, pickTemplate,
@@ -105,7 +106,7 @@ export function ensureBotScope(db: DatabaseSync, botId: string): string {
   const row = db.prepare("SELECT id FROM memory_scopes WHERE kind='bot' AND owner_key=?").get(botId);
   if (row) return String(row.id);
   const id = randomUUID();
-  db.prepare("INSERT INTO memory_scopes VALUES(?,'bot',?,'[]',0)").run(id, botId);
+  insertScope(db, id, "bot", botId);
   return id;
 }
 

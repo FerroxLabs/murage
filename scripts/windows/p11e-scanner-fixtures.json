@@ -1,0 +1,472 @@
+[
+  {
+    "name": "crev5 exact",
+    "ext": ".mjs",
+    "code": "import {kill as stop} from 'node:process';\n(stop)(123);\n"
+  },
+  {
+    "name": "parenthesized",
+    "ext": ".mjs",
+    "code": "import {kill as f} from 'node:process'; (((f)))(123);"
+  },
+  {
+    "name": "sequence",
+    "ext": ".mjs",
+    "code": "import {kill as f} from 'node:process'; (0,f)(123);"
+  },
+  {
+    "name": "optional-call",
+    "ext": ".mjs",
+    "code": "import {kill as f} from 'node:process'; f?.(123);"
+  },
+  {
+    "name": "alias",
+    "ext": ".mjs",
+    "code": "const p=process; p.kill(123);"
+  },
+  {
+    "name": "destructuring",
+    "ext": ".mjs",
+    "code": "const {kill:f}=process; f(123);"
+  },
+  {
+    "name": "globalThis",
+    "ext": ".mjs",
+    "code": "globalThis.process.kill(123);"
+  },
+  {
+    "name": "global",
+    "ext": ".mjs",
+    "code": "global.process.kill(123);"
+  },
+  {
+    "name": "global-computed",
+    "ext": ".mjs",
+    "code": "globalThis['pro'+'cess'].kill(123);"
+  },
+  {
+    "name": "global-alias",
+    "ext": ".mjs",
+    "code": "const g=globalThis; g.process.kill(123);"
+  },
+  {
+    "name": "global-destructure",
+    "ext": ".mjs",
+    "code": "const {process:p}=global; p.kill(123);"
+  },
+  {
+    "name": "computed-process",
+    "ext": ".mjs",
+    "code": "process['env'];"
+  },
+  {
+    "name": "parenthesized-process",
+    "ext": ".mjs",
+    "code": "(process).env;"
+  },
+  {
+    "name": "optional-member",
+    "ext": ".mjs",
+    "code": "process?.env;"
+  },
+  {
+    "name": "bare-value",
+    "ext": ".mjs",
+    "code": "consume(process);"
+  },
+  {
+    "name": "shorthand",
+    "ext": ".mjs",
+    "code": "const x={process};"
+  },
+  {
+    "name": "return-process",
+    "ext": ".mjs",
+    "code": "function f(){return process;}"
+  },
+  {
+    "name": "process-pid",
+    "ext": ".mjs",
+    "code": "console.log(process.pid);"
+  },
+  {
+    "name": "process-execPath",
+    "ext": ".mjs",
+    "code": "console.log(process.execPath);"
+  },
+  {
+    "name": "process-stdin",
+    "ext": ".mjs",
+    "code": "consume(process.stdin);"
+  },
+  {
+    "name": "process-binding",
+    "ext": ".mjs",
+    "code": "const f=process.binding;"
+  },
+  {
+    "name": "process-computed-symbol",
+    "ext": ".mjs",
+    "code": "process[Symbol.for('hook')];"
+  },
+  {
+    "name": "unknown-event",
+    "ext": ".mjs",
+    "code": "process.on('message',()=>{});"
+  },
+  {
+    "name": "dynamic-event",
+    "ext": ".mjs",
+    "code": "process.on(event,()=>{});"
+  },
+  {
+    "name": "on-return-alias",
+    "ext": ".mjs",
+    "code": "const p=process.on('exit',()=>{});"
+  },
+  {
+    "name": "on-alias",
+    "ext": ".mjs",
+    "code": "const on=process.on;"
+  },
+  {
+    "name": "cwd-alias",
+    "ext": ".mjs",
+    "code": "const cwd=process.cwd;"
+  },
+  {
+    "name": "stdout-alias",
+    "ext": ".mjs",
+    "code": "const stdout=process.stdout;"
+  },
+  {
+    "name": "stdout-other",
+    "ext": ".mjs",
+    "code": "process.stdout.destroy();"
+  },
+  {
+    "name": "stdout-computed",
+    "ext": ".mjs",
+    "code": "process.stdout['write']('x');"
+  },
+  {
+    "name": "stderr-optional-call",
+    "ext": ".mjs",
+    "code": "process.stderr.write?.('x');"
+  },
+  {
+    "name": "hrtime-computed",
+    "ext": ".mjs",
+    "code": "process.hrtime['bigint']();"
+  },
+  {
+    "name": "dynamic-import",
+    "ext": ".mjs",
+    "code": "await import('node:process');"
+  },
+  {
+    "name": "dynamic-import-local",
+    "ext": ".mjs",
+    "code": "await import('./helper.mjs');"
+  },
+  {
+    "name": "dynamic-import-expression",
+    "ext": ".mjs",
+    "code": "await import(target);"
+  },
+  {
+    "name": "eval",
+    "ext": ".mjs",
+    "code": "eval(code);"
+  },
+  {
+    "name": "eval-alias",
+    "ext": ".mjs",
+    "code": "const f=eval; f(code);"
+  },
+  {
+    "name": "Function",
+    "ext": ".mjs",
+    "code": "new Function(code)();"
+  },
+  {
+    "name": "Function-alias",
+    "ext": ".mjs",
+    "code": "const F=Function; new F(code);"
+  },
+  {
+    "name": "global-Function",
+    "ext": ".mjs",
+    "code": "globalThis.Function(code)();"
+  },
+  {
+    "name": "vm",
+    "ext": ".mjs",
+    "code": "vm.runInThisContext(code);"
+  },
+  {
+    "name": "require-alias",
+    "ext": ".mjs",
+    "code": "const r=require; r('node:process');"
+  },
+  {
+    "name": "computed-require",
+    "ext": ".mjs",
+    "code": "module['require']('node:process');"
+  },
+  {
+    "name": "dynamic-require",
+    "ext": ".mjs",
+    "code": "require(target);"
+  },
+  {
+    "name": "node:child_process named",
+    "ext": ".mjs",
+    "code": "import { x as f } from 'node:child_process';"
+  },
+  {
+    "name": "node:child_process default",
+    "ext": ".mjs",
+    "code": "import f from 'node:child_process';"
+  },
+  {
+    "name": "node:child_process namespace",
+    "ext": ".mjs",
+    "code": "import * as f from 'node:child_process';"
+  },
+  {
+    "name": "node:child_process require",
+    "ext": ".cjs",
+    "code": "const f=require('node:child_process');"
+  },
+  {
+    "name": "node:child_process re-export",
+    "ext": ".mjs",
+    "code": "export * from 'node:child_process';"
+  },
+  {
+    "name": "child_process named",
+    "ext": ".mjs",
+    "code": "import { x as f } from 'child_process';"
+  },
+  {
+    "name": "child_process default",
+    "ext": ".mjs",
+    "code": "import f from 'child_process';"
+  },
+  {
+    "name": "child_process namespace",
+    "ext": ".mjs",
+    "code": "import * as f from 'child_process';"
+  },
+  {
+    "name": "child_process require",
+    "ext": ".cjs",
+    "code": "const f=require('child_process');"
+  },
+  {
+    "name": "child_process re-export",
+    "ext": ".mjs",
+    "code": "export * from 'child_process';"
+  },
+  {
+    "name": "node:worker_threads named",
+    "ext": ".mjs",
+    "code": "import { x as f } from 'node:worker_threads';"
+  },
+  {
+    "name": "node:worker_threads default",
+    "ext": ".mjs",
+    "code": "import f from 'node:worker_threads';"
+  },
+  {
+    "name": "node:worker_threads namespace",
+    "ext": ".mjs",
+    "code": "import * as f from 'node:worker_threads';"
+  },
+  {
+    "name": "node:worker_threads require",
+    "ext": ".cjs",
+    "code": "const f=require('node:worker_threads');"
+  },
+  {
+    "name": "node:worker_threads re-export",
+    "ext": ".mjs",
+    "code": "export * from 'node:worker_threads';"
+  },
+  {
+    "name": "worker_threads named",
+    "ext": ".mjs",
+    "code": "import { x as f } from 'worker_threads';"
+  },
+  {
+    "name": "worker_threads default",
+    "ext": ".mjs",
+    "code": "import f from 'worker_threads';"
+  },
+  {
+    "name": "worker_threads namespace",
+    "ext": ".mjs",
+    "code": "import * as f from 'worker_threads';"
+  },
+  {
+    "name": "worker_threads require",
+    "ext": ".cjs",
+    "code": "const f=require('worker_threads');"
+  },
+  {
+    "name": "worker_threads re-export",
+    "ext": ".mjs",
+    "code": "export * from 'worker_threads';"
+  },
+  {
+    "name": "node:cluster named",
+    "ext": ".mjs",
+    "code": "import { x as f } from 'node:cluster';"
+  },
+  {
+    "name": "node:cluster default",
+    "ext": ".mjs",
+    "code": "import f from 'node:cluster';"
+  },
+  {
+    "name": "node:cluster namespace",
+    "ext": ".mjs",
+    "code": "import * as f from 'node:cluster';"
+  },
+  {
+    "name": "node:cluster require",
+    "ext": ".cjs",
+    "code": "const f=require('node:cluster');"
+  },
+  {
+    "name": "node:cluster re-export",
+    "ext": ".mjs",
+    "code": "export * from 'node:cluster';"
+  },
+  {
+    "name": "cluster named",
+    "ext": ".mjs",
+    "code": "import { x as f } from 'cluster';"
+  },
+  {
+    "name": "cluster default",
+    "ext": ".mjs",
+    "code": "import f from 'cluster';"
+  },
+  {
+    "name": "cluster namespace",
+    "ext": ".mjs",
+    "code": "import * as f from 'cluster';"
+  },
+  {
+    "name": "cluster require",
+    "ext": ".cjs",
+    "code": "const f=require('cluster');"
+  },
+  {
+    "name": "cluster re-export",
+    "ext": ".mjs",
+    "code": "export * from 'cluster';"
+  },
+  {
+    "name": "node:process named",
+    "ext": ".mjs",
+    "code": "import { x as f } from 'node:process';"
+  },
+  {
+    "name": "node:process default",
+    "ext": ".mjs",
+    "code": "import f from 'node:process';"
+  },
+  {
+    "name": "node:process namespace",
+    "ext": ".mjs",
+    "code": "import * as f from 'node:process';"
+  },
+  {
+    "name": "node:process require",
+    "ext": ".cjs",
+    "code": "const f=require('node:process');"
+  },
+  {
+    "name": "node:process re-export",
+    "ext": ".mjs",
+    "code": "export * from 'node:process';"
+  },
+  {
+    "name": "process named",
+    "ext": ".mjs",
+    "code": "import { x as f } from 'process';"
+  },
+  {
+    "name": "process default",
+    "ext": ".mjs",
+    "code": "import f from 'process';"
+  },
+  {
+    "name": "process namespace",
+    "ext": ".mjs",
+    "code": "import * as f from 'process';"
+  },
+  {
+    "name": "process require",
+    "ext": ".cjs",
+    "code": "const f=require('process');"
+  },
+  {
+    "name": "process re-export",
+    "ext": ".mjs",
+    "code": "export * from 'process';"
+  },
+  {
+    "name": "node:vm named",
+    "ext": ".mjs",
+    "code": "import { x as f } from 'node:vm';"
+  },
+  {
+    "name": "node:vm default",
+    "ext": ".mjs",
+    "code": "import f from 'node:vm';"
+  },
+  {
+    "name": "node:vm namespace",
+    "ext": ".mjs",
+    "code": "import * as f from 'node:vm';"
+  },
+  {
+    "name": "node:vm require",
+    "ext": ".cjs",
+    "code": "const f=require('node:vm');"
+  },
+  {
+    "name": "node:vm re-export",
+    "ext": ".mjs",
+    "code": "export * from 'node:vm';"
+  },
+  {
+    "name": "vm named",
+    "ext": ".mjs",
+    "code": "import { x as f } from 'vm';"
+  },
+  {
+    "name": "vm default",
+    "ext": ".mjs",
+    "code": "import f from 'vm';"
+  },
+  {
+    "name": "vm namespace",
+    "ext": ".mjs",
+    "code": "import * as f from 'vm';"
+  },
+  {
+    "name": "vm require",
+    "ext": ".cjs",
+    "code": "const f=require('vm');"
+  },
+  {
+    "name": "vm re-export",
+    "ext": ".mjs",
+    "code": "export * from 'vm';"
+  }
+]

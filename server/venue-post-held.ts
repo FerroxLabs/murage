@@ -5,6 +5,7 @@
 // row and is answered only through answerHeldVenuePost (venue-post.ts). States: held -> posting -> posted | unavailable; held -> declined;
 // held -> stopped. A held row never expires (cards wait). Light module: no store import, so database.ts and the snapshot can create it.
 import type { DatabaseSync } from "node:sqlite";
+import { assertWalWriteAdmission } from "./wal-maintenance.ts";
 
 export const VENUE_POSTS_DDL = `CREATE TABLE IF NOT EXISTS venue_posts (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, thread_id TEXT NOT NULL, origin TEXT NOT NULL,
   root_thread_id TEXT, request_message_id TEXT NOT NULL, request_hash TEXT NOT NULL, venue_id TEXT NOT NULL, venue_thread_id TEXT, target_thread_id TEXT NOT NULL,
@@ -80,17 +81,43 @@ export function stopHeldVenuePosts(db: DatabaseSync, threadId: string, now = Dat
   return rows;
 }
 
+/** A row the boot recovery looked at: the state the line on the target gives it, and whether this call moved it there. */
+export type RecoveredVenuePost = VenuePostHeldRow & { moved: boolean };
+
 /** Boot: a post cut short between its claim and its write. The line on the target, by stableId, decides: there -> posted, else -> held
- * (the card is open again; the owner answers it again). Returns the rows it moved, with their new state. */
-export function recoverVenuePosts(db: DatabaseSync, lineExists: (targetThreadId: string, stableId: string) => boolean, now = Date.now()): VenuePostHeldRow[] {
+ * (the card is open again; the owner answers it again). Returns the rows it looked at with that state; `moved` says whether the row was moved.
+ * While the database refuses writes (the admission gate: low disk, a read-only start, a log at its ceiling) the card's settle would be refused
+ * too, so nothing is moved (`moved: false`): the rows stay `posting` and the next recovery finds them again (bootdesign2-probes R3). The raw
+ * UPDATE is not behind the gate on its own; this check is what keeps a move from outliving its settle.
+ * `strict` (the composed recovery): the refusal is thrown instead, so the transaction around the move and the settle ends with nothing done. */
+export function recoverVenuePosts(db: DatabaseSync, lineExists: (targetThreadId: string, stableId: string) => boolean, now = Date.now(), strict = false): RecoveredVenuePost[] {
   initializeVenuePosts(db);
   const rows = (db.prepare("SELECT * FROM venue_posts WHERE state='posting'").all() as Raw[]).map(toRow);
-  const moved: VenuePostHeldRow[] = [];
+  let admitted = true;
+  try { assertWalWriteAdmission((db as unknown as { location(): string | null }).location()); }
+  catch (error) { if (strict) throw error; admitted = false; }
+  const seen: RecoveredVenuePost[] = [];
   for (const row of rows) {
     let there = false;
     try { there = lineExists(row.targetThreadId, row.stableId); } catch { there = false; }
     const to: VenuePostState = there ? "posted" : "held";
-    if (moveVenuePost(db, row.id, "posting", to, now)) moved.push({ ...row, state: to });
+    if (!admitted) seen.push({ ...row, state: to, moved: false });
+    else if (moveVenuePost(db, row.id, "posting", to, now)) seen.push({ ...row, state: to, moved: true });
   }
-  return moved;
+  return seen;
+}
+
+/** Boot, composed: the recovery of cut-short posts AND the settle of their cards are ONE transaction, so a refusal between them leaves the row `posting`
+ * and the card unanswered (never a moved row with an open card, never a settled card with a row still `posting`). The move is strict: a refusal the
+ * gate publishes after this transaction began is thrown out of it. A card is settled only for a row this transaction moved.
+ * `transaction` is the database's (passed in: this module cannot import database.ts). */
+export function recoverAndSettleVenuePosts(
+  _db: DatabaseSync, transaction: <T>(work: (inner: DatabaseSync) => T) => T,
+  lineExists: (targetThreadId: string, stableId: string) => boolean, settleCard: (row: VenuePostHeldRow) => void,
+): RecoveredVenuePost[] {
+  return transaction((inner) => {
+    const seen = recoverVenuePosts(inner, lineExists, Date.now(), true);
+    for (const row of seen) if (row.moved && row.state === "posted") settleCard(row);
+    return seen;
+  });
 }

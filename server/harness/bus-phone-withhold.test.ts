@@ -4,7 +4,8 @@
 // 1.0.9 phone tools S18 (H4, F18): the canonical event log withholds a phone thread's reply text and every phone tool row's
 // input and result, while live delivery keeps the words.
 import { describe, expect, it } from "vitest";
-import { EventBus, PHONE_RESULT_WITHHELD, PHONE_TEXT_WITHHELD } from "./bus.ts";
+import { PHONE_RESULT_WITHHELD, PHONE_TEXT_WITHHELD } from "./bus.ts";
+import { AdmittedEventBus as EventBus } from "../testing/admitted-event-bus.ts";
 import { makePhoneToolMatcher } from "../phones/withhold.ts";
 import { eventLogLimits } from "./event-log.ts";
 import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
@@ -53,11 +54,13 @@ describe("the event log and a phone thread (S18)", () => {
   // ql2 sink fold (was: the result's "file words" on disk): an unmarked thread's non-phone tool row is the allowlisted row (ids,
   // ok), never the phone stand-in, and its result is not written (Astra r1 H9)
   it("leaves a non-phone tool row unwithheld on an unmarked thread", () => {
-    const { bus, log } = rig(["t-marked"]);
+    const { bus, log, delivered } = rig(["t-marked"]);
     bus.publish({ provider: "fakeAsk", eventId: "s", createdAt: "x", threadId: "t-plain", itemId: "z", type: "item.started", itemType: "tool", origin: "engine", title: "read_file", input: { path: "a.txt" } } as never);
     bus.publish(done("t-plain", "z", { body: "file words" }));
     const rows = log().trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
-    expect(rows.map((row) => [row.type, row.itemId])).toEqual([["item.started", "z"], ["item.completed", "z"]]);
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: host item identity replaces the provider id on disk; execution remains exact.
+    expect(rows.map((row) => [row.type, row.itemId])).toEqual([["item.started", "1-0"], ["item.completed", "1-0"]]);
+    expect(delivered.map(row => row.itemId)).toEqual(["z", "z"]);
     expect(rows[1]).toMatchObject({ ok: true });
     expect(log()).not.toContain("file words");
     expect(log()).not.toContain(PHONE_RESULT_WITHHELD);
@@ -68,9 +71,12 @@ describe("the event log and a phone thread (S18)", () => {
     expect(log()).not.toContain("streamed words");
   });
   it("withholds a record over the size limit too (withhold runs before boundedRecord)", () => {
-    const { bus, log } = rig(["t-marked"]);
-    bus.publish(text("t-marked", "Dr Lee ".repeat(Math.ceil(eventLogLimits.recordBytes / 6))));
-    expect(log()).toContain(PHONE_TEXT_WITHHELD);
+    const { bus, log, delivered } = rig(["t-marked"]);
+    const event = text("t-marked", "Dr Lee ".repeat(Math.ceil(eventLogLimits.recordBytes / 6)));
+    bus.publish(event);
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: intake exhaustion precedes phone projection and emits only the fixed omission.
+    expect(JSON.parse(log())).toMatchObject({ type: "audience.omitted", reason: "redacted", text: "«redacted»" });
+    expect(delivered.at(-1)).toBe(event);
     expect(log()).not.toContain("Dr Lee");
   });
 
@@ -130,7 +136,10 @@ describe("the event log and a phone thread (S18)", () => {
     expect(delivered.some((e) => JSON.stringify(e).includes("5551234567"))).toBe(true);
     bus.publish({ ...(reasoning("t-plain") as object), eventId: "rs-plain", summary: "plain thinking" } as never);
     // ql2 sink fold (was: "plain thinking" on disk): a plain thread's reasoning row is kept, its words are not
-    expect(log()).toContain("rs-plain");
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: the host supplies event ids; the original still reaches execution.
+    expect(log()).not.toContain("rs-plain");
+    expect(delivered.some(event => event.eventId === "rs-plain")).toBe(true);
+    expect(log().trim().split("\n").map(line => JSON.parse(line).type)).toEqual(["item.started", "item.started"]);
     expect(log()).not.toContain("plain thinking");
   });
   it("withholds a marked thread's async question text and keeps its shape (N2)", () => {
@@ -138,14 +147,17 @@ describe("the event log and a phone thread (S18)", () => {
     const q = (threadId: string) => ({ provider: "fakeAsk", eventId: `q-${threadId}`, createdAt: "x", threadId, type: "question.async", questions: [{ id: "q1", question: "Text Sam at +15551234567?", header: "Sam", options: [{ label: "Yes Sam" }], multiSelect: false, allowOther: true }] }) as never;
     bus.publish(q("t-marked"));
     expect(log()).toContain("question.async");
-    expect(log()).toMatch(/"id":"q-[0-9a-f]{16}"/);
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: logged question shapes contain no execution identifiers, including hashed native ids.
+    expect(JSON.parse(log()).questions).toEqual([{ question: PHONE_RESULT_WITHHELD, options: [], multiSelect: false, allowOther: true }]);
     expect(log()).not.toContain('"id":"q1"');
     expect(log()).not.toContain("5551234567");
     expect(log()).not.toContain("Sam");
     expect(delivered.some((e) => JSON.stringify(e).includes("5551234567"))).toBe(true);
     bus.publish({ ...(q("t-plain") as object), eventId: "q-plain", questions: [{ id: "q2", question: "plain question words", options: [], multiSelect: false, allowOther: false }] } as never);
     // ql2 sink fold (was: "plain question words" on disk): a plain thread's question keeps its id and shape, not its words
-    expect(log()).toContain('"id":"q2"');
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: unmarked questions also omit native ids; their exact live ids survive.
+    expect(log()).not.toContain('"id":"q2"');
+    expect(delivered.at(-1).questions[0].id).toBe("q2");
     expect(log()).not.toContain("plain question words");
   });
 
@@ -161,15 +173,18 @@ describe("the event log and a phone thread (S18)", () => {
     expect(log()).not.toContain("Friday");
     expect(log()).toContain("plan.updated");
     expect(log()).toContain("turn.subtask");
-    expect(log()).toContain("runtime.error");
-    expect(log()).toContain("sub-1");
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: malformed object-valued error details are omitted, and subtasks use host identities.
+    expect(log().trim().split("\n").map(line => JSON.parse(line).type)).toEqual(["plan.updated", "turn.subtask", "audience.omitted"]);
+    expect(log()).not.toContain("sub-1");
     expect(log()).toContain("pending");
     expect(delivered.some((e) => JSON.stringify(e).includes("Find Sam"))).toBe(true);
   });
   it("withholds every string of an event type nobody listed, on a marked thread (r3 deny by default)", () => {
-    const { bus, log } = rig(["t-marked"]);
+    const { bus, log, delivered } = rig(["t-marked"]);
     bus.publish(base("t-marked", "invented.future-event", { note: "Sam is at +15551234567", nested: { deep: [{ words: "text Sam" }] }, count: 7, flag: true }));
-    expect(log()).toContain("invented.future-event");
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: unknown variants have only the fixed omission on disk; execution is unchanged.
+    expect(JSON.parse(log())).toMatchObject({ type: "audience.omitted", text: "«redacted»" });
+    expect(delivered.at(-1).type).toBe("invented.future-event");
     expect(log()).not.toContain("Sam");
     expect(log()).not.toContain("5551234567");
     // ql2 sink fold (was: its count and flag kept): an event type no allowlist names keeps its envelope only
@@ -177,14 +192,18 @@ describe("the event log and a phone thread (S18)", () => {
     expect(log()).not.toContain("\"flag\"");
   });
   it("keeps the allowlisted structural fields on a marked thread (r3)", () => {
-    const { bus, log } = rig(["t-marked"]);
+    const { bus, log, delivered } = rig(["t-marked"]);
     bus.publish({ provider: "fakeAsk", eventId: "keep-1", createdAt: "2026-10-26T00:00:00Z", threadId: "t-marked", turnId: "turn-9", itemId: "item-9", type: "item.started", itemType: "tool", origin: "engine", title: "Bash echo Sam", input: { command: "echo Sam" }, toolKind: "execute", toolIdentity: { namespace: "shell", name: "Bash", kind: "execute" } } as never);
     const line = JSON.parse(log().trim().split("\n").pop() as string);
     // NOLIMITS 1.0.18 (design NOLIMITS-S1S2-H6-ALLOWLIST.md L1/L5, MurageMain order 11-06): a withheld tool row is rebuilt by
     // withheldToolRow and carries NO toolIdentity and NO title. The `toolIdentity` pin that stood here moved to the kept
     // structural fields (envelope keys + `toolKind`), the withheld markers, and the phone-row test below (Set P), which
     // proves which phone tool a row was through its canonical `summary`.
-    expect(line).toMatchObject({ eventId: "keep-1", createdAt: "2026-10-26T00:00:00Z", threadId: "t-marked", turnId: "turn-9", itemId: "item-9", type: "item.started", itemType: "tool", origin: "engine", toolKind: "execute", provider: "fakeAsk" });
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: disk correlation is host-owned; provider metadata remains execution-only.
+    expect(line).toMatchObject({ eventId: expect.stringMatching(/^[0-9a-f-]{36}-\d+$/), createdAt: expect.any(String), threadId: "t-marked", itemId: "1-0", type: "item.started", itemType: "tool", origin: "engine", toolKind: "execute", provider: "fakeAsk" });
+    expect(line.turnId).toBeUndefined();
+    expect(line.createdAt).not.toBe("2026-10-26T00:00:00Z");
+    expect(delivered[0]).toMatchObject({ eventId: "keep-1", createdAt: "2026-10-26T00:00:00Z", turnId: "turn-9", itemId: "item-9" });
     expect(line.input).toBe(PHONE_RESULT_WITHHELD);
     expect(line.summary).toBe(PHONE_RESULT_WITHHELD);
     expect(Object.hasOwn(line, "toolIdentity")).toBe(false);
@@ -198,8 +217,9 @@ describe("the event log and a phone thread (S18)", () => {
     bus.publish(done("t-marked", "item-p", { sent: true, to: "+15551234567" }));
     const rows = log().trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ type: "item.started", itemType: "tool", itemId: "item-p", threadId: "t-marked", summary: "phone_text_compose", input: PHONE_RESULT_WITHHELD });
-    expect(rows[1]).toMatchObject({ type: "item.completed", itemType: "tool", itemId: "item-p", threadId: "t-marked", summary: "phone_text_compose", result: PHONE_RESULT_WITHHELD, ok: true });
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: starts and completions retain the same host item id; every canonical phone summary and withholding assertion stays.
+    expect(rows[0]).toMatchObject({ type: "item.started", itemType: "tool", itemId: "1-0", threadId: "t-marked", summary: "phone_text_compose", input: PHONE_RESULT_WITHHELD });
+    expect(rows[1]).toMatchObject({ type: "item.completed", itemType: "tool", itemId: "1-0", threadId: "t-marked", summary: "phone_text_compose", result: PHONE_RESULT_WITHHELD, ok: true });
     for (const row of rows) {
       expect(Object.hasOwn(row, "toolIdentity")).toBe(false);
       expect(Object.hasOwn(row, "title")).toBe(false);
@@ -224,9 +244,10 @@ describe("the event log and a phone thread (S18)", () => {
     bus.publish(base("t-plain", "invented.future-event", { note: "plain note words" }));
     for (const w of ["plain plan words", "plain subtask words", "plain error words", "plain note words"]) expect(log()).not.toContain(w);
     const rows = log().trim().split("\n").map((l) => JSON.parse(l) as Record<string, any>);
-    expect(rows.map((row) => row.type)).toEqual(["plan.updated", "turn.subtask", "runtime.error", "invented.future-event"]);
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: the closed audience schema omits unknown variants and replaces provider subtask ids.
+    expect(rows.map((row) => row.type)).toEqual(["plan.updated", "turn.subtask", "runtime.error", "audience.omitted"]);
     expect(rows[0].entries).toEqual([{ status: "pending" }]);
-    expect(rows[1].subtask).toMatchObject({ id: "s", status: "done" });
+    expect(rows[1].subtasks).toEqual([{ id: expect.stringMatching(/^[0-9a-f-]{36}-\d+-0$/), status: "done", startedAt: 1, toolCount: 0 }]);
     expect(rows[2].message).toBe(ERROR_LOGGED_MESSAGE);
     expect(log()).not.toContain(PHONE_RESULT_WITHHELD);
     expect(log()).not.toContain(PHONE_TEXT_WITHHELD);
@@ -240,14 +261,17 @@ describe("the event log and a phone thread (S18)", () => {
     expect(log()).not.toContain("confirm_text_to_sam");
     const ids = log().split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r: any) => r.type === "question.async").map((r: any) => r.questions[0].id);
     expect(ids).toHaveLength(2);
-    expect(ids[0]).toMatch(/^q-[0-9a-f]{16}$/);
-    expect(ids[1]).toBe(ids[0]);
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: both logged shapes omit execution ids entirely; the real native id is still delivered live.
+    expect(ids).toEqual([undefined, undefined]);
+    for (const row of log().split("\n").filter(Boolean).map(line => JSON.parse(line))) expect(Object.hasOwn(row.questions[0], "id")).toBe(false);
     expect(delivered.find((e) => e.type === "question.async").questions[0].id).toBe("confirm_text_to_sam");
   });
   it("leaves an unmarked thread's question ids alone (L-r4)", () => {
-    const { bus, log } = rig(["t-marked"]);
+    const { bus, log, delivered } = rig(["t-marked"]);
     bus.publish({ provider: "fakeAsk", eventId: "q3", createdAt: "x", threadId: "t-plain", type: "question.async", origin: "engine", questions: [{ id: "plain_id", question: "ok?", options: [], multiSelect: false, allowOther: false }] } as never);
-    expect(log()).toContain("plain_id");
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: the execution id survives live, while the disk copy contains no provider id.
+    expect(log()).not.toContain("plain_id");
+    expect(delivered.at(-1).questions[0].id).toBe("plain_id");
   });
 });
 
@@ -278,7 +302,8 @@ describe("NOLIMITS L5: a withheld tool row is rebuilt, never spread (Set P)", ()
     setP(s!, "(b) start"); setP(c!, "(b) completion");
     expect(s!.summary).toBe("phone_call_dial");
     expect(c!.summary).toBe("phone_call_dial");
-    expect(s!.itemId).toBe("pb"); expect(c!.itemId).toBe("pb");
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: the paired tool rows carry one host item identity.
+    expect(s!.itemId).toBe("1-0"); expect(c!.itemId).toBe("1-0");
   });
   it("(c) a BoxAgent title 'phoneJobs <text>' gives summary 'phone tool' on start and completion (r2 #4 literal)", () => {
     const { bus, log } = rig([]);

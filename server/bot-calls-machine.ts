@@ -10,6 +10,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { CALL_PROTOCOL, type AnswerRefusal } from "../shared/bot-calls-contract.ts";
 import { CALL_PRINCIPAL, inTransaction, insertCallRule } from "./bot-calls-schema.ts";
+import { BACKGROUND_BUSY_MS, setBusy } from "./db-busy.ts";
 import { rowToMessage } from "./transcript-seq.ts";
 
 /** One constant for freshness (4.1): a fact older than this when admitted or decided is late, never a late ring. */
@@ -477,9 +478,17 @@ export function markTurnCall(db: DatabaseSync, o: { botId: string; threadId: str
     return { ruleId };
   });
 }
+function callCleanup<T>(db: DatabaseSync, work: () => T): T {
+  const wait = Number(db.prepare("PRAGMA busy_timeout").get()!.timeout);
+  try { setBusy(db, Math.min(wait, BACKGROUND_BUSY_MS)); return work(); }
+  finally { if (db.isOpen) setBusy(db, wait); }
+}
+
 /** The settle hook: the marked turn ended at `at`. Returns whether an armed row was settled. */
 export function settleTurnOwed(db: DatabaseSync, turnId: string, at: number): boolean {
-  return Number(db.prepare("UPDATE bot_call_owed SET at=? WHERE fact_key=? AND at IS NULL").run(Math.trunc(at), `turn:${turnId}`).changes) === 1;
+  // Most completions have no call mark; an absent or settled key needs no writer.
+  if (!db.prepare("SELECT 1 FROM bot_call_owed WHERE fact_key=? AND at IS NULL").get(`turn:${turnId}`)) return false;
+  return callCleanup(db, () => Number(db.prepare("UPDATE bot_call_owed SET at=? WHERE fact_key=? AND at IS NULL").run(Math.trunc(at), `turn:${turnId}`).changes) === 1);
 }
 /** Boot: an armed row whose thread has no running turn counts as settled at the thread's newest message (boot clears the
  * busy flags, so a turn cut by the crash is not running). */
@@ -499,27 +508,25 @@ export type OwedMatch = Admission[] | "damaged";
 
 /** The drain: on a wake after a commit that wrote an owed row, and at boot. Paged `WHERE at IS NOT NULL ORDER BY at`
  * (armed turn rows wait until they settle, F58). Each row is ONE transaction: read the source, match, INSERT OR IGNORE,
- * delete the row. A crash rolls back to owed; the unique key keeps a redo to one intent (F4, F5). A row whose
+ * delete the row. Each wake drains at most one page; the sweep continues the backlog. A crash rolls back to owed; the unique
+ * key keeps a redo to one intent (F4, F5). A row whose
  * transaction throws stays owed for the next wake, and this drain stops. Returns the admitted intent ids. */
 export function drainOwed(db: DatabaseSync, match: (row: OwedRow) => OwedMatch, now: number, onDamaged: (row: OwedRow) => void = () => {}): string[] {
   const admitted: string[] = [];
-  const page = db.prepare("SELECT * FROM bot_call_owed WHERE at IS NOT NULL ORDER BY at, fact_key LIMIT ?");
-  for (;;) {
-    const rows = (page.all(PAGE) as OwedDbRow[]).map(toOwed);
-    for (const row of rows) {
-      try {
-        inTransaction(db, () => {
-          if (!db.prepare("SELECT 1 AS x FROM bot_call_owed WHERE fact_key=? AND at IS NOT NULL").get(row.factKey)) return;
-          let result: OwedMatch;
-          try { result = match(row); } catch { result = "damaged"; }
-          if (result === "damaged") onDamaged(row);
-          else for (const a of result) { const id = admitIntent(db, a, now); if (id) admitted.push(id); }
-          db.prepare("DELETE FROM bot_call_owed WHERE fact_key=?").run(row.factKey);
-        });
-      } catch { return admitted; }
-    }
-    if (rows.length < PAGE) return admitted;
+  const rows = (db.prepare("SELECT * FROM bot_call_owed WHERE at IS NOT NULL ORDER BY at, rowid LIMIT ?").all(PAGE) as OwedDbRow[]).map(toOwed);
+  for (const row of rows) {
+    try {
+      callCleanup(db, () => inTransaction(db, () => {
+        if (!db.prepare("SELECT 1 AS x FROM bot_call_owed WHERE fact_key=? AND at IS NOT NULL").get(row.factKey)) return;
+        let result: OwedMatch;
+        try { result = match(row); } catch { result = "damaged"; }
+        if (result === "damaged") onDamaged(row);
+        else for (const a of result) { const id = admitIntent(db, a, now); if (id) admitted.push(id); }
+        db.prepare("DELETE FROM bot_call_owed WHERE fact_key=?").run(row.factKey);
+      }));
+    } catch { return admitted; }
   }
+  return admitted;
 }
 
 /** The channel matcher (4.1): the message is read in TypeScript, never by json_extract in a write path. Every bot's

@@ -1,0 +1,29 @@
+DISAGREE
+
+The nine answers are adopted, and most amendments are substantially addressed. Amendments 4, 6, 7 and 9 still have concrete gaps. F8 would lose existing capabilities, so G9 is not yet satisfied.
+
+1. **Replace F8’s single-question submission shape with an atomic answer array.**  
+   Use `{requestHandle, action:"answer", answers:[{questionHandle, optionHandles, other?}]}`, with separate discriminated approval/skip actions and existing authorization checks. Resolve and validate the entire array before forwarding one original `QuestionAnswer[]`. Current F8 can represent only one question, while [shared/questions.ts](/work/fuigo-builds/orph/_base/shared/questions.ts:22) supports four and [questionReply](/work/fuigo-builds/orph/_base/server/index.ts:7488) validates the complete answer set. Add tests for multiple questions, multi-select, Other, secret answers and invalid mixed-request handles; assert exact original IDs/labels and no partial submission.
+
+2. **Replace F8’s universal admission/live-request lifetime with separate permission, conversation-question and command lifetimes.**  
+   Keep expired permission handles non-executable. Bind `question.async`/answer-as-send and permitted expired-question replies to their authoritative stored card, preserving the existing exactly-once owner-message path and secret/folder-trust restrictions. Bind command handles to authenticated bot, configured engine and cache revision; reconstruct fresh handles from the existing cache after reconnect/restart without requiring a live turn.  
+   Concrete failures: async questions have no adapter request; expired ordinary questions deliberately offer “Send as a message”; cached commands remain available between runs. F8’s pending-request-only reconstruction/deletion rule cannot preserve these. See [answerAsSendReply](/work/fuigo-builds/orph/_base/server/index.ts:7351), [QuestionCard](/work/fuigo-builds/orph/_base/src/components/QuestionCard.tsx:160), and [engine command cache](/work/fuigo-builds/orph/_base/server/engine-commands.ts:140). Add post-terminal, timeout, restart, reconnect, stale-provider and duplicate-submit tests, including unchanged command bytes and original answer text.
+
+3. **Add the engine setup-check path to the subscriber/sink manifest and Wave 2B.**  
+   Classify direct subscribers in `server/drivers/cli-memory-learning.ts` and `server/harness/instance-holds.ts`; explicitly cover the former’s raw `engineLine` error output. Add `server/engine-reply-check.ts` and its tests to ownership. Apply the shared standalone policy before `engineLine` performs destructive substitutions, whitespace flattening or truncation.  
+   Concrete bypass: `rate limit **password**: hunter2\nTAILSECRET` survives [engineLine’s private regexes](/work/fuigo-builds/orph/_base/server/engine-reply-check.ts:33), then leaves through [POST /api/engine-setup-check](/work/fuigo-builds/orph/_base/server/index.ts:32020). Collector sanitization and an inventory limited to shared-redactor calls do not cover it. Require an actual serialized-response RED, with error classification unchanged.
+
+4. **Replace D11/§4’s reliance on existing execution-queue accounting with an explicit bounded accounting contract.**  
+   Carry trusted size accounting from ingestion, or define conservative bounded charging/backpressure for execution payloads; never stringify or traverse the original graph merely to enqueue it after audience exhaustion. Preserve authorized execution inputs unchanged.  
+   Concrete failure: with a held writer, [eventBytes](/work/fuigo-builds/orph/_base/server/harness/bus.ts:56) calls `JSON.stringify(event)` before capacity enforcement. A huge unknown subtree—or an accessor omitted by the collector—therefore still receives an unrestricted traversal. Add real-bus tests combining audience exhaustion, a held execution subscriber, huge raw payloads and accessor tripwires; verify bounded accounting and reserved terminal/control capacity.
+
+Corrected ordered parallel slices; retain §8’s listed files except these explicit additions/transfers:
+
+- **0 — Freeze and evidence gates.** Retain historical-evidence reconciliation, independent Astra/Grok/Fable gates and replay acceptance. Freeze corrected F1–F8, including answer arrays, the three handle lifetimes and queue accounting.
+- **1A — Detector/policy, parallel with 1B and 1C.** Retain shared scanner/declarations/corpus, `redact-turn.ts` and performance tests. RED first: splits, immediate latch, CR equivalence, resets, bounds and failure.
+- **1B — Collector/drivers/execution.** Retain its backend files; add `server/engine-commands.ts` and tests for cache-backed handle resolution. Freeze F1–F5/F8. RED first: serialized delivery, replay, late generations, unchanged execution, multi-question round trips, lifetime cases and held-writer accounting.
+- **1C — Client wire migration.** Move §8 Wave 3B’s production UI files and handle/region interaction tests here. Consume frozen `shared/audience-wire.ts`; keep that file under 1B ownership. Prove question, command, approval and reconnect behavior before the combined Wave 1 checkpoint.
+- **2A / 2B — Parallel after Wave 1 integration.** Retain whole-text activation and historical/standalone file sets; add `server/engine-reply-check.ts` and its tests to 2B. Freeze F6/F7. RED first: T1–T4, historical exports, structured boundaries and setup-check leakage.
+- **3A / 3B — Parallel after Wave 2 integration.** Native cleanup remains S with preservation tests and deliberate mutations. 3B retains sink/performance completion, diagnostics guards, CI registration and packaged G9/Fable proof on the combined head.
+
+Read-only review; no project code, tests or builds were executed.

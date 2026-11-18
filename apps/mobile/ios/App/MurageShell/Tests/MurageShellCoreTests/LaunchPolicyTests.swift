@@ -2,7 +2,7 @@ import XCTest
 @testable import MurageShellCore
 
 final class LaunchPolicyTests: XCTestCase {
-    let mac = WorkspaceOrigin(string: "https://mac.tailnet123.ts.net")!
+    let mac = WorkspaceOrigin(string: "https://mac.tail000000.ts.net")!
 
     private var book: WorkspaceBook {
         var book = WorkspaceBook()
@@ -66,7 +66,7 @@ final class LaunchPolicyTests: XCTestCase {
 
     // B6 (Astra B6): a notification tap for a different computer must not
     // silently end a call in progress on the one already on screen.
-    let pc = WorkspaceOrigin(string: "https://pc.tailnet123.ts.net")!
+    let pc = WorkspaceOrigin(string: "https://pc.tail000000.ts.net")!
 
     func testHoldsADifferentComputersNotificationWhileACallIsOpen() {
         XCTAssertTrue(CrossComputerNotification.mustHold(current: mac, hasOpenCall: true, requested: pc))

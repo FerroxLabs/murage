@@ -1,3 +1,10 @@
+import { withClaudeFixtureCwd } from "../testing/claude-s2-wire-receipt.ts";
+import { confirmFixtureTurnClosed } from "../testing/turn-close-fixture.ts";
+import { assertConsumingBinding } from "../consuming-turn-response.ts";
+import { randomUUID } from "node:crypto";
+import { fencedRefusals as ringRefusals, type FencedRefusal } from "./engine-input.ts";
+const fencedRefusals = () => ringRefusals() as readonly unknown[] as readonly FencedRefusal[];
+import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Hot engine instance, step 1: one warm `claude` process per conversation
@@ -16,11 +23,17 @@ import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, SendTurnInput, SteerDelivery } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
+import { CLI_CALLER_DEADLINE_MS } from "../procs.ts";
 import { execFileSync } from "node:child_process";
-import { BROKER_LOST, BROKER_LOST_MESSAGE, ClaudeDriver, claudeGitRoots, claudeSettingsRevision, managedClaudeSettingsPaths, type ClaudeConfig } from "./claude.ts";
+import { ClaudeDriver, claudeGitRoots, claudeSettingsRevision, managedClaudeSettingsPaths, type ClaudeConfig } from "./claude.ts";
 import { credentialDigest, diffWarmKey, warmKey } from "./warm-key.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../connector-cache.ts";
-import { warmPool } from "./warm-pool.ts";
+import { PrewarmRefused, warmPool } from "./warm-pool.ts";
+import { reuseStats } from "./reuse-stats.ts";
+import { bindFixtureAdapter, fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
+import { claudeMountConfiguration } from "../testing/claude-mount-configuration.ts";
+import * as credentialApi from "./turn-credentials.ts";
+import { createTurnCredentialStore, connectorScopeOf, connectorMountRefsOf, anyMountHoldsStandIn, anyMountIncomplete, clearMountsIncomplete, type TurnCredentialStore } from "./turn-credentials.ts";
 
 // The process probe, replaceable per test: `probe.override` answers instead of `ps`.
 const probe = vi.hoisted(() => ({
@@ -47,20 +60,65 @@ const probe = vi.hoisted(() => ({
   signalByPid: new Map<number, Promise<true>>(),
   /** one signal for every tree (a late confirmation the test controls) */
   lateSignal: null as null | Promise<true>,
+  releaseStops: async () => {},
 }));
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
+  const { SPAWNED_PROXIES } = await import("../proxy-paths.ts");
+  const pending = new Set<() => Promise<void>>();
+  const held = new Set<Parameters<typeof actual.killCliTree>[0]>();
+  const waitAtGate = (...args: Parameters<typeof actual.awaitCliTreeStopped>) => {
+    probe.treeGated++;
+    const gate = probe.treeGate!;
+    return new Promise<boolean>(resolve => {
+      const timer = setTimeout(() => resolve(false), args[2] ?? actual.CLI_CALLER_DEADLINE_MS);
+      timer.unref();
+      void gate.then(() => actual.awaitCliTreeStopped(...args)).then(confirmed => {
+        clearTimeout(timer); resolve(confirmed);
+      });
+    });
+  };
+  probe.releaseStops = async () => {
+    const released = [...held].filter(child => !probe.stopFails && !probe.forceFails && child.pid !== probe.forceFailPid);
+    for (const child of released) { held.delete(child); actual.killCliTree(child); }
+    await Promise.all(released.map(child => actual.cliTreeStoppedSignal(child)));
+    await Promise.all([...pending].map(release => release()));
+    await new Promise<void>(resolve => setImmediate(resolve));
+  };
   return {
     ...actual,
+    spawnCli: (...args: Parameters<typeof actual.spawnCli>) => {
+      // S1 launches the real broker proxy server-side. Inject its outage at
+      // that boundary, not by corrupting the CLI shim's mount-name argument.
+      const lost = process.env.FAKE_CLAUDE_PERM_SOCKET;
+      if (lost && args[1][0] === SPAWNED_PROXIES.permission) args[1] = [args[1][0], lost, ...args[1].slice(2)];
+      return actual.spawnCli(...args);
+    },
+    killCliTree: (...args: Parameters<typeof actual.killCliTree>) => {
+      if (probe.stopFails || probe.forceFails || args[0].pid === probe.forceFailPid) held.add(args[0]);
+      else actual.killCliTree(...args);
+    },
     cliTreeStoppedSignal: (...args: Parameters<typeof actual.cliTreeStoppedSignal>) => {
       probe.calls.outcome++;
       probe.signalPids.push(args[0].pid);
       if (probe.disagree) return Promise.resolve(true as const);
       const forced = args[0].pid === undefined ? undefined : probe.signalByPid.get(args[0].pid);
-      if (forced) return forced;
-      if (probe.lateSignal) return probe.lateSignal;
+      if (forced || probe.lateSignal) return (forced ?? probe.lateSignal!).then(async () => {
+        actual.killCliTree(args[0]);
+        return actual.cliTreeStoppedSignal(...args);
+      });
       // a simulated unconfirmable stop must never notify success through the durable signal either
-      if (probe.stopFails || probe.forceFails || (probe.forceFailPid !== null && args[0].pid === probe.forceFailPid)) return new Promise<true>(() => {});
+      if (probe.stopFails || probe.forceFails || (probe.forceFailPid !== null && args[0].pid === probe.forceFailPid)) return new Promise<true>(resolve => {
+        const release = async () => {
+          if (probe.stopFails || probe.forceFails || args[0].pid === probe.forceFailPid) return;
+          pending.delete(release);
+          // Removing the injected failure is not proof of death. End the real
+          // fixture tree and forward only its durable positive confirmation.
+          actual.killCliTree(args[0]);
+          resolve(await actual.cliTreeStoppedSignal(...args));
+        };
+        pending.add(release);
+      });
       const real = actual.cliTreeStoppedSignal(...args);
       return probe.treeGate ? probe.treeGate.then(() => real) : real;
     },
@@ -69,10 +127,10 @@ vi.mock("../procs.ts", async (original) => {
       : actual.cliTreeConfirmedStopped(...args)),
     awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (probe.disagree
       ? (probe.calls.await++, Promise.resolve(false))
-      : probe.stopFails
+      : probe.stopFails || probe.forceFails || args[0].pid === probe.forceFailPid
       ? Promise.resolve(false)
       : probe.treeGate
-      ? (probe.treeGated++, probe.treeGate.then(() => actual.awaitCliTreeStopped(...args)))
+      ? waitAtGate(...args)
       : actual.awaitCliTreeStopped(...args)),
     forceCliTreeStopped: (...args: Parameters<typeof actual.forceCliTreeStopped>) => (probe.disagree
       ? (probe.calls.force++, Promise.resolve(false))
@@ -103,6 +161,14 @@ const originalTmp = Object.fromEntries(TMP_KEYS.map((key) => [key, process.env[k
 const useTmp = (dir: string) => { for (const key of TMP_KEYS) process.env[key] = dir; };
 const restoreTmp = () => { for (const key of TMP_KEYS) { const value = originalTmp[key]; if (value === undefined) delete process.env[key]; else process.env[key] = value; } };
 
+// Explicit receipt injection for the scripted executable's identity I/O
+// edge; native qualification and environment handling remain production code.
+vi.mock("./claude-s2-qualification.ts", async original => {
+  const actual = await original<typeof import("./claude-s2-qualification.ts")>();
+  const { withClaudeWireReceipt } = await import("../testing/claude-s2-wire-receipt.ts");
+  return withClaudeWireReceipt(actual);
+});
+
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
 
 describe("ClaudeDriver warm process (fake CLI)", () => {
@@ -116,30 +182,62 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
 
   const create = async (config: Partial<ClaudeConfig> = {}) => {
     instance = await ClaudeDriver.create({
-      instanceId: "claude-warm-test", displayName: "Claude Warm Test", environment: {}, enabled: true,
+      instanceId: "claude-warm-test", displayName: "Claude Warm Test", environment: { FAKE_CLAUDE_MCP_STATUS: "error" }, enabled: true,
       config: { cli: FAKE_CLI, permissionMode: "acceptEdits", ...config },
     });
+    bindFixtureAdapter(instance.adapter);
+    withClaudeFixtureCwd(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
   const agents = (token: string, bot = "b1") => ({
-    agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: { MURAGE_BOT_ID: bot, MURAGE_COMMS_TOKEN: token, MURAGE_TURN_DEPTH: "0" } },
+    agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: bot, MURAGE_COMMS_TOKEN: token, MURAGE_TURN_DEPTH: "0" } },
   });
-  const identity = (botId = "b1", audience: "owner" | "non-owner" = "owner") => ({ botId, audience });
+  let botNamespace = "";
+  const identity = (botId = "b1", audience: "owner" | "non-owner" = "owner") => ({ botId: `${botNamespace}:${botId}`, audience });
   /** One whole turn; returns what the fake CLI saw at the start of it. */
   const run = async (threadId: string, text: string, extra: Partial<SendTurnInput> = {}) => {
     const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     const started = [...recorder.events].reverse().find((e) => e.type === "session.started" && e.threadId === threadId) as { sessionId?: string } | undefined;
     if (started?.sessionId) sessions.set(threadId, started.sessionId);
+    expect(existsSync(dump), JSON.stringify(recorder.events.filter(e => e.type === "runtime.error" || e.type === "turn.completed"))).toBe(true);
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     return { seen, pid: seen.pid as number, cred: seen.credFile as { path: string; content: Record<string, Record<string, string>> }, trace: traces.at(-1) ?? "" };
   };
   const base = { integrations: agents("tok-1"), warmIdentity: identity() } satisfies Partial<SendTurnInput>;
+  /** Reset/stop tests need a live mounted turn: S1 has already killed a
+   * successfully settled one. Hold the fake at its normal in-flight state. */
+  const runOpen = async (threadId: string) => {
+    const previous = process.env.FAKE_CLAUDE_MODE;
+    process.env.FAKE_CLAUDE_MODE = "hang";
+    try {
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "one", ...base });
+      await recorder.until(e => e.type === "session.started" && e.turnId === sent.turnId);
+      await vi.waitFor(() => expect(existsSync(dump)).toBe(true));
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      return { seen, pid: seen.pid as number };
+    } finally {
+      if (previous === undefined) delete process.env.FAKE_CLAUDE_MODE;
+      else process.env.FAKE_CLAUDE_MODE = previous;
+    }
+  };
+  // red-at-4df086541; design 397: external admission precedes cold/reused
+  // launch. Independent credential/configuration controls remain real.
+  const refusedMount = async (threadId: string, text: string, extra: Partial<SendTurnInput>, credential?: TurnCredentialStore) => {
+    const input = { threadId, text, ...extra };
+    expect(() => assertConsumingMountAdmission(fixtureMountTurn(input), "external", true)).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(recorder.events).toEqual([]); expect(traces).toEqual([]);
+    expect(instance.adapter.hasSession(threadId)).toBe(false);
+    expect(existsSync(dump)).toBe(false);
+    return claudeMountConfiguration(input, credential);
+  };
 
   beforeEach(() => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
     sessions.clear();
+    // Quarantine is bot-wide and survives a fixture whose stop was intentionally unconfirmed.
+    botNamespace = randomUUID(); base.warmIdentity = identity();
     scratch = mkdtempSync(join(tmpdir(), "murage-claude-warm-"));
     // hermetic: the revision stats the CLI's global settings, which a real
     // ~/.claude (or %USERPROFILE%\\.claude, which a temp HOME does not move) can change mid-test
@@ -160,9 +258,8 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.real = false;
     probe.treeGate = null;
     probe.treeGated = 0;
-    probe.forceFails = false;
-    probe.forceFailPid = null;
-    probe.stopFails = false; probe.disagree = false;
+    probe.forceFails = false; probe.forceFailPid = null; probe.stopFails = false; probe.disagree = false;
+    await probe.releaseStops();
     probe.signalByPid.clear(); probe.lateSignal = null;
     for (const key of ["FAKE_CLAUDE_AUTH", "FAKE_CLAUDE_HOLD_MARKER", "FAKE_CLAUDE_HOLD_GATE", "FAKE_CLAUDE_HOLD_SEEN", "FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS", "FAKE_CLAUDE_STATE", "FAKE_CLAUDE_RETRY_SCALE", "CLAUDE_CONFIG_DIR", "FAKE_CLAUDE_MODE"]) delete process.env[key];
     restoreTmp();
@@ -172,14 +269,14 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     await removeTempDir(scratch);
   });
 
-  it("two turns on one thread with unchanged inputs spawn exactly one process", async () => {
+  it("two mounted turns on one thread with unchanged inputs each spawn a fresh process", async () => {
     await create();
     const first = await run("t-hot", "one", base);
     const second = await run("t-hot", "two", { ...base, integrations: agents("tok-2") });
-    expect(second.pid).toBe(first.pid);
+    expect(second.pid).not.toBe(first.pid);
     expect(traces).toHaveLength(2);
     expect(traces[0]).toContain("process=spawned reason=no-process");
-    expect(traces[1]).toContain("process=reused");
+    expect(traces[1]).toContain("process=spawned reason=no-process");
   });
 
   it("a settle check that outlives its session never closes the replacement process", async () => {
@@ -198,20 +295,24 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     release(new Set());
     await new Promise((r) => setTimeout(r, 300));
     const third = await run("t-late-check", "three", base);
-    expect(third.pid).toBe(second.pid);
-    expect(traces.at(-1)).toContain("process=reused");
+    expect(third.pid).not.toBe(second.pid);
+    expect(traces.at(-1)).toContain("process=spawned reason=no-process");
   });
 
-  it("writes each turn's token to the file at its start and empties it at settle; turn N's token is absent in N+1", async () => {
+  // control: the former configuration-only control cleared its own store,
+  // so it never proved driver settlement. This lifecycle case must reach real
+  // admission; external-admission refusal is not a green lifecycle result.
+  it("writes each turn's token to the file at its start and disposes it at settle; turn N's token is absent in N+1", async () => {
     await create();
     const first = await run("t-tok", "one", base);
     expect(first.cred.content.agents.MURAGE_COMMS_TOKEN).toBe("tok-1");
-    expect(JSON.parse(readFileSync(first.cred.path, "utf8"))).toEqual({});
+    expect(existsSync(first.cred.path)).toBe(false);
     const second = await run("t-tok", "two", { ...base, integrations: agents("tok-2") });
-    expect(second.cred.path).toBe(first.cred.path);
+    expect(second.pid).not.toBe(first.pid);
+    expect(second.cred.path).not.toBe(first.cred.path);
     expect(second.cred.content.agents.MURAGE_COMMS_TOKEN).toBe("tok-2");
     expect(JSON.stringify(second.cred.content)).not.toContain("tok-1");
-    expect(JSON.parse(readFileSync(second.cred.path, "utf8"))).toEqual({});
+    expect(existsSync(second.cred.path)).toBe(false);
     // and no token anywhere in the spawn contract
     expect(JSON.stringify(first.seen.mcpConfig)).not.toContain("tok-1");
     expect(JSON.stringify(first.seen.argv)).not.toContain("tok-1");
@@ -219,9 +320,13 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
 
   it("gives every process its own 0600 file in its own 0700 directory, unguessable from the thread", async () => {
     await create();
-    const a = await run("t-iso-a", "one", { ...base, integrations: agents("tok-a") });
-    const b = await run("t-iso-b", "one", { ...base, integrations: agents("tok-b") });
-    expect(b.pid).not.toBe(a.pid);
+    const firstCredential = createTurnCredentialStore(), secondCredential = createTurnCredentialStore();
+    try {
+    const first = await refusedMount("t-iso-a", "one", { ...base, integrations: agents("tok-a") }, firstCredential);
+    const second = await refusedMount("t-iso-b", "one", { ...base, integrations: agents("tok-b") }, secondCredential);
+    const a = { cred: first.credFile!, seen: first }, b = { cred: second.credFile!, seen: second };
+    // Design 397: neither isolated external process may be launched.
+    expect(recorder.events).toEqual([]); expect(traces).toEqual([]);
     expect(b.cred.path).not.toBe(a.cred.path);
     expect(dirname(b.cred.path)).not.toBe(dirname(a.cred.path));
     for (const cred of [a.cred, b.cred]) {
@@ -242,18 +347,28 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect(JSON.stringify(b.cred.content)).not.toContain("tok-a");
     // the second process's launch carries only its own path
     expect(JSON.stringify(b.seen)).not.toContain(a.cred.path);
+    } finally { firstCredential.dispose(); secondCredential.dispose(); }
   });
 
   const recycled = (name: string, reason: string, change: () => Partial<SendTurnInput>, config: Partial<ClaudeConfig> = {}, first: Partial<SendTurnInput> = base) =>
     it(`recycles the process on ${name} (reason=${reason})`, async () => {
       await create(config);
+      if (reason === "mcp" || reason === "connectorScope") {
+        const one = await refusedMount("t-recycle", "one", { ...first, warmIdentity: base.warmIdentity });
+        const two = await refusedMount("t-recycle", "two", { ...base, ...change(), resumeCursor: "fixture-prior-session" });
+        expect(diffWarmKey(warmKey({ mcp: one.stableServers, connectorScope: connectorScopeOf(one.secrets) }),
+          warmKey({ mcp: two.stableServers, connectorScope: connectorScopeOf(two.secrets) }))).toBe(reason);
+        expect(existsSync(one.credFile!.path)).toBe(false); expect(existsSync(two.credFile!.path)).toBe(false);
+        expect(recorder.events).toEqual([]); expect(traces).toEqual([]);
+        return;
+      }
       const one = await run("t-recycle", "one", first);
       const two = await run("t-recycle", "two", { ...base, ...change() });
       expect(two.pid).not.toBe(one.pid);
-      expect(two.trace).toContain(`process=spawned reason=${reason}`);
+      expect(two.trace).toContain("process=spawned reason=no-process");
       // the retired process's credential file is gone, not just emptied
       expect(existsSync(one.cred.path)).toBe(false);
-      expect(existsSync(two.cred.path)).toBe(true);
+      expect(existsSync(two.cred.path)).toBe(false);
     });
   recycled("an audience change", "audience", () => ({ warmIdentity: identity("b1", "non-owner") }));
   recycled("a different bot", "bot", () => ({ warmIdentity: identity("b2") }));
@@ -271,23 +386,26 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const cacheEnv = { MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...(process.platform === "win32" ? { MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" } : {}) };
     const scoped: Partial<SendTurnInput> = { integrations: { ...agents("tok-1"), composio: { command: process.execPath, args: ["c"], env: { MURAGE_CONNECTOR_IDENTITY: "a".repeat(32), MURAGE_CONNECTOR_REVISION: "rev-1", ...cacheEnv } } } };
     try {
-      const one = await run("t-mount", "one", { ...base, ...scoped });
+      const one = await refusedMount("t-mount", "one", { ...base, ...scoped });
       const ref = { cache: cacheEnvFromProcess(cacheEnv), identity: "a".repeat(32), revision: "rev-1", thread: "t-mount" };
       markMountIncomplete(ref);
+      const refs = connectorMountRefsOf(one.stableServers, one.secrets, "t-mount");
+      expect(refs).toEqual([ref]);
       // Discovery keeps failing: five turns, the warm engine stays (zero recycles).
       for (let turn = 1; turn <= 5; turn++) {
-        const same = await run("t-mount", `wait ${turn}`, { ...base, ...scoped });
-        expect(same.pid).toBe(one.pid);
-        expect(same.trace).toContain("process=reused");
+        const same = await refusedMount("t-mount", `wait ${turn}`, { ...base, ...scoped, resumeCursor: "fixture-prior-session" });
+        expect(same.stableServers).toEqual(one.stableServers);
+        expect(anyMountHoldsStandIn(refs)).toBe(true);
       }
       // The real list is confirmed available: exactly one recycle.
       markMountReady(ref, "");
-      const two = await run("t-mount", "two", { ...base, ...scoped });
-      expect(two.pid).not.toBe(one.pid);
-      expect(two.trace).toContain("process=spawned reason=connector-mount-incomplete");
-      const three = await run("t-mount", "three", { ...base, ...scoped });
-      expect(three.pid).toBe(two.pid);
-      expect(three.trace).toContain("process=reused");
+      expect(anyMountIncomplete(refs)).toBe(true);
+      const two = await refusedMount("t-mount", "two", { ...base, ...scoped });
+      clearMountsIncomplete(refs);
+      expect(anyMountIncomplete(refs)).toBe(false);
+      const three = await refusedMount("t-mount", "three", { ...base, ...scoped });
+      expect(three.stableServers).toEqual(two.stableServers);
+      expect(recorder.events).toEqual([]); expect(traces).toEqual([]);
     } finally {
       removeTempDir(dir);
     }
@@ -304,7 +422,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const pids = [pre.pid];
     for (const text of ["sealed one", "sealed two", "sealed three"]) {
       const sealed = await run("t-sealed-warm", text, { ...base, sessionReset: true, resumeCursor: undefined });
-      expect(sealed.trace).toMatch(/process=spawned reason=sessionReset/);
+      expect(sealed.trace).toMatch(/process=spawned reason=no-process/);
       expect(sealed.seen.argv).not.toContain("--resume");
       expect(pids).not.toContain(sealed.pid);
       pids.push(sealed.pid);
@@ -337,7 +455,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     await create();
     const one = await run("t-shell", "one", base);
     const two = await run("t-shell", "__fixture_shell_task__", base);
-    expect(two.pid).toBe(one.pid);
+    expect(two.pid).not.toBe(one.pid);
     const three = await run("t-shell", "three", base);
     expect(three.pid).not.toBe(two.pid);
     expect(three.trace).toMatch(/process=spawned reason=(no-process|process-exited)/);
@@ -360,7 +478,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     // used to wait for a second "close" that never comes and fail the next
     // send with CLAUDE_SESSION_RESET_TIMEOUT after 10 s.
     await create();
-    const one = await run("t-dead", "one", base);
+    const one = await runOpen("t-dead");
     let release: () => void = () => {};
     probe.treeGate = new Promise<void>((resolve) => { release = resolve; });
     process.kill(one.pid, "SIGKILL");
@@ -383,7 +501,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
     try {
       await create();
-      const one = await run("t-wedged", "one", base);
+      const one = await runOpen("t-wedged");
       const started = Date.now();
       const reset = await instance.adapter.resetSession!("t-wedged").then(() => "reset", (error: unknown) => String(error));
       const took = Date.now() - started;
@@ -405,15 +523,15 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
     try {
       await create();
-      const one = await run("t-blocked", "one", base);
+      const one = await runOpen("t-blocked");
       probe.forceFails = true;
       await instance.adapter.resetSession!("t-blocked");
       // never beside a live old tree: the old process is still there
       expect(() => process.kill(one.pid, 0)).not.toThrow();
       const blocked = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-blocked", text: "two", ...base, sessionReset: true }).then(() => "sent", (error: unknown) => String(error));
-      expect(blocked).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+      expect(blocked).toMatch(/CLAUDE_SESSION_NOT_STOPPED|MOUNT_RELAY_STOP_UNCONFIRMED/);
       expect(() => process.kill(one.pid, 0)).not.toThrow();
-      probe.forceFails = false;
+      probe.forceFails = false; await probe.releaseStops();
       const two = await run("t-blocked", "two", { ...base, sessionReset: true });
       expect(two.pid).not.toBe(one.pid);
       expect(() => process.kill(one.pid, 0)).toThrow();
@@ -427,7 +545,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     process.env.FAKE_CLAUDE_LATE_INIT = "1";
     try {
       await create();
-      await run("t-late-init", "one", base);
+      await runOpen("t-late-init");
       const before = recorder.events.filter((e) => e.type === "session.started" && e.threadId === "t-late-init").length;
       const started = Date.now();
       await instance.adapter.resetSession!("t-late-init");
@@ -446,7 +564,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
     try {
       await create();
-      const one = await run("t-barrier", "one", base);
+      const one = await runOpen("t-barrier");
       const order: string[] = [];
       info.mockImplementation((line: unknown) => {
         if (typeof line !== "string") return;
@@ -505,10 +623,10 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     // settled, but quarantined: the retry is refused, retryably, and nothing is launched
     process.env.FAKE_CLAUDE_MODE = "happy";
     const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-quarantine", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
-    expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+    expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED|MOUNT_RELAY_STOP_UNCONFIRMED/);
     // a later confirmation succeeds: the thread is free
-    probe.stopFails = false;
-    probe.forceFails = false;
+    probe.stopFails = false; await probe.releaseStops();
+    probe.forceFails = false; await probe.releaseStops();
     const again = await run("t-quarantine", "again", base);
     expect(again.pid).toBeGreaterThan(0);
   }, 30_000);
@@ -526,7 +644,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     process.env.FAKE_CLAUDE_MODE = "happy";
     const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-late-release", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
-    expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+    expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED|MOUNT_RELAY_STOP_UNCONFIRMED/);
     // the shared confirmation finally succeeds, long after the attempt expired
     confirmLate(true);
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -551,7 +669,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.signalPids = [];
     for (let i = 0; i < 5; i++) {
       const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-subs", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
-      expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+      expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED|MOUNT_RELAY_STOP_UNCONFIRMED/);
     }
     // one subscription per session, however many attempts failed
     expect(probe.signalPids.length).toBe(new Set(probe.signalPids).size);
@@ -575,15 +693,15 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
       await instance.adapter.interruptTurn("t-noclose").catch(() => undefined);
       const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId) as { ok?: boolean };
       // settled before the real SIGKILL escalation could have closed the root
-      expect(Date.now() - stoppedAt).toBeLessThan(2_500);
+      expect(Date.now() - stoppedAt).toBeLessThan(CLI_CALLER_DEADLINE_MS + 1_500);
       expect(done.ok).toBe(false);
       expect(recorder.events.some((e) => e.type === "runtime.error" && String((e as { message?: string }).message).startsWith("CLAUDE_SESSION_NOT_STOPPED"))).toBe(true);
       process.env.FAKE_CLAUDE_MODE = "happy";
       delete process.env.FAKE_CLAUDE_IGNORE_TERM;
       const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-noclose", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
-      expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
-      probe.stopFails = false;
-      probe.forceFails = false;
+      expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED|MOUNT_RELAY_STOP_UNCONFIRMED/);
+      probe.stopFails = false; await probe.releaseStops();
+      probe.forceFails = false; await probe.releaseStops();
       const again = await run("t-noclose", "again", base);
       expect(again.pid).toBeGreaterThan(0);
     } finally {
@@ -632,9 +750,15 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
       process.env.FAKE_CLAUDE_MODE = "happy";
       const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-deadline", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
       // the old turn was settled by the quarantine, and the refusal is the retryable one
-      expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+      // This mounted turn remains quarantined until its exact process-tree proof
+      // arrives, even when its durable completion has already freed the active entry.
+      // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d / 8ca7e47a3e2: completed quarantine
+      // now returns the same fixed retryable ownership error as the dispatch guard.
+      expect(refused).toMatch(/the stopped turn has not closed yet; wait a moment and send again|MOUNT_RELAY_STOP_UNCONFIRMED|CLAUDE_SESSION_NOT_STOPPED/);
+      expect(refused).not.toMatch(/already running/);
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
-      probe.forceFails = false;
+      release(); probe.treeGate = null;
+      probe.forceFails = false; await probe.releaseStops();
       const again = await run("t-deadline", "again", base);
       expect(again.pid).toBeGreaterThan(0);
     } finally {
@@ -680,7 +804,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const two = await run("t-child", "__fixture_spawn_child__", base);
     const kid = Number(readFileSync(process.env.FAKE_CLAUDE_CHILD_PID!, "utf8"));
     try {
-      expect(two.pid).toBe(one.pid);
+      expect(two.pid).not.toBe(one.pid);
       const three = await run("t-child", "three", base);
       expect(three.pid).not.toBe(two.pid);
       expect(three.trace).toMatch(/process=spawned reason=(no-process|process-exited)/);
@@ -697,7 +821,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     probe.override = async () => null;
     const two = await run("t-null", "two", base);
-    expect(two.pid).toBe(one.pid);
+    expect(two.pid).not.toBe(one.pid);
     const three = await run("t-null", "three", base);
     expect(three.pid).not.toBe(two.pid);
     expect(three.trace).toMatch(/process=spawned reason=(no-process|process-exited)/);
@@ -709,7 +833,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     probe.override = async () => { throw new Error("ps blew up"); };
     const two = await run("t-throw", "two", base);
-    expect(two.pid).toBe(one.pid);
+    expect(two.pid).not.toBe(one.pid);
     const three = await run("t-throw", "three", base);
     expect(three.pid).not.toBe(two.pid);
   });
@@ -753,12 +877,12 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect(calls[0]!.initAt).toBeLessThanOrEqual(Date.now());
   });
 
-  it("R3-3: a steer queued before init settles when the pre-accept launch dies and the turn is retried", async () => {
+  it("R3-3: a steer queued before init settles when a possibly written launch dies without retry", async () => {
     useTmp(scratch);
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "state");
     await create();
-    const sending = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-steer-retry", text: "x".repeat(4 * 1024 * 1024), ...base });
+    const sending = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-steer-retry", text: "x".repeat(4 * 1024 * 1024), ...base, draftOnly: true, integrations: undefined });
     // queue the steer while the launch is pre-init (a settled-false answer means it was not queued yet)
     const pending = Symbol("pending");
     let steered: Promise<boolean | SteerDelivery> | null = null;
@@ -770,7 +894,8 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     }
     expect(steered).not.toBeNull();
     const sent = await sending;
-    await recorder.until((e) => e.type === "turn.retrying" && e.turnId === sent.turnId);
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    expect(recorder.events.filter((e) => e.type === "turn.retrying" && e.turnId === sent.turnId)).toHaveLength(0);
     const outcome = await Promise.race([steered!, new Promise<string>((resolve) => setTimeout(() => resolve("stranded"), 3000))]);
     expect(outcome).toBe(false);
     await instance.adapter.interruptTurn("t-steer-retry", sent.turnId);
@@ -793,7 +918,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const two = await run("t-order", "two", routed);
     await followUp;
     unsubscribe();
-    expect(two.pid).toBe(one.pid);
+    expect(two.pid).not.toBe(one.pid);
     expect(traces.at(-1)).toMatch(/process=spawned reason=(no-process|process-exited)/);
   });
 
@@ -845,9 +970,13 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const one = await run("t-clear", "one", base);
     const held = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-clear", text: "__hold_here__ two", resumeCursor: sessions.get("t-clear"), ...base });
     for (let i = 0; i < 100 && !existsSync(process.env.FAKE_CLAUDE_HOLD_SEEN!); i++) await new Promise((resolve) => setTimeout(resolve, 20));
-    rmSync(one.cred.path, { force: true });
-    mkdirSync(one.cred.path); // the emptying rename now fails
-    writeFileSync(join(one.cred.path, "keep"), "x");
+    // S1 §0/§4: turn two owns a different file; inject the fault into its
+    // live store, never into turn one's already removed directory.
+    const heldPath = JSON.parse(readFileSync(dump, "utf8")).credFile.path as string;
+    expect(heldPath).not.toBe(one.cred.path);
+    rmSync(heldPath, { force: true });
+    mkdirSync(heldPath); // the emptying rename now fails
+    writeFileSync(join(heldPath, "keep"), "x");
     writeFileSync(gateFile, "go");
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === held.turnId);
     const three = await run("t-clear", "three", base);
@@ -873,7 +1002,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     writeFileSync(join(configDir, "settings.json"), JSON.stringify({ hooks: {} }));
     const two = await run("t-rev", "two", base);
     expect(two.pid).not.toBe(one.pid);
-    expect(two.trace).toContain("process=spawned reason=settingsRev");
+    expect(two.trace).toContain("process=spawned reason=no-process");
   });
 
   it("recycles when the project's .claude/settings.json or settings.local.json changes between turns", async () => {
@@ -883,19 +1012,19 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     await create();
     const one = await run("t-proj", "one", { ...base, cwd: project });
     const same = await run("t-proj", "same", { ...base, cwd: project });
-    expect(same.pid).toBe(one.pid);
+    expect(same.pid).not.toBe(one.pid);
     writeFileSync(join(project, ".claude", "settings.json"), JSON.stringify({ effortLevel: "high", hooks: {} }));
     const two = await run("t-proj", "two", { ...base, cwd: project });
     expect(two.pid).not.toBe(one.pid);
-    expect(two.trace).toContain("process=spawned reason=settingsRev");
+    expect(two.trace).toContain("process=spawned reason=no-process");
     writeFileSync(join(project, ".claude", "settings.local.json"), JSON.stringify({ permissions: {} }));
     const three = await run("t-proj", "three", { ...base, cwd: project });
     expect(three.pid).not.toBe(two.pid);
-    expect(three.trace).toContain("process=spawned reason=settingsRev");
+    expect(three.trace).toContain("process=spawned reason=no-process");
   });
 
   it("the settings revision covers the repository root's and the main checkout's settings.local.json (subdirectory and worktree)", () => {
-    const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.email=t@example.invalid", "-c", "user.name=t", ...args], { cwd, stdio: "ignore" });
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.email=t@example.invalid", "-c", "user.name=t", ...args], { windowsHide: true, cwd, stdio: "ignore" });
     mkdirSync(join(scratch, "rev-repo", "sub", "deeper"), { recursive: true });
     const repo = realpathSync.native(join(scratch, "rev-repo"));
     git(repo, "init", "-q");
@@ -936,29 +1065,37 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect(managedClaudeSettingsPaths().length).toBeGreaterThan(0);
   });
 
-  it("unlinks the credential file of a launch that died before accepting before the relaunch, not only at it", async () => {
+  it("S1: unlinks populated credentials when a mounted pre-accept launch dies, without replay", async () => {
     useTmp(scratch);
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "state");
-    await create();
-    // a prompt larger than any pipe buffer makes the pre-accept launch refuse the write
-    let leftAtRetry: string[] | null = null;
-    const unsubscribe = instance.adapter.onEvent((event) => {
-      if (event.type === "turn.retrying") leftAtRetry = readdirSync(scratch).filter((name) => name.startsWith("murage-cred-"));
+    const paths: string[] = [], written: Array<Record<string, Record<string, string>>> = [];
+    const original = credentialApi.createTurnCredentialStore;
+    const spy = vi.spyOn(credentialApi, "createTurnCredentialStore").mockImplementation(() => {
+      const store = original(); paths.push(store.path);
+      const write = store.write.bind(store);
+      store.write = secrets => { written.push(secrets); write(secrets); };
+      return store;
     });
-    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-retry", text: "x".repeat(4 * 1024 * 1024), ...base });
-    await recorder.until((e) => e.type === "turn.retrying" && e.turnId === sent.turnId);
-    unsubscribe();
-    // the dead launch's file is gone while the retry waits out its backoff
-    expect(leftAtRetry).toEqual([]);
-    await instance.adapter.interruptTurn("t-retry", sent.turnId);
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    try {
+      await create();
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-retry", text: "x".repeat(4 * 1024 * 1024), ...base });
+      const done = await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(done).toMatchObject({ ok: false });
+      expect(written.some(secrets => secrets.agents?.MURAGE_COMMS_TOKEN === "tok-1" && !!secrets.agents?.MURAGE_RELAY_TICKET)).toBe(true);
+      expect(paths).toHaveLength(1);
+      expect(paths.filter(existsSync)).toEqual([]);
+      expect(recorder.events.filter(e => e.type === "turn.retrying")).toEqual([]);
+      expect(readFileSync(process.env.FAKE_CLAUDE_STATE!, "utf8")).toBe("1");
+    } finally { spy.mockRestore(); }
   }, 20_000);
 
   // Design T3 end to end: the real capability registry gates a stand-in route,
   // the driver delivers each turn's real token through the file, and during
   // turn N+1 the route refuses turn N's token while the file holds N+1's.
-  it("refuses turn N's token at the route during turn N+1 on the same warm process", async () => {
+  // control: wait for the actual held turn; configuration-only inspection
+  // cannot satisfy the hold-marker assertion or prove driver-owned clearing.
+  it("refuses turn N's token at the route during turn N+1 on a fresh mounted process", async () => {
     const registry = new InternalCapabilities();
     const route: Server = createServer((req, res) => { req.resume(); res.writeHead(registry.resolve(req.headers.authorization) ? 200 : 401).end(); });
     await new Promise<void>((resolve) => route.listen(0, "127.0.0.1", resolve));
@@ -978,19 +1115,26 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
       const first = turnWith("g1");
       const one = await run("t-e2e", "one", first.input);
       expect(await hit(first.token)).toBe(200); // still the live generation until the harness settles it
+      expect(existsSync(one.cred.path)).toBe(false);
       registry.revokeGeneration("t-e2e", "g1"); // harness: turn N settled
       const second = turnWith("g2");
-      const held = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-e2e", text: "__hold_here__ two", resumeCursor: sessions.get("t-e2e"), ...second.input });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-e2e", text: "__hold_here__ two", ...second.input, resumeCursor: sessions.get("t-e2e") });
       for (let i = 0; i < 100 && !existsSync(process.env.FAKE_CLAUDE_HOLD_SEEN!); i++) await new Promise((resolve) => setTimeout(resolve, 20));
-      const inFile = JSON.parse(readFileSync(one.cred.path, "utf8")) as Record<string, Record<string, string>>;
+      expect(existsSync(process.env.FAKE_CLAUDE_HOLD_SEEN!)).toBe(true);
+      const two = JSON.parse(readFileSync(dump, "utf8"));
+      expect(two.pid).not.toBe(one.pid);
+      expect(two.credFile.path).not.toBe(one.cred.path);
+      const inFile = JSON.parse(readFileSync(two.credFile.path, "utf8")) as Record<string, Record<string, string>>;
       expect(JSON.stringify(inFile)).toContain(second.token);
       expect(JSON.stringify(inFile)).not.toContain(first.token);
       expect(await hit(first.token)).toBe(401);
       expect(await hit(second.token)).toBe(200);
       writeFileSync(gateFile, "go");
-      await recorder.until((e) => e.type === "turn.completed" && e.turnId === held.turnId);
-      expect(readFileSync(one.cred.path, "utf8")).toBe("{}");
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(existsSync(two.credFile.path)).toBe(false);
     } finally {
+      writeFileSync(gateFile, "go");
+      registry.revokeAll(); route.closeAllConnections();
       await new Promise<void>((resolve) => route.close(() => resolve()));
     }
   });
@@ -998,13 +1142,16 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   it("unlinks the credential file when the instance is disposed", async () => {
     await create();
     const one = await run("t-dispose", "one", base);
-    expect(existsSync(one.cred.path)).toBe(true);
+    expect(existsSync(one.cred.path)).toBe(false);
     await instance.dispose();
     expect(existsSync(one.cred.path)).toBe(false);
     expect(existsSync(dirname(one.cred.path))).toBe(false);
   });
   it("A: a Stop during the settle-check wait reaches the dispatch, and nothing is launched for it", async () => {
     await create();
+    // S1:10: a retained settle probe belongs to a mount-free draft.
+    const send = instance.adapter.sendTurn.bind(instance.adapter);
+    instance.adapter.sendTurn = input => send({ ...input, draftOnly: true, integrations: undefined });
     await run("t-stopwait", "one", base);
     await new Promise((resolve) => setTimeout(resolve, 300));
     let release!: () => void;
@@ -1023,13 +1170,13 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === stopped.turnId);
     expect((done as { stopReason?: string }).stopReason).toBe("cancelled");
     expect(traces).toHaveLength(dispatched);
-    // a message sent right after the Stop waits for the stopped dispatch's close, then runs on the same warm process
+    // A message sent after Stop runs on its own fresh process.
     const fourth = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stopwait", text: "four", resumeCursor: sessions.get("t-stopwait"), ...base });
     release();
     const sent = await fourth;
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.pid).toBe(two.pid);
+    expect(seen.pid).not.toBe(two.pid);
     expect(traces).toHaveLength(dispatched + 1);
   });
 
@@ -1038,10 +1185,10 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const keyed = (apiKey: string) => ({ ...route("r1"), apiKey }) as unknown as SendTurnInput["providerRoute"];
     const one = await run("t-rotate", "one", { ...base, model: "claude-fixture", providerRoute: keyed("fixture-key-one") });
     const same = await run("t-rotate", "same", { ...base, model: "claude-fixture", providerRoute: keyed("fixture-key-one") });
-    expect(same.pid).toBe(one.pid);
+    expect(same.pid).not.toBe(one.pid);
     const rotated = await run("t-rotate", "rotated", { ...base, model: "claude-fixture", providerRoute: keyed("fixture-key-two") });
     expect(rotated.pid).not.toBe(one.pid);
-    expect(rotated.trace).toContain("process=spawned reason=credentials");
+    expect(rotated.trace).toContain("process=spawned reason=no-process");
     expect(rotated.trace).not.toContain("fixture-key");
   });
 
@@ -1140,6 +1287,7 @@ const out = (frame) => process.stdout.write(JSON.stringify(frame) + "\\n");
 if (process.argv[2] === "--version") { process.stdout.write("2.1.295 (Claude Code)\\n"); process.exit(0); }
 if (process.env.MINI_PIDS) fs.appendFileSync(process.env.MINI_PIDS, process.pid + "\\n");
 const mcpConfig = (() => { const at = process.argv.indexOf("--mcp-config"); try { return at < 0 ? {} : JSON.parse(fs.readFileSync(process.argv[at + 1], "utf8")); } catch { return {}; } })();
+const mcp = import(${JSON.stringify(new URL("../testing/fake-mcp-client.mjs", import.meta.url).href)}).then(({ createFixtureMcpClient }) => createFixtureMcpClient(mcpConfig.mcpServers ?? {}));
 if (process.env.MINI_STUBBORN === "1") {
   process.on("SIGTERM", () => {});
   process.on("SIGHUP", () => {});
@@ -1157,10 +1305,13 @@ process.stdin.on("data", (chunk) => {
     buffer = buffer.slice(at + 1);
     let msg;
     try { msg = JSON.parse(line); } catch { continue; }
-    // As the real CLI does: mcp_status answers every server of its --mcp-config, connected. Unanswered, a fresh process costs the
-    // whole first-answer wait (on Windows the required-server wait, 15 s: mcpFirstAnswerMs), which no test here is about.
-    if (msg.type === "control_request" && msg.request && msg.request.subtype === "mcp_status") {
-      out({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: { mcpServers: Object.keys(mcpConfig.mcpServers || {}).map((name) => ({ name, status: "connected" })) } } });
+    if (msg.type === "control_request") {
+      void mcp.then(async client => {
+        const subtype = msg.request?.subtype;
+        if (subtype === "mcp_reconnect") await client.reconnect(msg.request.serverName);
+        const response = subtype === "mcp_status" ? { mcpServers: client.status() } : {};
+        out({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response } });
+      }).catch(error => out({ type: "control_response", response: { subtype: "error", request_id: msg.request_id, error: error.message } }));
       continue;
     }
     if (msg.type !== "user") continue;
@@ -1231,6 +1382,12 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
       instanceId: "claude-mini-test", displayName: "Claude Mini Test", environment: {}, enabled: true,
       config: { cli, permissionMode: "acceptEdits" },
     });
+    bindFixtureAdapter(instance.adapter);
+    withClaudeFixtureCwd(instance.adapter);
+    // Retained-process stale-frame controls use a mount-free draft; S1 ordinary
+    // turns own a broker mount and deliberately close their process at settle.
+    const send = instance.adapter.sendTurn.bind(instance.adapter);
+    instance.adapter.sendTurn = input => send({ ...input, draftOnly: true, integrations: undefined });
     recorder = recordEvents(instance.adapter);
   };
   const turn = async (threadId: string, text: string, extra: Partial<SendTurnInput> = {}) => {
@@ -1245,6 +1402,7 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
   beforeEach(() => {
     ensureDirs();
     cursors.clear();
+    identity.botId = randomUUID();
     scratch = mkdtempSync(join(tmpdir(), "murage-claude-mini-"));
     cli = join(scratch, "mini-claude");
     writeFileSync(cli, MINI_CLI_SOURCE, { mode: 0o755 });
@@ -1260,6 +1418,10 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     delete process.env.MINI_PIDS;
     delete process.env.MINI_STUBBORN;
     delete process.env.MINI_LOG;
+    probe.stopFails = false; probe.forceFails = false; probe.forceFailPid = null;
+    probe.disagree = false; probe.treeGate = null; probe.lateSignal = null;
+    probe.signalByPid.clear();
+    await probe.releaseStops();
     info.mockRestore();
     recorder?.stop();
     try { await instance?.dispose(); } catch { /* a stubborn fixture is ended below */ }
@@ -1323,7 +1485,10 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     await create();
     const revoked = () => { throw new Error("MEMORY_CONTEXT_REVOKED"); };
     // cold: the fence runs after setup, right before the spawn and first write
-    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence", text: "COLD-REFUSED", warmIdentity: identity, beforeSubmit: revoked })).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    const refused = fixtureMountTurn({ cwd: fixtureBotFolder(), threadId: "t-fence", text: "COLD-REFUSED", warmIdentity: identity, beforeSubmit: revoked });
+    await expect(instance.adapter.sendTurn(refused)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    // Unwritten-prompt cleanup must not invent a terminal retained refusal.
+    expect(() => assertConsumingBinding(refused.releaseBinding!)).not.toThrow();
     expect(mine()).toHaveLength(0);
     expect(instance.adapter.hasSession("t-fence")).toBe(false);
     // warm: a live idle process is not written to either
@@ -1341,6 +1506,19 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     expect(passes).toBeGreaterThanOrEqual(1);
     expect(passes).toBeLessThanOrEqual(2);
     expect(miniLog().filter((line) => line.startsWith("recv:"))).toEqual(["recv:one", "recv:three"]);
+  });
+
+  // CLSUB (reuse): a fenced (coded) refusal at the reused process's write fence is ONE submission record (driver-closed: the captured
+  // process is retired and confirmed gone, no lookup), no bytes are written, and the caller gets the refusal itself.
+  it("CLSUB reuse: a coded fence refusal on a reused process records one submission refusal at claude.prompt.reuse", async () => {
+    await create();
+    await turn("t-sub-reuse", "one");
+    const revoked = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-sub-reuse", text: "WARM-REFUSED", warmIdentity: identity, resumeCursor: "mini-session", beforeSubmit: () => { throw revoked; } })).rejects.toBe(revoked);
+    const rec = fencedRefusals().filter((r) => r.threadId === "t-sub-reuse");
+    expect(rec.map((r) => [r.site, r.kind, r.closer])).toEqual([["claude.prompt.reuse", "submission", "driver"]]);
+    expect(instance.adapter.hasSession("t-sub-reuse"), "the captured process is retired").toBe(false);
+    expect(miniLog().some((line) => line.includes("REFUSED"))).toBe(false);
   });
 
   it("memory r3: a steer queued before init is not written when its session went invalid while it waited", async () => {
@@ -1371,6 +1549,9 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
   it("B: a replaced session whose shutdown is pending is still reached by Stop, which confirms it stopped", async () => {
     process.env.MINI_STUBBORN = "1";
     await create();
+    // S1:10: exercise retained predecessors on mount-free drafts.
+    const send = instance.adapter.sendTurn.bind(instance.adapter);
+    instance.adapter.sendTurn = input => send({ ...input, draftOnly: true, integrations: undefined });
     await turn("t-replace", "one");
     const [old] = mine();
     // a changed spawn contract replaces the session while the old process ignores EOF and SIGTERM
@@ -1384,6 +1565,9 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
   it("B: dispose reaches a replaced session whose shutdown is pending", async () => {
     process.env.MINI_STUBBORN = "1";
     await create();
+    // S1:10: exercise retained predecessors on mount-free drafts.
+    const send = instance.adapter.sendTurn.bind(instance.adapter);
+    instance.adapter.sendTurn = input => send({ ...input, draftOnly: true, integrations: undefined });
     await turn("t-replace-d", "one");
     const [old] = mine();
     await turn("t-replace-d", "two", { model: "claude-other" });
@@ -1397,6 +1581,9 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
   it.skipIf(process.platform === "win32")("reset confirms EVERY older retiring process: A retiring, B current, A alive after reset keeps the thread quarantined so C cannot launch", async () => {
     process.env.MINI_STUBBORN = "1";
     await create();
+    // S1:10: exercise retained predecessors on mount-free drafts.
+    const send = instance.adapter.sendTurn.bind(instance.adapter);
+    instance.adapter.sendTurn = input => send({ ...input, draftOnly: true, integrations: undefined });
     await turn("t-older", "one");
     const [old] = mine();
     // a changed spawn contract replaces A with B; A ignores EOF and SIGTERM and stays retiring
@@ -1408,10 +1595,10 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     await instance.adapter.resetSession!("t-older");
     expect(alive(old!)).toBe(true);
     const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-older", text: "three", warmIdentity: identity, resumeCursor: "mini-session" }).then(() => "sent", (error: unknown) => String(error));
-    expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+    expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED|MOUNT_RELAY_STOP_UNCONFIRMED/);
     expect(mine()).toHaveLength(2); // C never launched
     // A is confirmed on a later attempt: the thread is free and A is really gone
-    probe.forceFailPid = null;
+    probe.forceFailPid = null; await probe.releaseStops();
     await turn("t-older", "three");
     expect(alive(old!)).toBe(false);
     expect(mine()).toHaveLength(3);
@@ -1420,6 +1607,9 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
   it("holdIdle includes a replaced predecessor that is still shutting down: not confirmed while it may still be writing the transcript, confirmed once it is gone", async () => {
     process.env.MINI_STUBBORN = "1";
     await create();
+    // S1:10: exercise retained predecessors on mount-free drafts.
+    const send = instance.adapter.sendTurn.bind(instance.adapter);
+    instance.adapter.sendTurn = input => send({ ...input, draftOnly: true, integrations: undefined });
     await turn("t-hold-retiring", "one");
     const [old] = mine();
     await turn("t-hold-retiring", "two", { model: "claude-other" }); // a changed spawn contract replaces A with B; A ignores EOF and SIGTERM and stays retiring
@@ -1428,7 +1618,7 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     const refused = await instance.adapter.holdIdle!();
     expect(refused.confirmed).toBe(false);
     refused.release();
-    probe.stopFails = false;
+    probe.stopFails = false; await probe.releaseStops();
     const allowed = await instance.adapter.holdIdle!();
     expect(allowed.confirmed).toBe(true);
     expect(alive(old!)).toBe(false);
@@ -1438,6 +1628,9 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
   it("A times out, B is still pending, then A's stop is confirmed: the aggregation does not quarantine A again", async () => {
     process.env.MINI_STUBBORN = "1";
     await create();
+    // S1:10: exercise retained predecessors on mount-free drafts.
+    const send = instance.adapter.sendTurn.bind(instance.adapter);
+    instance.adapter.sendTurn = input => send({ ...input, draftOnly: true, integrations: undefined });
     await turn("t-interleave", "one");
     const [old] = mine();
     await turn("t-interleave", "two", { model: "claude-other" });
@@ -1467,14 +1660,19 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
   let info: ReturnType<typeof vi.spyOn>;
   const sessions = new Map<string, string>();
   const agents = (token: string) => ({
-    agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: token, MURAGE_TURN_DEPTH: "0" } },
+    agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: token, MURAGE_TURN_DEPTH: "0" } },
   });
   const base = { integrations: agents("tok-1"), warmIdentity: { botId: "b1", audience: "owner" as const } } satisfies Partial<SendTurnInput>;
+  // The warm lifecycle and cursor fence apply to a real tool-free draft.
+  // Mounted user turns remain on the separate single-use security path.
+  const unmounted = { warmIdentity: base.warmIdentity, draftOnly: true as const } satisfies Partial<SendTurnInput>;
   const create = async () => {
     instance = await ClaudeDriver.create({
-      instanceId: "claude-prewarm-test", displayName: "Claude Prewarm Test", environment: {}, enabled: true,
+      instanceId: "claude-prewarm-test", displayName: "Claude Prewarm Test", environment: { FAKE_CLAUDE_MCP_STATUS: "error" }, enabled: true,
       config: { cli: FAKE_CLI, permissionMode: "acceptEdits" },
     });
+    bindFixtureAdapter(instance.adapter);
+    withClaudeFixtureCwd(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
   const run = async (threadId: string, text: string, extra: Partial<SendTurnInput> = {}) => {
@@ -1491,17 +1689,26 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     while (!check() && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
     expect(check()).toBe(true);
   };
-  /** A first user turn, then wait for the pool to let its engine go (the window is tiny), so the next prewarm starts cold. */
+  /** A mounted user turn fully retires before any prewarm attempt. */
   const goCold = async (threadId: string) => {
     await run(threadId, "one", base);
     await eventually(() => warmPool.idleCount() === 0);
-    await eventually(() => lines.some((l) => l.includes(`claude close thread=${threadId} reason=activity window`)));
+    await eventually(() => lines.some((l) => l.includes(`claude close thread=${threadId} reason=mounted-single-use`)));
+  };
+  // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d / dde7431bb8: mounted prewarms stay refused.
+  // Positive fence/idle controls use the native mount-free draft, retaining all spawn/cursor/hold assertions.
+  const native = unmounted;
+  const goColdNative = async (threadId: string) => {
+    await run(threadId, "one", native);
+    await eventually(() => warmPool.idleCount() === 0);
+    await eventually(() => lines.some(l => l.includes(`claude close thread=${threadId} reason=activity window`)));
   };
 
   beforeEach(() => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
     sessions.clear();
+    base.warmIdentity.botId = randomUUID();
     scratch = mkdtempSync(join(tmpdir(), "murage-claude-prewarm-"));
     process.env.FAKE_CLAUDE_DUMP = join(scratch, "dump.json");
     process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "250";
@@ -1517,23 +1724,19 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     await removeTempDir(scratch);
   });
 
-  it("starts a cold engine once, parks it held, and releases it when no send follows", async () => {
+  it("mounted intent prewarm starts nothing and leaves no parked process", async () => {
     await create();
     await goCold("t-pw-release");
+    const before = recorder.events.length;
     expect(dispatches()).toHaveLength(1);
-    expect(await instance.adapter.prewarm!("t-pw-release")).toBe(true);
-    expect(dispatches()).toHaveLength(2);
-    expect(dispatches()[1]).toMatch(/process=spawned reason=(no-process|process-exited)/);
-    expect(prewarms()).toHaveLength(1);
-    expect(warmPool.idleCount()).toBe(1);
-    // a second warm while the engine is live starts nothing
     expect(await instance.adapter.prewarm!("t-pw-release")).toBe(false);
-    expect(dispatches()).toHaveLength(2);
-    // the hold lapses with the window: no send followed, so the pool lets it go
-    await new Promise((r) => setTimeout(r, 400));
+    expect(await instance.adapter.prewarm!("t-pw-release")).toBe(false);
+    expect(dispatches()).toHaveLength(1);
+    expect(prewarms()).toHaveLength(0);
+    expect(recorder.events).toHaveLength(before);
     await warmPool.tick();
     expect(warmPool.idleCount()).toBe(0);
-    await eventually(() => lines.filter((l) => l.includes("claude close thread=t-pw-release reason=activity window")).length === 2);
+    expect(lines.filter(l => l.includes("claude close thread=t-pw-release reason=mounted-single-use"))).toHaveLength(1);
   });
 
   // 1.0.3 Windows gate (thread ba2a7f9a): after the engine went away and a fresh one started, an Ask tool call was
@@ -1556,49 +1759,55 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     }
   });
 
-  it("a proxy that cannot reach the broker still denies, opens no card, ends the turn with the reason, and the app log says why", async () => {
-    const errors: string[] = [];
-    const error = vi.spyOn(console, "error").mockImplementation((line: unknown) => { if (typeof line === "string") errors.push(line); });
+  it("S1: a broker transport loss seals the mounted turn without a fallback tool reply", async () => {
     await create();
     process.env.FAKE_CLAUDE_PERM_TOOL = "Bash";
     process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "rm -rf ~/Documents" });
     process.env.FAKE_CLAUDE_PERM_SOCKET = join(scratch, "brokerrsp-nothing-listens.sock");
     try {
-      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-brokerrsp-down", text: "__fixture_permission_tool__", ...base });
-      const denied = await recorder.until((e) => e.type === "item.completed" && e.threadId === "t-brokerrsp-down" && e.itemType === "tool");
-      expect((denied as { ok?: boolean }).ok).toBe(false);
-      // U22: the proxy would deny every later ask the same way; the turn ends here instead of running on with denials
-      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
-      expect(done).toMatchObject({ ok: false, stopReason: BROKER_LOST });
-      expect(recorder.events.some((e) => e.type === "runtime.error" && e.turnId === sent.turnId && e.message === BROKER_LOST_MESSAGE)).toBe(true);
-      expect(recorder.events.some((e) => e.type === "request.opened" && e.threadId === "t-brokerrsp-down")).toBe(false);
-      expect(errors.some((line) => line.startsWith("claude permission broker unreachable thread=t-brokerrsp-down"))).toBe(true);
-      // the process is recycled: the next turn gets a fresh engine with its own broker
-      await eventually(() => lines.some((l) => l.includes(`claude close thread=t-brokerrsp-down reason=${BROKER_LOST}`)));
+      const turn = fixtureMountTurn({ cwd: fixtureBotFolder(), threadId: "t-brokerrsp-down", text: "__fixture_permission_tool__", ...base });
+      expect(() => assertConsumingBinding(turn.releaseBinding!)).not.toThrow();
+      const sent = await instance.adapter.sendTurn(turn);
+      const done = await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
+      // S1:52: transport loss before stopping seals; no ordinary deny can
+      // escape the revoked proxy release authority as a fallback response.
+      expect(done).toMatchObject({ ok: false });
+      expect(() => assertConsumingBinding(turn.releaseBinding!)).toThrow("MEMORY_CONTEXT_REVOKED");
+      expect(recorder.events.filter(e => e.turnId === sent.turnId && e.type === "request.opened")).toEqual([]);
+      expect(recorder.events.filter(e => e.turnId === sent.turnId && e.type === "item.completed" && e.itemType === "tool")).toEqual([]);
+      expect(recorder.events.filter(e => e.turnId === sent.turnId && e.type === "turn.completed")).toHaveLength(1);
+      delete process.env.FAKE_CLAUDE_PERM_SOCKET;
+      const next = await run("t-brokerrsp-down", "recovered", base);
+      expect((await recorder.until(e => e.type === "turn.completed" && e.turnId === next.turnId))).toMatchObject({ ok: true });
     } finally {
       delete process.env.FAKE_CLAUDE_PERM_TOOL;
       delete process.env.FAKE_CLAUDE_PERM_INPUT;
       delete process.env.FAKE_CLAUDE_PERM_SOCKET;
-      error.mockRestore();
     }
   });
 
-  it("holdIdle (a deleted conversation is being removed from the engine's files) closes the idle engine, warms nothing while held, and allows it again after", async () => {
+  it("holdIdle after mounted settle confirms no idle engine; release cannot enable mounted prewarm", async () => {
     await create();
-    await run("t-hold", "one", base);
-    await eventually(() => warmPool.idleCount() === 1);
+    const completed = await run("t-hold", "one", base);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d / 8ca7e47a3e2: durable ending precedes
+    // process teardown; require its exact closure receipt before asserting the PID is gone.
+    await confirmFixtureTurnClosed(instance.adapter, "t-hold", completed.turnId);
+    expect(warmPool.idleCount()).toBe(0);
+    const pid = JSON.parse(readFileSync(process.env.FAKE_CLAUDE_DUMP!, "utf8")).pid;
+    expect(() => process.kill(pid, 0)).toThrow();
     const hold = await instance.adapter.holdIdle!();
-    expect(hold.confirmed).toBe(true);
-    await eventually(() => lines.some((l) => l.includes("claude close thread=t-hold reason=deletion-hold")));
-    await eventually(() => warmPool.idleCount() === 0);
+    try {
+      expect(hold.confirmed).toBe(true);
+      expect(await instance.adapter.prewarm!("t-hold")).toBe(false);
+    } finally { hold.release(); }
     expect(await instance.adapter.prewarm!("t-hold")).toBe(false);
-    hold.release();
-    expect(await instance.adapter.prewarm!("t-hold")).toBe(true);
+    expect(dispatches()).toHaveLength(1);
   });
 
   it("holdIdle answers confirmed only after the idle engine process has really exited", async () => {
     await create();
-    await run("t-hold-exit", "one", base);
+    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000";
+    await run("t-hold-exit", "one", native);
     await eventually(() => warmPool.idleCount() === 1);
     const pid = (JSON.parse(readFileSync(process.env.FAKE_CLAUDE_DUMP!, "utf8")) as { pid: number }).pid;
     expect(() => process.kill(pid, 0)).not.toThrow(); // alive and idle
@@ -1608,85 +1817,166 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     hold.release();
   });
 
+  describe("the prewarm fence", () => {
+    const lostOf = (reason: string) => reuseStats.snapshot().spares.lost[reason] ?? 0;
+    const startLogged = () => {
+      const startLog = join(scratch, "starts.log");
+      process.env.FAKE_CLAUDE_START_LOG = startLog;
+      process.env.FAKE_CLAUDE_START_DELAY_MS = "50";
+      return () => (existsSync(startLog) ? readFileSync(startLog, "utf8").split("\n").filter(Boolean).length : 0);
+    };
+
+    it("is handed the exact cursor the launch resumes, once, and a pass starts the engine", async () => {
+      await create();
+      await goColdNative("t-fence-pass");
+      const fence = vi.fn();
+      expect(await instance.adapter.prewarm!("t-fence-pass", { fence })).toBe(true);
+      expect(fence.mock.calls).toEqual([[sessions.get("t-fence-pass")]]);
+      expect(warmPool.idleCount()).toBe(1);
+    });
+
+    it("a stale remembered cursor spawns nothing: prewarm answers false and the spare ends lost fence:cursor-moved", async () => {
+      await create();
+      await goColdNative("t-fence-stale");
+      const started = startLogged();
+      const before = lostOf("fence:cursor-moved");
+      const fence = () => { throw new PrewarmRefused("cursor-moved"); };
+      expect(await instance.adapter.prewarm!("t-fence-stale", { fence })).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(started()).toBe(0);
+      expect(warmPool.idleCount()).toBe(0);
+      expect(lostOf("fence:cursor-moved")).toBe(before + 1);
+      expect(prewarms().filter((line) => line.includes("failed="))).toEqual([]);
+    });
+
+    it("a seal landing between the harness check and the launch refuses at the spawn, and the next warm can pass", async () => {
+      await create();
+      await goColdNative("t-fence-seal");
+      const started = startLogged();
+      let sealed = false;
+      const fence = () => { if (sealed) throw new PrewarmRefused("sealed"); };
+      let open = () => {};
+      const gate = new Promise<void>((resolve) => { open = resolve; });
+      const spy = vi.spyOn(warmPool, "beforeSpawn").mockImplementation(async () => { await gate; }); // the prewarm is parked just before its spawn
+      try {
+        const warming = instance.adapter.prewarm!("t-fence-seal", { fence });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        sealed = true;
+        open();
+        expect(await warming).toBe(false);
+        expect(started()).toBe(0);
+        spy.mockRestore();
+        sealed = false;
+        expect(await instance.adapter.prewarm!("t-fence-seal", { fence })).toBe(true);
+      } finally { open(); spy.mockRestore(); }
+    });
+
+    it("an instance that moved refuses the launch as fence:instance-moved", async () => {
+      await create();
+      await goColdNative("t-fence-moved");
+      const started = startLogged();
+      const before = lostOf("fence:instance-moved");
+      expect(await instance.adapter.prewarm!("t-fence-moved", { fence: () => { throw new PrewarmRefused("instance-moved"); } })).toBe(false);
+      expect(started()).toBe(0);
+      expect(lostOf("fence:instance-moved")).toBe(before + 1);
+    });
+
+    it("a parked spare holding another cursor is refused at dispatch: spawned reason=cursor", async () => {
+      await create();
+      await goColdNative("t-fence-wrong");
+      expect(await instance.adapter.prewarm!("t-fence-wrong", { fence: () => {} })).toBe(true);
+      await run("t-fence-wrong", "two", { ...native, resumeCursor: "another-session" });
+      expect(dispatches().at(-1)).toContain("spawned reason=cursor");
+    });
+  });
+
+  it("mounted prewarm is refused before the spawn/hold race can start", async () => {
+    await create();
+    await goCold("t-pw-hold-race");
+    const spawn = vi.spyOn(warmPool, "beforeSpawn");
+    try {
+      const warming = instance.adapter.prewarm!("t-pw-hold-race");
+      const hold = await instance.adapter.holdIdle!();
+      try {
+        expect(await warming).toBe(false);
+        expect(hold.confirmed).toBe(true);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally { hold.release(); }
+      expect(await instance.adapter.prewarm!("t-pw-hold-race")).toBe(false);
+      expect(dispatches()).toHaveLength(1);
+      expect(warmPool.idleCount()).toBe(0);
+    } finally { spawn.mockRestore(); }
+  });
+
   it("a prewarm that is already starting meets the hold at its spawn: no engine is started, and the hold is confirmed", async () => {
     await create();
     await goCold("t-pw-hold-race");
-    const startLog = join(scratch, "starts.log");
-    process.env.FAKE_CLAUDE_START_LOG = startLog;
-    process.env.FAKE_CLAUDE_START_DELAY_MS = "50"; // the fake CLI logs each start after this delay
-    const started = () => (existsSync(startLog) ? readFileSync(startLog, "utf8").split("\n").filter(Boolean).length : 0);
-    let open = () => {};
-    const gate = new Promise<void>((resolve) => { open = resolve; });
-    const spy = vi.spyOn(warmPool, "beforeSpawn").mockImplementation(async () => { await gate; }); // the prewarm is parked just before its spawn
+    const spawn = vi.spyOn(warmPool, "beforeSpawn");
     try {
-      const warming = instance.adapter.prewarm!("t-pw-hold-race"); // admitted: nothing is held yet
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const holding = instance.adapter.holdIdle!(); // taken while the prewarm waits at the gate
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      open();
-      const hold = await holding;
-      expect(await warming).toBe(false);
-      expect(hold.confirmed).toBe(true);
-      expect(started()).toBe(0); // it never started an engine beside the deletion
+      const warming = instance.adapter.prewarm!("t-pw-hold-race");
+      const hold = await instance.adapter.holdIdle!();
+      try {
+        expect(await warming).toBe(false);
+        expect(hold.confirmed).toBe(true);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally { hold.release(); }
+      expect(await instance.adapter.prewarm!("t-pw-hold-race")).toBe(false);
+      expect(dispatches()).toHaveLength(1);
       expect(warmPool.idleCount()).toBe(0);
-      spy.mockRestore();
-      hold.release();
-      expect(await instance.adapter.prewarm!("t-pw-hold-race")).toBe(true);
-      await eventually(() => started() === 1); // and once the hold is released it starts the engine
-    } finally { open(); spy.mockRestore(); }
+    } finally { spawn.mockRestore(); }
   });
 
-  it("emits nothing for the warm itself: no turn, no session.started until a real turn adopts the engine", async () => {
+  it("refused mounted prewarm emits neither a turn nor a session event", async () => {
     await create();
     await goCold("t-pw-quiet");
     const turns = () => recorder.events.filter((e) => e.type === "turn.started").length;
     const before = recorder.events.length;
-    expect(await instance.adapter.prewarm!("t-pw-quiet")).toBe(true);
+    expect(await instance.adapter.prewarm!("t-pw-quiet")).toBe(false);
     expect(recorder.events.length).toBe(before);
     expect(turns()).toBe(1);
   });
 
-  it("prewarm then send reuses the engine: no second spawn, and the turn still announces its session", async () => {
+  it("refused mounted prewarm then send starts a fresh engine and announces its session", async () => {
     await create();
     await goCold("t-pw-reuse");
-    expect(await instance.adapter.prewarm!("t-pw-reuse")).toBe(true);
+    expect(await instance.adapter.prewarm!("t-pw-reuse")).toBe(false);
     const sent = await run("t-pw-reuse", "two", base);
-    expect(dispatches()).toHaveLength(3);
-    expect(dispatches()[2]).toContain("process=reused reason=unchanged");
+    expect(dispatches()).toHaveLength(2);
+    expect(dispatches()[1]).toContain("process=spawned reason=no-process");
     const mine = recorder.events.filter((e) => e.turnId === sent.turnId).map((e) => e.type);
     expect(mine).toContain("turn.started");
     expect(mine).toContain("session.started");
     expect(mine.at(-1)).toBe("turn.completed");
-    // the send ended the hold: the engine follows the normal rules again
-    expect(prewarms()).toHaveLength(1);
+    // S1 has no prewarm hold to adopt.
+    expect(prewarms()).toHaveLength(0);
   });
 
   it("the first-token line tells a fresh session from a resumed one, cold or hot", async () => {
     await create();
     await goCold("t-pw-first"); // a new session on a new process
     await run("t-pw-first", "two", base); // a new process on the kept session
-    await run("t-pw-first", "three", base); // the kept process
+    await run("t-pw-first", "three", base); // another fresh process
     await eventually(() => lines.filter((l) => l.startsWith("claude first-token thread=t-pw-first")).length === 3);
     const tokens = lines.filter((l) => l.startsWith("claude first-token thread=t-pw-first"));
     expect(tokens[0]).toContain("process=spawned sealed=false resumed=false");
     expect(tokens[1]).toContain("process=spawned sealed=false resumed=true");
-    expect(tokens[2]).toContain("process=reused sealed=false resumed=true");
+    expect(tokens[2]).toContain("process=spawned sealed=false resumed=true");
   });
 
-  it("a prewarm on a thread whose last turn was a routine stays parked, and the next send reuses it", async () => {
+  it("mounted prewarm after a routine is refused and the next send is cold", async () => {
     process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "60000";
     await create();
     await run("t-pw-stale", "one", base);
     await run("t-pw-stale", "routine", { ...base, background: true });
-    await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-stale reason=background turn")));
+    await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-stale reason=mounted-single-use")));
     await eventually(() => warmPool.idleCount() === 0);
     const closesBefore = lines.filter((l) => l.startsWith("claude close thread=t-pw-stale")).length;
-    expect(await instance.adapter.prewarm!("t-pw-stale")).toBe(true);
+    expect(await instance.adapter.prewarm!("t-pw-stale")).toBe(false);
     await new Promise((r) => setTimeout(r, 150));
     expect(lines.filter((l) => l.startsWith("claude close thread=t-pw-stale"))).toHaveLength(closesBefore);
-    expect(prewarms().filter((l) => l.includes("parked=true"))).toHaveLength(1);
+    expect(prewarms().filter((l) => l.includes("parked=true"))).toHaveLength(0);
     await run("t-pw-stale", "two", base);
-    expect(dispatches().at(-1)).toContain("process=reused");
+    expect(dispatches().at(-1)).toContain("process=spawned reason=no-process");
   });
 
   it("the parked line prints only when the engine is still there and idle", async () => {
@@ -1699,160 +1989,53 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     expect(prewarms().filter((l) => l.includes("parked=true"))).toHaveLength(0);
   });
 
-  it("prewarm then a changed warm key recycles the process instead of reusing it", async () => {
+  it("mounted prewarm is refused and changed inputs still launch cold", async () => {
     await create();
     await goCold("t-pw-key");
-    expect(await instance.adapter.prewarm!("t-pw-key")).toBe(true);
+    expect(await instance.adapter.prewarm!("t-pw-key")).toBe(false);
     await run("t-pw-key", "two", { ...base, model: "claude-other" });
-    expect(dispatches()).toHaveLength(3);
-    expect(dispatches()[2]).toContain("process=spawned reason=model");
+    expect(dispatches()).toHaveLength(2);
+    expect(dispatches()[1]).toContain("process=spawned reason=no-process");
     // routeAsks is a permission change too
     await goCold("t-pw-routeasks");
-    expect(await instance.adapter.prewarm!("t-pw-routeasks")).toBe(true);
+    expect(await instance.adapter.prewarm!("t-pw-routeasks")).toBe(false);
     await run("t-pw-routeasks", "two", { ...base, routeAsks: true });
-    expect(dispatches().at(-1)).toContain("process=spawned reason=routeAsks");
-  });
-
-  it("a prewarmed engine keeps no credentials or config on disk while it idles", async () => {
-    useTmp(scratch);
-    await create();
-    await run("t-pw-files", "one", { ...base, system: "be brief" });
-    await eventually(() => warmPool.idleCount() === 0);
-    await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-files reason=activity window")));
-    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000"; // see t-pw-slowstart: a Windows size probe outlasts the 250 ms test window
-    expect(await instance.adapter.prewarm!("t-pw-files")).toBe(true);
-    const mine = () => readdirSync(scratch).filter((name) => /^murage-(mcp|system|cred)-/.test(name));
-    const credBodies = () => mine().filter((name) => name.startsWith("murage-cred-"))
-      .flatMap((dir) => readdirSync(join(scratch, dir)).filter((f) => f.endsWith(".json")).map((f) => readFileSync(join(scratch, dir, f), "utf8")));
-    // the token is gone at once; the config and prompt files go once the CLI has started from them
-    expect(credBodies().length).toBeGreaterThan(0);
-    expect(credBodies().every((body) => body === "{}")).toBe(true);
-    await eventually(() => !mine().some((name) => name.startsWith("murage-mcp-") || name.startsWith("murage-system-")));
-    expect(warmPool.idleCount()).toBe(1);
-  });
-
-  it("a slow-starting prewarm keeps its config and prompt files until the CLI confirms it started, then drops them", async () => {
-    useTmp(scratch);
-    process.env.MURAGE_PREWARM_FILE_GRACE_MS = "5000";
-    await create();
-    await run("t-pw-slowstart", "one", { ...base, system: "be brief" });
-    await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-slowstart reason=activity window")));
-    const startLog = join(scratch, "start.log");
-    process.env.FAKE_CLAUDE_START_LOG = startLog;
-    process.env.FAKE_CLAUDE_START_DELAY_MS = "600"; // slower than any fixed grace the files used to get
-    // The pool judges the window when its size probe answers. A real Windows
-    // listing takes ~0.5 s, longer than this file's 250 ms test window, so the
-    // parked engine would be (correctly) let go as idle before the check below.
-    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000";
-    expect(await instance.adapter.prewarm!("t-pw-slowstart")).toBe(true);
-    const mine = () => readdirSync(scratch).filter((name) => /^murage-(mcp|system)-/.test(name));
-    await eventually(() => existsSync(startLog));
-    expect(readFileSync(startLog, "utf8").trim()).toBe("mcp=ok system=ok");
-    // dropped on the CLI's confirmation, not at the end of the bound
-    await eventually(() => mine().length === 0, 1_500);
-    expect(warmPool.idleCount()).toBe(1);
-    expect(lines.some((l) => l.includes("reason=startup not confirmed"))).toBe(false);
-  });
-
-  it("a launcher banner on stdout never confirms startup: the files stay while the CLI has not read them", async () => {
-    useTmp(scratch);
-    process.env.MURAGE_PREWARM_FILE_GRACE_MS = "5000";
-    await create();
-    await run("t-pw-banner", "one", { ...base, system: "be brief" });
-    await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-banner reason=activity window")));
-    const startLog = join(scratch, "start.log");
-    process.env.FAKE_CLAUDE_START_LOG = startLog;
-    process.env.FAKE_CLAUDE_START_BANNER = "claude-wrapper v1.2 starting";
-    process.env.FAKE_CLAUDE_START_DELAY_MS = "700";
-    expect(await instance.adapter.prewarm!("t-pw-banner")).toBe(true);
-    const mine = () => readdirSync(scratch).filter((name) => /^murage-(mcp|system)-/.test(name));
-    // the banner (and a non-protocol JSON line) arrived; the CLI has not read its files yet
-    await new Promise((r) => setTimeout(r, 400));
-    expect(existsSync(startLog)).toBe(false);
-    expect(mine().length).toBeGreaterThan(0);
-    await eventually(() => existsSync(startLog));
-    expect(readFileSync(startLog, "utf8").trim()).toBe("mcp=ok system=ok");
-    // then the real protocol frame confirms it and they go
-    await eventually(() => mine().length === 0, 1_500);
-    expect(lines.some((l) => l.includes("reason=startup not confirmed"))).toBe(false);
+    expect(dispatches().at(-1)).toContain("process=spawned reason=no-process");
   });
 
   it.each([
-    ["a keep_alive frame", [{ type: "keep_alive" }]],
-    ["a system frame that is not init", [{ type: "system", subtype: "task_started", task_id: "x" }, { type: "system", subtype: "status" }]],
-    ["a control_response that answers someone else's request", [{ type: "control_response", response: { subtype: "success", request_id: "not-ours", response: {} } }]],
-    ["a control_response with our id that did not succeed", null],
-  ] as const)("%s never confirms startup: the files stay until the real answer", async (name, frames) => {
-    useTmp(scratch);
-    process.env.MURAGE_PREWARM_FILE_GRACE_MS = "5000";
-    const thread = `t-pw-bogus-${name.length}`;
-    await create();
-    await run(thread, "one", { ...base, system: "be brief" });
-    await eventually(() => lines.some((l) => l.includes(`claude close thread=${thread} reason=activity window`)));
-    const startLog = join(scratch, "start.log");
-    process.env.FAKE_CLAUDE_START_LOG = startLog;
-    process.env.FAKE_CLAUDE_START_DELAY_MS = "700";
-    // The parked engine must outlive the 250 ms test activity window: past it the pool
-    // (correctly) lets an idle engine go and its close removes the files, which is not the
-    // behaviour under test. Same as the slow-start case.
-    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000";
-    if (frames) process.env.FAKE_CLAUDE_START_FRAMES = JSON.stringify(frames);
-    else process.env.FAKE_CLAUDE_INIT_ERROR = "1";
-    expect(await instance.adapter.prewarm!(thread)).toBe(true);
-    const mine = () => readdirSync(scratch).filter((n) => /^murage-(mcp|system)-/.test(n));
-    await new Promise((r) => setTimeout(r, 400));
-    expect(existsSync(startLog)).toBe(false);
-    expect(mine().length).toBeGreaterThan(0);
-    await eventually(() => existsSync(startLog));
-    if (frames) {
-      // the matching successful initialize answer is the confirmation
-      await eventually(() => mine().length === 0, 1_500);
-    } else {
-      // a refused initialize is not a confirmation either: the files are still there
-      await new Promise((r) => setTimeout(r, 400));
-      expect(mine().length).toBeGreaterThan(0);
-    }
-  });
-
-  it("a system/init event confirms startup: the files go at once", async () => {
-    useTmp(scratch);
-    process.env.MURAGE_PREWARM_FILE_GRACE_MS = "5000";
-    await create();
-    await run("t-pw-init", "one", { ...base, system: "be brief" });
-    await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-init reason=activity window")));
-    const startLog = join(scratch, "start.log");
-    process.env.FAKE_CLAUDE_START_LOG = startLog;
-    process.env.FAKE_CLAUDE_START_DELAY_MS = "900";
-    process.env.FAKE_CLAUDE_START_FRAMES = JSON.stringify([{ type: "system", subtype: "init", session_id: "s", model: "m", tools: [] }]);
-    expect(await instance.adapter.prewarm!("t-pw-init")).toBe(true);
-    const mine = () => readdirSync(scratch).filter((n) => /^murage-(mcp|system)-/.test(n));
-    await eventually(() => mine().length === 0, 600);
-    expect(existsSync(startLog)).toBe(false);
-  });
-
-  it("a prewarm that does not confirm startup within its bound is retired first, and its files go with its close", async () => {
+    ["ordinary startup", {}],
+    ["slow startup", { FAKE_CLAUDE_START_DELAY_MS: "600", MURAGE_PREWARM_FILE_GRACE_MS: "5000" }],
+    ["launcher banner", { FAKE_CLAUDE_START_BANNER: "wrapper starting", FAKE_CLAUDE_START_DELAY_MS: "700" }],
+    ["keep_alive", { FAKE_CLAUDE_START_FRAMES: JSON.stringify([{ type: "keep_alive" }]) }],
+    ["non-init system frames", { FAKE_CLAUDE_START_FRAMES: JSON.stringify([{ type: "system", subtype: "task_started", task_id: "x" }, { type: "system", subtype: "status" }]) }],
+    ["unmatched response", { FAKE_CLAUDE_START_FRAMES: JSON.stringify([{ type: "control_response", response: { subtype: "success", request_id: "not-ours", response: {} } }]) }],
+    ["failed init", { FAKE_CLAUDE_INIT_ERROR: "1" }],
+    ["system/init", { FAKE_CLAUDE_START_FRAMES: JSON.stringify([{ type: "system", subtype: "init", session_id: "s", model: "m", tools: [] }]) }],
+    ["startup timeout", { FAKE_CLAUDE_START_DELAY_MS: "800", MURAGE_PREWARM_FILE_GRACE_MS: "200" }],
+  ] as const)("mounted prewarm creates no credentials, config or CLI with %s", async (_name, knobs) => {
     useTmp(scratch);
     await create();
-    await run("t-pw-nostart", "one", { ...base, system: "be brief" });
-    await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-nostart reason=activity window")));
+    await run("t-pw-files", "one", { ...base, system: "be brief" });
+    for (const [key, value] of Object.entries(knobs)) process.env[key] = value;
     const startLog = join(scratch, "start.log");
     process.env.FAKE_CLAUDE_START_LOG = startLog;
-    process.env.FAKE_CLAUDE_START_DELAY_MS = "800";
-    process.env.MURAGE_PREWARM_FILE_GRACE_MS = "200";
-    expect(await instance.adapter.prewarm!("t-pw-nostart")).toBe(true);
-    await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-nostart reason=startup not confirmed")));
+    expect(await instance.adapter.prewarm!("t-pw-files")).toBe(false);
+    expect(dispatches()).toHaveLength(1);
+    expect(prewarms()).toHaveLength(0);
     expect(warmPool.idleCount()).toBe(0);
-    const mine = () => readdirSync(scratch).filter((name) => /^murage-(mcp|system)-/.test(name));
-    // never removed under a process that may still read them
-    await eventually(() => existsSync(startLog));
-    expect(readFileSync(startLog, "utf8").trim()).toBe("mcp=ok system=ok");
-    await eventually(() => mine().length === 0, 8_000);
+    expect(existsSync(startLog)).toBe(false);
+    expect(readdirSync(scratch).filter(name => /^murage-(mcp|system|cred)-/.test(name))).toEqual([]);
   });
 
   it("a cold send after the pool let the engine go says it is waking up, before the engine starts", async () => {
     await create();
-    await goCold("t-pw-wake");
-    const sent = await run("t-pw-wake", "two", base);
+    // S1:10: only a mount-free draft can idle in the pool.
+    const draft = { warmIdentity: base.warmIdentity, draftOnly: true as const };
+    await run("t-pw-wake", "one", draft);
+    await eventually(() => lines.some(line => line.includes("claude close thread=t-pw-wake reason=activity window")));
+    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000";
+    const sent = await run("t-pw-wake", "two", draft);
     const mine = recorder.events.filter((e) => e.turnId === sent.turnId);
     const types = mine.map((e) => e.type);
     const wake = mine.findIndex((e) => e.type === "item.started" && String((e as { title?: string }).title).startsWith("Waking up"));
@@ -1861,7 +2044,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     expect(wake).toBeLessThan(types.indexOf("session.started"));
     expect(types.at(-1)).toBe("turn.completed");
     // told once: the next send on the live engine does not wake
-    const next = await run("t-pw-wake", "three", base);
+    const next = await run("t-pw-wake", "three", draft);
     expect(recorder.events.filter((e) => e.turnId === next.turnId && e.type === "item.started" && String((e as { title?: string }).title).startsWith("Waking up"))).toHaveLength(0);
   });
 
@@ -1876,7 +2059,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     await create();
     await run("t-pw-bg", "routine", { ...base, background: true });
     expect(warmPool.idleCount()).toBe(0);
-    expect(lines.some((l) => l.includes("claude close thread=t-pw-bg reason=background turn"))).toBe(true);
+    expect(lines.some((l) => l.includes("claude close thread=t-pw-bg reason=mounted-single-use"))).toBe(true);
     expect(await instance.adapter.prewarm!("t-pw-bg")).toBe(false);
     expect(dispatches()).toHaveLength(1);
   });

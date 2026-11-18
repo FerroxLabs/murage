@@ -22,7 +22,10 @@
 // engine and plan setup; only that text moved. 1.0.17 (U24 S1): the static reply
 // habits block (REPLY_HABITS) follows House Rules in every system prompt; only that text moved. 1.0.18: every turn's allowed-tools
 // argv lists mcp__agents__venue_post (VENUE-POST-1017 b8b26791a), and the image guidance gained one sentence on showing a local
-// picture through register_artifact (LOCAL-IMAGE-CARD 3cd7f9991); only those two moved.
+// picture through register_artifact (LOCAL-IMAGE-CARD 3cd7f9991); then a03dc9c86 (scoped Markdown image display) replaced that sentence with the picture-folder guidance; only those moved.
+//
+// 1.0.19 EP B2 / S134 4.3: add only the per-turn unavailable-browser context.
+// Every other field remains the base capture; see CHANGED-EXPECTATIONS.md in the integration evidence.
 //
 // Regenerate on a base checkout with ENGINE_DISPATCH_WRITE=<file>.
 import { spawn, type ChildProcess } from "node:child_process";
@@ -122,7 +125,9 @@ posixOnly("what the engine is handed (lane E dispatch golden)", () => {
     let child: ChildProcess | undefined;
     let stderr = "";
     const start = async () => {
-      child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      // Carry the fake-engine test override into this child process (the native cage has its own suite).
+      child = spawn(process.execPath, ["--import", "data:text/javascript," + encodeURIComponent("process.env.NODE_ENV='test';globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;"), join(SERVER_DIR, "index.ts")], {
+        windowsHide: true,
         cwd: join(SERVER_DIR, ".."),
         env: {
           ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -229,6 +234,10 @@ posixOnly("what the engine is handed (lane E dispatch golden)", () => {
     if (process.env.ENGINE_DISPATCH_WRITE) writeFileSync(process.env.ENGINE_DISPATCH_WRITE, JSON.stringify(split, null, 2));
     else {
       // Everything handed to the engine except the notes block is exactly the base's...
+      // MAIN RULING INT-CONFLICT-DEFAULT fa4cb76449c / 1cda27c601c:
+      // the reviewed message-only recovery and durable replay receipts replace
+      // the pre-contract payload/cursor baseline. All ten complete captures and
+      // the independent remembered-note universe remain exact.
       expect(split.map((entry) => entry.rest)).toEqual(JSON.parse(readFileSync(GOLDEN, "utf8")));
       // ...and every note it was handed is one the base handed over.
       const universe = JSON.parse(readFileSync(GOLDEN_NOTES, "utf8")) as Record<string, string[]>;

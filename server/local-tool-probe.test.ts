@@ -1,7 +1,7 @@
 // The Local models tool-calling test against a real HTTP server on loopback.
 // No model is involved: the fake server plays llama.cpp / Ollama / a broken
 // server, so every outcome code and every safety property is pinned without a
-// live call (LM2 does the live SeanBeast proof).
+// live call (LM2 does the live fixture-server proof).
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
@@ -103,7 +103,7 @@ function probe(base: string, overrides: Partial<Parameters<typeof runLocalToolPr
   return runLocalToolProbe({ serverId: "llamacpp", kind: "llamacpp", apiBase: base, apiKey: KEY, model: "qwen3.8-27b", requestTimeoutMs: 5_000, ...overrides });
 }
 
-describe("runLocalToolProbe — the seven SeanBeast checks", () => {
+describe("runLocalToolProbe — the seven fixture-server checks", () => {
   it("passes all seven against a working server and unlocks every surface", async () => {
     const { base, seen } = await fakeServer("good");
     const result = await probe(base, { context: { contextWindow: 65_536, source: "llamacpp-props", loaded: true } });

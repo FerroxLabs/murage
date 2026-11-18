@@ -1,0 +1,462 @@
+[
+  {
+    "signature": "[\"server/auto-approve.ts\",\"standingGrant\",\"approve\",\"`auto-approved ${tool}`\",\"\\\"auto-mode\\\"\"]",
+    "count": 2,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"standingGrant\",\"approve\",\"`auto-approved this command (always allowed for this routine)`\",\"\\\"routine-allow\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"standingGrant\",\"approve\",\"`auto-approved this exact command (always allowed here)`\",\"\\\"exact-command\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"standingGrant\",\"approve\",\"`auto-approved ${key} (always allowed)`\",\"\\\"always-allow\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"appSetGrant\",\"approve\",\"`auto-approved ${needed.length > 1 ? \\\"these actions\\\" : \\\"this action\\\"} (always allowed for this routine)`\",\"\\\"routine-allow\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"appSetGrant\",\"approve\",\"`auto-approved ${rule} (always allowed)`\",\"\\\"always-allow\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"finalizeNoLimits\",\"approve\",\"null\",\"\\\"always-ask\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"finalizeNoLimits\",\"approve\",\"decision.approve\",null]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"finalizeNoLimits\",\"approve\",\"decision.approve\",\"\\\"no-limits\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"autoVerdict\",\"approve\",\"null\",\"\\\"no-limits\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"autoVerdict\",\"approve\",\"null\",\"\\\"always-ask\\\"\"]",
+    "count": 2,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"autoVerdictOf\",\"approve\",\"null\",\"\\\"question-tool\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"autoVerdictOf\",\"approve\",\"null\",\"\\\"always-ask\\\"\"]",
+    "count": 3,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictPastAlwaysAsk\",\"approve\",\"null\",\"\\\"always-ask\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"outsideTurnCard\",\"approve\",\"null\",\"\\\"outside-turn\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"keyHeld\",\"approve\",\"null\",\"sensitiveSource\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"null\",\"\\\"prompt-guard\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"null\",\"\\\"stop-line\\\"\"]",
+    "count": 2,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"null\",\"\\\"unattended-block\\\"\"]",
+    "count": 4,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${tool} (every step allowed)`\",\"source\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${tool} (allowed for this task)`\",\"\\\"task-allowance\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${tool} (always allowed for this routine)`\",\"\\\"routine-allow\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${granted} (always allowed)`\",\"\\\"always-allow\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"null\",\"\\\"sensitive-guard\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"null\",\"\\\"unread-call\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${tool} (no limits)`\",\"\\\"no-limits\\\"\"]",
+    "count": 3,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"null\",\"sensitiveSource\"]",
+    "count": 4,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${tool} (full access)`\",\"\\\"full-access\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"null\",\"\\\"destructive-guard\\\"\"]",
+    "count": 4,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${tool} (project work folders)`\",\"\\\"project-work-roots\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${tool} (own workspace)`\",\"\\\"own-workspace\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"\\\"read its own saved tool result\\\"\",\"\\\"own-tool-results\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${tool} (its own files)`\",\"\\\"own-files\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${resolved.name} (looks at the screen)`\",\"\\\"own-unasked\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"`auto-approved ${resolved.name} (Murage's own tool)`\",\"\\\"own-unasked\\\"\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"null\",\"\\\"no-grant\\\"\"]",
+    "count": 3,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"null\",\"\\\"local-computer-block\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/auto-approve.ts\",\"verdictWithGrants\",\"approve\",\"grant.approve\",\"grant.source\"]",
+    "count": 1,
+    "reason": "Private policy candidate in auto-approve.ts; all callers restricted to the module, exported autoVerdict always finalizes."
+  },
+  {
+    "signature": "[\"server/browser-action-checker.ts\",\"checkAction\",\"decision\",\"\\\"allow\\\"\",null]",
+    "count": 2,
+    "reason": "Browser action policy result for the browser subsystem, not a No limits shortcut; consumed by browser owner-page safety checks."
+  },
+  {
+    "signature": "[\"server/browser-extension-approvals.ts\",\"fire\",\"decision\",\"record.status === \\\"allowed\\\" ? \\\"allow\\\" : \\\"deny\\\"\",null]",
+    "count": 1,
+    "reason": "Browser extension protocol answer after its own owner/audience and pending-approval checks; not No limits permission eligibility."
+  },
+  {
+    "signature": "[\"server/browser-extension-decide.ts\",\"decide\",\"decision\",\"\\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Browser extension protocol answer after its own owner/audience and pending-approval checks; not No limits permission eligibility."
+  },
+  {
+    "signature": "[\"server/browser-sandbox.ts\",\"ensureLinuxChromeSandbox\",\"verdict\",\"(deps.run ?? runChromeProbe)(chrome).then(classifyChromeSandboxProbe, () => \\\"unknown\\\" as const)\",null]",
+    "count": 1,
+    "reason": "Browser sandbox diagnostic enum, not tool authorization."
+  },
+  {
+    "signature": "[\"server/command-folder.ts\",\"commandFolderRefusal\",\"approve\",\"null\",\"\\\"always-ask\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/drivers/acp/core.ts\",\"handleServerRequest\",\"outcome\",\"{ outcome: \\\"selected\\\", optionId: allow }\",null]",
+    "count": 2,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/acp/core.ts\",\"acceptResult\",\"behavior\",\"optionId && behavior === \\\"allow\\\" ? \\\"allow\\\" : \\\"deny\\\"\",\"optionId ? source : \\\"system\\\"\"]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/acp/core.ts\",\"finish\",\"behavior\",\"allow ? \\\"allow\\\" : \\\"deny\\\"\",\"allow || behavior === \\\"deny\\\" ? source : \\\"system\\\"\"]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/antigravity.ts\",\"finish\",\"decision\",\"\\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/claude.ts\",\"finish\",\"behavior\",\"allowed ? \\\"answer\\\" : \\\"deny\\\"\",\"source\"]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/claude.ts\",\"judgeAsk\",\"decision\",\"\\\"auto-approved\\\"\",\"\\\"own-workspace\\\"\"]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/codex-hook.ts\",\"routeDelivery\",\"route\",\"\\\"allow\\\"\",null]",
+    "count": 5,
+    "reason": "Driver shortcut: routeDelivery returns ask before local allow branches when noLimits is set; routing guard and gate suite enforce this."
+  },
+  {
+    "signature": "[\"server/drivers/codex.ts\",\"finish\",\"decision\",\"\\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/codex.ts\",\"onPreTool\",\"decision\",\"\\\"allow\\\" as const\",null]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/codex.ts\",\"onPreTool\",\"decision\",\"\\\"auto-approved\\\"\",\"\\\"own-workspace\\\"\"]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/codex.ts\",\"handleServerRequest\",\"decision\",\"accept ? (legacy ? \\\"approved\\\" : \\\"accept\\\") : legacy ? \\\"denied\\\" : \\\"decline\\\"\",null]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/codex.ts\",\"handleServerRequest\",\"decision\",\"legacy ? \\\"approved\\\" : \\\"accept\\\"\",null]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/codex.ts\",\"finish\",\"decision\",\"behavior === \\\"allow\\\" ? (legacy ? \\\"approved\\\" : \\\"accept\\\") : legacy ? \\\"denied\\\" : \\\"decline\\\"\",null]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/muse-code.ts\",\"onNotification\",\"behavior\",\"String(params.decision ?? \\\"\\\").startsWith(\\\"approved\\\") ? \\\"allow\\\" : \\\"deny\\\"\",\"\\\"system\\\"\"]",
+    "count": 1,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/drivers/pi.ts\",\"<anonymous>\",\"allow\",\"true\",null]",
+    "count": 2,
+    "reason": "Driver protocol serialization of an already resolved response; No limits routes requests to broker. Local shortcuts separately pinned in routing_checks."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"deliverAnswer\",\"decision\",\"options?.batch && behavior === \\\"allow\\\" ? \\\"user-approved-bulk\\\" : behavior === \\\"allow\\\" ? \\\"user-approved\\\" : \\\"user-denied\\\"\",\"\\\"user\\\"\"]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"freshAuthRefusal\",\"decision\",\"behavior === \\\"answer\\\" ? \\\"answer\\\" : body.allowForTask === true ? \\\"allow-task\\\" : \\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"respondToCard\",\"outcome\",\"behavior === \\\"allow\\\" ? \\\"allowed-once\\\" : \\\"rejected\\\"\",null]",
+    "count": 2,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"respondToCard\",\"outcome\",\"behavior === \\\"allow\\\" ? \\\"allowed\\\" : \\\"rejected\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"approveAllApply\",\"decision\",\"\\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"approveAllApply\",\"behavior\",\"\\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"emailOwnerFreshProof\",\"decision\",\"\\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"reviewPermissionCard\",\"decision\",\"reviewed.allow ? \\\"review-would-approve\\\" : \\\"review-would-deny\\\"\",\"\\\"auto-review-shadow\\\"\"]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"reviewPermissionCard\",\"behavior\",\"\\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"reviewPermissionCard\",\"decision\",\"\\\"auto-approved\\\"\",\"\\\"auto-review\\\"\"]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"<anonymous>\",\"behavior\",\"\\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"<anonymous>\",\"decision\",\"\\\"auto-approved\\\"\",\"verdict.source\"]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"foldRuntimeEvent\",\"approve\",\"null\",\"\\\"question-tool\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"sendRoutineResolution\",\"outcome\",\"result.behavior === \\\"allow\\\" ? \\\"allowed-once\\\" : result.behavior === \\\"deny\\\" ? \\\"rejected\\\" : result.behavior === \\\"undo\\\" ? \\\"undone\\\" : \\\"unavailable\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"sendRoutineResolution\",\"outcome\",\"\\\"allowed-once\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"resolveAndSendRoutine\",\"decision\",\"result.state === \\\"applied\\\" ? \\\"user-approved\\\" : \\\"user-denied\\\"\",\"\\\"user\\\"\"]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"answerChiefProposalAsk\",\"behavior\",\"allow ? \\\"allow\\\" : \\\"deny\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"imageAutoApprovalLogged\",\"decision\",\"\\\"auto-approved\\\"\",\"auto.basis === \\\"No limits\\\" ? \\\"no-limits\\\" : auto.basis === \\\"Full access\\\" ? \\\"full-access\\\" : \\\"image-setting\\\"\"]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"settleAutomationProposal\",\"behavior\",\"\\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"settleAutomationProposal\",\"decision\",\"\\\"auto-approved\\\"\",\"\\\"full-access\\\"\"]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"resolveSkillRequest\",\"outcome\",\"\\\"allowed-once\\\"\",null]",
+    "count": 4,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"resolveSkillRequest\",\"outcome\",\"card.answered === \\\"allow\\\" ? \\\"allowed-once\\\" : \\\"rejected\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"resolveSkillRequest\",\"decision\",\"\\\"user-approved\\\"\",\"\\\"user\\\"\"]",
+    "count": 2,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"resolveSkillRequest\",\"decision\",\"\\\"auto-approved\\\" as const\",\"args.decidedBy\"]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"resolveSkillRequest\",\"decision\",\"\\\"user-approved\\\" as const\",\"\\\"user\\\" as const\"]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"handleRequest\",\"decision\",\"\\\"auto-approved\\\"\",\"\\\"task-allowance\\\"\"]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/index.ts\",\"handleRequest\",\"behavior\",\"\\\"allow\\\"\",null]",
+    "count": 1,
+    "reason": "Owner response delivery, approval audit record or resolution of an existing card; not a producer of No limits eligibility. Image eligibility is separately gated by imageAutoApproval."
+  },
+  {
+    "signature": "[\"server/permission-proxy.ts\",\"handle\",\"behavior\",\"\\\"allow\\\"\",null]",
+    "count": 2,
+    "reason": "Permission proxy serializes the broker response; does not derive No limits permission from mode."
+  },
+  {
+    "signature": "[\"server/routine-permissions.ts\",\"routineTurnApproval\",\"verdict\",\"autoVerdict(input.run ? applyRoutinePermissionMode(actor, mode) : actor, input.tool, input.summary, {\\n      ...input.context,\\n      ...(input.run ? { automated: true, routineLevel: true, routineAllow: input.run.alwaysAllow } : {}),\\n    })\",null]",
+    "count": 1,
+    "reason": "Routine adapter consumes autoVerdict; unwritten record is a denial only. Base rows are byte-for-byte tested."
+  },
+  {
+    "signature": "[\"server/routine-permissions.ts\",\"routineRecordUnwrittenVerdict\",\"approve\",\"null\",\"\\\"always-ask\\\"\"]",
+    "count": 1,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"shared/help-search.ts\",\"<module>\",\"approve\",\"[\\\"approval\\\", \\\"permission\\\"]\",null]",
+    "count": 1,
+    "reason": "Help-search vocabulary/configuration, not executable permission."
+  },
+  {
+    "signature": "[\"shared/no-limits-decision.ts\",\"finalDecision\",\"approve\",\"null\",null]",
+    "count": 3,
+    "reason": "Denial/candidate only: null carries no permission; finalizer handles No limits."
+  },
+  {
+    "signature": "[\"shared/no-limits-decision.ts\",\"finalDecision\",\"approve\",\"`auto-approved ${tool} (no limits)`\",null]",
+    "count": 1,
+    "reason": "Sole finalDecision gate; reader priority, clean-owner exception and exact base are matrix tested."
+  },
+  {
+    "signature": "[\"shared/no-limits-decision.ts\",\"finalDecision\",\"verdict\",\"\\\"run\\\"\",null]",
+    "count": 1,
+    "reason": "Sole finalDecision gate; reader priority, clean-owner exception and exact base are matrix tested."
+  }
+]

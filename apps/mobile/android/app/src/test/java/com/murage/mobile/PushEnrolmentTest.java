@@ -311,7 +311,7 @@ public class PushEnrolmentTest {
 
     // ---- register: the whole flow, with a fake relay, Play and FCM ----
 
-    private static final String MAC = "https://mac.tailnet123.ts.net", PI = "https://pi.tailnet123.ts.net:8443";
+    private static final String MAC = "https://mac.tail000000.ts.net", PI = "https://pi.tail000000.ts.net:8443";
     private static final String OLD_A = "3b0e7a52-2f0c-4a54-9d6e-4c0b3f4f6a14", OLD_B = "4b0e7a52-2f0c-4a54-9d6e-4c0b3f4f6a15";
     private final List<String> forgotten = new ArrayList<>();
 
@@ -352,11 +352,11 @@ public class PushEnrolmentTest {
         assertEquals("enrolled", reuse.getString("status"));
         assertEquals(OLD_A, reuse.getString("bindingId"));
         assertTrue(relay.calls.isEmpty());
-        JSONObject created = register(e, store, "https://new.tailnet123.ts.net", true, false);
+        JSONObject created = register(e, store, "https://new.tail000000.ts.net", true, false);
         assertEquals("granted", created.getString("status"));
         assertEquals(BINDING, created.getString("bindingId"));
         assertEquals(GRANT, created.getString("grant"));
-        assertEquals(BINDING, store.ledger().binding("https://new.tailnet123.ts.net"));
+        assertEquals(BINDING, store.ledger().binding("https://new.tail000000.ts.net"));
         assertTrue(forgotten.isEmpty());
     }
 

@@ -5,9 +5,11 @@
 // ones. Without this, an interrupted writeFileSync produces half-written JSON
 // that fails to parse on next boot and is silently treated as empty state.
 import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, fsyncSync, lstatSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { chmodSync, closeSync, fsyncSync, lstatSync, openSync, renameSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { registerTestHandle } from "./test-handle-registry.ts";
+import { assertFileWriteAdmission } from "./read-only-start.ts";
 
 // Windows refuses a rename onto an existing path while anything else holds a
 // handle to either file, and a virus scanner or the search indexer opening a
@@ -64,14 +66,23 @@ const DIRECTORY_SYNC_UNSUPPORTED = new Set(["EINVAL", "ENOTSUP", "EOPNOTSUPP", "
 
 /** fsync the directory holding `path`, so the rename that put the file there survives a power loss too.
  * Windows cannot open a directory for fsync, so there it is skipped; a filesystem that refuses a directory
- * sync is skipped the same way. Any other failure (an I/O error) is thrown like a failed write. */
+ * sync is skipped the same way. Any other failure (an I/O error) is thrown like a failed write.
+ * ACCEPTED LIMIT (Sean, 2026-11-10): on Windows a power loss right after a write can lose the newest rename, because Windows
+ * has no directory fsync. WhatsApp and Signal share this limit; it is stated in the design and in the channel settings text. */
 export function syncParentDirectory(path: string, platform: NodeJS.Platform = process.platform): void {
+  syncDirectory(dirname(path), platform, true);
+}
+
+/** Strict POSIX barrier for copied preservation trees: every open/fsync failure
+ * must stop removal of the source. Windows retains the accepted directory-sync skip.
+ * Only ordinary parent-directory writes opt into tolerating unsupported barriers. */
+export function syncDirectory(path: string, platform: NodeJS.Platform = process.platform, allowUnsupported = false): void {
   if (platform === "win32") return;
   let fd: number;
-  try { fd = openSync(dirname(path), "r"); }
-  catch (error) { if (DIRECTORY_SYNC_UNSUPPORTED.has(String((error as { code?: unknown } | null)?.code))) return; throw error; }
+  try { fd = openSync(path, "r"); }
+  catch (error) { if (allowUnsupported && DIRECTORY_SYNC_UNSUPPORTED.has(String((error as { code?: unknown } | null)?.code))) return; throw error; }
   try { fsyncSync(fd); }
-  catch (error) { if (!DIRECTORY_SYNC_UNSUPPORTED.has(String((error as { code?: unknown } | null)?.code))) throw error; }
+  catch (error) { if (!allowUnsupported || !DIRECTORY_SYNC_UNSUPPORTED.has(String((error as { code?: unknown } | null)?.code))) throw error; }
   finally { closeSync(fd); }
 }
 
@@ -91,8 +102,10 @@ export function syncParentDirectoryStatus(path: string, platform: NodeJS.Platfor
 
 /** `syncDir` (opt-in): also fsync the parent directory after the rename, for stores whose loss across a power
  * cut matters (the browser restore store). Off by default: every other caller keeps the file-only fsync. */
-export type WriteFileAtomicOptions = { mode?: number; syncDir?: boolean; rename?: (from: string, to: string) => void; platform?: NodeJS.Platform; /** test-only fault and order seams for the tmp file: open, write, fsync */ ops?: { open?: typeof openSync; write?: typeof writeFileSync; fsync?: typeof fsyncSync } };
+export type WriteFileAtomicOptions = { mode?: number; syncDir?: boolean; /** Opt-in custody protocols retain failed temporaries, including partial writes. */ keepFailedTemp?: boolean; rename?: (from: string, to: string) => void; /** Custom checked renames can own the retry schedule; do not nest two schedules. */ renameHandlesRetry?: boolean; platform?: NodeJS.Platform; /** test-only fault and order seams for the tmp file: open, write, fsync */ ops?: { open?: typeof openSync; write?: typeof writeFileSync; fsync?: typeof fsyncSync } };
 export function writeFileAtomic(path: string, data: string | Uint8Array, options: WriteFileAtomicOptions = {}): void {
+  // Boot tolerance, write authority: a read-only start writes no file in the data dir, whoever asks. Before the temp file exists.
+  assertFileWriteAdmission(path);
   writeFileAtomicInner(path, data, options);
   atomicWriteCounts.set(path, (atomicWriteCounts.get(path) ?? 0) + 1);
 }
@@ -109,7 +122,8 @@ function writeFileAtomicInner(path: string, data: string | Uint8Array, options: 
     (options.ops?.fsync ?? fsyncSync)(fd);
     closeSync(fd);
     fd = null;
-    renameWithRetry(tmp, path, options.rename, options.platform);
+    if (options.rename && options.renameHandlesRetry) options.rename(tmp, path);
+    else renameWithRetry(tmp, path, options.rename, options.platform);
   } catch (e) {
     if (fd !== null) {
       try {
@@ -118,10 +132,12 @@ function writeFileAtomicInner(path: string, data: string | Uint8Array, options: 
         /* best-effort cleanup */
       }
     }
-    try {
-      unlinkSync(tmp);
-    } catch {
-      /* best-effort cleanup */
+    if (!options.keepFailedTemp) {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* best-effort cleanup */
+      }
     }
     throw e;
   }

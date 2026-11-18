@@ -1,0 +1,13 @@
+diff --git a/server/drivers/acp/core.ts b/server/drivers/acp/core.ts
+index 343f505488..6d578cb10e 100644
+--- a/server/drivers/acp/core.ts
++++ b/server/drivers/acp/core.ts
+@@ -3746,7 +3746,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig>
+               if (!error && accepted) turn.onEngineWrite?.();
+               // The refused prompt write is classified here, by the prompt's own path, and claims before the submission settle. A lease R of
+               // this dispatch generation is joined (kind turn, memory-refused); with none, this claim is the first R, kind submission.
+-              const R = submissionRefused && error ? acpFenced(error, "acp.prompt", proc, { method: "session/prompt", kind: "submission" }) : undefined;
++              const R = undefined as FencedRefusal | undefined;
+               if (submissionRefused && !state.settled) { if (R) void turnRef.settleFenced(); else settle(false, "submission_refused"); }
+               requestDone?.(error, accepted);
+             };

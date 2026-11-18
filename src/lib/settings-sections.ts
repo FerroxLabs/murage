@@ -22,6 +22,8 @@ export type AppSettingsGroup = SettingsPageGroup;
 
 export type AppSettingsSection =
   | "general"
+  | "calls"
+  | "browseBots"
   | "aboutMe"
   | "botDefaults"
   | "houseRules"
@@ -60,22 +62,30 @@ export const SETTINGS_GROUPS: readonly AppSettingsGroup[] = SETTINGS_PAGE_GROUPS
 //
 // Phone is here for a different reason: on a phone it is an offer to do the
 // thing you have already done.
+//
+// Calls and Models & engines are on a phone too (LOCKED 2.4): Calls because the server admits "off for today" and the
+// history from the paired phone; Models & engines as a read-only page, its engine list as a readout and every card
+// that takes a key or a command line as the onComputer stub (no key ever renders away from the desktop).
 export const SETTINGS_SECTIONS: readonly SettingsSectionEntry[] = [
   { id: "general", group: "you" },
+  { id: "calls", group: "you" },
   { id: "aboutMe", group: "you", desktopOnly: true },
-  { id: "botDefaults", group: "bots", desktopOnly: true },
-  { id: "houseRules", group: "bots", desktopOnly: true },
-  { id: "skills", group: "bots", desktopOnly: true },
+  // Each bot's list page, past five bots (1.0.19 shell): a route, not one of the 13 pages.
+  { id: "browseBots", group: "bots", desktopOnly: true },
+  { id: "botDefaults", group: "allBots", desktopOnly: true },
+  { id: "houseRules", group: "allBots", desktopOnly: true },
+  { id: "skills", group: "allBots", desktopOnly: true },
   // An alias of the Teach a skill card on the Skills page (settings-pages.ts SECTION_ALIASES), grouped with it.
-  { id: "experimental", group: "bots", desktopOnly: true },
-  { id: "memory", group: "bots", desktopOnly: true },
-  { id: "models", group: "ai", desktopOnly: true },
-  { id: "engines", group: "ai", desktopOnly: true },
+  { id: "experimental", group: "allBots", desktopOnly: true },
+  { id: "memory", group: "allBots", desktopOnly: true },
+  { id: "models", group: "ai" },
+  { id: "engines", group: "ai" },
   { id: "images", group: "ai", desktopOnly: true },
   { id: "webSearch", group: "ai", desktopOnly: true },
   { id: "voice", group: "ai", desktopOnly: true },
-  { id: "connections", group: "reach", desktopOnly: true },
-  { id: "channels", group: "reach", desktopOnly: true },
+  // Apps and its legacy Messaging route render remote readouts and guard individual desktop actions.
+  { id: "connections", group: "reach" },
+  { id: "channels", group: "reach" },
   { id: "companion", group: "reach", desktopOnly: true },
   { id: "computer", group: "reach", desktopOnly: true },
   { id: "backups", group: "app", desktopOnly: true },
