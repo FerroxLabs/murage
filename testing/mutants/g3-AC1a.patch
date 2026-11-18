@@ -1,0 +1,10 @@
+--- a/server/drivers/acp/core.ts
++++ b/server/drivers/acp/core.ts
+@@ -5012,7 +5012,6 @@
+               if(behavior==='allow'&&(turn.permissionNow?.()??turn).noLimits===true&&!answerTransport.guardRelease(threadId,requestId,()=>guardEngineRelease({threadId,turnId,requestId,providerInstanceId:instanceId},nativeReleaseInput))){done(new Error('protected-release-held'),false);return;}
+               current.uncertain = true;
+               NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", sendPermission(response, (error, accepted = true) => {
+-                if (error) acpFenced(error, "acp.permission.answer", requestProcess, { requestId, method: "session/request_permission" });
+                 confirm(!error);
+                 current.uncertain = !!error && accepted;
+                 if (!error) clearAsk();

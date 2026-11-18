@@ -56,12 +56,12 @@ function fakeEngine(wait: () => Promise<void> = async () => undefined) {
   const emitFor = (threadId: string) => (event: Record<string, unknown>) =>
     listeners.forEach(listener => listener({ eventId: "e", provider: "codex", threadId, createdAt: "now", ...event } as RuntimeEvent));
   const adapter = {
-    provider: "codex", capabilities: { sessionModelSwitch: "unsupported" },
+    provider: "codex", capabilities: { sessionModelSwitch: "unsupported", fencedLearningWrite: true },
     onEvent: (listener: (event: RuntimeEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
     sendTurn: async (input: SendTurnInput) => {
       await wait();
       input.beforeSubmit?.();
-      written.push(input.text);
+      (input.fencedWrite ?? (<R>(w: () => R) => w()))(() => written.push(input.text));
       emitFor(input.threadId)({ type: "turn.started" });
       emitFor(input.threadId)({ type: "item.completed", itemType: "assistant_text", origin: "engine", text: JSON.stringify({ supported: true }) });
       emitFor(input.threadId)({ type: "turn.completed", ok: true });
@@ -139,9 +139,10 @@ describe("the learning send fence", () => {
     let release: () => void = () => undefined;
     const held = new Promise<void>(resolve => { release = resolve; });
     // the shape of claude.ts memorySession: waits (one-shot pause, version probe, env), then admits through the gate and writes stdin
-    const run = (): MemorySessionRunner => async (prompt, _signal, { gate }) => { await held; gate?.admit(); writes.push(prompt); gate?.wrote(); return JSON.stringify({ supported: true }); };
-    const adapter = { onEvent: () => () => undefined };
+    const run = (): MemorySessionRunner => async (prompt, _signal, { gate }) => { await held; gate?.send(() => writes.push(prompt)); return JSON.stringify({ supported: true }); };
+    const adapter = { capabilities: { fencedLearningWrite: true }, onEvent: () => () => undefined };
     const instance = fixtureLearningBot(withCliMemoryLearning({ instanceId: "claude-fixture", driverKind: "claude", enabled: true, adapter, dispose: async () => undefined } as unknown as ProviderInstance, { run }));
+
     const gate = gateOver({ records: [{ id, version: 1 }] });
     const queued = instance.groundMemory!(grounding(SECRET), 64, signal(), gate);
     await tick();

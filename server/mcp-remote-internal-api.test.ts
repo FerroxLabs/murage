@@ -51,11 +51,16 @@ describe("a turn is handed the proxy, and the proxy's token reaches the relay", 
       // (MURAGE_EXEC_KEEP): the token has moved into the turn's credential file by then, so its name is never on the list.
       const { MURAGE_EXEC_KEEP: keep, ...ownEnv } = mounted.env;
       // On Windows the stanza also carries PATH, with the turn's bash directory first, so a stdio server finds bash (1.0.4).
-      expect(Object.keys(ownEnv).sort()).toEqual(["ELECTRON_RUN_AS_NODE", "MURAGE_HARNESS_URL", "MURAGE_MCP_TOKEN", ...(process.platform === "win32" ? ["PATH"] : [])]);
-      expect(keep?.split(",").sort()).toEqual(["ELECTRON_RUN_AS_NODE", "MURAGE_CRED_FILE", "MURAGE_CRED_SERVER", "MURAGE_HARNESS_URL"]);
+      expect(Object.keys(ownEnv).sort()).toEqual(["ELECTRON_RUN_AS_NODE", "MURAGE_HARNESS_URL", "MURAGE_MCP_TOKEN", "MURAGE_MCP_WIPE_METADATA", ...(process.platform === "win32" ? ["PATH"] : [])]);
+      expect(keep?.split(",").sort()).toEqual(["ELECTRON_RUN_AS_NODE", "MURAGE_CRED_FILE", "MURAGE_CRED_SERVER", "MURAGE_HARNESS_URL", "MURAGE_MCP_WIPE_METADATA"]);
+      expect(mounted.env.MURAGE_MCP_WIPE_METADATA).toBe("1");
       expect(mounted.env.MURAGE_MCP_TOKEN).toMatch(/^[a-f0-9]{48}$/);
       expect(mounted.env.MURAGE_HARNESS_URL).toBe(BASE);
-      expect(servers.notes).toMatchObject({ command: "npx", env: { NOTES_TOKEN: "tok-notes-e2e" } });
+      const notes = servers.notes!;
+      expect(notes.command).toBe(mounted.command);
+      expect(notes.args[0]).toMatch(/mcp-wipe-proxy\.(ts|js)$/);
+      expect(notes.args.slice(1)).toEqual(["notes", JSON.stringify({ command: "npx", args: ["-y", "@x/notes-mcp"] })]);
+      expect(notes.env).toMatchObject({ NOTES_TOKEN: "tok-notes-e2e", MURAGE_MCP_WIPE_METADATA: "1" });
       // the link server's own credential and link never reach the engine
       const dumped = JSON.stringify(turn.dump);
       expect(dumped).not.toContain("the-real-api-key-9");

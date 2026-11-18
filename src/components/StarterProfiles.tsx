@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { ChatMarkdown } from "./ChatMarkdown";
+import { skillBody } from "@/lib/skills-api";
 import { api, useStore, type Bot, type Group, type ModelSelection } from "@/state/store";
 import { fromAnswer } from "@/state/answer-tag";
 import type { Routine } from "@/lib/routines";
@@ -10,6 +12,7 @@ interface Profile {
   agents: { key: string; name: string }[]; routines: { key: string; name: string }[]; connectionsRequired: boolean;
 }
 interface Preview {
+  profileText?: string;
   archiveSha256: string; reviewHash: string; missingDependencies: string[];
   summary: { name: string; agents: number; routines: number } | null;
   scan: { blocked: boolean; reviewRequired: boolean; findings: { path: string; rule: string }[] };
@@ -28,6 +31,12 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
   const [busy, setBusy] = useState<"loading" | "preview" | "import" | null>("loading");
   const [error, setError] = useState("");
   const gate = useRef(false);
+  const reviewRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!preview) return;
+    reviewRef.current?.focus();
+    reviewRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [preview]);
   const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
   const load = async () => {
     setBusy("loading"); setError("");
@@ -131,8 +140,12 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
         </label>)}
         {!selected.routines.length && <p className="mt-1 text-ink-secondary">No suggested routines in this profile.</p>}
       </fieldset>
-      {preview && <div aria-label="Starter import review" className="mt-3 border-t border-hairline/50 pt-3">
+      {preview && <div ref={reviewRef} role="region" tabIndex={-1} aria-label="Starter import review" className="mt-3 border-t border-hairline/50 pt-3">
         {preview.scan.blocked ? <p role="alert" className="text-danger">This profile failed content checks and cannot be imported.</p> : <>
+          {preview.profileText && <section aria-label="Starter profile instructions" className="mb-4 break-words text-[13px] leading-relaxed text-ink">
+            <h5 className="mb-2 font-semibold">Instructions and details</h5>
+            <ChatMarkdown text={skillBody(preview.profileText)} />
+          </section>}
           {preview.summary && <p className="text-ink">{preview.summary.agents} new {preview.summary.agents === 1 ? "bot" : "bots"} and {preview.summary.routines} paused {preview.summary.routines === 1 ? "routine" : "routines"} selected.</p>}
           {preview.missingDependencies.length > 0 && <p role="alert" className="mt-1 text-danger">This selection has missing dependencies. Choose another profile or retry the review.</p>}
           <p className="mt-1 text-ink-secondary">This is a separate copy. Existing bots, drafts and permissions are not replaced.</p>

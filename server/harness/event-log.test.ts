@@ -16,7 +16,7 @@ import { EVENTS_DIR, ensureDirs } from "../config.ts";
 import type { RuntimeEvent } from "../contracts.ts";
 import { ConversationDeletions, runConversationDeletion } from "../conversation-deletion.ts";
 import { readThreadEvents } from "../thread-events.ts";
-import { EventBus } from "./bus.ts";
+import { AdmittedEventBus as EventBus } from "../testing/admitted-event-bus.ts";
 import {
   boundedRecord, enforceEventLogBudget, eventLogIo, eventLogJobsSettled, eventLogLimits, eventLogPruneDone, forgottenTextsAll, forgottenTextsFor, pruneEventLogs, recordEventLogForget, resetEventLogJobsForTests,
   runEventLogForgets, setEventLogBudgetReady, threadSessionLines,
@@ -43,7 +43,7 @@ function streamReply(bus: EventBus, threadId: string, text: string, chunks: numb
   bus.publish(ev(threadId, { type: "turn.started", turnId }));
   const step = Math.ceil(text.length / chunks);
   for (let i = 0; i < chunks; i++) {
-    bus.publish(ev(threadId, { type: "content.delta", turnId, streamKind: "assistant_text", delta: text.slice(i * step, (i + 1) * step) || "." }));
+    bus.publish(ev(threadId, { type: "content.delta", turnId, streamKind: "assistant_text", delta: text.slice(i * step, (i + 1) * step) }));
     bus.publish(ev(threadId, { type: "item.updated", turnId, itemId: "r1", itemType: "reasoning", tokens: i }));
   }
   bus.publish(ev(threadId, { type: "item.completed", turnId, itemId: "a1", itemType: "assistant_text", text }));
@@ -95,7 +95,8 @@ describe("event log writes", () => {
     bus.publish(ev("huge", { type: "item.completed", itemType: "tool", itemId: "t1", ok: true, result: "y".repeat(50_000) }));
     const text = readFileSync(join(EVENTS_DIR, "huge.ndjson"), "utf8");
     const [logged] = text.trim().split("\n").map(l => JSON.parse(l));
-    expect(logged).toMatchObject({ type: "item.completed", itemType: "tool", itemId: "t1", ok: true });
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: the admitted fixture's first item has the host id; the tool result remains absent.
+    expect(logged).toMatchObject({ type: "item.completed", itemType: "tool", itemId: "1-0", ok: true });
     expect(Object.hasOwn(logged, "result")).toBe(false);
     expect(text).not.toContain("yyyy");
     const big = ev("huge", { type: "item.completed", itemType: "tool", itemId: "t2", ok: true, result: "y".repeat(50_000) });
@@ -142,14 +143,18 @@ describe("event log writes", () => {
     // makes 40 rows rotate is smaller
     eventLogLimits.threadBytes = 2 * 1024;
     const bus = new EventBus();
+    const execution: RuntimeEvent[] = [];
+    bus.subscribe(event => execution.push(event), { durable: false });
     for (let i = 0; i < 40; i++) bus.publish(ev("inspect", { type: "item.completed", itemType: "tool", itemId: `t${i}`, ok: true, result: "x".repeat(300) }));
     expect(existsSync(join(EVENTS_DIR, "inspect.previous.ndjson"))).toBe(true);
     const inCurrent = readFileSync(join(EVENTS_DIR, "inspect.ndjson"), "utf8").trim().split("\n").length;
     const page = readThreadEvents({ eventsDir: EVENTS_DIR, nativeDir: join(EVENTS_DIR, "no-native"), threadId: "inspect", limit: inCurrent + 3 });
     expect(page.entries).toHaveLength(inCurrent + 3);
     const ids = page.entries.map(e => (e.data as { itemId?: string }).itemId);
-    expect(ids[ids.length - 1]).toBe("t39");
-    expect(ids).toEqual([...ids].sort((a, b) => Number(a!.slice(1)) - Number(b!.slice(1))));
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: disk pages order host item identities; all forty original execution identities remain exact.
+    expect(ids[ids.length - 1]).toBe("40-0");
+    expect(ids).toEqual([...ids].sort((a, b) => Number(a!.split("-")[0]) - Number(b!.split("-")[0])));
+    expect(execution.map(event => event.itemId)).toEqual(Array.from({ length: 40 }, (_, i) => `t${i}`));
   });
 });
 
@@ -364,3 +369,34 @@ describe("a session line that missed the sessions file", () => {
   });
 });
 
+
+it('native cleanup recovers execution handles after restart without exposing them to Inspector', async () => {
+  removeTempDirSync(EVENTS_DIR); ensureDirs();
+  const original = eventLogIo.appendSession;
+  const thread = 'private-session-fixture', session = 'native-session-fixture';
+  try {
+    eventLogIo.appendSession = () => { throw new Error('fixture append refused'); };
+    new EventBus().publish(ev(thread, { type: 'session.started', sessionId: session }));
+    expect(readFileSync(join(EVENTS_DIR, `${thread}.sessions.pending`), 'utf8')).toContain(session);
+    expect(readFileSync(join(EVENTS_DIR, `${thread}.ndjson`), 'utf8')).not.toContain(session);
+    expect(JSON.stringify(readThreadEvents({ eventsDir: EVENTS_DIR, nativeDir: join(EVENTS_DIR, 'no-native'), threadId: thread }))).not.toContain(session);
+    resetEventLogJobsForTests();
+    eventLogIo.appendSession = original;
+    writeFileSync(join(EVENTS_DIR, '.retention-v1'), '');
+    expect((await threadSessionLines(EVENTS_DIR, thread)).map(row => JSON.parse(row).sessionId)).toEqual([session]);
+  } finally { eventLogIo.appendSession = original; }
+});
+
+it('a new session after restart preserves an older pending native cleanup handle', async () => {
+  removeTempDirSync(EVENTS_DIR); ensureDirs();
+  const original = eventLogIo.appendSession;
+  const thread = 'pending-session-fixture';
+  try {
+    eventLogIo.appendSession = () => { throw new Error('fixture append refused'); };
+    new EventBus().publish(ev(thread, { type: 'session.started', sessionId: 'older-native-session' }));
+    resetEventLogJobsForTests();
+    eventLogIo.appendSession = original;
+    new EventBus().publish(ev(thread, { type: 'session.started', sessionId: 'newer-native-session' }));
+    expect((await threadSessionLines(EVENTS_DIR, thread)).map(row => JSON.parse(row).sessionId)).toEqual(['older-native-session', 'newer-native-session']);
+  } finally { eventLogIo.appendSession = original; }
+});

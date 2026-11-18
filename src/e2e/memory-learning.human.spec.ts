@@ -4,7 +4,7 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -30,7 +30,7 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
 test("a fresh desktop shows learning immediately and saves per-bot choices", async ({ page }, info) => {
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   const sidebar = await openSidebar(page); await sidebar.getByRole("button", { name: "App settings", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
@@ -68,7 +68,7 @@ test("a fresh desktop shows learning immediately and saves per-bot choices", asy
 
 // Renderer race fixture: server behavior is covered by learning-routes.test.ts.
 for(const mutation of ["forget","correct"] as const)test(`workspace ${mutation} refreshes history and discards an older in-flight page`,async({page})=>{
- await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage-flux-invite-dismissed","1");});
+ await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage-flux-invite-dismissed","1");localStorage.setItem("help.seen.chat.level-chip","1");});
  const record={id:"history-fixture",version:1,scopeId:"fixture",kind:"fact",text:"FORGET_HISTORY_CANARY",assertion:"owner-statement",state:"active",ownerPinned:false,validFrom:1,validTo:null};
  const event={id:"learned-fixture",kind:"activated",record_id:record.id,record_version:1,created_at:1,undone_at:null,kept_at:null,record,scopeLabel:"Workspace",source:{threadId:"fixture",messageId:"message",botName:"Fixture bot",roomName:null}};
  let forgotten=false,corrected=false,historyCalls=0,release!:()=>void;

@@ -4,7 +4,7 @@
 // Hermes's ask hook leaves Murage's own run-without-asking tools alone (shared/own-servers.ts OWN_UNASKED), by
 // their exact names only. A routine sat waiting on cards for mcp__agents__list_bots and
 // mcp__murage_memory__memory_search on the Linux real-engine gate.
-import { HIGHLEVEL_WRITE_TOOLS } from "../../../shared/highlevel.ts";
+import { HIGHLEVEL_FAMILIES, HIGHLEVEL_FAMILY_TOOLS, HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_WRITE_TOOLS } from "../../../shared/highlevel.ts";
 import { describe, expect, it } from "vitest";
 
 import { OWN_ALWAYS_ASK, OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../../shared/own-servers.ts";
@@ -24,20 +24,22 @@ describe("Hermes ask hook and Murage's own tools", () => {
 
   it.each([false, true])("runs every OWN_UNASKED tool without a card on a turn email mounts for sending (host computer %s)", (host) => {
     const m = hermesAskMatcher(host, true, "send", true);
-    const names = OWN_UNASKED.flatMap((row) => row.tools.map((tool) => hermesName(row.mount, tool)));
+    const names = OWN_UNASKED.flatMap((row) => (row.mount === "own:highlevel" ? [...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES] : row.tools).map((tool) => hermesName(row.mount, tool)));
     expect(names.length).toBeGreaterThan(40);
     expect(names.filter((name) => asks(m, name))).toEqual([]);
   });
 
   it.each([false, true])("asks for every HighLevel tool on a turn that does not mount native HighLevel (host computer %s)", (host) => {
     const m = hermesAskMatcher(host, true, "send", false);
-    const names = OWN_UNASKED.filter((row) => row.mount === "own:highlevel").flatMap((row) => row.tools.map((tool) => hermesName(row.mount, tool)));
-    // HL-S2 is read only: the twelve read tools and two helpers; no change tool is ever unasked
-    expect(names.length).toBe(14);
+    const names = [...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES].map(tool => hermesName("own:highlevel", tool));
+    // The amended surface is seventeen family tools and two helpers.
+    expect(names.length).toBe(19);
+    expect(names.length).toBe(HIGHLEVEL_FAMILIES.length + HIGHLEVEL_HELPER_NAMES.length);
+    expect(names).toEqual(OWN_UNASKED.filter(row => row.mount === "own:highlevel").flatMap(row => row.tools.map(tool => hermesName(row.mount, tool))));
     expect(names.filter((name) => !asks(m, name))).toEqual([]);
   });
 
-  it.each([false, true])("asks for every HighLevel change tool even on a turn that mounts native HighLevel (host computer %s)", (host) => {
+  it.each([false, true])("asks for retired legacy HighLevel change names even on a turn that mounts native HighLevel (host computer %s)", (host) => {
     const m = hermesAskMatcher(host, true, "send", true);
     const changes = [...HIGHLEVEL_WRITE_TOOLS].map((tool) => hermesName("own:highlevel", tool));
     expect(changes).toHaveLength(8);

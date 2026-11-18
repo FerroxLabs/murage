@@ -13,7 +13,9 @@
 //   GET  /boxes/<id>/files?path=/tmp/muragebox-shot.jpg&encoding=base64
 // No creation, deletion, listing, account or billing endpoint is reachable.
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { currentUpstreamAccounting } from "./memory/upstream-reader.ts";
 import type { InternalCapability } from "./internal-capabilities.ts";
+import { consumingResponseBinding, denyConsumingHttp, stageConsumingResponse } from "./consuming-turn-response.ts";
 
 export const BOX_RELAY_PREFIX = "/api/internal/box/v1";
 /** The one file the proxy ever reads back over HTTP (computer-proxy.ts SHOT_PATH). */
@@ -91,16 +93,18 @@ function matchRoute(method: string, pathname: string, search: string): { boxId: 
   return route ? { boxId, route } : null;
 }
 
-async function readCapped(response: Response, cap: number): Promise<Buffer | null> {
+export async function readCapped(response: Response, cap: number): Promise<Buffer | null> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > cap) { await response.body?.cancel().catch(() => {}); return null; }
   if (!response.body) return Buffer.alloc(0);
+  const accounting = currentUpstreamAccounting("collection");
   const reader = response.body.getReader();
   const chunks: Buffer[] = [];
   let size = 0;
   for (;;) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) { accounting?.end(); break; }
+    try { accounting?.accept(value); } catch (error) { void reader.cancel().catch(() => {}); throw error; }
     size += value.byteLength;
     if (size > cap) { await reader.cancel().catch(() => {}); return null; }
     chunks.push(Buffer.from(value));
@@ -119,8 +123,8 @@ function isProviderHost(candidate: URL, upstream: URL): boolean {
 export async function relayBoxCall(input: BoxRelayInput, deps: BoxRelayDeps): Promise<BoxRelayResult> {
   const claim = deps.resolveClaim(input.authorization);
   if (!claim || !deps.isActive(claim)) return reply(401, "unauthorized");
-  const refuse = (reason: string): BoxRelayResult => {
-    deps.log?.(`box relay refused bot=${claim.botId} reason=${reason}`);
+  const refuse = (_reason: string): BoxRelayResult => {
+    deps.log?.("box-relay refused=1");
     return NOT_FOUND();
   };
   if (claim.kind !== "computer") return refuse("capability");
@@ -139,7 +143,7 @@ export async function relayBoxCall(input: BoxRelayInput, deps: BoxRelayDeps): Pr
     try { parsed = await input.readJson(BOX_RELAY_MAX_REQUEST_BYTES); }
     catch (error) {
       const status = (error as { status?: number }).status;
-      deps.log?.(`box relay refused bot=${claim.botId} reason=${status === 413 ? "body-too-large" : "body"}`);
+      deps.log?.("box-relay refused=1");
       return reply(status === 413 ? 413 : 400, status === 413 ? "body too large" : "invalid body");
     }
     const keys = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? Object.keys(parsed) : [];
@@ -179,7 +183,7 @@ export async function relayBoxCall(input: BoxRelayInput, deps: BoxRelayDeps): Pr
         let next: URL | null = null;
         try { next = location ? new URL(location, target) : null; } catch { next = null; }
         if (route.method !== "GET" || !next || hop >= MAX_REDIRECTS || !isProviderHost(next, upstream)) {
-          deps.log?.(`box relay refused bot=${claim.botId} reason=redirect`);
+          deps.log?.("box-relay refused=1");
           return reply(502, "upstream redirect refused");
         }
         target = next;
@@ -187,7 +191,7 @@ export async function relayBoxCall(input: BoxRelayInput, deps: BoxRelayDeps): Pr
       }
       const bytes = await readCapped(response, route.maxResponseBytes);
       if (!bytes) {
-        deps.log?.(`box relay refused bot=${claim.botId} reason=response-too-large`);
+        deps.log?.("box-relay refused=1");
         return reply(502, "upstream response too large");
       }
       return {
@@ -197,13 +201,17 @@ export async function relayBoxCall(input: BoxRelayInput, deps: BoxRelayDeps): Pr
       };
     }
   } catch {
-    deps.log?.(`box relay refused bot=${claim.botId} reason=upstream`);
+    deps.log?.("box-relay refused=1");
     return reply(502, "upstream unavailable");
   }
 }
 
 /** Writes a relay result to a Node response. */
 export function sendBoxRelayResult(res: ServerResponse, result: BoxRelayResult): void {
+  if (!consumingResponseBinding(res)) return denyConsumingHttp(res);
+  // Box transport bytes are external tool output, with no stored Murage refs.
+  // Retained parents are still checked, including all error/empty replies.
+  stageConsumingResponse(res, []);
   res.writeHead(result.status, {
     "content-type": result.contentType,
     "content-length": String(result.body.length),
@@ -216,6 +224,7 @@ export async function serveBoxRelay(
   req: IncomingMessage, res: ServerResponse, url: URL,
   deps: BoxRelayDeps, readJson: (maxBytes: number) => Promise<unknown>,
 ): Promise<void> {
+  if (!consumingResponseBinding(res)) return denyConsumingHttp(res);
   const abort = new AbortController();
   const gone = () => { if (!res.writableEnded) abort.abort(); };
   res.once("close", gone);
@@ -231,9 +240,7 @@ export async function serveBoxRelay(
 
 // ---- cloud home policy -------------------------------------------------
 
-export function isCloudHome(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.MURAGE_CLOUD_ROLE === "home";
-}
+export { isCloudHome } from "./cloud-home/role.ts";
 
 /** Opt-in: hosted computers on a cloud home are off unless the owner turns
  * them on (config features.cloudBoxComputers). Desktop is not affected. */

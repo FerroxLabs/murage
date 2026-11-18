@@ -6,6 +6,7 @@
 // 7 + 17(K + 1), K the statements of one page lookup (K <= 15); a record past the chain or line cap judges no line; a kept verdict
 // costs no page lookup; a search whose candidates the rule refuses stops at the allowance; an allowance spent across several affordable
 // lookups stops, withholds and keeps nothing.
+import { observeSqlReads } from "./testing/sql-read-observer.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { database } from "../database.ts";
 import { lineageReaderOf, readerWithheldMessage } from "./disclosures.ts";
@@ -15,23 +16,17 @@ import { ensureScope } from "./policy.ts";
 import { searchMemory } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { bindHumanThread } from "../human-principals.ts";
-import { access, channelPerson, exchange, hits, QUERY, resetWorld, world } from "./testing/xthread-world.ts";
+import { access, channelPerson, exchange, hits, resetWorld, world } from "./testing/xthread-world.ts";
 
 afterEach(() => { vi.restoreAllMocks(); });
 const big = () => LineageAllowance.tool(1_000_000_000);
 
-/** Counts every get and all of every statement prepared from now on, while `on`. */
+/** Counts every get, all and iterate of every statement prepared from now on, while `on`. */
 function trace() {
   const db = database(), real = db.prepare.bind(db);
   const state = { on: false, count: 0 };
-  vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
-    const statement = real(sql) as unknown as Record<"get" | "all", (...args: unknown[]) => unknown>;
-    for (const method of ["get", "all"] as const) {
-      const call = statement[method].bind(statement);
-      statement[method] = (...args: unknown[]) => { if (state.on) state.count++; return call(...args); };
-    }
-    return statement as unknown as ReturnType<typeof real>;
-  }) as typeof db.prepare);
+  const observer = { call() { if (state.on) state.count++; } };
+  vi.spyOn(db, "prepare").mockImplementation(sql => observeSqlReads(real(sql), sql, observer));
   return { state, measure<T>(run: () => T): { value: T; statements: number } { const before = state.count; state.on = true; try { return { value: run(), statements: state.count - before }; } finally { state.on = false; } } };
 }
 function record(id: string, scope: string, evidence: ReadonlyArray<string>): void {
@@ -101,7 +96,9 @@ describe("T5: the cross-thread judge is bounded", () => {
     let calls = 0;
     const counted = (thread: string, message: string, allowance: LineageAllowance) => { calls++; return rule(thread, message, allowance); };
     const allowance = LineageAllowance.tool(100);
-    const answer = await searchMemory(QUERY, reader, hits(refs), { allowance, withheldMessage: counted });
+    // Match the synthetic candidate text, rather than the captured human's
+    // question, which is independently readable through the live word index.
+    const answer = await searchMemory("note", reader, hits(refs), { allowance, withheldMessage: counted });
     expect(answer.hits).toEqual([]);
     expect(answer.partial).toBe(true);
     expect(allowance.hit).toBe(true);

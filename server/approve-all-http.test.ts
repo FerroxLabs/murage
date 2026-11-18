@@ -8,6 +8,9 @@
 //
 // HEADLESS ONLY: the data directory is a throwaway temp HOME and the port is
 // probed from the fixture band, clear of the live app's 8799.
+import { sessionBoundAcpPermissionEnvironment } from "./testing/acp-permission-fixture.ts";
+import { fixtureDisplayApi } from "./testing/display-fixture.ts";
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -16,7 +19,7 @@ import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { APPROVE_ALL_THREAD, approvalBatchDigest, approvalDigest } from "../shared/approval-digest.ts";
 import { proofMessage } from "./approval-fresh-auth.ts";
-import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { makeTestHome, removeTempDir } from "./testing/cleanup.ts";
 import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
 
@@ -35,14 +38,14 @@ let child: ChildProcess;
 let home: string;
 let stderr = "";
 
-const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+const request = fixtureDisplayApi(() => join(home, ".murage", "messages.db"), async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json().catch(() => null) };
-};
+});
 const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
 const threadMessages = async (threadId: string) => ((await desktopApi("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[];
 const cardById = async (threadId: string, requestId: string) => (await threadMessages(threadId)).find((m) => m.card?.requestId === requestId)?.card;
@@ -98,7 +101,7 @@ async function stoppedBot(name: string) {
   return { bot, requestId: card.card.requestId as string };
 }
 
-describe.skipIf(process.platform === "win32")("Approve all in Inbox > Approvals", () => {
+describe("Approve all in Inbox > Approvals", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1], 18_799, 200);
     base = `http://127.0.0.1:${port}`;
@@ -113,25 +116,28 @@ describe.skipIf(process.platform === "win32")("Approve all in Inbox > Approvals"
         instances: {
           deleter: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE },
+            environment: sessionBoundAcpPermissionEnvironment({ FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE }),
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           echoer: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission" },
+            environment: sessionBoundAcpPermissionEnvironment({ FAKE_ACP_MODE: "permission" }),
             config: { cli: FAKE_CLI, fullAuto: false },
           },
           builder: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: BUILD },
+            environment: sessionBoundAcpPermissionEnvironment({ FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: BUILD }),
             config: { cli: FAKE_CLI, fullAuto: false },
           },
         },
       }),
     );
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    // 30a1b3b2ce: this disposable server launches only fake ACP children.
+    child = spawn(process.execPath, ["--import", "data:text/javascript,globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;", join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...fixturePlatformEnv(),
+        NODE_ENV: "test",
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
@@ -140,7 +146,7 @@ describe.skipIf(process.platform === "win32")("Approve all in Inbox > Approvals"
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
         MURAGE_COMPANION_TOKEN: COMPANION_TOKEN,
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
     const deadline = Date.now() + 150_000; // generous: a loaded machine booted this in over 100 s
@@ -159,7 +165,7 @@ describe.skipIf(process.platform === "win32")("Approve all in Inbox > Approvals"
   }, 180_000);
 
   afterAll(async () => {
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeTempDir(home);
   });
 

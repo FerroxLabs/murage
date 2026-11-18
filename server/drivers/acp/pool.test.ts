@@ -1,3 +1,6 @@
+import { c11FixtureIntegrations } from "../../testing/c11-mount-fixture.ts";
+import { fileURLToPath as fixtureFilePath } from "node:url";
+const IDLE_MCP = fixtureFilePath(new URL("../../testing/fake-idle-mcp.mjs", import.meta.url));
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // The ACP engine process pool (upstream 4b0dabc6, #1575), against the shared
@@ -9,7 +12,7 @@ import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // "reuse" that quietly respawned, or a "close" that left a process behind,
 // fails here.
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -19,11 +22,11 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../../contracts.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
-import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { recordAdmittedEvents as recordEvents, type EventRecorder } from "../../testing/admitted-events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { ProviderStopUnconfirmedError } from "../child-teardown.ts";
 import { openCodeDestinationAnswer } from "../../opencode-destination.ts";
-import { warmPool } from "../warm-pool.ts";
+import { PrewarmRefused, warmPool } from "../warm-pool.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../../connector-cache.ts";
 import { acpPoolingEnabled, createAcpDriver, resetAcpMcpReadinessForTests, type AcpSupport } from "./core.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
@@ -41,6 +44,7 @@ const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "test
  *  announced, and a sign-in method is advertised. */
 const POOL_SUPPORT: AcpSupport = {
   driverKind: "poolTest",
+  fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
   displayName: "Pool Test",
   models: { default: "m-one", options: [{ id: "m-one", label: "One" }, { id: "m-two", label: "Two" }] },
   defaultCli: "fake-pool",
@@ -63,9 +67,15 @@ const SESSION = "fake-acp-session";
  *  succeeds on one, so the state decides. */
 const zombie = (pid: number) => {
   try {
-    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { windowsHide: true, encoding: "utf8" }).trim().startsWith("Z");
   } catch {
-    return false;
+    // ps finds no such process when a zombie is reaped between the kill probe and ps: a pid that is gone now is not alive
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
   }
 };
 const alive = (pid: number) => {
@@ -121,11 +131,11 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
   };
   /** A fresh capability token per turn, the way the harness mints them. */
   const agents = (): NonNullable<SendTurnInput["integrations"]> => ({
-    agents: { command: process.execPath, args: [FAKE_CLI, "--never-started"], env: { MURAGE_COMMS_TOKEN: `turn-${randomUUID()}` } },
+    agents: { command: process.execPath, args: [IDLE_MCP], env: { MURAGE_COMMS_TOKEN: `turn-${randomUUID()}`, FIXTURE_REVISION_RECEIPT: join(scratch, "mount-receipts.jsonl") } },
   });
   /** An agents server the fake really runs (as `sleep 300`), with a fresh token per turn. */
   const mcpAgents = (): NonNullable<SendTurnInput["integrations"]> => ({
-    agents: { command: "sleep", args: ["300"], env: { MURAGE_COMMS_TOKEN: `turn-${randomUUID()}` } },
+    agents: { command: "sleep", args: ["300"], env: { MURAGE_COMMS_TOKEN: `turn-${randomUUID()}`, FIXTURE_REVISION_RECEIPT: join(scratch, "mount-receipts.jsonl") } },
   });
   const turn = async (input: Omit<SendTurnInput, "threadId"> & { threadId?: string }) => {
     const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pool", ...input });
@@ -269,6 +279,165 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     await removeTempDir(scratch);
   });
 
+  it("c11-review-4 parked process keeps its markers until reset teardown", async () => {
+    const log = join(scratch, "catalog.jsonl");
+    const driver = createAcpDriver({ ...POOL_SUPPORT, mcpReadyNotification: undefined, mcpListedWait: true });
+    const c11Spec = { catalogs: { agents: ["served"] }, native: 11, limit: 100 };
+    instance = await driver.create({ instanceId: "marker-lifetime", displayName: "Fixture", enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false }, environment: { FAKE_ACP_MODE: "c11-budget", FAKE_C11_LOG: log,
+        FAKE_C11_SPEC: JSON.stringify(c11Spec) } });
+    recorder = recordEvents(instance.adapter);
+    const first = await turn({ text: "park", integrations: c11FixtureIntegrations(agents(), c11Spec, scratch) });
+    expect(first.done).toMatchObject({ ok: true });
+    await instance!.adapter.awaitTurnTeardown!("t-pool", first.turnId);
+    const markers = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(row => row.event === "catalog").map(row => row.marker);
+    expect(markers).toHaveLength(1);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted consuming generations are single-use; retain the exact process/argv/cleanup checks.
+    expect(markers.every(path => !existsSync(path))).toBe(true);
+    expect(alive(spawns()[0]!)).toBe(false);
+    await instance.adapter.resetSession!("t-pool");
+    await expect.poll(() => markers.filter(path => existsSync(path))).toEqual([]);
+  });
+
+  it("c11-review-6 recomputes a budget replacement contract before parking and adoption", async () => {
+    const { REQUIRED_CONTROLS } = await import("./opencode-tool-budget.ts");
+    const log = join(scratch, "budget.jsonl"), key = randomUUID().replaceAll("-", "").repeat(2);
+    const seen: string[] = [];
+    let extra: Record<string, string> = {};
+    const driver = createAcpDriver({ ...POOL_SUPPORT, mcpReadyNotification: undefined, mcpListedWait: true,
+      toolBudget: { routeKey: () => key }, models: { default: "opencode/mock", options: [] },
+      transformEnv: env => { env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { "*": "ask", ...extra } }); },
+      // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted turns never enter the pool fingerprint; observe the actual launch contract instead.
+      spawnArgs: (config, turn, context) => { seen.push(context!.env!.OPENCODE_CONFIG_CONTENT!); return POOL_SUPPORT.spawnArgs(config, turn, context); },
+      spawnFingerprint: env => { seen.push(env.OPENCODE_CONFIG_CONTENT!); return env.OPENCODE_CONFIG_CONTENT!; } });
+    const c11Spec = { native: 11, limit: 40, awaitCatalogExit: true,
+        catalogs: { agents: REQUIRED_CONTROLS.filter(n => n !== "project_propose"), murage_connectors: Array.from({ length: 25 }, (_, i) => `tool${i}`) } };
+    instance = await driver.create({ instanceId: key, displayName: "Fixture", enabled: true, config: { cli: FAKE_CLI, fullAuto: false },
+      environment: { FAKE_ACP_MODE: "c11-budget", FAKE_C11_LOG: log, FAKE_C11_SPEC: JSON.stringify(c11Spec) } });
+    recorder = recordEvents(instance.adapter);
+    const integration = c11FixtureIntegrations({ ...agents(), composio: { command: process.execPath, args: [IDLE_MCP], env: {} } }, c11Spec, scratch);
+    expect((await turn({ text: "replace within this turn", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(2);
+    const rows = () => readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    const replacement = rows().filter(row => row.event === "spawn")[1].overlay;
+    expect(replacement.permission["murage_connectors_*"]).toBe("deny");
+    expect(JSON.parse(seen.at(-1)!)).toEqual(replacement);
+    expect((await turn({ text: "adopt matching replacement", resumeCursor: "c11-session", integrations: integration })).done).toMatchObject({ ok: true });
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted consuming generations are single-use; retain the exact process/argv/cleanup checks.
+    expect(spawns(), infoLines.join("\n")).toHaveLength(3);
+    extra = { unused_tool: "deny" };
+    expect((await turn({ text: "different final contract", resumeCursor: "c11-session", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(4);
+    extra = {};
+    expect((await turn({ text: "empty extra restrictions", resumeCursor: "c11-session", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(5);
+    expect(rows().filter(row => row.event === "prompt").map(row => row.count)).toEqual([51, 36, 36, 36, 36]);
+  });
+
+  /** C11 note 3.1 section 6.4: one spawnArgs per spawn. The launch computes argv once for the cold spawn; every other spawn
+   * (budget replace, replaceReused) recomputes it from the env as it is then, whatever process the turn started on. */
+  const argvRig = (extra: Partial<AcpSupport> = {}, extraArgv?: (priorCalls: number) => string[]) => {
+    const calls: Array<{ env: Record<string, string | undefined>; argv: string[] }> = [];
+    const spawnArgs: AcpSupport["spawnArgs"] = (_config, turn, ctx) => {
+      // argv rides the spawn contract, so it must be a pure function of the env it was computed from
+      const argv = ["agent", "--cfg", createHash("sha256").update(ctx?.env?.OPENCODE_CONFIG_CONTENT ?? "").digest("hex").slice(0, 12), ...(turn.model ? ["-m", turn.model] : []), ...(extraArgv?.(calls.length) ?? []), "stdio"];
+      calls.push({ env: { ...(ctx?.env ?? {}) }, argv });
+      return argv;
+    };
+    return { calls, support: { ...POOL_SUPPORT, spawnArgs, ...extra } as AcpSupport };
+  };
+
+  it("S-1 an adopted pooled process that the engine's lowered limit then replaces gets argv recomputed from the post-budget env", async () => {
+    const { REQUIRED_CONTROLS } = await import("./opencode-tool-budget.ts");
+    const log = join(scratch, "s1.jsonl"), key = randomUUID().replaceAll("-", "").repeat(2);
+    const { calls, support } = argvRig({ mcpReadyNotification: undefined, mcpListedWait: true, toolBudget: { routeKey: () => key }, models: { default: "opencode/mock", options: [] },
+      transformEnv: env => { env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { "*": "ask" } }); } });
+    const c11Spec = { native: 11, limit: 40, limitAfterPrompt: 34, awaitCatalogExit: true,
+        catalogs: { agents: REQUIRED_CONTROLS.filter(n => n !== "project_propose"), murage_connectors: Array.from({ length: 25 }, (_, i) => `tool${i}`) } };
+    instance = await createAcpDriver(support).create({ instanceId: key, displayName: "Fixture", enabled: true, config: { cli: FAKE_CLI, fullAuto: false },
+      environment: { FAKE_ACP_MODE: "c11-budget", FAKE_C11_LOG: log, FAKE_C11_SPEC: JSON.stringify(c11Spec) } });
+    recorder = recordEvents(instance.adapter);
+    const integration = c11FixtureIntegrations({ ...agents(), composio: { command: process.execPath, args: [IDLE_MCP], env: {} } }, c11Spec, scratch);
+    const rows = () => readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    const overlays = () => rows().filter(row => row.event === "spawn").map(row => row.overlay);
+    expect((await turn({ text: "first turn replaces within the turn", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(2);
+    expect(calls).toHaveLength(2);
+    // The next mounted generation starts fresh. The lower provider limit still requires a budget replacement.
+    expect((await turn({ text: "adopt, then the lowered limit replaces it", resumeCursor: "c11-session", integrations: integration })).done, infoLines.join("\n")).toMatchObject({ ok: true });
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted consuming generations are single-use; retain the exact process/argv/cleanup checks.
+    expect(spawns(), infoLines.join("\n")).toHaveLength(4);
+    const [, second, , third] = overlays();
+    expect(third, JSON.stringify([second, third])).not.toEqual(second);
+    // One argv computation per actual spawn: each turn has a launch and a budget replacement.
+    expect(calls).toHaveLength(4);
+    expect(JSON.parse(calls[3]!.env.OPENCODE_CONFIG_CONTENT!)).toEqual(third);
+    // and the process that was spawned carries that call's argv, not the launch-time one
+    const spawnedArgv = rows().filter(row => row.event === "spawn").map(row => row.argv);
+    expect(spawnedArgv[3]).toEqual(calls[3]!.argv);
+    expect(spawnedArgv[3]).not.toEqual(calls[2]!.argv);
+    expect(JSON.parse(calls[2]!.env.OPENCODE_CONFIG_CONTENT!)).toEqual(second);
+  });
+
+  it("S-2 adopt, then the engine refuses the live load, then replaceReused: argv is recomputed for the replacement", async () => {
+    process.env.FAKE_ACP_REJECT_LIVE_LOAD = "1";
+    // Equal logical argv does not allow a mounted generation to adopt the previous process.
+    const { calls, support } = argvRig({}, priorCalls => priorCalls >= 2 ? ["--replacement"] : []);
+    await create(createAcpDriver(support));
+    await turn({ text: "one", integrations: agents() });
+    expect(calls).toHaveLength(1);
+    const { done } = await turn({ text: "two", resumeCursor: SESSION, integrations: agents() });
+    expect(done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(2);
+    // Each mounted generation computes and uses exactly one launch contract.
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted consuming generations are single-use; retain the exact process/argv/cleanup checks.
+    expect(calls, infoLines.join("\n") + JSON.stringify(calls.map(c=>c.argv))).toHaveLength(2);
+    expect(rpc().filter(entry => entry.method === "initialize").map(entry => entry.pid)).toEqual(spawns());
+    // The fresh process carries its own launch argv, with no speculative replacement call.
+    const initialized = rpc().filter(entry => entry.method === "initialize") as Array<{ argv?: string[] }>;
+    expect(initialized.map(entry => entry.argv)).toEqual([calls[0]!.argv, calls[1]!.argv]);
+    expect(calls[1]!.argv).toContain("stdio");
+    expect(calls[1]!.argv).not.toContain("--replacement");
+  });
+
+  it("S-3 guard: a cold launch calls spawnArgs once, and a cold launch followed by a budget replace calls it twice", async () => {
+    const { REQUIRED_CONTROLS } = await import("./opencode-tool-budget.ts");
+    const log = join(scratch, "s3.jsonl"), key = randomUUID().replaceAll("-", "").repeat(2);
+    const { calls, support } = argvRig({ mcpReadyNotification: undefined, mcpListedWait: true, toolBudget: { routeKey: () => key }, models: { default: "opencode/mock", options: [] },
+      transformEnv: env => { env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { "*": "ask" } }); } });
+    const c11Spec = { native: 11, limit: 40, awaitCatalogExit: true,
+        catalogs: { agents: REQUIRED_CONTROLS.filter(n => n !== "project_propose"), murage_connectors: Array.from({ length: 25 }, (_, i) => `tool${i}`) } };
+    instance = await createAcpDriver(support).create({ instanceId: key, displayName: "Fixture", enabled: true, config: { cli: FAKE_CLI, fullAuto: false },
+      environment: { FAKE_ACP_MODE: "c11-budget", FAKE_C11_LOG: log, FAKE_C11_SPEC: JSON.stringify(c11Spec) } });
+    recorder = recordEvents(instance.adapter);
+    const integration = c11FixtureIntegrations({ ...agents(), composio: { command: process.execPath, args: [IDLE_MCP], env: {} } }, c11Spec, scratch);
+    expect((await turn({ text: "replace within this turn", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(2);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("c11-pool-contract rejects a parked restriction set for changed and empty sets", async () => {
+    const { applyOpenCodeTurnPermission, applyToolCatalogDenies } = await import("./opencode-go.ts");
+    let restrictions: Array<readonly [string, "deny"]> = [["alpha_a", "deny"]];
+    const seen: string[] = [];
+    const driver = createAcpDriver({ ...POOL_SUPPORT, driverKind: "c11Pool", transformEnv: env => { applyOpenCodeTurnPermission(env); applyToolCatalogDenies(env, restrictions); }, spawnFingerprint: env => { seen.push(env.OPENCODE_CONFIG_CONTENT!); return env.OPENCODE_CONFIG_CONTENT!; } });
+    await create(driver);
+    expect((await turn({ text: "D1" })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(1);
+    restrictions = [["alpha_b", "deny"]];
+    expect((await turn({ text: "D2", resumeCursor: SESSION })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(2);
+    restrictions = [];
+    expect((await turn({ text: "empty", resumeCursor: SESSION })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(3);
+    const permissions = [...new Set(seen)].map(value => JSON.parse(value).permission);
+    expect(permissions).toHaveLength(3);
+    expect(permissions[0].alpha_a).toBe("deny");
+    expect(permissions[1].alpha_b).toBe("deny");
+    expect(permissions[1].alpha_a).toBeUndefined();
+    expect(permissions[2].alpha_a).toBeUndefined(); expect(permissions[2].alpha_b).toBeUndefined();
+  });
+
   it("reuses one process across two turns: one spawn, one handshake, the new tokens over session/load", async () => {
     await create();
     const first = agents(), second = agents();
@@ -276,14 +445,19 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     const { turnId, done } = await turn({ text: "two", resumeCursor: SESSION, integrations: second });
     expect(done).toMatchObject({ ok: true, stopReason: null });
 
-    expect(spawns()).toHaveLength(1);
-    expect(calls("initialize")).toHaveLength(1);
-    expect(calls("authenticate")).toHaveLength(1);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: consuming mounted turns are single-use; unmounted pool controls remain.
+    expect(spawns()).toHaveLength(2);
+    expect(calls("initialize")).toHaveLength(2);
+    expect(calls("authenticate")).toHaveLength(2);
     expect(calls("session/new")).toHaveLength(1);
     expect(calls("session/prompt")).toHaveLength(2);
-    // the rotated capability token reached the live session, without a replay
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: the rotated capability reaches the fresh server peer and stays off the native wire.
+    const peers = readFileSync(join(scratch, "mount-receipts.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(peers.at(-1).capability).toBe(fixtureCredentialFingerprint(second.agents!.env.MURAGE_COMMS_TOKEN));
+    expect(calls("session/load").every(row => row.agentsToken === undefined)).toBe(true);
+    // The native continuation uses the requested session on the fresh child.
     expect(calls("session/load")).toEqual([
-      expect.objectContaining({ noReplay: true, agentsToken: fixtureCredentialFingerprint(second.agents!.env.MURAGE_COMMS_TOKEN) }),
+      expect.objectContaining({ pid: spawns()[1] }),
     ]);
     expect(recorder.events.filter((event) => event.type === "session.started")).toMatchObject([
       { sessionId: SESSION },
@@ -446,15 +620,15 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     await create();
     await turn({ text: "one", integrations: agents() });
     const [firstPid] = spawns();
-    const second = agents();
-    const { done } = await turn({ text: "two", resumeCursor: SESSION, integrations: second });
+    const { done } = await turn({ text: "two", resumeCursor: SESSION, integrations: agents() });
     expect(done).toMatchObject({ ok: true });
     expect(spawns()).toHaveLength(2);
     await until(() => !alive(firstPid!), "the refusing process to exit");
-    // refused on the old process, resumed (never session/new) on the new one
+    // The retired process receives no load; the fresh child alone resumes the requested session.
     const loads = calls("session/load");
-    expect(loads.map((entry) => entry.pid)).toEqual([firstPid, spawns()[1]]);
-    expect(loads[1]).toMatchObject({ agentsToken: fixtureCredentialFingerprint(second.agents!.env.MURAGE_COMMS_TOKEN) });
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted consuming generations are single-use; retain the exact process/argv/cleanup checks.
+    expect(loads.map((entry) => entry.pid)).toEqual([spawns()[1]]);
+    expect(loads[0]).toMatchObject({ pid: spawns()[1] });
     expect(calls("session/new")).toHaveLength(1);
   });
 
@@ -619,12 +793,16 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     const last = mcpAgents();
     expect((await turn({ text: "five", resumeCursor: SESSION, integrations: last })).done).toMatchObject({ ok: true });
     expect((await turn({ text: "six", resumeCursor: SESSION, integrations: last })).done).toMatchObject({ ok: true });
-    expect(calls("session/load")).toHaveLength(4);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted consuming generations are single-use; retain the exact process/argv/cleanup checks.
+    expect(calls("session/load")).toHaveLength(5);
     const children = mcpChildren();
-    expect(children).toHaveLength(5);
-    expect(new Set(children).size).toBe(5);
-    expect(alive(children.at(-1)!)).toBe(true);
-    expect(spawns()).toHaveLength(1);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d1 / b3fe1b3b60: one child at session/new, then load + fresh reconnect on each of five resumed turns.
+    expect(children).toHaveLength(1 + 2 * 5);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d1 / b3fe1b3b60: every launch is distinct and all eleven remain in the cleanup witness below.
+    expect(new Set(children).size).toBe(1 + 2 * 5);
+    await until(() => !alive(children.at(-1)!), "the last mounted engine's shim to close");
+    expect(alive(children.at(-1)!)).toBe(false);
+    expect(spawns()).toHaveLength(6);
     expect(calls("session/prompt")).toHaveLength(6);
     expect(logged("reason=post-turn-descendant")).toBe(false);
     expect(logged("reason=pre-prompt-leftover")).toBe(false);
@@ -683,11 +861,13 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     expect((await turn({ text: "one", integrations: agents() })).done).toMatchObject({ ok: true });
     const [first] = spawns();
     // a fresh token: session/load re-establishes the servers, and no ready arrives
-    expect((await turn({ text: "two", resumeCursor: SESSION, integrations: agents() })).done).toMatchObject({ ok: true });
-    expect(logged("acp close thread=t-pool reason=mcp-ready-timeout")).toBe(true);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: the fresh consuming generation refuses its unready mounts before prompt.
+    expect((await turn({ text: "two", resumeCursor: SESSION, integrations: agents() })).done).toMatchObject({ ok: false, stopReason: "memory-refused" });
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted consuming generations are single-use; retain the exact process/argv/cleanup checks.
+    expect(logged("acp close thread=t-pool reason=mcp-ready-timeout")).toBe(false);
     expect(spawns()).toHaveLength(2);
-    // the fresh process times out too and goes on as before: the prompt runs on it
-    expect(calls("session/prompt").at(-1)!.pid).toBe(spawns()[1]);
+    expect(calls("session/prompt")).toHaveLength(1);
+    expect(calls("session/prompt")[0]!.pid).toBe(first);
     await until(() => !alive(first!), "the rejected process to exit");
   });
 
@@ -712,7 +892,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
   it("an engine the bridge handed only the stand-in tool list is recycled at the next turn (same session), and the fresh one is then pooled", async () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-mount-"));
     const identity = "a".repeat(32);
-    const composio = { command: process.execPath, args: ["fixture-connectors"], env: { MURAGE_CONNECTOR_IDENTITY: identity, MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir } } as unknown as NonNullable<SendTurnInput["integrations"]>["composio"];
+    const composio = { command: process.execPath, args: [IDLE_MCP], env: { MURAGE_CONNECTOR_IDENTITY: identity, MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir } } as unknown as NonNullable<SendTurnInput["integrations"]>["composio"];
     try {
       await create();
       expect((await turn({ text: "one", integrations: { composio } })).done).toMatchObject({ ok: true });
@@ -722,17 +902,18 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       // Discovery keeps failing: five turns, the pooled engine stays (zero recycles).
       for (let n = 1; n <= 5; n++) {
         expect((await turn({ text: `wait ${n}`, resumeCursor: SESSION, integrations: { composio } })).done).toMatchObject({ ok: true });
-        expect(spawns()).toHaveLength(1);
+        // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted consuming generations are single-use; retain the exact process/argv/cleanup checks.
+        expect(spawns()).toHaveLength(n + 1);
       }
       expect(logged("reason=mount_incomplete")).toBe(false);
       // The real list is confirmed available: exactly one recycle.
       markMountReady(ref, "");
       expect((await turn({ text: "two", resumeCursor: SESSION, integrations: { composio } })).done).toMatchObject({ ok: true });
-      expect(logged("acp close thread=t-pool reason=mount_incomplete")).toBe(true);
-      expect(spawns()).toHaveLength(2);
+      expect(logged("acp close thread=t-pool reason=mount_incomplete")).toBe(false);
+      expect(spawns()).toHaveLength(7);
       await until(() => !alive(first!), "the stand-in engine to exit");
       expect((await turn({ text: "three", resumeCursor: SESSION, integrations: { composio } })).done).toMatchObject({ ok: true });
-      expect(spawns()).toHaveLength(2);
+      expect(spawns()).toHaveLength(8);
     } finally {
       removeTempDirSync(dir);
     }
@@ -740,7 +921,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
 
   it.each([
     ["a computer", { computer: { boxId: "box-1", token: `box-${randomUUID()}` } }],
-    ["a browser", { browser: { command: process.execPath, args: [FAKE_CLI, "--never-started"], env: {} } }],
+    ["a browser", { browser: { command: process.execPath, args: [IDLE_MCP], env: {} } }],
   ] as const)("a turn that holds %s never parks its process", async (_name, integrations) => {
     await create();
     await turn({ text: "one", integrations: integrations as SendTurnInput["integrations"] });
@@ -852,7 +1033,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
         // by then (an immediate follow-up waits for it, by design)
         if (i) await new Promise((resolve) => setTimeout(resolve, 250));
         const started = performance.now();
-        await turn({ text: `turn ${i}`, ...(i ? { resumeCursor: SESSION } : {}), integrations: agents() });
+        await turn({ text: `turn ${i}`, ...(i ? { resumeCursor: SESSION } : {}), integrations: {} });
         times.push(performance.now() - started);
       }
       await instance!.dispose();
@@ -886,6 +1067,18 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       await until(() => !alive(pid!), "the idle process to close");
       process.env.MURAGE_ACP_POOL_IDLE_MS = "60000";
     };
+
+    it("the fence runs right before the spawn with the cursor the launch resumes; a refusal spawns nothing and tells nobody", async () => {
+      await goCold();
+      const count = spawns().length;
+      const before = recorder.events.length;
+      expect(await instance!.adapter.prewarm!("t-pool", { fence: () => { throw new PrewarmRefused("cursor-moved"); } })).toBe(false);
+      expect(spawns()).toHaveLength(count);
+      expect(recorder.events.length).toBe(before);
+      const fence = vi.fn();
+      expect(await instance!.adapter.prewarm!("t-pool", { fence })).toBe(true);
+      expect(fence.mock.calls).toEqual([[SESSION]]);
+    });
 
     it("starts a cold engine once with its session established, sends no prompt, and announces nothing", async () => {
       await goCold();
@@ -975,16 +1168,17 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     });
 
     it("a send that outwaits a slow prewarm takes over: the prewarm is cancelled and its slot freed, never 'already running'", async () => {
-      // like goCold, but the remembered turn mounts an MCP server, so the warm has something to wait for
+      // Warm a mount-free turn; hold initialization so the next send must take the pending warm over.
       process.env.MURAGE_ACP_POOL_IDLE_MS = "150";
       process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "250";
       await create();
-      await turn({ text: "one", integrations: agents() });
+      await turn({ text: "one" });
       await until(() => !alive(spawns()[0]!), "the idle process to close");
       process.env.MURAGE_ACP_POOL_IDLE_MS = "60000";
       process.env.MURAGE_PREWARM_WAIT_MS = "100";
       delete process.env.FAKE_ACP_MCP_READY; // the warm's MCP servers never report ready: it stays starting
       process.env.MURAGE_ACP_MCP_READY_MS = "60000";
+      process.env.FAKE_ACP_INIT_DELAY_MS = "1000";
       const warming = instance!.adapter.prewarm!("t-pool");
       await until(() => spawns().length === 2, "the prewarm's process to start");
       await new Promise((resolve) => setTimeout(resolve, 200)); // past the send's wait
@@ -1055,9 +1249,10 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       const second = agents();
       const { done } = await turn({ threadId: "t-b", text: "two", resumeCursor: SESSION, integrations: second });
       expect(done).toMatchObject({ ok: true });
-      expect(spawns()).toHaveLength(1);
+      // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted generations cannot adopt a spare.
+      expect(spawns()).toHaveLength(2);
       expect(calls("session/load")).toEqual([
-        expect.objectContaining({ noReplay: true, agentsToken: fixtureCredentialFingerprint(second.agents!.env.MURAGE_COMMS_TOKEN) }),
+        expect.objectContaining({ pid: spawns()[1] }),
       ]);
     });
 

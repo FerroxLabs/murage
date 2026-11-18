@@ -1,0 +1,3 @@
+vitest=0
+electron=0
+server-types=0

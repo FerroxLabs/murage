@@ -1,3 +1,4 @@
+import {prepareRecallContextSync,stopRecallViewMaintenance} from './recall-view.ts';
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Output lineage in every memory mode (memory schema v6, round 3 item 3).
 // A reply made with no receipt (memory off) rests on the replies its context
@@ -29,13 +30,15 @@ import { removeTempDirSync } from "../testing/cleanup.ts";
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
 
-const roster: MemoryRoster = { bots: [{ id: "dax", threadId: "dax-direct" }], groups: [] };
+const roster: MemoryRoster = { memoryRosterRevision: 1, bots: [{ id: "dax", threadId: "dax-direct" }], groups: [] };
 const thread = "dax-direct";
 // These tests commit thousands of rows one by one; the default synchronous=FULL makes that fsync-bound
 // (over 20 s on a Windows runner). Durability is not what they check.
 function noFsync() { database().exec("PRAGMA synchronous=OFF"); }
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); noFsync(); });
 function access(): MemoryAccess {
+  // MAIN RULING 1115-RECALL-S1S2H-ITEMS F: construct the real admitted view before issuing fixture access.
+  prepareRecallContextSync('dax',thread,roster);stopRecallViewMaintenance();
   const registry = new InternalCapabilities(); registry.begin("dax", thread, "g");
   return memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "dax", threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);
 }

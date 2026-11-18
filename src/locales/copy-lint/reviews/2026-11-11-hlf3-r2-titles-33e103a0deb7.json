@@ -1,0 +1,975 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "astra-hlf3-r2",
+  "date": "2026-11-11",
+  "base": "67367218d",
+  "scope": "Independent Sol review of the 160 F3 titles authored by astra-hlf3-r2; exact shipped text in eight packs",
+  "strings": {
+    "en:highlevel.titles.conversations.search": {
+      "text": "Search conversations",
+      "en": "Search conversations",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.get": {
+      "text": "Read a conversation",
+      "en": "Read a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.messages.list": {
+      "text": "List conversation messages",
+      "en": "List conversation messages",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.message.get": {
+      "text": "Read a message",
+      "en": "Read a message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.email.get": {
+      "text": "Read an email",
+      "en": "Read an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.create": {
+      "text": "Create a conversation",
+      "en": "Create a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.update": {
+      "text": "Update a conversation",
+      "en": "Update a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.delete": {
+      "text": "Delete a conversation",
+      "en": "Delete a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.send.sms": {
+      "text": "Send a text",
+      "en": "Send a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.send.email": {
+      "text": "Send an email",
+      "en": "Send an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.send.whatsapp": {
+      "text": "Send a WhatsApp message",
+      "en": "Send a WhatsApp message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.send.facebook": {
+      "text": "Send a Facebook message",
+      "en": "Send a Facebook message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.send.instagram": {
+      "text": "Send an Instagram message",
+      "en": "Send an Instagram message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.send.gmb": {
+      "text": "Send a Google Business message",
+      "en": "Send a Google Business message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.send.livechat": {
+      "text": "Send a live chat message",
+      "en": "Send a live chat message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.send.scheduledSms": {
+      "text": "Schedule a text",
+      "en": "Schedule a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.send.scheduledEmail": {
+      "text": "Schedule an email",
+      "en": "Schedule an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.schedule.cancel": {
+      "text": "Cancel a scheduled message",
+      "en": "Cancel a scheduled message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.schedule.cancelEmail": {
+      "text": "Cancel a scheduled email",
+      "en": "Cancel a scheduled email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "en:highlevel.titles.conversations.attachment.upload": {
+      "text": "Upload a message attachment",
+      "en": "Upload a message attachment",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.search": {
+      "text": "Unterhaltungen suchen",
+      "en": "Search conversations",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.get": {
+      "text": "Eine Unterhaltung lesen",
+      "en": "Read a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.messages.list": {
+      "text": "Nachrichten einer Unterhaltung auflisten",
+      "en": "List conversation messages",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.message.get": {
+      "text": "Eine Nachricht lesen",
+      "en": "Read a message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.email.get": {
+      "text": "Eine E-Mail lesen",
+      "en": "Read an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.create": {
+      "text": "Eine Unterhaltung erstellen",
+      "en": "Create a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.update": {
+      "text": "Eine Unterhaltung aktualisieren",
+      "en": "Update a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.delete": {
+      "text": "Eine Unterhaltung löschen",
+      "en": "Delete a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.send.sms": {
+      "text": "Eine SMS senden",
+      "en": "Send a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.send.email": {
+      "text": "Eine E-Mail senden",
+      "en": "Send an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.send.whatsapp": {
+      "text": "Eine WhatsApp-Nachricht senden",
+      "en": "Send a WhatsApp message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.send.facebook": {
+      "text": "Eine Facebook-Nachricht senden",
+      "en": "Send a Facebook message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.send.instagram": {
+      "text": "Eine Instagram-Nachricht senden",
+      "en": "Send an Instagram message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.send.gmb": {
+      "text": "Eine Google Business-Nachricht senden",
+      "en": "Send a Google Business message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.send.livechat": {
+      "text": "Eine Livechat-Nachricht senden",
+      "en": "Send a live chat message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.send.scheduledSms": {
+      "text": "Eine SMS planen",
+      "en": "Schedule a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.send.scheduledEmail": {
+      "text": "Eine E-Mail planen",
+      "en": "Schedule an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.schedule.cancel": {
+      "text": "Eine geplante Nachricht absagen",
+      "en": "Cancel a scheduled message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.schedule.cancelEmail": {
+      "text": "Eine geplante E-Mail absagen",
+      "en": "Cancel a scheduled email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "de:highlevel.titles.conversations.attachment.upload": {
+      "text": "Einen Nachrichtenanhang hochladen",
+      "en": "Upload a message attachment",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.search": {
+      "text": "Buscar conversaciones",
+      "en": "Search conversations",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.get": {
+      "text": "Leer una conversación",
+      "en": "Read a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.messages.list": {
+      "text": "Listar los mensajes de una conversación",
+      "en": "List conversation messages",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.message.get": {
+      "text": "Leer un mensaje",
+      "en": "Read a message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.email.get": {
+      "text": "Leer un correo",
+      "en": "Read an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.create": {
+      "text": "Crear una conversación",
+      "en": "Create a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.update": {
+      "text": "Actualizar una conversación",
+      "en": "Update a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.delete": {
+      "text": "Eliminar una conversación",
+      "en": "Delete a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.send.sms": {
+      "text": "Enviar un SMS",
+      "en": "Send a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.send.email": {
+      "text": "Enviar un correo",
+      "en": "Send an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.send.whatsapp": {
+      "text": "Enviar un mensaje de WhatsApp",
+      "en": "Send a WhatsApp message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.send.facebook": {
+      "text": "Enviar un mensaje de Facebook",
+      "en": "Send a Facebook message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.send.instagram": {
+      "text": "Enviar un mensaje de Instagram",
+      "en": "Send an Instagram message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.send.gmb": {
+      "text": "Enviar un mensaje de Google Business",
+      "en": "Send a Google Business message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.send.livechat": {
+      "text": "Enviar un mensaje de chat en vivo",
+      "en": "Send a live chat message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.send.scheduledSms": {
+      "text": "Programar un SMS",
+      "en": "Schedule a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.send.scheduledEmail": {
+      "text": "Programar un correo",
+      "en": "Schedule an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.schedule.cancel": {
+      "text": "Cancelar un mensaje programado",
+      "en": "Cancel a scheduled message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.schedule.cancelEmail": {
+      "text": "Cancelar un correo programado",
+      "en": "Cancel a scheduled email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "es:highlevel.titles.conversations.attachment.upload": {
+      "text": "Subir un archivo adjunto a un mensaje",
+      "en": "Upload a message attachment",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.search": {
+      "text": "Rechercher des conversations",
+      "en": "Search conversations",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.get": {
+      "text": "Lire une conversation",
+      "en": "Read a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.messages.list": {
+      "text": "Lister les messages d’une conversation",
+      "en": "List conversation messages",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.message.get": {
+      "text": "Lire un message",
+      "en": "Read a message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.email.get": {
+      "text": "Lire un e-mail",
+      "en": "Read an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.create": {
+      "text": "Créer une conversation",
+      "en": "Create a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.update": {
+      "text": "Mettre à jour une conversation",
+      "en": "Update a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.delete": {
+      "text": "Supprimer une conversation",
+      "en": "Delete a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.send.sms": {
+      "text": "Envoyer un SMS",
+      "en": "Send a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.send.email": {
+      "text": "Envoyer un e-mail",
+      "en": "Send an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.send.whatsapp": {
+      "text": "Envoyer un message WhatsApp",
+      "en": "Send a WhatsApp message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.send.facebook": {
+      "text": "Envoyer un message Facebook",
+      "en": "Send a Facebook message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.send.instagram": {
+      "text": "Envoyer un message Instagram",
+      "en": "Send an Instagram message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.send.gmb": {
+      "text": "Envoyer un message Google Business",
+      "en": "Send a Google Business message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.send.livechat": {
+      "text": "Envoyer un message de chat en direct",
+      "en": "Send a live chat message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.send.scheduledSms": {
+      "text": "Programmer un SMS",
+      "en": "Schedule a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.send.scheduledEmail": {
+      "text": "Programmer un e-mail",
+      "en": "Schedule an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.schedule.cancel": {
+      "text": "Annuler un message programmé",
+      "en": "Cancel a scheduled message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.schedule.cancelEmail": {
+      "text": "Annuler un e-mail programmé",
+      "en": "Cancel a scheduled email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "fr:highlevel.titles.conversations.attachment.upload": {
+      "text": "Envoyer une pièce jointe à un message",
+      "en": "Upload a message attachment",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.search": {
+      "text": "बातचीत खोजें",
+      "en": "Search conversations",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.get": {
+      "text": "बातचीत पढ़ें",
+      "en": "Read a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.messages.list": {
+      "text": "बातचीत के संदेशों की सूची देखें",
+      "en": "List conversation messages",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.message.get": {
+      "text": "संदेश पढ़ें",
+      "en": "Read a message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.email.get": {
+      "text": "ईमेल पढ़ें",
+      "en": "Read an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.create": {
+      "text": "बातचीत शुरू करें",
+      "en": "Create a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.update": {
+      "text": "बातचीत अपडेट करें",
+      "en": "Update a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.delete": {
+      "text": "बातचीत हटाएँ",
+      "en": "Delete a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.send.sms": {
+      "text": "SMS भेजें",
+      "en": "Send a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.send.email": {
+      "text": "ईमेल भेजें",
+      "en": "Send an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.send.whatsapp": {
+      "text": "WhatsApp संदेश भेजें",
+      "en": "Send a WhatsApp message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.send.facebook": {
+      "text": "Facebook संदेश भेजें",
+      "en": "Send a Facebook message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.send.instagram": {
+      "text": "Instagram संदेश भेजें",
+      "en": "Send an Instagram message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.send.gmb": {
+      "text": "Google Business संदेश भेजें",
+      "en": "Send a Google Business message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.send.livechat": {
+      "text": "लाइव चैट संदेश भेजें",
+      "en": "Send a live chat message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.send.scheduledSms": {
+      "text": "SMS भेजने का समय तय करें",
+      "en": "Schedule a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.send.scheduledEmail": {
+      "text": "ईमेल भेजने का समय तय करें",
+      "en": "Schedule an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.schedule.cancel": {
+      "text": "तय समय पर भेजा जाने वाला संदेश रद्द करें",
+      "en": "Cancel a scheduled message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.schedule.cancelEmail": {
+      "text": "तय समय पर भेजा जाने वाला ईमेल रद्द करें",
+      "en": "Cancel a scheduled email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "hi:highlevel.titles.conversations.attachment.upload": {
+      "text": "संदेश का अटैचमेंट अपलोड करें",
+      "en": "Upload a message attachment",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.search": {
+      "text": "会話を検索",
+      "en": "Search conversations",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.get": {
+      "text": "会話を読む",
+      "en": "Read a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.messages.list": {
+      "text": "会話のメッセージを一覧表示",
+      "en": "List conversation messages",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.message.get": {
+      "text": "メッセージを読む",
+      "en": "Read a message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.email.get": {
+      "text": "メールを読む",
+      "en": "Read an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.create": {
+      "text": "会話を作成",
+      "en": "Create a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.update": {
+      "text": "会話を更新",
+      "en": "Update a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.delete": {
+      "text": "会話を削除",
+      "en": "Delete a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.send.sms": {
+      "text": "SMSを送信",
+      "en": "Send a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.send.email": {
+      "text": "メールを送信",
+      "en": "Send an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.send.whatsapp": {
+      "text": "WhatsAppメッセージを送信",
+      "en": "Send a WhatsApp message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.send.facebook": {
+      "text": "Facebookメッセージを送信",
+      "en": "Send a Facebook message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.send.instagram": {
+      "text": "Instagramメッセージを送信",
+      "en": "Send an Instagram message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.send.gmb": {
+      "text": "Google Businessメッセージを送信",
+      "en": "Send a Google Business message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.send.livechat": {
+      "text": "ライブチャットのメッセージを送信",
+      "en": "Send a live chat message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.send.scheduledSms": {
+      "text": "SMSの送信を予約",
+      "en": "Schedule a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.send.scheduledEmail": {
+      "text": "メールの送信を予約",
+      "en": "Schedule an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.schedule.cancel": {
+      "text": "メッセージの送信予約を取り消す",
+      "en": "Cancel a scheduled message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.schedule.cancelEmail": {
+      "text": "メールの送信予約を取り消す",
+      "en": "Cancel a scheduled email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "ja:highlevel.titles.conversations.attachment.upload": {
+      "text": "メッセージの添付ファイルをアップロード",
+      "en": "Upload a message attachment",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.search": {
+      "text": "Buscar conversas",
+      "en": "Search conversations",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.get": {
+      "text": "Ler uma conversa",
+      "en": "Read a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.messages.list": {
+      "text": "Listar mensagens de uma conversa",
+      "en": "List conversation messages",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.message.get": {
+      "text": "Ler uma mensagem",
+      "en": "Read a message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.email.get": {
+      "text": "Ler um e-mail",
+      "en": "Read an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.create": {
+      "text": "Criar uma conversa",
+      "en": "Create a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.update": {
+      "text": "Atualizar uma conversa",
+      "en": "Update a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.delete": {
+      "text": "Excluir uma conversa",
+      "en": "Delete a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.send.sms": {
+      "text": "Enviar um SMS",
+      "en": "Send a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.send.email": {
+      "text": "Enviar um e-mail",
+      "en": "Send an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.send.whatsapp": {
+      "text": "Enviar uma mensagem no WhatsApp",
+      "en": "Send a WhatsApp message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.send.facebook": {
+      "text": "Enviar uma mensagem no Facebook",
+      "en": "Send a Facebook message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.send.instagram": {
+      "text": "Enviar uma mensagem no Instagram",
+      "en": "Send an Instagram message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.send.gmb": {
+      "text": "Enviar uma mensagem no Google Business",
+      "en": "Send a Google Business message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.send.livechat": {
+      "text": "Enviar uma mensagem no chat ao vivo",
+      "en": "Send a live chat message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.send.scheduledSms": {
+      "text": "Agendar um SMS",
+      "en": "Schedule a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.send.scheduledEmail": {
+      "text": "Agendar um e-mail",
+      "en": "Schedule an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.schedule.cancel": {
+      "text": "Cancelar uma mensagem agendada",
+      "en": "Cancel a scheduled message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.schedule.cancelEmail": {
+      "text": "Cancelar um e-mail agendado",
+      "en": "Cancel a scheduled email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "pt-br:highlevel.titles.conversations.attachment.upload": {
+      "text": "Enviar um anexo de mensagem",
+      "en": "Upload a message attachment",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.search": {
+      "text": "搜索会话",
+      "en": "Search conversations",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.get": {
+      "text": "阅读会话",
+      "en": "Read a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.messages.list": {
+      "text": "列出会话消息",
+      "en": "List conversation messages",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.message.get": {
+      "text": "阅读消息",
+      "en": "Read a message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.email.get": {
+      "text": "阅读邮件",
+      "en": "Read an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.create": {
+      "text": "创建会话",
+      "en": "Create a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.update": {
+      "text": "更新会话",
+      "en": "Update a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.delete": {
+      "text": "删除会话",
+      "en": "Delete a conversation",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.send.sms": {
+      "text": "发送短信",
+      "en": "Send a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.send.email": {
+      "text": "发送邮件",
+      "en": "Send an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.send.whatsapp": {
+      "text": "发送 WhatsApp 消息",
+      "en": "Send a WhatsApp message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.send.facebook": {
+      "text": "发送 Facebook 消息",
+      "en": "Send a Facebook message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.send.instagram": {
+      "text": "发送 Instagram 消息",
+      "en": "Send an Instagram message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.send.gmb": {
+      "text": "发送 Google Business 消息",
+      "en": "Send a Google Business message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.send.livechat": {
+      "text": "发送在线聊天消息",
+      "en": "Send a live chat message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.send.scheduledSms": {
+      "text": "定时发送短信",
+      "en": "Schedule a text",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.send.scheduledEmail": {
+      "text": "定时发送邮件",
+      "en": "Schedule an email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.schedule.cancel": {
+      "text": "取消定时消息",
+      "en": "Cancel a scheduled message",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.schedule.cancelEmail": {
+      "text": "取消定时邮件",
+      "en": "Cancel a scheduled email",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    },
+    "zh:highlevel.titles.conversations.attachment.upload": {
+      "text": "上传消息附件",
+      "en": "Upload a message attachment",
+      "verdict": "pass",
+      "note": "Sol independently reviewed the original Astra title: direct action wording, meaning matches English, channel name preserved, no em dash or added claim."
+    }
+  },
+  "files": {}
+}

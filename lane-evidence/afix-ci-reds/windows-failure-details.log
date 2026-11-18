@@ -1,0 +1,258 @@
+ FAIL  server/channels/signal/storage.test.ts > real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) > T-WIN-CLM returns identical owner, attributes and DACL in full and constrained language
+2026-11-12T14:47:42.1135444Z AssertionError: expected null not to be null
+2026-11-12T14:47:42.1136406Z  ❯ server/channels/signal/storage.test.ts:392:22
+2026-11-12T14:47:42.1137487Z     390|       ...options, input: `$ExecutionContext.SessionState.LanguageMode …
+2026-11-12T14:47:42.1138463Z     391|     }));
+2026-11-12T14:47:42.1139180Z     392|     expect(full).not.toBeNull();
+2026-11-12T14:47:42.1140292Z        |                      ^
+2026-11-12T14:47:42.1140843Z     393|     expect(constrained).toEqual(full);
+2026-11-12T14:47:42.1141577Z     394|     expect(full!.some(row => row.path === join(unicode, "鍵"))).toBe(tr…
+2026-11-12T14:47:42.1141913Z 
+2026-11-12T14:47:42.1142141Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[35/56]⎯
+2026-11-12T14:47:42.1142344Z 
+2026-11-12T14:47:42.1143529Z  FAIL  server/channels/signal/storage.test.ts > real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) > T-WIN-INHERIT repairs a real explicit Everyone grant and an inherited key DACL
+2026-11-12T14:47:42.1145786Z AssertionError: expected { state: 'blocked', …(3) } to deeply equal { state: 'ok' }
+2026-11-12T14:47:42.1146247Z 
+2026-11-12T14:47:42.1146384Z - Expected
+2026-11-12T14:47:42.1146712Z + Received
+2026-11-12T14:47:42.1146863Z 
+2026-11-12T14:47:42.1146964Z   {
+2026-11-12T14:47:42.1147210Z -   "state": "ok",
+2026-11-12T14:47:42.1147765Z +   "path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\murage-signal-storage-7mdGHs",
+2026-11-12T14:47:42.1148503Z +   "reason": "storage-permissions",
+2026-11-12T14:47:42.1148863Z +   "scope": "data-dir",
+2026-11-12T14:47:42.1149170Z +   "state": "blocked",
+2026-11-12T14:47:42.1149419Z   }
+2026-11-12T14:47:42.1149525Z 
+2026-11-12T14:47:42.1149847Z  ❯ server/channels/signal/storage.test.ts:404:35
+2026-11-12T14:47:42.1150454Z     402|   it("T-WIN-INHERIT repairs a real explicit Everyone grant and an inhe…
+2026-11-12T14:47:42.1151213Z     403|     const f = protectedFixture();
+2026-11-12T14:47:42.1152124Z     404|     expect(await f.guard.check()).toEqual({ state: "ok" });
+2026-11-12T14:47:42.1152829Z        |                                   ^
+2026-11-12T14:47:42.1153656Z     405|     aclRun(icacls(), [f.key, "/grant", "*S-1-1-0:R", "/q"]);
+2026-11-12T14:47:42.1154877Z     406|     expect(await f.guard.check()).toEqual({ state: "ok" });
+2026-11-12T14:47:42.1155397Z 
+2026-11-12T14:47:42.1155605Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[36/56]⎯
+2026-11-12T14:47:42.1155805Z 
+2026-11-12T14:47:42.1156962Z  FAIL  server/channels/signal/storage.test.ts > real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) > T-WIN-REPARSE refuses a real junction link without enumerating its target
+2026-11-12T14:47:42.1158247Z AssertionError: expected { state: 'blocked', …(3) } to deeply equal { state: 'ok' }
+2026-11-12T14:47:42.1158606Z 
+2026-11-12T14:47:42.1158728Z - Expected
+2026-11-12T14:47:42.1158981Z + Received
+2026-11-12T14:47:42.1159099Z 
+2026-11-12T14:47:42.1159192Z   {
+2026-11-12T14:47:42.1159437Z -   "state": "ok",
+2026-11-12T14:47:42.1159953Z +   "path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\murage-signal-storage-3FoN1I",
+2026-11-12T14:47:42.1160466Z +   "reason": "storage-permissions",
+2026-11-12T14:47:42.1160810Z +   "scope": "data-dir",
+2026-11-12T14:47:42.1161117Z +   "state": "blocked",
+2026-11-12T14:47:42.1161741Z   }
+2026-11-12T14:47:42.1161876Z 
+2026-11-12T14:47:42.1162189Z  ❯ server/channels/signal/storage.test.ts:423:35
+2026-11-12T14:47:42.1162778Z     421|     else fs.mkdirSync(junction);
+2026-11-12T14:47:42.1163599Z     422|     expect(windowsAclRestrict(junction, aclRun)).toBe(true);
+2026-11-12T14:47:42.1164655Z     423|     expect(await f.guard.check()).toEqual({ state: "ok" });
+2026-11-12T14:47:42.1165364Z        |                                   ^
+2026-11-12T14:47:42.1165975Z     424|     if (kind === "file") fs.unlinkSync(junction);
+2026-11-12T14:47:42.1166771Z     425|     else fs.rmdirSync(junction);
+2026-11-12T14:47:42.1167159Z 
+2026-11-12T14:47:42.1167392Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[37/56]⎯
+2026-11-12T14:47:42.1167651Z 
+2026-11-12T14:47:42.1168842Z  FAIL  server/channels/signal/storage.test.ts > real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) > T-WIN-REPARSE refuses a real dir link without enumerating its target
+2026-11-12T14:47:42.1170252Z AssertionError: expected { state: 'blocked', …(3) } to deeply equal { state: 'ok' }
+2026-11-12T14:47:42.1170766Z 
+2026-11-12T14:47:42.1170947Z - Expected
+2026-11-12T14:47:42.1171306Z + Received
+2026-11-12T14:47:42.1171501Z 
+2026-11-12T14:47:42.1187142Z   {
+2026-11-12T14:47:42.1187792Z -   "state": "ok",
+2026-11-12T14:47:42.1188682Z +   "path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\murage-signal-storage-Kg4qKy",
+2026-11-12T14:47:42.1189504Z +   "reason": "storage-permissions",
+2026-11-12T14:47:42.1190073Z +   "scope": "data-dir",
+2026-11-12T14:47:42.1190558Z +   "state": "blocked",
+2026-11-12T14:47:42.1190932Z   }
+2026-11-12T14:47:42.1191103Z 
+2026-11-12T14:47:42.1191652Z  ❯ server/channels/signal/storage.test.ts:423:35
+2026-11-12T14:47:42.1193603Z     421|     else fs.mkdirSync(junction);
+2026-11-12T14:47:42.1195564Z     422|     expect(windowsAclRestrict(junction, aclRun)).toBe(true);
+2026-11-12T14:47:42.1197782Z     423|     expect(await f.guard.check()).toEqual({ state: "ok" });
+2026-11-12T14:47:42.1199073Z        |                                   ^
+2026-11-12T14:47:42.1200119Z     424|     if (kind === "file") fs.unlinkSync(junction);
+2026-11-12T14:47:42.1201254Z     425|     else fs.rmdirSync(junction);
+2026-11-12T14:47:42.1201736Z 
+2026-11-12T14:47:42.1202117Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[38/56]⎯
+2026-11-12T14:47:42.1202462Z 
+2026-11-12T14:47:42.1204690Z  FAIL  server/channels/signal/storage.test.ts > real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) > T-WIN-REPARSE refuses a real file link without enumerating its target
+2026-11-12T14:47:42.1207023Z AssertionError: expected { state: 'blocked', …(3) } to deeply equal { state: 'ok' }
+2026-11-12T14:47:42.1207730Z 
+2026-11-12T14:47:42.1207934Z - Expected
+2026-11-12T14:47:42.1208303Z + Received
+2026-11-12T14:47:42.1208488Z 
+2026-11-12T14:47:42.1208638Z   {
+2026-11-12T14:47:42.1209016Z -   "state": "ok",
+2026-11-12T14:47:42.1209900Z +   "path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\murage-signal-storage-YB9dKc",
+2026-11-12T14:47:42.1210790Z +   "reason": "storage-permissions",
+2026-11-12T14:47:42.1211351Z +   "scope": "data-dir",
+2026-11-12T14:47:42.1211833Z +   "state": "blocked",
+2026-11-12T14:47:42.1212208Z   }
+2026-11-12T14:47:42.1212366Z 
+2026-11-12T14:47:42.1212886Z  ❯ server/channels/signal/storage.test.ts:423:35
+2026-11-12T14:47:42.1213908Z     421|     else fs.mkdirSync(junction);
+2026-11-12T14:47:42.1215369Z     422|     expect(windowsAclRestrict(junction, aclRun)).toBe(true);
+2026-11-12T14:47:42.1217272Z     423|     expect(await f.guard.check()).toEqual({ state: "ok" });
+2026-11-12T14:47:42.1218524Z        |                                   ^
+2026-11-12T14:47:42.1219582Z     424|     if (kind === "file") fs.unlinkSync(junction);
+2026-11-12T14:47:42.1220740Z     425|     else fs.rmdirSync(junction);
+2026-11-12T14:47:42.1221228Z 
+2026-11-12T14:47:42.1221591Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[39/56]⎯
+2026-11-12T14:47:42.1222183Z 
+2026-11-12T14:47:42.1224365Z  FAIL  server/channels/signal/storage.test.ts > real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) > T-WIN-REPARSE refuses a real non-link reparse tag with ordinary lstat; kills symlink-only checks
+2026-11-12T14:47:42.1226823Z AssertionError: expected { state: 'blocked', …(3) } to deeply equal { state: 'ok' }
+2026-11-12T14:47:42.1227442Z 
+2026-11-12T14:47:42.1227659Z - Expected
+2026-11-12T14:47:42.1228042Z + Received
+2026-11-12T14:47:42.1228233Z 
+2026-11-12T14:47:42.1228390Z   {
+2026-11-12T14:47:42.1228734Z -   "state": "ok",
+2026-11-12T14:47:42.1230044Z +   "path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\murage-signal-storage-culqXG",
+2026-11-12T14:47:42.1231000Z +   "reason": "storage-permissions",
+2026-11-12T14:47:42.1231586Z +   "scope": "data-dir",
+2026-11-12T14:47:42.1232097Z +   "state": "blocked",
+2026-11-12T14:47:42.1232518Z   }
+2026-11-12T14:47:42.1232682Z 
+2026-11-12T14:47:42.1233463Z  ❯ server/channels/signal/storage.test.ts:439:35
+2026-11-12T14:47:42.1234518Z     437|     const f = protectedFixture();
+2026-11-12T14:47:42.1235462Z     438|     const path = f.key;
+2026-11-12T14:47:42.1236937Z     439|     expect(await f.guard.check()).toEqual({ state: "ok" });
+2026-11-12T14:47:42.1238196Z        |                                   ^
+2026-11-12T14:47:42.1239092Z     440|     const before = (await windowsSecurityRead(f.roots))!.find(row => r…
+2026-11-12T14:47:42.1240506Z     441|     expect(before.attributes & 0x400).toBe(0);
+2026-11-12T14:47:42.1241320Z 
+2026-11-12T14:47:42.1241732Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[40/56]⎯
+2026-11-12T14:47:42.1242059Z 
+2026-11-12T14:47:42.1244342Z  FAIL  server/channels/signal/storage.test.ts > real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) > T-WIN-OWNER rejects real foreign-owned key with an accepted DACL; kills DACL-only checks and setowner repair
+2026-11-12T14:47:42.1246905Z AssertionError: expected { state: 'blocked', …(3) } to deeply equal { state: 'ok' }
+2026-11-12T14:47:42.1247558Z 
+2026-11-12T14:47:42.1247794Z - Expected
+2026-11-12T14:47:42.1248194Z + Received
+2026-11-12T14:47:42.1248393Z 
+2026-11-12T14:47:42.1248561Z   {
+2026-11-12T14:47:42.1248939Z -   "state": "ok",
+2026-11-12T14:47:42.1249806Z +   "path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\murage-signal-storage-ujIpxg",
+2026-11-12T14:47:42.1250735Z +   "reason": "storage-permissions",
+2026-11-12T14:47:42.1251362Z +   "scope": "data-dir",
+2026-11-12T14:47:42.1251867Z +   "state": "blocked",
+2026-11-12T14:47:42.1252291Z   }
+2026-11-12T14:47:42.1252475Z 
+2026-11-12T14:47:42.1253021Z  ❯ server/channels/signal/storage.test.ts:474:37
+2026-11-12T14:47:42.1254043Z     472|       const f = protectedFixture();
+2026-11-12T14:47:42.1255409Z     473|       const path = ({ key: f.key, auth: f.roots[2], signal: f.roots[1]…
+2026-11-12T14:47:42.1256992Z     474|       expect(await f.guard.check()).toEqual({ state: "ok" });
+2026-11-12T14:47:42.1258295Z        |                                     ^
+2026-11-12T14:47:42.1259191Z     475|       const before = (await windowsSecurityRead(f.roots))!.find(row =>…
+2026-11-12T14:47:42.1260255Z     476|       try {
+2026-11-12T14:47:42.1260555Z 
+2026-11-12T14:47:42.1260900Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[41/56]⎯
+2026-11-12T14:47:42.1261230Z 
+2026-11-12T14:47:42.1263540Z  FAIL  server/channels/signal/storage.test.ts > real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) > T-WIN-OWNER rejects real foreign-owned auth with an accepted DACL; kills DACL-only checks and setowner repair
+2026-11-12T14:47:42.1266096Z AssertionError: expected { state: 'blocked', …(3) } to deeply equal { state: 'ok' }
+2026-11-12T14:47:42.1266737Z 
+2026-11-12T14:47:42.1266951Z - Expected
+2026-11-12T14:47:42.1267312Z + Received
+2026-11-12T14:47:42.1267516Z 
+2026-11-12T14:47:42.1267665Z   {
+2026-11-12T14:47:42.1268023Z -   "state": "ok",
+2026-11-12T14:47:42.1268906Z +   "path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\murage-signal-storage-I7ihut",
+2026-11-12T14:47:42.1270071Z +   "reason": "storage-permissions",
+2026-11-12T14:47:42.1270681Z +   "scope": "data-dir",
+2026-11-12T14:47:42.1271192Z +   "state": "blocked",
+2026-11-12T14:47:42.1271610Z   }
+2026-11-12T14:47:42.1271787Z 
+2026-11-12T14:47:42.1272308Z  ❯ server/channels/signal/storage.test.ts:474:37
+2026-11-12T14:47:42.1273319Z     472|       const f = protectedFixture();
+2026-11-12T14:47:42.1274374Z     473|       const path = ({ key: f.key, auth: f.roots[2], signal: f.roots[1]…
+2026-11-12T14:47:42.1276251Z     474|       expect(await f.guard.check()).toEqual({ state: "ok" });
+2026-11-12T14:47:42.1277529Z        |                                     ^
+2026-11-12T14:47:42.1278440Z     475|       const before = (await windowsSecurityRead(f.roots))!.find(row =>…
+2026-11-12T14:47:42.1279206Z     476|       try {
+2026-11-12T14:47:42.1279485Z 
+2026-11-12T14:47:42.1279841Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[42/56]⎯
+2026-11-12T14:47:42.1280180Z 
+2026-11-12T14:47:42.1282474Z  FAIL  server/channels/signal/storage.test.ts > real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) > T-WIN-OWNER rejects real foreign-owned signal with an accepted DACL; kills DACL-only checks and setowner repair
+2026-11-12T14:47:42.1285321Z AssertionError: expected { state: 'blocked', …(3) } to deeply equal { state: 'ok' }
+2026-11-12T14:47:42.1285971Z 
+2026-11-12T14:47:42.1286174Z - Expected
+2026-11-12T14:47:42.1286559Z + Received
+2026-11-12T14:47:42.1286745Z 
+2026-11-12T14:47:42.1286929Z   {
+2026-11-12T14:47:42.1287304Z -   "state": "ok",
+2026-11-12T14:47:42.1288218Z +   "path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\murage-signal-storage-F4z29D",
+2026-11-12T14:47:42.1289153Z +   "reason": "storage-permissions",
+2026-11-12T14:47:42.1289734Z +   "scope": "data-dir",
+2026-11-12T14:47:42.1290239Z +   "state": "blocked",
+2026-11-12T14:47:42.1290670Z   }
+2026-11-12T14:47:42.1290829Z 
+2026-11-12T14:47:42.1291352Z  ❯ server/channels/signal/storage.test.ts:474:37
+2026-11-12T14:47:42.1292382Z     472|       const f = protectedFixture();
+2026-11-12T14:47:42.1293405Z     473|       const path = ({ key: f.key, auth: f.roots[2], signal: f.roots[1]…
+2026-11-12T14:47:42.1294926Z     474|       expect(await f.guard.check()).toEqual({ state: "ok" });
+2026-11-12T14:47:42.1297114Z        |                                     ^
+2026-11-12T14:47:42.1298064Z     475|       const before = (await windowsSecurityRead(f.roots))!.find(row =>…
+2026-11-12T14:47:42.1298818Z     476|       try {
+2026-11-12T14:47:42.1299112Z 
+2026-11-12T14:47:42.1299471Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[43/56]⎯
+2026-11-12T14:47:42.1299781Z 
+2026-11-12T14:47:42.1302073Z  FAIL  server/channels/signal/storage.test.ts > real Windows isolated reader (requires provisioned Windows quality runner; Linux/macOS cannot qualify B3) > T-WIN-OWNER rejects real foreign-owned data with an accepted DACL; kills DACL-only checks and setowner repair
+2026-11-12T14:47:42.1304732Z AssertionError: expected { state: 'blocked', …(3) } to deeply equal { state: 'ok' }
+2026-11-12T14:47:42.1305373Z 
+2026-11-12T14:47:42.1305603Z - Expected
+2026-11-12T14:47:42.1306009Z + Received
+2026-11-12T14:47:42.1306214Z 
+2026-11-12T14:47:42.1306370Z   {
+2026-11-12T14:47:42.1307059Z -   "state": "ok",
+2026-11-12T14:47:42.1308087Z +   "path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\murage-signal-storage-9p7xDP",
+2026-11-12T14:47:42.1308996Z +   "reason": "storage-permissions",
+2026-11-12T14:47:42.1309589Z +   "scope": "data-dir",
+2026-11-12T14:47:42.1310102Z +   "state": "blocked",
+2026-11-12T14:47:42.1310497Z   }
+2026-11-12T14:47:42.1310673Z 
+2026-11-12T14:47:42.1311200Z  ❯ server/channels/signal/storage.test.ts:474:37
+2026-11-12T14:47:42.1312204Z     472|       const f = protectedFixture();
+2026-11-12T14:47:42.1313269Z     473|       const path = ({ key: f.key, auth: f.roots[2], signal: f.roots[1]…
+2026-11-12T14:47:42.1314795Z     474|       expect(await f.guard.check()).toEqual({ state: "ok" });
+2026-11-12T14:47:42.1316410Z        |                                     ^
+2026-11-12T14:47:42.1317302Z     475|       const before = (await windowsSecurityRead(f.roots))!.find(row =>…
+2026-11-12T14:47:42.1318071Z     476|       try {
+2026-11-12T14:47:42.1318366Z 
+2026-11-12T14:47:42.1318695Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[44/56]⎯
+2026-11-12T14:47:42.1319016Z 
+2026-11-12T14:47:42.1319487Z ⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+2026-11-12T14:47:42.1320040Z 
+2026-11-12T14:47:42.1320494Z Vitest caught 1 unhandled error during the test run.
+2026-11-12T14:47:42.1322115Z This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+2026-11-12T14:47:42.1322843Z 
+2026-11-12T14:47:42.1323340Z ⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+2026-11-12T14:47:42.1324601Z AssertionError: expected [Function] to throw error including 'timeout' but got 'kept-check'
+2026-11-12T14:47:42.1326471Z  ❯ _Assertion.__VITEST_REJECTS__ node_modules/.pnpm/@vitest+expect@4.1.12/node_modules/@vitest/expect/dist/index.js:1747:17
+2026-11-12T14:47:42.1328312Z  ❯ _Assertion.propertyGetter node_modules/.pnpm/chai@6.3.0/node_modules/chai/index.js:1607:27
+2026-11-12T14:47:42.1329961Z  ❯ Object.proxyGetter [as get] node_modules/.pnpm/chai@6.3.0/node_modules/chai/index.js:1696:22
+2026-11-12T14:47:42.1331270Z  ❯ server/channels/signal/process-host.test.ts:326:65
+2026-11-12T14:47:42.1332584Z     324|     vi.useFakeTimers(); const f = fixture();
+2026-11-12T14:47:42.1333872Z     325|     f.spawnChild.mockImplementationOnce(() => { const child = new Fake…
+2026-11-12T14:47:42.1335260Z     326|     const starting = f.start(); const rejected = expect(starting).reje…
+2026-11-12T14:47:42.1336254Z        |                                                                 ^
+2026-11-12T14:47:42.1337608Z     327|     await vi.advanceTimersByTimeAsync(30_000); await rejected;
+2026-11-12T14:47:42.1339013Z     328|     expect(f.events).not.toContainEqual(expect.objectContaining({ kind…
+2026-11-12T14:47:42.1340518Z  ❯ node_modules/.pnpm/@vitest+runner@4.1.12/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+2026-11-12T14:47:42.1342657Z  ❯ node_modules/.pnpm/@vitest+runner@4.1.12/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+2026-11-12T14:47:42.1344385Z  ❯ node_modules/.pnpm/@vitest+runner@4.1.12/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+2026-11-12T14:47:42.1346485Z  ❯ runWithCancel node_modules/.pnpm/@vitest+runner@4.1.12/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10
+2026-11-12T14:47:42.1347416Z 
+2026-11-12T14:47:42.1348855Z This error originated in "server/channels/signal/process-host.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+2026-11-12T14:47:42.1351395Z The latest test that might've caused the error is "T-HOST startup silence terminates and retries without an invalid blocked reason". It might mean one of the following:
+2026-11-12T14:47:42.1352868Z - The error was thrown, while Vitest was running this test.
+2026-11-12T14:47:42.1354142Z - If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+2026-11-12T14:47:42.1355204Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+2026-11-12T14:47:42.1355508Z 
+2026-11-12T14:47:42.1355555Z 
+2026-11-12T14:47:42.1356031Z  

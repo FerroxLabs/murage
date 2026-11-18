@@ -1,9 +1,11 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
+import {execFileSync} from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import {fileURLToPath} from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { OWN_UNASKED } from "../../shared/own-servers.ts";
@@ -20,11 +22,16 @@ import piPermissionGate, {
   PI_GATE_UNCHECKED,
   PI_GATE_UNIDENTIFIED,
   filterSelfCheck,
+  visibleDeleteTarget,
   filterToolResult,
   piGateMessage,
   type FilterHooks,
   type McpToolEntry,
 } from "./pi-permission-gate.ts";
+
+import {wipeBreaker,nativeWipeBreaker} from '../wipe-breaker.ts';
+import {RootRegistry} from '../wipe/registry.ts';
+import {wipeBreaker as carriedWipeBreaker, RootRegistry as CarriedRootRegistry} from './pi-wipe-check.generated.mjs';
 
 const SECRET = "s3cret";
 type Handler = (event: any, ctx: any) => any;
@@ -35,6 +42,12 @@ let project = "";
 let outside = "";
 const holder = globalThis as Record<string, unknown>;
 
+// Owners: shared inventory producer and staged consumer fixtures — pi-roots-b.
+function writeInventory(file: string, context: object, roots: readonly string[] = []) {
+  const inventoryPath = file + '.roots';
+  writeFileSync(inventoryPath, 'MURAGE-PI-ROOTS 1 R 00000000-0000-4000-8000-000000000001\n' + JSON.stringify(roots));
+  writeFileSync(file, JSON.stringify({context, inventoryPath}));
+}
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "pi-gate-")));
   project = join(root, "project");
@@ -46,12 +59,16 @@ beforeEach(() => {
   writeFileSync(join(outside, ".ssh", "id_rsa"), "KEY\n");
   writeFileSync(join(outside, "plain.txt"), "plain\n");
   holder[MCP_TABLE_KEY] = new Map<string, McpToolEntry>();
+  writeInventory(join(root, 'default-context'), {});
+  process.env.MURAGE_PI_WIPE_CONTEXT_FILE = join(root, 'default-context');
 });
 afterEach(() => {
   removeTempDirSync(root);
   delete holder[MCP_TABLE_KEY];
   delete process.env.MURAGE_PI_GATE;
+  delete process.env.MURAGE_PI_GATE_MODE;
   delete process.env.MURAGE_PI_GATE_ONLY;
+  delete process.env.MURAGE_PI_WIPE_CONTEXT_FILE;
   delete (globalThis as Record<symbol, unknown>)[Symbol.for("murage.piGate")];
 });
 
@@ -64,8 +81,12 @@ interface Rig {
   on: Map<string, Handler>;
 }
 
-function rig(options: { hooks?: FilterHooks; onThrows?: string; only?: string; now?: () => number } = {}): Rig {
+function rig(options: { hooks?: FilterHooks; onThrows?: string; only?: string; now?: () => number; mode?: "open" | "bound" | null } = {}): Rig {
   process.env.MURAGE_PI_GATE = SECRET;
+  // These controls model native non-consuming Pi with legacy editor replies.
+  // Missing-mode and bound controls below retain the closed default.
+  if (options.mode === null) delete process.env.MURAGE_PI_GATE_MODE;
+  else process.env.MURAGE_PI_GATE_MODE = options.mode ?? "open";
   if (options.only) process.env.MURAGE_PI_GATE_ONLY = options.only;
   const on = new Map<string, Handler>();
   const api = {
@@ -74,6 +95,7 @@ function rig(options: { hooks?: FilterHooks; onThrows?: string; only?: string; n
       on.set(name, handler);
     },
   };
+  process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
   piPermissionGate(api as never, { hooks: options.hooks, now: options.now });
   const asked: { title: string; prefill: string }[] = [];
   const answer: Rig["answer"] = { next: () => JSON.stringify({ deny: true, reason: "no" }) };
@@ -184,6 +206,7 @@ describe("Rule 14: three trusted sets, nothing else", () => {
     rig({ only: "agents_project_propose" });
     expect(process.env.MURAGE_PI_GATE).toBeUndefined();
     const reloaded = new Map<string, Handler>();
+    process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
     piPermissionGate({ on: (name: string, handler: Handler) => reloaded.set(name, handler) } as never);
     const asked: string[] = [];
     const ctx = { cwd: project, hasUI: true, ui: { editor: async (title: string) => { asked.push(title); return JSON.stringify({ deny: true, reason: "no" }); } } };
@@ -196,6 +219,7 @@ describe("Rule 14: three trusted sets, nothing else", () => {
     delete process.env.MURAGE_PI_GATE;
     delete (globalThis as Record<symbol, unknown>)[Symbol.for("murage.piGate")];
     const on = new Map<string, Handler>();
+    process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
     piPermissionGate({ on: (name: string, handler: Handler) => on.set(name, handler) } as never);
     const ctx = { cwd: project, hasUI: true, ui: { editor: async () => JSON.stringify({ allow: true, input: { command: "ls" } }) } };
     expect(await on.get("tool_call")!({ toolCallId: "c1", toolName: "bash", input: { command: "ls" } }, ctx)).toEqual({ block: true, reason: PI_GATE_UNCHECKED });
@@ -515,6 +539,7 @@ describe("T105: the inlined copies equal their modules", () => {
     return gate.slice(from + begin.length, to);
   };
   it("shared/sensitive-paths.ts and shared/in-project.ts are carried whole", () => {
+    // MAIN RULING 1114-PI-FLOOR-FOLLOWS-AUTHORITY: wipe source is pinned by the generated-copy equality below.
     for (const file of ["shared/sensitive-paths.ts", "shared/in-project.ts"]) expect(block(file)).toBe(strip(here(`../../${file}`)));
   });
   it("the scan limits the gate uses are the same lines", () => {
@@ -525,9 +550,141 @@ describe("T105: the inlined copies equal their modules", () => {
       expect(inline).toContain(line);
     }
   });
-  it("the gate imports nothing of Murage's", () => {
+  it("the staged wipe checker equals the approved source bundle", () => {
+    // Run the real generator outside Vitest's module transforms, with the same
+    // Node loader used to regenerate the shipped artifact.
+    const generated = execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module'], {
+      input: `import {generatePiWipeCheck} from ${JSON.stringify(new URL('../../scripts/generate-pi-wipe-check.ts', import.meta.url).href)};
+        process.stdout.write(await generatePiWipeCheck());`,
+      encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
+    });
+    expect(here('./pi-wipe-check.generated.mjs')).toBe(generated);
+  });
+  it("the shipped checker fails closed on protected glob overflow and recovers below the bound", () => {
+    // MAIN RULING 1115-C4D2-GROK H2: saturated inventories fail closed, including unmatched globs.
+    // Owner checker: wipe-v3; owner shipped Pi consumer regression: t6-pi-wipe.
+    const pathPort = {realpath: (path: string) => path, isBlockDevice: () => false};
+    const context = {home: '/home/fixture', cwd: '/work/other', project: '/work/other',
+      dataDir: '/state/app', platform: 'linux' as const, pathPort, mountInventory: {contains: () => false}};
+    for (const CheckerRegistry of [RootRegistry, CarriedRootRegistry]) {
+      const registry = new CheckerRegistry(pathPort);
+      for (let i = 0; i < 257; i++) registry.replace(`bot:fixture-${i}:cwd`, [`/projects/unrelated-${i}`]);
+      for (const check of [wipeBreaker, carriedWipeBreaker]) {
+        expect(check('rm -rf /projects/target*', {...context, registry})?.rule).toBe('wipe-check-fault');
+        const bounded = {contains: (path: string) => registry.contains(path),
+          protectedChildren: (dir: string) => registry.protectedChildren(dir)};
+        expect(check('rm -rf /projects/target*', {...context, registry: bounded})?.rule).toBe('wipe-check-fault');
+      }
+      registry.drop('bot:fixture-256:cwd');
+      for (const check of [wipeBreaker, carriedWipeBreaker]) {
+        expect(check('rm -rf /projects/target*', {...context, registry})).toBeNull();
+        expect(check('rm -rf /projects/unrelated-25[5]', {...context, registry})).toBeTruthy();
+      }
+    }
+  });
+  it("the packaged extension loads its checker with only staged siblings and Node built-ins", () => {
+    const output=join(root,'staged');
+    const script=`
+      import {stagePiWindowsHide} from ${JSON.stringify(new URL('../../scripts/stage-pi-windows-hide.mjs',import.meta.url).href)};
+      import {readFileSync} from 'node:fs';
+      import {pathToFileURL} from 'node:url';
+      import assert from 'node:assert/strict';
+      stagePiWindowsHide(${JSON.stringify(fileURLToPath(new URL('../../',import.meta.url)))},${JSON.stringify(output)});
+      assert.equal(readFileSync(${JSON.stringify(join(output,'drivers/pi-wipe-check.generated.mjs'))},'utf8'),readFileSync(${JSON.stringify(fileURLToPath(new URL('./pi-wipe-check.generated.mjs',import.meta.url)))},'utf8'));
+      process.chdir(${JSON.stringify(output)});
+      const {default:gate}=await import(pathToFileURL(${JSON.stringify(join(output,'drivers/pi-permission-gate.ts'))}).href);
+      const handlers=new Map();process.env.MURAGE_PI_NO_LIMITS='1';delete process.env.MURAGE_PI_GATE;
+      process.env.MURAGE_PI_WIPE_CONTEXT_FILE=${JSON.stringify(join(root,'default-context'))};
+      gate({on:(name,handler)=>handlers.set(name,handler)});
+      for(const [command,wipe] of [
+        ['pwsh -Command Remove-Item -Recurse -Force "$HOME/*"',true],
+        [\`cmd /c 'rd /s /q "%USERPROFILE%/*"'\`,true],
+        ['printf "rm -rf ~/*"',false],['mkfs --help',false],
+      ])assert.equal((await handlers.get('tool_call')({toolName:'bash',input:{command}},{cwd:${JSON.stringify(project)},hasUI:false,ui:{}}))?.block===true,wipe);
+      console.log('staged-extension: Windows home wipes card; printed examples and help run');
+    `;
+    const result=execFileSync(process.execPath,['--experimental-strip-types','--input-type=module'],{
+      input:script,encoding:'utf8',timeout:30_000,
+      env:{...process.env,HOME:root,USERPROFILE:root,MURAGE_PI_GATE:'',MURAGE_PI_NO_LIMITS:'1'},
+    });
+    expect(result).toContain('staged-extension: Windows home wipes card; printed examples and help run');
+  });
+  it.each(['registered roots', 'engine environment'])("review context: staged gate preserves %s", finding => {
+    const registered = join(outside, 'registered');
+    const build = join(registered, 'pkg', 'build');
+    mkdirSync(build, {recursive:true});
+    const alias = join(outside, 'registered-alias');
+    symlinkSync(registered, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const registry = new RootRegistry();
+    registry.replace('bot:fixture:cwd', [registered, alias]);
+    const context = {home:root,project, dataDir:join(root,'.murage'),platform:process.platform};
+    const inventory = join(root, 'wipe-context.json');
+    writeInventory(inventory, context, registry.snapshot());
+    const env = {...process.env, HOME:root, USERPROFILE:root, BUILD_DIR:build, WIPE_DIR:registered,
+      MURAGE_PI_WIPE_CONTEXT_FILE:inventory, MURAGE_PI_NO_LIMITS:'1'};
+    const commands: [string, boolean][] = finding === 'registered roots'
+      ? [[`rm -rf "${registered}"`,true],[`rm -rf "${alias}"`,false],[`rm -rf "${alias}"/*`,true],
+         [`rm -rf "${outside}"`,true],[`rm -rf "${registered}"/*`,true],
+         [`rm -rf "${build}"/*`,false],[`rm -rf "${project}"`,true]]
+      : [['rm -rf "$BUILD_DIR"/*',false],['rm -rf "$WIPE_DIR"/*',true],
+         ['pwsh -Command Remove-Item -Recurse -Force "$env:BUILD_DIR/*"',false],
+         ['pwsh -Command Remove-Item -Recurse -Force "$env:WIPE_DIR/*"',true],
+         [String.raw`cmd /c rd /s /q "%BUILD_DIR%"`,false],
+         [String.raw`cmd /c rd /s /q "%WIPE_DIR%"`,true]];
+    const cwd = join(project,'src');
+    const expected = commands.map(([command,wipe]) => {
+      expect(wipeBreaker(command,{...context,cwd,env,registry}) !== null, command).toBe(wipe);
+      return [command,wipe];
+    });
+    const native = finding === 'registered roots' ? [[registered,true],[build,false]] as const : [];
+    for (const [path,wipe] of native) expect(nativeWipeBreaker('delete_file',{path},{...context,cwd,env,registry}) !== null).toBe(wipe);
+    const output=join(root,'review-staged');
+    const script=`
+      import {stagePiWindowsHide} from ${JSON.stringify(new URL('../../scripts/stage-pi-windows-hide.mjs',import.meta.url).href)};
+      import {pathToFileURL} from 'node:url';
+      import assert from 'node:assert/strict';
+      stagePiWindowsHide(${JSON.stringify(fileURLToPath(new URL('../../',import.meta.url)))},${JSON.stringify(output)});
+      const {default:gate}=await import(pathToFileURL(${JSON.stringify(join(output,'drivers/pi-permission-gate.ts'))}).href);
+      for(const missing of [false,true]) {
+        delete globalThis[Symbol.for('murage.piGate')];
+        process.env.MURAGE_PI_GATE=missing?'':'fixture-gate';
+        process.env.MURAGE_PI_NO_LIMITS='1';
+        process.env.MURAGE_PI_WIPE_CONTEXT_FILE=${JSON.stringify(inventory)};
+        const handlers=new Map();gate({on:(name,handler)=>handlers.set(name,handler)});
+        const ctx={cwd:${JSON.stringify(cwd)},hasUI:false,ui:{}};
+        for(const [command,wipe] of ${JSON.stringify(expected)}) {
+          const input={command};
+          assert.equal((await handlers.get('tool_call')({toolName:'bash',input},ctx))?.block===true,wipe,command);
+          assert.deepEqual(input,{command});
+        }
+        for(const [path,wipe] of ${JSON.stringify(native)})assert.equal((await handlers.get('tool_call')({toolName:'delete_file',input:{path}},ctx))?.block===true,wipe,path);
+        // The existing secret-bearing reload slot also retains its root context.
+        if(!missing) {
+          const reloaded=new Map();gate({on:(name,handler)=>reloaded.set(name,handler)});
+          for(const [command,wipe] of ${JSON.stringify(expected)})assert.equal((await reloaded.get('tool_call')({toolName:'bash',input:{command}},ctx))?.block===true,wipe,command);
+        }
+      }
+      console.log('review context verified');
+    `;
+    // A file-based ESM entry mirrors Pi's loader without making its probe workers ESM.
+    const entry=join(root,'review-staged.mjs');
+    writeFileSync(entry,script);
+    expect(execFileSync(process.execPath,['--experimental-strip-types',entry],{
+      encoding:'utf8',timeout:30_000,env,
+    })).toContain('review context verified');
+  });
+  it("the gate imports only its startup installer, staged checker and fixed-control table", () => {
     const imports = gate.split("\n").filter((line) => /^import /.test(line));
-    expect(imports.every((line) => /from "node:/.test(line))).toBe(true);
+    // MAIN RULING 1114-PI-FLOOR-FOLLOWS-AUTHORITY: static generated checker import, carried by the extension stager.
+    // MAIN RULING INT-CONFLICT-DEFAULT 0a8bdf9c8db6 d7b33d2b5628: retain the reviewed Windows startup installer and exact finite import allowlist.
+    expect(imports.filter(line => !/from "node:/.test(line))).toEqual([
+      'import "../../shared/win-hide-child-process.mjs";',
+      'import { PI_CONTROL_FRAMES, preToolCode } from "./hook-control.ts";',
+      'import { wipeBreaker, nativeWipeBreaker, RootRegistry } from "./pi-wipe-check.generated.mjs";',
+    ]);
+    const staged = here('./pi-wipe-check.generated.mjs');
+    expect(staged.split('\n').filter(line => /^import /.test(line)).every(line => /from "node:/.test(line))).toBe(true);
+    expect(staged).not.toMatch(/\bimport\s*\(/);
   });
 });
 
@@ -554,4 +711,183 @@ describe("T64: the installed engine's fields, pinned (@earendil-works/pi-coding-
       expect(gate.asked).toHaveLength(1);
     });
   }
+});
+
+describe('B8 No limits keeps only the local wipe check when the broker UI or secret is unavailable',()=>{
+ it.each([false,true])('missing secret=%s: non-wipe runs and real wipe blocks',async missing=>{
+  if(!missing)process.env.MURAGE_PI_GATE=SECRET;
+  process.env.MURAGE_PI_NO_LIMITS='1';
+  const on=new Map<string,Handler>();
+  try{
+   process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+   piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+   const call=on.get('tool_call')!,ctx={cwd:project,hasUI:false,ui:{}};
+   expect(await call({toolName:'bash',input:{command:'touch ~/.ssh/config'}},ctx)).toBeUndefined();
+   expect(await call({toolName:'bash',input:{command:'rm -rf ~'}},ctx)).toMatchObject({block:true});
+   expect(await call({toolName:'bash',input:{command:'echo "rm -rf /"'}},ctx)).toBeUndefined();
+   expect(await call({toolName:'bash',input:{command:'rm -rf "$UNKNOWN"'}},ctx)).toBeUndefined();
+  }finally{delete process.env.MURAGE_PI_NO_LIMITS;}
+ });
+});
+// H3 exercises the deployed fallback through the shared reader.
+it.each([['rm -rf ~/*',true],['rm -rf /usr/*',true],['mkfs --help',true],['mkfs.ext4 --version',true],['mkfs.ext4 /dev/fake-fixture',true],['printf "rm -rf ~/*"',true],["rm -rf '/usr/*'",true],['bash -c "rm -rf ~/*"',true]] as const)('H3 Pi local fallback: %s',async(command,_historicalWipe)=>{
+ // MAIN RULING 1114-PI-FLOOR-FOLLOWS-AUTHORITY: retain every historical input; the approved checker supplies the current verdict.
+ const wipe=wipeBreaker(command,{home:homedir(),cwd:project})!==null;
+ process.env.MURAGE_PI_NO_LIMITS='1';delete process.env.MURAGE_PI_GATE;
+ const on=new Map<string,Handler>();
+ try{
+  process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+  piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+  const result=await on.get('tool_call')!({toolName:'bash',input:{command}},{cwd:project,hasUI:false,ui:{}});
+  if(wipe)expect(result).toMatchObject({block:true});else expect(result).toBeUndefined();
+ }finally{delete process.env.MURAGE_PI_NO_LIMITS;}
+});
+
+// R1 exercises the actual Pi fallback with both broker-unavailable paths.
+for(const missing of [false,true])it.each([
+ ['pwsh -Command Remove-Item -Recurse -Force "$HOME/*"',true],
+ ["pwsh -Command Remove-Item -Recurse -Force '/usr/*'",true],
+ ['pwsh -Command Remove-Item -Recurse -Force -LiteralPath "$HOME/*"',true],
+ ['pwsh -Command \'Remove-Item -Recurse -Force "$HOME/*"\'',true],
+ ['pwsh -Command "Remove-Item -Recurse -Force \'/usr/*\'"',true],
+ ['pwsh -Command \'Remove-Item -Recurse -Force -LiteralPath "$HOME/*"\'',true],
+ ['bash -c \'rm -rf "$HOME/*"\'',true],
+ ["rm -rf '~'/*",true],
+ ['pwsh -Command \'Write-Output "Remove-Item -Recurse -Force $HOME/*"\'',true],
+] as const)(`R1 Pi missing secret=${missing}: %s`,async(command,_historicalWipe)=>{
+ // MAIN RULING 1114-PI-FLOOR-FOLLOWS-AUTHORITY: retain every historical input; the approved checker supplies the current verdict.
+ const wipe=wipeBreaker(command,{home:homedir(),cwd:project})!==null;
+ if(!missing)process.env.MURAGE_PI_GATE=SECRET;
+ else delete process.env.MURAGE_PI_GATE;
+ process.env.MURAGE_PI_NO_LIMITS='1';
+ const on=new Map<string,Handler>();
+ try{
+  process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+  piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+  const result=await on.get('tool_call')!({toolName:'bash',input:{command}},{cwd:project,hasUI:false,ui:{}});
+  if(wipe)expect(result).toMatchObject({block:true});else expect(result).toBeUndefined();
+ }finally{delete process.env.MURAGE_PI_NO_LIMITS;}
+});
+
+import { visibleWipeCases } from '../../shared/testing/no-limits-visible-wipe-cases.ts';
+// MAIN RULING 1114-PI-FLOOR-FOLLOWS-AUTHORITY: current-policy narrowWipe replaces the retained historical raw oracle.
+for (const missing of [false, true]) it.each(visibleWipeCases)(`R3 Pi missing secret=${missing} $id: $command`, async ({ command, narrowWipe: wipe }) => {
+ if (!missing) process.env.MURAGE_PI_GATE = SECRET;
+ else delete process.env.MURAGE_PI_GATE;
+ process.env.MURAGE_PI_NO_LIMITS = '1';
+ const on = new Map<string, Handler>();
+ try {
+  process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+  piPermissionGate({on: (name: string, handler: Handler) => on.set(name, handler)} as never);
+  const result = await on.get('tool_call')!({toolName: 'bash', input: {command: command.replaceAll('/fixture/home', homedir())}}, {cwd: project, hasUI: false, ui: {}});
+  if (wipe) expect(result).toMatchObject({block: true});
+  else expect(result).toBeUndefined();
+ } finally { delete process.env.MURAGE_PI_NO_LIMITS; }
+});
+
+for (const missing of [false, true]) it(`R4 Pi reader exception holds, missing secret=${missing}`, async () => {
+ if (!missing) process.env.MURAGE_PI_GATE = SECRET;
+ else delete process.env.MURAGE_PI_GATE;
+ process.env.MURAGE_PI_NO_LIMITS = '1';
+ const on = new Map<string, Handler>();
+ try {
+  process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+  piPermissionGate({on: (name: string, handler: Handler) => on.set(name, handler)} as never);
+  const input = Object.defineProperty({}, 'command', {get() {throw new Error('unread fixture');}});
+  expect(await on.get('tool_call')!({toolName: 'bash', input}, {cwd: project, hasUI: false, ui: {}})).toMatchObject({block: true});
+ } finally {delete process.env.MURAGE_PI_NO_LIMITS;}
+});
+
+import {assembledWipeCases} from '../../shared/testing/no-limits-assembled-cases.ts';
+for(const missing of [false,true])it.each(assembledWipeCases)(`R4 assembled Pi missing secret=${missing} $id wipe=$wipe`,async({command})=>{
+ // MAIN RULING 1114-PI-FLOOR-FOLLOWS-AUTHORITY: retain every historical input; the approved checker supplies the current verdict.
+ const wipe=wipeBreaker(command,{home:homedir(),cwd:project})!==null;
+ if(!missing)process.env.MURAGE_PI_GATE=SECRET;else delete process.env.MURAGE_PI_GATE;
+ process.env.MURAGE_PI_NO_LIMITS='1';const on=new Map<string,Handler>();
+ try{
+  process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+  piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+  const result=await on.get('tool_call')!({toolName:'bash',input:{command}},{cwd:project,hasUI:false,ui:{}});
+  if(wipe)expect(result).toMatchObject({block:true});else expect(result).toBeUndefined();
+ }finally{delete process.env.MURAGE_PI_NO_LIMITS;}
+});
+
+import {parseFreeWipeCases} from '../../shared/testing/no-limits-parse-free-cases.ts';
+for(const missing of [false,true])it.each(parseFreeWipeCases)(`R5 parse-free Pi missing secret=${missing} $id wipe=$wipe`,async({command})=>{
+ // MAIN RULING 1114-PI-FLOOR-FOLLOWS-AUTHORITY: retain every historical input; the approved checker supplies the current verdict.
+ const wipe=wipeBreaker(command,{home:homedir(),cwd:project})!==null;
+ if(!missing)process.env.MURAGE_PI_GATE=SECRET;else delete process.env.MURAGE_PI_GATE;
+ process.env.MURAGE_PI_NO_LIMITS='1';const on=new Map<string,Handler>();
+ try{
+  process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+  piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+  const result=await on.get('tool_call')!({toolName:'bash',input:{command}},{cwd:project,hasUI:false,ui:{}});
+  if(wipe)expect(result).toMatchObject({block:true});else expect(result).toBeUndefined();
+ }finally{delete process.env.MURAGE_PI_NO_LIMITS;}
+});
+
+it.each([null, "bound"] as const)("a %s mode never accepts a legacy editor allow", async mode => {
+  const gate = rig({ mode });
+  gate.answer.next = () => allowAs({ command: "echo fixture" });
+  expect(await gate.call({ toolName: "bash", input: { command: "echo fixture" } })).toMatchObject({ block: true });
+});
+
+// Test the real disconnected handler against the authority, independently of table verdicts.
+it('Pi offline differential: every visible case agrees with the approved checker', async () => {
+ const differences: {missing:boolean;id:string;gate:boolean;approved:boolean}[]=[];
+ const registry=new RootRegistry();
+ registry.replace('bot:differential:cwd',[project]);
+ const inventory=join(root,'differential-context.json');
+ const context={home:homedir(),project};
+ writeInventory(inventory, context, registry.snapshot());
+ let compared=0;
+ for(const missing of [false,true]) {
+  if(missing)delete process.env.MURAGE_PI_GATE;else process.env.MURAGE_PI_GATE=SECRET;
+  process.env.MURAGE_PI_NO_LIMITS='1';
+  process.env.MURAGE_PI_WIPE_CONTEXT_FILE=inventory;
+  const on=new Map<string,Handler>();
+  process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+  piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+  for(const {id,command} of visibleWipeCases) {
+   const text=command.replaceAll('/fixture/home',homedir());
+   const result=await on.get('tool_call')!({toolName:'bash',input:{command:text}},{cwd:project,hasUI:false,ui:{}});
+   const gate=result?.block===true,approved=wipeBreaker(text,{...context,cwd:project,platform:process.platform,env:process.env,registry})!==null;
+   if(gate!==approved)differences.push({missing,id,gate,approved});
+   compared++;
+  }
+ }
+ console.info(JSON.stringify({kind:'pi-offline-differential',cases:visibleWipeCases.length,compared,differences}));
+ expect(differences).toEqual([]);
+});
+
+it.each([
+ ['powershell-home','pwsh -Command Remove-Item -Recurse -Force "$HOME/*"',true],
+ ['cmd-home',`cmd /c 'rd /s /q "%USERPROFILE%/*"'`,true],
+ ['executed-substitution','echo "$(rm -rf ~)"',true],
+ ['printed-example','printf "rm -rf ~/*"',false],
+ ['help','mkfs --help',false],
+ ['version','mkfs.ext4 --version',false],
+] as const)('Pi offline authority witness: %s',async(id,command,wipe)=>{
+ delete process.env.MURAGE_PI_GATE;process.env.MURAGE_PI_NO_LIMITS='1';
+ const on=new Map<string,Handler>();
+ process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+ piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+ const result=await on.get('tool_call')!({toolName:'bash',input:{command}},{cwd:project,hasUI:false,ui:{}});
+ expect(result?.block===true).toBe(wipe);
+ expect(wipeBreaker(command,{home:homedir(),cwd:project})!==null).toBe(wipe);
+ console.info(JSON.stringify({kind:'pi-offline-witness',id,gate:result?.block?'card':'run',approved:wipe?'card':'run'}));
+});
+
+it.each([false,true])('Pi offline native targets use the approved checker, missing secret=%s',async missing=>{
+ if(missing)delete process.env.MURAGE_PI_GATE;else process.env.MURAGE_PI_GATE=SECRET;
+ process.env.MURAGE_PI_NO_LIMITS='1';
+ const on=new Map<string,Handler>();
+ process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+ piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+ const ctx={cwd:project,hasUI:false,ui:{}};
+ const wipe={paths:['/'],padding:'ordinary metadata'};
+ expect(await on.get('tool_call')!({toolName:'delete_files',input:wipe},ctx)).toMatchObject({block:true});
+ expect(wipe).toEqual({paths:['/'],padding:'ordinary metadata'});
+ expect(await on.get('tool_call')!({toolName:'delete_file',input:{path:join(project,'src/a.ts')}},ctx)).toBeUndefined();
+ expect(visibleDeleteTarget('/',homedir(),project)).toBe('delete-root');
 });

@@ -22,6 +22,7 @@ describe("job 7: Connect Telegram in four owner steps", () => {
     expect(effect).toMatch(/if \(tokenFocused\.current \|\| !status \|\| busy\) return;\s*tokenFocused\.current = true;\s*if \(status\.configured \|\| linked\) return;/);
     // Never takes focus the owner already put elsewhere.
     expect(effect).toContain("if (active && active !== tokenInput.current && active.closest(\"input, textarea, select, [contenteditable]");
+    expect(effect).toContain("if (active?.closest('[role=\"tab\"]')) return;");
     expect(effect).not.toContain("active !== document.body");
     expect(effect.indexOf("tokenInput.current?.focus();")).toBeGreaterThan(effect.indexOf("const active = document.activeElement;"));
   });

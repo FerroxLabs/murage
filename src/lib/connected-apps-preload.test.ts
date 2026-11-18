@@ -63,3 +63,43 @@ it("review F14: the panel remembering a refreshing list does not restamp it as f
   await inventory.preloadConnectedApps(); // a reopen must still ask the server
   expect(api).toHaveBeenCalledTimes(2);
 });
+
+it("held_panel_reopen_keeps_accounts_and_time_on_unknown_and_unavailable_answers", async () => {
+  const inventory = await import("./connected-apps-preload");
+  const retryAt = Date.now() + 7200_000;
+  const admission = { outcome: "held", reason: "rate_limited", status: 429, retryAt };
+  api.mockResolvedValueOnce({ configured: true, known: true, services: { calendar: { connected: true } }, admission });
+  await inventory.preloadConnectedApps();
+  expect((await inventory.preloadConnectedApps()).admission?.retryAt).toBe(retryAt);
+  for (const response of [{ configured: true, known: false }, { credentialStore: "unavailable" }, { configured: false }]) {
+    api.mockResolvedValueOnce(response);
+    const result = await inventory.preloadConnectedApps(true);
+    expect(result.services.calendar?.connected).toBe(true);
+    expect(result.admission?.retryAt).toBe(retryAt);
+  }
+});
+it("an_unrelated_success_never_erases_a_live_deadline", async () => {
+  const inventory = await import("./connected-apps-preload");
+  const retryAt = Date.now() + 7200_000;
+  inventory.rememberConnectedAppsAdmission({ outcome: "held", reason: "rate_limited", retryAt });
+  inventory.rememberConnectedAppsAdmission({ outcome: "completed", reason: "ready" });
+  expect(inventory.cachedConnectedAppsAdmission?.retryAt).toBe(retryAt);
+  expect(api).not.toHaveBeenCalled();
+});
+
+it("T6 terminal recovery replaces an elapsed hold and stays secret-free through cached inventory", async () => {
+  const inventory = await import("./connected-apps-preload");
+  const failed = { outcome: "failed" as const, reason: "credential_recovery_failed", attempted: false };
+  api.mockResolvedValueOnce({ configured: true, known: true, services: { calendar: { connected: true } }, admission: failed });
+  expect((await inventory.preloadConnectedApps(true)).admission).toEqual(failed);
+  expect((await inventory.preloadConnectedApps()).admission).toEqual(failed);
+  expect(inventory.cachedConnectorStatus?.calendar.connected).toBe(true);
+});
+
+it("T6 terminal recovery replaces a cached hold while admission keeps the transport floor", async () => {
+  const inventory = await import("./connected-apps-preload");
+  inventory.rememberConnectedAppsAdmission({ outcome: "held", reason: "rate_limited", retryAt: Date.now() + 21_600_000 });
+  const failed = { outcome: "failed" as const, reason: "credential_recovery_failed", attempted: false };
+  inventory.rememberConnectedAppsAdmission(failed);
+  expect(inventory.cachedConnectedAppsAdmission).toEqual(failed);
+});

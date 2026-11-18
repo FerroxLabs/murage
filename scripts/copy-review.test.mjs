@@ -269,13 +269,56 @@ function quietAccept(dir) {
 }
 
 describe("pending review list", () => {
-  it("allows exactly the four No limits keys", () => {
+  // MAIN RULING 1115-COPY-LEDGER-REVIEW: authors are the last-changing
+  // commits on the reviewed locale lines, audited with git blame at 7ed777368b.
+  // Keep the English, French and rewritten Hindi authors independent of the
+  // translation batches; a passing verdict alone cannot establish provenance.
+  const allLocales = "en de es fr hi ja pt-br zh";
+  it.each([
+    ["ae650cd69e", "en", ["sendNotice.toolTurnRefused", "sendNotice.stepTurnRefused"]],
+    ["b1d3c896f9", "de es hi ja pt-br zh", ["sendNotice.toolTurnRefused", "sendNotice.stepTurnRefused"]],
+    ["f26bc57bf3", "fr", ["sendNotice.toolTurnRefused", "sendNotice.stepTurnRefused"]],
+    ["aa124e02ef", allLocales, ["memoryWords.indexChecking"]],
+    ["aa124e02ef", "de es fr hi ja pt-br zh", ["memoryWords.scaleFreezeTitle"]],
+    ["aa124e02ef", "de es fr ja pt-br zh", ["memoryWords.scaleFreezeBody"]],
+    ["f2d348b402", "en", ["memoryWords.scaleFreezeTitle", "memoryWords.scaleFreezeBody"]],
+    ["7ed777368b", "hi", ["memoryWords.scaleFreezeBody"]],
+    ["61813d3480", allLocales, ["ux.l1.level.other.other-channel-or-webhook", "ux.l1.level.other.guest-channel", "ux.l1.level.termsNote"]],
+    ["7ff2de72e3", allLocales, ["ux.l1.level.unlimitedSummary", "ux.l1.level.channelNoLimits", "ux.l1.level.setupNoLimits"]],
+    ["fb1d9ab0d7", allLocales, ["ux.l1.level.setupIncluded", "ux.l1.level.cell.channel-enabled"]],
+  ])("attributes the reviewed strings to %s (%s)", (author, locales, keys) => {
+    const dir = fileURLToPath(new URL("../src/locales", import.meta.url));
+    const inputs = readReviewInputs(dir);
+    const ledger = JSON.parse(inputs.ledgerText);
+    for (const locale of locales.split(" ")) for (const key of keys) {
+      const id = `${locale}:${key}`;
+      expect(ledger.strings[id], id).toBeDefined();
+      const review = JSON.parse(inputs.records[ledger.strings[id].review]);
+      expect(review.author.slice(0, 10), id).toBe(author);
+      expect(review.reviewer.name, id).not.toBe(review.author);
+    }
+  });
+
+  it("keeps the four historical No limits keys reviewed, with none pending in the shipped packs", () => {
     expect(PENDING_KEYS).toEqual([
       "ux.l1.confirm.unlimitedBody",
       "ux.l1.level.unlimitedDetail",
       "ux.lcopyb.level.unlimited",
       "ux.lcopyb.level.unlimitedHere",
     ]);
+    const dir = fileURLToPath(new URL("../src/locales", import.meta.url));
+    const inputs = readReviewInputs(dir);
+    const ledger = JSON.parse(inputs.ledgerText);
+    expect(JSON.parse(readFileSync(join(dir, "copy-lint/pending-review.json"), "utf8")).strings).toEqual({});
+    const copy = loadCopy(dir);
+    const shipped = shippedMap(copy);
+    for (const locale of ["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
+      for (const key of PENDING_KEYS) {
+        const id = `${locale}:${key}`;
+        expect(ledger.strings[id]?.sha256, id).toBe(exactHash(shipped.get(id)));
+      }
+    }
+    expect(ledgerProblems({ ...inputs, shipped, english: copy.english })).toEqual([]);
   });
 
   it("excepts a listed key at its exact hash, and propose leaves it out", () => {

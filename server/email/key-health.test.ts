@@ -1,3 +1,4 @@
+import { createMemoryEmailRuntime } from "../testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -11,11 +12,10 @@ import { classifyResponse, type CredentialRef } from "./flux-email-client.ts";
 import { emailOwnerRoute, type OwnerRouteDeps } from "./owner-routes.ts";
 import { FakeFlux, fluxError, scopeRequired } from "../testing/fake-flux-email.ts";
 import { EMAIL_SETUP_COPY } from "../../shared/email-copy.ts";
-import { EMAIL_UNAVAILABLE } from "./admission.ts";
 import type { BotRecord } from "../store.ts";
 
 const BOT_REF: CredentialRef = { kind: "bot", botId: "b1" };
-const OWNER_REF: CredentialRef = { kind: "owner" };
+const OWNER_REF: CredentialRef = { kind: "owner", expectOwnerRef: "key_owner" };
 const refused = (status: number, code: string) => classifyResponse(status, { error: code, message: "" }, "key_b1");
 
 describe("classifyKeyHealth (section 8)", () => {
@@ -108,7 +108,7 @@ beforeEach(async () => {
   db = new DatabaseSync(":memory:");
   imported = undefined;
   capsOn = true;
-  runtime = new EmailRuntime({
+  runtime = createMemoryEmailRuntime({
     accountKey: () => "sk-flux-account-fixture", database: () => db, transaction: fn => fn(), fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test",
     now: () => clock, workspaceRoot: () => undefined, bot: id => (id === BOT.id ? BOT as unknown as BotRecord : undefined),
   });
@@ -133,10 +133,10 @@ describe("G15 and 2.3 through the runtime", () => {
     fake.on("GET", /^\/v1\/email\/inboxes\/ibx_1$/, fluxError(401, "key_revoked"));
     await runtime.client.getInbox({ kind: "bot", botId: "b1" }, "ibx_1");
     expect(runtime.keyRejected("b1")).toBe(true);
-    expect(runtime.mount("gen-2", mountInput)).toEqual({ mounted: false, line: KEY_HEALTH_LINES.rejected });
+    expect(runtime.mount("gen-2", mountInput)).toEqual({ mounted: false, line: "Email is disconnected. Turn it on in Settings > Bot email." });
     const before = fake.requests.length;
     const refusedCall = await runtime.call("email_list", { botId: "b1", threadId: "t-b1", generation: "gen-1" }, {}, live);
-    expect(refusedCall).toEqual({ status: 403, body: { error: EMAIL_UNAVAILABLE } });
+    expect(refusedCall).toEqual({ status: 200, body: { text: "Email is disconnected. Turn it on in Settings > Bot email." } });
     expect(fake.requests.length).toBe(before);
 
     // the owner sees the section 8 line and Reconnect (the inbox re-read uses the owner token, which is fine)

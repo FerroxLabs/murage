@@ -17,7 +17,8 @@ import { describe, expect, it } from "vitest";
 const here = dirname(fileURLToPath(import.meta.url));
 const models = readFileSync(join(here, "ModelsSettings.tsx"), "utf8");
 const section = readFileSync(join(here, "LocalModelsSettings.tsx"), "utf8");
-const picker = readFileSync(join(here, "ModelPicker.tsx"), "utf8");
+// The chip and its lazy dialog (1.0.19 slice P) are one picker: read both.
+const picker = ["ModelPicker.tsx", "ModelPickerDialog.tsx"].map((file) => readFileSync(join(here, file), "utf8")).join("\n");
 const engines = readFileSync(join(here, "EnginesSettings.tsx"), "utf8");
 const setup = readFileSync(join(here, "EngineSetup.tsx"), "utf8");
 
@@ -30,7 +31,7 @@ describe("the section is permanent (spec V1)", () => {
 
   it("renders its heading and its Add a server action outside every data branch", () => {
     const body = section.slice(section.indexOf("export function LocalModelsSettings"));
-    const heading = body.indexOf("local-models-heading");
+    const heading = body.indexOf("local-models-title");
     const add = body.indexOf("Add a server");
     expect(heading).toBeGreaterThan(-1);
     expect(add).toBeGreaterThan(-1);

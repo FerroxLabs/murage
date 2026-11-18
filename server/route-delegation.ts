@@ -3,6 +3,8 @@
 // itself, so feature lanes never co-edit dispatch code.
 import type { IncomingHttpHeaders, ServerResponse } from "node:http";
 import type { Readable } from "node:stream";
+import type { StagedResultProvenance } from "./memory/lineage-types.ts";
+import { consumingResponseBinding, prepareConsumingHttp, pipeConsumingStream, stageProvenance, refuseConsumingHttp } from "./consuming-turn-response.ts";
 
 export interface DelegatedRequest {
   method: string;
@@ -18,6 +20,11 @@ export interface DelegatedRequest {
 }
 
 export interface DelegatedResult {
+  /** Synchronous resource preparation enclosed by final response acceptance. */
+  prepareBody?: () => unknown;
+  preparationError?: (error: unknown) => DelegatedResult;
+  /** Staged stored-content provenance; undefined is unknown for consuming replies. */
+  provenance?: StagedResultProvenance;
   status: number;
   headers?: Record<string, string>;
   /** JSON body. */
@@ -46,6 +53,41 @@ export function responseGone(res: ServerResponse): boolean {
 }
 
 export function sendDelegated(res: ServerResponse, method: string, result: DelegatedResult): void {
+  if (result.prepareBody) {
+    if (!consumingResponseBinding(res) || !result.provenance) { refuseConsumingHttp(res); return; }
+    const { prepareBody, ...ready } = result;
+    try { prepareConsumingHttp(res, prepareBody, body => sendDelegated(res, method, { ...ready, body })); }
+    catch (error) {
+      if ((error as { code?: string }).code === "MEMORY_CONTEXT_REVOKED" || responseGone(res) || !result.preparationError) throw error;
+      sendDelegated(res, method, result.preparationError(error));
+    }
+    return;
+  }
+  if (consumingResponseBinding(res)) {
+    if (!result.provenance) {
+      result.stream?.destroy();
+      refuseConsumingHttp(res);
+      return;
+    }
+    stageProvenance(res, result.provenance);
+    if (result.stream) {
+      for (const [name, value] of Object.entries(result.headers ?? {})) res.setHeader(name, value);
+      res.writeHead(result.status);
+      if (method === "HEAD") { result.stream.destroy(); res.end(); }
+      else void pipeConsumingStream(result.stream, res);
+      return;
+    }
+    for (const [name, value] of Object.entries(result.headers ?? {})) res.setHeader(name, value);
+    if (result.bytes) {
+      res.writeHead(result.status);
+      res.end(method === "HEAD" ? undefined : result.bytes);
+      return;
+    }
+    if (!res.hasHeader("content-type")) res.setHeader("content-type", "application/json");
+    res.writeHead(result.status);
+    res.end(method === "HEAD" || result.body === undefined ? undefined : JSON.stringify(result.body));
+    return;
+  }
   const head = method === "HEAD";
   if (result.stream) {
     const stream = result.stream;

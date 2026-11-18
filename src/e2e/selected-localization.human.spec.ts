@@ -1,6 +1,6 @@
 import {test,expect} from "./page-error-guard";
 import {build} from 'vite';
-import tailwindcss from '@tailwindcss/vite';
+import tailwindcss from "./scoped-tailwind";
 import {createServer} from 'node:http';
 import {readFileSync,writeFileSync,mkdtempSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
@@ -27,7 +27,7 @@ test.afterAll(async()=>{await new Promise<void>(resolve=>server?server.close(()=
 for(const locale of ['en','de','es','fr','hi','ja','pt-br','zh'])test('selected setup, update and call controls: '+locale,async({page},info)=>{
  test.skip(info.project.name==='desktop'&&locale!=='en'||info.project.name==='mobile'&&locale==='en','one matching viewport per locale');
  const pack=JSON.parse(readFileSync(join(root,'src/locales',locale+'.json'),'utf8'));
- await page.setViewportSize(locale==='en'?{width:1280,height:900}:{width:390,height:844});await page.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());await page.goto(origin+'/?lang='+locale);
+ await page.setViewportSize(locale==='en'?{width:1280,height:900}:{width:390,height:844});await page.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());await page.addInitScript(()=>{try{localStorage.setItem("help.seen.chat.level-chip","1");}catch{}});await page.goto(origin+'/?lang='+locale);
  const setup=page.getByTestId('setup'),settings=page.getByTestId('settings');
  await setup.getByRole('button',{name:pack['engineSignIn.button'].replace('{name}','Claude'),exact:true}).press('Enter');await expect(page.getByRole('button',{name:pack['engineSignIn.openSignIn'],exact:true})).toBeVisible();await page.getByRole('button',{name:pack['engineSignIn.close'],exact:true}).click();await expect(page.getByRole('button',{name:pack['engineSignIn.openSignIn'],exact:true})).toHaveCount(0);
  await expect(settings.getByText(pack['updates.title'],{exact:true})).toBeVisible();await settings.getByRole('button',{name:pack['updates.download'],exact:true}).click();await page.evaluate(()=>(window as any).fixtureOpenCard());await expect(page.getByTestId('update-card').getByRole('button',{name:pack['updates.restart'],exact:true})).toBeVisible();

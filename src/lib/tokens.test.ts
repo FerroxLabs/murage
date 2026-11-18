@@ -42,6 +42,11 @@ function sourceFiles(): string[] {
   return out;
 }
 
+// MAIN RULING INT-CONFLICT-DEFAULT 44a1e97b55 / 99bcb86fa9d: numeric arbitrary offsets are generated width utilities.
+function withoutArbitraryOffsets(source: string): string {
+  return source.replace(/(?<![\w-])(?:outline|ring)-offset-\[-?\d+(?:\.\d+)?(?:px|rem|em)\]/g, "");
+}
+
 function declarationsIn(body: string): string[] {
   return [...body.matchAll(/(--[\w-]+)\s*:/g)].map(([, name]) => name);
 }
@@ -161,6 +166,11 @@ describe("token drift", () => {
     }
   });
 
+  it("distinguishes numeric arbitrary offsets from unknown color names", () => {
+    expect(withoutArbitraryOffsets("focus-visible:outline-offset-[-2px] ring-offset-[0.5rem]")).toBe("focus-visible: ");
+    expect(withoutArbitraryOffsets("outline-offset-unknown text-unknown ring-offset-[unknown]")).toBe("outline-offset-unknown text-unknown ring-offset-[unknown]");
+  });
+
   it("names only tokens that exist from every colour utility in src", () => {
     // Longest prefix first, so `ring-offset-app` is not read as `ring` plus a
     // bare word. The lookbehind rejects a hyphen as well as a word character:
@@ -243,7 +253,7 @@ describe("token drift", () => {
     const bad: string[] = [];
     for (const file of sourceFiles()) {
       const source = readFileSync(file, "utf8");
-      for (const [, name] of source.matchAll(utility)) {
+      for (const [, name] of withoutArbitraryOffsets(source).matchAll(utility)) {
         if (colorTokens.has(`--color-${name}`)) continue;
         if (NOT_A_TOKEN.has(name) || NOT_A_CLASS.has(name) || TAILWIND_PALETTE.test(name)) continue;
         bad.push(`${relative(root, file)}: -${name}`);
@@ -269,6 +279,8 @@ describe("token drift", () => {
       "src/lib/mascot.ts": "EMBER_COLORS — agent identity, theme-invariant by design",
       "src/components/EmberAvatar.tsx": "the mascot's own gradients and flame tones",
       "src/components/Avatar.tsx": "mascot fallback tones",
+      "src/components/MurageLockup.tsx": "the brand logo: ink and Ember tones are fixed brand colours, theme-invariant by design",
+      "src/components/FirstRunWelcome.tsx": "the welcome first paint matches the start-up window palette so the hand-off does not flash",
       "src/components/ProviderIcons.tsx": "vendor brand marks (Anthropic, OpenAI, …)",
       "src/components/HermesMark.tsx": "vendor brand mark",
       "src/components/CursorMark.tsx": "vendor brand mark",

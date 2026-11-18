@@ -17,6 +17,9 @@ import { ensureDirs } from "../config.ts";
 import { isolationStats, resetIsolationCache } from "./isolation-cache.ts";
 import { ScopeUnavailableError } from "./scoped-cli-home.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import type { SendTurnInput } from "../contracts.ts";
+const fixtureMountTurn = existsSync(new URL("../consuming-turn-response.ts", import.meta.url))
+  ? (await import("../testing/mcp-admission-fixture.ts")).fixtureMountTurn : (turn: SendTurnInput) => turn;
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 const dirs: string[] = [];
@@ -68,7 +71,9 @@ describe("codex personal setup isolation", () => {
     expect(codexIsolationArgs({ HOME: join(home, "none") }, { kind: "unreadable", why: "x" }, new Set())).toEqual([]);
   });
 
-  it("spawns the app-server with Murage's mounts and the owner's switched off", async () => {
+  // held pending addendum, MurageMain
+  // Keep the original isolation case, including a mount-free launch control.
+  it("refuses external consuming mounts and spawns a mount-free app-server with the owner's switched off", async () => {
     chmodSync(FAKE_CLI, 0o755);
     const { home, codex } = ownerHome();
     const dump = join(home, "dump.json");
@@ -77,14 +82,18 @@ describe("codex personal setup isolation", () => {
       environment: { HOME: home, CODEX_HOME: codex }, config: { cli: FAKE_CLI, fullAuto: false } });
     const recorder = recordEvents(instance.adapter);
     try {
-      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "codex-iso-1", text: "go",
-        integrations: { agents: { command: process.execPath, args: ["fixture-agents"], env: {} } } });
+      const unadmitted = { ...fixtureMountTurn({ threadId: "codex-iso-1", text: "go", cwd: fixtureBotFolder(),
+        integrations: { agents: { command: process.execPath, args: ["fixture-agents"], env: {} } } }), mountAdmission: undefined };
+      await expect(instance.adapter.sendTurn(unadmitted)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+      expect(existsSync(dump)).toBe(false);
+      expect(recorder.events).toEqual([]);
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "codex-iso-1", text: "go" });
       await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
       const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
       expect(argv).toContain("mcp_servers.tradingview.enabled=false");
       expect(argv).toContain('mcp_servers."my.server".enabled=false');
-      expect(argv).not.toContain("mcp_servers.agents.enabled=false");
-      expect(argv.join(" ")).toContain("mcp_servers.agents.command");
+      expect(argv).toContain("mcp_servers.agents.enabled=false");
+      expect(argv.join(" ")).not.toContain("mcp_servers.agents.command");
       // the path is a TOML string in the argument: a Windows backslash is written escaped
       expect(argv.find((arg) => arg.startsWith("skills.config="))).toContain(JSON.stringify(join(codex, "skills", "personal", "SKILL.md")).slice(1, -1));
       // the fake reports codex-cli 0.147.0: the global instructions are out through a scoped CODEX_HOME

@@ -5,7 +5,8 @@
 // high-water mark is kept in a small file beside the data (not in messages.db, because the first part of the upgrade runs inside one
 // transaction and the file must survive its rollback). Two trackers share it: the blocking stage before the server listens covers the first
 // part of the range (STARTING_SHARE), the background stage after it covers the rest (upgrade-progress.ts takes the window).
-import { renameSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { renameSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 export const UPGRADE_OVERALL_FILE = "memory-upgrade-overall.json";

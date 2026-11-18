@@ -17,6 +17,7 @@ import { isPrepared, prepareThread } from "./branch-store.ts";
 import { LINE_TEXT } from "./branch-index.ts";
 import { Store } from "./store.ts";
 import * as messages from "./message-db.ts";
+import { TURN_INDEX_DDL } from "./message-tables.ts";
 import { drainBranchChanges, startBranchChange } from "./memory/branch-change.ts";
 import { runProjectDigests } from "./project-digest.ts";
 import { initializeProjectTables } from "./project-tables.ts";
@@ -49,7 +50,11 @@ it("the synchronous fill is called only from the background fill modules; every 
   const body = (name: string) => { const at = db.indexOf(name); const end = db.indexOf("\n}\n", at); return db.slice(at, end); };
   for (const name of ["export function topRowsOnBranch", "export function* branchLinesNewest", "export function rowPlace", "export function activeTextLines"]) expect(body(name), name).not.toMatch(/prepareThreadSync/);
   // every reader that answers from the indexes asserts the thread is prepared instead of filling it
-  for (const name of ["export function turnRows", "export function turnTextRows", "export function newestLines(", "export function rowsNamingImage", "export function recentImagePaths", "export function threadHasKeyed", "export function keyedCardRows"]) expect(body(name), name).toMatch(/requirePrepared\(threadId, "/);
+  // MAIN RULING 1115-DIGEST-ADOPTED S3: turn readers use messages_turn,
+  // independently of branch preparation; all other reader guards stay pinned.
+  expect(body("export function turnRows")).toMatch(/if \(!optionalIndexReady\(db\(\), TURN_INDEX\)\) throw new TurnIndexNotReadyError\(\)/);
+  expect(body("export function turnTextRows")).toContain("turnRows(threadId, turnId)");
+  for (const name of ["export function newestLines(", "export function rowsNamingImage", "export function recentImagePaths", "export function threadHasKeyed", "export function keyedCardRows"]) expect(body(name), name).toMatch(/requirePrepared\(threadId, "/);
   const store = readFileSync(join(SERVER, "branch-store.ts"), "utf8");
   expect(store.slice(store.indexOf("export function childRowids"), store.indexOf("export function childRowids") + 300)).toMatch(/requirePrepared\(threadId, "childRowids"\)/);
   const branchRowsBody = store.slice(store.indexOf("export function branchRows"), store.indexOf("export function branchRows") + 1800);
@@ -166,8 +171,29 @@ it("every index reader refuses an unprepared thread instead of filling it", () =
   unprepare();
   const before = prepareStats.syncPrepares;
   expect(isPrepared(large)).toBe(false);
-  expect(() => messages.turnRows(large, "t")).toThrow(/not prepared/);
-  expect(() => messages.turnTextRows(large, "t")).toThrow(/not prepared/);
+  // MAIN RULING 1115-DIGEST-ADOPTED S4: the turn index is the required
+  // readiness boundary. Preserve both history populations and no-fill proof.
+  side.exec(TURN_INDEX_DDL);
+  for (const thread of [small, large]) {
+    side.prepare("UPDATE messages SET json=json_set(json,'$.turnId','indexed-turn') WHERE thread_id=? AND id IN ('c-2','c-3')").run(thread);
+    const expected = [
+      { id: "c-2", text: "line 2", turnId: "indexed-turn" },
+      { id: "c-3", text: "line 3", turnId: "indexed-turn" },
+    ];
+    for (const reader of [messages.turnRows, messages.turnTextRows]) {
+      expect(reader(thread, "indexed-turn").map(({ id, text, turnId }) => ({ id, text, turnId }))).toEqual(expected);
+      expect(reader(thread, "absent-turn")).toEqual([]);
+    }
+    expect(isPrepared(thread)).toBe(false);
+  }
+  // Roll back the index removal even on a failing assertion, keeping the
+  // following splice/edit controls on the original ready-index fixture.
+  database().exec("SAVEPOINT missing_turn_index; DROP INDEX messages_turn");
+  try {
+    for (const thread of [small, large]) for (const reader of [messages.turnRows, messages.turnTextRows]) {
+      expect(() => reader(thread, "indexed-turn")).toThrow(messages.TurnIndexNotReadyError);
+    }
+  } finally { database().exec("ROLLBACK TO missing_turn_index; RELEASE missing_turn_index"); }
   expect(() => messages.newestLines(large, LINE_TEXT, 3)).toThrow(/not prepared/);
   expect(() => messages.rowsNamingImage(large, "/x.png")).toThrow(/not prepared/);
   expect(() => messages.recentImagePaths(large, 3)).toThrow(/not prepared/);

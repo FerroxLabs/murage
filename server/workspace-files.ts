@@ -19,10 +19,8 @@
 //    and never followed; ancestors are re-checked after every directory read.
 // Discovery is not authorship: entries carry no producer, run or author.
 import { createHash, randomUUID } from "node:crypto";
-import {
-  closeSync, constants, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync, openSync, opendirSync, readFileSync, readSync, realpathSync,
-  renameSync, unlinkSync, writeSync, type Stats,
-} from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync, openSync, opendirSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, type Stats } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -486,6 +484,9 @@ const BOT_WRITING = "A bot is working in this workspace right now, so the file w
 /** The only holder of the workspace is a turn the user already stopped whose
  * engine did not close within its budget (STOPRESTORE2). Retryable. */
 const STOPPED_TURN_CLOSING = "A stopped bot turn is still closing and holds this workspace, so the file was not saved over. Your changes are kept; wait a moment and save again, or save a copy.";
+/** The holder is a turn the user stopped whose engine did not confirm its
+ * close within its bounded teardown: held (fail closed) until it does. */
+const STOPPED_TURN_UNCONFIRMED = "A stopped bot turn's engine has not confirmed that it closed, so it may still be writing in this workspace and the file was not saved over. Your changes are kept; save again once it has closed, or save a copy.";
 const CANNOT_CONFIRM = "Murage cannot confirm that no bot is writing in this workspace, so the file was not saved over. Save a copy instead.";
 const NOT_SAVED = "The file could not be saved. The original was preserved.";
 
@@ -768,7 +769,7 @@ async function holdWorkspace(deps: WorkspaceFilesDeps, leaseOwner: string, root:
     const admission = await deps.projectTurns.acquireRestoreWhenStopped(leaseOwner, root, { timeoutMs });
     if (admission.ok) return;
     if (admission.reason === "still-closing") fail("workspace_stopped_turn_closing", STOPPED_TURN_CLOSING);
-    if (admission.reason === "conflict" && (admission.code === "conflict" || admission.code === "owner-in-use")) fail("bot-writing", BOT_WRITING);
+    if (admission.reason === "conflict" && (admission.code === "conflict" || admission.code === "owner-in-use")) fail("bot-writing", admission.closeUnconfirmed ? STOPPED_TURN_UNCONFIRMED : BOT_WRITING);
     fail("root-changed", ROOT_CHANGED);
   }
   try { deps.projectFolders.acquireRestore(leaseOwner, root); }

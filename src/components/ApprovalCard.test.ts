@@ -8,6 +8,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import type { CardClass } from "../../shared/fold-scopes";
 import { PendingApprovalPanel, alwaysAllowLabel, approvalGrants, pendingOf, spokenApprovalPrompt, spokenToolAction, type Pending } from "./PendingApproval";
 import type { Message } from "@/state/store";
+import { approvalTitle, approvalReason } from "@/lib/pending-approval";
 import { skillRequestBehavior } from "../../shared/skill-request";
 import { loadPlainApproval } from "@/lib/plain-approval";
 
@@ -42,6 +43,19 @@ describe("ApprovalCard hold explanation", () => {
     expect(message.card!.held).toBe(held);
     expect(message.card!.answered).toBe(answered);
   });
+});
+
+it("renders persisted routine delivery failures without a success outcome", () => {
+  const held = "That webhook changed after this confirmation card was prepared.";
+  const message: Message = { id: "failed-routine", role: "bot", kind: "options", at: 1,
+    card: { title: "Update webhook", subtitle: "Reviewed instructions", options: ["Confirm", "Cancel"],
+      tool: "manage_webhook", requestId: "routine-request", answered: "allow", held,
+      routineRequest: { ...routineRequest, kind: "webhook", operation: { action: "pause", webhookId: "hook", expectedUpdatedAt: 1 } } } };
+  const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
+  expect(markup).toContain(held);
+  expect(markup).toContain('data-card-outcome="failed"');
+  expect(markup).not.toContain('Webhook paused');
+  expect(markup).not.toContain('data-card-outcome="allow"');
 });
 
 describe("ApprovalCard settled state", () => {
@@ -561,5 +575,23 @@ describe("browser card answer holds its buttons after the promise resolves", () 
     expect(source).toContain("({ settle, succeed }) =>");
     expect(source).toContain(".then(succeed, settle)");
     expect(source).not.toContain(".finally(settle)");
+  });
+});
+
+
+describe("marked routine confirmation", () => {
+  it("names the server target and shows the outside note before opening details, with no standing-grant choice", () => {
+    const message: Message = { id: "outside-routine", role: "bot", kind: "options", at: 1, card: {
+      title: 'Delete “Morning pictures”?', subtitle: 'Earlier, this chat read outside content (web page).\nAction: Delete routine\nName: Morning pictures',
+      options: ["Confirm", "Cancel"], tool: "manage_routine", requestId: routineRequest.requestId,
+      routineRequest: { ...routineRequest, outsideRead: true, outsideSource: "web page", operation: { action: "delete", routineId: "morning", expectedUpdatedAt: 1 } },
+    } };
+    const pending = pendingOf(message)!;
+    expect(approvalTitle(pending)).toBe(message.card!.title);
+    expect(approvalReason(pending)).toEqual({ held: "Earlier, this chat read outside content (web page)." });
+    expect(approvalGrants(pending, { desktop: true, hasBot: true })).toEqual({ always: false, exact: false, forTask: false, forRoutine: false });
+    const markup = waiting(message, "Fixture bot");
+    expect(markup).toContain("Morning pictures");
+    expect(markup).toContain("Earlier, this chat read outside content (web page).");
   });
 });

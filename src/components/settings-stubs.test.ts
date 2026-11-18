@@ -207,8 +207,9 @@ describe("Settings > Connected apps > Bot email card", () => {
   it("the Cloud window cannot set Flux, so it gets no Open Models & engines button", () => {
     vi.stubGlobal("location", { protocol: CLOUD_PROTOCOL });
     const html = render(BotEmailAccountCard, { status: { kind: "off" } });
-    expect(html).toContain(esc(SETTINGS_STUB_COPY.needsAccount("Nova")));
+    expect(html).toContain("Email connection is not available on this Cloud home yet.");
     expect(html).not.toContain(esc(SETTINGS_STUB_COPY.openModels));
+    expect(html).not.toContain("<button");
   });
 
   it("not on for the account yet: no button, the line ends the hunt", () => {
@@ -221,6 +222,20 @@ describe("Settings > Connected apps > Bot email card", () => {
     expect(html).toContain('data-testid="bot-email-account"');
     expect(html).toContain('role="switch"');
     expect(html).not.toContain("data-settings-stub");
+  });
+
+  it("1.0.19 Cloud dead end: a home with no durable key store shows the plain line and no switch, in the card and in the bot's section; desktop is unchanged", () => {
+    const cloud = { ...ON_VIEW, unavailable: { why: "cloud", line: "Email for bots isn't on Murage Cloud yet." } } as unknown as EmailStatusView;
+    const bot = { id: "nova", name: "Nova", threadId: "t-nova" };
+    for (const html of [render(BotEmailAccountCard, { status: { kind: "on", view: cloud } }), render(BotEmailSection, { bot, status: { kind: "on", view: cloud } })]) {
+      expect(html).toContain('data-testid="bot-email-unavailable"');
+      expect(html).toContain(esc("Email for bots isn't on Murage Cloud yet."));
+      expect(html).not.toContain('role="switch"');
+      expect(html).not.toContain("<button");
+    }
+    const desktop = render(BotEmailAccountCard, { status: { kind: "on", view: ON_VIEW } });
+    expect(desktop).toContain('role="switch"');
+    expect(desktop).not.toContain("bot-email-unavailable");
   });
 
   it("maps every reader state to a gate, and only on to none", () => {
@@ -290,7 +305,7 @@ describe("cards that need this computer, in the Cloud window", () => {
 
   it("paths name the page and the fold", () => {
     expect(settingsCardPath("startup-heading")?.path).toBe("General > Advanced > Start at login and run in the background");
-    expect(settingsCardPath("setup-heading")?.path).toBe("About & updates > Run setup again");
+    expect(settingsCardPath("setup-heading")?.path).toBe("About & help > Run setup again");
   });
 });
 

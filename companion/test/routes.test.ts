@@ -692,6 +692,21 @@ describe("project phone routes", () => {
   });
 });
 
+it("learning usage is GET-only on both doors with owner launch proof", () => {
+  const path = "/api/memory/learning-usage", token = "a".repeat(64);
+  for (const surface of ["device", "browser"] as const) {
+    expect(ask("GET", path, true, surface)).toBeNull();
+    expect(ask("GET", path, false, surface)?.status).toBe(401);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) expect(ask(method, path, true, surface)).not.toBeNull();
+    expect(ask("GET", "/api/memory/status", true, surface)).not.toBeNull();
+    expect(ask("POST", "/api/memory/action", true, surface)).not.toBeNull();
+    expect(ask("GET", `${path}/extra`, true, surface)).not.toBeNull();
+  }
+  expect(launchProofHeaders("GET", path, token)).toEqual({ "x-murage-companion-token": token });
+  expect(launchProofHeaders("GET", path, undefined)).toEqual({});
+  expect(launchProofHeaders("POST", path, token)).toEqual({});
+});
+
 it("project usage is owner-readable on both doors but authority writes stay desktop",()=>{
   for(const surface of ["device","browser"] as const){
     expect(ask("GET","/api/groups/g/usage",true,surface)).toBeNull();

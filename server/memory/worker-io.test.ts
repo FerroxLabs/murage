@@ -14,6 +14,9 @@ import { removeTempDirSync } from "../testing/cleanup.ts";
 const state = vi.hoisted(() => ({ fsWrite: 0, owed: false, purges: 0, platform: undefined as string | undefined, real: false, opened: [] as Array<{ close(): void }> }));
 vi.mock("./embeddings.ts", () => ({ MemoryEmbeddings: class { identity = "fixture"; backend = "native"; embed(texts: string[]) { return Promise.resolve(texts.map(() => [1])); } } }));
 vi.mock("./index.ts", async () => { const { DatabaseSync } = await import("node:sqlite"); const { walFrameReader } = await import("../io-written.ts"); return { MemoryIndex: class {
+  static async create(path: string) { return new this(path); }
+  resetDone() { return null; }
+  stopInfo() { return null; }
   rebuilt = false;
   // WIN-IOB-QUICK: with state.real the stub writes a real WAL index at the path it is given, as the real index does, and owns its log reader
   db: InstanceType<typeof DatabaseSync> | null = null;
@@ -23,13 +26,14 @@ vi.mock("./index.ts", async () => { const { DatabaseSync } = await import("node:
   truncateLog() { this.wal?.(); this.db?.exec("PRAGMA wal_checkpoint(TRUNCATE)"); }
   constructor(path: string) { state.opened.push(this); if (state.real) { this.db = new DatabaseSync(path); this.wal = walFrameReader(path); this.db.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS r(x)"); } }
   prepareModel() {}
+  async applyBatch() { this.upsert(); return { status: "done" as const }; }
   upsert() { state.fsWrite += 100; this.db?.exec("INSERT INTO r SELECT randomblob(4096) FROM (WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<32) SELECT i FROM n)"); }
   vector() { state.fsWrite += 1; }
   checkpointNow() { return true; }
   // the helper starts a pass at init and after every batch that owes a merge; only an owed merge writes
   purgeRolledCheckpoints() { if (state.owed) { state.purges++; state.fsWrite += 10; } return { removed: 0, examined: 0, merged: false, done: true }; }
   maintenanceOwed() { return state.owed; }
-  purgeRecords() {}
+  async purgeRecords() {}
   close() { this.db?.close(); this.db = null; this.wal?.close(); this.wal = null; }
 } }; });
 vi.mock("./eligibility.ts", () => ({ MemoryEligibility: class { pipRecordIds() { return []; } warm() {} close() {} } }));
@@ -45,8 +49,8 @@ async function withWorker(run: (ctx: { emit: (m: unknown) => void; sent: Sent[] 
   const realProcess = process, listeners = new Map<string, (message: unknown) => void>(), sent: Sent[] = [];
   const workerProcess = Object.create(realProcess) as NodeJS.Process;
   Object.defineProperties(workerProcess, {
-    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect" || event === "error") { listeners.set(event, listener); return workerProcess; } return realProcess.on(event, listener); } },
-    send: { value: (message: Sent) => { sent.push(message); return true; } },
+    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect" || event === "error") { listeners.set(event, listener); return workerProcess; } return workerProcess; } },
+    send: { value: (message: Sent, cb?: (e: Error | null) => void) => { if (typeof cb === "function") cb(null); sent.push(message); return true; } },
     exit: { value: vi.fn() },
     resourceUsage: { value: () => ({ ...realProcess.resourceUsage(), fsWrite: state.fsWrite }) },
     ...(state.platform ? { platform: { value: state.platform } } : {}),
@@ -55,12 +59,17 @@ async function withWorker(run: (ctx: { emit: (m: unknown) => void; sent: Sent[] 
   try {
     await import("./worker.ts");
     const emit = listeners.get("message")!;
-    emit({ type: "init", indexPath: options.indexPath ?? "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
+    await emit({ type: "init", indexPath: options.indexPath ?? "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
     await run({ emit, sent });
   } finally {
-    try { listeners.get("disconnect")?.(undefined); }
+    try {
+      await listeners.get("disconnect")?.(undefined);
+      // prepareExit is async: keep the fake process installed through its exit.
+      await vi.waitFor(() => expect(workerProcess.exit).toHaveBeenCalledWith(0));
+    }
     finally {
-      timers.forEach(clearTimeout); timeoutSpy.mockRestore(); state.opened.length = 0;
+      timers.forEach(clearTimeout); timeoutSpy.mockRestore();
+      while (state.opened.length) state.opened.pop()!.close();
       vi.unstubAllGlobals(); vi.resetModules();
     }
   }

@@ -1,3 +1,4 @@
+import { fakeEngineServerArgs } from "./testing/fake-engine-server.ts";
 // Folder trust through the real server (0.1.52 FUIGOTRUST1): a Fuigo bot on
 // the fake ACP CLI in `folder-trust` mode, which reads ./AGENTS.md into its
 // reply only when it was spawned with `--trust` — the engine's own
@@ -16,7 +17,7 @@
 //
 // Same server-spawn pattern as engine-questions-api.test.ts.
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -100,7 +101,8 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
       if (url.startsWith("https://")) throw new Error("External network blocked in folder-trust fixture: " + url);
       return originalFetch(input, init);
     };`, { mode: 0o600 });
-  const proc = spawn(process.execPath, ["--import", pathToFileURL(instrumentation).href, join(SERVER_DIR, "index.ts")], {
+  const proc = spawn(process.execPath, fakeEngineServerArgs("--import", pathToFileURL(instrumentation).href, join(SERVER_DIR, "index.ts")), {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -241,6 +243,33 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     await settled(bot);
     expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toHaveLength(1);
     expect(readDump().argv).toContain("--trust");
+  });
+
+  it("a registered trust answer reports a failed save without a durable receipt or cached trust", async () => {
+    const bot = await makeBot("Trust save failure");
+    const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, "AGENTS.md"), "# Fixture instructions\n");
+    await send(bot);
+    await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
+    const card = (await openTrustCard(bot.threadId))!;
+    expect(card.card.approvalId).toBeTruthy();
+    const file = join(home, ".murage", "folder-trust.json");
+    const previous = `${file}.previous`;
+    const existed = existsSync(file);
+    if (existed) renameSync(file, previous);
+    mkdirSync(file); // Atomic replacement must fail even when the fixture runs as root.
+    try {
+      const response = await answerTrust(bot, card.card.requestId, "Trust this folder");
+      expect(response.status, JSON.stringify(response.body)).toBe(500);
+      expect(response.body.ok).not.toBe(true);
+      await settled(bot);
+      expect((await trustRecord(workspace)).record).toBeNull();
+      expect(decisions().filter(row => row.requestId === card.card.requestId && row.decision === "folder-trusted")).toEqual([]);
+    } finally {
+      rmSync(file, { recursive: true });
+      if (existed) renameSync(previous, file);
+    }
   });
 
   it("(0.1.54 C) a bot with a linked library skill runs its own thread desk trusted: no card, --trust on the spawn, nothing recorded; a planted AGENTS.md next to the links still asks", async () => {
@@ -400,7 +429,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
   // must the picker note and the turn
   it("(2b) a bot in a linked git worktree runs under the main checkout's standalone grant: the picker says upstream, no card, no --trust, no chip, AGENTS.md read", async () => {
     const git = (cwd: string, ...args: string[]) =>
-      execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: home } });
+      execFileSync("git", args, { windowsHide: true, cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: home } });
     const main = join(home, "main-checkout");
     mkdirSync(main, { recursive: true });
     git(main, "init", "-q", ".");

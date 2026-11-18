@@ -1,0 +1,349 @@
+{
+ "R4B-7-sustained-active-reader-fault": [
+  {
+   "file": "server/decision/no-limits-y3c.test.ts",
+   "assertion": "expect(outcome.kind).toBe('card')"
+  }
+ ],
+ "R4B-8-release-bypass": [
+  {
+   "file": "server/decision/no-limits-recovery.test.ts",
+   "assertion": "expect(guardEngineRelease(identity,{command})).toBe(!catastrophic)"
+  }
+ ],
+ "R4B-8-projection-only-refresh": [
+  {
+   "file": "server/decision/no-limits-review-fixes.test.ts",
+   "assertion": "expect(guardEngineRelease({threadId:'t',requestId:'wipe-identity',turnId:'turn',providerInstanceId:'p'})).toBe(command!=='rm -rf /')"
+  }
+ ],
+ "R4B-9-consume-claim-removed": [
+  {
+   "file": "server/limit-backup-gate.test.ts",
+   "assertion": "expect(result.value).toBeUndefined()"
+  }
+ ],
+ "R4B-9-credit-refusal-ignored": [
+  {
+   "file": "server/limit-backup-gate.test.ts",
+   "assertion": "expect(result.value).toBeUndefined()"
+  }
+ ],
+ "R4B-12-no-progress": [
+  {
+   "file": "server/memory/scrub-owner-admission.test.ts",
+   "assertion": "expect(index.deletionScrubPending()).toBe(false)"
+  }
+ ],
+ "R4B-12-false-clean": [
+  {
+   "file": "server/memory/scrub-owner-admission.test.ts",
+   "assertion": "expect(Number(check.prepare(\"SELECT value FROM index_meta WHERE key='delete_scrub_merges'\").get()?.value??0)).toBeGreaterThan(0)"
+  }
+ ],
+ "R4B-14-graceful-close": [
+  {
+   "file": "server/memory/index-wal-state.test.ts",
+   "assertion": "expect(before.handlesOpen).toBe(true)"
+  }
+ ],
+ "R4B-11-remove-1": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-2": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-3": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-4": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-5": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-6": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-7": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-8": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-9": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-10": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-11": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-12": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-13": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-14": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-15": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-16": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-17": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-18": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-19": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-20": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-21": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-22": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-23": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-24": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-25": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-26": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-27": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-28": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-29": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-30": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-10-stored-record-unredacted": [
+  {
+   "file": "server/redact-sink-boundaries.test.ts",
+   "assertion": "expect(bytes).not.toContain(sentinel)",
+   "message": "Sink server/memory/record-write.ts:"
+  }
+ ],
+ "R4B-10-engine-line-unredacted": [
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toMatch(/boundary-private-value|BOUNDARY_PRIVATE_TAIL/)",
+   "message": "Sink server/engine-reply-check.ts:"
+  },
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toContain(key)",
+   "message": "Sink server/engine-reply-check.ts:"
+  }
+ ],
+ "R4B-10-approval-input-unredacted": [
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toMatch(/boundary-private-value|BOUNDARY_PRIVATE_TAIL/)",
+   "message": "Sink server/approval-text.ts:"
+  },
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toContain(key)",
+   "message": "Sink server/approval-text.ts:"
+  },
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toMatch(/boundary-private-value|BOUNDARY_PRIVATE_TAIL/)",
+   "message": "Sink server/approval-grant-request.ts:"
+  },
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toContain(key)",
+   "message": "Sink server/approval-grant-request.ts:"
+  }
+ ],
+ "R4B-10-text-pass-through": [
+  {
+   "file": "server/redact-sink-boundaries.test.ts",
+   "assertion": "expect(bytes).not.toContain(sentinel)",
+   "message": "Sink "
+  },
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toMatch(/boundary-private-value|BOUNDARY_PRIVATE_TAIL/)",
+   "message": "Sink "
+  },
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toContain(key)",
+   "message": "Sink "
+  },
+  {
+   "file": "server/testing/redact-sink-witnesses.ts",
+   "assertion": "expect(JSON.stringify(output)).not.toMatch(/hunter2|TAILSECRET|OLDSECRET123456|SIBLINGSECRET/)",
+   "message": "Sink "
+  }
+ ],
+ "R4B-10-card-pass-through": [
+  {
+   "file": "server/redact-sink-boundaries.test.ts",
+   "assertion": "expect(bytes).not.toContain(sentinel)",
+   "message": "Sink "
+  },
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toMatch(/boundary-private-value|BOUNDARY_PRIVATE_TAIL/)",
+   "message": "Sink "
+  },
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toContain(key)",
+   "message": "Sink "
+  },
+  {
+   "file": "server/testing/redact-sink-witnesses.ts",
+   "assertion": "expect(JSON.stringify(output)).not.toMatch(/hunter2|TAILSECRET|OLDSECRET123456|SIBLINGSECRET/)",
+   "message": "Sink "
+  }
+ ],
+ "R4B-10-sink-pass-through": [
+  {
+   "file": "server/redact-sink-boundaries.test.ts",
+   "assertion": "expect(bytes).not.toContain(sentinel)",
+   "message": "Sink "
+  },
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toMatch(/boundary-private-value|BOUNDARY_PRIVATE_TAIL/)",
+   "message": "Sink "
+  },
+  {
+   "file": "server/testing/redact-sink-extra.ts",
+   "assertion": "expect(bytes).not.toContain(key)",
+   "message": "Sink "
+  },
+  {
+   "file": "server/testing/redact-sink-witnesses.ts",
+   "assertion": "expect(JSON.stringify(output)).not.toMatch(/hunter2|TAILSECRET|OLDSECRET123456|SIBLINGSECRET/)",
+   "message": "Sink "
+  }
+ ],
+ "R4B-11-remove-31": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ],
+ "R4B-11-remove-32": [
+  {
+   "file": "server/no-limits-raw-boundaries-r9.test.ts",
+   "assertion": "expect(rawDeletePrimitive(token)).toBe(shellPrimitive)"
+  }
+ ]
+}

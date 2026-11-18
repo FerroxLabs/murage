@@ -232,17 +232,20 @@ export function refillThread(db: DatabaseSync, threadId: string): void {
  * measures a turn after it, so the counts compare only the turn's own reads. */
 export async function waitForMessageWalk(dbPath: string, ms = 120_000): Promise<void> {
   const end = Date.now() + ms;
+  let progress = "unreadable";
   for (;;) {
     let pending = true;
     try {
       const db = new DatabaseSync(dbPath, { readOnly: true });
       try {
-        const done = (db.prepare("SELECT name FROM transcript_index_state WHERE done = 1 AND name IN ('open_card','keyed_card','browser_check','turn_first')").all() as Array<{ name: string }>).length;
+        const states = db.prepare("SELECT name,done,cursor FROM transcript_index_state WHERE name IN ('open_card','keyed_card','browser_check','turn_first') ORDER BY name").all();
+        const done = states.filter(row => Number(row.done) === 1).length;
+        progress = states.map(row => `${row.name}:${row.done}@${row.cursor}`).join(",") || "no markers";
         pending = done < 4;
       } finally { db.close(); }
     } catch { /* the file is busy this moment: look again */ }
     if (!pending) return;
-    if (Date.now() > end) throw new Error("the message-index walk did not finish");
+    if (Date.now() > end) throw new Error(`the message-index walk did not finish (${progress})`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }

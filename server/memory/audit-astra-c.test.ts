@@ -3,6 +3,7 @@
 //
 // Astra's confirm audit (int102-gate/audit-astra-c/REPORT.md): two privacy leaks, each reproduced here first and fixed after, and two scale
 // findings Sean moved to the post-release scale track (it.todo, with Astra's measured numbers).
+import { deliveredToolText } from "./testing/delivered-tool-text.ts";
 import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -14,7 +15,7 @@ import { resetLineageBackfillForTest } from "./lineage-backfill.ts";
 import { closeTurnLineage, openTurnLineage } from "./lineage-write.ts";
 import type { LineageReader, LineageRef, MemoryRef } from "./lineage-types.ts";
 import { drainRevokeMarker } from "./memory-revocation.ts";
-import { buildPrompt, ownShownLineIds, promptPart, recordTurnObject, sendFence, turnToolText } from "./prompt-parts.ts";
+import { buildPrompt, ownShownLineIds, promptPart, recordTurnObject, sendFence } from "./prompt-parts.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { markerSlice, setScopeFlowEdgesRecorded } from "./revoke-marker.ts";
 import { forgetKeptLineageForTest } from "./testing/legacy-lineage/replay-lineage.ts";
@@ -24,9 +25,9 @@ const CONTENT: LineageReader = { audience: null };
 const msg = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: id, at: Date.now(), ...extra });
 const owner = (id: string, extra: Partial<Message> = {}): Message => msg(id, { role: "user", ...extra });
 const verdict = (thread: string, id: string) => denyLookup(database(), { threadId: thread, lines: [{ messageId: id, author: "generated" }] }, CONTENT).get(id)!;
-const inTurn = (thread: string, turnId: string, write: () => void) => {
+const inTurn = (thread: string, turnId: string, write: (turn: import("./lineage-types.ts").TurnLineage) => void) => {
   const turn = openTurnLineage(database(), { threadId: thread, turnId });
-  try { write(); } finally { closeTurnLineage(turn); }
+  try { write(turn); } finally { closeTurnLineage(turn); }
 };
 
 beforeEach(() => {
@@ -42,9 +43,9 @@ describe("Astra confirm audit", () => {
     appendMessage("A", owner("ao1"));
     inTurn("A", "turn-a", () => { appendMessage("A", msg("a1", { parentId: "ao1" })); recordTurnObject(db, "A", n1); });
     appendMessage("B", owner("bo1"));
-    inTurn("B", "turn-b", () => { turnToolText("B", "n1's words", [{ kind: "memory", ref: n1 }]); recordTurnObject(db, "B", n2); /* B writes the note and no reply: no thread edge of its own carries N1 on to N2's readers */ });
+    inTurn("B", "turn-b", turn => { deliveredToolText(turn, "n1's words", [{ kind: "memory", ref: n1 }]); recordTurnObject(db, "B", n2); /* B writes the note and no reply: no thread edge of its own carries N1 on to N2's readers */ });
     appendMessage("C", owner("co1"));
-    inTurn("C", "turn-c", () => { turnToolText("C", "n2's words", [{ kind: "memory", ref: n2 }]); appendMessage("C", msg("c1", { parentId: "co1" })); });
+    inTurn("C", "turn-c", turn => { deliveredToolText(turn, "n2's words", [{ kind: "memory", ref: n2 }]); appendMessage("C", msg("c1", { parentId: "co1" })); });
     expect(verdict("C", "c1").state).toBe("shown");
     db.prepare("UPDATE memory_lineage_cert SET ready=1,phase='done' WHERE id=1").run(); // the certificate is ready: the flow phase may close its '*' window
     commitRevoke(db, { kind: "line", threadId: "A", messageIds: ["a1"], cause: "forget" });

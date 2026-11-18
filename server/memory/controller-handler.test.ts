@@ -1,6 +1,7 @@
 // The worker's IPC handler returns quickly: the projection receipts of an index-result, and the publication
 // and checkpoint refresh of a finished job, are written on the next turn of the event loop, in the same
 // order and transactions as before, while the job stays held so nothing else is claimed in between.
+import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -26,7 +27,12 @@ beforeEach(() => {
   slow.ms = 0; sent = [];
   controller = new MemoryWorkerController();
   internals = controller as unknown as Internals;
-  internals.child = { kill() {}, on() {}, send: (message: any) => { if (message.type !== "index") sent.push(message); } };
+  const child = Object.assign(new EventEmitter(), {
+    kill() { child.emit("exit", 0, null); return true; },
+    disconnect() { child.emit("exit", 0, null); },
+    send(message: any) { if (message.type !== "index") sent.push(message); return true; },
+  });
+  internals.child = child;
   internals.ready = true;
 });
 afterEach(async () => { await controller.stop().catch(() => {}); });
@@ -67,4 +73,36 @@ it("a finished job is published after the handler returns, and stays held until 
   await settle();
   expect(internals.work).toBeNull();
   expect(String(database().prepare("SELECT status FROM memory_jobs WHERE id=?").get(work.id)!.status)).toBe("complete");
+});
+
+it("capture waiting behind an index batch wakes when its pacing gap ends", async () => {
+  appendMessage("thread", { id: "capture-during-index", at: 1, role: "user", kind: "text", text: "Capture must progress while index checks wait" });
+  vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setImmediate", "clearImmediate"] });
+  try {
+    const state = controller as unknown as { indexing:boolean; indexDeadline:number; nextEligibleWorkAt:number };
+    state.indexing=true;state.indexDeadline=Date.now()+60_000;state.nextEligibleWorkAt=performance.now()+200;
+    controller.start();
+    internals.tick();
+    expect(sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(sent).toHaveLength(1);
+    expect(internals.indexing).toBe(true);
+    expect(internals.work).not.toBeNull();
+  } finally { await controller.stop(); vi.useRealTimers(); }
+});
+
+it("an arrival wakes capture even while an independently acknowledged index batch is in flight", async () => {
+  appendMessage("thread", {id:"arrival-during-index",at:1,role:"user",kind:"text",text:"New capture must not inherit the index deadline"});
+  vi.useFakeTimers({toFake:["Date","performance","setTimeout","clearTimeout","setImmediate","clearImmediate","setInterval","clearInterval"]});
+  try {
+    const state=controller as unknown as {indexDeadline:number;nextEligibleWorkAt:number};
+    internals.indexing=true;state.indexDeadline=Date.now()+60_000;state.nextEligibleWorkAt=performance.now()+200;
+    controller.start();
+    controller.wake();
+    expect(sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(sent).toHaveLength(1);
+    expect(internals.indexing).toBe(true);
+    expect(internals.work).not.toBeNull();
+  } finally {await controller.stop();vi.useRealTimers();}
 });

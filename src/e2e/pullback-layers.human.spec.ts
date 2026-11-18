@@ -4,8 +4,11 @@ import { test, expect, type Page } from './page-error-guard';
 import { PullbackFixture, BOT, THREAD } from './pullback-layers.fixture';
 import type { Action } from '../state/store';
 import type { PullbackProbe } from './pullback-layers.observer';
+import { openSidebar } from './fixtures';
+import { headerMoreButton, phoneLayout } from './chat-controls';
 
 let fixture: PullbackFixture;
+let coldSettings: { requested: Promise<unknown>; release: () => Promise<void> } | undefined;
 test.beforeEach(async ({ page }, testInfo) => {
   if (testInfo.title.includes('actual App page-skill-recorder') || /BF-2[456]:/.test(testInfo.title)) await page.addInitScript(() => {
     const capabilities = {
@@ -20,6 +23,13 @@ test.beforeEach(async ({ page }, testInfo) => {
   fixture = new PullbackFixture(); await fixture.start();
   // Refuse every non-fixture request, including analytics and remote catalogs.
   await page.route('**/*', route => new URL(route.request().url()).origin === fixture.origin ? route.continue() : route.abort());
+  coldSettings = undefined;
+  // Bot Settings now prefetches the shared Settings shell on desktop idle.
+  // Install cold-chunk holds before navigation so prefetch cannot warm it.
+  if (/^(B2:|B10 retry:|B10 late completion:)/.test(testInfo.title)) {
+    const requested = page.waitForRequest('**/components/SettingsModal.tsx*');
+    coldSettings = { requested, release: await hold(page, 'SettingsModal.tsx', testInfo.title.startsWith('B10 retry:')) };
+  }
   await page.goto(fixture.origin + '/__pullback');
   await expect.poll(() => page.evaluate(() => window.pullback?.state.hydrated)).toBe(true);
   // Hydrated roster alone does not prove that the config reply was admitted.
@@ -32,6 +42,13 @@ const layers = (page: Page) => page.evaluate(() => window.pullback.layers());
 const names = async (page: Page) => (await layers(page)).map(layer => layer.name);
 const dispatch = (page: Page, action: Action) => page.evaluate(action => window.pullback.dispatch(action), action);
 const auxiliary = (page: Page, name: Parameters<PullbackProbe['auxiliary']>[0]) => page.evaluate(name => window.pullback.auxiliary(name), name);
+// Below md, selecting Settings closes the sidebar; its hidden opener hands focus
+// to the visible drawer button. Desktop retains the original Settings opener.
+function settingsReturnTarget(page: Page) {
+  return (page.viewportSize()?.width ?? 1440) < 768
+    ? page.getByRole('button', { name: 'Open bot list', exact: true })
+    : page.getByRole('button', { name: 'App settings', exact: true });
+}
 async function settings(page: Page) {
   await page.keyboard.press('Control+,');
   await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
@@ -72,17 +89,17 @@ async function hold(page: Page, file: string, reject = false) {
 test('B1: actual Settings search clears, closes, and returns to its opener', async ({ page }) => {
   const opener = page.getByRole('button', { name: 'App settings', exact: true });
   for (const temperature of ['cold', 'warm']) {
-    await opener.click();
+    await openSidebar(page); await opener.click();
     const search = page.getByRole('textbox', { name: 'Search settings', exact: true });
     await search.fill(temperature); await page.keyboard.press('Escape');
     await expect(search).toHaveValue(''); expect(await names(page)).toEqual(['settings']);
     await page.keyboard.press('Escape'); await expect(search).toHaveCount(0);
-    await expect(opener).toBeFocused(); expect(await layers(page)).toEqual([]);
+    await expect(settingsReturnTarget(page)).toBeFocused(); expect(await layers(page)).toEqual([]);
   }
 });
 
 test('B2: held Settings resolves below empty and reopened palette without stealing focus', async ({ page }) => {
-  const releaseSettings = await hold(page, 'SettingsModal.tsx');
+  const releaseSettings = coldSettings!.release;
   const releasePalette = await hold(page, 'CommandPalette.tsx');
   try {
     await page.keyboard.press('Control+,'); await expect.poll(() => names(page)).toEqual(['settings']);
@@ -93,6 +110,7 @@ test('B2: held Settings resolves below empty and reopened palette without steali
     await page.evaluate(() => window.pullback.palette());
     await expect.poll(() => names(page)).toEqual(['palette', 'settings']);
     const id = (await layers(page))[0].id;
+    await coldSettings!.requested;
     await releaseSettings();
     await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
     expect((await layers(page))[0].id).toBe(id);
@@ -171,9 +189,14 @@ for (const reverse of [false, true]) test(`H3/B7: equal-kind Team library and Se
   expect(before[0].paintRank).toBeGreaterThan(before[1].paintRank!);
   expect(before.map(entry => entry.paintRank)).toEqual(before.map(entry => entry.rank));
   await page.keyboard.press('Escape'); await expect.poll(() => names(page)).toEqual([before[1].name]);
-  // Sidebar explicitly hands Team library back to New or share, even beside Settings.
-  if (reverse) await expect(page.getByRole('button', { name: 'New or share', exact: true })).toBeFocused();
-  else expect((await layers(page))[0].focused).toBe(true);
+  // Sidebar explicitly hands Team library back to New or share, even beside
+  // Settings. The closed phone drawer hands that return to its visible button.
+  if (reverse) {
+    const target = (page.viewportSize()?.width ?? 1440) < 768
+      ? page.getByRole('button', { name: 'Open bot list', exact: true })
+      : page.getByRole('button', { name: 'New or share', exact: true });
+    await expect(target).toBeFocused();
+  } else await expect.poll(async () => (await layers(page))[0].focused).toBe(true);
 });
 
 for (const rejected of [false, true]) test(`B8: phone drawer Team library portal geometry and controls, rejected=${rejected}`, async ({ page }) => {
@@ -285,47 +308,50 @@ test('B10 / R22-RESTART / BF-4: document reload and application restart discard 
   await expect.poll(() => page.evaluate(() => window.pullback?.state.hydrated)).toBe(true);
   await expect.poll(() => names(page)).toEqual([]);
   const opener = page.getByRole('button', { name: 'App settings', exact: true });
-  await opener.click(); await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
-  await page.keyboard.press('Escape'); await expect(opener).toBeFocused();
-  await opener.click(); await palette(page);
+  await openSidebar(page); await opener.click(); await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape'); await expect(settingsReturnTarget(page)).toBeFocused();
+  await openSidebar(page); await opener.click(); await palette(page);
   await page.evaluate(() => window.pullbackUnmount()); await expect.poll(() => names(page)).toEqual([]);
   await expect(page.locator('[data-layer-surface]')).toHaveCount(0);
   await page.evaluate(() => window.pullbackMount());
   await expect.poll(() => page.evaluate(() => window.pullback.state.hydrated)).toBe(true);
   await expect.poll(() => names(page)).toEqual([]);
-  await opener.click(); await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
-  await page.keyboard.press('Escape'); await expect(opener).toBeFocused();
+  await openSidebar(page); await opener.click(); await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape'); await expect(settingsReturnTarget(page)).toBeFocused();
 });
 
 test('BF-23 / H1 / D2: full App app-to-bot-to-app Settings remount retains the original opener', async ({ page }) => {
   const opener = page.getByRole('button', { name: 'App settings', exact: true });
   for (const temperature of ['cold', 'warm']) {
-    await opener.click(); await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
-    await opener.evaluate(node => { node.setAttribute('data-focus-count', '0'); if (!node.hasAttribute('data-focus-watch')) { node.setAttribute('data-focus-watch', ''); node.addEventListener('focus', () => node.setAttribute('data-focus-count', String(Number(node.getAttribute('data-focus-count')) + 1))); } });
+    await openSidebar(page); await opener.click(); await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
+    const returnTarget = settingsReturnTarget(page);
+    await returnTarget.evaluate(node => { node.setAttribute('data-focus-count', '0'); if (!node.hasAttribute('data-focus-watch')) { node.setAttribute('data-focus-watch', ''); node.addEventListener('focus', () => node.setAttribute('data-focus-count', String(Number(node.getAttribute('data-focus-count')) + 1))); } });
     await dispatch(page, { type: 'toggleSettings', open: true, botId: BOT });
     await expect.poll(() => names(page)).toEqual(['bot-settings']);
     await expect.poll(async () => (await layers(page))[0].focused).toBe(true);
-    await expect(opener, temperature).toHaveAttribute('data-focus-count', '0');
+    await expect(returnTarget, temperature).toHaveAttribute('data-focus-count', '0');
     await dispatch(page, { type: 'toggleAppSettings', open: true });
     await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
-    await expect(opener).toHaveAttribute('data-focus-count', '0');
-    await page.keyboard.press('Escape'); await expect(opener).toBeFocused();
-    await expect(opener).toHaveAttribute('data-focus-count', '1'); expect(await layers(page)).toEqual([]);
+    await expect(returnTarget).toHaveAttribute('data-focus-count', '0');
+    await page.keyboard.press('Escape'); await expect(settingsReturnTarget(page)).toBeFocused();
+    await expect(returnTarget).toHaveAttribute('data-focus-count', '1'); expect(await layers(page)).toEqual([]);
   }
 });
 
 test('B10 retry: chunk retry calls the reload seam once, real reload reconstructs without ghosts', async ({ page }) => {
-  const release = await hold(page, 'SettingsModal.tsx', true);
+  const { requested, release } = coldSettings!;
   try {
     await page.keyboard.press('Control+,'); await expect.poll(() => names(page)).toEqual(['settings']);
-    await release();
+    await requested;
+    const refused = page.waitForEvent('requestfailed', request => request.url().includes('/components/SettingsModal.tsx'));
+    await release(); await refused;
     const retry = page.getByRole('button', { name: /Tap to retry/ }); await expect(retry).toBeFocused();
     await retry.click(); expect(await page.evaluate(() => window.pullbackReloads)).toBe(1);
     await page.reload(); await expect.poll(() => page.evaluate(() => window.pullback?.state.hydrated)).toBe(true);
     expect(await layers(page)).toEqual([]); await expect(page.locator('[data-layer-surface]')).toHaveCount(0);
-    const opener = page.getByRole('button', { name: 'App settings', exact: true }); await opener.click();
+    const opener = page.getByRole('button', { name: 'App settings', exact: true }); await openSidebar(page); await opener.click();
     await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
-    await page.keyboard.press('Escape'); await expect(opener).toBeFocused();
+    await page.keyboard.press('Escape'); await expect(settingsReturnTarget(page)).toBeFocused();
   } finally { await release(); }
 });
 
@@ -374,6 +400,7 @@ const nullCallers = [
   { caller: 'Hire template', file: 'NewFromTemplateDialog.tsx', name: 'hire-bot-templates', loaded: 'new-from-template-dialog' },
 ] as const;
 async function openNullCaller(page: Page, caller: typeof nullCallers[number]['caller']) {
+  await openSidebar(page);
   if (caller === 'Hire template') {
     await page.getByRole('button', { name: 'App settings', exact: true }).focus();
     await auxiliary(page, 'hire');
@@ -437,19 +464,20 @@ for (const query of ['', 'keep query']) test(`R23-H1 / R22-H2: actual search und
 });
 
 test('B10 late completion: application restart invalidates old loading owner and callbacks', async ({ page }) => {
-  const release = await hold(page, 'SettingsModal.tsx');
+  const { requested, release } = coldSettings!;
   try {
     await page.keyboard.press('Control+,'); await expect.poll(() => names(page)).toEqual(['settings']);
+    await requested;
     const old = (await layers(page))[0].id;
     await page.evaluate(() => window.pullbackUnmount()); await expect.poll(() => names(page)).toEqual([]);
     await release(); await expect(page.locator('[data-layer-surface]')).toHaveCount(0);
     await page.evaluate(() => window.pullbackMount());
     await expect.poll(() => page.evaluate(() => window.pullback.state.hydrated)).toBe(true);
     await expect.poll(() => names(page)).toEqual([]);
-    const opener = page.getByRole('button', { name: 'App settings', exact: true }); await opener.click();
+    const opener = page.getByRole('button', { name: 'App settings', exact: true }); await openSidebar(page); await opener.click();
     await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
     expect((await layers(page))[0].id).not.toBe(old);
-    await page.keyboard.press('Escape'); await expect(opener).toBeFocused();
+    await page.keyboard.press('Escape'); await expect(settingsReturnTarget(page)).toBeFocused();
   } finally { await release(); }
 });
 
@@ -503,7 +531,7 @@ for (const control of ['model', 'revoke'] as const) for (const foreign of ['none
 for (const name of ['export', 'shortcuts', 'close-project', 'end-project', 'bundle', 'whats-new', 'engine-link', 'engine-signin'] as const) {
   for (const warm of [false, true]) for (const strict of [false, true]) {
     test(`R22-OWNERS / R23-H3 / BF-6 / R22-RETURN: native ${name} warm=${warm} StrictMode=${strict} crash retry and final return`, async ({ page }) => {
-      const opener = page.getByRole('button', { name: 'App settings', exact: true }); await opener.focus();
+      const opener = settingsReturnTarget(page); await opener.focus(); await expect(opener).toBeFocused();
       await opener.evaluate(node => { node.setAttribute('data-returns', '0'); node.addEventListener('focus', () => node.setAttribute('data-returns', String(Number(node.getAttribute('data-returns')) + 1))); });
       await page.evaluate(({ name, warm, strict }) => window.pullback.nativeCase(name, warm, strict), { name, warm, strict });
       await expect(page.locator('dialog[open]')).toHaveCount(1);
@@ -536,6 +564,7 @@ for (const name of ['export', 'shortcuts', 'close-project', 'end-project', 'bund
 // dismissal lands on the chat view. All chats and Routines close onto the open chat (closeAllChats, closeCalendar), and that view's
 // composer takes focus when it mounts (Composer.tsx, "focus the draft when a thread opens", 2cd0f35a1), after the layer's release. Team
 // map and Skill recorder close onto Today, which has no autofocus, so the opener keeps it.
+// Touch devices deliberately skip composer autofocus to avoid opening the keyboard.
 type FocusAfter = 'opener' | 'composer';
 const appOwners: Array<{ name: string; file: string; action: Action; kind: 'page' | 'window'; focusAfter: FocusAfter }> = [
   { name: 'page-all-chats', file: 'AllChatsPage.tsx', action: { type: 'showAllChats' }, kind: 'page', focusAfter: 'composer' },
@@ -547,7 +576,11 @@ const appOwners: Array<{ name: string; file: string; action: Action; kind: 'page
 ];
 for (const row of appOwners) test(`R22-OWNERS: actual App ${row.name} cover activation, focus, upper owner and dismissal`, async ({ page }) => {
   await dispatch(page, { type: 'select', id: BOT });
-  const opener = page.getByRole('button', { name: 'App settings', exact: true }); await opener.focus();
+  // A page replaces the chat header (including its phone drawer button). Help
+  // stays mounted outside that slot, so it is a usable opener after dismissal.
+  const touch = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
+  const opener = touch && row.kind === 'page' ? page.locator('[data-help-launcher]') : settingsReturnTarget(page);
+  await opener.focus(); await expect(opener).toBeFocused();
   const release = await hold(page, row.file);
   try {
     await dispatch(page, row.action); await expect.poll(() => names(page)).toEqual([row.name]);
@@ -557,7 +590,12 @@ for (const row of appOwners) test(`R22-OWNERS: actual App ${row.name} cover acti
     await page.keyboard.press('Escape'); await expect.poll(() => names(page)).toEqual([row.name]);
     expect((await layers(page))[0].id).toBe(before.id); await expect(page.locator('[data-lazy-overlay]').getByRole('button', { name: 'Close', exact: true })).toBeFocused();
     await page.keyboard.press('Escape'); await expect.poll(() => names(page)).toEqual([]);
-    if (row.focusAfter === 'composer') await expect(page.locator('textarea[aria-label^="Message "]')).toBeFocused(); else await expect(opener).toBeFocused();
+    const composer = page.locator('textarea[aria-label^="Message "]');
+    if (row.focusAfter === 'composer' && !touch) await expect(composer).toBeFocused();
+    else {
+      await expect(opener).toBeFocused();
+      if (row.focusAfter === 'composer') await expect(composer).not.toBeFocused();
+    }
     await release(); await expect(page.locator('[data-layer-surface]')).toHaveCount(0);
   } finally { await release(); }
 });
@@ -583,9 +621,9 @@ test('R24 phone geometry: actual template sheet tracks visual viewport and recei
 });
 
 test('R22-OWNERS: actual Plugins cold/warm activation, upper palette, and opener return', async ({ page }) => {
-  const opener = page.getByRole('button', { name: 'App settings', exact: true });
+  const opener = settingsReturnTarget(page);
   for (const temperature of ['cold', 'warm']) {
-    await opener.focus(); await dispatch(page, { type: 'togglePlugins', open: true });
+    await opener.focus(); await expect(opener).toBeFocused(); await dispatch(page, { type: 'togglePlugins', open: true });
     await expect(page.getByRole('button', { name: 'Close connected apps', exact: true })).toBeVisible();
     expect(await names(page), temperature).toEqual(['plugins']); expect((await layers(page))[0].focused).toBe(true);
     const id = (await layers(page))[0].id; await palette(page);
@@ -600,7 +638,13 @@ for (const group of [false, true]) test(`R22-OWNERS: actual ${group ? 'group' : 
   await expect.poll(() => page.evaluate(id => window.pullback.state.bots.some(bot => bot.id === id) || window.pullback.state.groups.some(group => group.id === id), id)).toBe(true);
   await dispatch(page, { type: 'select', id });
   await expect.poll(() => page.evaluate(() => window.pullback.state.selectedId)).toBe(id);
-  const opener = page.getByRole('button', { name: 'App settings', exact: true }); await opener.focus();
+  // GroupView loads lazily: the selected id can precede its new header and
+  // composer. Capture the opener only after that view has finished mounting.
+  await expect(page.getByRole('log', { name: group ? 'Channel Pullback channel' : 'Conversation with Pullback bot', exact: true })).toBeVisible();
+  if (await page.evaluate(() => !matchMedia('(pointer: coarse)').matches)) {
+    await expect(page.getByRole('textbox', { name: group ? 'Message Pullback channel' : 'Message Pullback bot', exact: true })).toBeFocused();
+  }
+  const opener = settingsReturnTarget(page); await opener.focus(); await expect(opener).toBeFocused();
   const release = await hold(page, group ? 'GroupCallView.tsx' : 'CallView.tsx');
   try {
     expect(await page.evaluate(id => window.pullback.call(id), id)).toBe(id);
@@ -619,10 +663,19 @@ for (const group of [false, true]) test(`R22-OWNERS: actual ${group ? 'group' : 
   await expect.poll(() => page.evaluate(id => window.pullback.state.bots.some(bot => bot.id === id) || window.pullback.state.groups.some(group => group.id === id), id)).toBe(true);
   await dispatch(page, { type: 'select', id });
   await expect.poll(() => page.evaluate(() => window.pullback.state.selectedId)).toBe(id);
-  const opener = page.getByRole('button', { name: 'Find in conversation', exact: true }); await expect(opener).toBeVisible();
+  await expect(page.getByRole('log', { name: group ? 'Channel Pullback channel' : 'Conversation with Pullback bot', exact: true })).toBeVisible();
+  const menuFind = !group && await phoneLayout(page);
+  const opener = menuFind ? headerMoreButton(page) : page.getByRole('button', { name: 'Find in conversation', exact: true });
+  await expect(opener).toBeVisible();
   const release = await hold(page, 'ChatFindBar.tsx');
   try {
-    await opener.click(); const name = group ? 'group-find' : 'chat-find';
+    await opener.click();
+    if (menuFind) {
+      const menu = page.getByRole('menu', { name: 'More header actions', exact: true });
+      await expect(menu).toBeVisible();
+      await menu.getByRole('menuitemcheckbox', { name: /^Find in conversation/ }).click();
+    }
+    const name = group ? 'group-find' : 'chat-find';
     await expect.poll(() => names(page)).toEqual([name]);
     await expect(page.locator('[data-lazy-overlay]').getByRole('button', { name: 'Close', exact: true })).toBeFocused();
     const before = (await layers(page))[0].id; await palette(page); await page.keyboard.press('Escape');
@@ -634,7 +687,9 @@ for (const group of [false, true]) test(`R22-OWNERS: actual ${group ? 'group' : 
 
 for (const kind of ['browser', 'vm'] as const) test(`R22-OWNERS: actual App ${kind} workspace cover follows its dismissal callback`, async ({ page }) => {
   await dispatch(page, { type: 'select', id: BOT });
-  const opener = page.getByRole('button', { name: 'App settings', exact: true }); await opener.focus();
+  const touch = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
+  const opener = touch ? page.locator('[data-help-launcher]') : settingsReturnTarget(page);
+  await opener.focus(); await expect(opener).toBeFocused();
   const release = await hold(page, kind === 'browser' ? 'BrowserWorkspace.tsx' : 'LocalVmWorkspace.tsx');
   const releaseComputer = await hold(page, 'ComputerPanel.tsx');
   try {
@@ -649,7 +704,10 @@ for (const kind of ['browser', 'vm'] as const) test(`R22-OWNERS: actual App ${ki
       expect(await page.evaluate(() => window.pullback.state.computerOpen)).toBe(true);
       await expect(page.locator('[data-lazy-overlay]').getByRole('button', { name: 'Close', exact: true })).toBeFocused();
       await page.keyboard.press('Escape');
-    } else await expect(page.locator('textarea[aria-label^="Message "]')).toBeFocused(); // the VM workspace closes onto the open chat: its composer takes focus (see appOwners)
+    } else if (touch) {
+      await expect(opener).toBeFocused();
+      await expect(page.locator('textarea[aria-label^="Message "]')).not.toBeFocused();
+    } else await expect(page.locator('textarea[aria-label^="Message "]')).toBeFocused(); // desktop VM dismissal returns to the composer's autofocus
     await expect.poll(() => names(page)).toEqual([]);
     await release(); await releaseComputer(); expect(await layers(page)).toEqual([]);
   } finally { await release(); await releaseComputer(); }
@@ -683,7 +741,7 @@ async function wrapsAtBothEnds(page: Page, dialog: ReturnType<Page['locator']>) 
   await page.keyboard.press('Shift+Tab'); await expect(last).toBeFocused();
 }
 test('R5-M7: actual Hire starts in the job box, Enter writes a new line, Tab wraps at both ends, Escape returns to the opener', async ({ page }) => {
-  const opener = page.getByRole('button', { name: 'App settings', exact: true }); await opener.focus();
+  const opener = settingsReturnTarget(page); await opener.focus(); await expect(opener).toBeFocused();
   await auxiliary(page, 'hire'); await expect.poll(() => names(page)).toEqual(['hire-bot']);
   const job = page.locator('#hire-bot-job'); await expect(job).toBeFocused();
   await page.keyboard.type('Fixture line'); await page.keyboard.press('Enter'); await page.keyboard.type('second');

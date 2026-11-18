@@ -1,0 +1,13 @@
+diff --git a/server/drivers/engine-input.ts b/server/drivers/engine-input.ts
+index b509a007d1..a7327d7426 100644
+--- a/server/drivers/engine-input.ts
++++ b/server/drivers/engine-input.ts
+@@ -226,7 +226,7 @@ function join(R: FencedRefusal, site: string): void {
+ export function refusalFor(error: unknown, site: string, ctx: RefusalCtx): FencedRefusal | undefined {
+   if (!isMemoryRefusal(error)) return undefined;
+   const key = typeof error === "object" && error !== null ? error : null;
+-  let R = (key && refusalByError.get(key)) || fencedRefusalRegistry.byGeneration(dispatchGenerationOf(ctx.binding));
++  let R: FencedRefusal | undefined;
+   if (R) join(R, site);
+   else {
+     const kind: RefusalKind = ctx.kind ?? (ctx.owner ? "turn" : "notice");

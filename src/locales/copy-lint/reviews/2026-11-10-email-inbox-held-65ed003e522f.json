@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "email-account-change-builder",
+  "date": "2026-11-10",
+  "base": "a63422779",
+  "scope": "EMAIL-ACCOUNT-CHANGE r6 held inbox line",
+  "strings": {
+    "en:email.inbox.held": {
+      "text": "Murage is checking the email account. This bot's emails wait until it finishes.",
+      "en": "Murage is checking the email account. This bot's emails wait until it finishes.",
+      "verdict": "pass"
+    },
+    "de:email.inbox.held": {
+      "text": "Murage prüft das E-Mail-Konto. Die E-Mails dieses Bots warten, bis die Prüfung abgeschlossen ist.",
+      "en": "Murage is checking the email account. This bot's emails wait until it finishes.",
+      "verdict": "pass"
+    },
+    "es:email.inbox.held": {
+      "text": "Murage está comprobando la cuenta de correo. Los correos de este bot esperan hasta que termine.",
+      "en": "Murage is checking the email account. This bot's emails wait until it finishes.",
+      "verdict": "pass"
+    },
+    "fr:email.inbox.held": {
+      "text": "Murage vérifie le compte de messagerie. Les e-mails de ce bot attendent la fin de la vérification.",
+      "en": "Murage is checking the email account. This bot's emails wait until it finishes.",
+      "verdict": "pass"
+    },
+    "hi:email.inbox.held": {
+      "text": "Murage ईमेल खाते की जाँच कर रहा है। जाँच पूरी होने तक इस बॉट के ईमेल रुके रहेंगे।",
+      "en": "Murage is checking the email account. This bot's emails wait until it finishes.",
+      "verdict": "pass"
+    },
+    "ja:email.inbox.held": {
+      "text": "Murage はメールアカウントを確認しています。確認が終わるまで、このボットのメールは待機します。",
+      "en": "Murage is checking the email account. This bot's emails wait until it finishes.",
+      "verdict": "pass"
+    },
+    "pt-br:email.inbox.held": {
+      "text": "O Murage está verificando a conta de e-mail. Os e-mails deste bot aguardam até a verificação terminar.",
+      "en": "Murage is checking the email account. This bot's emails wait until it finishes.",
+      "verdict": "pass"
+    },
+    "zh:email.inbox.held": {
+      "text": "Murage 正在检查邮件账户。检查完成前，此机器人的邮件会暂时等待处理。",
+      "en": "Murage is checking the email account. This bot's emails wait until it finishes.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

@@ -1,0 +1,274 @@
+{
+  "surfaces": [
+    {
+      "kind": "card",
+      "id": "channels.signal",
+      "path": "src/lib/settings-card-registry.ts",
+      "why": "Connect the owner's Note to Self to their workspace Chief."
+    },
+    {
+      "kind": "search",
+      "id": "channels.signal",
+      "path": "src/lib/settings-card-registry.ts",
+      "why": "Find Signal through its name, Note to Self, or connect phone messages."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/status",
+      "path": "server/index.ts",
+      "why": "Let only the local owner status through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/review",
+      "path": "server/index.ts",
+      "why": "Let only the local owner review through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/link",
+      "path": "server/index.ts",
+      "why": "Let only the local owner link through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/connect-again",
+      "path": "server/index.ts",
+      "why": "Let only the local owner connect again through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/disconnect",
+      "path": "server/index.ts",
+      "why": "Let only the local owner disconnect through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/resend",
+      "path": "server/index.ts",
+      "why": "Let only the local owner resend through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/leave-it",
+      "path": "server/index.ts",
+      "why": "Let only the local owner leave it through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/dismiss",
+      "path": "server/index.ts",
+      "why": "Let only the local owner dismiss through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/finish-revocation",
+      "path": "server/index.ts",
+      "why": "Let only the local owner finish revocation through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/fix-permissions",
+      "path": "server/index.ts",
+      "why": "Let only the local owner fix permissions through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/retry-notes",
+      "path": "server/index.ts",
+      "why": "Let only the local owner retry notes through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/open-in-murage",
+      "path": "server/index.ts",
+      "why": "Let only the local owner open in murage through the Signal service."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/show-folder",
+      "path": "server/index.ts",
+      "why": "Let only the local owner show folder through the Signal service."
+    },
+    {
+      "kind": "problem",
+      "id": "link-required",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain link required with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "identity-unavailable",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain identity unavailable with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "identity-mismatch",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain identity mismatch with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "needs-update",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain needs update with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "storage-permissions",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain storage permissions with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "storage-owner",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain storage owner with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "revoke-recovery-required",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain revoke recovery required with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "disk-full",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain disk full with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "storage-slow",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain storage slow with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "ledger-write-failed",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain ledger write failed with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "notes-stuck",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain notes stuck with its recovery action."
+    },
+    {
+      "kind": "problem",
+      "id": "reply-lost",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explain reply lost with its recovery action."
+    },
+    {
+      "kind": "recovery",
+      "id": "link",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner link from the Signal card."
+    },
+    {
+      "kind": "recovery",
+      "id": "connect-again",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner connect again from the Signal card."
+    },
+    {
+      "kind": "recovery",
+      "id": "disconnect",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner disconnect from the Signal card."
+    },
+    {
+      "kind": "recovery",
+      "id": "finish-revocation",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner finish revocation from the Signal card."
+    },
+    {
+      "kind": "recovery",
+      "id": "fix-permissions",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner fix permissions from the Signal card."
+    },
+    {
+      "kind": "recovery",
+      "id": "retry-notes",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner retry notes from the Signal card."
+    },
+    {
+      "kind": "recovery",
+      "id": "review",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner review from the Signal card."
+    },
+    {
+      "kind": "recovery",
+      "id": "check-for-updates",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner check for updates from the Signal card."
+    },
+    {
+      "kind": "recovery",
+      "id": "open-storage",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner open storage from the Signal card."
+    },
+    {
+      "kind": "recovery",
+      "id": "show-folder",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner show folder from the Signal card."
+    },
+    {
+      "kind": "review",
+      "id": "resend",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner resend for one held reply."
+    },
+    {
+      "kind": "review",
+      "id": "leave-it",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner leave it for one held reply."
+    },
+    {
+      "kind": "review",
+      "id": "dismiss",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner dismiss for one held reply."
+    },
+    {
+      "kind": "review",
+      "id": "open-in-murage",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Let the owner open in murage for one held reply."
+    },
+    {
+      "kind": "route",
+      "id": "/api/signal/keep-both-and-link",
+      "path": "server/index.ts",
+      "why": "Authenticated owner custody replacement; preserves credentials and revokes local authority before fresh link"
+    },
+    {
+      "kind": "problem",
+      "id": "kept-check",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Signal files require custody review before use"
+    },
+    {
+      "kind": "problem",
+      "id": "kept-busy",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Earlier child may still hold Signal files"
+    },
+    {
+      "kind": "recovery",
+      "id": "keep-both-and-link",
+      "path": "src/components/SignalSettings.tsx",
+      "why": "Explicit owner replacement after complete durable exclusion and local authority replay"
+    }
+  ]
+}
