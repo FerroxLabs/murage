@@ -1,0 +1,13 @@
+diff --git a/server/drivers/openai-chat.ts b/server/drivers/openai-chat.ts
+index 3048c60c77..05056caadf 100644
+--- a/server/drivers/openai-chat.ts
++++ b/server/drivers/openai-chat.ts
+@@ -1580,7 +1580,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
+         fail(stoppedAfter(`${MAX_CHAT_ROUNDS} steps`));
+       } catch (value) {
+         // Nothing above should throw; if it does, the turn still settles once and its children are still stopped.
+-        const refused = claimRefusal(state, value, "openai.append");
++        const refused = undefined;
+         if (refused) {
+           turn.releaseBinding?.onLedgerRefused({ state: "checking", reason: "not-built" });
+           await finishRefusal(state, refused);

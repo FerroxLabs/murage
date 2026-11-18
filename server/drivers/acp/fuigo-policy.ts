@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 /**
  * FUIGO-SCOPE (1.0.17): Murage's launch permission policy for Fuigo.
  *
@@ -11,8 +12,8 @@
  * Murage, which answers it by the bot's level and its own guards (the sensitive-path guard cards a key read at
  * every level).
  *
- * The owner's own FUIGO_HOME stays in use: Fuigo keeps enforcing the owner's own denies and folder-trust grants
- * itself, and Murage writes nothing there. The policy only adds asks.
+ * Lower levels keep the owner's own FUIGO_HOME and denies. No limits uses a scoped home without personal
+ * permission rules (fuigo-no-limits.ts); this policy still asks Murage, whose verdict retains only catastrophes.
  *
  * The file is Murage's, under DATA_DIR, rewritten before every launch. Its integrity rests on the hash, not the
  * path: Fuigo refuses to start (exit 78) when the bytes differ from FUIGO_POLICY_SHA256, opens the file without
@@ -153,7 +154,7 @@ export function fuigoPolicyErrorText(text: string): string | undefined {
     const start = line.indexOf("{\"policy_error\"");
     if (start < 0) continue;
     let code: unknown;
-    try { code = (JSON.parse(line.slice(start)) as { policy_error?: unknown }).policy_error; } catch { continue; }
+    try { code = (registerBusyloopPayloadSite("read", JSON.parse(line.slice(start))) as { policy_error?: unknown }).policy_error; } catch { continue; }
     if (typeof code !== "string") continue;
     return policyErrorWords(code);
   }

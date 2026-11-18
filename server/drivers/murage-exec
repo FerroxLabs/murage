@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -p
 # Copyright 2026 Ferrox Labs
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
@@ -9,22 +9,31 @@
 # that Murage's environment record does not list. The environment is read
 # from a NUL-separated name=value file Murage writes for the turn (its path
 # is MURAGE_EXEC_ENV_FILE). Its content is read as data: never sourced,
-# never evaluated. Two reserved entries carry the directory and the shell.
+# never evaluated. Three reserved entries carry the directory, the shell and
+# PROVEN (X3); no other MURAGE_EXEC_* entry may be in the file.
 #
-# Claude also starts every stdio MCP server through this prefix, handing it that
-# server's own mcp.json `env` in this process's environment. Murage names those
-# variables in MURAGE_EXEC_KEEP (a comma list, set only on MCP servers, never in
-# Claude's own environment), and only they are carried over, on top of the turn's
-# map. A Bash command never has MURAGE_EXEC_KEEP, so it gains nothing. Read first,
-# before this script sets any variable of its own. The whole value is the list
-# (a name with a newline in it is not a name), and a name counts only when it came
-# in the environment (exported), never a variable Bash made itself (UID,
-# BASH_VERSION, ...). SHLVL, PWD, OLDPWD and _ are the shell's own bookkeeping and
-# are never carried. Values are kept in this shell only: they never become a
+# X3 (SIMPLE r2 + r4.5): `bash -p` imports no function and ignores BASH_ENV, ENV and SHELLOPTS (W1). Every Bash call
+# (Bash class) has Claude's snapshot `source` removed (W3) and its whole command string checked against the shape list
+# beside this file (W5); with MURAGE_EXEC_PROVEN=1 a call that does not conform is not run (exit 126, a value-free reason
+# and shape hash in the thread's flag file). An MCP server call is MCP class only when its MURAGE_EXEC_KEEP carries this
+# CLI process's nonce (MURAGE_EXEC_NONCE, inherited from the CLI's spawn env, never read from any file); it then keeps
+# the names after the head exactly as before. Any other KEEP is Bash class, keeps nothing, and writes one value-free
+# "keep-mismatch" line to <flag file>.diag (never the flag file).
+#
+# Claude starts every stdio MCP server through this prefix, handing it that server's own mcp.json `env` in this
+# process's environment, with MURAGE_EXEC_KEEP=mcp:<nonce>:<names>. Read first, before this script sets any variable
+# of its own, and with builtins only (no command is looked up before PATH is fixed below). A name counts only when it
+# came in the environment (exported), never a variable Bash made itself (UID, BASH_VERSION, ...). SHLVL, PWD, OLDPWD
+# and _ are the shell's own bookkeeping and are never carried. Values are kept in this shell only: they never become a
 # command-line argument of any process (see the exec at the end).
+murage_exec_no_limits=0
+murage_exec_keep_raw="${MURAGE_EXEC_KEEP-}"
+murage_exec_nonce_raw="${MURAGE_EXEC_NONCE-}"
 murage_exec_kept=()
-if [ -n "${MURAGE_EXEC_KEEP-}" ]; then
-  murage_exec_rest="$MURAGE_EXEC_KEEP,"
+murage_exec_names_part="$murage_exec_keep_raw"
+if [[ "$murage_exec_keep_raw" =~ ^mcp:[0-9a-f]{32}: ]]; then murage_exec_names_part="${murage_exec_keep_raw:37}"; fi
+if [ -n "$murage_exec_names_part" ]; then
+  murage_exec_rest="$murage_exec_names_part,"
   murage_exec_exported='^declare -[A-Za-z]*x'
   while [ -n "$murage_exec_rest" ]; do
     murage_exec_name="${murage_exec_rest%%,*}"
@@ -36,28 +45,160 @@ if [ -n "${MURAGE_EXEC_KEEP-}" ]; then
     murage_exec_kept+=("$murage_exec_name=${!murage_exec_name}")
   done
 fi
-f="$MURAGE_EXEC_ENV_FILE"
+# W1: this script's own commands (uname, cygpath, env, cksum) are the system's, whatever PATH the CLI had. The command
+# still gets the map's PATH (it is in `args`).
+PATH=/usr/bin:/bin
+murage_exec_msys=0
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) murage_exec_msys=1 ;; esac
+if [ "$murage_exec_msys" = 1 ]; then
+  command -v cygpath >/dev/null 2>&1 || { echo "murage-exec: cygpath is not available" >&2; exit 126; }
+fi
+f="${MURAGE_EXEC_ENV_FILE-}"
 if [ -z "$f" ] || [ ! -r "$f" ]; then
   echo "murage-exec: the turn environment is not available" >&2
   exit 126
 fi
+# W2: the file must be Murage's own, `<this wrapper's folder>/env/<24 hex>`. On MSYS both sides are compared in the
+# POSIX form: $0 is the forward-slash spelling and the file the Windows one.
+# No limits keeps the pre-X3 map path and format; X3 proof checks cannot refuse it.
+murage_exec_dir="${0%/*}"
+murage_exec_file="$f"
+if [ "$murage_exec_msys" = 1 ]; then
+  murage_exec_dir="$(cygpath -u "$murage_exec_dir")" || exit 126
+  murage_exec_file="$(cygpath -u "$f")" || exit 126
+fi
+murage_exec_base="${murage_exec_file##*/}"
+if [ "$murage_exec_no_limits" != 1 ] && { [[ ! "$murage_exec_base" =~ ^[0-9a-f]{24}$ ]] || [ "$murage_exec_file" != "$murage_exec_dir/env/$murage_exec_base" ]; }; then
+  echo "murage-exec: the turn environment is not Murage's" >&2
+  exit 126
+fi
+murage_exec_flag="$murage_exec_file.flag"
+# A file that cannot be read runs nothing. The file is Murage's (W2), so the refusal is also flagged: Murage then writes
+# the thread's file again (PROVEN=0, its own entries only) and the thread is on the floor (r4.5 S4p-rewrite (d)).
+murage_exec_unreadable() {
+  if [ "$murage_exec_no_limits" != 1 ]; then printf 'reason=unreadable shape=0\n' >> "$murage_exec_flag" 2>/dev/null || :; fi
+  echo "murage-exec: the turn environment could not be read" >&2
+  exit 126
+}
 args=()
 cwd=""
 shell=""
+murage_exec_guard=""
+murage_exec_path=""
+proven=""
+[ "$murage_exec_no_limits" != 1 ] || proven=0
 while IFS= read -r -d '' pair; do
   case "$pair" in
     MURAGE_EXEC_CWD=*) cwd="${pair#MURAGE_EXEC_CWD=}"; continue ;;
     MURAGE_EXEC_SHELL=*) shell="${pair#MURAGE_EXEC_SHELL=}"; continue ;;
+    MURAGE_EXEC_PROVEN=*)
+      if [ "$murage_exec_no_limits" = 1 ]; then proven=0; continue; fi
+      # the third reserved entry: exactly 0 or 1
+      proven="${pair#MURAGE_EXEC_PROVEN=}"
+      case "$proven" in 0|1) continue ;; esac
+      murage_exec_unreadable ;;
+    # r4.5 B3: any other MURAGE_EXEC_* entry (NONCE, KEEP, anything) makes the file unreadable
+    [Mm][Uu][Rr][Aa][Gg][Ee]_[Ee][Xx][Ee][Cc]_*)
+      [ "$murage_exec_no_limits" = 1 ] || murage_exec_unreadable ;;
   esac
-  if [[ ! "$pair" =~ ^[A-Za-z_][^=]*= ]]; then
-    echo "murage-exec: the turn environment could not be read" >&2
-    exit 126
-  fi
+  case "$pair" in
+    MURAGE_WIPE_GUARD=*) murage_exec_guard="${pair#*=}" ;;
+    PATH=*) murage_exec_path="${pair#*=}" ;;
+  esac
+  [[ "$pair" =~ ^[A-Za-z_][^=]*= ]] || murage_exec_unreadable
   args+=("$pair")
 done < "$f"
-if [ -z "$cwd" ] || [ -z "$shell" ]; then
+if [ -z "$cwd" ] || [ -z "$shell" ] || [ -z "$proven" ]; then
   echo "murage-exec: the turn environment is incomplete" >&2
   exit 126
+fi
+# B3: the class. MCP needs KEEP's head and this process's nonce to be the same 32 lower-case hex characters.
+murage_exec_mcp=0
+if [[ "$murage_exec_keep_raw" =~ ^mcp:[0-9a-f]{32}: ]] && [[ "$murage_exec_nonce_raw" =~ ^[0-9a-f]{32}$ ]] && [ "${murage_exec_keep_raw:4:32}" = "$murage_exec_nonce_raw" ]; then
+  murage_exec_mcp=1
+fi
+cmd="$1"
+if [ "$murage_exec_mcp" = 0 ]; then
+  murage_exec_kept=()
+  if [ "$murage_exec_no_limits" != 1 ]; then [ -z "$murage_exec_keep_raw" ] || printf 'keep-mismatch\n' >> "$murage_exec_flag.diag" 2>/dev/null || :; fi
+  # W3 (lenient on the word, exact on the frame): a leading `source W 2>/dev/null || true && ` goes, W any one plain or
+  # single-quoted word, at every PROVEN value. Nothing rc-derived is sourced.
+  murage_exec_w3=0
+  murage_exec_w3re="^source ('[^']*'|[A-Za-z0-9@%+=:,./_-]+) 2>/dev/null \\|\\| true && "
+  if [[ "$cmd" =~ $murage_exec_w3re ]]; then
+    cmd="${cmd:${#BASH_REMATCH[0]}}"
+    murage_exec_w3=1
+  fi
+  # W5: the whole string's shape. `'...'` becomes Q, `"..."` and `\x` stay verbatim, outside quotes a `/`-led run of
+  # path characters becomes P, and the one word after the first ` && eval ` (the command as the CLI quoted it) becomes C.
+  murage_exec_shape=""
+  murage_exec_bad=""
+  s="$cmd"; n=${#s}; i=0; evaled=0
+  while [ "$i" -lt "$n" ] && [ -z "$murage_exec_bad" ]; do
+    if [ "$evaled" = 0 ] && [ "${s:i:9}" = " && eval " ]; then
+      murage_exec_shape+=" && eval "; i=$((i + 9)); evaled=1; start=$i
+      while [ "$i" -lt "$n" ]; do
+        c="${s:i:1}"
+        case "$c" in
+          "'") seg="${s:i+1}"
+               case "$seg" in *"'"*) ;; *) murage_exec_bad=word; break ;; esac
+               seg="${seg%%\'*}"; i=$((i + ${#seg} + 2)) ;;
+          '"') i=$((i + 1))
+               while :; do
+                 [ "$i" -lt "$n" ] || { murage_exec_bad=word; break; }
+                 c="${s:i:1}"
+                 if [ "$c" = '\' ]; then i=$((i + 2)); elif [ "$c" = '"' ]; then i=$((i + 1)); break; else i=$((i + 1)); fi
+               done ;;
+          '\') i=$((i + 2)) ;;
+          [A-Za-z0-9_./:=@+,%-]) i=$((i + 1)) ;;
+          *) break ;;
+        esac
+        [ -z "$murage_exec_bad" ] || break
+      done
+      [ "$i" -gt "$start" ] || murage_exec_bad=word
+      murage_exec_shape+="C"
+      continue
+    fi
+    c="${s:i:1}"
+    case "$c" in
+      "'") seg="${s:i+1}"
+           case "$seg" in *"'"*) ;; *) murage_exec_bad=quote; break ;; esac
+           seg="${seg%%\'*}"; i=$((i + ${#seg} + 2)); murage_exec_shape+="Q" ;;
+      '"') j=$((i + 1))
+           while :; do
+             [ "$j" -lt "$n" ] || { murage_exec_bad=quote; break; }
+             c="${s:j:1}"
+             if [ "$c" = '\' ]; then j=$((j + 2)); elif [ "$c" = '"' ]; then j=$((j + 1)); break; else j=$((j + 1)); fi
+           done
+           murage_exec_shape+="${s:i:j-i}"; i=$j ;;
+      '\') murage_exec_shape+="${s:i:2}"; i=$((i + 2)) ;;
+      /) seg="${s:i}"; seg="${seg%%[!A-Za-z0-9@%+=:,._/-]*}"; murage_exec_shape+="P"; i=$((i + ${#seg})) ;;
+      *) murage_exec_shape+="$c"; i=$((i + 1)) ;;
+    esac
+  done
+  murage_exec_reason=""
+  if [ -n "$murage_exec_bad" ]; then murage_exec_reason="$murage_exec_bad"
+  elif [ "$murage_exec_w3" = 0 ]; then murage_exec_reason="no-snapshot"
+  elif [ "$evaled" = 0 ]; then murage_exec_reason="no-eval"
+  else
+    murage_exec_listed=0
+    case "$murage_exec_shape" in
+      *$'\n'*|*$'\r'*) ;;
+      *) if [ -r "$0.shapes" ]; then
+           while IFS= read -r line || [ -n "$line" ]; do
+             [ "$line" = "$murage_exec_shape" ] && { murage_exec_listed=1; break; }
+           done < "$0.shapes"
+         fi ;;
+    esac
+    [ "$murage_exec_listed" = 1 ] || murage_exec_reason="unlisted"
+  fi
+  if [ -n "$murage_exec_reason" ] && [ "$proven" = 1 ]; then
+    murage_exec_hash="$(printf '%s' "$murage_exec_shape" | cksum 2>/dev/null)"
+    murage_exec_hash="${murage_exec_hash%% *}"
+    printf 'reason=%s shape=%s\n' "$murage_exec_reason" "${murage_exec_hash:-0}" >> "$murage_exec_flag" 2>/dev/null || :
+    echo "Murage could not confirm the folder this command starts in, so it did not run it; the next try is checked the slow way" >&2
+    exit 126
+  fi
 fi
 # Windows (Claude runs Bash through Git Bash): the file holds Windows spellings. The directory, the shell and the
 # search path are turned into the MSYS form here, and only here, so the command sees the same map either way.
@@ -69,17 +210,47 @@ case "$(uname -s 2>/dev/null)" in
     for i in "${!args[@]}"; do
       case "${args[$i]}" in
         [Pp][Aa][Tt][Hh]=*) args[$i]="PATH=$(cygpath -u -p "${args[$i]#*=}")" || exit 126 ;;
+        MURAGE_WIPE_GUARD=*) args[$i]="MURAGE_WIPE_GUARD=$(cygpath -u "${args[$i]#*=}")" || exit 126 ;;
       esac
     done
     ;;
 esac
+# The guarded command uses a non-login shell and resets PATH AFTER shell
+# startup. Even /etc/zshenv (read despite zsh -f) cannot move a tool ahead
+# of the turn's shim. The command remains data until the selected shell
+# evaluates it; no interpolation into the bootstrap. Below No limits the
+# original shell invocation stays byte-for-byte the same.
+set -- "$cmd"
+murage_exec_shell_args=()
+case "${shell##*/}" in bash|bash.exe) murage_exec_shell_args=(--norc) ;; esac
+if [ -n "$murage_exec_guard" ]; then
+  murage_exec_safe_kept=()
+  for pair in "${murage_exec_kept[@]}"; do
+    case "$pair" in PATH=*|MURAGE_WIPE_GUARD=*) continue ;; esac
+    murage_exec_safe_kept+=("$pair")
+  done
+  murage_exec_kept=("${murage_exec_safe_kept[@]}")
+  for pair in "${args[@]}"; do
+    case "$pair" in PATH=*) murage_exec_path="${pair#*=}" ;; esac
+  done
+  case "${shell##*/}" in
+    bash|bash.exe) murage_exec_shell_args=(--noprofile --norc) ;;
+    zsh|zsh.exe) murage_exec_shell_args=(-f) ;;
+  esac
+  # Preserve the command's normal $0 and empty positional parameters.
+  murage_exec_command=$cmd
+  set -- 'export PATH="$1"; eval "$2"' "$shell" "$murage_exec_path" "set --; $murage_exec_command"
+fi
 # `env` below is found through this process's PATH. A turn whose handed PATH is empty or lacks /usr/bin (a login shell that
 # set none, as on a stock Ubuntu) would otherwise fail every command and every MCP server with "env: not found". Only
 # this script's own PATH is widened, and only when `env` is not on it; both execs run `env -i`, so no command sees it.
 if ! command -v env >/dev/null 2>&1; then PATH="/usr/bin:/bin${PATH:+:$PATH}"; fi
 cd -- "$cwd" || exit 126
+# C1: a Bash shell starts with --norc (no SHLVL in the map and a socket on stdin would read ~/.bashrc).
+murage_exec_norc=()
+case "${shell##*/}" in bash|bash.exe) murage_exec_norc=(--norc) ;; esac
 if [ "${#murage_exec_kept[@]}" -eq 0 ]; then
-  exec env -i "${args[@]}" "$shell" -c "$1"
+  exec env -i "${args[@]}" "$shell" "${murage_exec_shell_args[@]}" -c "$@"
 fi
 # An MCP server: its values must not appear in any process's arguments. The turn's map and then the server's own
 # values (last, so they win over the turn's) go NUL-separated through descriptor 3 (written by this shell's builtin
@@ -97,9 +268,22 @@ for pair in "${args[@]}"; do
   if [[ "${pair%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then murage_exec_names+=("$pair"); else murage_exec_others+=("$pair"); fi
 done
 exec 3< <(printf '%s\0' "${murage_exec_names[@]}" "${murage_exec_kept[@]}")
+murage_exec_writer=$!
+# Keep the writer's parent until it has been reaped. Execing this shell into
+# the server would hand that server an unknown child, which can remain a
+# zombie and keep Claude's process group present after the session closes.
+(
 exec env -i "${murage_exec_others[@]}" "$BASH" --norc -c 'unset SHLVL PWD OLDPWD
 while IFS= read -r -d "" murage_exec_pair <&3; do export "$murage_exec_pair" 2>/dev/null || :; done
 exec 3<&-
 unset murage_exec_pair
-case "${0##*/}" in bash|bash.exe) exec "$0" --norc -c "$1" ;; esac
-exec "$0" -c "$1"' "$shell" "$1"
+case "${0##*/}" in
+  bash|bash.exe) exec "$0" --norc -c "$@" ;;
+  zsh|zsh.exe) if [ -n "${MURAGE_WIPE_GUARD-}" ]; then exec "$0" -f -c "$@"; fi ;;
+esac
+exec "$0" -c "$@"' "$shell" "$@"
+)
+murage_exec_status=$?
+exec 3<&-
+wait "$murage_exec_writer"
+exit "$murage_exec_status"

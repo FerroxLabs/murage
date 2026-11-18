@@ -29,7 +29,7 @@
 import { chromium, test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -356,7 +356,7 @@ async function verifyCardDownload(bot: Bot, artifactId: string): Promise<string>
   const page = await context.newPage();
   // A manually launched browser has no action timeout; bound every wait so a stuck UI step fails instead of hanging the case.
   page.setDefaultTimeout(60_000);
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(state.origin, { waitUntil: "domcontentloaded" });
   // The row's select button is an overlay whose centre sits under the sibling Rename button, so a pointer click never becomes actionable.
   await (await openSidebar(page)).getByRole("button", { name: new RegExp(`^${bot.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).first().dispatchEvent("click");

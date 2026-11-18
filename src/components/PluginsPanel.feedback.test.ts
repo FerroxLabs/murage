@@ -20,11 +20,14 @@ vi.mock("react", async original => ({
     return hooks.values[i] ??= { current: initial };
   },
   useCallback: (fn: unknown) => fn,
+  useId: () => "plugins-feedback-fixture",
   useEffect: (fn: () => unknown) => { hooks.effects.push(fn); },
 }));
 vi.mock("@/state/store", () => ({ api: hooks.api, useStore: () => ({ state: { config: { flux: { configured: true } } }, dispatch: vi.fn() }) }));
 vi.mock("@/lib/use-surface", () => ({ useDesktopSurface: () => false }));
 vi.mock("@/lib/connected-apps-preload", () => ({
+  // No admission refusal is cached: the real module starts empty and tells a new subscriber so at once.
+  cachedConnectedAppsAdmission: undefined, rememberConnectedAppsAdmission: vi.fn(), subscribeConnectedAppsAdmission: (listener: (status: undefined) => void) => { listener(undefined); return () => {}; },
   cachedConnectorStatus: {}, cachedConnectorStatusAuthoritative: true, inventoryApps: {},
   isCredentialStoreUnreadable: () => false, rememberConnectedApps: vi.fn(), pendingConnectedApps: () => null, preloadConnectedApps: async () => ({ services: {}, authoritative: true, backendReady: true }),
 }));

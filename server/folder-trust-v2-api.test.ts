@@ -18,6 +18,7 @@ const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
 
 let base: string;
+let serverOutput = "";
 let desktopHeaders: Record<string, string>;
 let child: ChildProcess;
 let home: string;
@@ -71,11 +72,16 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
       "fuigo-sibling": engine({ FAKE_ACP_TRUST_WORKSPACE: K_SIBLING() }),
       "fuigo-held": engine({ FAKE_ACP_TRUST_HOLD_MS: "1500", FAKE_ACP_TRUST_WORKSPACE: K_HELD() }),
       "fuigo-plain": engine({ FAKE_ACP_TRUST_KINDS: "" }),
-      "fuigo-1037": engine({ FAKE_ACP_VERSION: "1.0.37" }),
+      "fuigo-1037": engine({ FAKE_ACP_VERSION: "1.0.37", FAKE_ACP_TRUST_FORCE_REQUEST: "1" }),
       computer: { driver: "boxAgent" },
     },
   }));
-  const proc = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+  // Only native execution is faked. Trust, owner authority, cards and replies
+  // still run through the real child server, including the Full access control.
+  const fakeEngineSetup = join(homeDir, "fake-engine-setup.mjs");
+  writeFileSync(fakeEngineSetup, "globalThis[Symbol.for('murage.hostPower.testUnwrapped')] = true;\n");
+  const proc = spawn(process.execPath, ["--import", fakeEngineSetup, join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -87,11 +93,12 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
       MURAGE_MODEL_PROVIDER_CONNECTIONS: "",
       MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: "",
       MURAGE_ACP_POOL: "1",
+      NODE_ENV: "test",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
   proc.stderr!.on("data", (c) => (output += c));
-  proc.stdout!.on("data", (c) => (output += c));
+  proc.stdout!.on("data", (c) => { output += c; serverOutput=(serverOutput+c).slice(-20000); });
   const deadline = Date.now() + 20_000;
   for (;;) {
     try {
@@ -158,6 +165,9 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
     trustLog = join(home, "trust.log");
     spawnLog = join(home, "spawns.log");
     ({ child, desktop: desktopHeaders } = await bootServer(home, port));
+    // This suite tests the trust pool. An uninstrumented fake engine cannot
+    // attest a retained memory session, so leave recall off in this fixture.
+    expect((await request("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
   }, 40_000);
 
   afterAll(async () => {
@@ -182,11 +192,74 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
     expect((await request("PATCH", `/api/bots/${owner.id}`, { cwd: atNoLimits })).status).toBe(200);
     await turn(owner);
     expect(requestsFor(atNoLimits)).toBe(1);
-    expect(JSON.parse(trustEvents().filter((entry) => entry.event === "reply").at(-1)!.raw!).result).toEqual({ outcome: "reject" });
+    expect(JSON.parse(trustEvents().filter((entry) => entry.event === "reply").at(-1)!.raw!).result).toEqual({ outcome: "trust", scope: "configAndCommands" });
     expect(await openCard(owner.threadId)).toBeUndefined();
     expect(stored()[atNoLimits]).toMatchObject({ decision: "trust", source: "picker" });
     expect(stored()[atNoLimits].consent).not.toBe(2);
   }, 40_000);
+
+  it("E5 owner No limits opens native Fuigo folder trust through the isolated server", async () => {
+    const owner = await makeBot("No limits native trust", "fuigo-1037");
+    const folder = join(home, "e5-no-limits-native");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "AGENTS.md"), "fixture instructions\n");
+    try {
+      expect((await request("POST", "/api/no-limits/terms", { acknowledgeNoLimits: true })).status).toBe(200);
+      expect((await raise(owner, "no-limits", { fullAccess: true, acknowledgeFullAccess: true, noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+      expect((await request("PATCH", `/api/bots/${owner.id}`, { cwd: folder })).status).toBe(200);
+      await turn(owner);
+      const native = trustEvents().filter(entry => entry.event === "request" && entry.params.workspace === folder);
+      // The No limits launch grants trust for this process before the native
+      // protocol can ask. Prove the instructions reached the actual engine.
+      expect(native.length).toBeLessThanOrEqual(1);
+      if (native.length) {
+        const reply = trustEvents().filter(entry => entry.event === "reply" && entry.pid === native[0]!.pid).at(-1)!;
+        expect(JSON.parse(reply.raw!).result).toEqual({ outcome: "trust", scope: "configAndCommands" });
+      }
+      expect(JSON.stringify(await messages(owner.threadId))).toContain("fixture instructions");
+      expect(await openCard(owner.threadId)).toBeUndefined();
+      expect(stored()[folder]).toMatchObject({ decision: "trust", source: "picker" });
+      expect(stored()[folder].consent).not.toBe(2);
+    } finally {
+      await request("DELETE", `/api/bots/${owner.id}`);
+      await forget(folder);
+    }
+  }, 40_000);
+
+  it("E5 Full access retains saved native Fuigo rejection below No limits", async () => {
+    const owner = await makeBot("Full native trust", "fuigo-1037");
+    const folder = join(home, "e5-full-native");
+    const nativeFile = join(home, ".fuigo", "trusted_folders.toml");
+    const previous = existsSync(nativeFile) ? readFileSync(nativeFile, "utf8") : "";
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "AGENTS.md"), "full-native-rejected-instructions\n");
+    // Model the native app's saved Don't trust setting. The actual server and
+    // CLI read this fixture file; no authorization or trust handler is mocked.
+    const rejected = previous + `[folders.${JSON.stringify(folder)}]\ntrusted = false\nconsent = 2\n`;
+    writeFileSync(nativeFile, rejected);
+    try {
+      const auto = { autoApprove: true, fullAccess: false, noLimits: false };
+      expect((await request("PATCH", `/api/bots/${owner.id}`, { settingsScope: "defaults", ...auto })).status).toBe(200);
+      expect((await request("PATCH", `/api/bots/${owner.id}/tasks/${owner.threadId}`, auto)).status).toBe(200);
+      expect((await raise(owner, "full", { fullAccess: true, acknowledgeFullAccess: true, noLimits: false })).status).toBe(200);
+      expect((await request("PATCH", `/api/bots/${owner.id}`, { cwd: folder })).status).toBe(200);
+      await turn(owner, "Full access keeps the native saved no");
+      expect(JSON.stringify(await messages(owner.threadId))).toContain("agents: withheld");
+      expect(JSON.stringify(await messages(owner.threadId))).not.toContain("full-native-rejected-instructions");
+      expect(await openCard(owner.threadId)).toBeUndefined();
+      expect(readFileSync(nativeFile, "utf8")).toBe(rejected);
+      expect((await request("POST", "/api/no-limits/terms", { acknowledgeNoLimits: true })).status).toBe(200);
+      expect((await raise(owner, "no-limits", { fullAccess: true, acknowledgeFullAccess: true, noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+      await turn(owner, "No limits reads the native saved-no folder");
+      expect(JSON.stringify(await messages(owner.threadId))).toContain("full-native-rejected-instructions");
+      expect(await openCard(owner.threadId)).toBeUndefined();
+      expect(readFileSync(nativeFile, "utf8")).toBe(rejected);
+    } finally {
+      writeFileSync(nativeFile, previous);
+      await request("DELETE", `/api/bots/${owner.id}`);
+      await forget(folder);
+    }
+  }, 60_000);
 
   it("(1) the combined topology: a reject at the main checkout answers a bot elsewhere, is listed, and Forget brings the card back", async () => {
     const sibling = await makeBot("Sibling", "fuigo-sibling");
@@ -231,11 +304,11 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
     const after1 = { spawns: spawnCount(), asks: requestsFor(K_SEQUENCE()) };
     // the digest is equal: adopted, and the fake's dedup sends no request
     await turn(bot, "two");
-    expect(spawnCount()).toBe(after1.spawns);
+    expect(spawnCount(),serverOutput.slice(-4000)).toBe(after1.spawns);
     expect(requestsFor(K_SEQUENCE())).toBe(after1.asks);
     // negative control: nothing changed, so a third turn adopts again
     await turn(bot, "three");
-    expect(spawnCount()).toBe(after1.spawns);
+    expect(spawnCount(),serverOutput.slice(-4000)).toBe(after1.spawns);
     expect((await list(workspaceOf(bot))).records.map((row: any) => row.key)).toContain(K_SEQUENCE());
     expect((await forget(K_SEQUENCE())).status).toBe(200);
     await send(bot, "four");

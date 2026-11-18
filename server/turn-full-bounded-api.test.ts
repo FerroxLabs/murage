@@ -89,7 +89,7 @@ const stored = (threadId: string, id: string) => {
 };
 
 beforeAll(async () => {
-  fixture = await launchVerificationServer({}, undefined, { instrumentationSource: countingInstrumentation(STORE) });
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: countingInstrumentation(STORE) });
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await api("GET", "/api/desktop-secret")).body.secret };
   model = (await api("GET", "/api/instances")).body.instances.find((instance: any) => instance.instanceId === "verification").models.options[0].id;
 }, 60_000);

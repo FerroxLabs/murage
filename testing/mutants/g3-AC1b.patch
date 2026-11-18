@@ -1,0 +1,11 @@
+--- a/server/drivers/acp/core.ts
++++ b/server/drivers/acp/core.ts
+@@ -4235,7 +4235,7 @@
+                 answerTransport.confirm(threadId, requestId, Promise.resolve(accepted));
+                 emit({ ...base(threadId, turnId), type: 'request.resolved', requestId,
+                   behavior: accepted && answered ? 'answer' : 'deny', source: source === 'system' ? 'system' : accepted ? source : 'unavailable' });
+-              }, () => true, nativeAskRetirement, error => { acpFenced(error, "acp.question", requestProcess, { requestId: msg.id, method: msg.method }); });
++              }, () => true, nativeAskRetirement);
+           };
+           // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
+           const timer = turn.unattendedAskNote ? wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS) : undefined;

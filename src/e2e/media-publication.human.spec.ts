@@ -27,7 +27,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -235,7 +235,7 @@ async function approveNext(bot: Bot, title: string) {
 
 async function openApp(page: Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   // The seeded profile is an update, not a fresh install, so the release's
   // What's New page would open over the sidebar (whats-new.human.spec.ts owns it).
   await page.route("**/api/whats-new?*", route => route.fulfill({ json: { show: false } }));

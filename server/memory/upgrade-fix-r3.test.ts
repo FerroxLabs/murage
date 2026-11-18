@@ -1,3 +1,4 @@
+import { openFixtureApproval } from '../testing/approval-card.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -147,11 +148,14 @@ const dump = (db: DatabaseSync) => JSON.stringify([
   db.prepare("SELECT total,done,finished_at IS NOT NULL AS finished FROM memory_root_set_compaction").all(),
 ]);
 
-it("R2-03: a kill at any step boundary (mid-fill, mid-count, mid-chain, between sets) resumes to the very state an uninterrupted run reaches", () => {
+it("R2-03: a kill at any step boundary (mid-fill, mid-count, mid-chain, between sets) resumes to the very state an uninterrupted run reaches", async () => {
   const seed = legacyFile(database()); // the conversion is retired on v10; the file below is 1.0.1-shaped (no certificate), as the raw connections read it
   fullSets(seed, ["ta", "tb"], 110);
   seed.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   closeDatabase();
+  // Raw legacy connections rebuild the schema; first retire the server's
+  // separate checkpoint connection, just as the isolated app shutdown does.
+  expect(await stopWalMaintenance()).toBe(true);
   const clone = join(DATA_DIR, "clone.db");
   copyFileSync(FILE(), clone);
   // uninterrupted
@@ -281,7 +285,7 @@ function longThread(db: DatabaseSync, thread: string, rows: number, cardAt: numb
     const card = cardAt.includes(i);
     const message = { id: `${thread}-${i}`, at: i, role: "bot", kind: card ? "options" : "text", text: "t", parentId: i > 1 ? `${thread}-${i - 1}` : null, turnId: `turn-${Math.ceil(i / 10)}`,
       ...(card ? { card: { requestId: `req-${i}`, options: [] } } : {}) };
-    put.run(thread, message.id, i, "bot", message.kind, "t", JSON.stringify(message));
+    put.run(thread, message.id, i, "bot", message.kind, "t", JSON.stringify(openFixtureApproval(db, thread, message)));
   }
   db.prepare("INSERT OR REPLACE INTO thread_state(thread_id,active_leaf_id) VALUES(?,?)").run(thread, `${thread}-${rows}`);
   db.exec("COMMIT");
@@ -412,12 +416,16 @@ it("R2-06: every connection that opens messages.db for writing installs the revi
     "database.ts": "triggers", "installation-restore-preparation.ts": "epoch", "memory/restore.ts": "epoch", "installation-memory-downgrade.ts": "epoch",
     // the TURNSTART gate seam's "foreign-commit": a second connection inserts a message, with the revision triggers installed like any writer
     "memory/lineage-warm-surface.ts": "triggers",
+    // RESTORE-PARK r3.1 / J4: the Cloud marker consumer and the restore job's prepare step rewrite the swapped-in messages.db as a whole (the email preparation),
+    // so each writes a new epoch in its own transaction; the job's stage step only writes marks into a private copy that install later renames over the live file.
+    "email/restore-marker.ts": "epoch", "email/restore-job-effects.ts": "epoch",
   };
   // memory/provenance-stamp.ts: its worker connection only reads (one BEGIN, one SELECT, COMMIT: the identity snapshot)
   // memory/optional-index.ts: its worker connection runs one CREATE INDEX (schema only, no row is written, so no revision moves)
   // memory/age-index.ts: opens memory-index.db only (the downgrade step's index-file half), never messages.db
+  // memory/index-quarantine.ts: read-only open of the caller's memory-index.db path; refuses messages.db (see probeIndexFile)
   // memory/index-wal.ts: the checked write path of memory-index.db only (MEMW WP1), never messages.db, so no revision trigger or epoch applies
-  const otherFiles = new Set(["memory/age-index.ts", "memory/index-wal.ts", "engine-fs.ts", "engine-structure-check.ts", "memory/cold-index-build.ts", "memory/optional-index.ts", "memory/provenance-stamp.ts", "wal-maintenance.ts", "memory/postings.ts", "inbox-fill-worker.ts", "send-store.ts", "skill-search.ts", "memory/schema.ts", "memory/testdata/v0161-schema.ts", "memory/index.ts", "installation-database-snapshot.ts", "connected-app-journal.ts", "conversation-deletion.ts", "engine-history-deletion.ts", "memory/root-set-compaction.ts", "memory/root-set-reclaim.ts", "memory/upgrade-counts.ts", "memory/eligibility.ts", "memory/index-reader.ts", "memory/owner-list.ts", "installation-activation.ts", "folder-trust.ts", "memory/revocation-index.bench.mjs"]);
+  const otherFiles = new Set(["memory/age-index.ts", "memory/index-wal.ts", "memory/index-quarantine.ts", "engine-fs.ts", "engine-structure-check.ts", "memory/cold-index-build.ts", "memory/optional-index.ts", "memory/provenance-stamp.ts", "wal-maintenance.ts", "memory/postings.ts", "inbox-fill-worker.ts", "send-store.ts", "skill-search.ts", "memory/schema.ts", "memory/testdata/v0161-schema.ts", "memory/index.ts", "installation-database-snapshot.ts", "connected-app-journal.ts", "conversation-deletion.ts", "engine-history-deletion.ts", "memory/root-set-compaction.ts", "memory/root-set-reclaim.ts", "memory/upgrade-counts.ts", "memory/eligibility.ts", "memory/index-reader.ts", "memory/owner-list.ts", "installation-activation.ts", "folder-trust.ts", "memory/revocation-index.bench.mjs"]);
   const found = files.map(path => ({ file: path.slice(root.length + 1).split("\\").join("/"), text: readFileSync(path, "utf8") })).filter(item => /new DatabaseSync\(/.test(item.text));
   // 1.0.9 Sentinel (GAP-SENTINEL-109): health files open only their own databases, never messages.db, so no revision can move.
   // health/stats-publisher.ts: its build worker creates a NEW db-stats-<generation>.sqlite inside health/ from observed figures

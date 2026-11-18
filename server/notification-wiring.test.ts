@@ -99,6 +99,7 @@ posixOnly("routine failure notification wiring", () => {
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
 
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env,
       stdio: ["ignore", "pipe", "pipe"],

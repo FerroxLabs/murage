@@ -56,6 +56,7 @@ export interface QuestionCardShape {
   options: string[];
   requestId?: string;
   tool?: string;
+  cardClass?: { reason: string };
   questions?: QuestionSpec[];
   routineRequest?: unknown;
   skillRequest?: unknown;
@@ -66,7 +67,7 @@ export interface QuestionCardShape {
  * one of the harness's own durable proposals. */
 export function isQuestionCard(card: QuestionCardShape | undefined | null): boolean {
   if (!card?.requestId) return false;
-  if (card.questions?.length) return true;
+  if (card.cardClass?.reason === "question" || card.questions?.length) return true;
   return !card.tool && !card.routineRequest && !card.skillRequest && !card.intake;
 }
 

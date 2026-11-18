@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -56,13 +57,14 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
   writeFileSync(join(homeDir, ".fuigo", "auth.json"), "{}");
   const instances = Object.fromEntries(Object.entries(INSTANCES).map(([name, driver]) => [name, {
     driver,
-    environment: { FAKE_ACP_RPC_LOG: join(homeDir, `${name}-rpc.log`), FAKE_ACP_INTERJECT: "fallback" },
+    environment: { FAKE_ACP_RPC_LOG: join(homeDir, `${name}-rpc.log`), FAKE_ACP_INTERJECT: "fallback", ...(driver === "customAcp" ? { FAKE_ACP_MODELS: "fake-acp-model" } : {}) },
     config: { cli: FAKE_ACP, fullAuto: false },
   }]));
   writeFileSync(join(homeDir, ".murage", "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances }));
-  const proc = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+  const proc = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", "data:text/javascript," + encodeURIComponent(`const { customAcpSupport: localFixtureHost } = await import(${JSON.stringify(new URL("./drivers/acp/custom.ts", import.meta.url).href)}); localFixtureHost.fluxReach = () => "elsewhere";`), join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
-    env: {
+    env: { ...powerBlockTestEnv(),
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
       HOME: homeDir,
       USERPROFILE: homeDir,

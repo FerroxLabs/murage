@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { connectionId, database, transaction } from "../database.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
-import { redactSecretsInText } from "../redact.ts";
+import { sanitizeDisplayTextUnit } from "../transcript-page.ts";
 import { ensureScope } from "./policy.ts";
 import { withContinuityInferenceLease, continuityDay, reportMemoryUsage, reconcileRecentMonths, type TextOnlyExtractor } from "./extract.ts";
 import { digestOf, isMemorySendBusy, learningGate, sampleLearningFence } from "./learning-send.ts";
@@ -130,7 +130,7 @@ const digest = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).di
 
 // ------------------------------------------------------------------ deps ----
 
-export interface ReflectBot { id: string; name?: string; threadIds: string[]; continuity: boolean; options?: ContinuityOptions; settingsGeneration?: number }
+export interface ReflectBot { id: string; name?: string; threadIds: readonly string[]; continuity: boolean; options?: ContinuityOptions; settingsGeneration?: number }
 export interface ResolvedRoute {
   fingerprint: string; engine: string; kind: "cli" | "http"; model: string; providerRoute?: ProviderTurnRoute;
   probeRequired?: boolean;
@@ -535,9 +535,10 @@ export async function pipReflectPendingSliced(deps: ReflectDeps, sliceMs = PIP_P
 export function supportCopy(entry: SupportEntry | undefined, engine?: string): string | null {
   if (!entry || entry.status === "ok") return null;
   if (entry.reason === "login-route") return LOGIN_ROUTE_COPY;
-  const detail = /inspection-failed|plugins?|leftover process/i.test(entry.reason) ? " Details: " + redactSecretsInText(entry.reason).replace(/\u2014/g, "-").slice(0, 400) : "";
+  const [safeReason, safeEngine] = sanitizeDisplayTextUnit([entry.reason, engine ?? "this engine"]);
+  const detail = /inspection-failed|plugins?|leftover process/i.test(entry.reason) ? " Details: " + safeReason.replace(/\u2014/g, "-").slice(0, 400) : "";
   if (/plugins?/i.test(entry.reason)) return HELD_PLUGIN_COPY + detail;
-  return `Reflection needs ${engine ?? "this engine"} to answer a text-only request; this bot keeps its record and brief, and will reflect when its engine can.` + detail;
+  return `Reflection needs ${safeEngine} to answer a text-only request; this bot keeps its record and brief, and will reflect when its engine can.` + detail;
 }
 function noteSupport(state: ReflectState, fingerprint: string, now: number, status: SupportEntry["status"], reason: string, history?: MissHistory) {
   const prev = state.support[fingerprint];

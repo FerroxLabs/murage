@@ -1,0 +1,35 @@
+COMMAND node_modules/.bin/vitest run server/decision/schema-lifecycle.test.ts -t M57
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/schema-lifecycle.test.ts > A5c M57 restore/downgrade cancellation settles record before same-action row
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/schema-lifecycle.test.ts (5 tests | 1 failed | 4 skipped) 550ms
+   ↓ A4 A5b M50 schema is registered once and migration DDL is atomic and restartable
+   × A5c M57 restore/downgrade cancellation settles record before same-action row 545ms
+   ↓ A4 full downgrade with open engine and queue records is accepted by the real 1.0.1 inspector
+   ↓ A4 staged email redaction terminalizes records and changes display only
+   ↓ A4 bound email bodies cannot escape in a staged backup
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  07:42:42
+   Duration  9.42s (transform 7.05s, setup 8.24s, import 510ms, tests 550ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/schema-lifecycle.test.ts > A5c M57 restore/downgrade cancellation settles record before same-action row
+AssertionError: expected 'open' to be 'cancelled' // Object.is equality
+
+Expected: "cancelled"
+Received: "open"
+
+ ❯ server/decision/schema-lifecycle.test.ts:15:133
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

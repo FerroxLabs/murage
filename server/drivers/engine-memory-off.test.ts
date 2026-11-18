@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../contracts.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
-import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { recordAdmittedEvents, type EventRecorder } from "../testing/admitted-events.ts";
 import { ClaudeDriver } from "./claude.ts";
 import { CodexDriver } from "./codex.ts";
 import { GrokAgentDriver } from "./acp/grok.ts";
@@ -65,7 +65,7 @@ describe("claude: auto memory is off at spawn", () => {
     const dump = join(scratch, `claude-${++seq}.json`);
     process.env.FAKE_CLAUDE_DUMP = dump;
     instance = await ClaudeDriver.create({ instanceId: "claude-mem", displayName: "Claude", environment: {}, enabled: true, config: { cli: FAKE_CLAUDE, permissionMode: "acceptEdits" } });
-    recorder = recordEvents(instance.adapter);
+    recorder = recordAdmittedEvents(instance.adapter);
     await oneTurn({ model });
     return JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string | undefined> };
   };
@@ -82,7 +82,7 @@ describe("codex: features.memories is false in the app-server argv", () => {
     const dump = join(scratch, `codex-${++seq}.json`);
     process.env.FAKE_CODEX_DUMP = dump;
     instance = await CodexDriver.create({ instanceId: "codex-mem", displayName: "Codex", environment: {}, enabled: true, config: { cli: FAKE_CODEX, fullAuto: false } });
-    recorder = recordEvents(instance.adapter);
+    recorder = recordAdmittedEvents(instance.adapter);
     await oneTurn({ model });
     return (JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] }).argv;
   };
@@ -95,7 +95,7 @@ describe("ACP engines", () => {
   const acp = async (create: (environment: Record<string, string>) => Promise<ProviderInstance>, turn: Partial<SendTurnInput> & { model: string }, extraEnv: Record<string, string> = {}) => {
     const dump = join(scratch, `acp-${++seq}.json`);
     instance = await create({ HOME: scratch, MURAGE_DATA_DIR: join(scratch, "state"), FAKE_ACP_DUMP: dump, ...extraEnv });
-    recorder = recordEvents(instance.adapter);
+    recorder = recordAdmittedEvents(instance.adapter);
     await oneTurn(turn);
     return JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
   };

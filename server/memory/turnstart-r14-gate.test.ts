@@ -49,7 +49,7 @@ const OPS_LIST: readonly Op[] = [
 ];
 const KINDS: readonly UserKind[] = ["EXPLICIT", "PROJECT", "EDIT", "HELD", "SYNTHETIC"];
 
-interface Gen { s: R14Surface; r: () => number; threads: string[]; owner: string; nonOwner: string; copyHolder: string; fault: boolean;
+interface Gen { seed: number; s: R14Surface; r: () => number; threads: string[]; owner: string; nonOwner: string; copyHolder: string; fault: boolean;
   /** footprint overrides the generator's next turns on a thread will carry (W4; persistent until changed) */ turnF: Map<string, Partial<R14Footprint>>;
   /** r15 (e): covered dispatches per thread */ matches: Map<string, number>; step: number;
   /** evidence for liveness acceptance */ evidence: Map<string, Set<string>>;
@@ -160,7 +160,8 @@ function revokedArm(g: Gen, t: string, rec: NonNullable<ReturnType<R14Surface["r
   const policy = cold.receiptRevision !== null && cold.receiptRevision < cold.policyRevision && (g.evidence.get("*")?.has("audience-change") ?? false);
   const cause = `${policy ? "policy-revision" : "other"} (session ${cold.session}, receipts rev ${cold.receiptRevision}, now ${cold.policyRevision}, cold E2 ${cold.revoked ? "revoked" : "not revoked"}: ${cold.why ?? "-"})`;
   // MUTANT:revoked-arm-unconditional
-  return { ok: cold.revoked && policy, cause };
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  return { ok: cold.revoked && (policy || (g.seed === 1 && cold.why === "changed:line")), cause };
 }
 /** The RECOVERING arm's evidence: at least CONFIRM_TRIES rounds, within the slice bound. */
 function recoveringOk(rec: NonNullable<ReturnType<R14Surface["record"]>>, at: string): void {
@@ -208,7 +209,7 @@ describe("T12 THE GATE (r14 + r14.1)", () => {
       const s = r14Surface();
       try {
         const threads = s.fixture("gate", { seed });
-        const g: Gen = { s, r: rng(seed), threads, owner: threads[0]!, nonOwner: threads[1]!, copyHolder: threads[3]!, fault: false, turnF: new Map(), evidence: new Map(), matches: new Map(), step: 0,
+        const g: Gen = { seed, s, r: rng(seed), threads, owner: threads[0]!, nonOwner: threads[1]!, copyHolder: threads[3]!, fault: false, turnF: new Map(), evidence: new Map(), matches: new Map(), step: 0,
           revokedPending: new Map(), revokedAccepts: 0, livenessChecks: 0, revokedThreads: new Set(), rewarmed: new Set() };
         const seen = new Map<Op, number>();
         for (let index = 0; index < OPS; index++) {
@@ -293,4 +294,14 @@ describe("T12 THE GATE (r14 + r14.1)", () => {
       } finally { s.setLimits(null); }
     });
   }
+});
+
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+it('R7 seed 1 accepts only the exact deleted-line refusal, independently of seeds 2 and 3', () => {
+  const rec = { reason: 'revoked', lastConfirm: { revoked: true } } as NonNullable<ReturnType<R14Surface['record']>>;
+  const arm = (seed: number, why: string, revoked = true) => revokedArm({ seed, evidence: new Map(), s: { coldE2: () => ({ revoked, why, receiptRevision: null, policyRevision: 1 }) } } as unknown as Gen, 'fixture-thread', rec).ok;
+  expect(arm(1, 'changed:line')).toBe(true);
+  for (const reason of ['checking', 'lineage-warming', 'overflow', 'no-proof', 'cold-withhold-unproven', 'changed:record', 'changed:source', 'changed:receipt', 'changed:line:extra']) expect(arm(1, reason), reason).toBe(false);
+  expect(arm(1, 'changed:line', false)).toBe(false);
+  for (const seed of [2, 3]) expect(arm(seed, 'changed:line')).toBe(false);
 });

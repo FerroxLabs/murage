@@ -542,6 +542,8 @@ export function applyReviewVerdict(
   if (card.reviewRequestId !== input.requestId || request.card_generation !== card.generation) {
     return notAllowed(`You are no longer reviewing card ${card.number}.`);
   }
+  // one review, one verdict: a repeated or concurrent submit never records a second one
+  if (request.outcome_note === "pass" || request.outcome_note === "changes") return notAllowed(`Your verdict on card ${card.number} is already in.`);
   if (input.verdict !== "pass" && input.verdict !== "changes") return invalid("The verdict is pass or changes.");
   db.prepare("UPDATE room_requests SET outcome_note=? WHERE id=?").run(input.verdict, input.requestId);
   const notes = input.notes?.trim().slice(0, 500);

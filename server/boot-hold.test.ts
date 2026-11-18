@@ -42,6 +42,7 @@ describe.skipIf(process.platform === "win32")("a start whose writes meet a held 
     writeFileSync(join(data, "config.json"), JSON.stringify({ instances: {} }));
     let stdout = "", stderr = "";
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_TURN_TRACE: "1", MURAGE_STALL_MS: "250" },
       stdio: ["ignore", "pipe", "pipe"],

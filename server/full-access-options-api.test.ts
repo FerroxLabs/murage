@@ -1,11 +1,13 @@
+// MAIN RULING INT-CONFLICT-DEFAULT 0ce501d4ceece11f77c025bb318fdfd94432a552 / 2147f49b9baa3f133b8bfeccb8e97d19967a0b35: identical authority predicates; preserve complete diagnostics and incoming durable-settlement checks.
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 // Full access as a bot default, and its two per-bot extras, over real HTTP:
 //
 //   - Bot Settings can make Full access the bot's default (desktop only,
 //     the same one-time warning), and new conversations inherit it while an
 //     existing conversation keeps its own level;
-//   - the owner's own messages from Telegram (the channel fixture) keep
-//     asking under Full access unless "Also skip approvals for my messages
-//     from Telegram, Slack and Discord" is on; a message from anyone else
+//   - the owner's own messages from Telegram (the channel fixture) run
+//     under Full access while Channel messages is on, and stop before
+//     engine dispatch when it is off; a message from anyone else
 //     never runs under Full access, and a webhook turn still asks;
 //   - setup requests (a routine proposal, a learned skill, a folder's own
 //     instructions) keep asking unless "Also approve setup requests" is on,
@@ -22,10 +24,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
 import { raiseLevel } from "./testing/raise-level.ts";
+import { fixtureDisplayReply, fixtureMessageEvidence } from "./testing/display-fixture.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -46,11 +50,16 @@ let desktopHeaders: Record<string, string>;
 let child: ChildProcess;
 let home: string;
 let holderDump: string;
+let finishGateDir: string;
 let acpDump: string;
+let protectedPromptDump: string;
 let telegramDir: string;
 let stderr = "";
 
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428: normal replies use public handles; preserve the explicit legacy forged-key attack body unchanged.
+  if (method === "POST" && path.endsWith("/respond") && !(body && typeof body === 'object' && Object.hasOwn(body, 'taskAllowKey')))
+    body = fixtureDisplayReply(join(home, ".murage", "messages.db"), body);
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
@@ -63,7 +72,8 @@ const desktopApi = (method: string, path: string, body?: unknown) => request(met
 const botState = async (botId: string) => (await desktopApi("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === botId);
 const taskState = async (botId: string, threadId: string) => (await botState(botId)).tasks.find((task: any) => task.threadId === threadId);
 const storedBot = (botId: string) => (JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")) as any[]).find((bot) => bot.id === botId);
-const threadMessages = async (threadId: string) => ((await desktopApi("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[];
+// MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428: assert execution evidence for actually displayed rows and independently prove no native requestId leaves HTTP.
+const threadMessages = async (threadId: string) => fixtureMessageEvidence(join(home, ".murage", "messages.db"), (await desktopApi("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []);
 const liveCard = async (threadId: string) =>
   (await threadMessages(threadId)).find((m) => m.kind === "options" && m.card?.requestId && m.card?.answered === undefined) ?? null;
 /** Full access approvals fold into one "Approved N steps (Full access)" line
@@ -132,6 +142,12 @@ async function stopTurn(botId: string, threadId: string) {
   await waitIdle(botId, threadId);
 }
 
+async function finishTurn(botId: string, threadId: string) {
+  const { pid } = JSON.parse(readFileSync(holderDump, "utf8")) as { pid: number };
+  writeFileSync(join(finishGateDir, String(pid)), "1");
+  expect(await waitIdle(botId, threadId), "the approved setup turn must settle cleanly").not.toBeNull();
+}
+
 const proposeRoutine = (bot: { id: string }, threadId: string, auth: Record<string, string>, name: string) =>
   request("POST", "/api/internal/routine-requests", {
     fromBotId: bot.id,
@@ -162,7 +178,7 @@ const stageSkill = (bot: { id: string }, threadId: string, auth: Record<string, 
 const cardFor = async (threadId: string, key: "routineRequest" | "skillRequest", name: string) =>
   (await threadMessages(threadId)).find((m) => m.card?.[key] && JSON.stringify(m.card[key]).includes(name))?.card ?? null;
 
-describe.skipIf(process.platform === "win32")("Full access default and its options", () => {
+describe("Full access default and its options", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1], 18_799, 200);
     base = `http://127.0.0.1:${port}`;
@@ -171,7 +187,9 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
     home = mkdtempSync(join(tmpdir(), "murage-full-access-options-"));
     expect(home.startsWith(tmpdir())).toBe(true);
     holderDump = join(home, "fake-claude-dump.json");
+    finishGateDir = join(home, "finish-gates"); mkdirSync(finishGateDir);
     acpDump = join(home, "fake-acp-dump.json");
+    protectedPromptDump = join(home, "protected-prompt.json");
     telegramDir = join(home, "telegram-fixture");
     mkdirSync(telegramDir);
     mkdirSync(join(home, ".murage"), { recursive: true });
@@ -186,27 +204,29 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
           // asks the client to approve cleaning a build folder
           protected: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: PROTECTED_READ },
+            environment: { FAKE_ACP_MCP_LIST: "all:ready", FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: PROTECTED_READ, FAKE_ACP_PROMPT_DUMP: protectedPromptDump },
             config: { cli: FAKE_ACP, fullAuto: false },
           },
           // holds every turn open so the test can call the bot's own tools
           holder: {
             driver: "claudeAgent",
-            environment: { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: holderDump },
+            environment: { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: holderDump, FAKE_CLAUDE_FINISH_GATE_DIR: finishGateDir },
             config: { cli: FAKE_CLAUDE },
           },
           // Fuigo's folder-trust gate
           fuigo: {
             driver: "fuigoAgent",
-            environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: acpDump },
+            environment: { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: acpDump },
             config: { cli: FAKE_ACP, fullAuto: false },
           },
         },
       }),
     );
-    child = spawn(process.execPath, ["--import", TELEGRAM_PRELOAD, "--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+    // Carry the fake-engine override and native test dependency into this fixture child.
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", TELEGRAM_PRELOAD, "--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...powerBlockTestEnv(), ...fixturePlatformEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
@@ -217,7 +237,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
         MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: "",
         FAKE_TELEGRAM_DIR: telegramDir,
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
     const deadline = Date.now() + 30_000;
@@ -236,7 +256,8 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
   }, 45_000);
 
   afterAll(async () => {
-    await waitForExit(child, { signal: "SIGTERM" });
+    if (child.exitCode !== null || child.signalCode !== null) console.error('isolated setup fixture exited', child.exitCode, child.signalCode, stderr.slice(-12000));
+    await stopFixtureServer(child);
     await removeTempDir(home);
   });
 
@@ -327,16 +348,27 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       auth = await heldTurn(bot, bot.threadId);
       const approved = await proposeRoutine(bot, bot.threadId, auth, "Approved brief");
       expect(approved.status, JSON.stringify(approved.body)).toBe(201);
-      expect(approved.body.autoApproved).toBe(true);
-      expect((await cardFor(bot.threadId, "routineRequest", "Approved brief"))?.answered).toBe("allow");
-      expect((await api("GET", "/api/routines")).body.routines.some((r: any) => r.name === "Approved brief")).toBe(true);
-      await expect.poll(() => decisions().some((row) => row.requestId === approved.body.requestId && row.decision === "auto-approved" && row.source === "full-access"), { timeout: 5_000 }).toBe(true);
+      // MAIN RULING INT-CONFLICT-DEFAULT D6 (BOT-CREATE-OUTSIDE-1019 r3.2 §6.7.8): setup applies only at the clean reply end; retain both enabled results and the Full access audit receipt.
+      expect(approved.body.autoApproved).not.toBe(true);
+      expect(approved.body.startsWhen).toBe('reply-ends');
+      expect((await cardFor(bot.threadId, "routineRequest", "Approved brief"))?.answered).toBeUndefined();
+      expect((await api("GET", "/api/routines")).body.routines.some((r: any) => r.name === "Approved brief")).toBe(false);
       const skill = await stageSkill(bot, bot.threadId, auth, "approved-skill");
       expect(skill.status, JSON.stringify(skill.body)).toBe(201);
-      expect(skill.body.autoApproved).toBe(true);
-      expect((await cardFor(bot.threadId, "skillRequest", "approved-skill"))?.answered).toBe("allow");
+      // MAIN RULING INT-CONFLICT-DEFAULT D6: a staged skill likewise waits for the same clean reply; it cannot enable itself mid-turn.
+      expect(skill.body.autoApproved).not.toBe(true);
+      expect(skill.body.startsWhen).toBe('reply-ends');
+      expect((await cardFor(bot.threadId, "skillRequest", "approved-skill"))?.answered).toBeUndefined();
+      expect((await desktopApi("GET", `/api/bots/${bot.id}/skills`)).body.skills.some((s: any) => s.name === "approved-skill")).toBe(false);
+      await finishTurn(bot.id, bot.threadId);
+      // MAIN RULING INT-CONFLICT-DEFAULT D6: busy ends before asynchronous
+      // service settlement; wait for the durable terminal receipt itself.
+      await expect.poll(async () => (await cardFor(bot.threadId, "routineRequest", "Approved brief"))?.answered, { timeout: 5000 }).toBe("allow");
+      expect((await api("GET", "/api/routines")).body.routines.some((r: any) => r.name === "Approved brief")).toBe(true);
+      await expect.poll(() => decisions().some((row) => row.requestId === approved.body.requestId && row.decision === "auto-approved" && row.source === "full-access"), { timeout: 5_000 }).toBe(true);
+      // MAIN RULING INT-CONFLICT-DEFAULT 49a54e2fae6 / 8bfe905cabf: registered skill delivery uses the canonical terminal label; require the accepted result and enabled skill after D6 clean settle.
+      await expect.poll(async () => (await cardFor(bot.threadId, "skillRequest", "approved-skill"))?.answered, { timeout: 5_000 }).toBe("Allowed");
       expect((await desktopApi("GET", `/api/bots/${bot.id}/skills`)).body.skills.some((s: any) => s.name === "approved-skill")).toBe(true);
-      await stopTurn(bot.id, bot.threadId);
 
       // the option does nothing once this conversation is back on Auto
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { fullAccess: false })).status).toBe(200);
@@ -470,15 +502,20 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       expect(await fullAccessChip(ownerThread), `no full-access chip by default. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
       expect(await liveCard(ownerThread)).toBeNull();
 
-      // the option turned off: the owner's next message asks again
+      // MAIN RULING INT-CONFLICT-DEFAULT 49a54e2fae6 / 244106ade5b / fc679ddb943: the newer Channel messages switch refuses before dispatch at every level; retain the owner/guest boundary and strengthen this control to zero prompts, cards and effects.
       expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { fullAccessChannelMessages: false })).status).toBe(200);
+      expect(existsSync(protectedPromptDump), "the allowed owner turn must exercise the real prompt observer").toBe(true);
+      rmSync(protectedPromptDump, { force: true });
+      const beforeBlockedMessages = await threadMessages(ownerThread);
       arrives(3, "read it again");
       const secondRun = await poll(async () => (await channelRuns()).find((run) => run.id !== firstRun!.id), 20_000);
       expect(secondRun).not.toBeNull();
-      expect((await channelRuns()).find((run) => run.id === secondRun!.id)?.threadId).toBe(ownerThread);
-      const card = await poll(() => liveCard(ownerThread), 20_000);
-      expect(card, "the owner's Telegram message skipped its card with the option off").not.toBeNull();
-      await deny(ownerThread, card.card.requestId);
+      // MAIN RULING INT-CONFLICT-DEFAULT 49a54e2fae6 / 244106ade5b: no task or approval is dispatched while Channel messages is off.
+      expect(secondRun).toMatchObject({ status: "completed", output: "Channel messages are off. Turn them on in Settings > Bot permissions > Channel messages." });
+      expect(secondRun!.threadId).toBeUndefined();
+      expect(existsSync(protectedPromptDump), "a disabled channel must never send a native prompt").toBe(false);
+      expect(await threadMessages(ownerThread)).toEqual(beforeBlockedMessages);
+      expect(await liveCard(ownerThread)).toBeNull();
       expect(await settledRun(secondRun!.id)).not.toBeNull();
       expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { fullAccessChannelMessages: true })).status).toBe(200);
 
@@ -489,12 +526,14 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       const thirdRun = await poll(async () => (await channelRuns()).find((run) => ![firstRun!.id, secondRun!.id].includes(run.id) && run.threadId), 20_000);
       expect(thirdRun, `no channel run for the other person. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
       expect(thirdRun!.threadId).not.toBe(ownerThread);
-      const otherCard = await poll(() => liveCard(thirdRun!.threadId), 20_000);
+      const otherCard = await poll(() => liveCard(thirdRun!.threadId), 45_000);
+      // a timeout (card never seen) is told apart from the gate: Full access shows its chip, a slow card shows neither
+      expect(otherCard !== null || (await fullAccessChip(thirdRun!.threadId)) !== null, "approval card not seen within 45 s").toBe(true);
       expect(otherCard, "someone else's message ran under the owner's Full access").not.toBeNull();
       expect(await fullAccessChip(thirdRun!.threadId)).toBeNull();
       await desktopApi("POST", `/api/routine-runs/${thirdRun!.id}/cancel`);
     },
-    120_000,
+    240_000,
   );
 
   it(

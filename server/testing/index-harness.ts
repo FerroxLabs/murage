@@ -9,7 +9,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { browserEngineRefusesHost } from "./browser-host.ts";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -21,7 +21,9 @@ import { removeTempDir, waitForExit } from "./cleanup.ts";
 import { browserSessionId } from "../browser-engine.ts";
 import { FAKE_FLUX_BROKER_PREFIX, FAKE_FLUX_BROKER_TOKEN, handleFakeFluxBroker } from "./fake-flux-broker.ts";
 import { withTurnSecrets } from "./fixture-dump.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./power-block-test.ts";
 import { OWNER_FIRST_MAX_DEFER_MS } from "../owner-first.ts";
+import { fixtureDisplayApi } from "./display-fixture.ts";
 
 export const SERVER_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const ROOT = join(SERVER_DIR, "..");
@@ -78,6 +80,7 @@ export const FIXTURE_ENGINE_OVERRIDES = {
   muse: { driver: "fixture-unavailable" },
   // U22 F9: the product fleet adds the owner's Copilot CLI; the fixture never probes a developer's own copy.
   githubCopilot: { driver: "fixture-unavailable" },
+  deepseek: { driver: "fixture-unavailable" },
 };
 
 /** Packaged-shape fixtures receive the renderer proof through their private
@@ -114,6 +117,43 @@ export const holdBoxSlowValidation = () => {
 export let boxStubPort = 0;
 export let connectorAliasFixture: { accounts: { id: string; alias: string; status: string; toolkit: { slug: string } }[]; links: { toolkit: string; alias?: string }[]; calls: number; refuseTakenLabels?: boolean; refuseAfterMs?: number; statusAfterMs?: number } | undefined;
 export let home: string;
+let lineageStateDir = "";
+/** Test-only: `skip` sends the fixture turn without the lineage readiness wait (the row that proves the product launches, or lands on the no-memory last resort, anyway). */
+export const lineageWaitControl = { skip: false };
+const lineageWaiters = new Map<string, number>();
+let lineageRevision = 0;
+const publishLineageWaiters = () => {
+  const revision = ++lineageRevision;
+  writeFileSync(join(lineageStateDir, "threads.tmp"), JSON.stringify({ revision, threads: [...lineageWaiters.keys()] }));
+  renameSync(join(lineageStateDir, "threads.tmp"), join(lineageStateDir, "threads.json"));
+  return revision;
+};
+/** Wait for a fresh reading of this turn's lineage. Only active waits are sampled, independent of earlier turns. */
+export const waitForLineageSettled = async (threadId: string, timeout = 15_000) => {
+  if (lineageWaitControl.skip) return;
+  lineageWaiters.set(threadId, (lineageWaiters.get(threadId) ?? 0) + 1);
+  const revision = publishLineageWaiters();
+  let lastState = "no reading yet";
+  const giveUpAt = Date.now() + timeout;
+  try {
+    for (;;) {
+      try {
+        const snapshot = JSON.parse(readFileSync(join(lineageStateDir, "lineage-state.json"), "utf8"));
+        const reading = snapshot.revision >= revision ? snapshot.states?.[threadId]?.state as string | undefined : undefined;
+        if (reading !== undefined) {
+          lastState = reading;
+          if (reading === "warm" || reading === "retired") return;
+        }
+      } catch { /* the preload has not written yet */ }
+      if (Date.now() >= giveUpAt) throw new Error(`lineage never settled for thread ${threadId} within ${timeout} ms (last state: ${lastState})`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  } finally {
+    const remaining = (lineageWaiters.get(threadId) ?? 1) - 1;
+    if (remaining) lineageWaiters.set(threadId, remaining); else lineageWaiters.delete(threadId);
+    publishLineageWaiters();
+  }
+};
 export let staticDir: string;
 export let fakeClaudeDump: string;
 export let stderr = "";
@@ -204,6 +244,8 @@ export const api = async (method: string, path: string, body?: unknown): Promise
     method,
     headers: { ...DOOR_HEADERS, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
+  }).catch((cause: unknown) => {
+    throw new Error(`fixture request failed (${method} ${path}; server exit ${child?.exitCode}):\n${stderr.slice(-6000)}`, { cause });
   });
   return { status: res.status, body: await res.json() };
 };
@@ -230,7 +272,7 @@ export const delayedJsonBody = async (method: string, path: string, body: unknow
       res.on("data", (chunk) => { data += chunk; });
       res.on("error", reject);
       res.on("end", () => {
-        try { resolve({ status: res.statusCode ?? 0, body: JSON.parse(data) }); }
+        try { resolve({ status: res.statusCode ?? 0, body: res.headers["content-type"]?.includes("application/json") ? JSON.parse(data) : data }); }
         catch (error) { reject(error); }
       });
     });
@@ -271,6 +313,20 @@ export const desktopApi = async (method: string, path: string, body?: unknown): 
   });
   return { status: res.status, body: await res.json() };
 };
+
+/** Consumer owner: c4-misc-c3. Display adapter owner: c4-misc-a;
+ * durable evidence owner: c3-askapi. The original caller/authentication stays.
+ * MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428.
+ */
+export function indexDisplayApis() {
+  const request = fixtureDisplayApi(() => join(home, ".murage", "messages.db"),
+    async (method: string, path: string, body?: unknown, surface: "door" | "desktop" = "door") =>
+      (surface === "desktop" ? desktopApi : api)(method, path, body));
+  return {
+    api: (method: string, path: string, body?: unknown) => request(method, path, body, "door"),
+    desktopApi: (method: string, path: string, body?: unknown) => request(method, path, body, "desktop"),
+  };
+}
 
 /** The paired phone, through the companion's door with its launch proof. */
 export const phoneApi = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
@@ -318,6 +374,7 @@ export const startInternalFixtureTurn = async (botId: string, groupId?: string, 
   const selected = (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === botId);
   const modelSelection = { instanceId: "claude", model: "claude-sonnet-5" };
   expect((await desktopApi("PATCH", (selected.tasks?.length ?? 1) > 1 ? `/api/bots/${botId}/tasks/${selected.threadId}` : `/api/bots/${botId}`, { modelSelection })).status).toBe(200);
+  await waitForLineageSettled(selected.threadId);
   rmSync(fakeClaudeDump, { force: true });
   const target = groupId ? `/api/groups/${groupId}/messages` : `/api/bots/${botId}/messages`;
   const started = await send("POST", target, groupId ? { text } : { text, threadId: selected.threadId });
@@ -415,6 +472,16 @@ export const stopFixtureTurn = async (botId: string, turn: { dump: { pid: number
   }, { timeout: 10_000, message: `stopped fixture engine pid ${turn.dump.pid} is still running` }).toBe(true);
 };
 
+/** Wait for these fixture engines to exit (best effort, bounded). A bot deleted while a turn of its engine still runs is left
+ * "engine-running": its history is owed, and each owed deletion takes a hold on the engine instance when a turn ends, so the NEXT
+ * test's first turn can wait behind a convoy of holds (250 ms rungs, then 60 s and 240 s) past the launch wait. A test that deletes
+ * many bots (the 99-bot budget tests) lets its engines exit first so no deletion is owed. The hold-yield ladder (caeaf8357,
+ * DELETE-HOLDS-ENGINE-1017 r2.5/r3.1: a waiting turn yields, five yields then the top rung runs whole) is unchanged. */
+export const waitEnginesGone = async (pids: number[]) => {
+  await expect.poll(() => pids.every((pid) => { try { process.kill(pid, 0); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; } }),
+    { timeout: 10_000 }).toBe(true).catch(() => {});
+};
+
 /** The memory settlement of every turn on a thread, oldest first. */
 export const turnMemoryOutcomes = (threadId: string): string[] => {
   const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
@@ -463,6 +530,8 @@ export const statusWithHeaders = (headers: Record<string, string>): Promise<numb
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "murage-api-test-"));
+  const { prepareMemoryMeterFixture } = await import("../memory/testing/native-meter-fixture.ts");
+  prepareMemoryMeterFixture(process.env.MURAGE_FIXTURE_IMPORT_ROOT ?? home);
   staticDir = join(home, "static");
   fakeClaudeDump = join(home, "fake-claude-dump.json");
   mkdirSync(join(home, "finish-fake"));
@@ -470,6 +539,16 @@ beforeAll(async () => {
   // tests exercise retries and inheritance of an existing owner's selection.
   mkdirSync(join(home, ".claude"));
   writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ model: "claude-sonnet-5" }));
+  // Own the fake CLI inputs at its executable entry. The production captured
+  // shell environment intentionally does not inherit arbitrary server variables.
+  const fixtureClaudeCli = join(home, "fixture-claude.mjs");
+  writeFileSync(fixtureClaudeCli, [
+    "#!/usr/bin/env -S node --experimental-strip-types",
+    "Object.assign(process.env," + JSON.stringify({ FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: fakeClaudeDump,
+      FAKE_CLAUDE_DUMP_HISTORY: fakeClaudeDump + ".jsonl",
+      FAKE_CLAUDE_DUMP_EACH_TURN: "1", FAKE_CLAUDE_FINISH_GATE_DIR: join(home, "finish-fake") }) + ");",
+    "await import(" + JSON.stringify(pathToFileURL(FAKE_CLAUDE_CLI).href) + ");",
+  ].join("\n"), { mode: 0o755 });
   // Only the local fake Claude can run; every other fixture slot is a shadow.
   mkdirSync(join(home, ".murage"), { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
@@ -482,7 +561,7 @@ beforeAll(async () => {
       instances: {
         ...FIXTURE_ENGINE_OVERRIDES,
         ghost: { driver: "not-a-real-driver", displayName: "Ghost" },
-        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
+        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: fixtureClaudeCli } },
       },
     }),
   );
@@ -694,12 +773,18 @@ beforeAll(async () => {
   // production never gains an authorization bypass or test mint endpoint.
   // A test file that sets MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET=1 before this harness starts gets a child with the revoke marker's
   // per-minute write budget lifted (revoke-budget-preload.mjs); every other file runs the child exactly as before.
+  // The fixture-turn harness waits for the thread lineage to leave "checking"/"pending" before it sends (lineage-state-preload.mjs reads
+  // the state in the server process). The directory is outside the data dir (home/.murage) and removed with the harness.
+  lineageStateDir = mkdtempSync(join(tmpdir(), "murage-lineage-state-"));
   const revokeBudgetPreload = process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET === "1" ? ["--import", pathToFileURL(join(SERVER_DIR, "testing", "revoke-budget-preload.mjs")).href] : [];
-  child = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", pathToFileURL(join(SERVER_DIR, "testing", "search-fetch-preload.mjs")).href, ...revokeBudgetPreload, process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
+  child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", pathToFileURL(join(SERVER_DIR, "testing", "mount-evidence-preload.mjs")).href, "--import", browserFixturePrelude, "--import", pathToFileURL(join(SERVER_DIR, "testing", "search-fetch-preload.mjs")).href, "--import", pathToFileURL(join(SERVER_DIR, "testing", "lineage-state-preload.mjs")).href, ...revokeBudgetPreload, process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...powerBlockTestEnv(),
+      MURAGE_ENGINE_EXCLUSION_PATH: process.env.MURAGE_ENGINE_EXCLUSION_PATH,
       HOME: home,
       USERPROFILE: home,
       TMPDIR: tmpdir(),
@@ -715,6 +800,8 @@ beforeAll(async () => {
       } : {}),
       ...(process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET === "1" ? { MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET: "1" } : {}),
       MURAGE_STATIC_DIR: staticDir,
+      MURAGE_TEST_LINEAGE_STATE_DIR: lineageStateDir,
+      MURAGE_TEST_LINEAGE_STATE_DB: join(home, ".murage", "messages.db"),
       // The preload isolates only native execution; authority uses the real harness.
       MURAGE_AGENT_BROWSER_PATH: process.execPath,
       MURAGE_BROWSER_FIXTURE_URL: `http://127.0.0.1:${boxStubPort}/fixture-browser-event`,
@@ -766,6 +853,8 @@ afterAll(async () => {
   // an exit that is actually waited for before the delete begins.
   await waitForExit(child, { signal: "SIGTERM" });
   await removeTempDir(home);
+  if (lineageStateDir) await removeTempDir(lineageStateDir);
+  expectStoppedTestServerCleanly(child, stderr);
   for (const directory of deferredCheckpointDirectories) expect(existsSync(directory), "owned checkpoint fixture must be removed after server shutdown").toBe(false);
 });
 

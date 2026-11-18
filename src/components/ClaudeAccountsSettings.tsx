@@ -135,7 +135,7 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
     catch { setError(t("claudeAccounts.copyError")); }
   };
   return <section aria-label="Claude accounts" className="space-y-3 rounded-xl bg-card p-4">
-    <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="claude-accounts-heading" tabIndex={-1} className="text-[15px] font-medium text-ink outline-none">Claude accounts</h3><div className="flex gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="claude-accounts-title" tabIndex={-1} className="text-[15px] font-medium text-ink outline-none">Claude accounts</h3><div className="flex gap-2">
       <button type="button" className={button} disabled={busy} onClick={() => { setError(""); void load().catch(cause => setError(cause.message)); }}>{t("claudeAccounts.refresh")}</button>
       <button type="button" data-setting-control="claude-accounts-heading" className={button} disabled={busy} onClick={() => edit()}>{t("claudeAccounts.add")}</button>
     </div></div>

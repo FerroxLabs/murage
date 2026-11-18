@@ -1,0 +1,11 @@
+--- a/server/drivers/acp/core.ts
++++ b/server/drivers/acp/core.ts
+@@ -4854,7 +4854,7 @@
+               jsonrpc: "2.0",
+               id: msg.id,
+               result: allow ? { outcome: { outcome: "selected", optionId: allow } } : cancelled,
+-            }, autoDone("allow")));
++            }, () => {}));
+           }
+           const tool = questionTool ?? (kind === "execute" ? "shell" : kind === "edit" ? "edit" : kind || "tool");
+           // The headline is the real target: the command (an argv array is

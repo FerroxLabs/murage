@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   PHONE_ASK_TAG, PHONE_ASK_TOKEN, PHONE_ASK_TTL_MS, SHARE_FILE_MIME_LIST, SHARE_IMAGE_MIME_LIST, SHARE_LIMITS, TARGETS_RECENT_MAX,
-  askSchema, manifestSchema, phoneAskMessage, targetsAnswerSchema, tokenRequestSchema,
+  askSchema, askAnswerSchema, manifestSchema, phoneAskMessage, targetsAnswerSchema, tokenRequestSchema,
 } from "./phone-ask-contract.ts";
 import { PHONE_JOBS_TAG, phoneJobsMessage } from "./phone-jobs-contract.ts";
 import { approvalKeyId } from "./phone-jobs-hash.ts";
@@ -143,7 +143,9 @@ describe("phone-ask contract", () => {
     expect(share.ok.map((a: { body: { queueId?: string } }) => Object.keys(a.body).sort().join())).toEqual(["messageId,state,threadId", "queueId,state,threadId"]);
     expect(share.errors.map((e: { status: number; body?: { code: string } }) => `${e.status}${e.body ? e.body.code : ""}`))
       .toEqual(["409conflict", "409target_gone", "413too_large", "415unsupported_type", "422invalid", "401revoked", "403revoked", "404"]);
-    expect(Object.keys(fx.ask.answer).sort()).toEqual(["askId", "id", "notify", "state", "threadId"]);
+    expect(Object.keys(fx.ask.answer).sort()).toEqual(["askId", "id", "notify", "proven", "state", "threadId"]);
+    expect(askAnswerSchema.safeParse(fx.ask.answer).success).toBe(true);
+    for (const error of fx.ask.errors) if (error.body) expect(askAnswerSchema.safeParse(error.body).success).toBe(true);
     expect(fx.ask.errors.map((e: { status: number; body?: { code: string } }) => `${e.status}${e.body ? e.body.code : ""}`))
       .toEqual(["409conflict", "409target_gone", "422invalid", "401revoked", "403revoked", "404"]);
   });

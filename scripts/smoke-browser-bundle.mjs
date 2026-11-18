@@ -14,7 +14,7 @@ import { parseArgs } from "node:util";
 import { inflateSync } from "node:zlib";
 import { browserBundlePaths, browserBundleSpec } from "../server/browser-bundle-release.ts";
 import { executableTarget } from "./prepare-cloudflared.mjs";
-import { WINDOWS_VENDOR_VERSION, verifyVendorCandidate, verifyVendorPatch } from "./build-windows-browser-vendor.mjs";
+import { verifyVendorCandidate, verifyVendorPatch } from "./build-windows-browser-vendor.mjs";
 import { safeWipe } from "../server/testing/safe-wipe.mjs";
 
 const { values } = parseArgs({ options: {
@@ -42,7 +42,6 @@ assert((await readdir(paths.licenses)).length > 0, "Missing bundled third-party 
 assert((await stat(join(paths.directory, spec.chrome.license))).size > 0, "Missing Chromium license");
 assert((await stat(join(paths.directory, spec.chrome.about))).size > 0, "Missing Chromium notice");
 let enginePath = paths.engine;
-let engineVersionExpected = spec.engine.version;
 if (values["engine-candidate"] !== undefined) {
   // Only the artifact-only vendor workflow uses this explicit mode. Standard
   // app release calls still discover and execute the bundled, pinned engine.
@@ -59,7 +58,6 @@ if (values["engine-candidate"] !== undefined) {
   for (const license of ["agent-browser-LICENSE.txt", "LICENSE-axe-core.txt", "LICENSE-axe-core-THIRD-PARTY.txt"]) {
     assert.deepEqual(await readFile(join(candidateDirectory, license)), await readFile(join(paths.licenses, license)), `Candidate changed upstream notice ${license}`);
   }
-  engineVersionExpected = WINDOWS_VENDOR_VERSION;
 }
 // Signing changes Mach-O bytes. Source-archive digests are checked before signing;
 // this gate checks the final layout, versions, and real browser behavior instead.
@@ -262,13 +260,17 @@ const interrupt = () => { for (const proc of children) proc.kill("SIGTERM"); };
 process.once("SIGINT", interrupt);
 process.once("SIGTERM", interrupt);
 try {
-  const { browserEngineStatus, agentBrowserIntegration } = await import("../server/browser-engine.ts");
+  const { browserEngineStatus, agentBrowserIntegration, verifyAgentBrowserBinary } = await import("../server/browser-engine.ts");
   const status = browserEngineStatus({ dataDir: env.OMB_DATA_DIR, env });
   assert.equal(status.kind, "ready", `Fresh-home runtime did not discover the bundle: ${JSON.stringify(status)}`);
   assert.equal(resolve(status.binaryPath), resolve(enginePath), "Runtime did not select the engine under test");
   const engineVersion = await run(enginePath, ["--version"], env);
   const chromeVersion = await run(paths.chrome, ["--version"], env);
-  assert.equal(engineVersion, `agent-browser ${engineVersionExpected}`, `Unexpected engine version: ${engineVersion}`);
+  // The REAL launch check (the one every Murage launch runs), against the pinned asset version: nothing in this
+  // smoke hard-codes a version, so a binary Murage would refuse can never pass here.
+  await verifyAgentBrowserBinary(enginePath, env);
+  const { agentBrowserReleaseVersion, resolveAgentBrowserReleaseAsset } = await import("../server/browser-engine-release.ts");
+  if (process.platform === "win32") assert.equal(engineVersion, `agent-browser ${agentBrowserReleaseVersion(resolveAgentBrowserReleaseAsset())}`, `Windows engine must print its pinned vendor revision, got: ${engineVersion}`);
   assert(chromeVersion.includes(spec.chrome.version), `Unexpected Chromium version: ${chromeVersion}`);
 
   const title = `OpenMausBot bundled browser ${randomBytes(6).toString("hex")}`;

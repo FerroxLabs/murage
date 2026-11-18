@@ -51,6 +51,7 @@ export type SteerQueueEntries = Array<[string, LegacyQueueEntry]>;
 
 export interface QueuedSteer {
   id: string;
+  sendId?: string;
 }
 
 /** Hold a send off the transcript until drain. With `rowSeq` the already-accepted
@@ -61,26 +62,27 @@ export function queueSteeredMessage(
   botId: string,
   threadId: string,
   text: string,
-  options: { prompt?: string; replyToId?: string; sendId?: string; origin?: MessageOrigin; existingMessageId?: string; rowSeq?: number } = {},
+  options: { prompt?: string; replyToId?: string; sendId?: string; origin?: MessageOrigin; existingMessageId?: string; rowSeq?: number; isolated?: boolean } = {},
 ): QueuedSteer {
   if (options.rowSeq !== undefined) {
     const row = sendStore.bySeq(options.rowSeq);
     if (!row) throw new Error("send record is gone");
     if (row.ownerId !== botId) throw new Error("queued task belongs to another bot");
     sendStore.queue(row.seq, options.existingMessageId, options.prompt);
-    return { id: row.queueId };
+    return { id: row.queueId, ...(row.sendId ? { sendId: row.sendId } : {}) };
   }
   const accepted = sendStore.accept({
     kind: "bot", ownerId: botId, threadId, text, status: "queued",
     ...(options.sendId ? { sendId: options.sendId } : {}),
     fingerprint: sendFingerprint(text, options.replyToId),
+    isolated: options.isolated,
     ...(options.replyToId ? { replyToId: options.replyToId } : {}),
     ...(options.origin ? { origin: options.origin } : {}),
     ...(options.prompt ? { prompt: options.prompt } : {}),
   });
   if (accepted.kind === "conflict") throw new Error("sendId already belongs to another message");
   if (accepted.kind === "new" && options.existingMessageId) sendStore.queue(accepted.row.seq, options.existingMessageId);
-  return { id: accepted.row.queueId };
+  return { id: accepted.row.queueId, ...(accepted.row.sendId ? { sendId: accepted.row.sendId } : {}) };
 }
 
 /** What one drain runs: the leading run of plain owner rows (they join, as always), or exactly the first row when it is a
@@ -88,8 +90,8 @@ export function queueSteeredMessage(
 export function drainBatch(rows: SendRow[]): SendRow[] {
   const first = rows[0];
   if (!first) return [];
-  if (first.via !== null) return [first];
-  const end = rows.findIndex((row) => row.via !== null);
+  if (first.via !== null || first.isolated) return [first];
+  const end = rows.findIndex((row) => row.via !== null || row.isolated);
   return end === -1 ? rows : rows.slice(0, end);
 }
 
@@ -188,7 +190,7 @@ export function drainSteeredMessages(
     userMessage: Message,
     excludeIds: string[],
     /** Which kind of batch this is: a share or ask-intent line runs alone, from the phone named here. */
-    batch: { via: "share" | "ask-intent" | null; viaDevice: string | null },
+    batch: { via: "share" | "ask-intent" | null; viaDevice: string | null; viaProof: SendRow["viaProof"]; isolated?: boolean; seqs?: number[] },
   ) => void | Promise<unknown>,
   /** Holds a queue the thread's own busy flag cannot see, such as the bot
    * speaking in a room turn (upstream OpenMausBot #1664). */
@@ -308,9 +310,12 @@ export function drainSteeredMessages(
         prompt,
         last,
         appended.map((message) => message.id),
-        { via: first.via, viaDevice: first.via ? first.viaDevice : null },
+        { via: first.via, viaDevice: first.via ? first.viaDevice : null, viaProof: first.via === "ask-intent" && committed.length === 1 ? committed[0]!.viaProof : null, ...(first.isolated ? { isolated: true } : {}), ...(sendStore.attempts() ? { seqs: committed.map(row => row.seq) } : {}) },
       );
-    } catch { /* same: the lines are already recorded */ }
+    } catch {
+      // Settle by captured queue identities, including anonymous sends.
+      for (const row of committed) sendStore.settle(row.seq, "failed", row.messageId ?? appended[committed.indexOf(row)]?.id);
+    }
     if (started && typeof (started as PromiseLike<unknown>).then === "function") {
       const token = Symbol(threadId);
       starting.set(threadId, token);
@@ -327,7 +332,12 @@ export function drainSteeredMessages(
         // admitted: the turn now holds the thread and its own end drains; anything else (failed, or a turn already over) drains now
         if (!occupied(ownerId, threadId)) again();
       };
-      Promise.resolve(started).then(settle, () => settle(undefined));
+      Promise.resolve(started).then(settle, () => {
+        try {
+          sendStore.within(() => committed.forEach((row, i) => sendStore.settle(row.seq, "failed", appended[i]?.id)));
+        } catch { return; } // receipt failure retains the starting barrier
+        settle(undefined);
+      });
     } else {
       clearRetry(threadId);
     }

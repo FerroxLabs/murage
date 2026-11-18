@@ -1,0 +1,141 @@
+{
+  "base": "5daadeac8ebbdc4100d9b9f2805c5e4135262c5a",
+  "families": [
+    {
+      "family": "contacts",
+      "owner": "F1",
+      "branch": "dev/1019-hlf1",
+      "tip": "c6a42f182041ab11fe9e7fa4c35a4cd71cf109e8",
+      "implementationBytes": 15335,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "opportunities",
+      "owner": "F2",
+      "branch": "dev/1019-hlf2",
+      "tip": "6e4d9bc3e5fee2c5826bec813d8242ed982a5f65",
+      "implementationBytes": 16622,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "conversations",
+      "owner": "F3",
+      "branch": "dev/1019-hlf3",
+      "tip": "6a31c0f53618dddbf25b241defa85b0f4f6cd37d",
+      "implementationBytes": 19520,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "calendars",
+      "owner": "F4",
+      "branch": "dev/1019-hlf4",
+      "tip": "9d598a9e1603ffd2a86d617c3c6ee0095d3f81a9",
+      "implementationBytes": 20681,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "automations",
+      "owner": "F5",
+      "branch": "dev/1019-hlf5",
+      "tip": "5e951918a4b9dc3ab6d0c37110423848563aec5b",
+      "implementationBytes": 9852,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "forms",
+      "owner": "F5",
+      "branch": "dev/1019-hlf5",
+      "tip": "5e951918a4b9dc3ab6d0c37110423848563aec5b",
+      "implementationBytes": 5063,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "location",
+      "owner": "F6",
+      "branch": "dev/1019-hlf6",
+      "tip": "6c92522d0bb2b78d891c2a6189037d63f45028a0",
+      "implementationBytes": 11807,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "users",
+      "owner": "F6",
+      "branch": "dev/1019-hlf6",
+      "tip": "6c92522d0bb2b78d891c2a6189037d63f45028a0",
+      "implementationBytes": 8222,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "payments",
+      "owner": "F7",
+      "branch": "dev/1019-hlf7",
+      "tip": "8878323e894015a3f62e0b1bc4c9c555b66de4e3",
+      "implementationBytes": 19827,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "social",
+      "owner": "F9",
+      "branch": "dev/1019-hlf9",
+      "tip": "5077cf7c009a6bb6bc766b3b6a11b3109c985d5e",
+      "implementationBytes": 3189,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "blogs",
+      "owner": "F9",
+      "branch": "dev/1019-hlf9",
+      "tip": "5077cf7c009a6bb6bc766b3b6a11b3109c985d5e",
+      "implementationBytes": 3040,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "media",
+      "owner": "F9",
+      "branch": "dev/1019-hlf9",
+      "tip": "5077cf7c009a6bb6bc766b3b6a11b3109c985d5e",
+      "implementationBytes": 1753,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "documents",
+      "owner": "F9",
+      "branch": "dev/1019-hlf9",
+      "tip": "5077cf7c009a6bb6bc766b3b6a11b3109c985d5e",
+      "implementationBytes": 2739,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "funnels",
+      "owner": "F10",
+      "branch": "dev/1019-hlf10",
+      "tip": "d7e54434c0df5aa59cd5903f57fbcfe1b56413ea",
+      "implementationBytes": 9003,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "courses",
+      "owner": "F10",
+      "branch": "dev/1019-hlf10",
+      "tip": "d7e54434c0df5aa59cd5903f57fbcfe1b56413ea",
+      "implementationBytes": 2152,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "saas",
+      "owner": "F10",
+      "branch": "dev/1019-hlf10",
+      "tip": "d7e54434c0df5aa59cd5903f57fbcfe1b56413ea",
+      "implementationBytes": 1396,
+      "status": "owner-tip-observed-adoption-required"
+    },
+    {
+      "family": "snapshots",
+      "owner": "F10",
+      "branch": "dev/1019-hlf10",
+      "tip": "d7e54434c0df5aa59cd5903f57fbcfe1b56413ea",
+      "implementationBytes": 1447,
+      "status": "owner-tip-observed-adoption-required"
+    }
+  ]
+}

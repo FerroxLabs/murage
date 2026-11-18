@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,6 +9,12 @@ import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 test("Windows backup bundles load without source protocol or node_modules and refuse unsupported hosts", async t => {
   const root = mkdtempSync(join(tmpdir(), "murage-windows-bundle-test-"));
   t.after(() => safeWipeSync(root));
+  // The Windows inheritance installer is an intentional runtime sibling of
+  // every server bundle (c27f55e312); isolate the complete packaged layout.
+  mkdirSync(join(root, "shared"));
+  for (const name of ["win-hide-child-process.mjs", "win-hide-child-process.cjs"]) {
+    copyFileSync(new URL(`../dist-server/shared/${name}`, import.meta.url), join(root, "shared", name));
+  }
   for (const name of ["windows-backup-resources", "installation-windows-backup-transport"]) {
     copyFileSync(new URL(`../dist-server/${name}.js`, import.meta.url), join(root, `${name}.mjs`));
   }

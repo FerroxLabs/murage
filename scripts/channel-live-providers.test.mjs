@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { DurableDelivery } from "../server/channels/durable-delivery.ts";
 import { discordPrompt } from "../server/channels/discord/event.ts";
-import { abortableSleep, abortableWait, askOperator, createRunAbort, finalizeLive, handleFixtureReplySetup, LiveStop, realReplyProblems, expectedReplyProblems, receiptDiagnostics, startReceiptCapture } from "./channel-live-providers.ts";
+import { abortableSleep, abortableWait, askOperator, channelLedgerRecords, createRunAbort, finalizeLive, handleFixtureReplySetup, LiveStop, realReplyProblems, expectedReplyProblems, receiptDiagnostics, startReceiptCapture } from "./channel-live-providers.ts";
 import { chiefPromotionBody, engineEnv, harnessConfig, ROOT } from "./channel-live-harness.ts";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
@@ -37,8 +37,8 @@ function ownerActionFixture() {
   const task = { threadId: "thread-owner", modelSelection: { instanceId: "owner-engine", model: "pinned-model" }, autoApprove: false, alwaysAllow: [] };
   const run = { id: "run-owner", threadId: task.threadId, botId: "chief-owner", status: "running", channelOrigin: { platform: "discord" } };
   writeFileSync(join(root, "bots.json"), JSON.stringify([{ id: run.botId, tasks: [task] }]));
-  // Production permission-card shape. The old live run retained only IDs, not its raw payload.
-  const message = { id: "message-owner", card: { requestId: "request-owner", tool: "other agents__list_bots", subtitle: "private-input-secret", options: ["Allow once", "Deny"] } };
+  // MAIN RULING INT-CONFLICT-DEFAULT 5c07f6b282 d55f3bbf61 public cards retain opaque routing handles; native request IDs stay private.
+  const message = { id: "message-owner", card: { requestHandle: "p.message-owner", tool: "other agents__list_bots", subtitle: "private-input-secret", options: ["Allow once", "Deny"] } };
   const calls = [], records = [], notices = [], ownerActions = new Map();
   const state = { runs: [run], messages: [message], messagesStatus: 200 };
   const harness = { root, data: root, url: "http://127.0.0.1:12345", record(step, data) { records.push({ step, data }); },
@@ -59,11 +59,11 @@ it.each(["allow", "deny"])("owner action waits without auto-grant or redispatch,
     expect(f.records.map(r => r.step)).toEqual(["reply-owner-action-pending"]);
     expect(JSON.stringify([f.records, f.notices])).not.toContain("private-input-secret");
     expect(JSON.stringify([f.records, f.notices])).not.toContain("agents__list_bots");
-    expect(f.notices[0]).toContain("request-owner");
+    expect(f.notices[0]).toContain("p.message-owner");
     // Represents the existing host's request.resolved(source=user) persisted card.
     f.message.card.answered = behavior; f.message.card.dismissed = false; f.run.status = "completed";
     expect(await f.poll()).toBe(false);
-    expect(f.records.at(-1)).toMatchObject({ step: "reply-owner-decision", data: { runId: "run-owner", threadId: "thread-owner", requestId: "request-owner", messageId: "message-owner", behavior } });
+    expect(f.records.at(-1)).toMatchObject({ step: "reply-owner-decision", data: { runId: "run-owner", threadId: "thread-owner", requestHandle: "p.message-owner", messageId: "message-owner", behavior } });
     expect(await f.poll()).toBe(false);
     expect(f.records).toHaveLength(2);
     expect(f.calls.every(c => c.method === "GET")).toBe(true);
@@ -73,11 +73,22 @@ it.each(["allow", "deny"])("owner action waits without auto-grant or redispatch,
 it("owner action never treats an unrelated already-answered card as a decision", async () => {
   const f = ownerActionFixture();
   try {
-    f.state.messages.unshift({ id: "historical", card: { requestId: "old", tool: "Bash", answered: "allow" } });
+    f.state.messages.unshift({ id: "historical", card: { requestHandle: "p.historical", tool: "Bash", answered: "allow" } });
     expect(await f.poll()).toBe(true);
     expect(f.ownerActions.size).toBe(1);
     f.state.messages = f.state.messages.filter(m => m.id !== f.message.id);
     await expect(f.poll()).rejects.toThrow("disappeared or changed identity");
+    expect(f.records.some(r => r.step === "reply-owner-decision")).toBe(false);
+  } finally { f.close(); }
+});
+
+it.each(["p.other-message", "q.message-owner", undefined])("owner action refuses changed or missing public identity %s", async requestHandle => {
+  const f = ownerActionFixture();
+  try {
+    expect(await f.poll()).toBe(true);
+    f.message.card.requestHandle = requestHandle;
+    await expect(f.poll()).rejects.toThrow("disappeared or changed identity");
+    expect(f.calls.every(c => c.method === "GET")).toBe(true);
     expect(f.records.some(r => r.step === "reply-owner-decision")).toBe(false);
   } finally { f.close(); }
 });
@@ -225,7 +236,7 @@ it("an early Yes compacts the ack; its receipt must never pass the pairing step 
     runs: { enqueue(input) { runs.push(input); return { id: "unexpected-run" }; }, result() { return null; } },
     send: async ({ recipient, text }) => { sends.push(text); return { recipient, messageId: `message-${sends.length}` }; },
   });
-  const records = () => JSON.parse(readFileSync(file, "utf8")).records.map(r => ({ id: r.deliveryId, state: r.state, response: r.response }));
+  const records = () => channelLedgerRecords(file);
   const captured = new Map(), controller = new AbortController(), errors = [];
   const stop = startReceiptCapture(() => { for (const record of records()) captured.set(record.id, record); }, error => errors.push(error), controller.signal, 5);
   try {
@@ -323,7 +334,8 @@ it.each(["slack", "discord"])("optional %s button phase reaches actual permissio
       await waitFor("owner resolution observed on actual host card", observeOwner, pending => pending === false);
       expect([...ownerActions.values()]).toEqual([expect.objectContaining({ runId: run.id, threadId: run.threadId, settled: true })]);
       const messages = (await harness.request("GET", `/api/threads/${run.threadId}/messages?limit=200`)).body.messages;
-      expect(messages.find(message => message.card?.requestId === [...ownerActions.keys()][0]).card).toMatchObject({ answered: behavior, dismissed: false });
+      // MAIN RULING INT-CONFLICT-DEFAULT 5c07f6b282 d55f3bbf61 observe the exact public handle; native host decision assertion above stays.
+      expect(messages.find(message => message.card?.requestHandle === [...ownerActions.keys()][0]).card).toMatchObject({ answered: behavior, dismissed: false });
       expect(setupCalls.every(method => method === "GET")).toBe(true);
     }
     await sleep(500);
@@ -331,6 +343,7 @@ it.each(["slack", "discord"])("optional %s button phase reaches actual permissio
     expect(traces.filter(trace => trace.op === "edit")).toHaveLength(2);
     expect(buttonDecisions(harness.data)).toHaveLength(4);
     expect(await runs()).toHaveLength(2);
+    harness.record("button-proof", { platform, decisions: buttonDecisions(harness.data), runs: (await runs()).map(run => ({ id: run.id, threadId: run.threadId, status: run.status })), cards: cards().length, edits: traces.filter(trace => trace.op === "edit").length });
   } finally { await harness.close(); }
 }, 120000);
 
@@ -353,7 +366,9 @@ it("fixture folder trust: actual channel host gate is answered only for the cano
   const evidenceDir = mkdtempSync(join(tmpdir(), "murage-folder-setup-test-"));
   const fixtureEngine = { instanceId: "fixtureTrust", driver: "fuigoAgent", config: { cli: join(ROOT, "server/testing/fake-acp-cli.ts"), fullAuto: false } };
   const harness = await createHarness({ label: "folder-setup", evidenceDir, engine: fixtureEngine, preload: spec.preload, ipc: true,
-    env: () => ({ FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: join(harness.root, "acp.json") }), secretEnv: () => spec.tokens });
+    // Like the native engine, hold the handed MCP mounts and announce readiness
+    // before prompting; silence correctly refuses a consuming mounted turn.
+    env: () => ({ FAKE_ACP_MODE: "folder-trust", FAKE_ACP_MCP_CONNECT: "1", FAKE_ACP_MCP_READY: "1", FAKE_ACP_DUMP: join(harness.root, "acp.json") }), secretEnv: () => spec.tokens });
   const event = (id, text) => harness.child().send({ kind: spec.eventKind, body: spec.body(id, text, spec.owner, spec.dm) });
   const runs = async () => (await harness.request("GET", "/api/routines")).body.runs.filter(run => run.channelOrigin?.platform === "slack");
   harness.onMessage(trace => { if (trace?.kind === spec.traceKind) traces.push(trace); });
@@ -378,8 +393,12 @@ it("fixture folder trust: actual channel host gate is answered only for the cano
     const task = bot.tasks.find(task => task.threadId === run.threadId);
     // The Chief links no skills, so Murage's scan names nothing and the card
     // carries the engine's own description of what it gates.
+    expect(card.card.requestId).toBeUndefined();
+    expect(card.card.requestHandle).toBe(`q.${card.id}`);
+    expect(card.card.questions[0]).toMatchObject({ handle: "q.0", id: "q.0" });
     expect(card.card.folderTrust.sources).toEqual(["AGENTS.md / CLAUDE.md"]);
     expect(fixtureFolderTrustProblems(harness, chief.id, run, task, card.card)).toEqual([]);
+    expect(fixtureFolderTrustProblems(harness, chief.id, run, task, { ...card.card, tool: "Bash" })).not.toEqual([]);
     expect(fixtureFolderTrustProblems(harness, "other-chief", run, task, card.card)).not.toEqual([]);
     writeFileSync(join(task.cwd, "AGENTS.md"), "planted\n");
     expect(fixtureFolderTrustProblems(harness, chief.id, run, task, card.card)).not.toEqual([]);
@@ -402,13 +421,17 @@ it("fixture folder trust: actual channel host gate is answered only for the cano
     await waitFor("one completed channel reply", async () => ({ run: (await runs()).find(item => item.id === run.id), sends: traces.filter(trace => trace.op === "send") }),
       state => state.run?.status === "completed" && state.sends.length >= 2, 30000);
     const settled = (await messages()).find(message => message.id === card.id);
-    expect(settled.card).toMatchObject({ answered: "answer", answers: [{ id: "folderTrust", selected: ["Trust this folder"] }] });
+    // MAIN RULING INT-CONFLICT-DEFAULT d837bee28b d55f3bbf61 private answer IDs/labels stay out of display; durable trust and native answer below still prove execution.
+    expect(settled.card).toMatchObject({ answered: "answer", requestHandle: `q.${card.id}`, questions: [{ handle: "q.0" }] });
+    expect(settled.card).not.toHaveProperty("requestId");
+    expect(settled.card).not.toHaveProperty("answers");
     const record = await harness.request("GET", `/api/folder-trust?folder=${encodeURIComponent(realpathSync(task.cwd))}`);
     expect(record.body.record).toMatchObject({ decision: "trust", source: "card" });
     const dump = JSON.parse(readFileSync(join(harness.root, "acp.json"), "utf8"));
     // The engine asked from inside the running turn, so the grant is its
     // answer there (it applies to the engine from the next start).
     expect(dump.decision).toEqual({ outcome: "trust" });
+    harness.record("folder-trust-proof", { threadId: run.threadId, requestHandle: settled.card.requestHandle, answered: settled.card.answered, trust: record.body.record, nativeDecision: dump.decision });
     expect(traces.filter(trace => trace.op === "send")).toHaveLength(2);
     const after = JSON.parse(readFileSync(join(harness.data, "bots.json"), "utf8"));
     const afterBot = (Array.isArray(after) ? after : after.bots).find(bot => bot.id === chief.id);

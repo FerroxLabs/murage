@@ -1,0 +1,155 @@
+{
+  "version": "1.0.43",
+  "binary": {
+    "package": "@fuigo/linux-x64@1.0.43",
+    "source": "registry.npmjs.org (npm pack), brotli-decoded",
+    "sha256": "d62ea93bc75ed09693e1b085b320c5656bd96429511d5d2f494886ca909861a1",
+    "version_output": "fuigo 1.0.43 (48d6f8e3c862)",
+    "tarball": "3d0d0932ed82e9ca497fb504f2aa87f2a9caa08f387277257d27772064497eb5"
+  },
+  "release_run": "FerroxLabs/fuigo 43134771062",
+  "source_commit": "48d6f8e3c862c1a63043b44eb83a3615f0c3b8b8",
+  "tree": "48d22d77d05c1966670e5b956a82a24b54d4189f",
+  "method": "docker node:22-bookworm --network none --cpus 2; capture.py (copy of swarm-b/busyloop-capture/capture.py, sha256 18249690a4d018a2cea1cf726effd49f3426995fc887796a948f9a144c060bdc) with a local 429 stub; dummy key only",
+  "scenarios": {
+    "S1-1": {
+      "code": -32003,
+      "message": "Rate limited",
+      "data": {
+        "message": "API error (status 429 Too Many Requests): rate_limit_exceeded: Your account's monthly free-tier token allowance is exhausted. Free-tier allowances are enforced across every key on the account. Upgrade at fluxrouter.ai/pricing to continue.",
+        "error_kind": "rate_limited",
+        "upstream": {
+          "http_status": 429,
+          "type": "rate_limit_exceeded",
+          "state": "free_cap_reached",
+          "codes": [
+            "free_cap_reached",
+            "rate_limit_exceeded"
+          ]
+        },
+        "verdicts": {
+          "creditLimit": false,
+          "freeUsage": false,
+          "reauth": false,
+          "httpStatus": 429,
+          "maxTokensTruncation": false,
+          "httpDump": false,
+          "diskFull": false,
+          "consumerUpsell": false
+        }
+      }
+    },
+    "S1-2": {
+      "code": -32003,
+      "message": "Rate limited",
+      "data": {
+        "message": "API error (status 429 Too Many Requests): rate_limit_exceeded: Your account's monthly free-tier token allowance is exhausted. Free-tier allowances are enforced across every key on the account. Upgrade at fluxrouter.ai/pricing to continue.",
+        "error_kind": "rate_limited",
+        "upstream": {
+          "http_status": 429,
+          "type": "rate_limit_exceeded",
+          "state": "free_cap_reached",
+          "codes": [
+            "free_cap_reached",
+            "rate_limit_exceeded"
+          ]
+        },
+        "verdicts": {
+          "creditLimit": false,
+          "freeUsage": false,
+          "reauth": false,
+          "httpStatus": 429,
+          "maxTokensTruncation": false,
+          "httpDump": false,
+          "diskFull": false,
+          "consumerUpsell": false
+        }
+      }
+    },
+    "S2-1": {
+      "code": -32003,
+      "message": "Rate limited",
+      "data": {
+        "message": "API error (status 429 Too Many Requests): throttling_error: litellm.RateLimitError: {\"error\": {\"type\": \"rate_limit_exceeded\", \"state\": \"free_cap_reached\", \"tier\": \"free\", \"message\": \"Your account's monthly free-tier token allowance is exhausted. Free-tier allowances are enforced across every key on the account. Upgrade a\u2026",
+        "error_kind": "rate_limited",
+        "upstream": {
+          "http_status": 429,
+          "type": "other",
+          "state": "free_cap_reached",
+          "codes": [
+            "other"
+          ]
+        },
+        "verdicts": {
+          "creditLimit": false,
+          "freeUsage": false,
+          "reauth": false,
+          "httpStatus": 429,
+          "maxTokensTruncation": false,
+          "httpDump": false,
+          "diskFull": false,
+          "consumerUpsell": false
+        }
+      }
+    },
+    "S2-2": {
+      "code": -32003,
+      "message": "Rate limited",
+      "data": {
+        "message": "API error (status 429 Too Many Requests): throttling_error: litellm.RateLimitError: {\"error\": {\"type\": \"rate_limit_exceeded\", \"state\": \"free_cap_reached\", \"tier\": \"free\", \"message\": \"Your account's monthly free-tier token allowance is exhausted. Free-tier allowances are enforced across every key on the account. Upgrade a\u2026",
+        "error_kind": "rate_limited",
+        "upstream": {
+          "http_status": 429,
+          "type": "other",
+          "state": "free_cap_reached",
+          "codes": [
+            "other"
+          ]
+        },
+        "verdicts": {
+          "creditLimit": false,
+          "freeUsage": false,
+          "reauth": false,
+          "httpStatus": 429,
+          "maxTokensTruncation": false,
+          "httpDump": false,
+          "diskFull": false,
+          "consumerUpsell": false
+        }
+      }
+    }
+  },
+  "posts_per_run": {
+    "S1-1": 2,
+    "S1-2": 2,
+    "S2-1": 2,
+    "S2-2": 2
+  },
+  "files_sha256": {
+    "S1.json": "5599beec803a6541d93da429bb6e90540deb10aa6017e62fa5b5ddc0ce5e02e3",
+    "S2.json": "786e6dd642259f7ed97b3e69263e22eb915f7bdd2e1f2ff921d5e3013a38d8d1",
+    "anonymous-install-linux.txt": "2e255728438b5accb9e153c1121552b764669fa17a9116cfaa0b696b69dbfa57",
+    "binary-version.txt": "7ac653649555e34653022f21694e105b92133d221b8def936aab17c1b5ff9ec2",
+    "capture.py": "18249690a4d018a2cea1cf726effd49f3426995fc887796a948f9a144c060bdc",
+    "frames-S1-1.jsonl": "4f4b52f94b356606d20f14985652b6b1f925fda1fbf32af2289071b42f05ec5f",
+    "frames-S1-2.jsonl": "3ab8350f812adb5d69e35d881070270efeb9288125870800d264c9586a425eab",
+    "frames-S2-1.jsonl": "16f5e891cc3acc43221d3024a7c6ba01f5fc67fd9e3e3039e5cbad0fd69a1f2e",
+    "frames-S2-2.jsonl": "7e89605aaebaacd63de3100a8c62e187b6b34b1afd03ab33ff6a83905bd13bd9",
+    "github-release-asset-sha256.txt": "5041351c0971c8f63a44f8c75f2b50311d936dc55a5f5060560d23bb83e1e706",
+    "requests-S1-1.jsonl": "50015d671d91ffcc83f969984eef2dcc145fda9fa09a853aaeadf74751c80f4e",
+    "requests-S1-2.jsonl": "94e4dcf1d9fcd0276140a3f062209d40fb7727bc2a431c293d4f43787e787cbc",
+    "requests-S2-1.jsonl": "3e69b0071f120da17d6dadefead0656f42dbd82b3952ecd283e3f66f8bfe0888",
+    "requests-S2-2.jsonl": "fb53e5442a1fefb7794bffbbb609423b474614d3a1f1e411d3bd98ada02c8e6d",
+    "result-S1-1.txt": "8ddc676fa5bfcbf8922cea040ca360fcc788813e2a17227762d6dd1fd14729ba",
+    "result-S1-2.txt": "8ddc676fa5bfcbf8922cea040ca360fcc788813e2a17227762d6dd1fd14729ba",
+    "result-S2-1.txt": "d4ff73220d417ab6a462d5ee566cdf61816ee80672c4974af1d318012525609f",
+    "result-S2-2.txt": "d4ff73220d417ab6a462d5ee566cdf61816ee80672c4974af1d318012525609f",
+    "run-capture.sh": "6496e0cb07bb0efaf1b892def837683387dbe972536a6c8d5d3928e61201d565",
+    "stderr-S1-1.log": "7def3a6de585459fbe6ab774b2f42cdc44dec8bdfad01c85dc06270d6ba01f20",
+    "stderr-S1-2.log": "e8bff38af4305ae7d55f65c3b4e5ea25d0c5c351e649feda142dc934887f5ee1",
+    "stderr-S2-1.log": "cb1fa389eab8c47b22550032abce8a386a675e981b1c3df9f1941835201d39fa",
+    "stderr-S2-2.log": "1ca22a99af1e268baab6d2b2d80b9815af3bc983c9d97b76054afa1b6a46df0f",
+    "tarball.sha256": "465bcb05c6a1cd37e6b169e36001db3a18d4a11c6413a743032eae449af00e63"
+  },
+  "capturedAt": "2026-11-12T05:52:44+00:00"
+}

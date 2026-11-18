@@ -36,8 +36,9 @@ describe("what an unconfigured connectors response carries", () => {
   it("says whether FluxRouter is connected and whether this build can use it", () => {
     resetManagedBrokerState();
     const unconfigured = connectorPanelFields(cfg(), false);
-    expect(unconfigured).toEqual({
+    expect(unconfigured).toEqual({ // MAIN RULING 1115-COMPOSIO-A5
       broker: null,
+      admission: { outcome: "completed", reason: "ready", attempted: false },
       migration: { state: "none", legacyUntil: null },
       fluxConfigured: false,
       fluxBrokerEnabled: false,

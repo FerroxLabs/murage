@@ -1,11 +1,19 @@
+import "../../shared/win-hide-child-process.mjs";
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
+import type { EngineTransport } from "../../shared/engine-transport.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { proxyTransportLost, proxyUpstreamResponse, reserveProxyUpstream } from "../proxy-turn-release.ts";
 // Scoped MCP adapter: the agent never receives engine credentials or a raw
 // CLI escape hatch. Harness authority is checked before and after every call.
+import { WebDocuments } from "../web-documents.ts";
+import type { EngineReadOptions } from "../browser-extension-engine-read.ts";
+import { routeBrowserRead, nativeReadPort } from "../browser-read-route.ts";
 import { spawn } from "node:child_process";
 import { spawnCloudBrowser } from "../cloud-home/browser-process.ts";
 import type { Readable, Writable } from "node:stream";
 import { existsSync } from "node:fs";
 import type { AgentBrowserSpec } from "../browser-engine.ts";
-import { createLineSplitter, writeMcpLine } from "../mcp-bridge.ts";
+import { createLineSplitter, writeMcpLine, registerChildMcpInput } from "../mcp-bridge.ts";
 import { BuiltinFloorGate, floorToolResult } from "../browser-floor-builtin.ts";
 import { BEFOREUNLOAD_GUARD_SCRIPT } from "../browser-beforeunload-guard.ts";
 import { cdpUrlFromCli, startTargetGuard, type TargetGuard } from "./headless-target-guard.ts";
@@ -34,7 +42,8 @@ export interface EngineClient {
   close: () => Promise<void>;
 }
 
-async function boundedJson(response: Response, maxBytes: number): Promise<unknown> {
+export async function boundedJson(response: Response, maxBytes: number): Promise<unknown> {
+  response = proxyUpstreamResponse("headlessBrowser", response);
   if (!response.ok || !response.body) throw new Error(FAILURE);
   const reader = response.body.getReader();
   let size = 0;
@@ -48,8 +57,10 @@ async function boundedJson(response: Response, maxBytes: number): Promise<unknow
       chunks.push(Buffer.from(value));
     }
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
+  } catch (error) {
+    proxyTransportLost("headlessBrowser");
     await reader.cancel().catch(() => {});
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
     throw new Error(FAILURE);
   } finally { reader.releaseLock(); }
 }
@@ -65,10 +76,10 @@ function authorityUrl(env: NodeJS.ProcessEnv): URL {
 export function createHeadlessAuthorityReader(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fetch): () => Promise<Authority> {
   const url = authorityUrl(env);
   return async () => {
-    const value = await boundedJson(await fetchImpl(url, {
+    const value = await boundedJson(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", fetchImpl(url, {
       headers: { authorization: `Bearer ${turnSecret("MURAGE_CONTROL_TOKEN", env)}` },
       redirect: "error", signal: AbortSignal.timeout(5000),
-    }), MAX_REQUEST_BYTES) as Partial<Authority> | null;
+    })), MAX_REQUEST_BYTES) as Partial<Authority> | null;
     const spec = value?.spec;
     if (typeof value?.held !== "boolean" || !spec || typeof spec.command !== "string" || !spec.command
       || !Array.isArray(spec.args) || !spec.args.every((arg) => typeof arg === "string")
@@ -81,10 +92,10 @@ export function createHeadlessAuthorityReader(env: NodeJS.ProcessEnv, fetchImpl:
 /** The harness owns daemon cleanup and serializes duplicate release paths.
  * Revoked authority is not an acknowledgment that a daemon actually exited. */
 export async function closeHeadlessAuthority(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fetch): Promise<void> {
-  const response = await fetchImpl(authorityUrl(env), {
+  const response = await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", fetchImpl(authorityUrl(env), {
     method: "DELETE", headers: { authorization: `Bearer ${turnSecret("MURAGE_CONTROL_TOKEN", env)}` },
     redirect: "error", signal: AbortSignal.timeout(15_000),
-  });
+  }));
   const receipt = await boundedJson(response, MAX_REQUEST_BYTES) as { closed?: unknown } | null;
   if (receipt?.closed !== true) throw new Error(FAILURE);
 }
@@ -96,13 +107,18 @@ const WITHDRAW_GRACE_MS = 10_000;
 /** The longest close() waits for the child to be gone. */
 const CLOSE_BOUND_MS = 5_000;
 
-export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
-  const child = spawnCloudBrowser(spec.args, spec.env) ?? spawn(spec.command, spec.args, { env: spec.env, shell: false, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+/** null is the server-owned browser transport, whose replies terminate at
+ * the harness. Proxy-process output keeps the strict consuming role by default. */
+export function startHeadlessEngine(spec: AgentBrowserSpec, upstreamRole: "headlessBrowser" | null = "headlessBrowser",
+  accountUpstream?: (chunk: Uint8Array) => void): EngineClient & EngineTransport {
+  const child = spawnCloudBrowser(spec.args, spec.env) ?? spawn(spec.command, [...spec.args], withHideInherit({ env: spec.env, shell: false, stdio: ["pipe", "pipe", "pipe"], windowsHide: true }));
+  registerChildMcpInput(child.stdin);
   let serial = 0;
   let stopped = false;
   let closePromise: Promise<void> | undefined;
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> | undefined }>();
   const fail = () => {
+    if (upstreamRole) proxyTransportLost(upstreamRole);
     stopped = true;
     for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error(FAILURE)); }
     pending.clear();
@@ -124,14 +140,21 @@ export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
     if (message.error || !Object.hasOwn(message, "result")) item.reject(new Error(FAILURE));
     else item.resolve(message.result);
   }, MAX_RESPONSE_BYTES);
+  let reads = Promise.resolve();
   child.stdout.on("data", (chunk: Buffer) => {
-    try { splitter.push(chunk); } catch { fail(); child.kill("SIGKILL"); }
+    child.stdout.pause();
+    reads = reads.then(async () => {
+      accountUpstream?.(chunk);
+      if (upstreamRole) await reserveProxyUpstream(upstreamRole, chunk.byteLength);
+      splitter.push(chunk); child.stdout.resume();
+    }).catch(() => { fail(); child.kill("SIGKILL"); });
   });
-  child.stdout.on("end", () => { try { splitter.flush(); } catch { fail(); } });
+  child.stdout.on("end", () => { void reads.then(() => splitter.flush()).catch(() => fail()); });
   return {
+    engineTransport: true,
     async notify(method, params) {
       if (stopped) throw new Error(FAILURE);
-      await writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method, params }));
+      await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method, params })));
     },
     request(method, params, options) {
       const signal = options?.signal;
@@ -142,14 +165,15 @@ export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
         const withdraw = () => {
           const item = pending.get(id);
           if (stopped || !item) return;
-          void writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason: "The turn was stopped." } })).catch(fail);
+          if (upstreamRole) proxyTransportLost(upstreamRole);
+          void writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id } })).catch(fail);
           // a request with no clock still ends after a Stop
           if (options?.timeoutMs === null) { clearTimeout(item.timer); item.timer = setTimeout(kill, WITHDRAW_GRACE_MS); }
         };
         const settle = <T>(finish: (value: T) => void) => (value: T) => { signal?.removeEventListener("abort", withdraw); finish(value); };
         const timer = options?.timeoutMs === null ? undefined : setTimeout(kill, options?.timeoutMs ?? 60_000);
         pending.set(id, { resolve: settle(resolve), reject: settle(reject), timer });
-        void writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", id, method, params })).catch(fail);
+        void NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", id, method, params }))).catch(fail);
         signal?.addEventListener("abort", withdraw, { once: true });
       });
     },
@@ -184,9 +208,9 @@ function pendingDialogType(reply: unknown): string | undefined {
  * engine's auto-answer is off (Windows, browser-engine.ts). confirm and prompt are left for the owner. */
 async function answerPendingAlerts(client: EngineClient): Promise<void> {
   for (let i = 0; i < 3; i++) {
-    const type = pendingDialogType(await client.request("tools/call", { name: "agent_browser_dialog_status", arguments: {} }));
+    const type = pendingDialogType(await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", client.request("tools/call", { name: "agent_browser_dialog_status", arguments: {} })));
     if (!type || !SELF_ANSWERED_DIALOGS.has(type)) return;
-    await client.request("tools/call", { name: "agent_browser_dialog_accept", arguments: {} });
+    await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", client.request("tools/call", { name: "agent_browser_dialog_accept", arguments: {} }));
   }
 }
 
@@ -200,6 +224,7 @@ export function createHeadlessBrowserProxy(options: {
   /** The engine's browser endpoint; by default asked of the engine's own CLI for this session. */
   cdpUrl?: (spec: AgentBrowserSpec) => Promise<string | undefined>;
 }) {
+  const documents = new WebDocuments();
   let engine: EngineClient | null = null;
   let spec: AgentBrowserSpec | null = null;
   let stopped = false;
@@ -229,7 +254,7 @@ export function createHeadlessBrowserProxy(options: {
     if (!engine) {
       spec = current;
       engine = (options.start ?? startHeadlessEngine)(current);
-      await engine.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "murage-headless", version: "1" } });
+      await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", engine.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "murage-headless", version: "1" } }));
     }
     return engine;
   };
@@ -251,7 +276,7 @@ export function createHeadlessBrowserProxy(options: {
         if (message.method === "ping") return result({});
         if (message.method === "tools/list") {
           const client = await ensureEngine();
-          const upstream = await client.request("tools/list");
+          const upstream = await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", client.request("tools/list"));
           const upstreamTools = (upstream as { tools?: unknown } | null)?.tools;
           const tools = listHeadlessBrowserTools(Array.isArray(upstreamTools) ? upstreamTools.filter((t) => HEADLESS_MODEL_TOOLS.includes((t as { name?: string } | null)?.name ?? "")) : upstreamTools);
           await authorized();
@@ -264,9 +289,15 @@ export function createHeadlessBrowserProxy(options: {
           // Initialization can cross a turn cancellation; check again at the
           // last boundary before the child receives any browser action.
           await authorized();
+          if (call.name === "agent_browser_read") {
+            const input = call.arguments as EngineReadOptions;
+            const reply = await routeBrowserRead("headless", input, nativeReadPort(client, { check: authorized, current: () => !stopped }, documents, "browser"));
+            await authorized();
+            return result(clean(reply));
+          }
           // The hard floor (T39), before the child receives any step the owner must take.
           const stop = await gate.guardAgentBrowser(call.name, call.arguments, async (selector) => {
-            const html = clean(await client.request("tools/call", { name: "agent_browser_get_html", arguments: { selector } })) as { content?: Array<{ text?: unknown }> };
+            const html = clean(await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", client.request("tools/call", { name: "agent_browser_get_html", arguments: { selector } }))) as { content?: Array<{ text?: unknown }> };
             return (html.content ?? []).map((c) => (typeof c.text === "string" ? c.text : "")).join("\n");
           });
           if (stop !== null) return result(floorToolResult(stop));
@@ -280,11 +311,11 @@ export function createHeadlessBrowserProxy(options: {
             // A tab created with a URL commits that page before any script can be registered, so it is
             // created blank, given the guard, and only then sent to the page.
             const { url: _url, ...blank } = call.arguments;
-            reply = await client.request("tools/call", { name: call.name, arguments: blank });
+            reply = await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", client.request("tools/call", { name: call.name, arguments: blank }));
             const targetId = /targetId\\?"\s*:\s*\\?"([0-9A-Fa-f]{16,64})/u.exec(JSON.stringify(reply) ?? "")?.[1];
             if (targetId) await activeGuard.installed(targetId);
-            await client.request("tools/call", { name: "agent_browser_open", arguments: { url: wantedUrl } });
-          } else reply = await client.request("tools/call", call);
+            await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", client.request("tools/call", { name: "agent_browser_open", arguments: { url: wantedUrl } }));
+          } else reply = await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", client.request("tools/call", call));
           if (answersDialogs) {
             await answerPendingAlerts(client).catch(() => {});
             // Once a browser exists: later tabs get the beforeunload guard at document start.
@@ -298,10 +329,12 @@ export function createHeadlessBrowserProxy(options: {
         }
         return { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Unsupported MCP method" } };
       } catch {
+        proxyTransportLost("headlessBrowser");
         return result({ isError: true, content: [{ type: "text", text: FAILURE }] });
       }
     },
     close() {
+      documents.dispose();
       if (closePromise) return closePromise;
       stopped = true;
       closePromise = (async () => {
@@ -316,7 +349,9 @@ export function createHeadlessBrowserProxy(options: {
 
 export async function runHeadlessBrowserProxy(input: Readable = process.stdin, output: Writable = process.stdout, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const proxy = createHeadlessBrowserProxy({ authorize: createHeadlessAuthorityReader(env), closeSession: () => closeHeadlessAuthority(env), secrets: () => [turnSecret("MURAGE_CONTROL_TOKEN", env)] });
-  const stop = () => { input.destroy(); void proxy.close().catch(() => { process.exitCode = 1; }); };
+  const seal = () => proxyTransportLost("headlessBrowser");
+  const stop = () => { seal(); input.destroy(); void proxy.close().catch(() => { process.exitCode = 1; }); };
+  input.once("end", seal); input.once("error", seal); input.once("close", seal);
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
   const lines: string[] = [];
@@ -324,22 +359,23 @@ export async function runHeadlessBrowserProxy(input: Readable = process.stdin, o
   const drain = async () => {
     for (const line of lines.splice(0)) {
       let message: Rpc;
-      try { message = JSON.parse(line); } catch { continue; }
-      if (!message || typeof message !== "object") continue;
+      try { message = JSON.parse(line); } catch { seal(); throw new Error("MEMORY_CONTEXT_REVOKED"); }
+      if (!message || typeof message !== "object") { seal(); throw new Error("MEMORY_CONTEXT_REVOKED"); }
       const response = await proxy.handle(message);
-      if (response !== undefined) await writeMcpLine(output, JSON.stringify(response));
+      if (response !== undefined) await writeMcpLine(output, JSON.stringify(response), "headlessBrowser");
     }
   };
   try {
     for await (const chunk of input) { splitter.push(chunk as Buffer); await drain(); }
-    splitter.flush();
-    await drain();
+    seal();
   } finally {
+    seal();
+    input.off("end", seal); input.off("error", seal); input.off("close", seal);
     process.off("SIGTERM", stop);
     process.off("SIGINT", stop);
     await proxy.close();
   }
 }
 if (process.argv[1] && existsSync(process.argv[1]) && /headless-browser-proxy\.(?:ts|js)$/.test(process.argv[1])) {
-  void runHeadlessBrowserProxy().catch(() => { process.stderr.write("Headless browser proxy ended without verified cleanup.\n"); process.exitCode = 1; });
+  void runHeadlessBrowserProxy().catch(() => { process.stderr.write("proxy cleanup failures=1\n"); process.exitCode = 1; });
 }

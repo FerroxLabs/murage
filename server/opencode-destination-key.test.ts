@@ -4,12 +4,14 @@ import { spawnSync } from "node:child_process";
 import { permissionFixture } from "./testing/opencode-permission-fixture.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-open.ts";
 import { OpenCodeDestinationKey } from "./opencode-destination-key.ts";
 import { OpenCodeDestinationResolver } from "./opencode-destination.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
-vi.mock("node:sqlite", async original => {
-  const sqlite = await original<typeof import("node:sqlite")>();
+// Count the actual constructor imported by the reader, including its meter
+// bootstrap, rather than a node:sqlite mock installed after setup cached it.
+vi.mock("./sqlite-open.ts", async original => {
+  const sqlite = await original<typeof import("./sqlite-open.ts")>();
   return { ...sqlite, DatabaseSync: vi.fn(function (path, options) { return new sqlite.DatabaseSync(path, options ?? {}); }) };
 });
 vi.mock("node:fs", async original => {
@@ -69,6 +71,7 @@ retained("D5 warm unreadable database closes under an unprivileged identity and 
     writeFileSync(join(root, "package.json"), '{"type":"module"}');
     const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e",
       'import { permissionFixture } from "./fixture.ts"; await permissionFixture(process.env.X4_PERMISSION_ROOT);'], {
+      windowsHide: true,
       cwd: root, uid: 65534, gid: 65534, encoding: "utf8", timeout: 20_000, killSignal: "SIGKILL",
       env: { PATH: process.env.PATH, HOME: root, USERPROFILE: root, X4_PERMISSION_ROOT: fixtureRoot, X4_PERMISSION_MODULE: "./opencode-destination-key.ts" },
     });

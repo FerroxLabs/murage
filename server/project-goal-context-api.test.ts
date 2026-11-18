@@ -14,15 +14,18 @@
 // finishing setup on a project writes its instructions into the brief.
 import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFailed, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
+import { fixtureMessageEvidence } from "./testing/display-fixture.ts";
 
 const TESTING = join(dirname(fileURLToPath(import.meta.url)), "testing");
 const FAKE_ACP = join(TESTING, "fake-acp-cli.ts");
-let fixture: VerificationServer, proof: string, fixtureRoot: string, leadDump: string;
+let fixture: VerificationServer, proof: string, fixtureRoot: string, leadDump: string, workerHistory: string, reviewDump: string;
 
 // A failed run prints the end of its fixture server's log, so a failure on a
 // CI runner can be read from the job log alone.
@@ -41,17 +44,20 @@ const withDb = <T>(read: (db: DatabaseSync) => T): T => {
 const GOAL_DESCRIPTION = "Ship a launch plan for Tallyroo (an app that lets small teams split and track shared expenses).";
 
 beforeAll(async () => {
-  fixtureRoot = mkdtempSync(join(dirname(fileURLToPath(import.meta.url)), ".goal-context-fixtures-"));
+  fixtureRoot = mkdtempSync(join(tmpdir(), "goal-context-fixtures-"));
   leadDump = join(fixtureRoot, "lead-prompt.json");
+  workerHistory = join(fixtureRoot, "worker-prompts.jsonl");
+  reviewDump = join(fixtureRoot, "review-prompt.json");
   vi.stubEnv("TMPDIR", fixtureRoot);
   chmodSync(FAKE_ACP, 0o755);
-  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
     const fs=await import('node:fs');const path=await import('node:path');
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
     const acp=${JSON.stringify(FAKE_ACP)};
-    cfg.instances.cardlead={driver:'grokAgent',displayName:'Lead fixture',environment:{FAKE_ACP_MODE:'project-card-lead'},config:{cli:acp,fullAuto:true}};
-    cfg.instances.leaddump={driver:'grokAgent',displayName:'Lead dump',environment:{FAKE_ACP_PROMPT_DUMP:${JSON.stringify(leadDump)}},config:{cli:acp,fullAuto:true}};
-    cfg.instances['rev-grok']={driver:'grokAgent',displayName:'Grok reviewer',environment:{FAKE_REVIEW_VERDICT:'pass'},config:{cli:acp,fullAuto:true}};
+    cfg.instances.verification.environment={...cfg.instances.verification.environment,FAKE_CLAUDE_DUMP_EACH_TURN:'1',FAKE_CLAUDE_DUMP_HISTORY:${JSON.stringify(workerHistory)}};
+    cfg.instances.cardlead={driver:'grokAgent',displayName:'Lead fixture',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MODE:'project-card-lead'},config:{cli:acp,fullAuto:true}};
+    cfg.instances.leaddump={driver:'grokAgent',displayName:'Lead dump',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_PROMPT_DUMP:${JSON.stringify(leadDump)}},config:{cli:acp,fullAuto:true}};
+    cfg.instances['rev-grok']={driver:'grokAgent',displayName:'Grok reviewer',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_REVIEW_VERDICT:'pass',FAKE_ACP_PROMPT_DUMP:${JSON.stringify(reviewDump)}},config:{cli:acp,fullAuto:true}};
     fs.writeFileSync(file,JSON.stringify(cfg));
   ` });
   proof = (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;
@@ -71,8 +77,12 @@ async function makeBot(name: string, instanceId: string) {
 const cardOf = async (groupId: string, cardId: string) => (await api("GET", `/api/groups/${groupId}/board`)).body.cards.find((entry: any) => entry.id === cardId);
 async function deskAsks(botId: string, groupId: string): Promise<string[]> {
   const desk = (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === botId).tasks.find((task: any) => task.channelProjectDesk?.groupId === groupId);
-  const messages = (await api("GET", `/api/threads/${desk.threadId}/messages`)).body.messages;
-  return messages.filter((message: any) => message.role === "user").map((message: any) => String(message.text ?? ""));
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: use the
+  // existing evidence helper only for rows actually returned by the public page.
+  // Display producer: l5a/c3-askapi; consuming fixture: r2-owner-limit-projects.
+  const displayed = (await api("GET", `/api/threads/${desk.threadId}/messages?limit=100`)).body.messages;
+  return fixtureMessageEvidence(join(fixture.info.dataDir, "messages.db"), displayed)
+    .filter((row: any) => row.role === "user").map((row: any) => String(row.text ?? ""));
 }
 
 describe.skipIf(process.platform === "win32")("a goal card's run knows its goal and its review sees its files", () => {
@@ -105,6 +115,20 @@ describe.skipIf(process.platform === "win32")("a goal card's run knows its goal 
     const saved = withDb(db => ({ artifacts: db.prepare("SELECT name, kind, thread_id, bot_id, created_at FROM artifacts").all(), runs: db.prepare("SELECT verb, dispatched_at, target_thread_id FROM room_requests WHERE work_item_id=?").all(card.id), card: db.prepare("SELECT request_id, desk_thread_id FROM project_work_items WHERE id=?").get(card.id), pubs: db.prepare("SELECT stage, path_token, error_category, thread_id FROM output_publications").all() }));
     expect(review, JSON.stringify(saved)).toContain('<file-to-review name="LAUNCH-PLAN.md">');
     expect(review).toContain("# Weekly report");
+
+    // The fake writes these captures only after receiving the real provider prompt.
+    // A stored prompt alone does not prove the consuming turn received it.
+    const receivedWork = readFileSync(workerHistory, "utf8").trim().split("\n")
+      .map(line => JSON.stringify(JSON.parse(line).prompt)).find(text => text.includes("Write the plan")) ?? "";
+    expect(receivedWork).toContain("<project-goal>");
+    expect(receivedWork).toContain("Goal: Tallyroo launch plan");
+    expect(receivedWork).toContain(GOAL_DESCRIPTION);
+    expect(receivedWork).toContain("- It names three target customer segments");
+    const receivedReview = (JSON.parse(readFileSync(reviewDump, "utf8")) as Array<{ text?: string }>)
+      .map(part => part.text ?? "").join("\n");
+    expect(receivedReview).toContain(GOAL_DESCRIPTION);
+    expect(receivedReview).toContain('<file-to-review name="LAUNCH-PLAN.md">');
+    expect(receivedReview).toContain("# Weekly report");
   }, 90000);
 
   it("the lead's Start wake carries the goal's description", async () => {

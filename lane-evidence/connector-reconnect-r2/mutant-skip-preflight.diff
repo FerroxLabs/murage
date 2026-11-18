@@ -1,0 +1,11 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -2155,7 +2155,7 @@
+   const action = connectedAppActionCall(payload);
+   if (!action) return relayMcp(cfg, payload, transportSessionId, beforeDispatch);
+   beforeDispatch?.();
+-  if (options.scheduled) {
++  if (false) {
+     const slugs = [...new Set(toolsNamedBy(payload).map(tool => tool.split("_")[0]!.toLowerCase()))];
+     if (slugs.length) await checkIdleConnectorHealth(cfg, slugs);
+     beforeDispatch?.();

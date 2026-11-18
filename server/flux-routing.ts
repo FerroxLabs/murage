@@ -18,6 +18,8 @@
 // So `applyFluxSurface` takes the key as an ARGUMENT. Callers get it from
 // `fluxKey()` (flux-config.ts:16), which reads config/`process.env` — never the
 // child env — and every call site must sit AFTER the strip, never before.
+import { assertFluxNotPaused } from "./cloud-home/flux-pause.ts";
+import { assertNoFluxForSignInEngine } from "./cloud-home/engine-flux-guard.ts";
 import type { DriverKind } from "./contracts.ts";
 import { FLUX_CODEX_TABLE_HEADERS, codexHttpHeaderArgs } from "./flux-memory-wire.ts";
 
@@ -30,6 +32,10 @@ export type FluxSurfaceKind = "openai" | "anthropic" | "responses";
 
 /** OpenAI-compatible base. The CLI appends `/chat/completions`. */
 export const FLUX_OPENAI_BASE = "https://api.fluxrouter.ai/v1";
+
+/** Device grants belong to the app. The image build already selects the router host for each environment. */
+export const FLUX_DEVICE_BASE = new URL(FLUX_OPENAI_BASE).hostname === "api-staging.fluxrouter.ai"
+  ? "https://app-staging.fluxrouter.ai" : "https://fluxrouter.ai";
 
 /** Responses base. Codex appends `/responses` when `wire_api = "responses"`. */
 export const FLUX_RESPONSES_BASE = "https://api.fluxrouter.ai/v1";
@@ -363,6 +369,12 @@ export function applyFluxSurface(
   if (!model) return NOT_APPLIED;
   const bearer = key?.trim();
   if (!bearer) return NOT_APPLIED;
+  // A Cloud home whose Flux key is paused (monthly limit used, stopped, replaced,
+  // Flux unreachable) refuses a Flux turn here, in plain words, before sending it.
+  // Engines on Claude or ChatGPT sign-ins never reach this function.
+  // Claude Code and Codex on a Cloud home never route through Flux (their own sign-in only).
+  assertNoFluxForSignInEngine(engine);
+  assertFluxNotPaused();
 
   const stripped: string[] = [];
   const drop = (names: readonly string[]) => {

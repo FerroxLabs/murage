@@ -17,7 +17,8 @@ import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { ownerMemoryTicket } from "./authority.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { WORKSPACE_OWNER } from "../human-principals.ts";
 import { assertOwnerPinsFit, buildMemoryBundle, MEMORY_FRAME_TOKENS, ownerPinUse, PIN_SHARE_DEFAULT } from "./bundle.ts";
 import { memoryOwnerRoute } from "./settings.ts";
@@ -28,10 +29,10 @@ import { removeTempDirSync } from "../testing/cleanup.ts";
 const roster = { bots: [{ id: "moss", threadId: "private" }], groups: [] };
 const ticket = ownerMemoryTicket(), bridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); });
-function access() {
+function access(readerRoster: MemoryRoster = roster) {
   const registry = new InternalCapabilities(), generation = registry.begin("moss", "private");
   const token = registry.mint({ botId: "moss", threadId: "private", generation, depth: 0, kind: "memory", skillAuthoring: false });
-  return memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
+  return memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => readerRoster);
 }
 function scopeId() { return String((database().prepare("SELECT id FROM memory_scopes WHERE kind='bot' AND owner_key='moss'").get() as any).id); }
 /** An active owner-statement fact in the bot's scope, as capture or an approved candidate leaves it. `pinned` writes the pin straight
@@ -43,7 +44,7 @@ function activeFact(text: string, pinned = false) {
 }
 const pin = (id: string, pinned = true, version = 1) => memoryOwnerRoute("/api/memory/action", { action: "pin", id, version, pinned }, ticket, roster);
 const act = (body: Record<string, unknown>) => memoryOwnerRoute("/api/memory/action", body, ticket, roster);
-const bundle = (availableContextTokens: number) => buildMemoryBundle("What should I do next?", access(), bridge, { allowance: LineageAllowance.tool(), availableContextTokens });
+const bundle = (availableContextTokens: number, readerRoster: MemoryRoster = roster) => buildMemoryBundle("What should I do next?", access(readerRoster), bridge, { allowance: LineageAllowance.tool(), availableContextTokens });
 const bytes = (text: string) => Buffer.byteLength(text, "utf8");
 const pinnedFlag = (id: string, version = 1) => (database().prepare("SELECT owner_pinned FROM memory_records WHERE id=? AND version=?").get(id, version) as any)?.owner_pinned;
 
@@ -53,7 +54,7 @@ const ONE = `When you draft anything for a client, use British spelling, keep it
 const SET = [
   ONE,
   `My working hours are 08:00 to 17:00 Austin time, Monday to Friday. Do not schedule, send or promise anything outside those hours unless I say so in the same message. Meetings default to 25 minutes, never back to back, and always with a video link.`,
-  `Our company is Ferrox Labs, a Florida LLC with its address in Austin, Texas. Never say Bangkok. Never mention The Forge, it is an old product. Privacy questions go to privacy@murage.ai and security reports to security@ferroxlabs.com; do not answer those yourself.`,
+  `Our company is Ferrox Labs, a Florida LLC with its address in Austin, Texas. Never say Bangkok. Never mention Old Model, it is an old product. Privacy questions go to privacy@murage.ai and security reports to security@ferroxlabs.com; do not answer those yourself.`,
   `When I ask for a summary, give one paragraph first, then a single table of what is done, in progress and pending, then an Important notes section. Lead every question you ask me with a verified recommendation and the reason for it; never give me a bare list of options.`,
   `Pricing: never sell on price, never quote a discount, never compare us with a competitor by name. If someone asks what Murage costs, point them to the pricing page and offer a call. The Agency plan and Cloud are coming; say coming, never give a date.`,
   `Tone for everything public: confident, plain, no exclamation marks, no emojis, no em dashes, frame every fix as a strength (what it can now do), and keep claims true. Sign-off on blog posts is "The Murage team"; on email it is my name only.`,
@@ -224,7 +225,7 @@ it("per reader: a direct chat crossing the share is refused even when a room tur
   expect(database().prepare("SELECT version,state,owner_pinned FROM memory_records WHERE id=? ORDER BY version").all(canon.id).map(row => ({ ...row })))
     .toEqual([{ version: 1, state: "superseded", owner_pinned: 1 }, { version: 2, state: "active", owner_pinned: 1 }]);
   // the direct chat's bundle carries the canon and drops nothing
-  const built = await bundle(1_000_000);
+  const built = await bundle(1_000_000, withPair);
   expect(built.pinned.map(record => [record.id, record.version])).toEqual([[canon.id, 2]]);
   expect(built.droppedPins).toBeUndefined();
 });

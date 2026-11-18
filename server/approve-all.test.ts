@@ -1,3 +1,4 @@
+import { wiring } from "./decision-wiring/fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -8,11 +9,20 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { APPROVE_ALL_THREAD, approvalBatchDigest, approvalBatchDigestInput, approvalDigestInput } from "../shared/approval-digest.ts";
-import { REASON_FOLD } from "../shared/fold-scopes.ts";
+import { REASON_FOLD, foldScopes } from "../shared/fold-scopes.ts";
 import { FreshAuthGate, approvalBatchDigestSync } from "./approval-fresh-auth.ts";
 import { APPROVE_ALL_BATCH_TTL_MS, APPROVE_ALL_CAP, ApproveAllBatches, BULK_REASON, BULK_SPECIAL_KINDS, CaptureResponse, bulkEligibility, bulkSpecialRefusal, type BulkSpecialKind, type BulkSpecialProbes } from "./approve-all.ts";
+import { Store } from "./store.ts";
+import * as decision from "./decision/index.ts";
+import { ProducerApprovalQueue } from "./narrow-denials.ts";
+import { serviceQueueFixture } from "./testing/service-queue-fixture.ts";
+import { limitOfferCard, limitCardAnswer, LIMIT_WAIT_OPTION } from "./limit-continuation.ts";
+import { threadHumanPrincipal } from "./human-principals.ts";
+import { turnAudienceIsOwner } from "./owner-audience.ts";
+import { isQuestionCard, questionsForCard } from "../shared/questions.ts";
+import { recordableAnswers } from "./question-normalize.ts";
 import { AnsweredWhere } from "./mobile-push-hooks.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -25,6 +35,12 @@ const ordinary = (extra: Record<string, unknown> = {}, cls: Record<string, unkno
 });
 
 describe("bulkEligibility: a positive allowlist, fail closed", () => {
+  it("owner-switch refusals never offer standing or bulk approval",()=>{
+    expect(BULK_REASON['owner-switch']).toBe('held');expect(REASON_FOLD['owner-switch']).toBe('none');
+    expect(bulkEligibility(ordinary({}, {reason:'owner-switch'}),RID)).toEqual({ok:false,reasonKey:'held'});
+    expect(foldScopes({reason:'owner-switch',unattended:false,automated:false,origin:'owner',keys:['allowKey']},{allowKey:'Bash:git'})).toEqual([]);
+  });
+
   it("an ordinary card in the owner's own turn qualifies", () => {
     expect(bulkEligibility(ordinary(), RID)).toEqual({ ok: true });
   });
@@ -181,6 +197,7 @@ describe("source: one responder, refusals before every resolver", () => {
     const pairs: Array<[resolver: string, refusal: string]> = [
       ["answerLimitCard(", 'bulkSkip(res, "special-card:limit")'],
       ["answerEmailCard(", 'bulkSkip(res, "special-card:email")'],
+      ["answerHighLevelCard(", 'bulkSkip(res, "special-card:highlevel")'],
       ["answerAsSendReply(", 'bulkSkip(res, "special-card:question")'],
       ["questionReply(", 'bulkSkip(res, "special-card:question")'],
       ["resolveSkillRequest(", 'bulkSkip(res, "special-card:skill")'],
@@ -218,7 +235,10 @@ describe("source: one responder, refusals before every resolver", () => {
   it("each probe is the predicate its own branch tests, and every special reason in respondToCard is a listed kind", () => {
     const probes = between("const special: BulkSpecialProbes = {", "\n  };");
     const expected: Record<BulkSpecialKind, string> = {
-      limit: 'requestId.startsWith("limit-")',
+      highlevel: "requestId.startsWith(HIGHLEVEL_REQUEST_PREFIX)",
+      // MAIN RULING 1115-SOURCE-PINS-GROK A2: a limit offer card (tool murage_limit_offer) is a limit card whatever its request id;
+      // the probe is the branch's own limitCard lookup OR the id prefix, so it only ever skips more cards in bulk
+      limit: 'Boolean(limitCard) || requestId.startsWith("limit-")',
       email: "isEmailRequestId(requestId)",
       question: "Boolean(cardByRequest(threadId, requestId, (message) => isQuestionCard(message.card)))",
       skill: "Boolean(store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.skillRequest))?.card?.skillRequest)",
@@ -234,12 +254,83 @@ describe("source: one responder, refusals before every resolver", () => {
       expect(respond, kind).toContain(`if (bulk && ${call}) return bulkSkip(res, "special-card:${kind}");`);
     }
     // the branches themselves still test the same thing the probe does
-    expect(respond).toContain('requestId.startsWith("limit-") && !mayApprove(req, url)');
+    expect(respond).toContain("const limitCard = store.cardForRequest(threadId, requestId, message => message.card?.tool === 'murage_limit_offer');");
+    expect(respond).toContain("if (limitCard && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });");
     expect(respond).toContain("if (isEmailRequestId(requestId)) {");
     expect(respond).toContain("store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.skillRequest))");
     expect(respond).toContain("store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.routineRequest))");
     const reasons = [...respond.matchAll(/"special-card:([a-z-]+)"/g)].map((m) => m[1]);
     for (const reason of reasons) expect(BULK_SPECIAL_KINDS as readonly string[], reason).toContain(reason);
+  });
+
+  it("A2 behavior: the shipped limit probe skips a limit card in bulk whatever its request id, and an ordinary card is not skipped", () => {
+    // run the shipped probe block itself (not a copy) over stand-ins for the card lookups
+    const probes = (between("const special: BulkSpecialProbes = {", "\n  };") + "\n  };").replace("const special: BulkSpecialProbes = {", "const special = {");
+    const build = new Function("requestId", "limitCard", "store", "cardByRequest", "peerApprovalHolder", "browserExtension", "hostComputerConsentPending",
+      "isEmailRequestId", "isQuestionCard", "HIGHLEVEL_REQUEST_PREFIX", "threadId",
+      `${probes}\n  return special;`) as (...args: unknown[]) => BulkSpecialProbes;
+    const probesFor = (requestId: string, limitCard: unknown) => build(requestId, limitCard, { cardForRequest: () => undefined }, () => undefined,
+      () => undefined, undefined, () => false, () => false, () => false, "highlevel-", "thread-1");
+    // a limit offer card whose id has no limit- prefix: the card lookup alone decides
+    expect(bulkSpecialRefusal(probesFor("offer-7", { card: { tool: "murage_limit_offer" } }))).toBe("special-card:limit");
+    // a limit- id without a stored card still skips
+    expect(bulkSpecialRefusal(probesFor("limit-9", undefined))).toBe("special-card:limit");
+    // an ordinary card is not skipped
+    expect(bulkSpecialRefusal(probesFor("req-1", undefined))).toBeNull();
+  });
+
+  // MAIN RULING 1115-SOURCE-PINS-GROK A2: a real registered offer survives bulk
+  // and is successfully answered through the production limit handler/registry.
+  it("a limit offer skips bulk resolution and remains answerable one by one", async () => {
+    const store = new Store(() => ({ instanceId: "fixture", model: "model" }));
+    const bot = store.createBot(), threadId = bot.threadId, requestId = "offer-fixture";
+    const producer = serviceQueueFixture(store, { persisted: true, cancelAtEnd: true });
+    const queue = new ProducerApprovalQueue("event-limit");
+    producer.queue(queue);
+    const generation = "limit-fixture-generation";
+    const authority = producer.authorityFor(threadId, bot.id, { generation });
+    const principal = JSON.stringify(threadHumanPrincipal(threadId));
+    decision.installProvenanceReader({
+      turnGenerationFor: () => generation,
+      provenance: () => ({ botId: bot.id, threadId, generation, principal, roomOwnerOnly: true, at: 1, initiator: { k: "owner-typed" } }),
+      live: () => ({ botId: bot.id, turnId: "fixture-turn", providerInstanceId: "fixture", principal, owner: true, level: "ask" }),
+    });
+    const proof = { kind: "background-job" as const, id: "limit-offer-fixture", botId: bot.id, threadId };
+    await decision.saveContinuation(proof, { threadId, generation });
+    const { title, subtitle, ...action } = limitOfferCard({ requestId, engine: "Fixture", until: 100,
+      sourceMessageId: "source", from: bot.modelSelection, resetsAt: null, choices: [] });
+    const opened = queue.open({ authority: { ...authority, proof }, ref: requestId, tool: "murage_limit_offer",
+      input: { sourceMessageId: "source", from: bot.modelSelection }, action, view: { title, subtitle }, base: { approve: null, source: "no-grant" } });
+    expect(opened.outcome.kind).toBe("card");
+    if (opened.outcome.kind !== "card") throw new Error("offer must await an answer");
+    const accepted = vi.fn();
+    queue.presentNow(opened, opened.outcome.ref, accepted);
+    const cardByRequest = (...args: Parameters<Store["cardForRequest"]>) => store.cardForRequest(...args);
+    const { respondToCard } = wiring(["respondToCard", "answerLimitCard", "answerRegisteredApproval"], {
+      APPROVE_ALL_THREAD, HIGHLEVEL_REQUEST_PREFIX: "highlevel-", RELEASE_SUPERSEDED: "superseded",
+      requestBehavior: (value: unknown) => value, mayApprove: () => true, store, cardByRequest,
+      isQuestionCard, questionsForCard, recordableAnswers, isEmailRequestId: () => false,
+      peerApprovalHolder: () => undefined, browserExtension: undefined, hostComputerConsentPending: () => false,
+      threadDeps: () => ({}), bulkRecheck: () => ({ ok: true }), bulkSpecialRefusal,
+      bulkSkip: (_res: unknown, reason: string) => ({ skipped: reason }),
+      json: (_res: unknown, status: number, body: unknown) => ({ status, body }),
+      limitAnswersInFlight: new Set(), limitCardPhoneCarry: new Map(), limitCardAnswer, LIMIT_WAIT_OPTION,
+      lookupApproval: decision.lookupApproval, readApproval: decision.readApproval, answerApproval: decision.answerApproval,
+      readApprovalExecution: decision.readApprovalExecution, readContinuation: decision.readContinuation,
+      serviceQueue: () => queue, threadHumanPrincipal, turnAudienceIsOwner,
+    });
+    const io = { req: { headers: {} }, url: new URL("http://fixture.invalid"), res: {} };
+    const body = { requestId, behavior: "answer", message: LIMIT_WAIT_OPTION };
+    expect(await respondToCard(io, threadId, { ...body, behavior: "allow" }, {})).toEqual({ skipped: "special-card:limit" });
+    expect(accepted).not.toHaveBeenCalled();
+    expect(decision.readApproval(opened.outcome.ref.approvalId)?.state).toBe("open");
+    expect(store.cardForRequest(threadId, requestId)?.card?.answered).toBeUndefined();
+    expect(queue.pendingApprovals()).toHaveLength(1);
+    expect(await respondToCard(io, threadId, body)).toEqual({ status: 200, body: { ok: true, outcome: "wait" } });
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(decision.readApprovalExecution(opened.outcome.ref)).toMatchObject({ delivery: "accepted", answer: { behavior: "answer" } });
+    expect(store.cardForRequest(threadId, requestId)?.card?.answered).toBe(LIMIT_WAIT_OPTION);
+    expect(queue.pendingApprovals()).toHaveLength(0);
   });
 
   it("the thread respond route is a call to respondToCard, and apply answers only through it", () => {
@@ -287,6 +378,16 @@ describe("source: one responder, refusals before every resolver", () => {
     expect(index).toContain("beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring, undefined, undefined, !roomOwnerAudience, roomOwnerAudience);");
   });
 
+  // MAIN RULING 1115-SOURCE-PINS-GROK A2: exercise the source authority function independently of its spelling.
+  it("only a typed owner turn gives bulk approval owner origin", () => {
+    for (const origin of ["owner", "other", "unattended"]) for (const ownerTyped of [undefined, false, true]) {
+      const { approveAllTurnOrigin } = wiring(["approveAllTurnOrigin"], {
+        fullAccessTurnOrigin: () => origin, internalTurnOwners: new Map([["thread", { ownerTyped }]]),
+      });
+      expect(approveAllTurnOrigin!("thread")).toBe(origin === "owner" ? ownerTyped === true ? "owner" : "other" : origin);
+    }
+  });
+
   it("the respond route awaits respondToCard and refuses a body that is not an object (Astra R1 H1)", () => {
     expect(respond).toContain('if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400,');
     expect(respond.indexOf("typeof body !== \"object\"")).toBeLessThan(respond.indexOf("body.behavior"));
@@ -300,8 +401,8 @@ describe("source: one responder, refusals before every resolver", () => {
 
 describe("bulkSpecialRefusal (probes only)", () => {
   const none = (): BulkSpecialProbes => Object.fromEntries(BULK_SPECIAL_KINDS.map((kind) => [kind, () => false])) as unknown as BulkSpecialProbes;
-  it("lists all eight kinds in branch order", () => {
-    expect([...BULK_SPECIAL_KINDS]).toEqual(["limit", "email", "question", "skill", "routine", "peer", "extension", "host-consent"]);
+  it("lists all nine kinds in branch order (HighLevel: 2c0e386d80)", () => {
+    expect([...BULK_SPECIAL_KINDS]).toEqual(["highlevel", "limit", "email", "question", "skill", "routine", "peer", "extension", "host-consent"]);
   });
   it("no kind set passes", () => {
     expect(bulkSpecialRefusal(none())).toBeNull();
@@ -313,7 +414,7 @@ describe("bulkSpecialRefusal (probes only)", () => {
     const asked: string[] = [];
     const probes = Object.fromEntries(BULK_SPECIAL_KINDS.map((kind) => [kind, () => { asked.push(kind); return kind === "question" || kind === "peer"; }])) as unknown as BulkSpecialProbes;
     expect(bulkSpecialRefusal(probes)).toBe("special-card:question");
-    expect(asked).toEqual(["limit", "email", "question"]);
+    expect(asked).toEqual(["highlevel", "limit", "email", "question"]);
   });
   it("a probe that throws propagates: nothing is decided as eligible", () => {
     expect(() => bulkSpecialRefusal({ ...none(), skill: () => { throw new Error("store gone"); } })).toThrow("store gone");

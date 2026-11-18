@@ -1,3 +1,4 @@
+import { checkpointHead, checkpointSnapshot, assertCheckpointRetained } from './testing/checkpoint-head-fixture.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -25,7 +26,8 @@ import { captureWork } from "./chunks.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import type { MemoryWork } from "./worker-protocol.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
-import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
+import { reconcileMemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { buildMemoryBundleAfterReset, MemoryDispatchReceipt } from "./dispatch.ts";
 import { forgetMemory } from "./forget.ts";
@@ -68,16 +70,19 @@ function workerBridge(holding: MemoryWork, before?: () => void) {
 it("gives a room member the room's saved notes when the round's capture rolls the checkpoint during recall", async () => {
   const saved = inFlight("Remember: the dog is called Biscuit and her collar is teal.");
   const first = settle(saved.work);
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  const old = checkpointSnapshot(roomThread);
   const ask = inFlight("What is the dog called?");
   const access = member();
   const bundle = await buildMemoryBundleAfterReset("What is the dog called?", access, workerBridge(ask.work), async () => {}, { allowance: LineageAllowance.tool(1_000_000_000), excludeMessageIds: [saved.messageId, ask.messageId], withheldMessage: readerWithheldMessage(access) });
   // The checkpoint rolled while recall awaited the worker.
-  expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id, first.version)?.state).toBe("archived");
+  assertCheckpointRetained(old);
   expect(bundle.tokenCount).toBeGreaterThan(0);
   expect(bundle.text).toContain("Biscuit");
   // The member gets the room's current notes, not a dropped record.
-  expect(bundle.recordVersions).toEqual([{ id: first.id, version: first.version + 1 }]);
-  expect(bundle.checkpoint.map(record => record.version)).toEqual([first.version + 1]);
+  expect(bundle.recordVersions).toEqual([checkpointHead(roomThread)]);
+  expect(bundle.checkpoint.map(record => record.version)).toEqual([checkpointHead(roomThread).version]);
+  expect(checkpointHead(roomThread).id).not.toBe(first.id);
   expect(bundle.degradedReason).toBeUndefined();
   const receipt = new MemoryDispatchReceipt(bundle, access, "fixture");
   expect(() => receipt.assertCurrent()).not.toThrow();
@@ -85,14 +90,18 @@ it("gives a room member the room's saved notes when the round's capture rolls th
 
 it("gives each member of the round the notes, the second one after the first one's reply is captured", async () => {
   const saved = inFlight("Remember: the dog is called Biscuit.");
-  const first = settle(saved.work);
+  settle(saved.work);
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  const old = checkpointSnapshot(roomThread);
   const ask = inFlight("What is the dog called?");
   const a = await buildMemoryBundleAfterReset("dog", member("bot"), workerBridge(ask.work), async () => {}, { allowance: LineageAllowance.tool(1_000_000_000), excludeMessageIds: [saved.messageId, ask.messageId] });
-  expect(a.recordVersions).toEqual([{ id: first.id, version: first.version + 1 }]);
+  expect(a.recordVersions).toEqual([checkpointHead(roomThread)]);
   const reply = inFlight("It is Biscuit.", "bot");
   const b = await buildMemoryBundleAfterReset("dog", member("other"), workerBridge(reply.work), async () => {}, { allowance: LineageAllowance.tool(1_000_000_000), excludeMessageIds: [saved.messageId, ask.messageId, reply.messageId] });
-  expect(b.recordVersions).toEqual([{ id: first.id, version: first.version + 2 }]);
+  expect(b.recordVersions).toEqual([checkpointHead(roomThread)]);
   expect(b.text).toContain("Biscuit");
+  assertCheckpointRetained(old);
+  expect(b.recordVersions).not.toEqual(a.recordVersions);
 });
 
 it("still refuses the turn when the owner forgets the room's notes while recall awaits", async () => {

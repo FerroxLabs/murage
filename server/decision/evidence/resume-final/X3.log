@@ -1,0 +1,38 @@
+COMMAND node_modules/.bin/vitest run server/decision/routine-policy.test.ts -t A7a
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/routine-policy.test.ts > A7a core validates exact routine run source, bot and generation
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/routine-policy.test.ts (5 tests | 4 failed | 1 skipped) 1055ms
+   ↓ R4b R4c M29 owner routines override captured ceiling only while bot is unlimited; draft stays Ask
+   × A7a core validates exact routine run source, bot and generation 291ms
+   × A7a core validates exact routine wake source, bot and generation 242ms
+   × A7a core validates exact routine peer source, bot and generation 254ms
+   × A7a core validates exact routine project-room source, bot and generation 265ms
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 1 skipped (5)
+   Start at  08:16:24
+   Duration  5.47s (transform 3.45s, setup 4.09s, import 209ms, tests 1.05s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine run source, bot and generation
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine wake source, bot and generation
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine peer source, bot and generation
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine project-room source, bot and generation
+AssertionError: expected 'other' to be 'owner-routine' // Object.is equality
+
+Expected: "owner-routine"
+Received: "other"
+
+ ❯ server/decision/routine-policy.test.ts:10:65
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+

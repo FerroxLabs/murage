@@ -7,7 +7,7 @@
 import { test, expect, type Page, type TestInfo } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
@@ -71,7 +71,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
 
 async function openBot(page: Page, name: string) {
-  await page.addInitScript(() => localStorage.setItem("murage-email-gate", "skipped"));
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   // A fresh data dir has not seen this release's What's new page, and its
   // modal would sit over the sidebar. This spec is about the composer.
   await page.route("**/api/whats-new?*", (route) => route.fulfill({ json: { show: false } }));

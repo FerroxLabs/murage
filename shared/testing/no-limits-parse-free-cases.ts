@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Classifier inputs only. Never execute these shell strings.
+export const parseFreeWipeCases:{id:string;command:string;wipe:boolean}[]=[
+ {id:'r5-fd-dup',command:"printf '%s%s -%s ~' r m rf | 2>&1 bash",wipe:true},
+ {id:'r5-group',command:"printf '%s%s -%s ~' r m rf | (head -n 0; bash)",wipe:true},
+ {id:'r5-array',command:String.raw`a=($(r\m -rf ~))`,wipe:true},
+ {id:'r5-time',command:String.raw`time -p r\m -rf ~`,wipe:true},
+ {id:'r5-env-split',command:"env --split-string=printf '%s%s -%s ~' r m rf | bash",wipe:true},
+ {id:'r5-printf-sh',command:'printf rm | sh',wipe:true},
+ {id:'r5-curl-bash',command:'curl -s x | bash',wipe:true},
+ {id:'safe-r5-platform',command:'echo platform ready',wipe:false},
+ {id:'safe-r5-grep-sh',command:'ls -la | grep sh',wipe:false},
+ {id:'safe-r5-head',command:'git log | head',wipe:false},
+ {id:'safe-r5-sort-uniq',command:'cat a.txt | sort | uniq',wipe:false},
+ {id:'safe-r5-grep-python',command:'ps aux | grep python',wipe:false},
+ {id:'safe-r5-npm',command:'npm run build',wipe:false},
+ {id:'safe-r5-build',command:'rm -rf build',wipe:false},
+ // R7 review witnesses and required stage-rule controls, shared by actual Pi
+ // fallback handlers, server readers, decisions and the isolated API lifecycle.
+ {id:'r8-review-later-filter',command:"env --split-string=printf '%s%s -%s ~' r m rf | (true; cat \"$(bash)\")",wipe:true},
+ {id:'r8-filter-semicolon',command:'cmd | cat sh; true',wipe:true},
+ {id:'r8-filter-logical-or',command:'cmd | grep python || true',wipe:true},
+ {id:'r8-filter-newline',command:'cmd | cat sh\ntrue',wipe:true},
+ {id:'r8-fd-receiver',command:'bash 2>&1 <(cat a)',wipe:true},
+ {id:'safe-r8-tee-existing',command:'echo hi | tee ordinary.txt',wipe:false},
+ {id:'r7-review-if',command:"env --split-string=printf '%s%s -%s ~' r m rf | if true; then bash; fi",wipe:true},
+ {id:'r7-review-nice',command:"env --split-string=printf '%s%s -%s ~' r m rf | nice -n 0 bash",wipe:true},
+ {id:'r7-if',command:'cmd | if true; then bash; fi',wipe:true},
+ {id:'r7-nice',command:'cmd | nice -n 0 bash',wipe:true},
+ {id:'r7-basename',command:String.raw`cmd | /bin/ba\sh`,wipe:true},
+ {id:'r7-curl',command:'curl x | bash',wipe:true},
+ {id:'safe-r7-head',command:'git log | head -20',wipe:false},
+ {id:'safe-r7-sort-uniq',command:'cat a | sort | uniq -c',wipe:false},
+ {id:'safe-r7-tee',command:'echo hi | tee out.txt',wipe:false},
+ {id:'safe-r7-npm-react',command:'npm ls | grep react',wipe:false},
+ {id:'safe-r7-status',command:'git status',wipe:false},
+];

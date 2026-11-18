@@ -7,7 +7,7 @@ import { request as httpRequest } from "node:http";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { removeTempDir, waitForExit } from "./cleanup.ts";
 
@@ -25,11 +25,15 @@ export type Fleet = {
   stop: () => Promise<void>;
 };
 
-export async function bootFleet(instances: Record<string, unknown>, prefix: string): Promise<Fleet> {
+export async function bootFleet(instances: Record<string, unknown>, prefix: string, options: { instrumentationSource?: string } = {}): Promise<Fleet> {
   const home = mkdtempSync(join(tmpdir(), prefix));
   const dataDir = join(home, ".murage");
   mkdirSync(dataDir, { recursive: true });
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({ instances }));
+  // Fixture-owned driver dependencies, loaded before the isolated server. This
+  // never enters the saved config or a live app launch.
+  const instrumentation = join(dataDir, "delegation-instrumentation.mjs");
+  if (options.instrumentationSource !== undefined) writeFileSync(instrumentation, options.instrumentationSource, { mode: 0o600 });
 
   let stderr = "";
   let base = "";
@@ -50,7 +54,8 @@ export async function bootFleet(instances: Record<string, unknown>, prefix: stri
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentation).href]), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env,
       stdio: ["ignore", "pipe", "pipe"],

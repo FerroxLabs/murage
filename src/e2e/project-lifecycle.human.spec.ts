@@ -3,7 +3,7 @@
 import { test, expect, type Page, type Locator } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { readFileSync, writeFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -49,7 +49,7 @@ test.beforeAll(async () => {
 test.afterAll(async()=>{try{await vite?.close();}finally{await fixture?.close();}});
 async function enter(page:Page,width:number,group?:string){
   await page.setViewportSize({width,height:900});
-  await page.addInitScript(()=>localStorage.setItem('murage-email-gate','skipped'));
+  await page.addInitScript(()=>{localStorage.setItem('murage-email-gate','skipped');localStorage.setItem('help.seen.chat.level-chip','1');});
   await page.route('https://**/*',route=>route.abort());
   await page.goto(origin);
   // The room view loads on first open (1.0.17), so wait for its header the way a person waits to see the room.

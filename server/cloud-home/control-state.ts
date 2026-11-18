@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Control wire v1 (home <-> control plane). No fake literal; unknown wire fences.
 // Poller: root `murage-control` (deploy/cloud-home), every 60 s, fixed HTTPS admin origin, no redirects/proxy.
@@ -58,7 +59,7 @@ export function readLinuxClockHealth(): LinuxClockHealth {
     // A slow start of the helper is not a clock fault. On a small shared VM a brief stall
     // (seen on qa14: 100 ms was exceeded on an idle home and paused all work) must not
     // quiesce the home, so allow a second and one retry before giving up.
-    const run=()=>execFileSync(helper,[],{timeout:CLOCK_HELPER_TIMEOUT_MS,maxBuffer:4096,encoding:"utf8",env:{},stdio:["ignore","pipe","ignore"]});
+    const run=()=>execFileSync(helper,[],withHideInherit({timeout:CLOCK_HELPER_TIMEOUT_MS,maxBuffer:4096,encoding:"utf8",env:{},stdio:["ignore","pipe","ignore"]}));
     let output:string;
     try {output=run();} catch {output=run();}
     return clockSchema.parse(JSON.parse(output));

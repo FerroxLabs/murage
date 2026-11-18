@@ -6,7 +6,7 @@
 // Nothing here touches a server, a key or a data directory.
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +24,7 @@ test.beforeAll(async () => {
   cache = mkdtempSync(join(tmpdir(), "murage-call-aura-"));
   server = await createServer({
     configFile: false, root, cacheDir: cache, envFile: false,
-    optimizeDeps: { noDiscovery: true, include: ["react", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "lucide-react"] },
+    optimizeDeps: { noDiscovery: true, include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "lucide-react"] },
     resolve: { alias: { "@": `${root}/src` } },
     server: { host: "127.0.0.1", watch: null, hmr: false },
     plugins: [tailwindcss(), {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // hotpath round r6 (closes Astra r5c): the accepted bound on a fresh 402 at 3M scale is pinned; the projection stores a
 // capped preview, so the locked apply of a huge message is small; a reused rowid never resurrects a stale deferred stage.
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -23,7 +23,7 @@ function fileDb() {
   const dir = mkdtempSync(join(tmpdir(), "murage-r6-")); dirs.push(dir);
   const file = join(dir, "messages.db");
   const db = new DatabaseSync(file); databases.push(db);
-  db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=1000;");
+  db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=1000; PRAGMA wal_autocheckpoint=0;");
   initializeMessageTables(db);
   return { db, file };
 }
@@ -107,7 +107,7 @@ describe("r6 #2: the projection stores a capped preview of summary and title", (
     inboxProjectionSlice(db, { rows: 10_000, weight: 512 * 1024 });
     expect(count(db, "SELECT COUNT(*) AS n FROM inbox_fill_deferred")).toBe(1);
     const other = new DatabaseSync(file); databases.push(other);
-    other.exec("PRAGMA busy_timeout=0;");
+    other.exec("PRAGMA busy_timeout=0; PRAGMA wal_autocheckpoint=0;");
     const drain = inboxDeferredDrain(other, INBOX_DEFERRED_SQL);
     drain.stage(); // the JSON work, outside any lock
     const lockStarted = performance.now();
@@ -121,10 +121,13 @@ describe("r6 #2: the projection stores a capped preview of summary and title", (
   }, 120_000);
 
   it("while the worker projects it, no concurrent main-thread write waits more than 50 ms", async () => {
-    const { db } = fileDb();
+    const { db, file } = fileDb();
     insertRow(db, "t", "big", 1_000, "text", null, hugeText("big", 1_000));
     filler(db, 0, 500, 100);
     initializeInbox(db);
+    // Production's serving connection disables automatic checkpoints. Only the
+    // paced WAL maintenance owner may copy this 128 MiB source into the main DB.
+    const sourceBytes = statSync(file).size;
     const fill = startInboxProjectionFill(db, {});
     const waits: number[] = [];
     const write = db.prepare("INSERT OR REPLACE INTO messages(thread_id,id,at,role,kind,text,json) VALUES('live',?,?,'bot','text','hi',?)");
@@ -144,6 +147,7 @@ describe("r6 #2: the projection stores a capped preview of summary and title", (
     const worst = Math.max(...waits);
     console.log(`[r6-writes] ${waits.length} main-thread writes during the projection: worst ${worst.toFixed(1)} ms`);
     expect(worst).toBeLessThanOrEqual(50);
+    expect(statSync(file).size, "the projection worker must not checkpoint the source").toBe(sourceBytes);
   }, 180_000);
 
   it("the trigger path and the title are capped too", () => {
@@ -169,7 +173,7 @@ describe("r6 #3: a reused rowid never resurrects a stale deferred stage", () => 
     inboxProjectionSlice(db, { rows: 10_000, weight: 64 * 1024 }); // over budget: deferred
     expect(count(db, "SELECT COUNT(*) AS n FROM inbox_fill_deferred")).toBe(1);
     const other = new DatabaseSync(file); databases.push(other);
-    other.exec("PRAGMA busy_timeout=0;");
+    other.exec("PRAGMA busy_timeout=0; PRAGMA wal_autocheckpoint=0;");
     const drain = inboxDeferredDrain(other, INBOX_DEFERRED_SQL);
     drain.stage(); // the worker holds the 402 staged
     db.prepare("INSERT OR REPLACE INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','m',2000,'bot','activity',NULL,?)").run(good);

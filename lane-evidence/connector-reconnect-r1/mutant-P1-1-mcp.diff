@@ -1,0 +1,11 @@
+--- a/electron/mcp-signin/refresher.mjs
++++ b/electron/mcp-signin/refresher.mjs
+@@ -70,7 +70,7 @@
+ 
+   function schedule(name) {
+     const oauth = current(name)?.oauth;
+-    if (!oauth?.accessToken && !oauth?.refreshToken) { cancelTimer(name); return; }
++    if (!oauth?.refreshToken) { cancelTimer(name); return; }
+     if (typeof oauth.expiresAt !== "number") { later(name, IDLE_PROBE_MS); return; }
+     later(name, oauth.expiresAt - (oauth.refreshToken ? SKEW_MS : 0) - now());
+   }

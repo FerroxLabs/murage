@@ -211,7 +211,7 @@ export function createBackupScheduleHost(host) {
     let firstRun;try{firstRun=await firstRunState();}catch{firstRun={eligible:false,completed:null,owed:false};}
     let waiting=s.waiting;
     if(waiting)try{const b=await read();if(b)waiting={...waiting,...spaceRequirement(await spaceInputs(s,b))};}catch{/* Preserve the wait when its folder is unreadable. */}
-    return {supported,firstRun,...(waiting?{waiting}:{}),...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(checking?{checking:true}:{}),...(unavailable?{unavailable}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),...(s.lastSkipped?{lastSkipped:s.lastSkipped}:{}),refs,error:lastError};
+    return {supported,firstRun,...(waiting?{waiting}:{}),...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(checking?{checking:true}:{}),...(unavailable?{unavailable}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,restoreDeferred:s.restoreDeferred,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),...(s.lastSkipped?{lastSkipped:s.lastSkipped}:{}),refs,error:lastError};
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();let s;try{s=coordinator.status();}catch{return;}
