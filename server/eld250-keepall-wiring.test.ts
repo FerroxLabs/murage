@@ -59,7 +59,13 @@ describe("the keep-all repair gate in index.ts (ALL.eld250)", () => {
   it("6.10 the stop latch is set at shutdown entry, and the join runs inside the data-writer stop before anything closes", () => {
     // rejects: a join outside the writer stop (r2 item 9), and a latch only inside a cleanup job
     const shutdown = block("const gracefulShutdown = createGracefulShutdown({", "cleanup: [");
-    expect(shutdown).toContain("onStart: () => keepAllRepair.stop(),");
+    // c9f99951c2 also stops the connector subscriptions at shutdown entry.
+    // Execute the actual callback: the repair latch must still be set synchronously.
+    const onStart = shutdown.match(/onStart: \(\) => \{([^{}]+)\},/);
+    expect(onStart).not.toBeNull();
+    let stops = 0;
+    new Function("keepAllRepair", "stopConnectorHealthMonitor", "stopConnectorRecovery", "stopConnectorChanges", onStart![1]!)({ stop: () => { stops++; } }, () => {}, () => {}, () => {});
+    expect(stops).toBe(1);
     const writers = block("const dataWriterGate = createDataWriterGate(", "const gracefulShutdown");
     expect(writers).toMatch(/async \(\) => \{ await joinKeepAllRepair\(keepAllRepair\); await transcriptReader\.close\(\); return stopDataWriters\(/);
   });

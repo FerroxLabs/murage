@@ -4,7 +4,8 @@
 // The prompt never waits for the computer. Dispatch awaits a box wake only
 // when the agent runs on the box; every other engine wakes the box on its
 // first computer tool call, bounded, and errors cleanly if it never comes up.
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,7 +86,8 @@ describe("first computer tool call wakes the box (fake archived box)", () => {
     });
     await new Promise<void>((r) => box!.listen(0, "127.0.0.1", r));
     const port = (box.address() as any).port;
-    proxy = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
+    proxy = await spawnBoundProxy("computer", process.execPath, ["--experimental-strip-types", PROXY], {
+      windowsHide: true,
       env: {
         ...process.env,
         MURAGEBOX_BOX_API: `http://127.0.0.1:${port}`,

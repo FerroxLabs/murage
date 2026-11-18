@@ -104,6 +104,7 @@ test("the guided first run survives an engine that never answers", async ({ app 
   await card(app, "apps").getByRole("button", { name: "Open" }).click();
   await expect(card(app, "apps")).toContainText("hundreds of apps, including Gmail, Slack, Notion and GitHub");
   await expect(app.locator("[data-setup-panel]")).not.toContainText("500+");
+  await expect(app.locator("[data-setup-panel]")).not.toContainText("1,600+");
 
   // Accessibility, at both widths, on the flow as drawn.
   for (const width of [1440, 390] as const) {

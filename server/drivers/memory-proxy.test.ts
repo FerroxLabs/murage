@@ -1,8 +1,16 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
+const sealedProxyRefusal = { jsonrpc: "2.0", id: null, error: {
+  code: -32099, message: LEDGER_REFUSAL_LINE,
+  data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true },
+} };
+// control migration: real bound proxy ingress; existing assertions retained.
+import type { ChildProcess } from "node:child_process";
+import { spawnBoundProxy, boundProxyState } from "../testing/bound-proxy-fixture.ts";
+import { once } from "node:events";
 import { MEMORY_CURSOR_MAX_CHARS } from "../memory/cursor-limits.ts";
 import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 
 const TOKEN = "fixture-memory-capability";
 type Json = Record<string, any>;
@@ -77,9 +85,11 @@ beforeAll(async () => {
     });
   });
   await new Promise<void>(resolve => stub.listen(0, "127.0.0.1", resolve));
+});
+beforeEach(async () => {
   const address = stub.address();
   if (!address || typeof address === "string") throw new Error("missing fixture port");
-  child = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./memory-proxy.ts", import.meta.url))], {
+  child = await spawnBoundProxy("memory", process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./memory-proxy.ts", import.meta.url))], {
     env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${address.port}`, MURAGE_MEMORY_TOKEN: TOKEN },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -98,13 +108,35 @@ beforeAll(async () => {
 });
 
 beforeEach(() => { requests = []; status = 200; holdMs = 0; rpcTimeoutMs = 5000; response = JSON.stringify({ hits: [], degradedReason: "lexical-only" }); });
-afterAll(async () => {
+afterEach(async () => {
   if (child && child.exitCode === null && child.signalCode === null) {
     const closed = new Promise<void>(resolve => child.once("exit", () => resolve()));
     child.kill(); await closed;
   }
-  if (stub) await new Promise<void>((resolve, reject) => stub.close(error => error ? reject(error) : resolve()));
 });
+afterAll(async () => {
+  stub.closeAllConnections();
+  await new Promise<void>((resolve, reject) => stub.close(error => error ? reject(error) : resolve()));
+});
+
+async function terminalRequest(frame: unknown, parentRefusal = false) {
+  const frames: string[] = [];
+  child.stdout!.on("data", chunk => frames.push(chunk.toString()));
+  const closed = once(child, "close");
+  const replied = once(child.stdout!, "data");
+  child.stdin!.write(JSON.stringify(frame) + "\n");
+  await Promise.race([closed, replied]);
+  expect(frames).toEqual([]);
+  if (parentRefusal) {
+    // Malformed engine IDs are refused by parent ingress before the child sees
+    // a frame. There can be no authenticated child terminal receipt here.
+    expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1 });
+  } else {
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be9 / 6a9dfe7db86: also require the authenticated fixed terminal receipt.
+    expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
+  }
+}
+const terminalCall = (name: string, args: unknown) => terminalRequest({ jsonrpc: "2.0", id: nextId++, method: "tools/call", params: { name, arguments: args } });
 
 it("negotiates MCP and exposes only the bounded memory and thread tools", async () => {
   const initialized = await rpc("initialize", { protocolVersion: "2024-11-05" });
@@ -188,13 +220,12 @@ it("says which argument a refused memory call got wrong, so the model can correc
   expect(requests).toEqual([]);
 });
 
-it("distinguishes memory taking too long from memory not being there", async () => {
+// control migration: design §12.1 H1a-REFUSE (line 399) makes timeout terminal.
+it("seals memory taking too long without a recoverable diagnostic reply", async () => {
   holdMs = 8000; rpcTimeoutMs = 20000; // the stub holds the reply past the search deadline
-  const reply = await call("memory_search", { query: "backups" });
-  expect(reply.result.isError).toBe(true);
-  expect(reply.result.content[0].text).toContain("5 seconds");
-  expect(reply.result.content[0].text).not.toContain("MEMORY_REQUEST_FAILED");
-});
+  await terminalCall("memory_search", { query: "backups" });
+  expect(requests).toHaveLength(1);
+}, 15000);
 
 it("preserves API failure and degraded results without claiming success", async () => {
   status = 403; response = JSON.stringify({ error: "MEMORY_CONTEXT_REVOKED" });
@@ -205,18 +236,19 @@ it("preserves API failure and degraded results without claiming success", async 
   reply = await call("memory_save", { text: "candidate", evidence, idempotencyKey: "k" });
   expect(reply.result.isError).toBe(true);
   response = "not json";
-  expect((await call("memory_search", { query: "backups" })).result.isError).toBe(true);
+  // control: §12.1 H1a-REFUSE, malformed upstream transport seals the lease.
+  await terminalCall("memory_search", { query: "backups" });
 });
 
 it("refuses oversized response frames and never executes tool notifications", async () => {
-  response = JSON.stringify({ text: "x".repeat(32769) });
-  const reply = await call("memory_get", { handles: [{ id: "r", version: 1 }] });
-  expect(reply.result.isError).toBe(true);
-  expect(Buffer.byteLength(JSON.stringify(reply))).toBeLessThanOrEqual(32768);
   const count = requests.length;
   child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", method: "tools/call", params: { name: "memory_save", arguments: { text: "candidate", evidence, idempotencyKey: "k" } } }) + "\n");
   await rpc("ping");
   expect(requests).toHaveLength(count);
+  response = JSON.stringify({ text: "x".repeat(32769) });
+  // control: §12.1 H1a-REFUSE; zero frames is stronger than a bounded error.
+  await terminalCall("memory_get", { handles: [{ id: "r", version: 1 }] });
+  expect(requests).toHaveLength(count + 1);
 });
 
 it("forwards the thread tools to their fixed routes and rejects bad arguments before any request", async () => {
@@ -254,22 +286,17 @@ it("forwards the thread tools to their fixed routes and rejects bad arguments be
   expect(requests).toEqual([]);
 });
 
-it("a request id over 256 bytes, or neither a string nor a finite number, runs no tool", async () => {
-  const invalid = (id: unknown) => new Promise<Json>((resolve, reject) => {
-    const timer = setTimeout(() => { pending.delete(null as never); reject(new Error("no reply")); }, 5000);
-    pending.set(null as never, value => { clearTimeout(timer); resolve(value); });
-    child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "thread_list", arguments: {} } }) + "\n");
-  });
+// control migration: §12.1 H1a-REFUSE requires invalid frames to terminate.
+// Keep every legacy malformed-ID case, each on a fresh admitted generation.
+it.each(["x".repeat(300), "é".repeat(129), true, { a: 1 }, [1], null, 1.5].map(id => ({ id })))("invalid protocol id $id seals without running a tool", async ({ id }) => {
   requests = [];
-  for (const id of ["x".repeat(300), "é".repeat(129), true, { a: 1 }, [1], null]) {
-    const reply = await invalid(id);
-    expect(reply.error).toEqual({ code: -32600, message: "Invalid request" });
-  }
+  await terminalRequest({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "thread_list", arguments: {} } }, true);
   expect(requests).toEqual([]);
-  // an id of exactly 256 bytes and a number still run
+});
+
+// control: the bound protocol retains numeric-ID delivery for safe integers.
+it("a valid numeric request id still runs the tool", async () => {
   response = JSON.stringify({ rows: [] });
-  const ok = new Promise<Json>(resolve => { pending.set(1.5 as never, resolve); });
-  child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id: 1.5, method: "tools/call", params: { name: "thread_list", arguments: {} } }) + "\n");
-  expect((await ok).result.isError).toBe(false);
+  expect((await call("thread_list", {})).result.isError).toBe(false);
   expect(requests).toHaveLength(1);
 });

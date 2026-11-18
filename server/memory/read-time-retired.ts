@@ -8,6 +8,7 @@
 // not reached) keeps the judge as the only line judge until its first row is written.
 import type { DatabaseSync } from "node:sqlite";
 import { lineageLive } from "./deny-read.ts";
+import { rootSetTablePresent } from "./root-set-reclaim.ts";
 
 /** The root-set tables the idle reclaim drops (root-set-reclaim.ts). Their temp triggers and readers must not name them once gone. */
 export const RETIRED_ROOT_SET_TABLES = ["memory_output_roots", "memory_session_roots", "memory_root_sets", "memory_root_set_members", "memory_root_set_parents"] as const;
@@ -29,7 +30,7 @@ const retired = new WeakSet<DatabaseSync>();
 /** `sql` (one trigger per statement, each on one line, or a list of statements) without the temp triggers on a root-set table that no longer
  * exists: creating one on a dropped table fails the whole batch. */
 export function withoutDroppedTableTriggers(db: DatabaseSync, sql: string): string {
-  const gone = RETIRED_ROOT_SET_TABLES.filter(table => !db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table));
+  const gone = RETIRED_ROOT_SET_TABLES.filter(table => !rootSetTablePresent(db, table));
   if (!gone.length) return sql;
   const names = new RegExp(`\\bON main\\.(?:${gone.join("|")})\\b`);
   return sql.split("\n").filter(line => !names.test(line)).join("\n");

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { constants, closeSync, createReadStream, fstatSync, lstatSync, openSync, readdirSync, readFileSync, writeFileSync, type Stats } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { constants, closeSync, createReadStream, fstatSync, lstatSync, openSync, readdirSync, readFileSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { backupSelectionSchema, type BackupSelection, type BackupCoverage } from "../shared/installation-backup.ts";
 import { portableArchivePath, type ArchiveLimits } from "./installation-archive.ts";
@@ -57,6 +58,8 @@ export async function inventoryFidelity(installation:OfflineInstallation,stage:{
   }
   const channelDirectories=new Map<string,{identity:Stats;names:string[]}>();
   let channelEntries=0;
+  // A channel delivery store is copied through SQLite (never raw): its -wal/-shm sidecars are not backup members, the db is staged below.
+  const ledgerStores:string[]=[],stagedLedgers=new Map<string,string>();
   const walkChannels=(relative:string,depth=0)=>{
     if(options.signal?.aborted)fail("SNAPSHOT_CANCELLED");
     if(depth>64||++channelEntries>(options.maxFiles??MAX_BACKUP_FILES))fail("SNAPSHOT_LIMIT_EXCEEDED",relative);
@@ -66,16 +69,29 @@ export async function inventoryFidelity(installation:OfflineInstallation,stage:{
     if(stat.isDirectory()){
       const names=readdirSync(path).sort(),folded=new Set<string>();channelDirectories.set(path,{identity:stat,names});
       for(const name of names){const normal=name.normalize("NFC").toLowerCase();if(folded.has(normal))fail("NONPORTABLE_SNAPSHOT_PATH",`${relative}/${name}`);folded.add(normal);walkChannels(`${relative}/${name}`,depth+1);}
-    }else if(stat.isFile()&&stat.nlink===1)selectedFiles.push({path:relative});
+    }else if(stat.isFile()&&stat.nlink===1){
+      const leaf=relative.slice(relative.lastIndexOf("/")+1);
+      if(relative.startsWith("channels/")&&(leaf==="delivery-ledger.db-wal"||leaf==="delivery-ledger.db-shm"))return;
+      if(relative.startsWith("channels/")&&leaf==="delivery-ledger.db")ledgerStores.push(relative);
+      selectedFiles.push({path:relative});
+    }
     else fail("UNSAFE_SNAPSHOT_ENTRY",relative);
   };
   if(roots.includes("channels"))walkChannels("channels");
+  // Every retained component needs actual payload bytes, not only an
+  // "included" coverage row. Database snapshots and startup prefs are above.
+  for(const name of roots)if(classifyDataDirEntry(name)?.backup==="retained"&&!["channels","memory-index.db","startup-background.json"].includes(name))walkChannels(name);
   if(selectedFiles.length>(options.maxFiles??MAX_BACKUP_FILES))fail("SNAPSHOT_LIMIT_EXCEEDED");
+  for(const [index,relative] of ledgerStores.entries()){
+    const staged=join(stage.directory,`channel-ledger-${index}.db`);
+    if((await installation.snapshotChannelLedger(relative,staged)).status!=="copied")fail("BACKUP_REQUIRED_COMPONENT_MISSING");
+    stagedLedgers.set(relative,staged);
+  }
   let bytes=0;
   for(const file of selectedFiles){
     if(options.signal?.aborted)fail("SNAPSHOT_CANCELLED");
     const path=file.path.replaceAll("\\","/");if(!portableArchivePath(path))fail("UNSAFE_ARCHIVE_PATH");
-    let source=path==="messages.db"?join(stage.directory,"state",file.path):path==="memory-index.db"?join(stage.directory,"memory-index.db"):join(root,file.path);
+    let source=path==="messages.db"?join(stage.directory,"state",file.path):path==="memory-index.db"?join(stage.directory,"memory-index.db"):stagedLedgers.get(path)??join(root,file.path);
     if(path==="config.json"){
       // The retired own connected-apps key is never copied into a backup. The
       // source file itself is left untouched; only this raw copy omits it.

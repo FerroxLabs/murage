@@ -50,7 +50,8 @@ const createBot = async (name: string, grant: Record<string, string>) => {
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "tools", model: "ask-1" } });
   expect(created.status).toBe(201);
   const bot = created.body.bot as { id: string; threadId: string };
-  expect((await api("PATCH", `/api/bots/${bot.id}`, { phoneApps: grant })).status).toBe(200);
+  // MAIN RULING INT-CONFLICT-DEFAULT 21ebb09024 / c33d9c2544: lifecycle fixtures choose Auto; Ask waits for its own-write review before offering a job.
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, computer: "off", phoneApps: grant })).status).toBe(200);
   return bot;
 };
 /** Starts an owner turn that stays open and returns its device token (the env the engine was handed). */
@@ -160,6 +161,8 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     ` });
     mkdirSync(askDir(), { recursive: true });
     await connect();
+    // Exercise phone grants, jobs and withholding independently of recall's cold-view recovery.
+    expect((await api("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
     expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
     const registration = JSON.parse(readFileSync(join(SERVER_DIR, "..", "apps", "mobile", "contract", "phone-jobs.json"), "utf8")).registration.valid;
     expect((await phone("PUT", "/api/phones/self", registration)).status).toBe(200);

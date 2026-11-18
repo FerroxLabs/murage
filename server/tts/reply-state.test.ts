@@ -64,6 +64,23 @@ describe("D24 durable turn identity and settlement", () => {
     expect(f.db.prepare("SELECT count(*) n FROM speech_settlements").get()?.n).toBe(0);
     expect(f.state.settle("thread", "provider", "m", true)).toBeDefined();
   });
+  it("a speech write nested in the caller's transaction neither commits nor ends it, and its failure undoes only its own savepoint", () => {
+    const f = fixture();
+    f.db.exec("CREATE TABLE outer_marks(id TEXT PRIMARY KEY)");
+    f.db.exec("BEGIN IMMEDIATE");
+    f.db.exec("INSERT INTO outer_marks VALUES('before')");
+    expect(() => f.tx(db => { db.exec("INSERT INTO outer_marks VALUES('inner-failed')"); throw new Error("fixture inner failure"); })).toThrow("fixture inner failure");
+    expect(f.db.isTransaction).toBe(true);
+    expect(f.tx(db => { db.exec("INSERT INTO outer_marks VALUES('inner-kept')"); return "kept"; })).toBe("kept");
+    expect(f.db.isTransaction).toBe(true);
+    expect(f.db.prepare("SELECT id FROM outer_marks ORDER BY id").all().map(row => row.id)).toEqual(["before", "inner-kept"]);
+    f.db.exec("ROLLBACK");
+    expect(f.db.prepare("SELECT count(*) n FROM outer_marks").get()?.n).toBe(0);
+    // a top-level speech write still commits on its own
+    f.tx(db => { db.exec("INSERT INTO outer_marks VALUES('alone')"); });
+    expect(f.db.isTransaction).toBe(false);
+    expect(f.db.prepare("SELECT count(*) n FROM outer_marks").get()?.n).toBe(1);
+  });
   it("S-target revalidates source membership and bot identity inside reservation", () => {
     const f = fixture(); const event = f.settle();
     const auto = { ...f.input(), action: undefined, settlementId: event.settlementId };
@@ -197,11 +214,14 @@ it("S-dispose retires completed downloads, rotates authority on fleet disposal, 
   const fresh = f.state.session({ ...f.connection, id: "new-connection" }, "thread");
   code(() => f.state.reserve({ ...f.input(2), sessionId: fresh.sessionId, connectionId: "new-connection", action: undefined, settlementId: ready.settlementId }, f.validate()), 204);
 });
-it("S-remote bot disposal invalidates its completed generations without clearing another conversation", () => {
+it("S-remote bot disposal revokes its completed replies without clearing another conversation", () => {
   const f = fixture(); f.settle();
   f.state.begin("other-thread", "other-bot", "other-generation", "other-prompt"); f.state.bind("other-generation", "other-provider");
+  const revision = f.state.revision("thread");
   f.state.invalidateBot("bot");
-  expect(f.state.generation("thread", "provider")?.state).toBe("invalid");
+  // design r5.1 T2: the completed row is not rewritten; the thread's revision bump is what makes its reply unusable
+  expect(f.state.generation("thread", "provider")?.state).toBe("completed");
+  expect(f.state.revision("thread")).toBe(revision + 1);
   expect(f.state.generation("other-thread", "other-provider")?.state).toBe("running");
 });
 it("provider plan versions are durable and separate from their account's shared hold", () => {

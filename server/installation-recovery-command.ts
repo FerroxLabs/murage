@@ -92,7 +92,7 @@ export async function installationRecoveryCommand(args: string[], input: { readI
     const to = MEMORY_DOWNGRADE_TARGETS.find(target => String(target) === options.get("--to"));
     // no target used to mean 1: a step to 1.0.1's shape or older, which belongs to 1.0.2's own command. The only caller that leaves it out is a hand-run one.
     if (to === undefined) refuseStepBefore102();
-    return { ok: true, operation: "memory-downgrade", ...downgradeInstallationMemorySchema(options.get("--data-dir")!, to) };
+    return { ok: true, operation: "memory-downgrade", ...await downgradeInstallationMemorySchema(options.get("--data-dir")!, to) };
   }
   if (command === "review" && options.size === 1 && options.has("--data-dir")) {
     return { ok: true, operation: "review", ...reviewInstallation(options.get("--data-dir")!) };

@@ -18,6 +18,7 @@ import { markerSlice } from "./memory/revoke-marker.ts";
 import { denyGeneration, fenceVerdict, refsLookup, sessionLookup } from "./memory/deny-read.ts";
 import { buildPrompt, promptPart } from "./memory/prompt-parts.ts";
 import { CONTENT, WritetimeFixture } from "./memory/testing/writetime-fixture.ts";
+import { prepareFixtureRecall } from "./testing/recall-ready-fixture.ts";
 
 let fixture: VerificationServer, gate: string, dump: string, eachGate: string, eachDump: string, newestReads: string, headers: Record<string,string>;
 const api = async (method:string,path:string,body?:unknown) => {
@@ -27,16 +28,32 @@ const api = async (method:string,path:string,body?:unknown) => {
 };
 const rowsOf=(file:string)=>existsSync(file)?readFileSync(file,"utf8").trim().split("\n").filter(Boolean).map(line=>JSON.parse(line)):[];
 const rows=()=>rowsOf(dump);
+// Every refusal here needs a turn that holds memory. A turn sent before its recall view is built starts without recall after its bounded
+// wait (by design) and no roster change can refuse it: under load that turn ran once and the refusal never came (1 of 7 gate runs). So each
+// refusal test waits for the view of the bot it sends to before sending (the fixture rule c11-refused-resend-api.test.ts uses); the
+// "losing order" witness below holds the view absent on purpose and pins what that turn does.
+const recallReady=async(bot:{id:string},threadId:string)=>{
+  for(;;){
+    try { return await prepareFixtureRecall(fixture.info.dataDir,bot.id,threadId); }
+    catch(error){ if(!String(error).includes("MEMORY_RECALL_STORAGE_LIMIT"))throw error; await new Promise(resolve=>setTimeout(resolve,100)); }
+  }
+};
 describe.skipIf(process.platform==="win32")("memory refusal at a late submission",()=>{
   beforeAll(async()=>{
     fixture=await launchVerificationServer(process.env,undefined,{instrumentationSource:`
+      await import(${JSON.stringify(pathToFileURL(join(process.cwd(),"server/testing/recall-ready-preload.mjs")).href)});
       const fs=await import('node:fs'); const path=await import('node:path'); const sqlite=await import('node:sqlite');
+      // while this marker exists every recall read answers that the view is not built yet (the losing order, held on purpose)
+      const {RecallReadiness}=await import(${JSON.stringify(pathToFileURL(join(process.cwd(),"server/memory/recall-readiness.ts")).href)});
+      const {RecallViewLost}=await import(${JSON.stringify(pathToFileURL(join(process.cwd(),"server/memory/recall-recovery.ts")).href)});
+      const noView=path.join(process.env.MURAGE_DATA_DIR,'noview-arm'),access=RecallReadiness.prototype.access;
+      RecallReadiness.prototype.access=function(read,...rest){ if(!fs.existsSync(noView))return access.call(this,read,...rest); return access.call(this,()=>{throw new RecallViewLost('held absent');},...rest); };
       const {BUILT_IN_DRIVERS}=await import(${JSON.stringify(pathToFileURL(join(process.cwd(),"server/drivers/builtIn.ts")).href)});
       const {makeLateTerminalDriver}=await import(${JSON.stringify(pathToFileURL(join(process.cwd(),"server/testing/fake-late-terminal-driver.ts")).href)});
-      BUILT_IN_DRIVERS.push(makeLateTerminalDriver());
+      BUILT_IN_DRIVERS.push(makeLateTerminalDriver({ fencedDefaults: true }));
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
-      cfg.instances.handback={driver:'fakeLateTerminal',environment:{FAKE_LATE_HANDBACK:'1',FAKE_LATE_SESSION_GATE:path.join(process.env.MURAGE_DATA_DIR,'handback-gate'),FAKE_LATE_DUMP:path.join(process.env.MURAGE_DATA_DIR,'handback-dump')}};
-      cfg.instances.handbackeach={driver:'fakeLateTerminal',environment:{FAKE_LATE_HANDBACK:'1',FAKE_LATE_GATE_EACH:'1',FAKE_LATE_SESSION_GATE:path.join(process.env.MURAGE_DATA_DIR,'each-gate'),FAKE_LATE_DUMP:path.join(process.env.MURAGE_DATA_DIR,'each-dump')}};
+      cfg.instances.handback={driver:'fakeLateTerminal',environment:{FAKE_LATE_HANDBACK:'1',FAKE_LATE_DUMP_CONTEXT:'1',FAKE_LATE_SESSION_GATE:path.join(process.env.MURAGE_DATA_DIR,'handback-gate'),FAKE_LATE_DUMP:path.join(process.env.MURAGE_DATA_DIR,'handback-dump')}};
+      cfg.instances.handbackeach={driver:'fakeLateTerminal',environment:{FAKE_LATE_HANDBACK:'1',FAKE_LATE_GATE_EACH:'1',FAKE_LATE_DUMP_CONTEXT:'1',FAKE_LATE_SESSION_GATE:path.join(process.env.MURAGE_DATA_DIR,'each-gate'),FAKE_LATE_DUMP:path.join(process.env.MURAGE_DATA_DIR,'each-dump')}};
       cfg.instances.handbackmem={driver:'fakeLateTerminal',environment:{FAKE_LATE_HANDBACK:'1',FAKE_LATE_GATE_EACH:'1',FAKE_LATE_MEMORY_MCP:'1',FAKE_LATE_SESSION_GATE:path.join(process.env.MURAGE_DATA_DIR,'mem-gate'),FAKE_LATE_DUMP:path.join(process.env.MURAGE_DATA_DIR,'mem-dump')}};
       fs.writeFileSync(file,JSON.stringify(cfg));
       // every read of a thread's newest message row (message-db.ts newestMessageAt), counted for the bot-frame case
@@ -56,6 +73,7 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     const group=room?(await api("POST","/api/groups",{name:"Handback room",memberIds:[bot.id],setup:{bulletin:"",defaultResponder:{kind:"member",botId:bot.id}}})).group:undefined;
     const threadId=group?.threadId??bot.threadId;
     expect((await api("GET","/api/memory/status")).mode).toBe("active");
+    await recallReady(bot,threadId);
     await api("POST",room?`/api/groups/${group.id}/messages`:`/api/bots/${bot.id}/messages`,{threadId,text:"hello there"});
     // the id is back and the prompt not yet written: the revoke lands now
     await expect.poll(()=>existsSync(`${gate}.waiting`),{timeout:15000}).toBe(true);
@@ -70,8 +88,32 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     expect(mine.find(row=>row.prompt)?.turnId).toBe(mine.filter(row=>!row.prompt)[1]?.turnId);
     expect((await replies()).filter(message=>String(message.tool?.name??"").startsWith("error:")).map(message=>message.tool.name)).toEqual([]);
   },60000);
+  // The losing order the readiness wait above closes, forced: the recall view is held absent for the whole turn (the marker), so the turn
+  // takes its bounded wait and starts without recall. Its prompt holds nothing a roster change can revoke, so the revoke at its late write
+  // refuses nothing: it runs once and is answered, with no rebuild and no card (the 1-of-7 gate red: one dispatch where two were expected).
+  for(const room of [false,true])it(`${room?"room":"direct"}: a turn sent before its recall view is built runs once without recall, and a revoke at its late write refuses nothing`,async()=>{
+    const noView=join(fixture.info.dataDir,"noview-arm");
+    for(const file of [gate,`${gate}.waiting`,dump])rmSync(file,{force:true});
+    const bot=(await api("POST","/api/bots",{name:`No view ${room?"room":"direct"}`,modelSelection:{instanceId:"handback",model:"late-1"}})).bot;
+    await api("PATCH",`/api/bots/${bot.id}`,{computer:"off",browser:false,composio:false});
+    const group=room?(await api("POST","/api/groups",{name:"No view room",memberIds:[bot.id],setup:{bulletin:"",defaultResponder:{kind:"member",botId:bot.id}}})).group:undefined;
+    const threadId=group?.threadId??bot.threadId;
+    writeFileSync(noView,"");
+    try {
+      await api("POST",room?`/api/groups/${group.id}/messages`:`/api/bots/${bot.id}/messages`,{threadId,text:"hello before the view"});
+      await expect.poll(()=>existsSync(`${gate}.waiting`),{timeout:15000}).toBe(true);
+      await api("PATCH",`/api/bots/${bot.id}`,{section:"Revoke without a view"});
+      writeFileSync(gate,"");
+      const replies=async()=>((await api("GET",`/api/threads/${threadId}/messages?limit=100`)).messages as any[]);
+      await expect.poll(async()=>(await replies()).some(message=>message.role==="bot"&&message.kind==="text"&&message.text==="Hello from late"),{timeout:20000}).toBe(true);
+      const mine=rows().filter(row=>row.threadId===threadId);
+      expect(mine.filter(row=>!row.prompt)).toHaveLength(1);
+      expect(mine.filter(row=>row.prompt)).toHaveLength(1);
+      expect((await replies()).filter(message=>String(message.tool?.name??"").startsWith("error:"))).toEqual([]);
+    } finally { rmSync(noView,{force:true}); }
+  },60000);
   // 1.0.3 engine-switch, then 1.0.2 Keep all P0 (F3): a revoke lands before every late write, the first dispatch and each rebuild. The
-  // first three are refused and rebuilt after the walk settles; the third rebuild is the last one, a fresh session with no memory frame
+  // first two are refused and rebuilt after the walk settles; the second rebuild is the last one, a fresh session with no memory frame
   // whose prompt rests only on lines judged shown as it was built, so it passes the fence and the reply runs, with one plain line saying it
   // ran without remembered context. Before: the second refusal returned early and the fold posted nothing, then a "Try again" card forever.
   for(const room of [false,true])it(`${room?"room":"direct"}: a refusal at every late write ends with a reply from the last rebuild, which says it ran without memory`,async()=>{
@@ -80,9 +122,10 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     await api("PATCH",`/api/bots/${bot.id}`,{computer:"off",browser:false,composio:false});
     const group=room?(await api("POST","/api/groups",{name:"Each room",memberIds:[bot.id],setup:{bulletin:"",defaultResponder:{kind:"member",botId:bot.id}}})).group:undefined;
     const threadId=group?.threadId??bot.threadId;
+    await recallReady(bot,threadId);
     await api("POST",room?`/api/groups/${group.id}/messages`:`/api/bots/${bot.id}/messages`,{threadId,text:"hello every time"});
     const seen=new Set<string>();
-    for(let attempt=1;attempt<=4;attempt++){
+    for(let attempt=1;attempt<=3;attempt++){
       // this attempt's id is back and its prompt not yet written: a revoke lands before every write
       await expect.poll(()=>{ try { const id=readFileSync(`${eachGate}.waiting`,"utf8"); return id&&!seen.has(id)?id:""; } catch { return ""; } },{timeout:20000}).not.toBe("");
       seen.add(readFileSync(`${eachGate}.waiting`,"utf8"));
@@ -91,7 +134,9 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     }
     const messages=async()=>((await api("GET",`/api/threads/${threadId}/messages?limit=100`)).messages as any[]);
     const reply=(message:any)=>message.role==="bot"&&message.kind==="text"&&message.text==="Hello from late";
-    const without=(message:any)=>message.role==="bot"&&message.kind==="activity"&&/^Memory changed while .+ was starting, so this reply ran without remembered context\.$/.test(String(message.tool?.name??""));
+    // Roster/receipt authority refusals carry no lineage verdict. Their unknown cause gets the neutral sentence, while the
+    // exactly-once chip, dispatch count and final write proof below remain the same.
+    const without=(message:any)=>message.role==="bot"&&message.kind==="activity"&&message.memoryNote==="without-memory"&&message.tool?.name==="Murage prepared this reply from your message, with remembered context left out.";
     await expect.poll(async()=>(await messages()).some(reply),{timeout:30000}).toBe(true);
     await expect.poll(async()=>(await messages()).some(without),{timeout:10000}).toBe(true);
     await new Promise(resolve=>setTimeout(resolve,300));
@@ -101,11 +146,11 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     // no error card, and the raw code never reaches the person
     expect(all.filter(message=>String(message.tool?.name??"").startsWith("error:"))).toEqual([]);
     expect(all.some(message=>/MEMORY_CONTEXT_REVOKED|submission_refused/.test(String(message.tool?.name??"")))).toBe(false);
-    // four dispatches (the first and three rebuilds), and only the last wrote its prompt; no fifth
+    // three dispatches (the first and two rebuilds), and only the last wrote its prompt; no fourth
     const mine=rowsOf(eachDump).filter(row=>row.threadId===threadId);
-    expect(mine.filter(row=>!row.prompt)).toHaveLength(4);
+    expect(mine.filter(row=>!row.prompt)).toHaveLength(3);
     expect(mine.filter(row=>row.prompt)).toHaveLength(1);
-    expect(mine.find(row=>row.prompt)?.turnId).toBe(mine.filter(row=>!row.prompt)[3]?.turnId);
+    expect(mine.find(row=>row.prompt)?.turnId).toBe(mine.filter(row=>!row.prompt)[2]?.turnId);
   },90000);
   // Thread recall on the last rebuild: once the memory retries run out, the rebuild runs with no remembered context, so it carries no memory
   // mount at all: neither memory_* nor thread_* (the active-mode frame and the off-mode thread tools both stop there). The first dispatch
@@ -116,9 +161,10 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     const bot=(await api("POST","/api/bots",{name:"Recall last rebuild",modelSelection:{instanceId:"handbackmem",model:"late-1"}})).bot;
     await api("PATCH",`/api/bots/${bot.id}`,{computer:"off",browser:false,composio:false});
     expect((await api("GET","/api/memory/status")).mode).toBe("active");
+    await recallReady(bot,bot.threadId);
     await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.threadId,text:"hello with recall"});
     const seen=new Set<string>();
-    for(let attempt=1;attempt<=4;attempt++){
+    for(let attempt=1;attempt<=3;attempt++){
       await expect.poll(()=>{ try { const id=readFileSync(`${memGate}.waiting`,"utf8"); return id&&!seen.has(id)?id:""; } catch { return ""; } },{timeout:20000}).not.toBe("");
       seen.add(readFileSync(`${memGate}.waiting`,"utf8"));
       await api("PATCH",`/api/bots/${bot.id}`,{section:`Recall revoke ${attempt}`});
@@ -127,11 +173,11 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     const messages=async()=>((await api("GET",`/api/threads/${bot.threadId}/messages?limit=100`)).messages as any[]);
     await expect.poll(async()=>(await messages()).some(message=>message.role==="bot"&&message.kind==="text"&&message.text==="Hello from late"),{timeout:30000}).toBe(true);
     const dispatches=rowsOf(memDump).filter(row=>row.threadId===bot.threadId&&!row.prompt);
-    expect(dispatches).toHaveLength(4);
+    expect(dispatches).toHaveLength(3);
     // the first dispatch, memory on: the memory mount and the thread tools (the bot's own direct chat reaches a thread)
     expect(dispatches[0]).toMatchObject({memory:true,threadRecall:true});
     // the last rebuild: no memory mount, no thread tools
-    expect(dispatches[3]).toMatchObject({memory:false,threadRecall:false});
+    expect(dispatches[2]).toMatchObject({memory:false,threadRecall:false});
   },90000);
   it("a bot frame reads no message row per task (index.ts withLastActivity)",async()=>{
     const bot=(await api("POST","/api/bots",{name:"Many tasks",modelSelection:{instanceId:"handback",model:"late-1"}})).bot;

@@ -8,6 +8,7 @@ import { endpointProvider } from "./endpoint-provider.ts";
 const DRIVER_KIND = "grok";
 const DEFAULT_URL = "https://api.x.ai/v1";
 const MODELS = {
+  // MAIN 1114-MODELS-FRESH: only Grok ACP may change its default.
   default: "grok-4",
   options: [
     // Upstream #1632: without a window the memory budget falls back to

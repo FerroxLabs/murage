@@ -44,7 +44,7 @@ const counts = (db: DatabaseSync) => Object.fromEntries(PHONE_TABLES.map(name =>
 const ONE_EACH = { phone_ask_revocations: 1, phone_receipts: 1, phone_registrations: 1, phone_revocations: 1 };
 
 describe("a backup taken with the phone flags on", () => {
-  it("passes the restore check, rows intact", () => {
+  it("passes the restore check, rows intact", async () => {
     const f = backupFixture();
     try {
       withPhoneTables(f.db);
@@ -70,7 +70,7 @@ describe("a backup taken with the phone flags on", () => {
 });
 
 describe("a backup from a build without the four tables (the 1.0.8 shape)", () => {
-  it("still passes the restore check", () => {
+  it("still passes the restore check", async () => {
     const f = backupFixture();
     try {
       for (const name of PHONE_TABLES) expect(f.db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name), name).toBeUndefined();
@@ -82,16 +82,16 @@ describe("a backup from a build without the four tables (the 1.0.8 shape)", () =
 describe("the downgrade (memory-downgrade --to 10) with the phone tables present", () => {
   type Row = { type: string; name: string; tbl_name: string; sql: string | null };
   const fresh102 = (JSON.parse(readFileSync(join(import.meta.dirname, "testing", "schema-1.0.2-fresh.json"), "utf8")) as { objects: Row[] }).objects;
-  beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
-  afterEach(() => { closeDatabase(); });
+  beforeEach(async () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+  afterEach(async () => { closeDatabase(); });
 
-  it("leaves none of the four tables behind", () => {
+  it("leaves none of the four tables behind", async () => {
     const db = database();
     initializeImageOperations(db);
     ensureForgetTable(db);
     withPhoneTables(db);
     closeDatabase();
-    expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
+    expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
     const after = readOnly(join(DATA_DIR, "messages.db"));
     try {
       const names = new Set((after.prepare("SELECT name FROM sqlite_master").all() as Array<{ name: string }>).map(row => row.name));
@@ -105,7 +105,7 @@ describe("the downgrade (memory-downgrade --to 10) with the phone tables present
     } finally { after.close(); }
   });
 
-  it("refuses while a phone line is still waiting to send, and changes nothing at all", () => {
+  it("refuses while a phone line is still waiting to send, and changes nothing at all", async () => {
     const db = database();
     initializeImageOperations(db);
     ensureForgetTable(db);
@@ -118,7 +118,7 @@ describe("the downgrade (memory-downgrade --to 10) with the phone tables present
     const before = snapshot(DATA_DIR);
     expect(before.pushColumns).toContain("phone_used");
     expect(before.pushRows).toEqual([{ event_ref: "e1", phone_used: 1 }]);
-    expect(() => downgradeInstallationMemorySchema(DATA_DIR, 10)).toThrow(/waiting to send/);
+    await expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).rejects.toThrow(/waiting to send/);
     // the column and its values, owner_sends's text and rows, all four phone tables and both tombstone files: exactly as they were
     expect(snapshot(DATA_DIR)).toEqual(before);
     const after = readOnly(join(DATA_DIR, "messages.db"));

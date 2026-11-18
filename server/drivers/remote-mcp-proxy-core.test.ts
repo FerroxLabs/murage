@@ -86,8 +86,9 @@ describe("failureFrame and failureText: every id is answered", () => {
 
 describe("module hygiene", () => {
   const source = readFileSync(new URL("./remote-mcp-proxy-core.ts", import.meta.url), "utf8");
-  it("imports nothing and carries the license header", () => {
-    expect(source).not.toMatch(/^import /m);
+  it("imports only the busyloop marker and carries the license header", () => {
+    // MAIN RULING 2026-11-14 busyloop inventory (9b045906a8) needs its marker; proxy process already imports repo code; one import only
+    expect(source.match(/^import .*$/gm)).toEqual(['import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";']);
     expect(source).toContain("SPDX-License-Identifier: AGPL-3.0-or-later");
   });
 });

@@ -13,7 +13,8 @@ import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { setObserveSink, resetObserveWindows } from "../observe.ts";
 import { ownerMemoryTicket } from "./authority.ts";
-import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
+import { reconcileMemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { writeBotIdentity, type IdentityWrite } from "./identity.ts";
 import { briefBudget, buildMemoryBundle } from "./bundle.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
@@ -43,6 +44,9 @@ describe("U29: bindings by scope", () => {
       db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON");
       migrateMemorySchema(db, "active");
       const revoke = "EXPLAIN QUERY PLAN UPDATE memory_scope_bindings SET state='revoked' WHERE scope_id IN (SELECT value FROM json_each(?)) AND NOT (subject_type='system' AND subject_id=?)";
+      // R12 T4: a new file makes it with its empty tables (it is the bindings' child-key index); a file an earlier build left without it:
+      expect(optionalIndexReady(db, BINDINGS_SCOPE_INDEX)).toBe(true);
+      db.exec(`DROP INDEX ${BINDINGS_SCOPE_INDEX}`);
       expect(JSON.stringify(db.prepare(revoke).all("[\"s\"]", "x"))).not.toContain(BINDINGS_SCOPE_INDEX);
       expect(await buildOptionalIndexOffThread(db, BINDINGS_SCOPE, { inline: true })).toBe(true);
       expect(optionalIndexReady(db, BINDINGS_SCOPE_INDEX)).toBe(true);

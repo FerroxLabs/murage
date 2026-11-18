@@ -6,11 +6,14 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IoBudget, ioBudget, osWriteBlocks } from "./io-budget.ts";
-import { noteWrittenBytes, noteWrittenFile, takeWrittenBytes } from "./io-written.ts";
+import { noteWrittenBytes, noteWrittenFile, takeWrittenBytes, setWrittenMeter } from "./io-written.ts";
 import { settleFtsCopy } from "./settle-copy.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+
+// These synthetic-platform fixtures exercise the logical-size fallback. Real native bytes have their own meter fixtures.
+beforeEach(()=>setWrittenMeter({active:()=>false,snapshot:()=>null}));
 
 const MINUTE = 60_000;
 // 2000 * 512 is below the default 1 MiB idle budget; use a smaller test-only budget.

@@ -1,0 +1,9 @@
+PASS witness: TimeoutSeconds 60; prelaunch CIM delayed beyond 150 seconds
+[31;1mRemove-WrapperTask: [0m/work/scripts/windows/p11b-check.ps1:16[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  16 | [0m  [36;1mRemove-WrapperTask[0m -Item $item -Prefix $prefix -Before @() -End $end …[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m  ~~~~~~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe term 'Remove-WrapperTask' is not recognized as a name of a cmdlet,[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m[31;1m[36;1m     | [31;1mfunction, script file, or executable program. Check the spelling of the[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m[31;1m[36;1m[31;1m[36;1m     | [31;1mname, or if a path was included, verify that the path is correct and try[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m[31;1m[36;1m[31;1m[36;1m[31;1m[36;1m     | [31;1magain.[0m

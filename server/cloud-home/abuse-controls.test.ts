@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const dir = new URL("../../deploy/cloud-home/", import.meta.url);
 const read = (name: string) => readFileSync(new URL(name, dir), "utf8");
-const hasPython = (() => { try { execFileSync("python3", ["--version"]); return true; } catch { return false; } })();
+const hasPython = (() => { try { execFileSync("python3", ["--version"], { windowsHide: true }); return true; } catch { return false; } })();
 
 describe("abuse controls in the home image", () => {
   it("drops outbound SMTP on 25, 465 and 587 unconditionally, ahead of every engine accept", () => {
@@ -38,6 +38,6 @@ describe("abuse controls in the home image", () => {
     expect(sh).toContain("StrictHostKeyChecking=yes");
   });
   it.skipIf(!hasPython)("miner heuristic passes its own state-machine selftest", () => {
-    expect(execFileSync("python3", ["-I", new URL("murage-miner-watch.py", dir).pathname, "--selftest"], { encoding: "utf8" })).toContain("selftest ok");
+    expect(execFileSync("python3", ["-I", new URL("murage-miner-watch.py", dir).pathname, "--selftest"], { windowsHide: true, encoding: "utf8" })).toContain("selftest ok");
   });
 });

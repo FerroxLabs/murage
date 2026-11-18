@@ -25,7 +25,7 @@ describe("remote Cua computer setup", () => {
     expect(command).not.toContain("cua-computer-server");
     expect(command).not.toContain("--port 8000");
     if (process.platform !== "win32") {
-      expect(spawnSync("/bin/bash", ["-n"], { input: command }).status).toBe(0);
+      expect(spawnSync("/bin/bash", ["-n"], { windowsHide: true, input: command }).status).toBe(0);
     }
   });
 
@@ -51,13 +51,14 @@ describe("remote Cua computer setup", () => {
 
     if (process.platform !== "win32") {
       // Still a syntactically valid script with a hostile name in it...
-      expect(spawnSync("/bin/bash", ["-n"], { input: command }).status).toBe(0);
+      expect(spawnSync("/bin/bash", ["-n"], { windowsHide: true, input: command }).status).toBe(0);
       // ...and the substitution does not happen. Running the real bootstrap
       // would need a box, so this executes only the tmux line's payload, which
       // is the part the name is interpolated into.
       const payload = /tmux new-session -d -s work (.+)$/m.exec(command);
       expect(payload).toBeTruthy();
       const ran = spawnSync("/bin/bash", ["-c", `eval ${payload![1]!.replace(/; exec bash -i/, "")}`], {
+        windowsHide: true,
         encoding: "utf8",
       });
       expect(ran.stdout).toContain("$(id -un)");

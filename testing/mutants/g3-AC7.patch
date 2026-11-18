@@ -1,0 +1,11 @@
+--- a/server/drivers/acp/core.ts	2026-11-17 02:40:40.422382678 +0000
++++ b/server/drivers/acp/core.ts	2026-11-17 02:40:45.186421330 +0000
+@@ -4571,7 +4571,7 @@
+ 
+         const sendUnknownRequest = (msg: any) => {
+           const requestProcess = proc;
+-          return send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } }, error => { if (error) acpFenced(error, "acp.reply.unknown", requestProcess, { requestId: msg.id, method: msg.method }); });
++          return send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
+         };
+         // The native posture must catch up before an answer can release the next tool.
+         let postureModes: { currentModeId?: unknown; availableModes?: Array<{ id?: unknown }> } | undefined;

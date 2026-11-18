@@ -9,6 +9,11 @@ describe("memberTurnSelection", () => {
     ).toEqual({ model: "omlx::gemma-4-31b-it-bf16" });
   });
 
+  it("carries native thinking alongside model and effort for room dispatch", () => {
+    expect(memberTurnSelection({ instanceId: "custom", model: "deep", effort: "high", variant: "max" }))
+      .toEqual({ model: "deep", effort: "high", variant: "max" });
+  });
+
   it("keeps a configured effort", () => {
     expect(
       memberTurnSelection({ instanceId: "qwen", model: "omlx::gemma-4-31b-it-bf16", effort: "high" }),

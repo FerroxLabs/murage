@@ -1,0 +1,43 @@
+✔ MAIN 1: suspended job has no breakaway and verifies empty after owner close (1.549311ms)
+✔ MAIN 2: full task snapshots and prefix-only new-task cleanup (1.253769ms)
+✔ MAIN 3: HTTPS dispatch is handoff only; Desktop keeps refusal rows (0.260113ms)
+✔ MAIN 4: registration diff is Handoff-only and guarded by machine (0.234891ms)
+✔ MAIN 5: only operator finalizes after cleanup; receipt needs cleanup proof (7.143523ms)
+✔ p11b 1: TimeoutSeconds 60, prelaunch CIM blocked beyond 150s still has operator-owned wrapper cleanup (1.058728ms)
+✖ p11b 2: schtasks beyond 30s uses suspended job creation, job timeout and empty proof (0.876127ms)
+✔ p11b 2: recursive ban includes all Windows source and test files (878.390529ms)
+✔ p11b 3: all six MAIN mutants are installed (0.325203ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 8
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1178.706343
+
+✖ failing tests:
+
+test at scripts/windows/p11b.node-test.mjs:16:1
+✖ p11b 2: schtasks beyond 30s uses suspended job creation, job timeout and empty proof (0.876127ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Invoke-OwnedNative.*-TimeoutSeconds 30/. Input:
+  
+  'function Invoke-WindowsNative([string]$File, [string[]]$ArgumentList) {\n' +
+    "  $arguments=($ArgumentList | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '\n" +
+    '  $process = [Diagnostics.Process]::Start($File,$arguments); $process.Kill()\n' +
+    '}\n'
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/p11b.node-test.mjs:19:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: "function Invoke-WindowsNative([string]$File, [string[]]$ArgumentList) {\n  $arguments=($ArgumentList | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '\n  $process = [Diagnostics.Process]::Start($File,$arguments); $process.Kill()\n}\n",
+    expected: /Invoke-OwnedNative.*-TimeoutSeconds 30/,
+    operator: 'match',
+    diff: 'simple'
+  }

@@ -566,9 +566,9 @@ Create this runbook at `runbooks.internal/payments-high-error-rate`:
 3. Check for recent deployments:
    - ArgoCD: [link] -- filter to payments namespace, last 2 hours
 4. Check downstream dependencies:
-   - Database: `kubectl exec -n payments deploy/payments-api -- pg_isready -h $DB_HOST`
+   - Database: `kubectl exec -n payments deployment/payments-api -- pg_isready -h $DB_HOST`
    - Payment gateway: Check [status.stripe.com or your gateway's status page]
-   - Redis cache: `kubectl exec -n payments deploy/payments-api -- redis-cli -h $REDIS_HOST ping`
+   - Redis cache: `kubectl exec -n payments deployment/payments-api -- redis-cli -h $REDIS_HOST ping`
 
 ## Mitigation Options
 

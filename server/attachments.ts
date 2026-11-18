@@ -4,16 +4,10 @@
 // Incremental accounting adapted from OpenMausBot PR #938 (2c6e4ece), with
 // Murage quota-pressure cleanup and failed-partial byte accounting retained.
 import { createHash, randomUUID } from "node:crypto";
-import {
-  linkSync,
-  mkdirSync,
-  readdirSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { link, open, unlink } from "node:fs/promises";
+import { writeFileSync } from "./counted-fs.ts";
+import { linkSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { open } from "./counted-fs-promises.ts";
+import { link, unlink } from "node:fs/promises";
 import { basename, join, extname, dirname, resolve } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { addOutstandingBytes, availableForNewBytes, diskSpaceError, freeDiskBytes, isNoSpaceError, outstandingBytes } from "./disk-space.ts";

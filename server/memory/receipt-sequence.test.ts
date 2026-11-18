@@ -1,3 +1,4 @@
+import {prepareRecallContextSync,stopRecallViewMaintenance} from './recall-view.ts';
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -24,11 +25,13 @@ import { capturedMessageWithheld } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
-const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
+const roster: MemoryRoster = { memoryRosterRevision: 1, bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
 const empty = { async search() { return { hits: [], vectorRows: 0, coverageComplete: false }; } };
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
 
 function access() {
+  // MAIN RULING 1115-RECALL-S1S2H-ITEMS F: construct the real admitted view before issuing fixture access.
+  prepareRecallContextSync('bot',"chat",roster);stopRecallViewMaintenance();
   const registry = new InternalCapabilities(); registry.begin("bot", "chat", "g");
   return memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "bot", threadId: "chat", generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);
 }

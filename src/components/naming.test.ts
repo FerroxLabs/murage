@@ -154,7 +154,7 @@ describe("connected apps", () => {
 
   it("says what the key unlocks, in the one claim the product makes", () => {
     // The claim itself lives in ConnectedAppsLock.tsx and is stated once.
-    // "500+ apps" is the wording; a count of MODELS is still never given.
+    // Apps are named by example; a count of MODELS is still never given.
     expect(read("./PluginsPanel.tsx")).toContain('t("ux.lcopyb.connected.subtitleDesktop", { apps: appsClaimFor(catalog?.total, APPS_CLAIM) })');
     expect(en["ux.lcopyb.connected.subtitleDesktop"]).toBe("One Flux Router key connects {apps}. You can add your own connected tools too.");
     for (const value of Object.values(en)) expect(value).not.toMatch(/\d+\+ (?:more|models)|and \d+\+ more/);
@@ -174,8 +174,9 @@ describe("the copy quick wins", () => {
   it("does not say Discord or WhatsApp is coming soon above working cards", () => {
     const telegram = read("./TelegramSettings.tsx");
     expect(telegram).not.toContain("coming soon");
-    expect(read("./SettingsModal.tsx")).toContain("<DiscordSettings />");
-    expect(read("./SettingsModal.tsx")).toContain("<WhatsAppSettings />");
+    // 1.0.19: the Messaging apps page file (settings/pages/ChannelsPage.tsx) renders the four app cards.
+    expect(read("./settings/pages/ChannelsPage.tsx")).toContain("<DiscordSettings");
+    expect(read("./settings/pages/ChannelsPage.tsx")).toContain("<WhatsAppSettings");
   });
 
   it("counts one bot as one bot", () => {
@@ -192,7 +193,7 @@ describe("the copy quick wins", () => {
     expect(effortLabel("xhigh")).toBe("X-High");
     expect(effortLabel("medium")).toBe("Medium");
     expect(effortLabel(undefined)).toBe("Default");
-    expect(read("./ModelPicker.tsx")).toContain("{effortLabel(level)}");
+    expect(read("./ModelPickerDialog.tsx")).toContain("{effortLabel(level)}");
     expect(read("./SettingsPanel.tsx")).toContain("{effortLabel(level)}");
     expect(read("./SettingsPanel.tsx")).not.toContain("(Default: no level is sent)");
   });

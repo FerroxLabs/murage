@@ -18,6 +18,7 @@
 //
 // Pure module: nothing here imports Electron, so node tests drive it directly.
 
+import { isOwnedMainSender, isCloudHomeSender } from "./main-trust.mjs";
 import { externalWebUrl } from "./app-permissions.mjs";
 import { CLOUD_HOME_SCHEME, isApiPath, resolveStaticPath } from "./cloud-home-protocol.mjs";
 
@@ -73,9 +74,11 @@ const CLOUD_REFUSAL_MESSAGE = `This action is available only on your computer. (
  * `cloud.onRefused(channel)` EVERY time (channel name only, no payload); other refusals go to `onRefused` as before.
  *
  * @param {{ ipcMain: { handle: Function, on: Function }, isTrusted: (event: any) => boolean, onRefused?: (channel: string) => void,
+ *   cloudPopout?: { windowFor: (sender: any) => { window: any, homeId: string } | undefined },
+ *   popout?: { windowFor: (sender: any) => any, origin: () => string },
  *   cloud?: { isCloudSender: (event: any) => boolean, classOf: (channel: string) => string, onRefused?: (channel: string) => void } }} deps
  */
-export function createOwnedMainIpc({ ipcMain, isTrusted, onRefused = () => {}, cloud }) {
+export function createOwnedMainIpc({ ipcMain, isTrusted, onRefused = () => {}, cloud, popout, cloudPopout }) {
   const registered = [];
   const trusted = (event) => {
     try {
@@ -97,6 +100,21 @@ export function createOwnedMainIpc({ ipcMain, isTrusted, onRefused = () => {}, c
   /** "allow", or the refusal to apply: "other" (not our window) / "cloud" (Cloud-home window, wrong class). */
   const decide = (channel, event) => {
     if (trusted(event)) return !cloud || cloud.classOf(channel) !== "cloud-only" ? "allow" : "other";
+    // Every pop-out call reuses the exact owned sender predicate before the
+    // channel allowlist; no origin-only or webContents-id shortcut.
+    try {
+      const window = popout?.windowFor(event.sender);
+      if (window && isOwnedMainSender(event, { window, origin: popout.origin() })) {
+        return ["desktop:surface-secret", "desktop:skin", "browser-popout:close", "browser-popout:state-now"].includes(channel) ? "allow" : "other";
+      }
+    } catch { return "other"; }
+    try {
+      const entry = cloudPopout?.windowFor(event.sender);
+      if (entry) {
+        if (!isCloudHomeSender(event, entry)) return "other";
+        return ["cloud-home:browser-popout:close", "cloud-home:browser-popout:state-now"].includes(channel) ? "allow" : "other";
+      }
+    } catch { return "other"; }
     if (!cloud) return "other";
     let fromCloud = false;
     try { fromCloud = cloud.isCloudSender(event) === true; } catch { fromCloud = false; }

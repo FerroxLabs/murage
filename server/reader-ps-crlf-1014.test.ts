@@ -44,7 +44,10 @@ describe("a backtick before CRLF continues a PowerShell line, as before LF", () 
 
   it.each(CASES.map((cmd) => [JSON.stringify(cmd), cmd]))("it cards at Ask, Auto, Full access and No limits: %s", (_, cmd) => {
     for (const [level, bot, context] of levels(cmd)) {
-      expect(autoVerdict(bot, "PowerShell", cmd, context), level).toMatchObject({ approve: null, source: "always-ask" });
+      // MAIN RULING 2026-11-13 wipe-only: an opaque target runs at No limits; the named home-folder wipe and lower levels still card.
+      expect(autoVerdict(bot, "PowerShell", cmd, context), level).toMatchObject(level === "No limits" && !cmd.includes("USERPROFILE")
+        ? { approve: expect.any(String), source: "no-limits" }
+        : { approve: null, source: "always-ask" });
     }
   });
 

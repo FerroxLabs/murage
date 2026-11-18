@@ -1,3 +1,4 @@
+import { createMemoryEmailSecrets } from "../testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -6,7 +7,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyEmailShellMessage, EMAIL_OWNER_MESSAGE, EMAIL_SECRETS_ENV, EMAIL_SECRETS_SAVE, EmailSecretStore, credentialFingerprint, type EmailSecretsDoc } from "./email-secrets.ts";
+import { applyEmailShellMessage, EMAIL_OWNER_MESSAGE, EMAIL_SECRETS_ENV, EMAIL_SECRETS_SAVE, credentialFingerprint, type EmailSecretsDoc } from "./email-secrets.ts";
 import { stripWorkspaceCredentialEnv, WORKSPACE_CREDENTIAL_ENV } from "../config.ts";
 import { claudeEnvironment } from "../drivers/claude.ts";
 
@@ -27,7 +28,7 @@ function envFingerprints(env: Record<string, string | undefined>): Set<string> {
 describe("email keys stay out of every spawned engine", () => {
   it("the shell's hand-off is read once and removed; its name is a workspace credential every driver strips", () => {
     const env: NodeJS.ProcessEnv = { [EMAIL_SECRETS_ENV]: JSON.stringify(DOC), PATH: "/bin" };
-    const secrets = new EmailSecretStore();
+    const secrets = createMemoryEmailSecrets();
     expect(secrets.loadFromEnv(env)).toEqual({ loaded: 2 });
     expect(env[EMAIL_SECRETS_ENV]).toBeUndefined();
     expect(WORKSPACE_CREDENTIAL_ENV).toContain(EMAIL_SECRETS_ENV);
@@ -37,7 +38,7 @@ describe("email keys stay out of every spawned engine", () => {
   });
 
   it("Claude's turn env, built from a parent that still had the hand-off, carries no email key (by fingerprint)", () => {
-    const secrets = new EmailSecretStore();
+    const secrets = createMemoryEmailSecrets();
     secrets.replaceAll(DOC);
     const parent: NodeJS.ProcessEnv = { ...process.env, [EMAIL_SECRETS_ENV]: JSON.stringify(DOC) };
     const env = claudeEnvironment(null, parent);
@@ -69,7 +70,7 @@ describe("email keys stay out of every spawned engine", () => {
 
   it("2.4: the owner token main hands over is stored, handed back for the encrypted store, and still never reaches an engine env", () => {
     const saved: EmailSecretsDoc[] = [];
-    const secrets = new EmailSecretStore(doc => saved.push(doc));
+    const secrets = createMemoryEmailSecrets(doc => { saved.push(doc); });
     expect(applyEmailShellMessage(secrets, { type: "murage:model-signin-refresh" })).toBe(false);
     expect(applyEmailShellMessage(secrets, { type: EMAIL_OWNER_MESSAGE, owner: { token: "has space", keyId: "k" } })).toBe(true);
     expect(secrets.owner()).toBeNull();
@@ -82,7 +83,10 @@ describe("email keys stay out of every spawned engine", () => {
 
   it("index.ts persists key changes to the shell, takes the owner hand-off before any other private message, and fluxKey never reads email", () => {
     const index = readFileSync(join(ROOT, "server", "index.ts"), "utf8");
-    expect(index).toMatch(/persistSecrets: doc => \{ postDesktopPrivateMessage\(\{ type: EMAIL_SECRETS_SAVE, doc \}\); \}/);
+    expect(index).toContain('return postDesktopPrivateMessage({ type: EMAIL_SECRETS_SAVE, doc, rev: meta.rev, epoch: meta.epoch });');
+    const fixture = readFileSync(join(ROOT, "server", "testing", "email-store-fixture.ts"), "utf8");
+    expect(fixture).toContain('queueMicrotask(() => runtime.secrets.ack({ ...meta, keyIds: fixtureEmailKeyIds(saved) }))');
+    expect(index).not.toContain('queueMicrotask(() => emailRuntime.secrets.ack');
     expect(index).toContain("if (isEmailShellMessage(message))");
     expect(EMAIL_SECRETS_SAVE).toBe("murage:email-secrets-save");
     const fluxConfig = readFileSync(join(ROOT, "server", "flux-config.ts"), "utf8");

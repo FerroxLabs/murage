@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { accessSync, constants, lstatSync, readFileSync, readlinkSync, realpathSync, statSync, type Stats } from "node:fs";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { userInfo } from "node:os";
-import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { DatabaseSync, type StatementSync } from "./sqlite-open.ts";
 
 export type DestinationEnv = Record<string, string | undefined>;
 // All values come from the hand. Credentials in AUTH_CONTENT never enter the key.
@@ -111,6 +111,10 @@ export class OpenCodeDestinationKey {
   }
   read(env: DestinationEnv, cwd: string, cli: string, now = Date.now()): { key: string; cacheable: boolean; settled: boolean } {
     const signature = (st: Stats) => JSON.stringify([st.dev, st.ino, st.size, st.mtimeMs, st.ctimeMs, st.mode]);
+    // Directory entry churn does not change an ancestor's path identity.
+    // Every traversed child is checked separately; symlinks keep their full
+    // signature so replacement or retargeting still invalidates the cache.
+    const componentSignature = (st: Stats) => st.isDirectory() ? JSON.stringify([st.dev, st.ino, st.mode]) : signature(st);
     const components = new Map<string, Stats>();
     const component = (path: string) => {
       let st = components.get(path);
@@ -124,22 +128,22 @@ export class OpenCodeDestinationKey {
         // traversed component across this read (shared ancestors checked once),
         // and zero realpath/readlink calls. Include symlinks and their expanded
         // targets, not just lexical parents: a link target can itself cross links.
-        if (saved?.tuple === tuple && [...saved.parents].every(([parent, before]) => signature(component(parent)) === before)) return saved.real;
+        if (saved?.tuple === tuple && [...saved.parents].every(([parent, before]) => componentSignature(component(parent)) === before)) return saved.real;
         this.reals.delete(path);
         const parents = new Map<string, string>();
         let current = parse(path).root, links = 0;
         let pending = path.slice(current.length).split(sep).filter(Boolean);
-        parents.set(current, signature(component(current)));
+        parents.set(current, componentSignature(component(current)));
         while (pending.length) {
           const name = pending.shift()!;
           if (name === ".") continue;
           if (name === "..") { current = dirname(current); continue; }
           const next = join(current, name), part = component(next);
-          parents.set(next, signature(part));
+          parents.set(next, componentSignature(part));
           if (part.isSymbolicLink()) {
             if (++links > 40) throw new Error("too many destination symlinks");
             const target = readlinkSync(next), root = parse(target).root;
-            if (root) { current = root; parents.set(root, signature(component(root))); }
+            if (root) { current = root; parents.set(root, componentSignature(component(root))); }
             // Expand before handling .. so intermediate symlinks stay tracked.
             pending = [...target.slice(root.length).split(sep).filter(Boolean), ...pending];
           } else current = next;

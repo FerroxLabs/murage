@@ -1,3 +1,4 @@
+// Native prompt producer owner: tri3-g1. B34 observation consumer owner: new3-g2d.
 // B34 adapter harness: test support (not a *.test.ts). It lets a Vitest file
 // run one join adapter against the isolated fake-engine server the way Claude
 // 5's runner scripts/b34-receipt-matrix.ts (v3, sha256 69fbb75f…9c78) does,
@@ -17,13 +18,14 @@
 //   verifyQ14Readbacks 1153-1200 runner re-read of every Q14 readback
 // Receipt-only runner behaviour is not mirrored: no receipt, inputs, engines,
 // limitations or deliveredMemory are written, and no server log is copied
-// anywhere. The verification connection is read-only. Nothing is logged;
-// check details keep the runner's rule of identifiers, counts and HTTP statuses,
-// never bodies, headers or secrets. Runner receipts remain Claude 5's and
+// anywhere. The verification connection is read-only. Check details keep
+// the runner's rule of identifiers, counts and HTTP statuses. Explicit external
+// diagnostics may retain a bounded held-prompt tail and synthetic scope ids,
+// never credentials; the fixture profile itself is still removed. Runner receipts remain Claude 5's and
 // root's; results here are Claude 4 lane evidence only.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { launchVerificationServer, runControlMurage, type VerificationServer } from "../../../scripts/control-murage.ts";
@@ -87,8 +89,8 @@ export async function runAdapterLikeRunner(adapter: B34Adapter, opts: AdapterHar
   const blocked = unusable(adapter, row);
   if (blocked) throw new Error(blocked);
   const checks: Check[] = [], observed: Observed[] = [], result: HarnessRunResult = { artifacts: null, lease: { before: null, after: null } };
-  const instrumentationSource = adapter.launch?.instrumentationSource;
-  const fixture = instrumentationSource === undefined ? await launchVerificationServer() : await launchVerificationServer(process.env, undefined, { instrumentationSource });
+  const instrumentationSource = "process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';\n" + (adapter.launch?.instrumentationSource ?? "");
+  const fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource, dumpLog: true });
   const dataDir = fixture.info.dataDir;
   let database: DatabaseSync | undefined, headers: Record<string, string> = {};
   async function refreshDesktopAuthority() {
@@ -131,9 +133,32 @@ export async function runAdapterLikeRunner(adapter: B34Adapter, opts: AdapterHar
       return made.body.bot as Bot;
     },
     async send(bot, text, hold = false, threadId) {
+      const history = () => { try { return readFileSync(fixture.fixtureDumpLogPath, "utf8").split("\n").filter(Boolean); } catch { return []; } };
+      const prior = history().length;
       rmSync(fixture.fixtureDumpPath, { force: true });
       await ctx.setup(null, "POST", `/api/bots/${bot.id}/messages`, threadId === undefined ? { text } : { threadId, text }, 202);
-      const dump = await ctx.until<Dump>(`fake provider accepted ${text}`, () => { try { return withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")) as Dump); } catch { return undefined; } });
+      const dump = await ctx.until<Dump>(`fake provider accepted ${text}`, () => {
+        for (const line of history().slice(prior).reverse()) {
+          try {
+            const candidate = withTurnSecrets(JSON.parse(line) as Dump);
+            if (String(candidate.prompt?.message?.content ?? "").includes(text)) return candidate;
+          } catch { /* a complete current native prompt is required */ }
+        }
+        return undefined;
+      });
+      const evidence = process.env.SC_ISSUES_EVIDENCE;
+      if (hold && evidence) {
+        const away = relative(process.cwd(), evidence);
+        if (!isAbsolute(evidence) || !(away.startsWith("..") || isAbsolute(away))) throw new Error("B34 diagnostics must stay outside the checkout");
+        const servers = (dump as Dump & { mcpConfig?: { mcpServers?: Record<string, { env?: Record<string, string> }> } }).mcpConfig?.mcpServers ?? {};
+        const state = await ctx.api("GET", "/api/bots?messages=0");
+        const current = state.body?.bots?.find((item: { id: string }) => item.id === bot.id);
+        mkdirSync(evidence, { recursive: true });
+        writeFileSync(join(evidence, `b34-${row}-held.json`), JSON.stringify({ requestedThread: threadId ?? bot.threadId,
+          observedThreads: Object.values(servers).map(server => server.env?.MURAGE_THREAD_ID).filter(Boolean),
+          busy: current?.busy, tasks: current?.tasks?.map((task: { threadId: string; busy: boolean }) => ({ threadId: task.threadId, busy: task.busy })),
+          promptTail: String(dump.prompt?.message?.content ?? "").slice(-2000) }));
+      }
       if (!hold) await ctx.settled("bot", bot.id);
       return dump;
     },

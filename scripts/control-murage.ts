@@ -1,9 +1,11 @@
 #!/usr/bin/env -S node --experimental-strip-types
+import "../shared/win-hide-child-process.mjs";
+import { withHideInherit } from '../shared/win-hide-child-process.mjs';
 // Thin, agent-friendly CLI over the same guarded MCP operations exposed to
 // external clients. It deliberately owns no second API client or wait loop.
 import { spawn, type ChildProcess } from "node:child_process";
 import { request as httpRequest } from "node:http";
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, readdirSync, mkdtempSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -11,7 +13,8 @@ import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 
 import { handleToolCall, request, validateBaseUrl } from "./mcp-server.ts";
 import { readMcpAccessKey } from "../server/mcp-access.ts";
-import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
+import { removeTempDir, removeTempDirSync } from "../server/testing/cleanup.ts";
+import { stopFixtureServer } from "../server/testing/platform-fixtures.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
 import { gitBashPath } from "../server/tool-discovery.ts";
 import { TERMS_VERSION } from "../shared/terms.ts";
@@ -24,6 +27,30 @@ const MUTATING = new Set(["new-bot", "new-channel", "send", "send-channel", "int
  * so a call to one of them finds its access key without every caller passing
  * the folder (audit C5). */
 const fixtureDataDirs = new Map<string, string>();
+
+// Native grant producer: scperf-p1. Verification-server consumer: c4-misc-d.
+// The unit exclusion stub cannot enforce grants for a real server's workers.
+// Keep the compiled addon outside every server's disposable data directory so
+// sequential fixtures never inherit the path of an already closed fixture.
+let verificationMeter: Promise<string> | undefined;
+function verificationMeterPath(): Promise<string> {
+  return verificationMeter ??= (async () => {
+    const directory = mkdtempSync(join(tmpdir(), "murage-verification-meter-"));
+    try {
+      const { prepareMemoryMeterFixture } = await import("../server/memory/testing/native-meter-fixture.ts");
+      prepareMemoryMeterFixture(directory);
+      const { ioMeterNativePath } = await import("../server/io-meter.ts");
+      const path = ioMeterNativePath();
+      if (!path) throw new Error("Verification server native meter is unavailable");
+      process.once("exit", () => removeTempDirSync(directory));
+      return path;
+    } catch (error) {
+      await removeTempDir(directory);
+      verificationMeter = undefined;
+      throw error;
+    }
+  })();
+}
 
 export class ControlMurageError extends Error {
   readonly hint?: string;
@@ -349,6 +376,8 @@ export async function launchVerificationServer(
   signal?: AbortSignal,
   options: {
     instrumentationSource?: string;
+    /** Qualify the complete spend-pause flow in this isolated child while release admission stays off. */
+    qualifySpendPause?: boolean;
     cloud?: { publicOrigin: string; bootstrapSecret: string };
     /** Fixture startup allowance for slow filesystems or a loaded machine; does
      *  not change turn deadlines. Default 120 s, or MURAGE_VERIFY_READY_TIMEOUT_MS. */
@@ -357,8 +386,8 @@ export async function launchVerificationServer(
     /** Extra MURAGE_ANNOUNCEMENTS_* variables, e.g. a loopback stub feed, or
      *  a companion launch proof for a test standing in for the phone's door, or
      *  the fake engine's scripted background-helper run (see __fixture_background__
-     *  in server/testing/fake-claude-cli.ts). */
-    env?: Partial<Record<"MURAGE_ANNOUNCEMENTS_URL" | "MURAGE_ANNOUNCEMENTS_TEST_KEY" | "MURAGE_COMPANION_TOKEN" | "FAKE_CLAUDE_BG_STAGGER_DIR" | "FAKE_CLAUDE_BG_TASKS" | "FAKE_CLAUDE_BG_ASKS" | "FAKE_CLAUDE_BG_LOG", string>>;
+     *  in server/testing/fake-claude-cli.ts), or an owned test native meter. */
+    env?: Partial<Record<"MURAGE_ANNOUNCEMENTS_URL" | "MURAGE_ANNOUNCEMENTS_TEST_KEY" | "MURAGE_COMPANION_TOKEN" | "FAKE_CLAUDE_BG_STAGGER_DIR" | "FAKE_CLAUDE_BG_TASKS" | "FAKE_CLAUDE_BG_ASKS" | "FAKE_CLAUDE_BG_LOG" | "NODE_ENV" | "MURAGE_ENGINE_EXCLUSION_PATH", string>>;
     /** Give the child a HOME outside its data folder, so everything at the
      * data folder's root is Murage's own (data-dir-inventory.test.ts). */
     separateHome?: boolean;
@@ -378,6 +407,11 @@ export async function launchVerificationServer(
     dumpLog?: boolean;
   } = {},
 ): Promise<VerificationServer> {
+  const exclusionStub = join(ROOT, "server", "testing", "engine-exclusion-stub.cjs");
+  const nativeMeter = process.platform !== "win32" && parentEnv.NODE_ENV === "test"
+    && parentEnv.MURAGE_TEST_DOOR_TOKEN && parentEnv.MURAGE_ENGINE_EXCLUSION_PATH === exclusionStub
+    ? await verificationMeterPath() : undefined;
+  if (nativeMeter) parentEnv = { ...parentEnv, MURAGE_ENGINE_EXCLUSION_PATH: nativeMeter };
   const port = await freePortBlock([0, 1], options.portRange?.from, options.portRange?.span);
   if (signal?.aborted) throw new ControlMurageError("verification launch cancelled");
   const url = `http://127.0.0.1:${port}`;
@@ -422,6 +456,16 @@ export async function launchVerificationServer(
     },
   }, null, 2));
 
+  let fixtureExclusion = parentEnv.MURAGE_ENGINE_EXCLUSION_PATH;
+  if (parentEnv.NODE_ENV === "test" && parentEnv.MURAGE_TEST_DOOR_TOKEN) {
+    // A spawned memory worker needs the real native byte-admission VFS.
+    // The engine-lock stand-in cannot acknowledge checked background writes.
+    try {
+      const { prepareMemoryMeterFixture } = await import("../server/memory/testing/native-meter-fixture.ts");
+      prepareMemoryMeterFixture(parentEnv.MURAGE_FIXTURE_IMPORT_ROOT ?? home);
+      fixtureExclusion = process.env.MURAGE_ENGINE_EXCLUSION_PATH;
+    } catch (error) { await removeFixtureDirs(); throw error; }
+  }
   const childEnv: NodeJS.ProcessEnv = {};
   const platformKeys = new Set(["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL", "TZ"]);
   for (const [key, value] of Object.entries(parentEnv)) {
@@ -460,7 +504,7 @@ export async function launchVerificationServer(
     ...(parentEnv.MURAGE_TEST_DOOR_TOKEN ? { MURAGE_COMPANION_TOKEN: parentEnv.MURAGE_TEST_DOOR_TOKEN } : {}),
     // The suite's stand-in for the native engine-exclusion addon (server/testing/engine-exclusion-stub.cjs), which a deletion of
     // an engine's files needs before it changes anything. The override is honored only with NODE_ENV=test.
-    ...(parentEnv.MURAGE_TEST_DOOR_TOKEN && parentEnv.MURAGE_ENGINE_EXCLUSION_PATH ? { NODE_ENV: "test", MURAGE_ENGINE_EXCLUSION_PATH: parentEnv.MURAGE_ENGINE_EXCLUSION_PATH } : {}),
+    ...(parentEnv.MURAGE_TEST_DOOR_TOKEN && fixtureExclusion ? { NODE_ENV: "test", MURAGE_ENGINE_EXCLUSION_PATH: fixtureExclusion } : {}),
     ...(options.turnLog ? {
       FAKE_CLAUDE_DUMP_EACH_TURN: "1",
       FAKE_CLAUDE_DUMP_LOG: fixtureTurnLogPath,
@@ -483,23 +527,45 @@ export async function launchVerificationServer(
   // Optional fixture-owned observation only. Existing callers retain exactly
   // their previous launch; no preload path or source enters a live app config.
   const instrumentationPath = join(dataDir, ".verification-instrumentation.mjs");
-  if (options.instrumentationSource !== undefined) {
+  {
+    // Preserve the isolated fake CLI's scripted inputs at the driver handoff.
+    // A captured owner shell deliberately omits arbitrary server variables.
+    const fakeEnvironmentSource = `
+    await import(${JSON.stringify(pathToFileURL(join(ROOT, "server", "testing", "mount-evidence-preload.mjs")).href)});
+    {
+      const {registerHooks: registerFixtureHooks} = await import('node:module');
+      registerFixtureHooks({load(url, context, next) {
+        const loaded = next(url, context);
+        if (${options.qualifySpendPause === true} && url.endsWith('/server/spend-gate.ts')) {
+          const source = String(loaded.source);
+          const anchor = 'options.enabled ?? PAUSE_RENDERER_CARD_SHIPPED';
+          if (!source.includes(anchor)) throw new Error('Verification spend-pause anchor missing');
+          return {...loaded, source: source.replace(anchor, 'options.enabled ?? true')};
+        }
+        if (!url.endsWith('/server/drivers/claude.ts')) return loaded;
+        const source = String(loaded.source);
+        const anchor = 'extra: { ...ownedTurnNames(env, stripOwned), ...claudeNames,';
+        if (!source.includes(anchor)) throw new Error('Verification CLI environment anchor missing');
+        return {...loaded, source: source.replace(anchor, anchor + " ...Object.fromEntries(Object.entries({...process.env, ...env}).filter(([name]) => name.startsWith('FAKE_'))),")};
+      }});
+    }
+    `;
     // `--import` is inherited by every worker thread the server starts (the WAL checkpointer, the upgrade counter, ...), so the fixture source would
     // run again in each of them: a second Store, second fixture rows, and a fixture file overwritten with ids the server never loaded. It runs in the
     // main thread only, from a file of its own the preload imports there.
     const bodyPath = join(dataDir, ".verification-instrumentation.body.mjs");
-    writeFileSync(bodyPath, options.instrumentationSource, { mode: 0o600 });
+    writeFileSync(bodyPath, fakeEnvironmentSource + "\n" + (options.instrumentationSource ?? ""), { mode: 0o600 });
     writeFileSync(instrumentationPath, `import { isMainThread } from "node:worker_threads";\nif (isMainThread) await import(${JSON.stringify(pathToFileURL(bodyPath).href)});\n`, { mode: 0o600 });
   }
   function startChild() {
     const log = openSync(logPath, "a", 0o600);
-    try { const launched = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentationPath).href]), join(ROOT, "server", "index.ts")], {
+    try { const launched = spawn(process.execPath, ["--experimental-strip-types", "--import", pathToFileURL(instrumentationPath).href, join(ROOT, "server", "index.ts")], withHideInherit({
     cwd: ROOT,
     env: childEnv,
     // Cloud fixtures keep the private boot pipe at FD3 and satisfy the
-    // supervisor's separate IPC contract at FD4; desktop stdio is unchanged.
-    stdio: options.cloud ? ["ignore", log, log, "pipe", "ipc"] : ["ignore", log, log],
-    });
+    // supervisor's separate IPC contract at FD4; desktop has an IPC channel too, for graceful Windows shutdown.
+    stdio: options.cloud ? ["ignore", log, log, "pipe", "ipc"] : ["ignore", log, log, "ipc"],
+    }));
     if(options.cloud) (launched.stdio[3] as import("node:stream").Writable).on("error", () => {}).end(JSON.stringify({ version: 1, bootstrapSecret: options.cloud.bootstrapSecret, credentials: {} }));
     return launched; } finally { closeSync(log); }
   }
@@ -520,7 +586,7 @@ export async function launchVerificationServer(
   try {
     await ready();
   } catch (error) {
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeFixtureDirs();
     throw error;
   }
@@ -539,25 +605,28 @@ export async function launchVerificationServer(
       if (closed || restarting) throw new ControlMurageError("verification fixture is closed or restarting");
       restarting = true;
       try {
-        await waitForExit(child, { signal: "SIGTERM" });
+        await stopFixtureServer(child);
         logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
         child = startChild();
         fixture.child = child;
         fixture.info = { url, pid: child.pid!, dataDir, logPath };
         try { await ready(); }
-        catch (error) { await waitForExit(child, { signal: "SIGTERM" }); throw error; }
+        catch (error) { await stopFixtureServer(child); throw error; }
       } finally { restarting = false; }
     },
     async stop() {
       if (restarting) throw new ControlMurageError("verification fixture is restarting");
-      await waitForExit(child, { signal: "SIGTERM" });
+      await stopFixtureServer(child);
     },
     async close() {
       if (closed) return;
       if (restarting) throw new ControlMurageError("verification fixture is restarting");
       closed = true;
       fixtureDataDirs.delete(url);
-      await waitForExit(child, { signal: "SIGTERM" });
+      await stopFixtureServer(child);
+      // Diagnostics only: a lane that wants the server logs of a run (its container's temp dir is discarded) creates <repo>/.fixture-logs.
+      const tee = join(ROOT, ".fixture-logs");
+      if (existsSync(tee)) for (const name of readdirSync(evidenceDir)) if (name.endsWith(`-${process.pid}.log`)) copyFileSync(join(evidenceDir, name), join(tee, name));
       await removeFixtureDirs();
     },
   };

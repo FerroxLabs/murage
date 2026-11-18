@@ -1,3 +1,4 @@
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Dictation clean-up: raw speech-to-text in, a tidy chat message out.
 //
 // ADAPTED FROM FLOW. The system prompt below is Flow's "Polished" prompt
@@ -20,6 +21,7 @@
 // output, and the guardrails in `acceptCleaned`.
 import { fluxCallHeadersVia } from "../flux-memory-headers.ts";
 import type { VoiceEndpoint } from "./voice-routes.ts";
+import { authorizeFluxDispatch } from "../flux-start-gate.ts";
 
 /** The longest a person waits on clean-up before getting the raw text. */
 export const CLEANUP_TIMEOUT_MS = 4000;
@@ -50,6 +52,14 @@ export function cleanupNames(input: { bots?: string[]; rooms?: string[]; glossar
     if (out.length >= 200) break;
   }
   return out;
+}
+
+/** Match the complete name in the raw transcript, without matching inside a word. */
+function nameInTranscript(raw: string, name: string): boolean {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return false;
+  const escaped = parts.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+  return new RegExp(`(?:^|[^\\p{L}\\p{M}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{M}\\p{N}_])`, "iu").test(raw);
 }
 
 /** Names go into the prompt as data: no newlines, no quotes to break out of. */
@@ -166,17 +176,22 @@ export async function cleanDictation(raw: string, options: CleanupOptions): Prom
   const original = { text: raw, cleaned: false };
   const { endpoint } = options;
   if (!endpoint || shouldSkipCleanup(raw)) return original;
+  // Product names are fixed vocabulary. Owner names only leave with words that mention them.
+  const names = options.names.filter((name) => FIXED_NAMES.some((fixed) => fixed.toLowerCase() === name.toLowerCase()) || nameInTranscript(raw, name));
+  // The generic prompt works without a target name, so an unmentioned target is omitted too.
+  const target = options.target && nameInTranscript(raw, options.target) ? options.target : undefined;
   const call = options.fetchImpl ?? fetch;
   // Room for a list's markers and a longer spelling of a number, never an essay.
   const maxTokens = Math.min(2048, Math.max(96, wordsOf(raw).length * 4));
   try {
-    const res = await call(`${endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+    if (endpoint.via === "flux") await authorizeFluxDispatch(endpoint.key); // spend gate
+    const res = await call(fluxRouteFor(`${endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`).requestUrl, {
       method: "POST",
       headers: { authorization: `Bearer ${endpoint.key}`, "content-type": "application/json", ...fluxCallHeadersVia("dictation-cleanup", endpoint.via) },
       body: JSON.stringify({
         model: endpoint.model,
         messages: [
-          { role: "system", content: buildCleanupPrompt({ target: options.target, names: options.names }) },
+          { role: "system", content: buildCleanupPrompt({ target, names }) },
           { role: "user", content: raw },
         ],
         ...sampling(endpoint, maxTokens),
@@ -184,10 +199,10 @@ export async function cleanDictation(raw: string, options: CleanupOptions): Prom
       signal: AbortSignal.timeout(options.timeoutMs ?? CLEANUP_TIMEOUT_MS),
     });
     if (!res.ok) return original;
-    const body = (await res.json().catch(() => null)) as { choices?: Array<{ message?: { content?: unknown } }> } | null;
+    const body = (await registerBusyloopPayloadSite("read", res.json()).catch(() => null)) as { choices?: Array<{ message?: { content?: unknown } }> } | null;
     const content = body?.choices?.[0]?.message?.content;
     if (typeof content !== "string") return original;
-    const accepted = acceptCleaned(raw, content, options.names);
+    const accepted = acceptCleaned(raw, content, names);
     return accepted === null ? original : { text: accepted, cleaned: true };
   } catch {
     return original;

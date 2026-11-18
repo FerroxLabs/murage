@@ -3,7 +3,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -45,7 +45,7 @@ async function open(page: Page, width: number, options: { flags?: boolean; missi
   const errors: string[] = [], calls: Array<{ path: string; body: unknown }> = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("https://**/*", (route) => route.abort());
-  await page.addInitScript(() => localStorage.setItem("murage-email-gate", "skipped"));
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.setViewportSize({ width, height: 900 });
   const project: ProjectRead = {
     lifecycle: options.closed ? "closed" : "open",

@@ -14,7 +14,9 @@ export function stableJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-export type WarmKeyParts = Record<string, unknown>;
+/** CLI drivers explicitly distinguish S1 mounted single-use processes from
+ * the unmounted pool. Other drivers may omit this field. */
+export type WarmKeyParts = Record<string, unknown> & { mounted?: boolean };
 
 /** What a warm key keeps in memory. Never the values: a field can carry a
  * secret (an MCP server's env, args or headers; an injected credential), and a

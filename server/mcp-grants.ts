@@ -21,7 +21,8 @@
 // A grant never proves ownership: a send made with one is marked unproven,
 // exactly as a message from any other script on this computer.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { chmodSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import type { IncomingHttpHeaders } from "node:http";
 import { join } from "node:path";
 

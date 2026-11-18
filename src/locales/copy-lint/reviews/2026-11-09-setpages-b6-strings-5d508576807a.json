@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sonnet-b6",
+  "date": "2026-11-09",
+  "base": "817635153",
+  "scope": "setpages-b6-strings",
+  "strings": {
+    "en:settings.claudeCode.linkedFiles": {
+      "text": "Claude Code files are reached through a link, so Murage did not read them.",
+      "en": "Claude Code files are reached through a link, so Murage did not read them.",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.linkedFiles": {
+      "text": "Die Claude-Code-Dateien sind über eine Verknüpfung erreichbar. Deshalb hat Murage sie nicht gelesen.",
+      "en": "Claude Code files are reached through a link, so Murage did not read them.",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.linkedFiles": {
+      "text": "Los archivos de Claude Code se encuentran a través de un enlace, por eso Murage no los ha leído.",
+      "en": "Claude Code files are reached through a link, so Murage did not read them.",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.linkedFiles": {
+      "text": "Les fichiers de Claude Code sont accessibles par un lien, donc Murage ne les a pas lus.",
+      "en": "Claude Code files are reached through a link, so Murage did not read them.",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.linkedFiles": {
+      "text": "Claude Code की फ़ाइलें एक लिंक के ज़रिए मिलती हैं, इसलिए Murage ने उन्हें नहीं पढ़ा।",
+      "en": "Claude Code files are reached through a link, so Murage did not read them.",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.linkedFiles": {
+      "text": "Claude Codeのファイルはリンク経由で参照されているため、Murageは読み取りませんでした。",
+      "en": "Claude Code files are reached through a link, so Murage did not read them.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.linkedFiles": {
+      "text": "Os arquivos do Claude Code são acessados por um link, por isso o Murage não os leu.",
+      "en": "Claude Code files are reached through a link, so Murage did not read them.",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.linkedFiles": {
+      "text": "Claude Code 文件通过链接访问，因此 Murage 没有读取它们。",
+      "en": "Claude Code files are reached through a link, so Murage did not read them.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

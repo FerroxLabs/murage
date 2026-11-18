@@ -1,0 +1,13 @@
+diff --git a/server/drivers/codex-hook.ts b/server/drivers/codex-hook.ts
+index 48569f9855..40e08cf66e 100644
+--- a/server/drivers/codex-hook.ts
++++ b/server/drivers/codex-hook.ts
+@@ -781,7 +781,7 @@ export class CodexHookGate {
+         const serialized = JSON.stringify(binding === null ? value : { code: hookCodeOf(event, value) }) + "\n";
+         releaseNativeAnswer(binding, "codex:hook-socket", serialized,
+           () => NotModelRequest("Local permission hook answer; no model request", socket.end(serialized, (error?: Error | null) => receipt?.(!error))));
+-      } catch (e) { try { admittedTurn?.onFencedRefusal?.(e, socket); } finally { receipt?.(false, e); socket.destroy(); } }
++      } catch (e) { try { receipt?.(false, e); } finally { admittedTurn?.onFencedRefusal?.(e, socket); socket.destroy(); } }
+     };
+     const lost = () => {
+       if (done) return;

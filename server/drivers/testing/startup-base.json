@@ -1,0 +1,173 @@
+{
+  "sourceSha": "292df98d80a1c55db3e6f232166fc05162b632ab",
+  "scope": "Complete Claude spawn argv and Codex turn/start payload, captured by eight level runs on archived BASE; only ephemeral identities normalized",
+  "claude": {
+    "instancePermissionMode": "acceptEdits",
+    "ask": "acceptEdits",
+    "auto": "acceptEdits",
+    "full": "acceptEdits",
+    "unlimited": "acceptEdits"
+  },
+  "codex": {
+    "version": "0.147.0",
+    "fullAuto": false,
+    "ask": {},
+    "auto": {},
+    "full": {
+      "approvalPolicy": "untrusted"
+    },
+    "unlimited": {
+      "approvalPolicy": "untrusted"
+    }
+  },
+  "claudeFull": {
+    "ask": [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--input-format",
+      "stream-json",
+      "--verbose",
+      "--include-partial-messages",
+      "--permission-mode",
+      "acceptEdits",
+      "--model",
+      "claude-sonnet-5-5",
+      "--permission-prompt-tool",
+      "mcp__muragebox__approve",
+      "--mcp-config",
+      "/tmp/murage-mcp-<temp>/mcp.json",
+      "--allowedTools",
+      "mcp__muragebox__approve,mcp__muragebox__ask_user",
+      "--strict-mcp-config",
+      "--settings",
+      "/tmp/murage-test-home-<temp>/.murage/claude-private/<settings>.json",
+      "--append-system-prompt-file",
+      "/tmp/murage-system-<temp>/prompt.txt",
+      "--session-id",
+      "<uuid>"
+    ],
+    "auto": [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--input-format",
+      "stream-json",
+      "--verbose",
+      "--include-partial-messages",
+      "--permission-mode",
+      "acceptEdits",
+      "--model",
+      "claude-sonnet-5-5",
+      "--permission-prompt-tool",
+      "mcp__muragebox__approve",
+      "--mcp-config",
+      "/tmp/murage-mcp-<temp>/mcp.json",
+      "--allowedTools",
+      "mcp__muragebox__approve,mcp__muragebox__ask_user",
+      "--strict-mcp-config",
+      "--settings",
+      "/tmp/murage-test-home-<temp>/.murage/claude-private/<settings>.json",
+      "--append-system-prompt-file",
+      "/tmp/murage-system-<temp>/prompt.txt",
+      "--session-id",
+      "<uuid>"
+    ],
+    "full": [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--input-format",
+      "stream-json",
+      "--verbose",
+      "--include-partial-messages",
+      "--permission-mode",
+      "acceptEdits",
+      "--model",
+      "claude-sonnet-5-5",
+      "--permission-prompt-tool",
+      "mcp__muragebox__approve",
+      "--mcp-config",
+      "/tmp/murage-mcp-<temp>/mcp.json",
+      "--allowedTools",
+      "mcp__muragebox__approve,mcp__muragebox__ask_user",
+      "--strict-mcp-config",
+      "--settings",
+      "/tmp/murage-test-home-<temp>/.murage/claude-private/<settings>.json",
+      "--append-system-prompt-file",
+      "/tmp/murage-system-<temp>/prompt.txt",
+      "--session-id",
+      "<uuid>"
+    ],
+    "unlimited": [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--input-format",
+      "stream-json",
+      "--verbose",
+      "--include-partial-messages",
+      "--permission-mode",
+      "acceptEdits",
+      "--model",
+      "claude-sonnet-5-5",
+      "--permission-prompt-tool",
+      "mcp__muragebox__approve",
+      "--mcp-config",
+      "/tmp/murage-mcp-<temp>/mcp.json",
+      "--allowedTools",
+      "mcp__muragebox__approve,mcp__muragebox__ask_user",
+      "--strict-mcp-config",
+      "--settings",
+      "/tmp/murage-test-home-<temp>/.murage/claude-private/<settings>.json",
+      "--append-system-prompt-file",
+      "/tmp/murage-system-<temp>/prompt.txt",
+      "--session-id",
+      "<uuid>"
+    ]
+  },
+  "codexFull": {
+    "ask": {
+      "threadId": "codex-thread-1",
+      "model": "gpt-fake-default",
+      "input": [
+        {
+          "type": "text",
+          "text": "To ask the owner something, call ask_user on the agents server. With no tools, write the same input as JSON in a ```murage-question fenced block instead. Then end your turn: the answer arrives as the owner's next message. Whenever you need something the owner could pick instead of type, such as a date, a time, days of the week, a length, whether to go ahead with a change, or one of a few options, show a widget form, in follow-up questions too, without being asked. When the owner wants to change something that already exists, such as a routine, a reminder or a booking, show it as a form prefilled with how it is set now (each field's defaultValue), say in the caption that this is how it is set now, and give it a confirm button. Call show_widget on the agents server; with no tools, write the same widget as JSON in a ```murage-widget fenced block instead.\n\nfixture"
+        }
+      ]
+    },
+    "auto": {
+      "threadId": "codex-thread-1",
+      "model": "gpt-fake-default",
+      "input": [
+        {
+          "type": "text",
+          "text": "To ask the owner something, call ask_user on the agents server. With no tools, write the same input as JSON in a ```murage-question fenced block instead. Then end your turn: the answer arrives as the owner's next message. Whenever you need something the owner could pick instead of type, such as a date, a time, days of the week, a length, whether to go ahead with a change, or one of a few options, show a widget form, in follow-up questions too, without being asked. When the owner wants to change something that already exists, such as a routine, a reminder or a booking, show it as a form prefilled with how it is set now (each field's defaultValue), say in the caption that this is how it is set now, and give it a confirm button. Call show_widget on the agents server; with no tools, write the same widget as JSON in a ```murage-widget fenced block instead.\n\nfixture"
+        }
+      ]
+    },
+    "full": {
+      "threadId": "codex-thread-1",
+      "model": "gpt-fake-default",
+      "input": [
+        {
+          "type": "text",
+          "text": "To ask the owner something, call ask_user on the agents server. With no tools, write the same input as JSON in a ```murage-question fenced block instead. Then end your turn: the answer arrives as the owner's next message. Whenever you need something the owner could pick instead of type, such as a date, a time, days of the week, a length, whether to go ahead with a change, or one of a few options, show a widget form, in follow-up questions too, without being asked. When the owner wants to change something that already exists, such as a routine, a reminder or a booking, show it as a form prefilled with how it is set now (each field's defaultValue), say in the caption that this is how it is set now, and give it a confirm button. Call show_widget on the agents server; with no tools, write the same widget as JSON in a ```murage-widget fenced block instead.\n\nfixture"
+        }
+      ],
+      "approvalPolicy": "untrusted"
+    },
+    "unlimited": {
+      "threadId": "codex-thread-1",
+      "model": "gpt-fake-default",
+      "input": [
+        {
+          "type": "text",
+          "text": "To ask the owner something, call ask_user on the agents server. With no tools, write the same input as JSON in a ```murage-question fenced block instead. Then end your turn: the answer arrives as the owner's next message. Whenever you need something the owner could pick instead of type, such as a date, a time, days of the week, a length, whether to go ahead with a change, or one of a few options, show a widget form, in follow-up questions too, without being asked. When the owner wants to change something that already exists, such as a routine, a reminder or a booking, show it as a form prefilled with how it is set now (each field's defaultValue), say in the caption that this is how it is set now, and give it a confirm button. Call show_widget on the agents server; with no tools, write the same widget as JSON in a ```murage-widget fenced block instead.\n\nfixture"
+        }
+      ],
+      "approvalPolicy": "untrusted"
+    }
+  }
+}

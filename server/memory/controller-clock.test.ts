@@ -1,3 +1,4 @@
+import {settleFixtureIndexGrant} from "./testing/helper-permits.ts";
 // R3: the pacing deadline and the wake-up delay are measured on the monotonic
 // clock (performance.now), so setting the wall clock back cannot hold work off
 // beyond the pause a cycle earned (1 s at most). Persisted lease timestamps keep
@@ -30,12 +31,13 @@ beforeEach(() => {
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep(); resetParkReconcile();
   state.claimCost = 0; state.cost = 0; state.mono = 0; state.claims = 0; sent = [];
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });
+  vi.setSystemTime(new Date("2026-10-10T00:00:00Z"));
   // Monotonic time: follows the fake wall clock while it advances, and is kept continuous when the wall clock is set back.
   vi.spyOn(performance, "now").mockImplementation(() => Date.now() + state.cost + state.mono);
   controller = new MemoryWorkerController();
   internals = controller as unknown as Internals;
   internals.child = { kill() {}, on() {}, send: (message: any) => {
-    if (message.type === "index") internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" });
+    if (message.type === "index") { settleFixtureIndexGrant(message,event=>internals.onWorkerMessage(internals.child,event)); internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
     else sent.push(message);
   } };
   internals.ready = true;

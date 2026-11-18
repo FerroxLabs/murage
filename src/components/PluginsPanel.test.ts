@@ -13,7 +13,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
+import { act, createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -555,7 +555,7 @@ describe("the connected-apps lock", () => {
   });
 
   it("says exactly what unlocking buys, in English, under connectedApps.lock.*", () => {
-    // No count is claimed that the code can prove: "500+" was never verified
+    // No count is claimed before the catalog reports it
     // against the live catalogue, so the copy names apps instead of a number.
     expect(en["connectedApps.lock.title"]).toBe("Connect your apps");
     expect(en["connectedApps.lock.body"]).toBe(
@@ -810,7 +810,7 @@ describe("audit round 1, renderer", () => {
     expect(rows).toMatch(/if \(next\.width !== current\.width\) heights\.current\.clear\(\);/);
   });
   it("A10: the Browse all count is the count label, not a split claim", () => {
-    expect(panel).toContain("const countLabel = appCountLabel(catalog?.total);");
+    expect(panel).toContain("const browseAllParts = appCountParts(catalog?.total);");
     expect(panel).not.toMatch(/\.split\(","\)\[0\]/);
   });
 });
@@ -879,4 +879,129 @@ describe("the panel's sign-in wait ends in words, not a spinner", () => {
     expect(panel).toMatch(/PANEL_SIGN_IN_POLLS = 120/);
     expect(panel).toMatch(/\+\+tries >= PANEL_SIGN_IN_POLLS[\s\S]{0,500}expirePendingSignIn/);
   });
+});
+
+it("hold_expires_locally_and_has_an_accessible_absolute_time", async () => {
+  const { connectedAppsAdmissionTime } = await import("./PluginsPanel");
+  const now = Date.parse("2026-11-01T12:00:00Z"), retryAt = now + 7200_000;
+  expect(connectedAppsAdmissionTime({ outcome: "held", reason: "rate_limited", retryAt }, now)).toBeTruthy();
+  expect(connectedAppsAdmissionTime({ outcome: "held", reason: "rate_limited", retryAt }, retryAt)).toBeNull();
+  const source = readFileSync(new URL("./PluginsPanel.tsx", import.meta.url), "utf8");
+  expect(source).toContain('dateTime={new Date(admission!.retryAt!).toISOString()}');
+  expect(source).toContain('result.outcome === "held"');
+  expect(source).toContain('admissionHeld && (action.id === "claim" || action.id === "reconnect")');
+});
+
+it("T6 recovery failure has exact plain copy and the existing reconnect Retry action", async () => {
+  const { connectedAppsRecoveryMessage } = await import("./PluginsPanel");
+  expect(connectedAppsRecoveryMessage({ outcome: "failed", reason: "credential_recovery_failed", attempted: false })).toBe("Connected apps recovery could not finish. Try again.");
+  expect(connectedAppsRecoveryMessage({ outcome: "held", reason: "rate_limited", retryAt: Date.now() + 1000 })).toBeNull();
+  expect(panel).toContain('runNoticeAction("reconnect")');
+});
+
+
+// Owners: composio-429-j owns the recovery UI producer and desktop lifecycle consumer.
+it("J rendered recovery Retry uses owner admission and deletes one exhausted inactive capability without a second mint", async () => {
+  const { installDOMHarness, mount, settle } = await import("../testing/dom-harness");
+  const inventory = await import("../lib/connected-apps-preload");
+  const { createComposioLifecycle } = await import("../../electron/composio-lifecycle.mjs");
+  const { applyComposioCustodyDelta, readComposioCustody } = await import("../../electron/managed-composio.mjs");
+  const { fluxKeyFingerprint } = await import("../../electron/flux-composio-token.mjs");
+  const { runInNewContext } = await import("node:vm");
+  const { createRequire } = await import("node:module");
+  const { JSDOM } = createRequire(import.meta.url)("jsdom");
+  const { createComposioAdmissionHost } = await import("../../electron/composio-admission-port.mjs");
+  const child = await import("../../server/composio-lifecycle.ts");
+  const dom = new JSDOM("", { url: "http://localhost", pretendToBeVisual: true });
+  for (const key of ["window", "document", "HTMLElement", "HTMLDialogElement", "HTMLInputElement", "DOMRect", "getComputedStyle", "Event", "navigator", "localStorage", "requestAnimationFrame", "cancelAnimationFrame"]) {
+    vi.stubGlobal(key, dom.window[key]);
+  }
+  const restore = installDOMHarness(), previousConfig = storeStub.config;
+  const origin = "https://broker.example.test", minted = "c".repeat(64), previous = "a".repeat(64);
+  let document: Record<string, unknown> = { fluxApiKey: "sk-flux-fixture-owner", fluxComposioBrokerToken: previous,
+    fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint("sk-flux-fixture-owner"), fluxComposioBrokerTokenExpiresAt: "2099-01-01T00:00:00.000Z" };
+  let holds: unknown[] = [], cut = true;
+  const deletes: string[] = [], mint = vi.fn();
+  let authority: ReturnType<typeof createComposioLifecycle>, host: ReturnType<typeof createComposioAdmissionHost> | undefined;
+  const saveCustody: NonNullable<Parameters<typeof createComposioLifecycle>[0]["savePendingRevocations"]> = async (entries, delta) => {
+    document.composioPendingRevocations = applyComposioCustodyDelta(document.composioPendingRevocations, entries, delta);
+    if (cut) { authority.dispose(); throw new Error("fixture crash after W1"); }
+    return readComposioCustody(document.composioPendingRevocations);
+  };
+  const attach = () => createComposioLifecycle({
+    getConfiguration: () => ({ fluxBrokerUrl: origin, prepareLegacy: false }), getCredentials: () => document,
+    readDurableCredentials: async () => document, requireDurableCustody: true,
+    getPendingRevocations: () => readComposioCustody(document.composioPendingRevocations),
+    savePendingCredentialWrite: saveCustody, savePendingRevocations: saveCustody,
+    saveCredentials: async next => { document = { ...next, composioPendingRevocations: document.composioPendingRevocations }; return true; },
+    store: { load: () => holds as never[], save: rows => { holds = structuredClone(rows); } },
+    transport: async (_url, init) => {
+      if (init?.method === "DELETE") { deletes.push(new Headers(init.headers).get("authorization")!.slice(7)); return Response.json({}); }
+      mint(); return Response.json({ token: minted, expiresAt: "2099-01-01T00:00:00.000Z" });
+    },
+  });
+  authority = attach();
+  try {
+    await authority.request({ operation: "reconnect", force: true });
+    expect(mint).toHaveBeenCalledTimes(1); expect(deletes).toEqual([]);
+    cut = false;
+    const receipt = readComposioCustody(document.composioPendingRevocations)[0];
+    expect(receipt).toMatchObject({ token: minted, previous, replacement: true });
+    document.composioPendingRevocations = [{ ...receipt, attempts: 3, exhausted: true }];
+    authority = attach(); await authority.request({ operation: "refresh" });
+    expect(authority.inspect()).toEqual({ outcome: "failed", reason: "credential_recovery_failed", attempted: false });
+    const intents: unknown[] = [];
+    host = createComposioAdmissionHost({ authority: () => ({ ...authority, request: intent => {
+      intents.push(intent); return authority.request(intent);
+    } }), send: message => { child.receiveComposioAdmission(message); } });
+    child.connectComposioAuthority({ postMessage: message => { host!.receive(message); } });
+    const takeover = vi.fn(() => authority.request({ operation: "reconnect", force: true }));
+    const handlers = new Map<string, () => Promise<unknown>>();
+    const main = source(join(here, "../../electron/main.mjs"));
+    const reconnectHandler = main.match(/ipcMain.handle\("composio:reconnect", async \(\) => \{[\s\S]*?^\}\);/m)![0];
+    new Function("ipcMain", "fluxComposioLifecycleEnabled", "composioTokenRejections", reconnectHandler)(
+      { handle: (name: string, handler: () => Promise<unknown>) => handlers.set(name, handler) }, () => true, { reconnect: takeover });
+    const invoke = vi.fn((channel: string) => handlers.get(channel)!());
+    runInNewContext(source(join(here, "../../electron/preload.cjs")), {
+      require: () => ({ contextBridge: { exposeInMainWorld: (_name: string, bridge: typeof window.muragebox) => { window.muragebox = bridge; } },
+        ipcRenderer: { invoke, sendSync: () => "fixture", on() {}, send() {}, removeListener() {} } }),
+      process: { argv: ["--murage-renderer-origin=http://127.0.0.1:1234"], platform: "linux", arch: "x64" },
+      location: { origin: "http://127.0.0.1:1234", search: "" }, URL, URLSearchParams, Buffer, setTimeout, clearTimeout, console,
+    });
+    storeStub.config = { flux: { configured: true }, composio: { configured: true, mode: "managed", broker: "flux" } };
+    const retryCalls: unknown[][] = [];
+    let retryWork: ReturnType<typeof child.retryComposioRecovery> | undefined;
+    storeStub.api.mockImplementation(async (path?: unknown, init?: unknown) => {
+      if (path === "/api/connectors/recovery/retry") {
+        retryCalls.push([path, init]); retryWork = child.retryComposioRecovery(); return await retryWork as never;
+      }
+      if (String(path).includes("/connected")) return { configured: true, known: true, services: { calendar: { connected: true } }, admission: authority.inspect() } as never;
+      return { configured: true, mode: "managed", cards: [], admission: authority.inspect() } as never;
+    });
+    inventory.rememberConnectedAppsAdmission(authority.inspect());
+    const view = mount(createElement<{ embedded?: boolean }>(PluginsPanel, { embedded: true })); await settle();
+    const alert = view.container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("Connected apps recovery could not finish. Try again.");
+    const retry = alert?.querySelector("button"); expect(retry?.textContent).toBe("Try again"); expect(retry?.disabled).toBe(false);
+    await act(async () => { retry!.click(); await retryWork; }); await settle();
+    expect(retryCalls).toEqual([["/api/connectors/recovery/retry", { method: "POST" }]]);
+    expect(invoke).not.toHaveBeenCalled();
+    expect(takeover).not.toHaveBeenCalled();
+    expect(intents).toEqual([{ operation: "reconnect", force: true, retryRecovery: true }]);
+    expect(deletes).toEqual([minted]); expect(mint).toHaveBeenCalledTimes(1);
+    expect(readComposioCustody(document.composioPendingRevocations)).toEqual([]);
+    expect(document.fluxComposioBrokerToken).toBe(previous);
+    await authority.request({ operation: "refresh" });
+    expect(mint, "an inventory refresh after Retry must not replay a forced mint").toHaveBeenCalledTimes(1);
+    expect(deletes).toEqual([minted]);
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    expect(view.container.textContent).not.toMatch(/reconnected successfully/i);
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain(minted);
+    // Takeover remains on its own original IPC.
+    expect(typeof window.muragebox?.reconnectConnectedApps).toBe("function");
+  } finally {
+    restore(); host?.dispose(); child.disconnectComposioAuthority(); child.resetComposioLifecycleForTests(); authority.dispose(); dom.window.close(); vi.unstubAllGlobals(); storeStub.config = previousConfig;
+    inventory.rememberConnectedAppsAdmission({ outcome: "completed", reason: "ready" });
+    storeStub.api.mockImplementation(async () => { throw new Error("no request may leave the locked panel"); });
+  }
 });

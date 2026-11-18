@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "r13-cafix1",
+  "date": "2026-11-17",
+  "base": "3539939db6~1",
+  "scope": "connectedApps-admission-strings",
+  "strings": {
+    "en:connectedApps.rateLimitedUntil": {
+      "text": "Connected apps are rate-limited until {time}.",
+      "en": "Connected apps are rate-limited until {time}.",
+      "verdict": "pass"
+    },
+    "en:connectedApps.recoveryFailed": {
+      "text": "Connected apps recovery could not finish. Try again.",
+      "en": "Connected apps recovery could not finish. Try again.",
+      "verdict": "pass"
+    },
+    "en:connectedApps.retryAt": {
+      "text": "Connected apps will retry at {time}.",
+      "en": "Connected apps will retry at {time}.",
+      "verdict": "pass"
+    },
+    "de:connectedApps.rateLimitedUntil": {
+      "text": "Verbundene Apps sind bis {time} gedrosselt.",
+      "en": "Connected apps are rate-limited until {time}.",
+      "verdict": "pass",
+      "note": "gedrosselt for rate-limited"
+    },
+    "de:connectedApps.recoveryFailed": {
+      "text": "Die Wiederherstellung der verbundenen Apps konnte nicht abgeschlossen werden. Versuche es erneut.",
+      "en": "Connected apps recovery could not finish. Try again.",
+      "verdict": "pass"
+    },
+    "de:connectedApps.retryAt": {
+      "text": "Verbundene Apps versuchen es um {time} erneut.",
+      "en": "Connected apps will retry at {time}.",
+      "verdict": "pass"
+    },
+    "es:connectedApps.rateLimitedUntil": {
+      "text": "Las aplicaciones conectadas están limitadas hasta {time}.",
+      "en": "Connected apps are rate-limited until {time}.",
+      "verdict": "pass"
+    },
+    "es:connectedApps.recoveryFailed": {
+      "text": "No se pudo completar la recuperación de las aplicaciones conectadas. Inténtalo de nuevo.",
+      "en": "Connected apps recovery could not finish. Try again.",
+      "verdict": "pass"
+    },
+    "es:connectedApps.retryAt": {
+      "text": "Próximo reintento de las aplicaciones conectadas: {time}.",
+      "en": "Connected apps will retry at {time}.",
+      "verdict": "pass",
+      "note": "reworded: {time} may include a date, so no clock-time preposition"
+    },
+    "fr:connectedApps.rateLimitedUntil": {
+      "text": "Les applications connectées sont limitées jusqu’à {time}.",
+      "en": "Connected apps are rate-limited until {time}.",
+      "verdict": "pass"
+    },
+    "fr:connectedApps.recoveryFailed": {
+      "text": "La récupération des applications connectées n’a pas pu se terminer. Réessaie.",
+      "en": "Connected apps recovery could not finish. Try again.",
+      "verdict": "pass"
+    },
+    "fr:connectedApps.retryAt": {
+      "text": "Les applications connectées réessaieront à {time}.",
+      "en": "Connected apps will retry at {time}.",
+      "verdict": "pass"
+    },
+    "hi:connectedApps.rateLimitedUntil": {
+      "text": "कनेक्ट किए गए ऐप्स {time} तक सीमित हैं।",
+      "en": "Connected apps are rate-limited until {time}.",
+      "verdict": "pass"
+    },
+    "hi:connectedApps.recoveryFailed": {
+      "text": "कनेक्ट किए गए ऐप्स की रिकवरी पूरी नहीं हो सकी। फिर कोशिश करें।",
+      "en": "Connected apps recovery could not finish. Try again.",
+      "verdict": "pass"
+    },
+    "hi:connectedApps.retryAt": {
+      "text": "कनेक्ट किए गए ऐप्स {time} पर फिर कोशिश करेंगे।",
+      "en": "Connected apps will retry at {time}.",
+      "verdict": "pass"
+    },
+    "ja:connectedApps.rateLimitedUntil": {
+      "text": "連携アプリは {time} まで制限されています。",
+      "en": "Connected apps are rate-limited until {time}.",
+      "verdict": "pass"
+    },
+    "ja:connectedApps.recoveryFailed": {
+      "text": "連携アプリの復旧を完了できませんでした。もう一度お試しください。",
+      "en": "Connected apps recovery could not finish. Try again.",
+      "verdict": "pass"
+    },
+    "ja:connectedApps.retryAt": {
+      "text": "連携アプリは {time} に再試行します。",
+      "en": "Connected apps will retry at {time}.",
+      "verdict": "pass"
+    },
+    "pt-br:connectedApps.rateLimitedUntil": {
+      "text": "Os apps conectados estão limitados até {time}.",
+      "en": "Connected apps are rate-limited until {time}.",
+      "verdict": "pass"
+    },
+    "pt-br:connectedApps.recoveryFailed": {
+      "text": "Não foi possível concluir a recuperação dos apps conectados. Tente novamente.",
+      "en": "Connected apps recovery could not finish. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:connectedApps.retryAt": {
+      "text": "Próxima tentativa dos apps conectados: {time}.",
+      "en": "Connected apps will retry at {time}.",
+      "verdict": "pass",
+      "note": "reworded: {time} may include a date"
+    },
+    "zh:connectedApps.rateLimitedUntil": {
+      "text": "已连接的应用在 {time} 前受到限流。",
+      "en": "Connected apps are rate-limited until {time}.",
+      "verdict": "pass"
+    },
+    "zh:connectedApps.recoveryFailed": {
+      "text": "已连接应用的恢复未能完成。请重试。",
+      "en": "Connected apps recovery could not finish. Try again.",
+      "verdict": "pass"
+    },
+    "zh:connectedApps.retryAt": {
+      "text": "已连接的应用将在 {time} 重试。",
+      "en": "Connected apps will retry at {time}.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

@@ -13,17 +13,17 @@ import { observeReset } from "../health/turn-observer.ts";
 export const RESET_LOOP_WINDOW_MS = 10 * 60_000;
 export const RESET_LOOP_LIMIT = 3;
 
-const seen = new Map<string, { at: number[]; reasons: string[]; warned: boolean }>();
+const seen = new Map<string, { at: number[]; reasons: string[]; warned: boolean; count: number }>();
 
 /** Count one reset; returns the warning line when this reset crosses the limit (once per thread). */
 export function noteContinuationReset(threadId: string, engine: string, reason: string, now = Date.now()): string | undefined {
   observeReset(threadId, engine, reason); // Sentinel S08: an automatic reset, per opaque scope (observe only)
-  const entry = seen.get(threadId) ?? { at: [], reasons: [], warned: false };
-  entry.at.push(now); entry.reasons.push(reason);
+  const entry = seen.get(threadId) ?? { at: [], reasons: [], warned: false, count: 0 };
+  entry.count++; entry.at.push(now); entry.reasons.push(reason);
   while (entry.at.length && now - entry.at[0]! > RESET_LOOP_WINDOW_MS) { entry.at.shift(); entry.reasons.shift(); }
-  seen.set(threadId, entry);
+  seen.delete(threadId); seen.set(threadId, entry);
   // bounded: a long-running server with many threads keeps only recent ones
-  if (seen.size > 2_000) for (const [id, other] of seen) if (!other.at.length || now - other.at.at(-1)! > RESET_LOOP_WINDOW_MS) seen.delete(id);
+  while (seen.size > 2_000) seen.delete(seen.keys().next().value!);
   if (entry.at.length <= RESET_LOOP_LIMIT || entry.warned) return undefined;
   entry.warned = true;
   const counts = new Map<string, number>();
@@ -32,6 +32,12 @@ export function noteContinuationReset(threadId: string, engine: string, reason: 
   const line = `memory continuation reset loop thread=${threadId} engine=${engine} resets=${entry.at.length} window=${RESET_LOOP_WINDOW_MS / 60_000}m reasons=${reasons}`;
   console.warn(line);
   return line;
+}
+
+/** Read-only counters for tests and diagnostics. Counts last while a thread remains in the bounded watch;
+ * recent reasons are fixed codes supplied by the decision, never recalled content. */
+export function continuationResetCounts(): { threadId: string; count: number; recent: number; reasons: string[] }[] {
+  return [...seen].map(([threadId, entry]) => ({ threadId, count: entry.count, recent: entry.at.length, reasons: [...entry.reasons] }));
 }
 
 /** Thread recall (THREAD-SEAL 3.4): a turn the seal started fresh is fresh by

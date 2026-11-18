@@ -1,0 +1,2 @@
+export const emptyDiff=()=>({before:[],after:[],added:[],changed:[],removed:[],deleted:[],remaining:[],errors:[],ok:true});
+export function cleanup(kind='desktop') {return {writer:'operator',pid:100,childPid:101,prefix:`MurageCI-${'a'.repeat(32)}-`,completedAt:1000,finalizedAt:1001,processes:{ok:true,escaped:[],browsers:[],enrolled:[]},job:{ownerClosed:true,empty:true,flags:0x2000,remaining:[]},tasks:emptyDiff(),launcher:emptyDiff(),registrations:kind==='desktop'?null:emptyDiff()};}
