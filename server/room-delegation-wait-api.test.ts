@@ -21,6 +21,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -45,7 +46,7 @@ posixOnly("a handoff to a teammate who was next in the same channel", () => {
     chmodSync(FAKE_ACP, 0o755);
     fixture = await launchVerificationServer(process.env, undefined, {
       portRange: { from: 45_000, span: 900 },
-      instrumentationSource: `
+      instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       cfg.instances.delegator={driver:'grokAgent',displayName:'Delegator fixture',environment:{FAKE_ACP_MODE:'delegate-peer',FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};

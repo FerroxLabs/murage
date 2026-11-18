@@ -11,14 +11,24 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { CLAUDE_ISOLATION_CONTRACT } from "./drivers/claude.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
+import { prepareFixtureRecall } from "./testing/recall-ready-fixture.ts";
+import { memoryVerificationMeter } from "./testing/memory-verification-fixture.ts";
+// MAIN RULING INT-CONFLICT-DEFAULT: resume metadata is the generation-fenced
+// checkpoint plus task sidecars, the same durable projection the server boots.
+// Producer owner: recall-scope-c; fixture consumer owner: c4-misc-a2.
+import { readBotRecords, foldBotTurnStateForDowngrade } from "./bot-turn-state.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
+// MAIN RULING INT-CONFLICT-DEFAULT: retained mounted sessions use the exact
+// reviewed scripted S2 receipt; native BG admission and every resume check stay live.
+const RETAINED_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "claude-retained-session-preload.mjs")).href;
 const DESKTOP_SECRET = "0123456789abcdef".repeat(4);
 const DESKTOP_HEADERS = { "x-murage-surface": "desktop", "x-murage-surface-secret": DESKTOP_SECRET } as const;
 /** The end of the restarted-session preamble (turn-context.ts RESTARTED_PREAMBLE): the replayed history follows it. */
@@ -49,9 +59,12 @@ describe("Claude sessions made before the isolation contract", () => {
 
   const start = async () => {
     stderr = "";
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", pathToFileURL(join(SERVER_DIR, "testing", "idle-load-preload.mjs")).href, "--import", RETAINED_PRELOAD, "--import", pathToFileURL(join(SERVER_DIR, "testing", "recall-ready-preload.mjs")).href, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
+        ...powerBlockTestEnv(),
+        MURAGE_ENGINE_EXCLUSION_PATH: memoryVerificationMeter(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
@@ -61,6 +74,7 @@ describe("Claude sessions made before the isolation contract", () => {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    child.stdout!.on("data", (chunk) => (stderr += chunk));
     child.stderr!.on("data", (chunk) => (stderr += chunk));
     const deadline = Date.now() + 30_000;
     for (;;) {
@@ -77,15 +91,18 @@ describe("Claude sessions made before the isolation contract", () => {
 
   const botsFile = () => join(home, ".murage", "bots.json");
   const taskOf = (bot: BotView): TaskRow | undefined =>
-    (JSON.parse(readFileSync(botsFile(), "utf8")) as BotRow[]).find((row) => row.id === bot.id)?.tasks?.find((task) => task.threadId === bot.threadId);
+    (readBotRecords(join(home, ".murage")) as BotRow[]).find((row) => row.id === bot.id)?.tasks?.find((task) => task.threadId === bot.threadId);
 
   /** Sends one message and waits for its turn to finish; returns what the fake CLI was launched with. */
   const turn = async (bot: BotView, text: string): Promise<{ argv: string[]; prompt: string }> => {
+    await prepareFixtureRecall(join(home, ".murage"), bot.id, bot.threadId);
     rmSync(dump, { force: true });
     expect((await request("POST", `/api/bots/${bot.id}/messages`, { text })).status).toBe(202);
     await expect.poll(() => existsSync(dump), { timeout: 20_000 }).toBe(true);
     await expect.poll(async () => (await request("GET", "/api/bots?messages=0")).body.bots.find((b: BotView) => b.id === bot.id)?.busy, { timeout: 20_000 }).toBe(false);
     const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; prompt: unknown };
+    if (text === "second message" && !seen.argv.includes("--resume"))
+      console.info("fixture-resume refusal", stderr.split("\n").filter(line => line.includes("memory continuation reset")).join("\n"));
     return { argv: seen.argv, prompt: JSON.stringify(seen.prompt) };
   };
 
@@ -130,13 +147,16 @@ describe("Claude sessions made before the isolation contract", () => {
     await stop();
     await start();
     const resumed = await turn(bot, "second message");
-    expect(resumed.argv[resumed.argv.indexOf("--resume") + 1]).toBe(cursor);
+    expect(resumed.argv[resumed.argv.indexOf("--resume") + 1], stderr.slice(-20000)).toBe(cursor);
     // a resumed session needs no replay (memory may still recall the earlier words, so look for the replay itself)
     expect(resumed.prompt).not.toContain(REPLAY_MARK);
     expect(resumed.prompt).not.toContain(SWITCH_MARK);
 
     // The same thread as a build from before the contract left it: a cursor with no contract beside it.
     await stop();
+    // MAIN RULING INT-CONFLICT-DEFAULT: build the old-format fixture from
+    // actual settled task state before removing only its isolation contract.
+    foldBotTurnStateForDowngrade(join(home, ".murage"));
     const rows = JSON.parse(readFileSync(botsFile(), "utf8")) as Array<BotRow & Record<string, unknown>>;
     for (const row of rows) for (const task of row.tasks ?? []) delete task.resumeContracts;
     writeFileSync(botsFile(), JSON.stringify(rows));

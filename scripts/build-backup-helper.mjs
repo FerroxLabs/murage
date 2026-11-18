@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,8 +7,9 @@ import { fileURLToPath } from "node:url";
 export function buildBackupHelper(options = {}) {
   const { platform = process.platform, arch = process.arch, env = process.env,
     root = fileURLToPath(new URL("../", import.meta.url)),
-    exec = execFileSync, exists = existsSync, mkdir = mkdirSync } = options;
+    exec = execFileSync, exists = existsSync, mkdir = mkdirSync, write = writeFileSync, ageDigest } = options;
   if (platform !== "win32" || arch !== "x64") throw Error("Backup helper build requires Windows x64 with existing MSVC and Windows SDK.");
+  if (ageDigest !== undefined && !/^[a-f0-9]{64}$/.test(ageDigest)) throw Error("Invalid signed age digest");
   const join = path.win32.join;
   const vswhere = join(env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Microsoft Visual Studio", "Installer", "vswhere.exe");
   if (!exists(vswhere)) throw Error("Existing Visual Studio C++ build tools are required. No installation was attempted.");
@@ -18,7 +19,9 @@ export function buildBackupHelper(options = {}) {
   if (!exists(environment)) throw Error("Visual Studio developer environment is missing.");
   const directory = join(root, "dist-native", "backup-tools", "win32-x64");
   mkdir(directory, { recursive: true });
-  const command = `call "${environment}" -arch=x64 -host_arch=x64 && cl /nologo /std:c++20 /EHsc /W4 /D_WIN32_WINNT=0x0602 native\\backup-age\\transport.cpp /Fo:dist-native\\backup-tools\\win32-x64\\ /Fe:dist-native\\backup-tools\\win32-x64\\murage-backup-age.exe /link Advapi32.lib Bcrypt.lib`;
+  const forcedInclude = ageDigest === undefined ? "" : ' /FI"dist-native\\backup-tools\\win32-x64\\signed-age-pin.h"';
+  if (ageDigest !== undefined) write(join(directory, "signed-age-pin.h"), `#define MURAGE_AGE_DIGEST "${ageDigest}"\n`);
+  const command = `call "${environment}" -arch=x64 -host_arch=x64 && cl /nologo /std:c++20 /EHsc /W4 /D_WIN32_WINNT=0x0602${forcedInclude} native\\backup-age\\transport.cpp /Fo:dist-native\\backup-tools\\win32-x64\\ /Fe:dist-native\\backup-tools\\win32-x64\\murage-backup-age.exe /link Advapi32.lib Bcrypt.lib`;
   exec(env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe", ["/d", "/s", "/c", command], { cwd: root, stdio: "inherit", windowsVerbatimArguments: true });
   const executable = join(directory, "murage-backup-age.exe");
   if (!exists(executable)) throw Error("Backup helper build did not produce its executable.");

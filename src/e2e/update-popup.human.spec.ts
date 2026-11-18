@@ -2,7 +2,7 @@
 // interrupted, it clears the footer, the Undo toast and the composer, and it closes and comes back by the rule.
 import {test,expect} from "./page-error-guard";
 import {build} from 'vite';
-import tailwindcss from '@tailwindcss/vite';
+import tailwindcss from "./scoped-tailwind";
 import {createServer} from 'node:http';
 import {readFileSync,writeFileSync,mkdtempSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';

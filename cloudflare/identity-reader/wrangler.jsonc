@@ -10,7 +10,8 @@
   "workers_dev": false,
   "preview_urls": false,
   // Fixed Supabase project origin (https://<ref>.supabase.co). Not a secret. Empty fails closed: every read is identity_unavailable.
-  "vars": { "SUPABASE_URL": "" },
+  // Production reads the members-area project "murage-site" (custom domain auth.murage.ai), the same one staging reads.
+  "vars": { "SUPABASE_URL": "https://vkuixifpqawrptnbwxti.supabase.co" },
   // The Supabase secret key: set with `wrangler secret put`, only ever on this Worker.
   "secrets": { "required": ["SUPABASE_SECRET_KEY"] },
   "observability": { "enabled": false },

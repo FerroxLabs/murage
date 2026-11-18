@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { IncomingHttpHeaders } from "node:http";
-import { cloudIdentity } from "./cloud-request-identity.ts";
+import { cloudIdentity, ownerBrowserActs } from "./cloud-request-identity.ts";
 import { FRESH_AUTH_COPY } from "./approval-fresh-auth.ts";
 import { requestSurface } from "./sse-visibility.ts";
 
-/** The desktop app itself. On a Cloud home the paired phone also reads as the "desktop" surface (so it can approve),
- * but handlers reserved for the desktop app must not treat it as one. */
-export const isDesktopApp = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean =>
-  requestSurface(headers, query) === "desktop" && !(process.env.MURAGE_CLOUD_ROLE === "home" && cloudIdentity(headers)?.scope === "owner-phone");
+/** The desktop app itself. On a Cloud home the paired phone and the owner's browser also read as the "desktop" surface (so
+ * they can approve), but handlers reserved for the desktop app must not treat either as one: no browser, of any factor, is
+ * the computer. */
+export const isDesktopApp = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean => {
+  if (requestSurface(headers, query) !== "desktop") return false;
+  if (process.env.MURAGE_CLOUD_ROLE !== "home") return true;
+  const scope = cloudIdentity(headers)?.scope;
+  return scope !== "owner-phone" && scope !== "browser";
+};
 
 /** The owner's physical computer, for bot-level and task-level "Always" grants only (L1A-GRANT-AUTHORITY-1013):
  * the local desktop app with its renderer secret proven. On a Cloud home no surface is the computer, not the phone,
@@ -15,6 +20,16 @@ export const isDesktopApp = (headers: IncomingHttpHeaders, query?: URLSearchPara
  * a Cloud enrollment lane). Kept apart from `isDesktopApp`, which other handlers widen on purpose. */
 export const isOwnersComputer = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean =>
   process.env.MURAGE_CLOUD_ROLE !== "home" && requestSurface(headers, query) === "desktop";
+
+/** Taking a remembered "Always" back (Settings Remove, the card's Undo): it only narrows what a bot may do. The owner's computer, as
+ * before; and on a Cloud home also the owner's desktop app (owner-desktop) and an owner browser. Never a phone, a chat-only
+ * browser, a revoked device or a bot's own shell. */
+export const mayTakeAlwaysBack = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean => {
+  if (isOwnersComputer(headers, query)) return true;
+  if (process.env.MURAGE_CLOUD_ROLE !== "home") return false;
+  const identity = cloudIdentity(headers);
+  return identity !== undefined && !identity.revoked && (identity.scope === "owner-desktop" || ownerBrowserActs(identity));
+};
 
 /** True when the fresh-auth gate is skipped for this approval: the desktop app only. */
 export const skipsFreshAuth = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean =>

@@ -37,7 +37,7 @@ export class AskTurnDevices {
  * its thread limit (thread_limit), or a browser, computer or folder another thread holds (resource_busy). */
 export const OCCUPIED_REFUSALS: ReadonlySet<string> = new Set(["thread_busy", "room_busy", "thread_limit", "resource_busy"]);
 /** Refusals that pass by themselves: engines still starting, a provider fence, a files restore, a busy database, a prepared restart, a thread fill that outlasted its deadline. */
-export const TRANSIENT_REFUSALS: ReadonlySet<string> = new Set(["engine_starting", "provider_fenced", "files_restoring", "DATABASE_BUSY", "BACKUP_RESTART_PREPARED", "prepare_timeout"]);
+export const TRANSIENT_REFUSALS: ReadonlySet<string> = new Set(["engine_starting", "provider_fenced", "files_restoring", "DATABASE_BUSY", "BACKUP_RESTART_PREPARED", "prepare_timeout", "spend_limit"]);
 
 /** "wait": the line stays queued and is tried again. "fail": a refusal of its own, shown as could-not-start. A coded refusal is judged by
  * its code alone. A conflict with no code counts as busy when the thread is held at that moment, whatever its words; anything else fails. */

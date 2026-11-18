@@ -11,7 +11,7 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,7 +51,7 @@ async function openRoutines(page: import("@playwright/test").Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
   // the first-run setup checklist is another lane's surface; this spec is
   // about the routine editor, so it starts from a machine that has seen it
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   const sidebar = await openSidebar(page);
   await openSidebarPlace(sidebar, "routines");

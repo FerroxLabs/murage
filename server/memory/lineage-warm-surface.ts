@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// Fixture producer owner: recall-fix-a. Warm-surface test consumer owner: recall-fix-a.
 //
 // 1.0.18 TURNSTART r14/r15/r15.1: the ONE test seam the r14/r15 tests read (testing/turnstart-r14-surface.ts is the contract). Test-only: no
 // production code calls anything here (lineage-warm.ts only re-exports lineageWarmTestSurface). It builds fixtures in the test DB, drives
@@ -7,7 +8,7 @@
 // E2 -> recall -> E1 on the turn's own inputs, a cold legacy answer, the bot reply).
 // Module cycle: lineage-warm.ts re-exports this file and this file imports lineage-warm.ts; nothing here touches LW at load time.
 import { mkdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "../sqlite-open.ts";
 import { installWriteRevisionTriggers } from "../app-write-revision.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -20,14 +21,17 @@ import { LineageAllowance } from "./lineage-allowance.ts";
 import { accessStamp, compareLineageFootprint, externalUpdatesKey, footprintHash, lineageFootprintCounters, noteLineageFootprint,
   resetLineageFootprintCountersForTest, type LineageFootprint, type UserKind } from "./lineage-footprint.ts";
 import * as LW from "./lineage-warm.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { catchUpRecentMemory } from "./recent.ts";
 import { LARGE_ROOT_SET, forceProofRestartForTest, forgetKeptLineageForTest, lineageBuilderKeysForTest, onProducerBranchForTest, outputRootsFor, prepareLineageCache, recordSessionRoots,
   setEdgeBoundForTest, setReplayNodeBudgetForTest, setVerdictLimitForTest } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
 import { setMaxHandlesForTest } from "./root-set-handles.ts";
 import { chainStore } from "./schema.ts";
-import { resumeCursorOf } from "./session-incarnation.ts";
+import { resumeCursorOf, sessionKeyOf } from "./session-incarnation.ts";
+import { initializeFreshSessionProof } from "./session-proof.ts";
+import { noteSessionFrame } from "./session-proof-schema.ts";
 import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { owner, verdictStore as store, type MapName } from "./verdict-store.ts";
 
@@ -59,7 +63,7 @@ function installStatementTally(): void {
 interface TaskRow { cursor: { instance: string; session: string; incarnation: number } | null; externalUpdates: string[] }
 const env = {
   now: 1_000_000,
-  roster: { bots: [{ id: BOT, threadId: "", tasks: [] as Array<{ threadId: string }> }], groups: [] } as MemoryRoster,
+  roster: { memoryRosterRevision: 1, bots: [{ id: BOT, threadId: "", tasks: [] as Array<{ threadId: string }> }], groups: [] } as MemoryRoster,
   threads: [] as string[],
   n: 0,
   taskRows: new Map<string, TaskRow>(),
@@ -78,12 +82,13 @@ const env = {
   testMint: null as ((botId: string, threadId: string) => unknown) | null,
 };
 
-function access(thread: string, notOwnerAudience = false): MemoryAccess {
+function turnAccess(thread: string, notOwnerAudience = false): { access: MemoryAccess; end(): void } {
   const registry = new InternalCapabilities(); registry.begin(BOT, thread, "g");
   const claim = registry.resolve(`Bearer ${registry.mint({ botId: BOT, threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false,
     ...(notOwnerAudience ? { notOwnerAudience: true as const } : {}) })}`)!;
-  return memoryAccess(registry, claim, () => env.roster);
+  return { access: memoryAccess(registry, claim, () => env.roster), end: () => registry.revokeGeneration(thread, "g") };
 }
+function access(thread: string, notOwnerAudience = false): MemoryAccess { return turnAccess(thread, notOwnerAudience).access; }
 /** The surface's mint: the owner's access for its own chat; a non-owner fixture thread is read by a non-owner audience (SHARED, DI:550). */
 function surfaceMint(_botId: string, thread: string): MemoryAccess | null { return access(thread, env.nonOwner.has(thread)); }
 const mint = (botId: string, thread: string): MemoryAccess | null => (env.testMint ? env.testMint(botId, thread) as MemoryAccess | null : surfaceMint(botId, thread));
@@ -146,7 +151,7 @@ function reset(): void {
   removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   env.now = 1_000_000; env.threads = []; env.n = 0; env.taskRows.clear(); env.maxBytes.clear(); env.uncertain.clear(); env.nonOwner.clear();
   env.freshSession.clear(); env.loseAfterDispatch.clear(); env.lastSent.clear(); env.pendingCapture.clear(); env.throwLines = 0; env.renewals = 0; env.held = 0; env.warmStepsBetweenSendAndDispatch = 0;
-  env.storeLog = []; env.roster = { bots: [{ id: BOT, threadId: "", tasks: [] }], groups: [] };
+  env.storeLog = []; env.roster = { memoryRosterRevision: 1, bots: [{ id: BOT, threadId: "", tasks: [] }], groups: [] };
   // limits are the test's (a test may set them before its first fixture; afterEach restores them): applied as they stand
   limits({});
   store.setPinBudgets(null);
@@ -183,16 +188,28 @@ const EACH_FROM = 20;
 const OUTSIDE = "outside";
 function sessionOf(thread: string, nativeSession: string, listing: string[]): void {
   const db = database();
-  db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,'[]','[]',?,(SELECT policy_revision FROM memory_meta),(SELECT deletion_epoch FROM memory_meta),0,'delivered',9)")
-    .run(`rc-${thread}-${nativeSession}`, thread, DRIVER, nativeSession, JSON.stringify(listing));
-  recordSessionRoots(thread, DRIVER, nativeSession, outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
   stampFreshSession(db, thread, DRIVER, nativeSession);
+  const key = sessionKeyOf(thread, DRIVER, nativeSession);
+  // The fixture starts an empty session, then binds its first empty frame.
+  // Use ordinary retained S1 and the production first-frame initializer; a
+  // prior frame/receipt/root can never acquire a fresh-event privilege here.
+  noteSessionFrame(db, key, false);
+  // The seeding turn ends when its proof is written, as a real turn does: an open turn is a live recall reader, and every later roster
+  // write of the fixture would rebuild its view (one per seeded thread, on every new thread).
+  const seeding = turnAccess(thread);
+  try { initializeFreshSessionProof(key, seeding.access, () => {
+    noteSessionFrame(db, key, true);
+    db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,'[]','[]',?,(SELECT policy_revision FROM memory_meta),(SELECT deletion_epoch FROM memory_meta),0,'delivered',9)")
+      .run(`rc-${thread}-${nativeSession}`, thread, DRIVER, nativeSession, JSON.stringify(listing));
+  }); } finally { seeding.end(); }
+  recordSessionRoots(thread, DRIVER, nativeSession, outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
 }
 function newThread(): string {
   const thread = `t${++env.n}`;
   env.threads.push(thread);
   const bot = env.roster.bots[0]!;
   if (!bot.threadId) bot.threadId = thread; else bot.tasks!.push({ threadId: thread });
+  env.roster.memoryRosterRevision!++;
   reconcileMemoryRoster(env.roster);
   env.taskRows.set(thread, { cursor: null, externalUpdates: [] });
   return thread;

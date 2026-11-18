@@ -18,13 +18,14 @@
 //   refs        a records revocation (archive, correct ...): every receipt citing an affected record or source, per id
 //   bindings    evaluation and review bindings that copied ended evidence, paged by binding id
 //   learning    what was learned from the material (evolution-forgetting.ts purgeLearningStep)
-//   all         a deleted bot: every receipt made before the commit's epoch, paged by bundle id
+//   all         legacy global cleanup (bot deletions now retain only their scoped receipt work)
 //   done        the job's own target rows, deleted in pages
 // Ids live in memory_revocation_targets (job, kind, id, rev), paged by key: the job row (memory_scope_bindings, subject
 // 'system'/'memory-revocation') carries only the phase and a scalar cursor, so it stays under 1 KB and resumes after a restart
 // or any error; only completion removes it. When no job row waits, the runner fills the two late lookup tables instead.
 import { syncThreadSummary, bumpChatsGen } from "../thread-summary.ts";
 import { holdForgottenSources } from "../turn-source-holds.ts";
+import { accountedPrepare, accountedDatabase, chargeReleaseStatement, chargeReleaseWork } from "./release-budget.ts";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { lockedError } from "./revocation-index.ts";
@@ -35,8 +36,9 @@ import { newLearningPurgeCursor, purgeLearningStep, purgeEvolutionBinding, EVOLU
 import { reconcilePipStances } from "./pip-stance.ts";
 import { beginRevokeMeasure, budgetedMarkerSlice, chargeRevokeRows, endRevokeMeasure, revokePaceNeed, revokePaceRows, revokePaceWaitMs, revokeSliceNeed, revokeWriteWaitMs } from "./revoke-budget.ts";
 import { enqueueReceipts, markerSlice, markerWorkPending, releaseHold, totalChanges } from "./revoke-marker.ts";
+import { coverReceiptChanges } from "./recall-view-schema.ts";
 import { setFlipWake } from "./receipt-outputs.ts";
-import { setSendFenceDeps } from "./send-fence.ts";
+import { setSendFenceDeps } from "./send-fence-deps.ts";
 import { MARKER_SLICE_ROWS } from "./lineage-types.ts";
 import { recordCounter } from "../health/counters.ts";
 import { noteRevocationJobCreated, noteRevocationJobEnded, noteRevocationQueueEmpty } from "../health/pending-revocations.ts";
@@ -48,7 +50,7 @@ function st(db: DatabaseSync, sql: string): StatementSync {
   let held = statements.get(db);
   if (!held) statements.set(db, held = new Map());
   let statement = held.get(sql);
-  if (!statement) { statement = db.prepare(sql); if (held.size < 512) held.set(sql, statement); }
+  if (!statement) { statement = accountedPrepare(db, sql); if (held.size < 512) held.set(sql, statement); }
   return statement;
 }
 
@@ -236,7 +238,7 @@ function sourceWorkStep(db: DatabaseSync, job: RevocationJob, budget: Budget): b
 }
 const payloadOf = (db: DatabaseSync, job: RevocationJob, id: string) => { void db; void id; return JSON.stringify({ deleted: job.thread ? "thread-deleted" : "bot-deleted" }); };
 
-type Budget = { rows: number; deadline: number };
+type Budget = { rows: number; deadline: number; projections: Array<[string, number, number]> };
 /** No single step reads more than this many candidate rows: the deadline is checked between steps, so a slice is never longer than
  * its budget plus one chunk, whichever phase it is in. */
 export const STEP_CHUNK = 256;
@@ -255,7 +257,7 @@ const PHASE_OPERATION: Readonly<Record<Phase, string>> = {
 };
 /** Advances a job within the budget (caller's transaction). True when it is complete. */
 export function advanceRevocationJob(db: DatabaseSync, job: RevocationJob, rows: number, ms = Number.POSITIVE_INFINITY): boolean {
-  const budget: Budget = { rows: Math.max(1, rows), deadline: performance.now() + ms };
+  const budget: Budget = { rows: Math.max(1, rows), deadline: performance.now() + ms, projections: [] };
   while (job.phases.length && !exhausted(budget)) {
     const phase = job.phases[0]!;
     const step = Object.hasOwn(STEPS, phase) ? STEPS[phase] : undefined;
@@ -269,6 +271,14 @@ export function advanceRevocationJob(db: DatabaseSync, job: RevocationJob, rows:
       continue;
     }
     const finished = step(db, job, budget);
+    // Finish record logging before covering this bounded step's receipt flips, so record rows cannot end the cover early.
+    if (budget.projections.length) {
+      const projections = budget.projections.splice(0);
+      coverReceiptChanges(db, projections.map(([id, version]) => [id, version]), () => {
+        for (const [id, version, force] of projections)
+          st(db, "UPDATE memory_projection_receipts SET lexical_status='delete-pending',embedding_status='delete-pending' WHERE record_id=? AND record_version=? AND lexical_status!='delete-pending' AND (lexical_status!='deleted' OR ?=1)").run(id, version, force);
+      });
+    }
     recordCounter("io-pressure", PHASE_OPERATION[phase], "none");
     if (finished) {
       job.phases.shift(); job.c = null;
@@ -422,8 +432,7 @@ function scopeStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boolea
     const id = String(row.id), version = Number(row.version);
     if (!st(db, "SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND revision IS NULL").get(id))
       st(db, "INSERT INTO memory_tombstones VALUES(?,'record',?,NULL,NULL,?,'bot-deleted',?)").run(randomUUID(), id, epoch, now);
-    st(db, "UPDATE memory_records SET text='' WHERE id=? AND version=? AND text!=''").run(id, version);
-    affect(db, job, id, version);
+    affect(db, job, budget, id, version);
   }
   spend(budget, rows.length);
   if (rows.length === n) { c.rec = [String(rows[rows.length - 1]!.id), Number(rows[rows.length - 1]!.version)]; return false; }
@@ -541,23 +550,26 @@ export function resetPipStanceParses(): void { pipStanceParses = 0; }
 // ---- expand: the records resting on an ended source or targeted, and every record derived from one
 /** Ends one record version: deleted, its projection receipts queued for deletion, its learning events gone, its id a receipts
  * target, its derived children queued (paged by the expand step, never read whole here). */
-function affect(db: DatabaseSync, job: RevocationJob, id: string, version: number): void {
+function affect(db: DatabaseSync, job: RevocationJob, budget: Budget, id: string, version: number): void {
   const prior = st(db, "SELECT state,length(CAST(text AS BLOB)) AS bytes FROM memory_records WHERE id=? AND version=?").get(id, version);
   // Sentinel (S02 annotation): how often a record is ended, how often it was already deleted, and what the step rewrites.
   // Counts only, from the row this step reads anyway; the decision below is unchanged.
   observeAffect(prior);
   if (!prior) return;
-  st(db, "UPDATE memory_records SET state='deleted',owner_pinned=0 WHERE id=? AND version=? AND (state!='deleted' OR owner_pinned!=0)").run(id, version);
   // Forget means the words are gone (Learn about me r3 C3): every record a forget ends loses its text in this same step, not only
   // those resting on a deleted conversation. Readers are already refused from the forget's commit; the indexes drop it by id.
-  st(db, "UPDATE memory_records SET text='' WHERE id=? AND version=? AND text!=''").run(id, version);
+  // One statement, so the record logs one recall change row, not one for the state and one for the text (T4: a slice's rows changed stay
+  // inside SLICE_WORK_PER_ROW per budget row).
+  st(db, "UPDATE memory_records SET state='deleted',owner_pinned=0,text='' WHERE id=? AND version=? AND (state!='deleted' OR owner_pinned!=0 OR text!='')").run(id, version);
   // A rolled checkpoint has a 'deleted' projection while its record is still
   // archived. Its first actual forget must also scrub old segments and WAL pages.
   // Repeated visits to an already deleted record keep completed work completed (scale finding A6); an already pending pair needs no rewrite.
-  st(db, "UPDATE memory_projection_receipts SET lexical_status='delete-pending',embedding_status='delete-pending' WHERE record_id=? AND record_version=? AND lexical_status!='delete-pending' AND (lexical_status!='deleted' OR ?=1)").run(id, version, prior.state !== "deleted" ? 1 : 0);
+  if (st(db, "SELECT 1 FROM memory_projection_receipts WHERE record_id=? AND record_version=? AND lexical_status!='delete-pending' AND (lexical_status!='deleted' OR ?=1) LIMIT 1").get(id, version, prior.state !== "deleted" ? 1 : 0))
+    budget.projections.push([id, version, prior.state !== "deleted" ? 1 : 0]);
   // (indexed by record; the events naming it as their prior go in the learning phase's rowid windows: evolution-forgetting.ts)
   if (hasTable(db, "memory_learning_events")) st(db, "DELETE FROM memory_learning_events WHERE record_id=? AND record_version=?").run(id, version);
   addTarget(db, job, "r", id);
+  addTarget(db, job, "terms", id, version);
   // what was derived from it goes too; a record deleted before (by an earlier forget) had its descendants handled then
   if (prior.state !== "deleted") addTarget(db, job, "p", id, version);
 }
@@ -596,7 +608,7 @@ function expandStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boole
   if (queued.length) {
     for (const row of queued) {
       st(db, "DELETE FROM memory_revocation_targets WHERE job_id=? AND kind='q' AND id=? AND rev=?").run(job.id, row.id, row.rev);
-      affect(db, job, String(row.id), Number(row.rev));
+      affect(db, job, budget, String(row.id), Number(row.rev));
     }
     spend(budget, queued.length);
     return false;
@@ -604,7 +616,7 @@ function expandStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boole
   // 4. the targeted record's versions
   if (job.record && c.rec !== null) {
     const rows = st(db, "SELECT version FROM memory_records WHERE id=? AND version>? AND (?3 IS NULL OR version=?3) ORDER BY version LIMIT ?").all(job.record.id, c.rec, job.record.rev, n) as Array<{ version: number }>;
-    for (const row of rows) affect(db, job, job.record.id, Number(row.version));
+    for (const row of rows) affect(db, job, budget, job.record.id, Number(row.version));
     spend(budget, rows.length);
     c.rec = rows.length === n ? Number(rows[rows.length - 1]!.version) : null;
     return false;
@@ -625,7 +637,7 @@ function expandStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boole
       ? st(db, "SELECT source_revision AS r,record_id AS i,record_version AS v,start_byte AS b FROM memory_evidence_by_source WHERE source_id=? AND (source_revision,record_id,record_version,start_byte)>(?,?,?,?) ORDER BY source_revision,record_id,record_version,start_byte LIMIT ?").all(id, ...(c.ev as [number, string, number, number]), n)
       : st(db, "SELECT source_revision AS r,record_id AS i,record_version AS v,start_byte AS b FROM memory_evidence_by_source WHERE source_id=? ORDER BY source_revision,record_id,record_version,start_byte LIMIT ?").all(id, n)) as Array<{ r: number; i: string; v: number; b: number }>;
     const deleted = Boolean(st(db, "SELECT 1 FROM memory_sources WHERE id=? AND state='deleted'").get(id));
-    for (const row of rows) if (every || deleted || revs.get(job.id, id, Number(row.r))) affect(db, job, String(row.i), Number(row.v));
+    for (const row of rows) if (every || deleted || revs.get(job.id, id, Number(row.r))) affect(db, job, budget, String(row.i), Number(row.v));
     spend(budget, rows.length);
     if (rows.length === n) { const last = rows[rows.length - 1]!; c.ev = [Number(last.r), String(last.i), Number(last.v), Number(last.b)]; }
     else { c.srcAfter = c.src; c.src = null; c.ev = null; }
@@ -642,7 +654,7 @@ function expandStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boole
   const deleted = st(db, "SELECT 1 FROM memory_sources WHERE id=? AND state='deleted'");
   for (const row of rows) {
     const held = revs.all(job.id, String(row.s)).map(r => Number(r.rev));
-    if (held.length && held.some(rev => rev === ALL || rev === Number(row.r) || Boolean(deleted.get(String(row.s))))) affect(db, job, String(row.i), Number(row.v));
+    if (held.length && held.some(rev => rev === ALL || rev === Number(row.r) || Boolean(deleted.get(String(row.s))))) affect(db, job, budget, String(row.i), Number(row.v));
   }
   spend(budget, rows.length);
   if (rows.length === n) { const last = rows[rows.length - 1]!; c.scan = [String(last.i), Number(last.v), String(last.s), Number(last.r), Number(last.b)]; return false; }
@@ -788,9 +800,11 @@ function recordsScanStep(db: DatabaseSync, job: RevocationJob, budget: Budget): 
   return hi >= c.end;
 }
 
-// ---- all: every receipt made before the commit's epoch ends (a deleted bot), a page of bundle ids at a time; the policy
+// ---- all: legacy global receipt cleanup, a page of bundle ids at a time; the policy
 // revision moved in the commit, so readers already refuse them, and a receipt made since (a later epoch) is not touched
 function allStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boolean {
+  // Older bot jobs already walked scope -> expand -> receipts. Keep that scoped result on restart as well.
+  if (job.cause === "bot-deletion") return true;
   const c = (job.c ??= { after: null }) as { after: string | null };
   const n = chunk(budget);
   return bundlePage(db, c, n, (after, end) => Number(st(db, "UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked' AND deletion_epoch<?3 AND bundle_id>?1 AND bundle_id<=?2").run(after, end, Number(job.epoch ?? 0)).changes), job, budget);
@@ -801,6 +815,18 @@ function doneStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boolean
   // the first page in key order, then a primary-key range delete up to its last key (the page is what is left at the front)
   const n = chunk(budget);
   const page = st(db, "SELECT kind,id,rev FROM memory_revocation_targets WHERE job_id=? ORDER BY kind,id,rev LIMIT ?").all(job.id, n);
+  // Recall consumer owner: c3-memory-side; derived projection producer: recall-scope.
+  // A retained or revoked view is still deletion debt. Drain its words before dropping
+  // the durable record target; ordinary view upkeep cannot admit a revoked generation.
+  if (hasTable(db, "memory_recall_view_terms")) for (const target of page) {
+    if (target.kind !== "terms") continue;
+    const removed = Number(st(db, `DELETE FROM memory_recall_view_terms
+      WHERE (record_id,version,view_id,generation,term,sequence) IN (
+        SELECT record_id,version,view_id,generation,term,sequence FROM memory_recall_view_terms
+        WHERE record_id=? AND version=? ORDER BY view_id,generation,term,sequence LIMIT ?)`)
+      .run(target.id, target.rev, n).changes);
+    if (removed) { spend(budget, page.length + removed); return false; }
+  }
   spend(budget, page.length);
   if (!page.length) return true;
   const last = page[page.length - 1]!;
@@ -838,7 +864,7 @@ function rewalkDeletions(db: DatabaseSync, named: Partial<RevocationJob> | null)
   const scopes = [...new Set(list(named.scopes).filter(id => denied("scope", id)) as string[])];
   if (scopes.length) {
     const job = forgetJob({ epoch, scopes, cause: "bot-deletion" });
-    job.phases.unshift("scope"); job.phases.splice(job.phases.indexOf("done"), 0, "all");
+    job.phases.unshift("scope");
     createRevocationJob(db, job);
   }
 }
@@ -871,7 +897,7 @@ export function startRevocationJob(db: DatabaseSync, job: RevocationJob, inline:
 export function deferRecordsScan(db: DatabaseSync, rec: NonNullable<RevocationJob["rec"]>): { revoked: number; deferred: boolean } | null {
   const job: RevocationJob = { v: 2, id: randomUUID(), phases: ["records-scan"], c: null, rec };
   let revoked = 0;
-  const budget: Budget = { rows: INLINE_REVOCATION.rows, deadline: performance.now() + INLINE_REVOCATION.ms };
+  const budget: Budget = { rows: INLINE_REVOCATION.rows, deadline: performance.now() + INLINE_REVOCATION.ms, projections: [] };
   while (job.phases.length && !exhausted(budget)) { if (recordsScanStep(db, job, budget)) { job.phases.shift(); job.c = null; } }
   revoked += job.revoked ?? 0; job.revoked = 0;
   if (!job.phases.length) return { revoked, deferred: false };
@@ -1023,7 +1049,7 @@ async function tick(): Promise<void> {
       if (live) memoryRevocationStats.markerYields++;
     }
     const budget = (options.sliceMs ?? REVOCATION_SLICE_MS) * (live && marker ? REVOCATION_LIVE_SLICE_FRACTION : 1), t0 = performance.now();
-    let more = false, budgetWait = false;
+    let more = false, budgetWait = false, workMs = 0;
     // a background runner: the write lock is taken within the background budget, never the handle's 1 s wait (a busy start retries)
     beginBackground(db, "revocation-job");
     // the runner's own transaction: what its commit writes to the WAL is measured into the budget's cost estimate (revoke-budget.ts S2)
@@ -1055,7 +1081,8 @@ async function tick(): Promise<void> {
           } finally { chargeRevokeRows(db, totalChanges(db) - before); }
         }
       }
-      memoryRevocationStats.maxWorkMs = Math.max(memoryRevocationStats.maxWorkMs, performance.now() - t0);
+      workMs = performance.now() - t0;
+      memoryRevocationStats.maxWorkMs = Math.max(memoryRevocationStats.maxWorkMs, workMs);
       db.exec("COMMIT");
       // measured right after its COMMIT, before anything else runs on this thread: for the pace always (whatever it held), and into C and
       // admission only when it held the marker's slice and nothing else (a job step or a late build ran otherwise)
@@ -1067,7 +1094,10 @@ async function tick(): Promise<void> {
     if (budgetWait) { memoryRevocationStats.budgetWaits++; schedule(Math.max(1, revokeWriteWaitMs(revokeSliceNeed(db)))); return; }
     memoryRevocationStats.slices++; memoryRevocationStats.workMs += ms;
     memoryRevocationStats.maxSliceMs = Math.max(memoryRevocationStats.maxSliceMs, ms);
-    rowsPerSlice = nextRevocationRows(rowsPerSlice, ms, budget); backoff = options.retryMs ?? LOCK_RETRY_MS;
+    // Size row work against its deadline. Shrinking rows cannot reduce fixed
+    // commit/checkpoint costs; it only multiplies those costs on slow storage.
+    // The pause below still includes all storage time, preserving duty cycle.
+    rowsPerSlice = nextRevocationRows(rowsPerSlice, workMs, budget); backoff = options.retryMs ?? LOCK_RETRY_MS;
     if (live) { if (!marker) memoryRevocationStats.busyPauses++; schedule(options.busyPauseMs ?? REVOCATION_BUSY_PAUSE_MS); }
     else schedule(Math.max(options.pauseMs ?? REVOCATION_MIN_PAUSE_MS, Math.ceil(ms * REVOCATION_PAUSE_FACTOR)));
   } catch (error) {
@@ -1132,17 +1162,26 @@ export const SEND_FENCE_DRAIN = { rows: 2048, ms: 40 };
  * runner yields to a live owner turn, so without this the owner's next turn would be refused for a revoke nobody walks while it waits.
  * Bounded (a large revoke is left to the runner); never inside a caller's transaction. True while marker work is left. */
 export function drainRevokeMarkerBounded(db: DatabaseSync, budget: { rows: number; ms: number } = SEND_FENCE_DRAIN, options: { background?: boolean } = {}): boolean {
+  chargeReleaseWork();
   if (db.isTransaction) return markerWorkPending(db);
   const deadline = performance.now() + budget.ms;
   let rows = budget.rows;
   while (rows > 0 && performance.now() < deadline) {
     revokePaceNeed(db); // the drain's outstanding copies are settled outside its transaction first: its own copy (revoke-budget.ts r3.6c)
     // the upgrade's slices take the background budget; the send fence (an owner's send is waiting) keeps the handle's owner wait
+    chargeReleaseStatement();
+    // Reserve both transaction exits before BEGIN. Cleanup cannot need a new
+    // reservation after a failed row/check has sealed the generation.
+    chargeReleaseStatement();
+    chargeReleaseStatement();
     if (options.background) beginBackground(db, "revoke-marker"); else db.exec("BEGIN IMMEDIATE");
     const measure = beginRevokeMeasure(db); // this drain's own transaction: its commit is measured into the cost estimate (revoke-budget.ts S2)
     let moved: boolean | "budget";
     // inside the marker's write budget (revoke-budget.ts): a minute with no room left walks nothing more here; the runner carries on later
-    try { moved = budgetedMarkerSlice(db, Math.min(rows, MARKER_SLICE_ROWS), Math.max(1, deadline - performance.now()), lateBuildStep); db.exec("COMMIT"); endRevokeMeasure(db, measure); }
+    try {
+      moved = budgetedMarkerSlice(accountedDatabase(db), Math.min(rows, MARKER_SLICE_ROWS), Math.max(1, deadline - performance.now()), lateBuildStep);
+      db.exec("COMMIT"); endRevokeMeasure(db, measure);
+    }
     catch (error) {
       if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* rolled back */ } }
       endRevokeMeasure(db, measure, false, false);
@@ -1154,26 +1193,44 @@ export function drainRevokeMarkerBounded(db: DatabaseSync, budget: { rows: numbe
   }
   return markerWorkPending(db);
 }
-setSendFenceDeps({ drain: db => { drainRevokeMarkerBounded(db); } });
+
 /** How long a turn the send fence refused for a revoke still being walked waits for the marker before it rebuilds its prompt once. */
 export const REDISPATCH_SETTLE_MS = 5_000;
 /** Before a refused turn rebuilds its prompt: walks the revoke marker in bounded slices, yielding between them, until nothing is pending or
  * `maxMs` passed (the runner yields to the owner's live turn, so without this the rebuilt prompt would meet the same window). True when
  * the marker is done. Each slice is SEND_FENCE_DRAIN-bounded: the event loop keeps serving. */
 export async function settleRevokesForTurn(db: DatabaseSync, maxMs = REDISPATCH_SETTLE_MS): Promise<boolean> {
-  const deadline = performance.now() + maxMs;
-  for (;;) {
-    let pending: boolean;
-    try { pending = db.isTransaction ? true : drainRevokeMarkerBounded(db); } catch { return false; }
-    if (!pending) return true;
-    if (performance.now() >= deadline) return false;
-    // a minute whose write budget is spent walks nothing until it has room: wait for that (or the deadline) instead of spinning
-    const wait = revokeWriteWaitMs(revokeSliceNeed(db));
-    // room that comes only after the deadline (the idle pace, IO-IDLE-DRAIN-1018 r3.5: one commit's room a minute) is not waited for: the
-    // refused turn rebuilds now and its prompt reads "checking" (the accepted cost), instead of every such turn stalling the whole window
-    if (wait > deadline - performance.now()) return false;
-    if (wait > 0) await new Promise<void>(resolve => { setTimeout(resolve, Math.max(1, wait)).unref?.(); });
-    else await new Promise<void>(resolve => setImmediate(resolve));
+  const started = performance.now();
+  const deadline = started + maxMs;
+  // Count bounded drain attempts, including a throwing attempt, excluding transaction-only loop iterations.
+  // Cleared/budget/error describe their existing exits; in-tx refines only a deadline reached inside a caller's transaction.
+  let slices = 0;
+  let outcome: "cleared" | "deadline" | "budget" | "error" | "in-tx" = "error";
+  try {
+    for (;;) {
+      let pending: boolean;
+      let inTx = false;
+      try {
+        inTx = db.isTransaction;
+        pending = inTx ? true : (slices++, drainRevokeMarkerBounded(db));
+      } catch { return false; }
+      if (!pending) { outcome = "cleared"; return true; }
+      if (performance.now() >= deadline) { outcome = inTx ? "in-tx" : "deadline"; return false; }
+      // a minute whose write budget is spent walks nothing until it has room: wait for that (or the deadline) instead of spinning
+      const wait = revokeWriteWaitMs(revokeSliceNeed(db));
+      // room that comes only after the deadline is not waited for: the refused turn rebuilds now, as before
+      if (wait > deadline - performance.now()) { outcome = "budget"; return false; }
+      if (wait > 0) await new Promise<void>(resolve => { setTimeout(resolve, Math.max(1, wait)).unref?.(); });
+      else await new Promise<void>(resolve => setImmediate(resolve));
+    }
+  } finally {
+    // Diagnostics must never alter a return or mask an exception. -1 means the count could not be read; activeJobs does not count flips/folds.
+    try {
+      const ms = Math.max(0, Math.round(performance.now() - started));
+      let activeJobs = -1;
+      try { activeJobs = (db.prepare("SELECT count(*) AS activeJobs FROM (SELECT 1 FROM memory_revoke_jobs WHERE state IN ('active','undoing') LIMIT 1001)").get() as { activeJobs: number }).activeJobs; } catch { /* diagnostic only */ }
+      console.warn(`[memory] settle outcome=${outcome} ms=${ms} slices=${slices} activeJobs=${activeJobs > 1000 ? ">1000" : activeJobs}`);
+    } catch { /* diagnostic only */ }
   }
 }
 /** Wakes the runner if this process started it, once the caller's synchronous transaction is over (a microtask runs after it):
@@ -1197,3 +1254,5 @@ export function resetMemoryRevocationStats(): void { for (const key of Object.ke
 
 // a receipt any path turns 'revoked' wakes the runner, which commits it as a receipt root (receipt-outputs.ts)
 setFlipWake(wakeIfStarted);
+
+setSendFenceDeps({ drain: db => { drainRevokeMarkerBounded(db); } });

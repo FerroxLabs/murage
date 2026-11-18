@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
@@ -27,13 +27,15 @@ function slackEvent(id: string, text: string, user = "UOTHER") {
   renameSync(name + ".tmp", name + ".json");
 }
 async function openWorkspaceMemory(page: Page) {
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); localStorage.setItem("murage.settings.mode", "advanced"); });
   await page.goto(origin);
   const sidebar = await openSidebar(page);
   await sidebar.getByRole("button", { name: "App settings", exact: true }).click();
   const settings=page.getByRole("dialog",{name:"Settings",exact:true});
   await settings.getByRole("navigation").getByRole("button",{name:"Memory",exact:true}).click();
-  return page.getByTestId("memory-section");
+  // 1.0.19 (558df204d6): Settings > Memory is an Advanced-only page of cards; each card is a slot the
+  // section portals its piece into, so the cards are not inside data-testid="memory-section". Scope to the dialog.
+  return settings;
 }
 async function inspectWidth(page: Page, width: number, panel: ReturnType<Page["getByRole"]>, target: ReturnType<Page["getByRole"]>, focusTarget: ReturnType<Page["getByRole"]>) {
   await page.setViewportSize({ width, height: 1100 });
@@ -49,7 +51,7 @@ async function inspectWidth(page: Page, width: number, panel: ReturnType<Page["g
 async function audit(page: Page, info: { attach: (name: string, value: { body: string; contentType: string }) => Promise<void> }, name: string) {
   if (!process.env.MURAGE_B31_AXE_SOURCE) return;
   await page.addScriptTag({ path: process.env.MURAGE_B31_AXE_SOURCE });
-  const result = await page.evaluate(async () => (window as any).axe.run(document.querySelector('[data-testid="memory-settings"]')));
+  const result = await page.evaluate(async () => (window as any).axe.run(document.querySelector('[data-settings-page-body]')));
   await info.attach(`axe-${name}.json`, { body: JSON.stringify(result), contentType: "application/json" });
   expect(result.violations.filter((issue: any) => ["critical", "serious"].includes(issue.impact))).toEqual([]);
 }
@@ -87,8 +89,8 @@ test("learning choices persist, stale edits require refresh, and workspace activ
   await expect(page.getByRole("alert")).toContainText("changed elsewhere");await expect(review).toBeDisabled();
   await page.getByRole("button", { name: "Refresh changed settings" }).click();
   await expect(procedures).not.toBeChecked();await expect(review).toBeEnabled();
-  await page.getByRole("button", { name: /^Advanced/ }).click();
-  const advanced = page.getByRole("region", { name: "Advanced", exact: true });
+  // 1.0.19 removed the page's "Advanced" fold: workspace activity is the Memory health card (memory.health) in Advanced mode.
+  const advanced = panel.getByRole("region", { name: "Memory health", exact: true });
   await expect(advanced.getByText(/Counts cover the whole workspace/)).toBeVisible();
   await expect(advanced.getByText("No activity recorded", { exact: false }).first()).toBeVisible();
   await expect(advanced.getByText(/Combining memories: disabled/)).toBeVisible();
@@ -119,6 +121,8 @@ test("owner assigns, conflicts and revokes an actual verified Slack person throu
   expect(humans.bindings).toHaveLength(1); expect(humans.bindings[0]).toMatchObject({ personId: null, revision: 1, active: true, state: "link-required" });
 
   const panel = await openWorkspaceMemory(page);
+  // The people card sits in the page's "Open memory" fold (MemoryPage MemoryBrowserSlot), closed until opened.
+  await panel.getByRole("button", { name: "Open memory", exact: true }).click();
   const people = panel.getByRole("region", { name: "Verified people and accounts", exact: true });
   const account = people.getByRole("group", { name: "Slack account · user ID UOTHER · account provider ID TEAM", exact: true });
   await expect(account).toContainText("Needs an owner decision");

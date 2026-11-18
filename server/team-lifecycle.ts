@@ -1,6 +1,7 @@
 import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { interruptSharedThread } from "./shared-work.ts";
 import { validateSharingStructure } from "./sharing-restore.ts";
+import { bootStep } from "./read-only-start.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from "node:crypto";
@@ -128,6 +129,9 @@ export function reconcileTeamJournalFiles(root:string,db:DatabaseSync,bots:BotRe
   catch(error){if(!(error instanceof Error)||error.message!==TEAM_RENAME_STALLED)throw error;rollBackRename(files,db,String(row.team_id));notes.push(TEAM_RENAME_ROLLED_BACK);}
  return notes;
 }
+/** Bots whose repaired record the disk refused to save: memory keeps the repair (E4: revoked and retired team access stays closed), so the next
+ * reconcile in this process saves them even when it finds nothing new to change (bootdesign2-probes R4: memory ahead of disk is saved again). */
+const unsavedRepairs=new Set<string>();
 export function reconcileTeamIdentities(store:Store):string[] {
  const notes:string[]=[];
  const db=database();validateSharingStructure(store.bots as unknown as Record<string,unknown>[],store.groups as unknown as Record<string,unknown>[],db);
@@ -140,8 +144,11 @@ export function reconcileTeamIdentities(store:Store):string[] {
    if(!sharedWithTeam(bot,work.teamId)&&work.closedAt===undefined){work.closedAt=Date.now();work.closedReason=db.prepare("SELECT 1 FROM team_identities WHERE team_id=? AND retired_at IS NULL").get(work.teamId)?"revoked":"team-deleted";changed=true;}
    if(work.finishing){const run=work.finishing.requestId?roomRequest(db,work.finishing.requestId):null;if(!run||["done","failed","cancelled","expired","unknown"].includes(run.state)){delete work.finishing;changed=true;}}
   }
-  if(changed)store.patchBot(bot.id,{sharedWith:bot.sharedWith,partitionedAt:bot.partitionedAt,tasks:bot.tasks});
+  if(changed||unsavedRepairs.has(bot.id)){unsavedRepairs.add(bot.id);store.patchBot(bot.id,{sharedWith:bot.sharedWith,partitionedAt:bot.partitionedAt,tasks:bot.tasks});unsavedRepairs.delete(bot.id);}
  }
  validateSharingStructure(store.bots as unknown as Record<string,unknown>[],store.groups as unknown as Record<string,unknown>[],db);
  store.markPartitions();reconcileMemoryRoster(store);return notes;
 }
+/** The boot caller (index.ts): a roster save the disk refuses switches the start to read-only (boot tolerance E4); the in-memory repair stays, the
+ * file gets it at the next start, which reconciles again. */
+export function reconcileTeamsAtBoot(store:Store):string[] {return bootStep("teams.reconcileIdentities",()=>reconcileTeamIdentities(store),[]);}

@@ -42,16 +42,33 @@
 //   hold RESERVED for this ticket (pairing.ts reservePairHold: reserved_by = nonce, reserved_until = expiry + skew), never spent here; the
 //   home spends it at exchange. No hold, or one reserved by another ticket: 409 door_needs_hold (with completesAt while a hold is running).
 //   The first full-scope device a home ever has needs no hold.
+//   Exception, a desktop that is ALREADY a device of the home: when the request's bind equals the bind the home's device list gives an ACTIVE
+//   full-scope (not browser) device (home image 4D; never revoked, never a browser-scope device), the ticket is minted with no pairHold and
+//   nothing reserved. Safe because the home still demands the key proof for that bind and answers "known" before its hold check, so only
+//   that key's holder can redeem it. An older image gives no bind: exactly the rule above.
+// - Browser owner (browser-owner/DESIGN.md, settled with the round 4 corrections): a v2 BROWSER ticket for a home that advertises the owner factor
+//   (cloud_homes.door_proof = 1, set by the heartbeat header x-murage-owner-factor: 1) carries `proof`: "email" for an emailed sign-in, a granted
+//   code or a claimed emailed intent, "factor" for a trusted authenticator. The home issues the remembered-owner factor on it. A home that does
+//   not advertise it parses no such claim, so it never gets one. The ready-email link is the same door: a proof older than 900 s is no step-up,
+//   so the customer is asked for the normal emailed code once, and the ticket then carries proof "email".
+// - The FIRST COMPUTER (a desktop ticket, history "never", no known bind) needs an EMAILED step-up, not an authenticator alone (403
+//   step_up_required, step_up.reason "email_code_required"): the home needs no pair hold for it, and its scope skips every code. It connects at
+//   once, with no hold and no link to press, and the owner is mailed "A computer was connected to your Murage home" with Make chat-only and
+//   Remove (sendFirstComputerMail, one row per ticket nonce). A home that had a computer is unchanged.
 // - The notice is owed per (account, home, Supabase session, bind), and its SEND is paced: at most three emails per (account, home) per
 //   clock hour, claimed and reserved atomically (sendOwedNotices); the rest fold into the next email.
 import { z } from "zod";
 import { signPayload } from "./b3-signatures";
 import { boundCustomer, DOOR_ROUTE, DOOR_STEP_UP_MAX_AGE_SECONDS, DOOR_V1_STEP_UP_MAX_AGE_SECONDS, doorRecentProofAt, doorV2Required, stepUpProof, stepUpProofValid,
   type CustomerSession, type Identity } from "./customer-identity";
+import { FIRST_SETUP_WINDOW_MS } from "./access-events";
 import { noticeBackoff } from "./b5-billing";
 import { reconciledContactEmail, type CurrentSupabaseUser } from "./cloud-accounts";
+import { cancelMark, ensureLaterJoin, handoutGuard, hasUsedRow, joinRequired, joinStillReadyGuard, joinView, liveLaterJoin, markJoinUsed, noteHomeHadComputer, sendConnectionMail,
+  sendJoinMail, settleFirstRows, ticketStatements, JOIN_COLS, JOIN_HOLD_MS, JOIN_READY_MS, type JoinRow } from "./device-join";
 import { listHomeDevices } from "./devices";
 import { senderOrFail, type TransactionalEmailSender } from "./email";
+import { proofGate } from "./flux-email-proof";
 import { HOSTNAME } from "./homes";
 import { errorResponse, HTTPError, json, readBoundedJSON } from "./http";
 import { reservePairHold, runningPairHold, type PairingDependencies } from "./pairing";
@@ -138,14 +155,17 @@ function rateLimited(retryAfterSeconds: number): Response {
 /** Which proof the door's second step came from (the mint log line says it; never anything else about it). */
 type ProofKind = "intent" | "factor" | "amr" | "granted";
 
-/** When this request's fresh second factor was proved (ms), and by what, or 403 step_up_required. A step-up intent claimed for this very
- *  request counts: an emailed-code approval from its verification (approved_at), and the TRUSTED authenticator in the session from its
- *  proof (an intent claimed by a fresh authenticator keeps any older approved_at). Door v2 (3.4): the emailed sign-in or an emailed code
- *  granted in THIS Supabase session (doorRecentProofAt) counts too. The FRESHEST proof inside the door's window (900 s) wins. An
- *  authenticator's proof time counts only when the gate's own check accepts that factor now (trustedProofAt: on the trusted list, active,
- *  out of its hold, its method's proof fresh, still verified in Supabase's current list), never a timestamp read beside it (Astra
- *  DOORMINT-3). */
-async function stepUpAt(request: Request, env: Env, identity: Identity, session: CustomerSession, now: number): Promise<{ at: number; proof: ProofKind }> {
+/** One proof the door would accept now, and the last millisecond (inclusive) at which this proof alone would still be accepted. */
+export interface DoorProof { at: number; proof: ProofKind; lastFresh: number }
+
+/** The window of the door for a home: v2 900 s, v1 300 s (the home refuses an older stepUpAt). */
+export const doorWindowMs = (v2: boolean): number => (v2 ? DOOR_STEP_UP_MAX_AGE_MS : DOOR_V1_STEP_UP_MAX_AGE_MS);
+
+/** Every proof the door accepts for this request now (or 403 step_up_required when none), each with the moment it stops counting. The one
+ *  evaluator behind both /door (doorStepUpAt) and GET /v1/account/step-up/state (doorFreshness), so they cannot disagree. An email proof (the
+ *  emailed sign-in, a granted code) lasts 900 s inclusive. A trusted authenticator also stops with the route's own gate window
+ *  min(CLOUD_STEPUP_MAX_AGE_SECONDS, 900 s) (identity.stepUpNeeded), which counts whole seconds: accepted while floor(now/1000) - proof <= window. */
+export async function doorProofs(request: Request, env: Env, identity: Identity, session: CustomerSession, now: number): Promise<DoorProof[]> {
   const accountId = session.user.id;
   const refuse = () => new HTTPError(403, "step_up_required");
   const valid = (at: number | null | undefined): at is number =>
@@ -158,23 +178,48 @@ async function stepUpAt(request: Request, env: Env, identity: Identity, session:
     if (!config || session.user.id !== accountId) throw refuse();
     return trustedProofAt(env.DB, accountId, session.supabase, config, now, DOOR_STEP_UP_MAX_AGE_SECONDS, currentFactors);
   };
+  const emailed = (at: number, proof: ProofKind): DoorProof => ({ at, proof, lastFresh: at + DOOR_STEP_UP_MAX_AGE_MS });
+  const factorProof = (at: number, windowSeconds: number): DoorProof =>
+    ({ at, proof: "factor", lastFresh: Math.min(at + DOOR_STEP_UP_MAX_AGE_MS, (Math.floor(at / 1000) + windowSeconds + 1) * 1000 - 1) });
   const recent = await doorRecentProofAt(env, session, now);
-  const proofs: { at: number; proof: ProofKind }[] = [];
-  if (recent && valid(recent.at)) proofs.push(recent);
+  const proofs: DoorProof[] = [];
+  if (recent && valid(recent.at)) proofs.push(emailed(recent.at, recent.proof));
   if (stepUpProof(request) && await stepUpProofValid(request)) {
     const row = await env.DB.prepare("SELECT approved_at FROM cloud_stepup_intents WHERE id=? AND user_id=?")
       .bind(stepUpProof(request)!.intentId, accountId).first<{ approved_at: number | null }>();
     if (!row) throw refuse();
-    if (valid(row.approved_at)) proofs.push({ at: row.approved_at, proof: "intent" });
+    if (valid(row.approved_at)) proofs.push(emailed(row.approved_at, "intent"));
     // A valid emailed approval stands on its own: the authenticator can only make it fresher.
-    try { const f = await trusted(); if (valid(f)) proofs.push({ at: f, proof: "factor" }); } catch (e) { if (!proofs.length) throw e; }
+    try { const f = await trusted(); if (valid(f)) proofs.push(factorProof(f, DOOR_STEP_UP_MAX_AGE_SECONDS)); } catch (e) { if (!proofs.length) throw e; }
   } else if (!await identity.stepUpNeeded(request, env)) {
-    try { const f = await trusted(); if (valid(f)) proofs.push({ at: f, proof: "factor" }); } catch (e) { if (!proofs.length) throw e; }
+    try {
+      const f = await trusted();
+      if (valid(f)) proofs.push(factorProof(f, Math.min(identity.config(env)?.stepUpMaxAgeSeconds ?? DOOR_STEP_UP_MAX_AGE_SECONDS, DOOR_STEP_UP_MAX_AGE_SECONDS)));
+    } catch (e) { if (!proofs.length) throw e; }
   }
   if (!proofs.length) throw refuse();
-  const best = proofs.reduce((a, b) => (b.at > a.at ? b : a));
+  return proofs;
+}
+
+/** When this request's fresh second factor was proved (ms), and by what, or 403 step_up_required. A step-up intent claimed for this very
+ *  request counts: an emailed-code approval from its verification (approved_at), and the TRUSTED authenticator in the session from its
+ *  proof (an intent claimed by a fresh authenticator keeps any older approved_at). Door v2 (3.4): the emailed sign-in or an emailed code
+ *  granted in THIS Supabase session (doorRecentProofAt) counts too. The FRESHEST proof inside the door's window (900 s) wins. An
+ *  authenticator's proof time counts only when the gate's own check accepts that factor now (trustedProofAt: on the trusted list, active,
+ *  out of its hold, its method's proof fresh, still verified in Supabase's current list), never a timestamp read beside it (Astra
+ *  DOORMINT-3). */
+export async function doorStepUpAt(request: Request, env: Env, identity: Identity, session: CustomerSession, now: number): Promise<{ at: number; proof: ProofKind }> {
+  const best = (await doorProofs(request, env, identity, session, now)).reduce((a, b) => (b.at > a.at ? b : a));
   // Never later than the ticket itself (a proof inside the clock skew is signed as "now").
   return { at: Math.min(best.at, now), proof: best.proof };
+}
+
+/** The last millisecond (inclusive) at which /door, for a home whose window is `windowMs` (doorWindowMs), would still accept this request's
+ *  proofs: the latest over every proof of min(its own end, its time + windowMs), since /door takes the freshest proof still valid and then
+ *  checks the home's window against it. 403 step_up_required when /door would ask now. */
+export async function doorFreshUntil(request: Request, env: Env, identity: Identity, session: CustomerSession, now: number, windowMs: number): Promise<number> {
+  const proofs = await doorProofs(request, env, identity, session, now);
+  return Math.max(...proofs.map((p) => Math.min(p.lastFresh, p.at + windowMs)));
 }
 
 interface DoorHome {
@@ -210,6 +255,17 @@ async function sendDoorNotice(env: Env, dependencies: DoorDependencies, to: stri
  *  write is fenced on the intent still executing; the background send ends after the intent is finalized, so its writes would roll back. */
 const noticeDb = (env: Env): D1Database => stepUpOpOf(env)?.db ?? env.DB;
 
+/** The owner opening their own new home for the first time: one delivered hand-out, the home's first notice, soon after it went ready. The welcome
+ *  email covers it, so it is closed unsent. An attempt, a second sign-in, or a later one is mailed. Unknown is mailed. */
+async function ownersFirstOpen(db: D1Database, accountId: string, homeId: string, claimed: { delivered: number }[], nowMs: number): Promise<boolean> {
+  if (claimed.length !== 1 || !claimed[0].delivered) return false;
+  try {
+    const row = await db.prepare(`SELECT h.ready_at AS ready_at, (SELECT COUNT(*) FROM cloud_door_notices n WHERE n.home_id=h.id AND n.sent_at IS NOT NULL) AS earlier
+      FROM cloud_homes h WHERE h.id=? AND h.owner_id=?`).bind(homeId, accountId).first<{ ready_at: number | null; earlier: number }>();
+    return !!row && row.earlier === 0 && row.ready_at !== null && nowMs <= row.ready_at + FIRST_SETUP_WINDOW_MS;
+  } catch { return false; }
+}
+
 /** ONE paced send of the owed notices of (account, home) (4B "Notices", Astra r3 Medium 6). Never throws; true when an email went out.
  *  1. Claim: one statement takes every armed, unsent, due row of (account, home) for this sender (claim_id; next_attempt_at moves past the
  *     claim, so another sender skips them). No rows: nothing to send.
@@ -229,6 +285,10 @@ async function sendOwedNotices(db: D1Database, env: Env, dependencies: DoorDepen
       .all<{ session_id: string; bind: string; delivered: number; attempts: number }>()).results;
   } catch { return false; }
   if (!claimed.length) return false;
+  if (await ownersFirstOpen(db, accountId, homeId, claimed, nowMs)) {
+    try { await db.prepare("UPDATE cloud_door_notices SET sent_at=? WHERE claim_id=? AND sent_at IS NULL").bind(nowMs, claimId).run(); } catch { /* the claim runs out; the sweep tries again */ }
+    return false;
+  }
   const attempts = Math.max(...claimed.map((r) => r.attempts));
   const backOff = async () => {
     try {
@@ -273,7 +333,7 @@ async function sendOwedNotices(db: D1Database, env: Env, dependencies: DoorDepen
 
 /** Supabase's current record of `sub` from the identity reader (cloudflare/identity-reader: GET /auth/v1/admin/users/:sub with the secret
  *  key, which only that Worker holds): no reader, a timeout, an error or another user's answer is 503 identity_unavailable. */
-function readerUser(env: Env, dependencies: DoorDependencies): LiveUser {
+export function readerUser(env: Env, dependencies: DoorDependencies): LiveUser {
   return async (sub) => {
     const reader = readerOf(env, { reader: dependencies.reader });
     if (!reader) throw new HTTPError(503, "identity_unavailable");
@@ -317,6 +377,8 @@ export async function sweepDoorNotices(env: Env, nowMs = Date.now(), dependencie
   for (const row of due.results) {
     if (await sendOwedNotices(db, env, dependencies, row.account_id, row.home_id, live, nowMs)) sent++;
   }
+  try { sent += await retryFirstComputerMails(env, nowMs, dependencies, live); }
+  catch { console.error(JSON.stringify({ message: "first computer mail retry failed" })); }
   return sent;
 }
 
@@ -328,12 +390,15 @@ export async function sweepDoorNotices(env: Env, nowMs = Date.now(), dependencie
  *  - "unknown": the answer omits fullScopeEver (an older image). Never read as "never enrolled", and never a hold on that alone: a ready
  *    hold is reserved and claimed when there is one, else the ticket is minted as before and the home's exchange decides. */
 type DesktopHistory = "had" | "never" | "unknown";
-async function desktopHistory(env: Env, homeId: string, account: { id: string; email: string }, dependencies: DoorDependencies)
-  : Promise<{ history: DesktopHistory; consumed: string[] }> {
+async function desktopHistory(env: Env, homeId: string, account: { id: string; email: string }, dependencies: DoorDependencies, bind: string)
+  : Promise<{ history: DesktopHistory; consumed: string[]; knownBind: boolean; devices: { scope: string; bind: string | null }[] }> {
   const list = await listHomeDevices(env, homeId, account, { homeFetch: dependencies.homeFetch, keyWrapper: dependencies.keyWrapper });
   const consumed = list.consumedHoldIds ?? [];
-  if (list.fullScopeEver === true || list.devices.some((d) => d.scope !== "browser") || consumed.length > 0) return { history: "had", consumed };
-  return { history: list.fullScopeEver === false ? "never" : "unknown", consumed };
+  // Plain compare on validated hex (devices.ts deviceBind): an active owner-desktop device whose bind is the request's. Exactly the scope the
+  // home's own 4F exchange requires (cloud-sessions.ts): an enrolled owner-phone (or any other non-browser scope) is not a known desktop bind.
+  const knownBind = list.devices.some((d) => d.scope === "owner-desktop" && d.bind !== null && d.bind === bind);
+  if (list.fullScopeEver === true || list.devices.some((d) => d.scope !== "browser") || consumed.length > 0) return { history: "had", consumed, knownBind, devices: list.devices };
+  return { history: list.fullScopeEver === false ? "never" : "unknown", consumed, knownBind, devices: list.devices };
 }
 
 /** 409 door_needs_hold: with the running pair hold's end time when one is running, nothing else otherwise. */
@@ -352,13 +417,18 @@ export async function doorRoute(request: Request, env: Env, identity: Identity, 
   const session = await identity.customer(request);
   if (!session) throw new HTTPError(401, "unauthorized");
   const account = { id: session.user.id };
+  // FLUX-ENSURE-EMAIL-VERIFIED launch flow A: no door while the owner's email is not proven (the same gate that disables the page's
+  // "Open Murage"), so a direct link cannot skip the code. It is about the caller's own account, so it says nothing about any home.
+  if ((await proofGate(env, account.id)).blocked) throw new HTTPError(409, "email_unproven");
   const parsed = bodySchema.safeParse(await readBoundedJSON(request));
   if (!parsed.success) throw new HTTPError(400, "invalid_request");
   const body = parsed.data as { bind?: string; kind?: "browser" | "desktop" };
   const homeId = match[1];
   const now = identity.now();
-  const stepped = await stepUpAt(request, env, identity, session, now);
-  const steppedAt = stepped.at;
+  const proofs = await doorProofs(request, env, identity, session, now);
+  const freshest = (list: DoorProof[]) => { const b = list.reduce((a, c) => (c.at > a.at ? c : a)); return { at: Math.min(b.at, now), proof: b.proof }; };
+  let stepped = freshest(proofs);
+  let steppedAt = stepped.at;
 
   // The account budget counts every mint, whatever the home: it reveals nothing about any home.
   const perAccount = await takeLimit(env, account.id, "door_account", now);
@@ -381,8 +451,67 @@ export async function doorRoute(request: Request, env: Env, identity: Identity, 
   const kind = v2 ? body.kind! : null;
   const bind = v2 ? body.bind! : "";
   // r4.2: a desktop ticket for a home that has had a full-scope device carries a reserved pair hold, or is not minted.
-  const known = kind === "desktop" ? await desktopHistory(env, homeId, { id: account.id, email: session.user.email }, dependencies) : null;
+  const known = kind === "desktop" ? await desktopHistory(env, homeId, { id: account.id, email: session.user.email }, dependencies, bind) : null;
   const history: DesktopHistory | null = known?.history ?? null;
+  const knownDevice = known?.knownBind === true;
+  // The first computer of a home (browser-owner design 3.6, settled: one fresh EMAILED step-up, an immediate connection, a mail after; no hold,
+  // no link to press). The home needs no pair hold for it, so a trusted authenticator alone would let anyone holding a stolen Supabase session
+  // connect the first "computer", whose scope skips every code. The step-up must have been an emailed code (an emailed sign-in, a granted
+  // code or a claimed emailed intent), inside the window like any other. An already-known desktop key and a home that had a computer before
+  // (the 72-hour hold) are unchanged.
+  const firstComputer = kind === "desktop" && history === "never" && !knownDevice;
+  if (firstComputer) {
+    const emailed = proofs.filter((p) => p.proof !== "factor");
+    if (!emailed.length) throw new HTTPError(403, "step_up_required", { step_up: { reason: "email_code_required" } });
+    stepped = freshest(emailed);
+    steppedAt = stepped.at;
+  }
+  // Door device confirmation (device-join.ts), only with DOOR_JOIN_REQUIRED=1. Known key: nothing recorded. First computer: the emailed proof above
+  // (and newer than the last No), a row and a connection mail. Later computer: a customer hold, a ready join, or a join that waits (409).
+  let joinMode: "first" | "hold" | "join" | null = null;
+  let joinTicket: JoinRow | null = null;
+  let joinMark = 0;
+  if (joinRequired(env) && kind === "desktop" && known && !knownDevice) {
+    const mark = await cancelMark(env.DB, homeId);
+    joinMark = mark;
+    const afterMark = steppedAt > mark + CLOCK_SKEW_SECONDS * 1000;
+    const email = session.user.email;
+    await settleFirstRows(env.DB, homeId, known.devices, now);
+    if (history === "had") await noteHomeHadComputer(env.DB, account.id, email, homeId, home.generation, now);
+    const later = history !== "never" || await hasUsedRow(env.DB, homeId);
+    if (!later) {
+      if (!afterMark) throw new HTTPError(403, "step_up_required", { step_up: { reason: "email_code_required" } });
+      joinMode = "first";
+    } else {
+      // Exact: a customer hold that completed before this second step and ran at least 72 hours qualifies; the mint reserves only such a hold.
+      const holdOk = (await env.DB.prepare(`SELECT 1 AS x FROM cloud_recovery_holds WHERE home_id=? AND generation=? AND action='pair'
+        AND completed_at IS NOT NULL AND canceled_at IS NULL AND spent_device_digest IS NULL AND completed_at>? AND completed_at<? AND completed_at-started_at>=? LIMIT 1`)
+        .bind(homeId, home.generation, now - 7 * 86_400_000, steppedAt, JOIN_HOLD_MS).first()) !== null;
+      const join = await liveLaterJoin(env.DB, homeId);
+      // Independent of any live join (another computer's join must not make this key wait again), and never a cancelled one (ended_at).
+      const used = await env.DB.prepare(`SELECT ${JOIN_COLS}
+        FROM cloud_device_joins WHERE home_id=? AND tier='later' AND state='used' AND needs_revoke=0 AND ended_at IS NULL AND redeemed_bind=? AND generation=? AND used_at>? ORDER BY used_at DESC LIMIT 1`)
+        .bind(homeId, bind, home.generation, now - JOIN_READY_MS).first<JoinRow>();
+      // r8-2: a lost answer gets the same result for the same key, never a new wait. Only with a second step newer than the last No (afterMark): a
+      // used row whose ticket was never redeemed must not let its key keep getting tickets on a proof from before another join's cancellation.
+      if (used && afterMark) { joinMode = "join"; joinTicket = used; }
+      else if (holdOk && afterMark && !join) joinMode = "hold";
+      else if (join?.state === "ready" && join.generation === home.generation && steppedAt > (join.hold_until ?? 0) && afterMark) { joinMode = "join"; joinTicket = join; }
+      else if (join?.state === "ready" && join.generation === home.generation && afterMark) throw new HTTPError(403, "step_up_required", { step_up: { reason: "email_code_required" } });
+      else if (join && join.generation === home.generation) throw new HTTPError(409, "door_join_waiting", joinView(join) as never);
+      else {
+        if (!afterMark) throw new HTTPError(403, "step_up_required", { step_up: { reason: "email_code_required" } });
+        const seen = request.cf as { city?: string; country?: string } | undefined;
+        const place = seen?.country ? [seen.city, seen.country].filter(Boolean).join(", ") : null;
+        const made = await ensureLaterJoin(env, { accountId: account.id, email, homeId, generation: home.generation, kind: "desktop", place }, now);
+        if (made.created) {
+          const send = sendJoinMail(env, dependencies, made.join.id, now);
+          if (dependencies.waitUntil) dependencies.waitUntil(send); else void send;
+        }
+        throw new HTTPError(409, "door_join_waiting", joinView(made.join) as never);
+      }
+    }
+  }
   await dependencies.afterRead?.();
 
   // The final check: the home is still exactly the one read above (owner, generation, state, ready endpoint at that hostname, its door). A
@@ -396,7 +525,7 @@ export async function doorRoute(request: Request, env: Env, identity: Identity, 
   // The same origin GET /v1/homes returns (homes.ts), from the stored hostname only.
   const publicOrigin = `https://${home.hostname}`;
   // The home refuses a stepUpAt older than issuedAt - 900 s (v2) or - 300 s (v1): never mint one it would refuse.
-  const windowMs = v2 ? DOOR_STEP_UP_MAX_AGE_MS : DOOR_V1_STEP_UP_MAX_AGE_MS;
+  const windowMs = doorWindowMs(v2);
   let reservedWith: string | null = null;
   // The ticket is stamped HERE, after every await above; only the hold's reservation (desktop) and the signature are awaited after it.
   const mint = async (): Promise<DoorTicket> => {
@@ -409,11 +538,12 @@ export async function doorRoute(request: Request, env: Env, identity: Identity, 
     if (!v2) claims = { type: "murage-door-v1", ...common };
     else {
       let pairHold: string | null = null;
-      if (history === "had" || history === "unknown") {
+      if (joinMode === "join") pairHold = joinTicket!.id;
+      else if (!knownDevice && joinMode !== "first" && (history === "had" || history === "unknown" || joinMode === "hold")) {
         // r4.1: RESERVED for this ticket (never spent here); lapses at expiry + skew. Taken by another ticket, or none: no claim, and for a
         // home that had a full-scope device 409. Unknown history with no ready hold: minted without a claim (the home decides).
         pairHold = await reservePairHold(noticeDb(env), homeId, home.generation, bind, nonce, expiresAt + CLOCK_SKEW_SECONDS * 1000, issuedAt, reservedWith,
-          known?.consumed ?? []);
+          known?.consumed ?? [], joinMode === "hold" ? { completedBefore: steppedAt, ranAtLeastMs: JOIN_HOLD_MS } : undefined);
         if (pairHold) reservedWith = nonce;
         else if (history === "had") throw await needsHold(env, homeId, home.generation);
       }
@@ -429,7 +559,8 @@ export async function doorRoute(request: Request, env: Env, identity: Identity, 
     }
   };
   const fresh = (t: { claims: DoorClaims }) => t.claims.expiresAt - identity.now() >= DOOR_TICKET_MIN_REMAINING_MS;
-  const handout: DoorHandout = { ticket: await mint(), reminted: false, mint, fresh, afterSign: dependencies.afterSign, requestId, publicOrigin,
+  const handout: DoorHandout = { ticket: await mint(), reminted: false, mint, fresh, afterSign: dependencies.afterSign, requestId, publicOrigin, firstComputer,
+    join: joinMode ? { mode: joinMode, joinId: joinTicket?.id ?? null, email: session.user.email, generation: home.generation, bind, mark: joinMark } : null,
     owe: { db: noticeDb(env), env, dependencies, accountId: account.id, homeId, sessionId: session.supabase.sessionId, bind, home, now: identity.now,
       live: () => identity.supabaseUser(request, env) } };
   await dependencies.afterSign?.(0);
@@ -455,6 +586,10 @@ interface DoorTicket { claims: DoorClaims; envelope: { payload: string; signatur
 interface DoorHandout {
   ticket: DoorTicket; reminted: boolean; mint: () => Promise<DoorTicket>; fresh: (t: DoorTicket) => boolean;
   afterSign?: DoorDependencies["afterSign"]; requestId: string; publicOrigin: string;
+  /** The ticket connects a home's first computer: the owner is mailed once it has been handed out (sendFirstComputerMail). */
+  firstComputer: boolean;
+  /** Set with DOOR_JOIN_REQUIRED for a ticket that can enroll a new key (device-join.ts): recorded in the hand-out batch. */
+  join: { mode: "first" | "hold" | "join"; joinId: string | null; email: string; generation: number; bind: string; mark: number } | null;
   /** What the hand-out needs to owe (and attempt) the notice of its (account, home, Supabase session, bind). */
   owe: { db: D1Database; env: Env; dependencies: DoorDependencies; accountId: string; homeId: string; sessionId: string; bind: string;
     home: DoorHome; now: () => number; live: () => Promise<CurrentSupabaseUser> };
@@ -555,6 +690,14 @@ async function stageNotice(h: DoorHandout, prior: Staged | null): Promise<Staged
         RETURNING handouts, armed_by, next_attempt_at`)
         .bind(accountId, homeId, sessionId, bind, now, due, homeId, accountId, home.generation, home.desired_state, home.hostname),
       db.prepare(HOME_SQL).bind(homeId),
+      ...(h.join ? [
+        ...handoutGuard(db, { homeId, mark: h.join.mark, mode: h.join.mode, holdId: h.ticket.claims.type === "murage-door-v2" ? h.ticket.claims.pairHold ?? null : null }),
+        ...(h.join.mode === "join" ? joinStillReadyGuard(db, h.join.joinId!) : []),
+        ...ticketStatements(db, { homeId, accountId, email: h.join.email, generation: h.join.generation, bind: h.join.bind, nonce: h.ticket.claims.nonce,
+          issuedAt: h.ticket.claims.issuedAt, expiresAt: h.ticket.claims.expiresAt, tier: h.join.mode === "first" ? "first" : h.join.mode === "join" ? "later" : "hold",
+          joinId: h.join.joinId }),
+        ...(h.join.mode === "join" ? [markJoinUsed(db, h.join.joinId!, now)] : []),
+      ] : []),
     ]);
   } catch {
     console.error(JSON.stringify({ message: "door notice could not be armed", requestId: h.requestId }));
@@ -617,4 +760,82 @@ async function confirmHandout(h: DoorHandout, intentId: string | undefined, clai
     console.error(JSON.stringify({ message: "door notice delivery could not be recorded", requestId: h.requestId }));
   }
   if (claim !== null) await firstAttempt(h);
+  if (h.firstComputer) {
+    if (joinRequired(h.owe.env)) await sendConnectionMail(h.owe.env, h.owe.dependencies, h.owe.homeId, h.ticket.claims.nonce);
+    else await sendFirstComputerMail(h);
+  }
+}
+
+export const FIRST_COMPUTER_SUBJECT = "A computer was connected to your Murage home";
+
+/** The mail after a first computer's ticket was handed out (unpaced: it can happen once per ticket, and a first computer is rare). One row
+ *  per (home, ticket nonce) is the dedupe; the address is the account's contact address as Supabase confirms it now. Never throws. */
+async function sendFirstComputerMail(h: DoorHandout): Promise<void> {
+  const { db, accountId, homeId } = h.owe;
+  const nonce = h.ticket.claims.nonce;
+  let claimed;
+  try {
+    // ITEM 9 r2: the hand-out's own send is attempt 0 of the notice's ONE claim (tries 0, claimed_at now): no retry claims it while this runs.
+    const at = Date.now();
+    claimed = await db.prepare("INSERT OR IGNORE INTO door_computer_notices (home_id,ticket_nonce,created_at,tries,claimed_at) VALUES (?,?,?,0,?)").bind(homeId, nonce, at, at).run();
+  } catch {
+    console.error(JSON.stringify({ message: "first computer mail failed", homeId, requestId: h.requestId }));
+    return;
+  }
+  if (claimed.meta.changes !== 1) return;
+  await deliverFirstComputerMail(db, h.owe.env, h.owe.dependencies, accountId, homeId, nonce, h.owe.live, h.requestId);
+}
+
+/** ITEM 9 M4: a first-computer mail whose send failed (a sender or identity reader hiccup) is tried again by sweepDoorNotices, at most
+ *  FIRST_COMPUTER_RETRIES times, the k-th no sooner than FIRST_COMPUTER_RETRY_MS * 4^(k-1) after the hand-out and only within a day.
+ *  ITEM 9 r2: every send of a notice (the hand-out's own, then each retry) is serialized by ONE claim on the notice's own row: `tries` moves
+ *  k-1 -> k conditionally (a CAS, together with claimed_at), only while unsent and no other attempt holds the claim (claimed_at older than
+ *  FIRST_COMPUTER_CLAIM_MS). Two sweeps, whatever retry number each thinks is due, can never both send. Exhausted rows (tries at the cap)
+ *  and rows not yet due are filtered out BEFORE the LIMIT, so they never starve an eligible row. Only rows of the plain mail: a row with a
+ *  device-join row is the join path's (device-join.ts). */
+export const FIRST_COMPUTER_RETRIES = 3;
+export const FIRST_COMPUTER_RETRY_MS = 5 * 60_000;
+const FIRST_COMPUTER_CLAIM_MS = FIRST_COMPUTER_RETRY_MS;
+const FIRST_COMPUTER_RETRY_WINDOW_MS = 24 * 60 * 60_000;
+/** The due time of the next retry after `tries` retries: created_at + RETRY_MS * 4^tries. */
+const NEXT_RETRY_DUE_SQL = `n.created_at + CASE n.tries ${Array.from({ length: FIRST_COMPUTER_RETRIES }, (_, k) => `WHEN ${k} THEN ${FIRST_COMPUTER_RETRY_MS * 4 ** k}`).join(" ")} END`;
+async function retryFirstComputerMails(env: Env, nowMs: number, dependencies: DoorDependencies, live: LiveUser): Promise<number> {
+  const db = env.DB;
+  const rows = (await db.prepare(`SELECT n.home_id AS home_id, n.ticket_nonce AS nonce, n.tries AS tries, h.owner_id AS owner_id
+      FROM door_computer_notices n JOIN cloud_homes h ON h.id=n.home_id
+      WHERE n.sent_at IS NULL AND n.tries<? AND ${NEXT_RETRY_DUE_SQL}<=? AND (n.claimed_at IS NULL OR n.claimed_at<=?)
+        AND n.created_at>? AND n.ticket_nonce NOT LIKE 'retry:%' AND h.desired_state<>'deleted'
+        AND NOT EXISTS (SELECT 1 FROM cloud_device_joins j WHERE j.home_id=n.home_id AND j.ticket_nonce=n.ticket_nonce)
+      ORDER BY n.created_at LIMIT ?`).bind(FIRST_COMPUTER_RETRIES, nowMs, nowMs - FIRST_COMPUTER_CLAIM_MS, nowMs - FIRST_COMPUTER_RETRY_WINDOW_MS, DOOR_NOTICE_SWEEP_BATCH)
+    .all<{ home_id: string; nonce: string; tries: number; owner_id: string }>()).results;
+  let sent = 0;
+  for (const r of rows) {
+    const claim = await db.prepare(`UPDATE door_computer_notices SET tries=tries+1, claimed_at=? WHERE home_id=? AND ticket_nonce=? AND tries=? AND sent_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at<=?)`).bind(nowMs, r.home_id, r.nonce, r.tries, nowMs - FIRST_COMPUTER_CLAIM_MS).run();
+    if (claim.meta.changes !== 1) continue; // another sweep holds this notice's claim
+    if (await deliverFirstComputerMail(db, env, dependencies, r.owner_id, r.home_id, r.nonce, live)) sent++;
+  }
+  return sent;
+}
+
+/** The send itself, for a claimed row: to the contact address as Supabase confirms it now; sent_at on success. Never throws. */
+async function deliverFirstComputerMail(db: D1Database, env: Env, dependencies: DoorDependencies, accountId: string, homeId: string, nonce: string,
+  live: LiveUser, requestId?: string): Promise<boolean> {
+  try {
+    const open = await db.prepare("SELECT 1 AS x FROM door_computer_notices WHERE home_id=? AND ticket_nonce=? AND sent_at IS NULL").bind(homeId, nonce).first();
+    if (!open) return false;
+    const to = await reconciledContactEmail(db, accountId, Date.now(), live);
+    if (!to) throw new Error("notice_undeliverable");
+    const text = `${FIRST_COMPUTER_SUBJECT}\n\nA computer signed in with the code we emailed you and was just given the one-time link that connects it to your Murage home.\n\n`
+      + "If this was you, there is nothing to do.\n\n"
+      + "If it was not you, open your Murage Cloud page at https://murage.ai/home/cloud, choose Make chat-only next to anything you do not recognise under Devices, then choose Remove.";
+    await (dependencies.emailSender?.(env) ?? senderOrFail(env)).send({ to, from: { email: env.EMAIL_FROM, name: "Murage" },
+      subject: FIRST_COMPUTER_SUBJECT, text, html: `<!doctype html><html><body>${text.split("\n\n").map((p) => `<p>${p}</p>`).join("")}</body></html>` });
+    await db.prepare("UPDATE door_computer_notices SET sent_at=? WHERE home_id=? AND ticket_nonce=?").bind(Date.now(), homeId, nonce).run();
+    return true;
+  } catch {
+    // Never the address. The row stays unsent: sweepDoorNotices tries it again (retryFirstComputerMails, bounded).
+    console.error(JSON.stringify({ message: "first computer mail failed", homeId, requestId }));
+    return false;
+  }
 }

@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { put, testExitThrows } from "./testing/open-index.ts";
 import { afterEach, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,47 +8,51 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
-const state = vi.hoisted(() => ({ scrubbed: false, pending: false, blocked: true, attempts: [] as number[], throws: false, calls: [] as string[], indexFactory: null as null | ((path: string) => unknown) }));
+const state = vi.hoisted(() => ({ deferError: undefined as Error | undefined, deferred: false, scrubbed: false, pending: false, blocked: true, attempts: [] as number[], throws: false, calls: [] as string[], indexFactory: null as null | ((path: string, opts?: unknown) => unknown) }));
 vi.mock("./embeddings.ts", () => ({ MemoryEmbeddings: class {
   identity = "fixture";
   embed(texts: string[]) { return Promise.resolve(texts.map(() => [1])); }
 } }));
-vi.mock("./index.ts", () => ({ MemoryIndex: function(path: string) {
+vi.mock("./index.ts", () => ({ MemoryIndex: { async create(path: string) {
   if (state.indexFactory) return state.indexFactory(path);
   return {
     rebuilt: false,
+    resetDone() { return null; },
+    stopInfo() { return null; },
+    async applyBatch(records: Array<{deleted:boolean;rolled?:boolean}>) { this.upsert(records); return { status: "done" as const }; },
     prepareModel() {},
     upsert(records: Array<{deleted:boolean;rolled?:boolean}>) { state.calls.push("remove"); if(records.some(row=>row.deleted&&!row.rolled))state.pending=true; },
     vector() {},
     deletionScrubPending() { return state.pending; },
     get scrubBlocked() { return state.blocked; },
-    scrubDeleted() { state.calls.push("scrub"); state.attempts.push(Date.now()); if (state.throws) throw new Error("fixture scrub failure"); if(state.scrubbed)state.pending=false; return state.scrubbed; },
+    scrubDeleted() { state.calls.push("scrub"); state.attempts.push(Date.now()); if (state.deferred) throw state.deferError; if (state.throws) throw new Error("fixture scrub failure"); if(state.scrubbed)state.pending=false; return state.scrubbed; },
     purgeRolledCheckpoints() { return { removed: 0, examined: 0, merged: false, done: true }; },
     maintenanceOwed() { return false; },
     purgeRecords() {},
     close() {},
   };
-} }));
+} } }));
 vi.mock("./eligibility.ts", () => ({ MemoryEligibility: class { pipRecordIds() { return []; } warm() {} close() {} } }));
 
 type Reply = { type: string; requestId?: string; scrubOwed?: boolean; records?: Array<{ id: string; deleted: boolean }> };
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.resetModules(); });
 
-async function fixture(options: { indexPath: string; indexFactory: (path: string) => unknown } | undefined = undefined) {
-  vi.resetModules(); state.scrubbed = false; state.throws = false; state.pending = false; state.blocked = true; state.attempts.length = 0; state.calls.length = 0;
+async function fixture(options: { indexPath: string; indexFactory: (path: string, opts?: unknown) => unknown } | undefined = undefined) {
+  vi.resetModules(); state.deferred = false; state.scrubbed = false; state.throws = false; state.pending = false; state.blocked = true; state.attempts.length = 0; state.calls.length = 0;
   state.indexFactory = options?.indexFactory ?? null;
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  state.deferError = new (await import("../bg-admission.ts")).BgDeferred(5000);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
   const realProcess = process, listeners = new Map<string, (message: unknown) => void>(), sent: Reply[] = [];
   const workerProcess = Object.create(realProcess) as NodeJS.Process;
   Object.defineProperties(workerProcess, {
     on: { value: (event: string, listener: (message: unknown) => void) => { listeners.set(event, listener); return workerProcess; } },
-    send: { value: (message: Reply) => { if (message.type !== "io") state.calls.push(message.type); /* io is write telemetry, not part of the order under test */ sent.push(message); return true; } },
+    send: { value: (message: Reply, cb?: (e: Error | null) => void) => { if (typeof cb === "function") cb(null); if (message.type !== "io") state.calls.push(message.type); /* io is write telemetry, not part of the order under test */ sent.push(message); return true; } },
     resourceUsage: { value: () => realProcess.resourceUsage() },
   });
   vi.stubGlobal("process", workerProcess);
   await import("./worker.ts");
   const emit = listeners.get("message")!;
-  emit({ type: "init", indexPath: options?.indexPath ?? "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
+  await emit({ type: "init", indexPath: options?.indexPath ?? "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
   state.calls.length = 0;
   return { emit, sent };
 }
@@ -96,7 +101,8 @@ it("a blocked or failing scrub backs off 1 s doubling to one minute while captur
   await vi.waitFor(()=>expect(sent.some(message=>message.type==='result')).toBe(true));
   expect(sent.filter(message=>message.requestId?.startsWith("live-")).every(message=>message.records?.length===1)).toBe(true);
   await vi.advanceTimersByTimeAsync(200_000);
-  const gaps=state.attempts.slice(1).map((at,n)=>at-state.attempts[n]!);
+  // the first attempt found the scrub blocked and returned; the thrown ones after it back off on the worker tick (50 ms granularity)
+  const gaps=state.attempts.slice(1).map((at,n)=>Math.round((at-state.attempts[n]!)/100)*100);
   expect(gaps.slice(0,7)).toEqual([1000,2000,4000,8000,16000,32000,60000]);
   expect(state.pending).toBe(true);
   // The idle retry finishes without requiring another forget batch.
@@ -107,13 +113,14 @@ it("a blocked or failing scrub backs off 1 s doubling to one minute while captur
 });
 
 it("the real worker acknowledges a forget at once and its scrub timer erases database, WAL and SHM bytes once a reader lets go", async () => {
+  testExitThrows();
   const { MemoryIndex } = await vi.importActual<typeof import("./index.ts")>("./index.ts");
   const root = mkdtempSync(join(tmpdir(), "worker-delete-scrub-")), path = join(root, "index.db");
   let index: InstanceType<typeof MemoryIndex> | undefined, reader: DatabaseSync | undefined;
   const marker = "orchidworkerfixture";
   const copies = () => [path, `${path}-wal`, `${path}-shm`].map(file => ({ file, found: existsSync(file) && readFileSync(file).includes(Buffer.from(marker)) }));
   try {
-    const { emit, sent } = await fixture({ indexPath: path, indexFactory: file => (index = new MemoryIndex(file)) });
+    const { emit, sent } = await fixture({ indexPath: path, indexFactory: async file => (index = await MemoryIndex.create(file, { charge: async () => true })) });
     expect(sent.find(message => message.type === "initialised")?.scrubOwed).toBe(false);
     emit({ type: "index", requestId: "seed", records: [row("gone", { deleted: false, text: marker }), row("kept", { deleted: false, text: "retained fixture" })] });
     await vi.advanceTimersByTimeAsync(10);
@@ -143,16 +150,18 @@ it("the real worker acknowledges a forget at once and its scrub timer erases dat
 });
 
 it("boot resumes durable merge debt without a projection batch and scrubs raw bytes", async () => {
+  testExitThrows();
   const {MemoryIndex}=await vi.importActual<typeof import("./index.ts")>("./index.ts");
   const root=mkdtempSync(join(tmpdir(),"worker-scrub-boot-")),path=join(root,"index.db"),marker="orchidworkerbootfixture";
   let index:InstanceType<typeof MemoryIndex>|undefined;
   try{
-    const seed=new MemoryIndex(path);
-    seed.upsert([row("gone",{deleted:false,text:marker})]);
-    seed.upsert([row("gone")]);
+    const seed=await MemoryIndex.create(path, { charge: async () => true });
+    await put(seed, [row("gone",{deleted:false,text:marker})]);
+    await put(seed, [row("gone")]);
     expect(seed.deletionScrubPending()).toBe(true);
+    await seed.prepareExit();
     seed.close();
-    const {sent}=await fixture({indexPath:path,indexFactory:file=>(index=new MemoryIndex(file))});
+    const {sent}=await fixture({indexPath:path,indexFactory:async file=>(index=await MemoryIndex.create(file, { charge: async () => true }))});
     expect(sent.find(message=>message.type==='initialised')?.scrubOwed).toBe(true);
     await vi.advanceTimersByTimeAsync(2000);
     expect(sent.some(message=>message.type==='scrub-done')).toBe(true);
@@ -162,4 +171,38 @@ it("boot resumes durable merge debt without a projection batch and scrubs raw by
       expect(existsSync(file)&&readFileSync(file).includes(Buffer.from(marker)),file).toBe(false);
     }
   }finally{vi.clearAllTimers();index?.close();removeTempDirSync(root);}
+});
+
+it("BG admission deferral does not spend scrub lock backoff and a delivered grant wakes the debt", async () => {
+  const { emit, sent } = await fixture();
+  state.deferred = true;
+  emit({ type: "index", requestId: "deferred-forget", records: [row("gone")] });
+  await vi.advanceTimersByTimeAsync(60);
+  expect(state.attempts).toHaveLength(1);
+  state.deferred = false; state.blocked = false; state.scrubbed = true;
+  await emit({ type: "bg-grant", ticket: { id: "scrub-permit", bytes: 4096, expiresAt: Date.now() + 60000 } });
+  await vi.advanceTimersByTimeAsync(60);
+  expect(state.pending).toBe(false);
+  expect(sent.some(message => message.type === "scrub-done")).toBe(true);
+});
+
+it("repeated BG deferrals retain their admission deadline without exponential lock backoff", async () => {
+  const { emit } = await fixture();
+  state.deferred = true;
+  emit({ type: "index", requestId: "budget-forget", records: [row("gone")] });
+  await vi.advanceTimersByTimeAsync(15060);
+  expect(state.attempts.slice(1).map((at, n) => at - state.attempts[n]!)).toEqual([5000, 5000, 5000]);
+});
+
+it("a denied scrub grant replaces the provisional retry with the parent's admission deadline", async () => {
+  const { emit } = await fixture();
+  state.deferred = true;
+  emit({ type: "index", requestId: "denied-forget", records: [row("gone")] });
+  await vi.advanceTimersByTimeAsync(60);
+  state.deferred = false; state.blocked = false; state.scrubbed = true;
+  await emit({ type: "bg-grant", ticket: null, retryInMs: 200 });
+  await vi.advanceTimersByTimeAsync(199);
+  expect(state.pending).toBe(true);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(state.pending).toBe(false);
 });

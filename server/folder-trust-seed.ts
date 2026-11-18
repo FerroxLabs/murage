@@ -5,7 +5,8 @@
 // Only stored records and the turn's own policy folder reach this file. The owner's
 // own Fuigo home is never written.
 import { randomBytes } from "node:crypto";
-import { closeSync, constants, fsyncSync, lstatSync, openSync, renameSync, rmSync, writeSync } from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { closeSync, constants, fsyncSync, lstatSync, openSync, renameSync, rmSync } from "node:fs";
 import { lstat, opendir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 

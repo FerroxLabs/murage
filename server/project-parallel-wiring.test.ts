@@ -4,13 +4,15 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { expect, it, vi } from "vitest";
 import { automationForTurn, automationRunForTurn } from "./message-automation.ts";
+import { LimitApplications, OwnerLimitContinuations, initializeOwnerLimitStorage } from "./owner-limit-continuation.ts";
+import { WritetimeFixture } from "./memory/testing/writetime-fixture.ts";
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 it("a 429 retry reuses exactly one persisted user prompt for its request", () => {
   // Execute the actual startTurn selection and append block with a tiny store.
   const start = source.indexOf("  let userMessage = opts?.userMessage");
   const end = source.indexOf("  if (opts?.projectCardRun) {", start);
   // Lane D: the block also stamps the automation origin, so its helpers are passed in too.
-  const append = (...args: unknown[]) => new Function("opts", "store", "threadId", "text", "turnImages", "routineRunPrompt", "randomUUID", "automationForTurn", "automationRunForTurn", "routines", ts.transpileModule(source.slice(start, end) + "return userMessage;", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText)(...args, automationForTurn, automationRunForTurn, undefined);
+  const append = (...args: unknown[]) => new Function("opts", "store", "threadId", "text", "turnImages", "routineRunPrompt", "randomUUID", "automationForTurn", "automationRunForTurn", "routines", "commsDepth", ts.transpileModule(source.slice(start, end) + "return userMessage;", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText)(...args, automationForTurn, automationRunForTurn, undefined, 0);
   const messages: any[] = [];
   const store = { messagesFor: () => messages, scanNewest: (_thread: string, visit: (m: any) => boolean) => { for (let at = messages.length - 1; at >= 0; at -= 1) if (visit(messages[at])) return true; return false; }, appendMessage: (_thread: string, m: any) => { const row = { ...m, id: `m${messages.length}` }; messages.push(row); return row; } };
   const opts = { projectCardRun: { request: { id: "request" } } };
@@ -42,7 +44,7 @@ it.each([true, false])("direct Stop fences the project request before revoking d
   const end = source.indexOf("\n/**", begin);
   const code = ts.transpileModule(source.slice(begin, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const requestStop = vi.fn(); const bindings = new Map(bound ? [["generation", "request"]] : []);
-  const stop = new Function("directRuns", "internalTurnOwners", "turnRequestByGeneration", "projectCardExecutor", "revokeInternalThread", "directTurnDispatchClaims", "recordMemorySettlement", "markCancelledProviderHandshake", "workAdmission", code + "return cancelDirectTurnDispatch;")(
+  const stop = new Function("directRuns", "internalTurnOwners", "turnRequestByGeneration", "projectCardExecutor", "revokeInternalGeneration", "directTurnDispatchClaims", "recordMemorySettlement", "markCancelledProviderHandshake", "workAdmission", code + "return cancelDirectTurnDispatch;")(
     { get: () => ({ botId: "a", generation: "generation" }), cancel: vi.fn() }, new Map([["desk", { botId: "a", generation: "generation" }]]), bindings, { requestStop },
     () => { expect(requestStop).toHaveBeenCalledWith("request", undefined); bindings.clear(); }, new Map(), vi.fn(), vi.fn(), { liveTurns: () => [{ botId: "a", threadId: "desk", requestId: "request" }] });
   // the owner's own Stop carries no server note: the card says "Stopped by you"
@@ -61,13 +63,18 @@ it("an interrupt never crosses a generation replacement during browser cleanup",
   const end = source.indexOf("\n/**", begin);
   const code = ts.transpileModule(source.slice(begin, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   let generation = "first"; const interruptTurn = vi.fn();
-  const deps = { replyState: { invalidate: vi.fn() }, callSpeech: { invalidate: vi.fn() }, directRuns: { get: () => ({ generation }) }, internalTurnOwners: new Map(), botForDirectThread: () => ({ modelSelection: { instanceId: "fake" } }),
+  // The real owner-limit registries index.ts declares beside the interrupt seam; Stop cancels both.
+  const fixture = new WritetimeFixture(); initializeOwnerLimitStorage(fixture.db);
+  const ownerLimitContinuations = new OwnerLimitContinuations(() => true), limitApplications = new LimitApplications(() => fixture.db);
+  const deps = { ownerLimitContinuations, limitApplications, replyState: { invalidate: vi.fn() }, callSpeech: { invalidate: vi.fn() }, directRuns: { get: () => ({ generation }) }, internalTurnOwners: new Map(), botForDirectThread: () => ({ modelSelection: { instanceId: "fake" } }),
     cancelDirectTurnDispatch: () => ({ phase: "dispatching" }), releaseBrowserCapabilityForThread: async () => { generation = "replacement"; },
     registry: { get: () => ({ adapter: { interruptTurn } }) }, closeOpenApprovals: vi.fn(), stopCloseConfirmed: () => true,
     // bot email (4.5): the Stop hands the stopped generation to email's own withdraw rule (off here)
-    stopEmailForTurn: vi.fn(async () => undefined), emailRuntime: {}, emailGeneration: () => 0 };
+    stopEmailForTurn: vi.fn(async () => undefined), emailRuntime: {}, emailGeneration: () => 0,
+    sealDirectAttempts: vi.fn(), randomUUID: () => "stop-receipt", ownWriteHolds: { stop: vi.fn() }, bus: { cancelTurn: vi.fn() },
+    refusedTurnOf: () => undefined, stopInterrupts: new Map() }; // LLS: no ledger refusal here
   const interrupt = new Function(...Object.keys(deps), code + "return interruptDirectThread;")(...Object.values(deps));
-  await interrupt("a", "desk", "first"); expect(interruptTurn).not.toHaveBeenCalled();
+  try { await interrupt("a", "desk", "first"); expect(interruptTurn).not.toHaveBeenCalled(); } finally { fixture.close(); }
 });
 
 it("a stale backoff target interrupts its matching live generation", async () => {

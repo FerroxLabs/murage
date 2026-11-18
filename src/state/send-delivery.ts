@@ -9,6 +9,7 @@
 // a timeout or a server error is NOT a refusal: the line stays on screen as
 // "Sending" and delivery is tried again, with the same sendId.
 
+import type { ResendAction, SendActionTarget, ScopedTurnStop } from "../../shared/help-turn-state";
 import type { Attachment } from "@/lib/composer-attachments";
 import { t } from "@/lib/i18n";
 
@@ -49,6 +50,14 @@ export interface OutboxEntry {
   draft?: OutboxDraft;
   /** Set by the chip's Send again: the server runs a restore-held send only on this. */
   resend?: true;
+  /** Persist the exact v1 action before its first request. sendId is its replacement identity. */
+  sendAction?: ResendAction;
+  /** Help runs as one isolated owner turn, including after reload. */
+  noSteer?: boolean;
+  /** Maintenance never expires an acknowledged local save. */
+  indexing?: boolean;
+  /** Scope undrafted Help/actions to the signed-in account. */
+  account?: string;
   /** The restore generation the chip carried: Send again presents it, and the server runs a held send only for the newest restore's. */
   restoreGen?: string;
   /** The stop token the chip carried: the server runs a stopped send only for a press made after that Stop. */
@@ -101,7 +110,7 @@ function isEntry(value: unknown): value is OutboxEntry {
     && (e.kind === "bot" ? typeof e.botId === "string" : typeof e.groupId === "string");
 }
 
-export function createOutbox(storage: OutboxStorage | undefined, journal?: OutboxJournal) {
+export function createOutbox(storage: OutboxStorage | undefined, journal?: OutboxJournal, account?: () => string | undefined) {
   // Undrafted entries only (engine commands, calls, onboarding, the chip's Send again): kept exactly as before, with
   // this memory cache standing in when storage refuses writes.
   let memory: OutboxEntry[] | null = null;
@@ -122,10 +131,15 @@ export function createOutbox(storage: OutboxStorage | undefined, journal?: Outbo
     });
     return memory;
   };
-  const drafted = (): OutboxEntry[] => journal?.entries() ?? [];
+  const indexKey = `${KEY}:indexing`;
+  const heldIndex = (): string[] => {
+    try { const value: unknown = JSON.parse(storage?.getItem(indexKey) ?? "[]"); return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []; }
+    catch { return []; }
+  };
+  const drafted = (): OutboxEntry[] => (journal?.entries() ?? []).map(e => heldIndex().includes(e.sendId) ? { ...e, indexing: true } : e);
   const all = (): OutboxEntry[] => {
     const records = drafted();
-    return [...read().filter((entry) => !records.some((record) => record.sendId === entry.sendId)), ...records];
+    return [...read().filter((entry) => (!entry.account || entry.account === account?.()) && !records.some((record) => record.sendId === entry.sendId)), ...records];
   };
   /** True when the entries are on disk (or there is no disk to write to). */
   const write = (next: OutboxEntry[]): boolean => {
@@ -138,14 +152,15 @@ export function createOutbox(storage: OutboxStorage | undefined, journal?: Outbo
     /** The outbox is a convenience for a reload, not the thing that makes a send safe: the composer
      * keeps the words until the server acknowledges, and the server records each sendId durably.
      * So a missing, blocked or full localStorage never stops a send; the entry is held in memory
-     * for this page. Only "full" (too many unresolved sends) leaves the outbox as it was. */
-    add(entry: OutboxEntry): "ok" | "full" | "gone" {
+     * for this page. Help and v1 actions require durable storage before posting; ordinary sends retain the legacy fallback. */
+    add(entry: OutboxEntry): "ok" | "full" | "gone" | "unavailable" {
       // A drafted entry was written by W1 (its record): it is only checked to still be that record's attempt.
       if (entry.draft && journal) return journal.holds(entry) ? "ok" : "gone";
       const before = read();
       const others = before.filter((existing) => existing.sendId !== entry.sendId);
       if (others.length >= MAX_OUTBOX_ENTRIES) return "full";
-      write([...others, entry]);
+      if ((entry.sendAction || entry.noSteer) && !storage) return "unavailable";
+      if (!write([...others, entry]) && (entry.sendAction || entry.noSteer)) { memory = before; return "unavailable"; }
       return "ok";
     },
     remove(sendId: string): void {
@@ -157,6 +172,7 @@ export function createOutbox(storage: OutboxStorage | undefined, journal?: Outbo
     inRecord: (entry: OutboxEntry): boolean => Boolean(entry.draft && journal),
     /** Every exit of a send: a drafted entry settles on its record; an undrafted one is removed, as before. */
     settle(entry: OutboxEntry, outcome: SendOutcome): void {
+      try { storage?.setItem(indexKey, JSON.stringify(heldIndex().filter(id => id !== entry.sendId))); } catch { /* harmless retained deadline marker */ }
       if (entry.draft && journal) { void journal.settle(entry, outcome); return; }
       const remove = () => {
         const rest = read().filter((existing) => existing.sendId !== entry.sendId);
@@ -170,6 +186,11 @@ export function createOutbox(storage: OutboxStorage | undefined, journal?: Outbo
     /** A drafted attempt's record settled (here, in another tab, by a delete): `settle` runs once with how it ended. */
     watch(entry: OutboxEntry, settle: (outcome: SendOutcome | "gone") => void): () => void {
       return entry.draft && journal?.watch ? journal.watch(entry, settle) : () => {};
+    },
+    holdForIndex(entry: OutboxEntry): void {
+      try { storage?.setItem(indexKey, JSON.stringify([...new Set([...heldIndex(), entry.sendId])])); } catch { /* the journal still holds the send */ }
+      // Drafts already have their durable journal; retain an undrafted marker too for the deadline.
+      write(read().map(e => e.sendId === entry.sendId ? { ...e, indexing: true } : e));
     },
     bump(entry: OutboxEntry): void {
       if (entry.draft && journal) { void journal.bump(entry); return; }
@@ -185,12 +206,19 @@ export type Outbox = ReturnType<typeof createOutbox>;
  * repeat is always right. Neither is a refusal. Only isDatabaseBusyAnswer below is strict about the code. */
 export function isBusyRefusal(error: unknown): boolean {
   const e = error as { status?: unknown; body?: { code?: unknown } } | null;
+  if (isReadOnlyRefusal(error)) return false;
   return e?.body?.code === "DATABASE_BUSY" || e?.status === 503;
+}
+/** A read-only start's refusal (boot tolerance G1): the server says retryable:false because nothing is admitted again in that process. It is a
+ * refusal the server meant, so it is never repeated and the person sees the server's words (the owner copy) on the first answer. */
+export function isReadOnlyRefusal(error: unknown): boolean {
+  const body = (error as { body?: { code?: unknown; retryable?: unknown } } | null)?.body;
+  return body?.code === "DATABASE_BUSY" && body.retryable === false;
 }
 /** The server's own busy answer and nothing else: the body names DATABASE_BUSY. A settings write or a delete is repeated only
  * on this (api(), store.tsx); any other 503 (a failed save, a gateway) is the answer the person sees, on the first try. */
 export function isDatabaseBusyAnswer(error: unknown): boolean {
-  return (error as { body?: { code?: unknown } } | null)?.body?.code === "DATABASE_BUSY";
+  return (error as { body?: { code?: unknown } } | null)?.body?.code === "DATABASE_BUSY" && !isReadOnlyRefusal(error);
 }
 /** How long to wait before repeating a send that met a busy answer: its Retry-After (seconds, in the body), at least a second, at most five. */
 export function busyRetryDelayMs(error: unknown): number {
@@ -249,6 +277,7 @@ export function deliverEdit(
 
 /** A refusal the server meant: retrying the same words cannot succeed. */
 export function isDefinitiveFailure(error: unknown): boolean {
+  if (isReadOnlyRefusal(error)) return true;
   if (isBusyRefusal(error)) return false;
   const status = (error as { status?: unknown } | null)?.status;
   return typeof status === "number" && status >= 400 && status < 500 && status !== 408 && status !== 425 && status !== 429;
@@ -261,6 +290,7 @@ export interface DeliveryHooks {
   onFailed?: (entry: OutboxEntry, error: unknown) => boolean | void;
   /** The attempt was settled elsewhere before it started (another tab, a delete): nothing to show, nothing restored. */
   onGone?: (entry: OutboxEntry) => void;
+  onIndexing?: (entry: OutboxEntry) => void;
 }
 
 export interface DeliveryDeps {
@@ -290,6 +320,7 @@ const attemptTimedOutSentence = (): string => t("send.timedOut");
 
 export function createSendDelivery(deps: DeliveryDeps) {
   const inFlight = new Set<string>();
+  const indexing = new Set<string>();
   const hooksFor = new Map<string, DeliveryHooks>();
   /** Send ids the server refused (it shows a chip). Remembered even while a POST is in flight, so that POST
    * failing later is not retried by itself: only the chip's Send again resends. */
@@ -304,6 +335,7 @@ export function createSendDelivery(deps: DeliveryDeps) {
   const once = (hooks: DeliveryHooks): DeliveryHooks => {
     let settled = false;
     return {
+      onIndexing: (e) => { if (!settled) hooks.onIndexing?.(e); },
       onReceipt: (e, body) => { if (settled) return; settled = true; hooks.onReceipt?.(e, body); },
       onFailed: (e, err) => { if (settled) return true; settled = true; return hooks.onFailed?.(e, err); },
       onGone: (e) => { if (settled) return; settled = true; hooks.onGone?.(e); },
@@ -334,10 +366,10 @@ export function createSendDelivery(deps: DeliveryDeps) {
     if (!settled) reconciledWatches.set(key, stop);
   };
   /** A 2xx receipt whose body says the send was cancelled is a cancel, never an ack. */
-  const receiptOutcome = (body: any): SendOutcome => (body && typeof body === "object" && body.cancelled === true ? "cancelled" : "acked");
+  const receiptOutcome = (body: any): SendOutcome => body?.cancelled === true || body?.failure === "removed" ? "cancelled" : body?.failure ? "refused" : "acked";
 
   const retryLater = (entry: OutboxEntry, error?: unknown) => {
-    const delay = isBusyRefusal(error) ? busyRetryDelayMs(error) : RETRY_DELAYS_MS[Math.min(entry.attempts, RETRY_DELAYS_MS.length - 1)]!;
+    const delay = isIndexing(error) ? 5_000 : isBusyRefusal(error) ? busyRetryDelayMs(error) : RETRY_DELAYS_MS[Math.min(entry.attempts, RETRY_DELAYS_MS.length - 1)]!;
     deps.setTimer(() => { void attempt(entry.sendId); }, delay);
   };
 
@@ -379,7 +411,7 @@ export function createSendDelivery(deps: DeliveryDeps) {
       return;
     }
     // The overall deadline holds whether or not an attempt ever fails cleanly.
-    if (deps.now() - entry.at > OUTBOX_GIVE_UP_MS) {
+    if (!entry.sendAction && !entry.indexing && !indexing.has(sendId) && deps.now() - entry.at > OUTBOX_GIVE_UP_MS) {
       finishFailed(entry, Object.assign(new Error(attemptTimedOutSentence()), { status: 408 }));
       return;
     }
@@ -390,7 +422,7 @@ export function createSendDelivery(deps: DeliveryDeps) {
     try {
       // Each attempt has its own clock: a POST or settings wait that never settles
       // is abandoned, counts as a failed attempt, and is retried with the same sendId.
-      const remaining = Math.max(1, OUTBOX_GIVE_UP_MS - (deps.now() - entry.at));
+      const remaining = entry.sendAction || entry.indexing || indexing.has(sendId) ? ATTEMPT_TIMEOUT_MS : Math.max(1, OUTBOX_GIVE_UP_MS - (deps.now() - entry.at));
       const limit = Math.min(deps.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS, remaining);
       const timedOut = new Promise<never>((_, reject) => {
         const fire = () => { controller.abort(); reject(Object.assign(new Error(attemptTimedOutSentence()), { status: 408 })); };
@@ -398,7 +430,11 @@ export function createSendDelivery(deps: DeliveryDeps) {
         else { const handle = setTimeout(fire, limit); cancelTimer = () => clearTimeout(handle); }
       });
       timedOut.catch(() => {});
-      const body = await Promise.race([deps.post(entry, controller.signal), timedOut]);
+      const body = terminalSendReceipt(await Promise.race([deps.post(entry, controller.signal), timedOut]));
+      if (entry.sendAction && (body?.replacementSendId !== entry.sendAction.replacementSendId || typeof body?.replacementAttemptId !== "string" || !body?.receipt || body?.actionId !== entry.sendAction.actionId)) {
+        throw Object.assign(new Error("Could not confirm the send action."), { status: 503 });
+      }
+      if (entry.sendAction) deps.outbox.remove(entry.sendAction.sendId);
       if (superseded.has(sendId) && refusedByServer.has(sendId)) {
         // A refusal was observed for this id, so this late success must not consume the queued resend: the resend
         // starts when this attempt ends (the server re-admits a refused id; a durable row dedupes if it was accepted).
@@ -429,7 +465,12 @@ export function createSendDelivery(deps: DeliveryDeps) {
         // The server refused this id while the POST was out: no automatic retry, the chip's Send again resends.
         inFlight.delete(sendId);
         resolveRefused(sendId);
-      } else if (isDefinitiveFailure(error) || deps.now() - entry.at > OUTBOX_GIVE_UP_MS) {
+      } else if (isIndexing(error)) {
+        indexing.add(sendId);
+        deps.outbox.holdForIndex(entry);
+        hooksFor.get(sendId)?.onIndexing?.(entry);
+        retryLater(entry, error);
+      } else if (isDefinitiveFailure(error) || (!entry.sendAction && !entry.indexing && !indexing.has(sendId) && deps.now() - entry.at > OUTBOX_GIVE_UP_MS)) {
         finishFailed(entry, error);
       } else {
         deps.outbox.bump(entry);
@@ -478,6 +519,9 @@ export function createSendDelivery(deps: DeliveryDeps) {
   }
 
   return {
+    pendingResend(threadId: string, sendId: string): OutboxEntry | undefined {
+      return deps.outbox.list().find(e => e.threadId === threadId && e.sendAction?.sendId === sendId);
+    },
     /** Write the outbox entry, show the line, post. Call BEFORE the composer clears. */
     submit(entry: OutboxEntry, rawHooks: DeliveryHooks = {}): Promise<void> {
       const hooks = once(rawHooks);
@@ -520,7 +564,7 @@ export function createSendDelivery(deps: DeliveryDeps) {
     reconcile(known: { messageSendIds: ReadonlySet<string>; pendingSendIds: ReadonlySet<string> }): void {
       for (const entry of deps.outbox.list()) {
         if (inFlight.has(entry.sendId)) continue;
-        if (known.messageSendIds.has(entry.sendId) || known.pendingSendIds.has(entry.sendId)) {
+        if (!entry.sendAction && !entry.noSteer && (known.messageSendIds.has(entry.sendId) || known.pendingSendIds.has(entry.sendId))) {
           // The server accepted it while the acknowledgement was lost: this is that acknowledgement.
           // The same callback a receipt runs, so the composer clears its draft and stops waiting.
           deps.outbox.settle(entry, "acked");
@@ -540,4 +584,33 @@ export function createSendDelivery(deps: DeliveryDeps) {
     forget: resolveRefused,
     inFlight: (sendId: string): boolean => inFlight.has(sendId),
   };
+}
+
+/** ML3: a terminal failed retry is definitive receipt information, not a transport failure. */
+export function terminalSendReceipt(body: any): any {
+  const state = body?.receipt?.state;
+  return body?.existing === true && body?.ok === false && ["failed", "refused", "removed", "stopped", "unknown"].includes(state)
+    ? { ...body, failure: state, ...(state === "removed" ? { cancelled: true } : {}) } : body;
+}
+export function isIndexing(error: unknown): boolean {
+  const e = error as { status?: number; body?: { code?: string; accepted?: boolean } } | null;
+  return e?.status === 503 && e.body?.code === "turn_index_not_ready" && e.body.accepted === false;
+}
+/** Shared by production delivery and mounted tests, including group actions. */
+export function sendActionRequest(entry: OutboxEntry): { path: string; body: string } | undefined {
+  if (!entry.sendAction) return undefined;
+  return { path: `/api/${entry.kind === "group" ? "groups" : "bots"}/${encodeURIComponent(entry.kind === "group" ? entry.groupId! : entry.botId!)}/send-actions`, body: JSON.stringify(entry.sendAction) };
+}
+
+/** Stop/Remove targets survive close/reload; retries never adopt a newer receipt. */
+export function persistedHelpAction(key: string, target: Omit<SendActionTarget, "actionId"> & { turnId?: string }): SendActionTarget | ScopedTurnStop {
+  const storageKey = `murage.help.action:${key}`;
+  const stored = localStorage.getItem(storageKey);
+  if (stored) {
+    const old = JSON.parse(stored);
+    if (old.contract === 1 && typeof old.actionId === "string" && old.attemptId === target.attemptId && old.receiptRevision === target.receiptRevision && old.bindingEpoch === target.bindingEpoch && old.sendId === target.sendId && old.threadId === target.threadId && old.turnId === target.turnId) return old;
+  }
+  const action = { ...target, actionId: crypto.randomUUID() };
+  localStorage.setItem(storageKey, JSON.stringify(action));
+  return action;
 }

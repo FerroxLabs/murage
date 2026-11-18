@@ -23,7 +23,7 @@
 import { test, expect, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -32,13 +32,14 @@ import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
-import { openSidebar, SEND_KEY } from "./fixtures.ts";
+import { dismissFirstRunWelcome, openSidebar, SEND_KEY } from "./fixtures.ts";
 import { fakeLlamaCompletion, fakeLlamaToolStream } from "./fake-llama-completion";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { laneDataDir } from "./lane-data-dir";
 import { seedWhatsNewSeen } from "../../scripts/control-murage.ts";
 import { openSidebarPlace } from "./sidebar-nav";
 import { TERMS_VERSION } from "../../shared/terms.ts";
+import { buildNativeMeter } from "../../server/memory/testing/native-meter-build.ts";
 
 // ── Inputs ───────────────────────────────────────────────────────────────
 
@@ -155,6 +156,11 @@ async function startHarness() {
   symlinkSync(process.execPath, join(bin, "node"));
   writeConfig();
   const preload = pathToFileURL(join(ROOT, "server", "testing", "search-fetch-preload.mjs")).href;
+  // The memory worker settles a turn's capture only through the native I/O meter (server/memory/terminal.ts). A packaged app
+  // ships it and a checkout that built dist-native/engine-exclusion finds it there; otherwise this harness gets the fixture
+  // build, the way launchMemoryVerificationServer gives its own servers one. Without it RED2C's capture job never runs.
+  const builtMeter = join(ROOT, "dist-native", "engine-exclusion", `${process.platform}-${process.arch}`, "engine-exclusion.node");
+  const meter = process.platform === "win32" || existsSync(builtMeter) ? undefined : buildNativeMeter(join(DATA_DIR, "native-meter"));
   harnessEnv = {
     ...Object.fromEntries(["LANG", "LC_ALL", "TZ"].filter((key) => process.env[key]).map((key) => [key, process.env[key]!])),
     PATH: [bin, "/usr/bin", "/bin"].join(":"),
@@ -163,6 +169,7 @@ async function startHarness() {
     MURAGE_DATA_DIR: DATA_DIR, MURAGE_PORT: String(HARNESS_PORT), MURAGE_WEBHOOK_PORT: String(HARNESS_PORT + 1),
     MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
     MURAGE_TERMS_ACCEPTED: TERMS_VERSION, // a fixture install has no one to tick the terms box (server/terms.ts)
+    ...(meter ? { NODE_ENV: "test", MURAGE_ENGINE_EXCLUSION_PATH: meter } : {}),
     // The built UI, when present, is what the harness serves to a phone
     // (electron/harness-resources.mjs decides the same for `pnpm dev:server`).
     ...(existsSync(join(ROOT, "dist", "index.html")) ? { MURAGE_STATIC_DIR: join(ROOT, "dist") } : {}),
@@ -222,7 +229,7 @@ const workspaceOf = async (who: Bot) => (await api(`/api/artifacts/workspace?bot
 
 async function openApp(page: Page, { width = 1440, height = 900, skin = "light" } = {}) {
   await page.setViewportSize({ width, height });
-  await page.addInitScript((skin) => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", skin); }, skin);
+  await page.addInitScript((skin) => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", skin); localStorage.setItem("help.seen.chat.level-chip", "1"); }, skin);
   // A person uses the app once it has finished loading. The engine list is
   // the slowest part of that (about 3 s with the real CLIs probed); a send
   // before it lands is the startup race recorded in 0152-USER-SMOKE.md.
@@ -388,6 +395,9 @@ test("05 CTA1: no key → dimmed app grid behind 'Connect your apps', 'Add Flux 
   });
   for (const skin of ["light", "dark"] as const) {
     await openApp(page, { width: 1100, height: 800, skin });
+    // A fresh install first offers the full-window welcome. Enter the app the
+    // way a person does before opening the sidebar behind that screen.
+    await dismissFirstRunWelcome(page);
     const panel = await openConnectedApps(page);
     await expect(panel.getByText("Connect your apps", { exact: true })).toBeVisible({ timeout: 20_000 });
     const lock = panel.locator("[data-connected-apps-lock]");
@@ -428,6 +438,7 @@ test("05 CTA1: no key → dimmed app grid behind 'Connect your apps', 'Add Flux 
 
 test("07 regression sweep: create bot, fake turn, Claude question card, pane Markdown save, chat image lightbox, Local models, Composio CTA, narrow Stop", async ({ page }) => {
   await openApp(page);
+  await dismissFirstRunWelcome(page);
   const sidebar = await openSidebar(page);
   const before = ((await api("/api/bots?messages=0")).bots as Bot[]).length;
   await sidebar.getByRole("button", { name: "New or share", exact: true }).click();
@@ -502,11 +513,23 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
   await expect(lightbox(page)).toHaveCount(0);
 
   // Settings → Models: Local models.
-  const models = await openSettings(page, "Models & engines");
-  // 1.0.3: Local models sits under the Models page's one Advanced
-  const advanced = models.getByRole("button", { name: /^Advanced · / });
-  if ((await advanced.getAttribute("aria-expanded")) !== "true") await advanced.click();
-  await expect(advanced).toHaveAttribute("aria-expanded", "true");
+  // MAIN RULING 1115-CIINH-ADV: the global switch replaced the Models disclosure.
+  let models = await openSettings(page, "Models & engines");
+  await models.locator("[data-settings-mode-footer]").click();
+  const advanced = models.getByRole("switch", { name: "Advanced mode", exact: true });
+  // Exercise the switch from Off as well, so an inherited Advanced default cannot mask a lost save.
+  if ((await advanced.getAttribute("aria-checked")) === "true") await advanced.click();
+  await expect(advanced).toHaveAttribute("aria-checked", "false");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("murage.settings.mode"))).toBe("simple");
+  if ((await advanced.getAttribute("aria-checked")) !== "true") await advanced.click();
+  await expect(advanced).toHaveAttribute("aria-checked", "true");
+  // A reload re-reads the saved choice; a switch that only changes this render must fail here.
+  await closeSettings(page);
+  await page.reload();
+  const general = await openSettings(page, "General");
+  await expect(general.getByRole("switch", { name: "Advanced mode", exact: true })).toHaveAttribute("aria-checked", "true");
+  await closeSettings(page);
+  models = await openSettings(page, "Models & engines");
   const local = models.locator("#local-models");
   await local.scrollIntoViewIfNeeded();
   await expect(local.getByRole("heading", { name: "Local models", exact: true })).toBeVisible();
@@ -526,6 +549,7 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
     await expect(pane(page)).toBeHidden();
   }
   await say(page, bot.name, "Hold this one. __fixture_hold_authority__");
+  await expect.poll(() => cliHolds("__fixture_hold_authority__"), { timeout: 30_000, message: "the fake must accept the held turn before the narrow Stop check" }).toBe(true);
   await expect.poll(() => busy(bot), { timeout: 30_000 }).toBe(true);
   await page.setViewportSize({ width: 390, height: 844 });
   const header = page.locator("[data-chat-header]");

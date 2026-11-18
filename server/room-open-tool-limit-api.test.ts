@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 const SPEED = 120;
@@ -47,7 +48,9 @@ async function stoppedAfter(group: { id: string; threadId: string }, longestMinu
 // fake-codex-app-server.ts and fake-acp-cli.ts have POSIX shebangs
 describe.skipIf(process.platform === "win32")("a room's no activity limit while a tool is open", () => {
   beforeAll(async () => {
-    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
+      // This fixture CLI has no model host; unknown-host refusal has its own reach tests.
+      const { customAcpSupport: localFixtureHost } = await import(${JSON.stringify(new URL("./drivers/acp/custom.ts", import.meta.url).href)}); localFixtureHost.fluxReach = () => "elsewhere";
       const fs=await import('node:fs');const path=await import('node:path');
       const SPEED=${SPEED};const t0=Date.now();
       const {TurnWatchdog}=await import(${JSON.stringify(pathToFileURL(join(serverDir, "turn-watchdog.ts")).href)});
@@ -58,7 +61,7 @@ describe.skipIf(process.platform === "win32")("a room's no activity limit while 
       const codex=(mode)=>({driver:'codex',displayName:mode,config:{cli:${JSON.stringify(FAKE_CODEX)},fullAuto:true},environment:{FAKE_CODEX_MODE:mode}});
       cfg.instances.codexTool=codex('tool-hold');
       cfg.instances.codexClosed=codex('tool-close-then-hold');
-      cfg.instances.acpTool={driver:'customAcp',displayName:'acpTool',config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true},environment:{FAKE_ACP_MODE:'stall-after-tool',FAKE_ACP_TOOL_NEVER_FINISHES:'1'}};
+      cfg.instances.acpTool={driver:'customAcp',displayName:'acpTool',config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true},environment:{FAKE_ACP_MODE:'stall-after-tool',FAKE_ACP_TOOL_NEVER_FINISHES:'1',FAKE_ACP_MODELS:'fake-acp-model'}};
       cfg.instances.piSilent={driver:'piAgent',displayName:'piSilent',config:{cli:${JSON.stringify(join(serverDir, "testing/fake-pi-cli.ts"))},fullAuto:true},environment:{FAKE_PI_MODE:'hold'}};
       fs.writeFileSync(file,JSON.stringify(cfg));
     ` });

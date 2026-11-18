@@ -7,12 +7,27 @@ import { BrowserExtensionIntegration } from "./browser-extension-integration.ts"
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
 import { extensionBrowserUnavailablePrompt } from "./browser-extension-prompt.ts";
 import type { BotRecord } from "./store.ts";
-import type { BrowserExtensionCommand, BrowserExtensionHello, BrowserExtensionResponse } from "../shared/browser-extension-protocol.ts";
+import type { BrowserExtensionCommand, BrowserExtensionHello, BrowserExtensionResponse, ExtensionJson } from "../shared/browser-extension-protocol.ts";
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
 import { removeTempDir, removeTempDirSync } from "./testing/cleanup.ts";
 
+import { DEFAULT_CHECKER_MODELS } from "./browser-action-checker-connection.ts";
+import { resetFluxKeyModelsForTests, setFluxKeyCatalog } from "./flux-key-models.ts";
+const brokerSlot = vi.hoisted(() => ({ value: undefined as unknown }));
+vi.mock("./browser-extension-broker.ts", () => ({ startBrowserExtensionBroker: async () => brokerSlot.value }));
+vi.mock("./flux-config.ts", async importOriginal => ({
+  ...await importOriginal<typeof import("./flux-config.ts")>(), fluxKey: () => "synthetic-consent-key",
+}));
+vi.mock("./flux-start-gate.ts", async importOriginal => ({
+  ...await importOriginal<typeof import("./flux-start-gate.ts")>(), authorizeFluxDispatch: async () => {},
+}));
+const consentIntegrations: { close(): Promise<void> }[] = [];
 const cleanup: string[] = [];
-afterEach(async () => { for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
+afterEach(async () => {
+  for (const integration of consentIntegrations.splice(0)) await integration.close();
+  for (const directory of cleanup.splice(0)) await removeTempDir(directory);
+  resetFluxKeyModelsForTests(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+});
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 async function fixture(profileIds: string[], browser: BrowserExtensionHello["browser"] = "chromium") {
   const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".integration-")); cleanup.push(directoryRoot);
@@ -68,7 +83,7 @@ describe("browser tools only when the owner's browser is ready for this bot", ()
     await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread");
     f.offline();
     const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
-    expect(error).toMatchObject({ code: "browser_extension_not_ready" });
+    expect(error).toMatchObject({ code: "host_offline" });
     expect(error.message).toMatch(PLAIN); expect(error.message).toMatch(/not connected/);
     expect(extensionBrowserUnavailablePrompt(error.message, true)).not.toContain("host_offline");
   });
@@ -78,7 +93,7 @@ describe("browser tools only when the owner's browser is ready for this bot", ()
     await f.service.pause(first.bindingId);
     const runtime = f.bindings.get(first.bindingId)!; runtime.tabs[0].navigationEpoch++; runtime.tabs[0].origin = ""; runtime.tabs[0].url = "";
     const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
-    expect(error).toMatchObject({ code: "browser_extension_not_ready" });
+    expect(error).toMatchObject({ code: "paused" });
     expect(error.message).toMatch(/paused/); expect(error.message).not.toMatch(/Invalid URL/);
     await expect(f.service.stop(first.bindingId)).resolves.toBeUndefined();
     const stopped = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
@@ -96,7 +111,7 @@ describe("browser tools only when the owner's browser is ready for this bot", ()
       const f = await fixture(["profile_a"]);
       f.value.start = async () => ({ status: () => ({ profiles: [{ profileId: "profile_a", browser: "chromium" }], bindings: [] }), ensureBinding: async () => { throw Object.assign(Error(`${code} at /private/tmp/x`), { code }); } }) as never;
       const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
-      expect(error).toMatchObject({ code: "browser_extension_not_ready" });
+      expect(error).toMatchObject({ code });
       expect(error.message).toMatch(PLAIN); expect(error.message).toMatch(pattern); expect(error.message).not.toMatch(/_|\/private|—/);
     }
   });
@@ -273,4 +288,96 @@ describe("EXT-RESTART 14, 15, 28, 28b: restart reports before the service exists
     const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
     expect(error.message).toMatch(/Chrome or Murage closed/); expect(error.message).toMatch(PLAIN);
   });
+});
+it('an unpinned chosen Edge route never takes the sole Chrome profile',async()=>{
+ const f=await fixture(['p'],'chrome');await expect(f.value.bind(bot({browserExtensionBrowser:'edge'}),'thread')).rejects.toMatchObject({code:'browser_extension_setup_required'});
+});
+it('an unpinned chosen Edge route uses its sole explicitly identified Edge profile',async()=>{
+ const f=await fixture(['p'],'edge');await expect(f.value.bind(bot({browserExtensionBrowser:'edge'}),'thread')).resolves.toMatchObject({profileId:'p'});
+});
+
+async function consentFixture() {
+  const { root, directory } = await privateTestDirectory(path.resolve('.consent-'));
+  cleanup.push(root);
+  const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
+  const calls: BrowserExtensionCommand[] = [];
+  const cards: { summary: string }[] = [];
+  const broker = {
+    close: async () => {}, drop: () => false,
+    profiles: (): BrowserExtensionHello[] => [{ version: 1, type: "hello", profileId: "profile", browser: "chromium", extensionVersion: "1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1"] }],
+    async request(_profile: string, command: BrowserExtensionCommand): Promise<BrowserExtensionResponse> {
+      calls.push(command);
+      let binding = bindings.get(command.bindingId);
+      if (!binding) {
+        binding = { generation: 1, state: "active", tabs: [{ tabId: 1, navigationEpoch: 1, origin: "https://fixture.test", url: "https://fixture.test/" }] };
+        bindings.set(command.bindingId, binding);
+      }
+      let result: ExtensionJson = binding;
+      if (command.operation === "stop" || command.operation === "pause") { binding.generation++; binding.state = command.operation === "stop" ? "stopped" : "paused"; }
+      if (command.operation === "cdp") {
+        const { method, params } = command.params as { method: string; params: Record<string, unknown> };
+        let value: ExtensionJson = {};
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1, url: binding.tabs[0].url }] };
+        if (method === "Page.getFrameTree") value = { frameTree: { frame: { id: "frame", loaderId: "L" } } };
+        if (method === "Page.createIsolatedWorld") value = { executionContextId: 7 };
+        if (method === "DOM.getDocument") value = { root: { nodeId: 1 } };
+        if (method === "DOM.describeNode") value = { node: { backendNodeId: 12 } };
+        if (method === "DOM.resolveNode") value = { object: { objectId: "target" } };
+        if (method === "Runtime.evaluate") value = { result: { value: String(params.expression).includes("__murageGuard()") ? false : "page", objectId: "target" } };
+        if (method === "Runtime.callFunctionOn") value = { result: { value: String(params.functionDeclaration).includes("const value=JSON.stringify") ? '{"tag":"TEXTAREA"}' : String(params.functionDeclaration).includes("elementFromPoint") ? true : { x: 1, y: 1, w: 10, h: 10 } } };
+        result = { result: value, ...binding.tabs[0] };
+      }
+      return { version: 1, type: "response", id: command.id, bindingId: command.bindingId, generation: command.generation, result: structuredClone(result) };
+    },
+  };
+  brokerSlot.value = broker;
+  const record = { id: "bot", name: "Consentbot", browserApproval: "task" } as BotRecord;
+  const integration = new BrowserExtensionIntegration({
+    dataDir: directory, socketDir: directory, workspaceId: "workspace",
+    approvalBus: { store: { bots: [], groups: [], messagesFor: () => [] } } as never,
+    bot: () => record, protectedOrigins: [],
+    collectFacts: async (_io: unknown, _target: unknown, operation: string) => ({ operation, visibility: { box: { x: 1, y: 1, width: 50, height: 20 }, inViewport: true, opacity: 1, visibility: "visible", ariaHidden: false, coveredBy: null } }) as never,
+    createEngine: engine => ({
+      resolveTarget: async () => ({ backendNodeId: 12, document: await engine.transport.selected() }),
+      resolveTab: async () => engine.transport.selected(), event() {}, async close() {},
+      async call(_name, args) {
+        const document = await engine.transport.selected();
+        const params = { text: args.text };
+        await engine.beforeCommand(document, "Input.insertText", params);
+        await engine.transport.send("Input.insertText", params, document);
+        return { content: [] };
+      },
+    }),
+    ownerInstruction: () => ({ id: "owner-message", text: "Write the requested note" }),
+  });
+  vi.spyOn(integration.approvals, "ask").mockImplementation(async input => { cards.push({ summary: input.summary }); return "allow"; });
+  const service = await integration.start(); consentIntegrations.push(integration);
+  const binding = await service.ensureBinding({ botId: "bot", threadId: "thread", profileId: "profile" });
+  return { record, service, binding, calls, cards };
+}
+
+it.each([
+  { name: "d: fresh browser action completes locally without a Flux check", saveFlux: false },
+  { name: "e: Flux checking starts only after the explicit saved choice", saveFlux: true },
+])("ROOM-ROUTING-CONSENT $name", async ({ saveFlux }) => {
+  setFluxKeyCatalog(() => [DEFAULT_CHECKER_MODELS.stage1, DEFAULT_CHECKER_MODELS.stage2]);
+  const requests: Array<{ url: string; body: any }> = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    requests.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+    return new Response(JSON.stringify({ choices: [{ message: { content: "ALLOW" } }] }), { headers: { "x-flux-no-retain": "applied" } });
+  }));
+  const f = await consentFixture();
+  expect(f.record.browserActionCheck).toBeUndefined();
+  const fill = () => f.service.dispatch(f.binding.bindingId, "agent_browser_fill", { selector: "textarea", text: "Requested note" }, () => true);
+  await expect(fill()).resolves.toBeDefined();
+  expect(requests.filter(request => request.url.endsWith("/chat/completions"))).toHaveLength(0);
+  expect(f.cards.some(card => card.summary.includes("Ask each step until the action check is available."))).toBe(true);
+  expect(f.calls.some(call => call.params.method === "Input.insertText")).toBe(true);
+  if (saveFlux) {
+    f.record.browserActionCheck = "flux";
+    await expect(fill()).resolves.toBeDefined();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe("https://api.fluxrouter.ai/v1/chat/completions");
+    expect(requests[0].body.messages[1].content).toContain("Write the requested note");
+  }
 });

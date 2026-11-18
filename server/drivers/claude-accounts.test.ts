@@ -1,3 +1,4 @@
+import { admittedFixtureInstance } from "../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -33,7 +34,7 @@ else { for(const key of Object.keys(process.env))if(!['HOME','USERPROFILE','PATH
     const root=join(scratch,name);mkdirSync(root);
     writeFileSync(join(root,"settings.json"),JSON.stringify({customModels:[`account-${name}`]}));
     writeFileSync(join(root,"auth-result.json"),JSON.stringify({loggedIn:index===0}));
-    instances.push(await ClaudeDriver.create({instanceId:name,displayName:name,enabled:true,config:{cli:`${JSON.stringify(process.execPath)} ${JSON.stringify(wrapper)}`,permissionMode:"acceptEdits",configDir:root},environment:{FAKE_CLAUDE_DUMP:join(root,"dump.json")}}));
+    instances.push(await admittedFixtureInstance(ClaudeDriver.create({instanceId:name,displayName:name,enabled:true,config:{cli:`${JSON.stringify(process.execPath)} ${JSON.stringify(wrapper)}`,permissionMode:"acceptEdits",configDir:root},environment:{FAKE_CLAUDE_DUMP:join(root,"dump.json")}})));
   }
   for(const [index,instance] of instances.entries()){
     const name=index===0?"work":"personal",root=join(scratch,name),snapshot=await instance.snapshot();

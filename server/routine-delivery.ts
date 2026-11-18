@@ -139,6 +139,9 @@ export function deliverRoutineRun(run: RoutineRun, deps: RoutineDeliveryDeps, fi
   const text = routineRunFallbackText(card);
   const id = routineResultId(run.id);
   const existing = deps.messageById(target.threadId, id);
+  // The unread mark goes BEFORE the card: `existing` is what says the status changed, so a card written first and a failed mark would lose the unread
+  // for good (routine-run-card.ts says the same for the source-chat card).
+  if (existing?.routineRun?.status !== run.status && UNREAD.has(run.status)) deps.markUnread(target);
   if (existing) {
     deps.patchMessage(target.threadId, id, { text, routineRun: card, ...(artifactIds.length ? { artifactIds } : {}) });
   } else {
@@ -147,7 +150,6 @@ export function deliverRoutineRun(run: RoutineRun, deps: RoutineDeliveryDeps, fi
     if (target.group) message.from = { botId: target.bot.id, name: target.bot.name, color: target.bot.color };
     deps.appendMessage(target.threadId, message, id);
   }
-  if (existing?.routineRun?.status !== run.status && UNREAD.has(run.status)) deps.markUnread(target);
   return target.threadId;
 }
 

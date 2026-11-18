@@ -65,7 +65,7 @@ test("XDG_DATA_DIRS does not grow with AppImage restarts", { skip: process.platf
   const require = createRequire(import.meta.url);
   const { generateAppRunScript } = require(path.join(pnpm, readdirSync(pnpm).find(n => n.startsWith("app-builder-lib@")), "node_modules", "app-builder-lib", "out", "targets", "appimage", "appImageUtil.js"));
   const line = generateAppRunScript({ ExecutableName: "murage", ProductName: "Murage", ProductFilename: "Murage" }).split("\n").find(l => l.startsWith("export XDG_DATA_DIRS="));
-  const appRunXdg = (env, appDir) => spawnSync("/bin/bash", ["-c", `${line}; printf %s "$XDG_DATA_DIRS"`], { env: { APPDIR: appDir, ...(env.XDG_DATA_DIRS ? { XDG_DATA_DIRS: env.XDG_DATA_DIRS } : {}) }, encoding: "utf8" }).stdout;
+  const appRunXdg = (env, appDir) => spawnSync("/bin/bash", ["-c", `${line}; printf %s "$XDG_DATA_DIRS"`], { windowsHide: true, env: { APPDIR: appDir, ...(env.XDG_DATA_DIRS ? { XDG_DATA_DIRS: env.XDG_DATA_DIRS } : {}) }, encoding: "utf8" }).stdout;
   for (const session of ["/usr/share/ubuntu:/usr/local/share/:/usr/share/:/var/lib/snapd/desktop", undefined]) {
     let env = session ? { XDG_DATA_DIRS: session } : {};
     const seen = [];
@@ -107,7 +107,7 @@ test("a real AppImage-style restart: the file itself runs only after the old pro
     writeFileSync(appImage, `#!/bin/sh\nprintf '%s\\n' "$PWD" "$APPDIR" "$LD_LIBRARY_PATH" "$MURAGE_DATA_DIR" "$@" > "${out}.tmp" && mv "${out}.tmp" "${out}"\n`);
     chmodSync(appImage, 0o755);
     // Stands in for the old Murage: alive until told to exit.
-    const old = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], { stdio: "ignore" });
+    const old = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], { windowsHide: true, stdio: "ignore" });
     await new Promise(resolve => old.once("spawn", resolve));
     const env = { ...process.env, APPIMAGE: appImage, APPDIR: mount, OWD: home, LD_LIBRARY_PATH: `${mount}/usr/lib`, MURAGE_DATA_DIR: "/data/for/this/copy" };
     const how = relaunchDesktop({ app: { relaunch: () => assert.fail("not Electron's relaunch") }, args: ["--no-sandbox", "--murage-backup-mode", "two words"],
@@ -141,7 +141,7 @@ test("the restart helper hands the AppImage no inherited descriptors (Linux)", {
     chmodSync(appImage, 0o755);
     // Open two descriptors without close-on-exec, the way Chromium holds its
     // resource files, then become the helper exactly as relaunchDesktop runs it.
-    const helper = spawn("bash", ["-c", `exec 15<"${held}" 200<"${held}"; exec bash -c "$0" murage-relaunch 999999999 "${appImage}"`, APPIMAGE_RELAUNCH_SCRIPT], { stdio: "ignore" });
+    const helper = spawn("bash", ["-c", `exec 15<"${held}" 200<"${held}"; exec bash -c "$0" murage-relaunch 999999999 "${appImage}"`, APPIMAGE_RELAUNCH_SCRIPT], { windowsHide: true, stdio: "ignore" });
     await new Promise(resolve => helper.once("exit", resolve));
     assert.equal(await waitFor(() => existsSync(out)), true, "the AppImage was never started");
     const listing = readFileSync(out, "utf8");

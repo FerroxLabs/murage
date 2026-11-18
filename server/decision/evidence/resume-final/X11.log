@@ -1,0 +1,80 @@
+COMMAND node_modules/.bin/vitest run server/decision/ingress.test.ts -t R12
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/ingress.test.ts > R12 decision never reads message history
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/ingress.test.ts > R12 ten and ten-thousand message histories have identical deny lookup cost and zero message reads
+[sqlite] slow op=WITH RECURSIVE n(x) AS(VALUES(?) UNION ALL SELECT x+? FROM n WHERE x<?) INSERT I ms=116 source=caller:ingress.test.ts:36<ingress.test.ts:36
+
+ ❯ server/decision/ingress.test.ts (9 tests | 2 failed | 7 skipped) 672ms
+   ↓ A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts
+   ↓ A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected
+   ↓ R16 actor substitution ignored and all authority objects frozen at registration
+   × R12 decision never reads message history 302ms
+   ↓ service execution joins concurrent calls, retains frozen content and never uses caller mutations
+   ↓ ingress duplicate event envelope metadata does not change input identity
+   ↓ R16 service request keys are scoped to their verified conversation, never another owner handle
+   × R12 ten and ten-thousand message histories have identical deny lookup cost and zero message reads 366ms
+   ↓ A2 BASE conflict reads the latest bounded snapshot and keeps reader faults inside policy
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 7 skipped (9)
+   Start at  08:17:03
+   Duration  4.99s (transform 3.36s, setup 3.97s, import 229ms, tests 672ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/ingress.test.ts > R12 decision never reads message history
+AssertionError: expected "messagesFor" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st messagesFor call:
+
+    Array [
+      "t",
+    ]
+
+
+Number of calls: 1
+
+ ❯ server/decision/ingress.test.ts:21:128
+     19| });
+     20| it('R12 decision never reads message history',()=>{
+     21|  const f=fixture();const histories=vi.spyOn(f.store,'messagesFor');con…
+       |                                                                                                                                ^
+     22| });
+     23| it('service execution joins concurrent calls, retains frozen content a…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/decision/ingress.test.ts > R12 ten and ten-thousand message histories have identical deny lookup cost and zero message reads
+AssertionError: expected "messagesFor" to not be called at all, but actually been called 2 times
+
+Received:
+
+  1st messagesFor call:
+
+    Array [
+      "t",
+    ]
+
+  2nd messagesFor call:
+
+    Array [
+      "t",
+    ]
+
+
+Number of calls: 2
+
+ ❯ server/decision/ingress.test.ts:36:798
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+

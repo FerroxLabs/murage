@@ -1,0 +1,22 @@
+
+ RUN  v4.1.12 /work
+
+ ✓ server/channels/signal/service.test.ts (67 tests | 2 skipped) 39291ms
+   ✓ T-STUCK: 250 journaled notes drain in order; 20 review records plus 190 notes use admissionCapacity (mutant: pending count)  19012ms
+   ✓ T-RESEND: root commit faults preserve one recoverable reply across overflow and restart (mutant: settle then admit)  798ms
+   ✓ T-UNLINK-CRASH: each durable boundary recovers without a child; pre-barrier failure performs no cleanup  505ms
+   ✓ T-BACKPRESSURE: 50 waiting fsyncs pause reads; disk failure retains the row, timeout blocks without killing the child  2000ms
+   ✓ T-CONTRACT: B7 typechecks against the frozen dependencies  13046ms
+ ✓ server/channels/signal/process-host.test.ts (50 tests | 1 skipped) 15296ms
+     ✓ B5 compiles against frozen B0 ProcessHost  12786ms
+ ✓ server/powershell-json-array.test.ts (3 tests) 320ms
+   ✓ every embedded PowerShell env JSON array parser unwraps inside @() for PS 5.1  313ms
+ ✓ server/channels/signal/storage.test.ts (67 tests | 10 skipped) 182ms
+ ✓ scripts/win-gate/result.test.mjs (11 tests) 9ms
+ ✓ scripts/win-gate/coverage.test.mjs (24 tests) 43ms
+
+ Test Files  6 passed (6)
+      Tests  209 passed | 13 skipped (222)
+   Start at  16:23:19
+   Duration  71.76s (transform 8.66s, setup 14.18s, import 1.61s, tests 55.14s, environment 0ms)
+

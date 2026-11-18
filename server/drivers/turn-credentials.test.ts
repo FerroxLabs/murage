@@ -1,4 +1,11 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
+const sealedProxyRefusal = { jsonrpc: "2.0", id: null, error: {
+  code: -32099, message: LEDGER_REFUSAL_LINE,
+  data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true },
+} };
+// control migration: real bound proxy ingress; existing assertions retained.
+import type { ChildProcess } from "node:child_process";
+import { boundProxyState, spawnBoundProxy } from "../testing/bound-proxy-fixture.ts";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname } from "node:path";
@@ -78,7 +85,7 @@ describe("memory proxy reads its token from the credential file on every call", 
     });
     await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", resolve));
     const address = stub.address() as { port: number };
-    child = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./memory-proxy.ts", import.meta.url))], {
+    child = await spawnBoundProxy("memory", process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./memory-proxy.ts", import.meta.url))], {
       env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${address.port}`, MURAGE_CRED_FILE: store.path, MURAGE_CRED_SERVER: "murage-memory", MURAGE_MEMORY_TOKEN: "" },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -95,9 +102,11 @@ describe("memory proxy reads its token from the credential file on every call", 
     });
   });
   afterAll(async () => {
-    const exited = new Promise((resolve) => child.once("exit", resolve));
-    child.stdin!.end();
-    await exited;
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((resolve) => child.once("exit", resolve));
+      child.stdin!.end();
+      await exited;
+    }
     await new Promise((resolve) => stub.close(resolve));
     store.dispose();
   });
@@ -109,9 +118,17 @@ describe("memory proxy reads its token from the credential file on every call", 
     await call("memory_search", { query: "b" });
     expect(auths).toEqual(["Bearer turn-1", "Bearer turn-2"]);
     store.clear();
-    const refused = await call("memory_search", { query: "c" });
+    // red-at-4df086541; design line 399: missing authority seals the lease
+    // instead of returning the old recoverable "not available" tool answer.
+    const accepted: string[] = [];
+    child.stdout!.on("data", chunk => accepted.push(chunk.toString()));
+    const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
+    const replied = new Promise<void>(resolve => child.stdout!.once("data", () => resolve()));
+    await Promise.race([closed, call("memory_search", { query: "c" }), replied]);
     expect(auths).toHaveLength(2);
-    expect(JSON.stringify(refused)).toContain("not available");
+    expect(accepted).toEqual([]);
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be9 / 6a9dfe7db86: also require the authenticated fixed terminal receipt.
+    expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
     writeFileSync(store.path, "{}");
   });
 });

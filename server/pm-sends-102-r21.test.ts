@@ -400,7 +400,7 @@ describe("d. going back to 1.0.1 keeps the waiting handoffs", () => {
       prep.exec("CREATE TABLE IF NOT EXISTS messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));");
       migrateMemorySchema(prep, "active");
       prep.close();
-      const result = downgradeInstallationMemorySchema(copy, 6, { testOnlyBefore102: true });
+      const result = await downgradeInstallationMemorySchema(copy, 6, { testOnlyBefore102: true });
       expect(result).toMatchObject({ status: "downgraded", to: 6, handoffs: 3 });
       expect(Object.values(loadAs101(join(copy, "delegations.json"))).flat().map((i) => i.id).sort()).toEqual(["h1", "h2", "h3"]);
       const after = new DatabaseSync(join(copy, "messages.db"));

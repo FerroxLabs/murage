@@ -206,3 +206,7 @@ export function serviceMessage<T extends Json>(message: T): T {
   if (message.method !== "tools/call" || !isObject(message.params) || typeof message.params.name !== "string") return message;
   return { ...message, params: { ...message.params, name: serviceToolName(message.params.name) } };
 }
+
+/** Internal protocol identifiers and exact transport source inventory. */
+export const CONNECTED_APP_EXECUTE_TOOL = "COMPOSIO_MULTI_EXECUTE_TOOL";
+export const CONNECTED_APP_SOURCE_PATHS = Object.freeze({ runtime: "server/composio.ts", transport: "server/composio-lifecycle.ts" });

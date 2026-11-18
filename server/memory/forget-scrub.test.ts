@@ -3,6 +3,7 @@
 // Forget scrubs the words (r3 C3): every record a forget ends loses its text in
 // the step that marks it deleted, on every live forget path (a Settings forget
 // of a record or a source, a job resumed after a restart, an owner identity delete).
+import { prepareRecallContextSync } from "./recall-view.ts";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -26,7 +27,7 @@ import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
-const roster = { bots: [{ id: "bot", threadId: "thread" }], groups: [] } as unknown as MemoryRoster;
+const roster = { memoryRosterRevision: 1, bots: [{ id: "bot", threadId: "thread" }], groups: [] } as unknown as MemoryRoster;
 const owner = ownerMemoryTicket();
 const holding = (word: string) => Number(database().prepare("SELECT count(*) AS n FROM memory_records WHERE text LIKE ?").get(`%${word}%`)!.n);
 /** One active owner memory, written the way an owner-authored record is (no source, no evidence). */
@@ -39,6 +40,7 @@ function ownerMemory(text: string): string {
 function access() {
   const registry = new InternalCapabilities(); registry.begin("bot", "thread", "generation");
   const token = registry.mint({ botId: "bot", threadId: "thread", generation: "generation", depth: 99, kind: "memory", skillAuthoring: false });
+  prepareRecallContextSync("bot", "thread", roster);
   return memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
 }
 const readable = (id: string, version = 1) => { try { return typeof readableMemoryRecord(id, version, access(), { allowance: LineageAllowance.tool() }) !== "string"; } catch { return false; } };

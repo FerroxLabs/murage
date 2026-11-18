@@ -1,0 +1,37 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/powershell-json-array.test.ts (2 tests | 1 failed) 720ms
+   ✓ rejects PS 5.1 nested arrays even when enumeration happens outside @() 3ms
+   × every embedded PowerShell env JSON array parser unwraps inside @() for PS 5.1 713ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/powershell-json-array.test.ts > every embedded PowerShell env JSON array parser unwraps inside @() for PS 5.1
+AssertionError: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "server/channels/signal/service.ts: $env:MURAGE_SIGNAL_DIRS | ConvertFrom-Json",
++   "server/channels/signal/storage.ts: $env:MURAGE_SIGNAL_ROOTS | ConvertFrom-Json",
++ ]
+
+ ❯ server/powershell-json-array.test.ts:54:112
+     52|     "server/channels/signal/storage.ts", "server/channels/signal/servi…
+     53|   ]));
+     54|   expect(parsers.flatMap(({ file, script }) => unsafeEnvJsonParses(scr…
+       |                                                                                                                ^
+     55| });
+     56|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  16:17:11
+   Duration  6.65s (transform 4.45s, setup 5.54s, import 287ms, tests 720ms, environment 0ms)
+

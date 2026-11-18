@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { SlackService } from "./service.ts";
 import type { SlackTransport } from "./transport.ts";
 import { ChannelSendError } from "../durable-delivery.ts";
+import { ledgerFilesIn, rawText } from "../delivery-ledger-test-support.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
 const roots: string[] = [], services: SlackService[] = [];
 afterEach(async () => { for (const s of services.splice(0)) await s.stop(); for (const p of roots.splice(0)) removeTempDirSync(p); vi.useRealTimers(); });
@@ -51,8 +52,7 @@ it("requires the named owner challenge and durably accepts before ACK, not model
   expect(f.sendText).toHaveBeenCalledWith(expect.objectContaining({ text: "Slack is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." }));
   f.sendText.mockClear();
   const ack = vi.fn(async () => {
-    const file = readdirSync(join(f.dir, "channels/slack")).find(n => n !== "connection.json")!;
-    expect(readFileSync(join(f.dir, "channels/slack", file), "utf8")).toContain("EvREQUEST");
+    expect(rawText(ledgerFilesIn(join(f.dir, "channels/slack"))[0]!)).toContain("EvREQUEST");
     expect(f.enqueue).not.toHaveBeenCalled();
   });
   await f.emit(f.raw("hello", "EvREQUEST"), ack);
@@ -117,4 +117,16 @@ it("temporary disconnect keeps the saved binding authoritative but blocks transp
   f.health.at(-1)!("disconnected"); expect(f.service.isCurrent(saved.binding)).toBe(true);
   await f.service.tick(); expect(f.sendText).not.toHaveBeenCalled();
   await f.service.stop(); expect(f.service.isCurrent(saved.binding)).toBe(false);
+});
+
+it("Cloud refuses raw sign-in codes before Slack persistence or enqueue", async () => {
+  vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+  try {
+    const f = fixture(); await f.pair();
+    const code = "4/fixtureCodeSecret0123456789";
+    await f.emit(f.raw(code));
+    expect(f.enqueue).not.toHaveBeenCalled();
+    for (const file of readdirSync(join(f.dir, "channels/slack"))) expect(readFileSync(join(f.dir, "channels/slack", file), "utf8")).not.toContain(code);
+    expect(f.sendText).toHaveBeenCalledWith(expect.objectContaining({ text: "That looks like a sign-in code. Paste it in the sign-in dialog, not here." }));
+  } finally { vi.unstubAllEnvs(); }
 });

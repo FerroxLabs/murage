@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { useDesktopSurface } from "../lib/use-surface";
+import type { SettingsMode } from "@/lib/settings-mode";
 import { Card, Switch } from "./SettingsPrimitives";
 
 export type PhoneOfferBlock = "cloud-home" | "shared-workspace" | "launch-proof";
@@ -33,6 +34,8 @@ export const PREVIEW_COPY: Record<PhonePreview, { label: string; body: string }>
     body: "Send things to your bots from any app on the phone, and ask them from anywhere.",
   },
 };
+/** SIMPLE-COPY 3: the Simple page's Phone tools line. The full `PREVIEW_COPY.phoneTools.body` stays in Advanced. */
+export const PHONE_TOOLS_BODY_SIMPLE = "Bots can use this phone's calendar, reminders and contacts. You approve each request.";
 /** The one line under a switch that is on but does nothing on this host. */
 export const PREVIEW_BLOCKED_LINE: Record<PhoneOfferBlock | "unknown", string> = {
   "cloud-home": "On, but not used here: this Murage runs in the Cloud, and the preview works only on your own computer.",
@@ -69,14 +72,17 @@ export function PreviewSwitchRow({
   busy,
   error,
   onChange,
+  mode,
 }: {
   which: PhonePreview;
   answer: PhoneOfferAnswer | null;
   busy: boolean;
   error: boolean;
   onChange: (on: boolean) => void;
+  mode?: SettingsMode;
 }) {
-  const copy = PREVIEW_COPY[which];
+  const full = PREVIEW_COPY[which];
+  const copy = mode === "simple" && which === "phoneTools" ? { ...full, body: PHONE_TOOLS_BODY_SIMPLE } : full;
   const on = previewFlagOn(which, answer);
   const reason = previewReason(which, answer);
   return (
@@ -111,7 +117,7 @@ export function PreviewReadFailed({ onRetry }: { onRetry: () => void }) {
  * The Preview card. `onAnswer` hands every fresh answer to the parent (CompanionSection reads `shareAsk` from it for the
  * per-device share and ask row), so the page asks the harness once per change, not twice.
  */
-export function PhonePreviewSwitches({ onAnswer }: { onAnswer?: (answer: PhoneOfferAnswer | null) => void }) {
+export function PhonePreviewSwitches({ onAnswer, mode }: { onAnswer?: (answer: PhoneOfferAnswer | null) => void; mode?: SettingsMode }) {
   const desktop = useDesktopSurface();
   const [answer, setAnswer] = useState<PhoneOfferAnswer | null>(null);
   const [busy, setBusy] = useState<PhonePreview | null>(null);
@@ -166,6 +172,7 @@ export function PhonePreviewSwitches({ onAnswer }: { onAnswer?: (answer: PhoneOf
             answer={answer}
             busy={busy !== null}
             error={failed === which}
+            mode={mode}
             onChange={(on) => void change(which, on)}
           />
         ))}

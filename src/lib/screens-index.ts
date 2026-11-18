@@ -378,6 +378,23 @@ export const SCREENS: readonly ScreenIndexEntry[] = [
     ]
   },
   {
+    "key": "settings:calls",
+    "pattern": "settings:calls",
+    "title": "ux.l4a.screen.settings.calls.title",
+    "intro": "ux.l4a.screen.settings.calls.intro",
+    "tips": [
+      "ux.l4a.screen.settings.calls.tip1"
+    ],
+    "why": "ux.l4a.screen.settings.calls.why",
+    "controls": [
+      {
+        "id": "settings-search",
+        "label": "ux.l4a.control.settingsSearch",
+        "address": "murage://settings/search"
+      }
+    ]
+  },
+  {
     "key": "settings:botDefaults",
     "pattern": "settings:botDefaults",
     "title": "ux.l4a.screen.settings.botDefaults.title",
@@ -481,14 +498,14 @@ export const SCREENS: readonly ScreenIndexEntry[] = [
     ]
   },
   {
-    "key": "settings:channels",
-    "pattern": "settings:channels",
-    "title": "ux.l4a.screen.settings.channels.title",
-    "intro": "ux.l4a.screen.settings.channels.intro",
+    "key": "settings:computer",
+    "pattern": "settings:computer",
+    "title": "ux.l4a.screen.settings.computer.title",
+    "intro": "ux.l4a.screen.settings.computer.intro",
     "tips": [
-      "ux.l4a.screen.settings.channels.tip1"
+      "ux.l4a.screen.settings.computer.tip1"
     ],
-    "why": "ux.l4a.screen.settings.channels.why",
+    "why": "ux.l4a.screen.settings.computer.why",
     "controls": [
       {
         "id": "settings-search",
@@ -558,6 +575,23 @@ export const SCREENS: readonly ScreenIndexEntry[] = [
       "ux.l4a.screen.settings.about.tip1"
     ],
     "why": "ux.l4a.screen.settings.about.why",
+    "controls": [
+      {
+        "id": "settings-search",
+        "label": "ux.l4a.control.settingsSearch",
+        "address": "murage://settings/search"
+      }
+    ]
+  },
+  {
+    "key": "settings:channels",
+    "pattern": "settings:channels",
+    "title": "ux.l4a.screen.settings.channels.title",
+    "intro": "ux.l4a.screen.settings.channels.intro",
+    "tips": [
+      "ux.l4a.screen.settings.channels.tip1"
+    ],
+    "why": "ux.l4a.screen.settings.channels.why",
     "controls": [
       {
         "id": "settings-search",

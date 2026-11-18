@@ -191,7 +191,7 @@ describe("appendNative", () => {
     if (process.platform !== "win32") expect(mode).toBe(0o600);
   });
 
-  it("keeps lifecycle ids intact: a digit run inside a UUID is not a secret number", () => {
+  it("native-projection-contract.lifecycle-uuid: a digit run inside a UUID is not a secret number", () => {
     // The last one's tail reads as a Luhn-valid card number (4111 1111 1111 1111) to the financial-id rule.
     const ids = ["fb296783-4baa-4128-831c-b46042fa7ced", "40784341-8049-46ee-9f0b-fb6dcf07132f", "12345678-9012-4345-8678-901234567890", "fb296783-4baa-4cde-4111-111111111111"];
     for (const id of ids) {
@@ -257,7 +257,7 @@ describe("appendNative", () => {
       expect(rows("t-open-thread")[0].msg).toEqual({ type: "assistant" });
     });
 
-    it("the first phone call is withheld before any mark exists: a tool_use naming a phone tool, and its streamed argument fragments", () => {
+    it("native-projection-contract.phone-first-and-next: first call and streamed argument fragments are withheld", () => {
       const thread = "t-first-call";
       appendNative(thread, { dir: "in", source: "claude", msg: { type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__phoneJobs__phone_calendar_read", input: { start: "2026-10-26", note: "CANARY-ONE" } }] } } });
       appendNative(thread, { dir: "in", source: "claude", msg: { type: "stream_event", event: { type: "content_block_start", index: 2, content_block: { type: "tool_use", name: "phone_location_get", input: {} } } } });
@@ -279,7 +279,7 @@ describe("appendNative", () => {
 // over that answer and then drop it for size, so each turn's resume held the event loop a little longer than the last.
 describe("an oversized frame is dropped before any redaction", () => {
   const recordsFor = (thread: string) => readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8").trimEnd().split("\n").map((line) => JSON.parse(line) as { msg: Record<string, unknown> });
-  it("a thread/resume answer with the whole history writes only the omitted marker, and no secret from it", () => {
+  it("native-raw-size-order: oversized history is omitted before any descendant read", () => {
     const thread = "t-resume-history";
     const key = `${"sk-" + "ant-"}api03-${"Q".repeat(40)}`;
     const turn = { id: "turn", items: [{ type: "userMessage", content: [{ type: "text", text: `token=${key} ${"word ".repeat(200)}` }] }] };
@@ -329,10 +329,10 @@ describe("an oversized frame is dropped before any redaction", () => {
     expect(readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8")).toContain("keep-lifecycle");
   });
 
-  it("frames that carry stream state keep the full path even when oversized", () => {
+  it("native-raw-size-order.stream-exemptions: user, delta and indexed phone frames keep the full path", () => {
     const big = "x".repeat(70_000);
     // an oversized user frame keeps the full path: it is written (not the omitted marker) and the frames around it are unchanged. The trace
-    // drops delta text before the stream mask reads it, so no text latch forms through kept fields; the latch reset is asserted on the phone block below.
+    // drops delta text; only phone block tracking carries state, and its close is asserted below.
     const thread = "t-user-reset";
     const delta = (text: string) => ({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } });
     // the trace writes a delta's label and index, never its text, so each frame is read through its kept fields: it is present, not the omitted marker
@@ -385,5 +385,41 @@ describe("an oversized frame is dropped before any redaction", () => {
     const log = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
     expect(log).toContain("c-2");
     expect(log).not.toContain("RRRR");
+  });
+});
+
+// DESIGN-r2 T12: encoded bytes, not JavaScript string length, decide the final write.
+describe("native-raw-size-order.utf8-byte-limit", () => {
+  it("accepts the exact encoded limit and omits limit+1", () => {
+    const limit = 64 * 1024;
+    const entry = { dir: "lifecycle" as const, source: "fixture", msg: { detail: "界".repeat(10_000) } };
+    const overhead = Buffer.byteLength(JSON.stringify({ at: "2000-01-01T00:00:00.000Z", ...entry }) + "\n");
+    entry.msg.detail += "x".repeat(limit - overhead);
+    expect(JSON.stringify(entry).length).toBeLessThan(limit);
+    appendNative("t-utf8-exact", entry);
+    const exact = readFileSync(join(NATIVE_DIR, "t-utf8-exact.ndjson"), "utf8");
+    expect(Buffer.byteLength(exact)).toBe(limit);
+    expect(JSON.parse(exact).msg.detail).toBe(entry.msg.detail);
+    appendNative("t-utf8-over", { ...entry, msg: { detail: entry.msg.detail + "x" } });
+    const over = readFileSync(join(NATIVE_DIR, "t-utf8-over.ndjson"), "utf8");
+    expect(JSON.parse(over).msg).toEqual({ type: "native_trace_record_omitted", encodedBytes: limit + 1, limitBytes: limit });
+    expect(over).not.toContain("界");
+  });
+
+  it("writes the sanitized record to the current segment after rotation at the exact segment limit", () => {
+    const t = "t-final-append-target", segment = 4 * 1024 * 1024;
+    const current = join(NATIVE_DIR, `${t}.ndjson`), previous = join(NATIVE_DIR, `${t}.previous.ndjson`);
+    const prefix = '{"old":true,"padding":"', suffix = '"}\n';
+    const old = prefix + " ".repeat(segment - prefix.length - suffix.length) + suffix;
+    writeFileSync(current, old);
+    appendNative(t, { dir: "in", source: "fixture", msg: { id: "final-row", delta: { text: "FINAL-SECRET" }, input: { command: "FINAL-INPUT", cwd: "/work" } } });
+    expect(readFileSync(previous, "utf8")).toBe(old);
+    const output = readFileSync(current, "utf8");
+    const rows = output.trimEnd().split("\n").map(line => JSON.parse(line));
+    expect(rows).toHaveLength(2);
+    expect(rows[0].msg.type).toBe("native_trace_retention");
+    expect(rows[1].msg).toEqual({ id: "final-row", input: { cwd: "/work" } });
+    expect(output).not.toMatch(/FINAL-SECRET|FINAL-INPUT/);
+    expect(Buffer.byteLength(output)).toBeLessThan(segment);
   });
 });

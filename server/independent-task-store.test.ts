@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -203,11 +203,14 @@ it("clearing resume cursors in one batch leaves the same records as one setResum
     {botId:"gone",instanceId:"engine-one",threadId:"nowhere",cursor:"s1",incarnation:undefined}];
   fresh(); // lands the seed's deferred save
   const original=readFileSync(join(DATA_DIR,"bots.json"),"utf8");
+  // The fixture rewinds the complete generation-bound durable view, including task deltas.
+  const taskDir=join(DATA_DIR,"bot-task-state"),taskDeltas=new Map(readdirSync(taskDir).map(name=>[name,readFileSync(join(taskDir,name))]));
   const perCall=fresh(),perCallChanges:string[]=[];perCall.onChange(change=>{if(change.type==="bot")perCallChanges.push(change.botId);});
   for(const clear of clears)perCall.setResumeCursor(clear.botId,clear.instanceId,undefined,clear.threadId);
   const expected=JSON.stringify(perCall.bots),expectedShape=structuredClone(perCall.bots);
   fresh(); // lands the per-call store's deferred save before the file is put back
   writeFileSync(join(DATA_DIR,"bots.json"),original);
+  removeTempDirSync(taskDir);mkdirSync(taskDir,{recursive:true});for(const [name,bytes] of taskDeltas)writeFileSync(join(taskDir,name),bytes);
   const batch=fresh(),batchChanges:string[]=[],order:string[]=[];
   batch.onChange(change=>{if(change.type==="bot"){batchChanges.push(change.botId);order.push(`bot:${change.botId}`);}});
   type Saver={saveBots:(...args:unknown[])=>void};

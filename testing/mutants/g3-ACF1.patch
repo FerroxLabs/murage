@@ -1,0 +1,13 @@
+diff --git a/server/drivers/acp/core.ts b/server/drivers/acp/core.ts
+index 81f2b5339b..5691b6833d 100644
+--- a/server/drivers/acp/core.ts
++++ b/server/drivers/acp/core.ts
+@@ -4311,7 +4311,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig>
+                 releaseCardHold(requestId);
+                 answerTransport.confirm(threadId,requestId,Promise.resolve(accepted));
+                 emit({ ...base(threadId,turnId),type:'request.resolved',requestId,behavior:accepted && decision ? 'answer' : 'deny',source:accepted ? source : 'unavailable',...(folderTrustLate?{folderTrustLate}:{}) });
+-              }, () => true, nativeAskRetirement, error => { acpFenced(error, v2 ? "acp.trust.v2.card" : "acp.trust.v1", cardProcess, { method: "fuigo/folder_trust/request" }); });
++              }, () => true, nativeAskRetirement, error => { if (v2) acpFenced(error, "acp.trust.v2.card", cardProcess, { method: "fuigo/folder_trust/request" }); });
+           };
+           // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
+           const timer = turn.unattendedAskNote ? wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS) : undefined;

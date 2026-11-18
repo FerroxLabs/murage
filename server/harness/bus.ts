@@ -1,3 +1,5 @@
+import { types } from "node:util";
+import { checkAllHookCanon } from "../hook-safety.ts";
 // Fan-in event bus — port of upstream's ProviderService fan-in +
 // EventNdjsonLogger tee, minus Effect. Every adapter's event stream merges
 // into one bus; each event is stamped with its providerInstanceId, teed to
@@ -5,7 +7,7 @@
 // agentcal lean on), and delivered to subscribers (the SSE endpoint and
 // the server-side message folder).
 import { looksLikeAuthFailure, noteInstanceAuthFailure, noteInstanceTurnOk } from "../key-rejections.ts";
-import { appendFileSync } from "node:fs";
+import { appendFileSync } from "../counted-fs.ts";
 import { join } from "node:path";
 
 import { EVENTS_DIR } from "../config.ts";
@@ -13,14 +15,14 @@ import { redactSecrets } from "../redact.ts";
 import { LOGGED_TOOL_KINDS, loggedRuntimeEvent } from "../runtime-event-out.ts";
 import { isPhoneRequest } from "../phones/withhold.ts";
 import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { RuntimeAudienceCollector, attachedEventCharge, chargeExecutionEvent } from "./audience-collector.ts";
+import type { AudienceEmission, SourceContext, TurnTextPolicy, AttachmentCapability } from "../contracts.ts";
+import { boundedEventCharge } from "./event-charge.ts";
 import { IntakeValve } from "./intake.ts";
 import { observeTurnEvent } from "../health/turn-observer.ts";
-import { boundedRecord, markLogCovered, persistsEvent, flushSessionLines, markSessionsPending, recordSessionLine, rotateIfFull, sweepAfterWrite, threadLogClosed } from "./event-log.ts";
-import { newId, type ProviderInstance, type RuntimeEvent, type RuntimeEventListener } from "../contracts.ts";
-
-const INCOMPLETE_LOG_MESSAGE =
-  "Canonical event history is incomplete: Murage could not write one or more events to disk. Live updates will continue.";
+import { boundedRecord, markLogCovered, persistsEvent, flushSessionLines, recordSessionLine, rotateIfFull, sweepAfterWrite, threadLogClosed } from "./event-log.ts";
+import { type ProviderInstance, type RuntimeEvent, type RuntimeEventListener } from "../contracts.ts";
 
 /** Provider image bytes, out of the on-disk log.
  *
@@ -47,12 +49,9 @@ export type DeliveryGate = {
   /** The queue passed its bound while the gate was held: release the hold (the index build defers to a later idle). */
   overflow?(): void;
 };
-type QueuedDelivery = { event: RuntimeEvent; owed: RuntimeEventListener[]; bytes: number };
+type QueuedDelivery = { event: RuntimeEvent; owed: RuntimeEventListener[]; bytes: number; reserved: boolean };
 export type DeliveryLimits = { maxEvents: number; maxBytes: number; batch: number; retryMinMs: number; retryMaxMs: number };
 const DEFAULT_LIMITS: DeliveryLimits = { maxEvents: 2_000, maxBytes: 32 * 1024 * 1024, batch: 50, retryMinMs: 50, retryMaxMs: 2_000 };
-function eventBytes(event: RuntimeEvent): number {
-  try { return JSON.stringify(event).length; } catch { return 4_096; }
-}
 
 export const PHONE_TEXT_WITHHELD = "[phone turn text withheld]";
 export const PHONE_RESULT_WITHHELD = "[phone result withheld]";
@@ -204,10 +203,74 @@ function withheldForLog(policy: PhoneWithholdPolicy | null, loggable: RuntimeEve
 }
 
 
+/** Log routing and classification read a bounded descriptor copy. Execution keeps the original graph. */
+const safeLogCopies = new WeakMap<object, RuntimeEvent>();
+function descriptorLogEvent(event: RuntimeEvent): RuntimeEvent {
+  const cached = safeLogCopies.get(event); if (cached) return cached;
+  let nodes = 0, units = 0;
+  const clone = (value: unknown, depth: number): unknown => {
+    if (++nodes > 2048 || depth > 8) return undefined;
+    if (typeof value === 'string') { units += value.length; return units <= 262144 ? value : undefined; }
+    if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
+    if (!value || typeof value !== 'object' || types.isProxy(value)) return undefined;
+    const out: Record<string, unknown> | unknown[] = Array.isArray(value) ? [] : {};
+    for (const key in value) {
+      if (++nodes > 2048 || (units += key.length) > 262144) break;
+      const d = Object.getOwnPropertyDescriptor(value, key); if (!d || !('value' in d)) continue;
+      const copy = clone(d.value, depth + 1); if (copy !== undefined && key !== '__proto__' && key !== 'constructor') Object.defineProperty(out, key, { value: copy, enumerable: true, configurable: true, writable: true });
+    }
+    return out;
+  };
+  let copy: RuntimeEvent;
+  try { copy = clone(event, 0) as RuntimeEvent; } catch { copy = undefined as unknown as RuntimeEvent; }
+  const thread = copy?.threadId;
+  if (!copy || typeof copy !== 'object') copy = {} as RuntimeEvent;
+  // No provider-controlled path may escape events/.
+  copy.threadId = typeof thread === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(thread) ? thread : 'unowned';
+  safeLogCopies.set(event, copy); return copy;
+}
+
+/** Reconstruct only named path/wrapper slots from the already scanned preview. No raw argument graph enters the logger. */
+function loggedAudienceInput(event: RuntimeEvent): Record<string, unknown> | undefined {
+  const rows = (event as unknown as { preview?: readonly {key:string;value:string}[] }).preview;
+  if (!rows) return undefined;
+  const wrappers = new Set(['tool_input','toolInput','args','arguments','input','params','parameters']);
+  const leaves = new Set(['path','file_path','filePath','filepath','dir','directory','cwd','folder','notebook_path','target_file','old_path','new_path','move_path','destination','directory_path','root','workdir','working_directory','tool_name','toolName']);
+  const out: Record<string, unknown> = {};
+  for (const row of rows.slice(0, 64)) {
+    const parts = row.key.split('.'); if (parts.length > 5 || !leaves.has(parts.at(-1)!)) continue;
+    let target = out, accepted = true;
+    for (const part of parts.slice(0,-1)) {
+      if (!wrappers.has(part)) { accepted = false; break; }
+      const old = target[part]; if (old !== undefined && (!old || typeof old !== 'object')) { accepted = false; break; }
+      target = (target[part] ??= {}) as Record<string, unknown>;
+    }
+    if (accepted) target[parts.at(-1)!] = row.value;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 export class EventBus {
+  /** C4 installs projection before event-log persistence; listeners keep the original. */
+  highlevelProjection(project: (event: RuntimeEvent) => RuntimeEvent | null): void { void project; throw new Error("C4 implements"); }
+  private pendingLogWarnings = new Map<string, RuntimeEvent>();
+  readonly collector: RuntimeAudienceCollector;
+  private attachments = new Map<string, AttachmentCapability>();
+  private hostDriverKinds = new Map<string, string>();
+  private hostSources = new Map<string, SourceContext>();
+  /** LLS S2 (nativecrash): terminal arbitration is bus-owned. A source is `stopped` once cancelTurn ran for it and `terminated` once its one
+   * terminal (a provider turn.completed, or the host's memory_refused) went through intake; later events for it never reach intake. */
+  private stoppedSources = new WeakSet<SourceContext>();
+  private terminatedSources = new WeakSet<SourceContext>();
+  /** A duplicate terminal rejected by S2 (never an LLE drop). */
+  dupTerminalRejected = 0;
+  private executionSources = new WeakMap<object, SourceContext>();
+  sourceForExecution(event: RuntimeEvent): SourceContext | undefined { return this.executionSources.get(event); }
+  private audienceListeners = new Map<(event: AudienceEmission) => void, { durable?: boolean }>();
+  private audienceByExecution = new WeakMap<object, readonly AudienceEmission[]>();
+  private maskedByExecution = new WeakMap<object, boolean>();
   private listeners = new Set<RuntimeEventListener>();
   private unsubscribes: Array<{ instanceId: string; unsubscribe: () => void }> = [];
-  private pendingLogWarnings = new Map<string, RuntimeEvent>();
   private readonly appendLog: typeof appendFileSync;
   /** Every listener is durable by default (the fold, terminal cleanup and the waiters all write or follow writes): its
    * deliveries wait out the writer gate and are retried on a locked database, never dropped. `{ durable: false }` opts out. */
@@ -220,6 +283,9 @@ export class EventBus {
   private retryState = new Map<string, { at: number; attempts: number }>();
   /** Every event still owed. All of it is in RAM and none of it is ever written to a side file: revoked content must not
    * outlive its deletion, so the bound is kept by slowing the producers (see intake.ts), never by spilling. */
+  private reserveCount = 0;
+  private reserveBytes = 0;
+  private regularByThread = new Map<string, number>();
   private pendingCount = 0;
   private pendingBytes = 0;
   /** Bytes owed per thread, so a few huge events from one thread close that thread's intake before they reach the global byte cap. */
@@ -236,21 +302,38 @@ export class EventBus {
   /** 1.0.9 phone tools: what the canonical log may not keep of a phone thread (see withholdText). */
   private withhold: PhoneWithholdPolicy | null = null;
 
-  constructor(appendLog: typeof appendFileSync = appendFileSync) {
+  constructor(appendLog: typeof appendFileSync = appendFileSync, policy?: TurnTextPolicy) {
+    this.collector = new RuntimeAudienceCollector(policy);
     this.appendLog = appendLog;
   }
 
+  private boundResolution?: (threadId: string, turnId: string) => boolean;
+  /** A raw engine resolution needs an immutable dispatch binding before any consumer can use it. */
+  bindRequestResolutions(bound: (threadId: string, turnId: string) => boolean): void { this.boundResolution = bound; }
+
   attach(instances: ProviderInstance[]) {
     for (const instance of instances) {
-      const unsub = instance.adapter.onEvent((event) => {
+      const attachment = this.collector.attach(instance.instanceId);
+      this.hostDriverKinds.set(instance.instanceId, instance.driverKind);
+      const previous = this.attachments.get(instance.instanceId);
+      if (previous) this.collector.detach(previous);
+      this.attachments.set(instance.instanceId, attachment);
+      const unsub = instance.adapter.onEvent((event, source) => {
         // hard invariant borrowed from correlateRuntimeEventWithInstance:
         // an adapter may only emit events for its own driver kind
-        if (event.provider !== instance.driverKind) {
+        if (descriptorLogEvent(event).provider !== instance.driverKind) {
           console.error(`bus: dropped cross-driver event from ${instance.instanceId}`);
           return;
         }
-        if (instance.tracksKeyRejection !== true) observeSignIn(instance.instanceId, event, instance.driverKind === "claude" || instance.driverKind === "codex");
-        this.publish({ ...event, providerInstanceId: instance.instanceId });
+        if (instance.tracksKeyRejection !== true) observeSignIn(instance.instanceId, descriptorLogEvent(event), instance.driverKind === "claude" || instance.driverKind === "codex");
+        const charge = chargeExecutionEvent(event);
+        // The ordinary schema-only wrapper keeps legacy execution correlation;
+        // hostile/oversize graphs are handed off untouched and accounted once.
+        const stamped = charge.oversize ? event : Object.create(Object.getPrototypeOf(event), {
+          ...Object.getOwnPropertyDescriptors(event), providerInstanceId: { value: instance.instanceId, enumerable: true },
+        }) as RuntimeEvent;
+        chargeExecutionEvent(stamped, event);
+        this.publish(stamped, source?.attachment === attachment ? source : undefined);
       });
       this.unsubscribes.push({ instanceId: instance.instanceId, unsubscribe: unsub });
     }
@@ -264,57 +347,118 @@ export class EventBus {
    * an over-limit record is withheld too. Never gated on the feature flag (a mark outlives the flag). */
   withholdText(policy: PhoneWithholdPolicy) { this.withhold = policy; }
 
-  publish(event: RuntimeEvent) {
-    if (this.omitThread(event.threadId)) return this.deliver(event);
-    // Sentinel: every engine's turn outcomes through this one common path (observe only, O(1), never throws)
-    observeTurnEvent(event);
-    // Live-only events (each streamed chunk, each progress tick) and events of a
-    // conversation already deleted are delivered and never written
-    // (harness/event-log.ts says which and why).
-    if (!persistsEvent(event) || threadLogClosed(event.threadId)) return this.deliver(event);
-    const pendingWarning = this.pendingLogWarnings.get(event.threadId);
-    // the F12 record (the map handed to the engine process) is never written (runtime-event-out.ts)
-    // the phone policy recognises on the ORIGINAL event; the withheld row is built from the logged projection (L5)
-    const loggable = withheldForLog(this.withhold, redactSecrets(withoutImageBytes(loggedRuntimeEvent(event))) as RuntimeEvent, event);
-    const persistedEvents = pendingWarning ? [pendingWarning, loggable] : [loggable];
-    try {
-      // the canonical log is a file people paste into bug reports; scrub
-      // credential-shaped content (tool titles, request summaries, reply
-      // text) the same way the native tee does
-      const lines = persistedEvents.map((entry) => boundedRecord(entry as RuntimeEvent));
-      const encoded = lines.join("\n") + "\n";
-      const bytes = Buffer.byteLength(encoded);
-      // a bus given its own writer (a test, or the no-log presentation bus) owns no files
-      const ownsFiles = this.appendLog === appendFileSync;
-      if (ownsFiles) { flushSessionLines(EVENTS_DIR, event.threadId); if (event.type === "session.started") markSessionsPending(EVENTS_DIR, event.threadId); }
-      const freshFile = ownsFiles && rotateIfFull(EVENTS_DIR, event.threadId, bytes);
-      this.appendLog(join(EVENTS_DIR, `${event.threadId}.ndjson`), encoded, { mode: 0o600 });
-      // a file this release created holds no session line the sessions file lacks
-      if (freshFile) markLogCovered(EVENTS_DIR, event.threadId);
-      if (ownsFiles && event.type === "session.started") recordSessionLine(EVENTS_DIR, event.threadId, lines[lines.length - 1]!);
-      if (ownsFiles) sweepAfterWrite(EVENTS_DIR, event.threadId, bytes);
-      if (pendingWarning) this.pendingLogWarnings.delete(event.threadId);
-    } catch (error) {
-      // Never feed this warning back through publish(): that would retry the
-      // same failed write and recurse. Deliver it once for this outage, then
-      // persist the same marker before the first event written after recovery.
-      if (!pendingWarning) {
-        const warning: RuntimeEvent = {
-          eventId: newId(),
-          provider: event.provider,
-          providerInstanceId: event.providerInstanceId,
-          threadId: event.threadId,
-          createdAt: new Date().toISOString(),
-          turnId: event.turnId,
-          type: "runtime.error",
-          message: INCOMPLETE_LOG_MESSAGE,
-        };
-        this.pendingLogWarnings.set(event.threadId, warning);
-        console.error("bus: canonical event log write failed", error);
-        this.deliver(warning);
+  /** The send fence allocates this before invoking any adapter. The context is
+   * host-only and travels as the callback's second argument. */
+  admitNewTurn(instanceId: string, threadId: string): SourceContext {
+    const attachment = this.attachments.get(instanceId);
+    if (!attachment) throw new Error("instance_not_attached");
+    const previous = this.hostSources.get(threadId);
+    if (previous) this.terminatedSources.add(previous);
+    if (previous?.admission) this.collector.cancel(previous.admission);
+    const source = this.collector.source(this.collector.admitNewTurn({ instanceId, threadId, attachment }));
+    this.hostSources.set(threadId, source);
+    return source;
+  }
+
+  cancelTurn(threadId: string): void {
+    const source = this.hostSources.get(threadId);
+    if (source) this.stoppedSources.add(source);
+    if (source?.admission) this.collector.cancel(source.admission);
+    if (source && this.hostSources.get(threadId) === source) this.hostSources.delete(threadId);
+  }
+
+  /** Host-owned terminal control for a sealed ledger. It carries no provider
+   * content and never re-enters execution finalizers or settles a replacement. */
+  refuseTurn(threadId: string, source: SourceContext): readonly AudienceEmission[] {
+    // A source Stop already cancelled still owes its one memory_refused (S1' race); a replaced or terminated source owes nothing.
+    if (this.terminatedSources.has(source) || this.hostSources.get(threadId) !== source && !this.stoppedSources.has(source)) return [];
+    if (this.hostSources.get(threadId) === source) this.hostSources.delete(threadId);
+    this.terminatedSources.add(source);
+    const event: RuntimeEvent = { type: "turn.completed", eventId: randomUUID(), provider: "murage",
+      threadId, createdAt: new Date().toISOString(), ok: false, stopReason: "memory_refused" };
+    return this.collector.intake(event, source).audience
+      .filter(emission => emission.event.type === "turn.completed")
+      .map(emission => Object.freeze({ ...emission, event: Object.freeze({ ...emission.event,
+        ok: false, stopReason: "memory_refused" }) }));
+  }
+
+  audienceMaskedFor(event: RuntimeEvent): boolean { return this.maskedByExecution.get(event) ?? true; }
+  audienceFor(event: RuntimeEvent): readonly AudienceEmission[] { return this.audienceByExecution.get(event) ?? []; }
+
+  publish(event: RuntimeEvent, source?: SourceContext) {
+    if (source) {
+      const terminal = event.type === "turn.completed";
+      if (this.terminatedSources.has(source)) { if (terminal) this.dupTerminalRejected++; return; }
+      if (this.stoppedSources.has(source) && !terminal) return;
+      if (terminal) this.terminatedSources.add(source);
+    }
+    // Intake always precedes every no-log/live/closed-log and delivery branch.
+    const result = this.collector.intake(event, source);
+    const route = descriptorLogEvent(event);
+    if (route.type === "request.resolved" && this.boundResolution && (!route.turnId || !this.boundResolution(route.threadId, route.turnId))) return;
+    if (source) this.executionSources.set(event, source);
+    this.audienceByExecution.set(event, result.audience);
+    this.maskedByExecution.set(event, this.collector.masked(source));
+    if (route.type === "item.completed" && route.itemType === "tool") checkAllHookCanon("V-ANY");
+    observeTurnEvent(route);
+    const write = !this.omitThread(route.threadId) && persistsEvent(route) && !threadLogClosed(route.threadId);
+    if (write) {
+      try {
+        const safe = result.audience.filter(emission => persistsEvent(emission.event as unknown as RuntimeEvent)).map(emission => {
+          const safeEvent = emission.event as unknown as RuntimeEvent;
+          const candidate = { ...safeEvent, provider: this.hostDriverKinds.get(emission.envelope.instanceId), ...(safeEvent.type === 'item.started' ? { input: loggedAudienceInput(safeEvent) } : {}) } as RuntimeEvent;
+          return candidate.type === ("audience.omitted" as string) ? candidate :
+            withheldForLog(this.withhold, redactSecrets(withoutImageBytes(loggedRuntimeEvent(candidate))) as RuntimeEvent, route);
+        });
+        const pendingWarning = this.pendingLogWarnings.get(route.threadId);
+        const lines = (pendingWarning ? [pendingWarning, ...safe] : safe).map(value => boundedRecord(value as RuntimeEvent));
+        const encoded = lines.join("\n") + "\n";
+        const bytes = Buffer.byteLength(encoded);
+        const ownsFiles = this.appendLog === appendFileSync;
+        if (ownsFiles) {
+          flushSessionLines(EVENTS_DIR, route.threadId);
+          // Native deletion owns this private compact record. Audience logs
+          // keep only the collector projection, including its opaque ids.
+          if (route.type === "session.started") recordSessionLine(EVENTS_DIR, route.threadId, JSON.stringify(loggedRuntimeEvent(route)));
+        }
+        const freshFile = ownsFiles && rotateIfFull(EVENTS_DIR, route.threadId, bytes);
+        this.appendLog(join(EVENTS_DIR, `${route.threadId}.ndjson`), encoded, { mode: 0o600 });
+        if (freshFile) markLogCovered(EVENTS_DIR, route.threadId);
+        if (ownsFiles) sweepAfterWrite(EVENTS_DIR, route.threadId, bytes);
+        this.pendingLogWarnings.delete(route.threadId);
+      } catch {
+        // Never expose an exception that may contain provider values.
+        if (!this.pendingLogWarnings.has(route.threadId)) {
+          const warning: RuntimeEvent = { type: "runtime.error", eventId: randomUUID(), provider: "murage", threadId: route.threadId,
+            createdAt: new Date().toISOString(), message: "Canonical event history is incomplete: Murage could not write one or more events to disk. Live updates will continue." };
+          this.pendingLogWarnings.set(route.threadId, warning);
+          console.error("bus: canonical event log write failed");
+          this.deliver(warning);
+        }
       }
     }
     this.deliver(event);
+    for (const emission of result.audience) {
+      const owed: RuntimeEventListener[] = [];
+      for (const [listener, options] of this.audienceListeners) {
+        if (options.durable !== false) { owed.push(() => listener(emission)); continue; }
+        try { listener(emission); } catch { console.error("bus: audience listener threw"); }
+      }
+      if (!owed.length) continue;
+      // Queue only the immutable safe payload. Retrying an owed listener never
+      // re-enters the collector or captures the execution graph.
+      const safe = emission.event as unknown as RuntimeEvent;
+      if (this.pendingByThread.has(safe.threadId) || this.gate?.held()) this.enqueue(safe, owed);
+      else { const left = this.runOwed(safe, owed); if (left.length) this.enqueue(safe, left); }
+    }
+  }
+
+  subscribeExecution(listener: RuntimeEventListener, options: { durable?: boolean } = {}): () => void {
+    return this.subscribe(listener, options);
+  }
+  subscribeAudience(listener: (event: AudienceEmission) => void, options: { durable?: boolean } = {}): () => void {
+    this.audienceListeners.set(listener, options);
+    return () => { this.audienceListeners.delete(listener); };
   }
 
   private deliver(event: RuntimeEvent) {
@@ -324,13 +468,13 @@ export class EventBus {
       try {
         listener(event);
       } catch (e) {
-        console.error("bus: listener threw", e);
+        console.error("bus: execution listener threw");
       }
     }
     if (!owed.length) return;
     // Durable listeners write to messages.db. While the lock is held, or earlier events of the same thread are still waiting,
     // this one queues behind them (per-thread order is kept); otherwise it runs now.
-    if (this.pendingByThread.has(event.threadId) || this.gate?.held()) { this.enqueue(event, owed); return; }
+    if (this.pendingByThread.has(descriptorLogEvent(event).threadId) || this.gate?.held()) { this.enqueue(event, owed); return; }
     const left = this.runOwed(event, owed);
     if (left.length) this.enqueue(event, left);
   }
@@ -343,19 +487,26 @@ export class EventBus {
         owed[i]!(event);
       } catch (e) {
         if (this.gate?.isBusy(e)) return owed.slice(i);
-        console.error("bus: listener threw", e);
+        console.error("bus: execution listener threw");
       }
     }
     return [];
   }
 
   private enqueue(event: RuntimeEvent, owed: RuntimeEventListener[]) {
-    const bytes = eventBytes(event);
-    const entry = { event, owed, bytes };
-    const queue = this.pendingByThread.get(event.threadId);
-    if (queue) queue.push(entry); else this.pendingByThread.set(event.threadId, [entry]);
-    this.pendingCount++; this.pendingBytes += bytes;
-    this.bytesByThread.set(event.threadId, (this.bytesByThread.get(event.threadId) ?? 0) + bytes);
+    const bytes = (attachedEventCharge(event) ?? boundedEventCharge(event)).bytes;
+    const control = descriptorLogEvent(event).type === "turn.completed" || descriptorLogEvent(event).type === "session.exited" || descriptorLogEvent(event).type === "request.resolved" || descriptorLogEvent(event).type === "runtime.error";
+    const reserved = control && this.reserveCount < 256 && this.reserveBytes + bytes <= 1024 * 1024;
+    if (control && !reserved) console.error("bus: control delivery reserve reached its cap");
+    const entry = { event, owed, bytes, reserved };
+    const queue = this.pendingByThread.get(descriptorLogEvent(event).threadId);
+    if (queue) queue.push(entry); else this.pendingByThread.set(descriptorLogEvent(event).threadId, [entry]);
+    if (reserved) { this.reserveCount++; this.reserveBytes += bytes; }
+    else {
+      this.pendingCount++; this.pendingBytes += bytes;
+      this.regularByThread.set(descriptorLogEvent(event).threadId, (this.regularByThread.get(descriptorLogEvent(event).threadId) ?? 0) + 1);
+      this.bytesByThread.set(descriptorLogEvent(event).threadId, (this.bytesByThread.get(descriptorLogEvent(event).threadId) ?? 0) + bytes);
+    }
     this.checkCapacity();
     this.kick();
   }
@@ -379,6 +530,10 @@ export class EventBus {
     } else if (this.saturated && this.pendingCount <= Math.floor(maxEvents / 2) && this.pendingBytes <= Math.floor(maxBytes / 2)) {
       this.saturated = false;
     }
+    if (!this.overflowed && [...this.bytesByThread.values()].some(bytes => bytes >= Math.max(1, Math.floor(maxBytes / 2)))) {
+      this.overflowed = true;
+      try { this.gate?.overflow?.(); } catch { console.error("bus: overflow release failed"); }
+    }
     if (!this.pendingCount) this.overflowed = false;
     this.valve.evaluate();
   }
@@ -387,18 +542,18 @@ export class EventBus {
   private intakeClosed(threadId: string | null): boolean {
     if (this.saturated) return true;
     if (threadId === null) return false;
-    return (this.pendingByThread.get(threadId)?.length ?? 0) >= this.threadShare() || (this.bytesByThread.get(threadId) ?? 0) >= Math.max(1, Math.floor(this.limits.maxBytes / 2));
+    return (this.regularByThread.get(threadId) ?? 0) >= this.threadShare() || (this.bytesByThread.get(threadId) ?? 0) >= Math.max(1, Math.floor(this.limits.maxBytes / 2));
   }
 
   private kick() {
     if (this.draining) return;
     this.draining = true;
-    void this.drain().catch(e => console.error("bus: drain failed", e)).finally(() => { this.draining = false; if (this.pendingCount) this.kick(); });
+    void this.drain().catch(e => console.error("bus: drain failed", e)).finally(() => { this.draining = false; if (this.pendingDurable()) this.kick(); });
   }
 
   private async drain() {
     let held = 0;
-    while (this.pendingCount) {
+    while (this.pendingDurable()) {
       if (this.gate?.held()) {
         await this.gate.wait();
         // a wait that returns at once while the hold is still in force (a bounded or exclusion-blind wait) must not spin the loop: a real timer, growing to a cap
@@ -422,15 +577,20 @@ export class EventBus {
             soonest = Math.min(soonest, Date.now() + wait);
             break;
           }
-          queue.shift(); budget--; this.pendingCount--; this.pendingBytes -= head.bytes;
-          this.bytesByThread.set(threadId, Math.max(0, (this.bytesByThread.get(threadId) ?? 0) - head.bytes));
+          queue.shift(); budget--;
+          if (head.reserved) { this.reserveCount--; this.reserveBytes -= head.bytes; }
+          else {
+            this.pendingCount--; this.pendingBytes -= head.bytes;
+            this.regularByThread.set(threadId, Math.max(0, (this.regularByThread.get(threadId) ?? 0) - 1));
+            this.bytesByThread.set(threadId, Math.max(0, (this.bytesByThread.get(threadId) ?? 0) - head.bytes));
+          }
           this.retryState.delete(threadId);
         }
-        if (!queue.length) { this.pendingByThread.delete(threadId); this.retryState.delete(threadId); this.bytesByThread.delete(threadId); }
+        if (!queue.length) { this.pendingByThread.delete(threadId); this.retryState.delete(threadId); this.bytesByThread.delete(threadId); this.regularByThread.delete(threadId); }
         this.checkCapacity();
         if (budget <= 0) break;
       }
-      if (!this.pendingCount) break;
+      if (!this.pendingDurable()) break;
       // hand the loop back between batches; sleep until the soonest retry when every thread is backing off
       await new Promise<void>(resolve => budget <= 0 ? setImmediate(resolve) : setTimeout(resolve, Math.max(5, Math.min(this.limits.retryMaxMs, soonest - Date.now()))));
     }
@@ -443,7 +603,7 @@ export class EventBus {
   gateDeliveries(gate: DeliveryGate | null) { this.gate = gate; }
 
   /** True while a durable delivery is still queued. */
-  pendingDurable(): number { return this.pendingCount; }
+  pendingDurable(): number { return this.pendingCount + this.reserveCount; }
 
   subscribe(listener: RuntimeEventListener, options: { durable?: boolean } = {}): () => void {
     this.listeners.add(listener);
@@ -452,6 +612,8 @@ export class EventBus {
   }
 
   detachAll() {
+    for (const attachment of this.attachments.values()) this.collector.detach(attachment);
+    this.attachments.clear();
     for (const { unsubscribe } of this.unsubscribes.splice(0)) unsubscribe();
   }
 
@@ -460,7 +622,7 @@ export class EventBus {
   detach(instanceIds: ReadonlySet<string>) {
     const kept: Array<{ instanceId: string; unsubscribe: () => void }> = [];
     for (const entry of this.unsubscribes) {
-      if (instanceIds.has(entry.instanceId)) entry.unsubscribe();
+      if (instanceIds.has(entry.instanceId)) { const attachment = this.attachments.get(entry.instanceId); if (attachment) this.collector.detach(attachment); this.attachments.delete(entry.instanceId); entry.unsubscribe(); }
       else kept.push(entry);
     }
     this.unsubscribes = kept;
@@ -475,5 +637,9 @@ function observeSignIn(instanceId: string, event: RuntimeEvent, subscriptionLogi
     return;
   }
   if (event.type !== "runtime.error" || event.setup === true) return;
+  if (event.fluxDecision) {
+    if (event.fluxDecision.reason === "keyRevoked") noteInstanceAuthFailure(instanceId, Date.now(), { signIn: false });
+    return;
+  }
   if (event.authRequired === true || event.providerError?.kind === "authentication" || looksLikeAuthFailure(event.message, { engineLevel: subscriptionLogin })) noteInstanceAuthFailure(instanceId, Date.now(), { signIn: subscriptionLogin });
 }

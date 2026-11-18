@@ -1,0 +1,540 @@
+[
+  {
+    "fixture": {
+      "url": "http://127.0.0.1:20105",
+      "pid": 477,
+      "dataDir": "/tmp/murage-verify-data-9TKL2s",
+      "logPath": "/tmp/murage-verification-evidence/server-1794373580813-469.log"
+    }
+  },
+  {
+    "scheduledFailure": {
+      "id": "6076d6b6-700c-484e-8416-dc14167d6878",
+      "routineId": "9a0fd01b-d175-4391-a700-04553fc00485",
+      "routineName": "Check GitHub queue",
+      "prompt": "Check the GitHub queue without publishing anything.",
+      "instructionRevision": "0223fcd9a70f9b8ee5bc334a63abe5899337a7cbb9c0712cf04c34515eebc9db",
+      "durationMinutes": 30,
+      "attachments": [],
+      "target": "bot",
+      "botId": "ddeb6bda-1bce-483f-967e-4fdba62faaf5",
+      "runOn": "ember",
+      "scheduledFor": 1794373583621,
+      "dueAt": 1794373583621,
+      "status": "failed",
+      "manual": false,
+      "triggerSource": "schedule",
+      "createdAt": 1794373594353,
+      "delivery": {
+        "state": "sent",
+        "threadId": "686f56e5-d76b-4676-b9fe-431b10f5dce5"
+      },
+      "event": {
+        "version": 1,
+        "id": "6076d6b6-700c-484e-8416-dc14167d6878",
+        "definitionId": "9a0fd01b-d175-4391-a700-04553fc00485",
+        "receivedAt": 1794373594353,
+        "budgetId": "6076d6b6-700c-484e-8416-dc14167d6878",
+        "source": "schedule",
+        "origin": {
+          "kind": "local-schedule"
+        }
+      },
+      "eventBudget": {
+        "version": 2,
+        "limits": {
+          "create": 4,
+          "handoff": 4
+        },
+        "admissions": [],
+        "closed": false
+      },
+      "threadId": "e2fa11a6-184e-48e7-ac6c-9fd48dd447c6",
+      "startedAt": 1794373594377,
+      "slotAt": 1794373583621,
+      "procedureBundleId": "eddb1ca8fc80ebb75c405f6439ec0df3ee27cc1f54704dcd067b68474058724d",
+      "error": "GitHub needs you to sign in again. Reconnect GitHub.",
+      "finishedAt": 1794373595242
+    },
+    "messages": {
+      "messages": [
+        {
+          "id": "2a7474d8-ab24-4b6e-8367-6d86775b82a6",
+          "at": 1794373594380,
+          "parentId": null,
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Scheduled run: Check GitHub queue",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 1
+        },
+        {
+          "id": "d080ff44-d86b-4b48-981b-4f46cd9a1a2a",
+          "at": 1794373594413,
+          "parentId": "2a7474d8-ab24-4b6e-8367-6d86775b82a6",
+          "role": "user",
+          "kind": "text",
+          "text": "Check the GitHub queue without publishing anything.",
+          "attachments": [],
+          "routineRunPrompt": {
+            "trigger": "schedule",
+            "routineName": "Check GitHub queue"
+          },
+          "automation": {
+            "kind": "schedule",
+            "routineId": "9a0fd01b-d175-4391-a700-04553fc00485"
+          },
+          "dispatchedIn": "169a1023-b02b-4b37-8dc0-accae21bcfdd",
+          "seq": 2
+        },
+        {
+          "id": "423ab864-35dc-41a7-8845-93a1089d89c3",
+          "at": 1794373595231,
+          "parentId": "d080ff44-d86b-4b48-981b-4f46cd9a1a2a",
+          "role": "bot",
+          "kind": "text",
+          "text": "GitHub needs you to sign in again. Reconnect GitHub.",
+          "murageLine": true,
+          "seq": 3
+        },
+        {
+          "id": "ev-71b72590b920bf4c1d6c05455e1707c9",
+          "at": 1794373595289,
+          "parentId": "423ab864-35dc-41a7-8845-93a1089d89c3",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Connected app: Github get an issue",
+            "action": {
+              "name": "mcp__murage_connectors__GITHUB_GET_AN_ISSUE",
+              "classes": [],
+              "outcome": "failed"
+            },
+            "ok": false,
+            "spoken": "using a tool"
+          },
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "169a1023-b02b-4b37-8dc0-accae21bcfdd",
+          "provenance": "provider",
+          "speechGenerationId": "eecb2d1c-e4c8-4302-9258-8ea8c31a257e",
+          "seq": 4
+        },
+        {
+          "id": "ev-92ad5fee39d086ede9d369b63ecb2386",
+          "at": 1794373595323,
+          "parentId": "ev-71b72590b920bf4c1d6c05455e1707c9",
+          "role": "bot",
+          "kind": "text",
+          "text": "custom tool failed: GitHub needs you to sign in again. Reconnect GitHub.\nTool failed",
+          "turnId": "169a1023-b02b-4b37-8dc0-accae21bcfdd",
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "provenance": "provider",
+          "speechGenerationId": "eecb2d1c-e4c8-4302-9258-8ea8c31a257e",
+          "turnTerminal": true,
+          "seq": 5
+        }
+      ],
+      "hasMore": false,
+      "newestSeq": 5
+    },
+    "failedCalls": 1,
+    "completedCalls": 0
+  },
+  {
+    "signIn": {
+      "url": "https://backend.composio.dev/auth/fixture"
+    },
+    "finalRuns": [
+      {
+        "id": "22148e94-ecb8-4cb7-988e-2e607d507101",
+        "routineId": "9a0fd01b-d175-4391-a700-04553fc00485",
+        "routineName": "Check GitHub queue",
+        "prompt": "Check the GitHub queue without publishing anything.",
+        "instructionRevision": "0223fcd9a70f9b8ee5bc334a63abe5899337a7cbb9c0712cf04c34515eebc9db",
+        "durationMinutes": 30,
+        "attachments": [],
+        "target": "bot",
+        "botId": "ddeb6bda-1bce-483f-967e-4fdba62faaf5",
+        "runOn": "ember",
+        "scheduledFor": 1794373594450,
+        "dueAt": 1794373594450,
+        "status": "completed",
+        "manual": false,
+        "triggerSource": "schedule",
+        "createdAt": 1794373604353,
+        "delivery": {
+          "state": "sent",
+          "threadId": "686f56e5-d76b-4676-b9fe-431b10f5dce5"
+        },
+        "event": {
+          "version": 1,
+          "id": "22148e94-ecb8-4cb7-988e-2e607d507101",
+          "definitionId": "9a0fd01b-d175-4391-a700-04553fc00485",
+          "receivedAt": 1794373604353,
+          "budgetId": "22148e94-ecb8-4cb7-988e-2e607d507101",
+          "source": "schedule",
+          "origin": {
+            "kind": "local-schedule"
+          }
+        },
+        "eventBudget": {
+          "version": 2,
+          "limits": {
+            "create": 4,
+            "handoff": 4
+          },
+          "admissions": [],
+          "closed": false
+        },
+        "threadId": "e2fa11a6-184e-48e7-ac6c-9fd48dd447c6",
+        "startedAt": 1794373614353,
+        "slotAt": 1794373606393,
+        "procedureBundleId": "eddb1ca8fc80ebb75c405f6439ec0df3ee27cc1f54704dcd067b68474058724d",
+        "output": "custom tool said: GitHub queue checked safely. No posts were published.",
+        "cost": 0,
+        "finishedAt": 1794373614949
+      },
+      {
+        "id": "6076d6b6-700c-484e-8416-dc14167d6878",
+        "routineId": "9a0fd01b-d175-4391-a700-04553fc00485",
+        "routineName": "Check GitHub queue",
+        "prompt": "Check the GitHub queue without publishing anything.",
+        "instructionRevision": "0223fcd9a70f9b8ee5bc334a63abe5899337a7cbb9c0712cf04c34515eebc9db",
+        "durationMinutes": 30,
+        "attachments": [],
+        "target": "bot",
+        "botId": "ddeb6bda-1bce-483f-967e-4fdba62faaf5",
+        "runOn": "ember",
+        "scheduledFor": 1794373583621,
+        "dueAt": 1794373583621,
+        "status": "failed",
+        "manual": false,
+        "triggerSource": "schedule",
+        "createdAt": 1794373594353,
+        "delivery": {
+          "state": "sent",
+          "threadId": "686f56e5-d76b-4676-b9fe-431b10f5dce5"
+        },
+        "event": {
+          "version": 1,
+          "id": "6076d6b6-700c-484e-8416-dc14167d6878",
+          "definitionId": "9a0fd01b-d175-4391-a700-04553fc00485",
+          "receivedAt": 1794373594353,
+          "budgetId": "6076d6b6-700c-484e-8416-dc14167d6878",
+          "source": "schedule",
+          "origin": {
+            "kind": "local-schedule"
+          }
+        },
+        "eventBudget": {
+          "version": 2,
+          "limits": {
+            "create": 4,
+            "handoff": 4
+          },
+          "admissions": [],
+          "closed": false
+        },
+        "threadId": "e2fa11a6-184e-48e7-ac6c-9fd48dd447c6",
+        "startedAt": 1794373594377,
+        "slotAt": 1794373583621,
+        "procedureBundleId": "eddb1ca8fc80ebb75c405f6439ec0df3ee27cc1f54704dcd067b68474058724d",
+        "error": "GitHub needs you to sign in again. Reconnect GitHub.",
+        "finishedAt": 1794373595242
+      }
+    ],
+    "safeContinuation": {
+      "messages": [
+        {
+          "id": "2a7474d8-ab24-4b6e-8367-6d86775b82a6",
+          "at": 1794373594380,
+          "parentId": null,
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Scheduled run: Check GitHub queue",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 1
+        },
+        {
+          "id": "d080ff44-d86b-4b48-981b-4f46cd9a1a2a",
+          "at": 1794373594413,
+          "parentId": "2a7474d8-ab24-4b6e-8367-6d86775b82a6",
+          "role": "user",
+          "kind": "text",
+          "text": "Check the GitHub queue without publishing anything.",
+          "attachments": [],
+          "routineRunPrompt": {
+            "trigger": "schedule",
+            "routineName": "Check GitHub queue"
+          },
+          "automation": {
+            "kind": "schedule",
+            "routineId": "9a0fd01b-d175-4391-a700-04553fc00485"
+          },
+          "dispatchedIn": "169a1023-b02b-4b37-8dc0-accae21bcfdd",
+          "seq": 2
+        },
+        {
+          "id": "423ab864-35dc-41a7-8845-93a1089d89c3",
+          "at": 1794373595231,
+          "parentId": "d080ff44-d86b-4b48-981b-4f46cd9a1a2a",
+          "role": "bot",
+          "kind": "text",
+          "text": "GitHub needs you to sign in again. Reconnect GitHub.",
+          "murageLine": true,
+          "seq": 3
+        },
+        {
+          "id": "ev-71b72590b920bf4c1d6c05455e1707c9",
+          "at": 1794373595289,
+          "parentId": "423ab864-35dc-41a7-8845-93a1089d89c3",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Connected app: Github get an issue",
+            "action": {
+              "name": "mcp__murage_connectors__GITHUB_GET_AN_ISSUE",
+              "classes": [],
+              "outcome": "failed"
+            },
+            "ok": false,
+            "spoken": "using a tool"
+          },
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "169a1023-b02b-4b37-8dc0-accae21bcfdd",
+          "provenance": "provider",
+          "speechGenerationId": "eecb2d1c-e4c8-4302-9258-8ea8c31a257e",
+          "seq": 4
+        },
+        {
+          "id": "ev-92ad5fee39d086ede9d369b63ecb2386",
+          "at": 1794373595323,
+          "parentId": "ev-71b72590b920bf4c1d6c05455e1707c9",
+          "role": "bot",
+          "kind": "text",
+          "text": "custom tool failed: GitHub needs you to sign in again. Reconnect GitHub.\nTool failed",
+          "turnId": "169a1023-b02b-4b37-8dc0-accae21bcfdd",
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "provenance": "provider",
+          "speechGenerationId": "eecb2d1c-e4c8-4302-9258-8ea8c31a257e",
+          "turnTerminal": true,
+          "seq": 5
+        },
+        {
+          "id": "a16a6ccb-925e-4677-8c2d-64dca438f7e6",
+          "at": 1794373614361,
+          "parentId": "ev-92ad5fee39d086ede9d369b63ecb2386",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Scheduled run: Check GitHub queue",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 6
+        },
+        {
+          "id": "2514deed-1c28-41c9-a943-b284adfa312c",
+          "at": 1794373614374,
+          "parentId": "a16a6ccb-925e-4677-8c2d-64dca438f7e6",
+          "role": "user",
+          "kind": "text",
+          "text": "Check the GitHub queue without publishing anything.",
+          "attachments": [],
+          "routineRunPrompt": {
+            "trigger": "schedule",
+            "routineName": "Check GitHub queue"
+          },
+          "automation": {
+            "kind": "schedule",
+            "routineId": "9a0fd01b-d175-4391-a700-04553fc00485"
+          },
+          "dispatchedIn": "a18d97d8-567c-4bce-bcca-faeabdf6575a",
+          "seq": 7
+        },
+        {
+          "id": "ev-c237ca47ab2256b56a8f6f2769a16d4e",
+          "at": 1794373614528,
+          "parentId": "2514deed-1c28-41c9-a943-b284adfa312c",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Waking up: starting a fresh engine after a quiet spell",
+            "action": {
+              "name": "Waking up: starting a fresh engine after a quiet spell",
+              "classes": [],
+              "outcome": "pending"
+            },
+            "ok": true,
+            "spoken": "using a tool"
+          },
+          "murageLine": true,
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "a18d97d8-567c-4bce-bcca-faeabdf6575a",
+          "seq": 8
+        },
+        {
+          "id": "ev-fc4fd11099e15254670882b24ca5fc8d",
+          "at": 1794373614919,
+          "parentId": "ev-c237ca47ab2256b56a8f6f2769a16d4e",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Connected app: Github get an issue",
+            "action": {
+              "name": "mcp__murage_connectors__GITHUB_GET_AN_ISSUE",
+              "classes": [],
+              "outcome": "pending"
+            },
+            "ok": true,
+            "spoken": "using a tool"
+          },
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "a18d97d8-567c-4bce-bcca-faeabdf6575a",
+          "provenance": "provider",
+          "speechGenerationId": "dd1dafee-6ded-47e9-8367-27afca88b3bf",
+          "seq": 9
+        },
+        {
+          "id": "ev-317d7b85514a4eea05b6d5ee2ebedcb7",
+          "at": 1794373614940,
+          "parentId": "ev-fc4fd11099e15254670882b24ca5fc8d",
+          "role": "bot",
+          "kind": "text",
+          "text": "custom tool said: GitHub queue checked safely. No posts were published.",
+          "turnId": "a18d97d8-567c-4bce-bcca-faeabdf6575a",
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "provenance": "provider",
+          "speechGenerationId": "dd1dafee-6ded-47e9-8367-27afca88b3bf",
+          "turnTerminal": true,
+          "actionCheck": {
+            "state": "unchecked",
+            "claims": []
+          },
+          "seq": 10
+        },
+        {
+          "id": "605e04fa-c6f9-407a-a0b6-d017eaab5b4d",
+          "at": 1794373614950,
+          "parentId": "ev-317d7b85514a4eea05b6d5ee2ebedcb7",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Recovered: Check GitHub queue finished OK.",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 11
+        }
+      ],
+      "hasMore": false,
+      "newestSeq": 11
+    },
+    "failedCalls": 1,
+    "completedCalls": 1,
+    "wait": {
+      "status": "settled",
+      "targetType": "bot",
+      "targetId": "ddeb6bda-1bce-483f-967e-4fdba62faaf5",
+      "taskId": "686f56e5-d76b-4676-b9fe-431b10f5dce5",
+      "target": {
+        "id": "ddeb6bda-1bce-483f-967e-4fdba62faaf5",
+        "name": "GitHub schedule fixture",
+        "title": "",
+        "description": "",
+        "section": null,
+        "chiefOfStaff": false,
+        "modelSelection": {
+          "instanceId": "verification",
+          "model": "claude-sonnet-5-5"
+        },
+        "busy": false,
+        "activity": "idle",
+        "unread": true,
+        "activeTaskId": "686f56e5-d76b-4676-b9fe-431b10f5dce5",
+        "task": {
+          "taskId": "686f56e5-d76b-4676-b9fe-431b10f5dce5",
+          "title": "New task",
+          "createdAt": 1794373584553,
+          "active": true
+        }
+      },
+      "messages": [
+        {
+          "id": "01ed13ab-74fb-45b4-8bb0-792d37047cdd",
+          "at": 1794373584558,
+          "role": "bot",
+          "kind": "text",
+          "text": "I'm GitHub schedule fixture. Nothing set up, nothing learned, nothing assumed."
+        },
+        {
+          "id": "9781a5ae-af55-4ac9-b7fb-9fea9e60b6ad",
+          "at": 1794373584566,
+          "role": "bot",
+          "kind": "options",
+          "card": {
+            "title": "What do you actually want me for?",
+            "subtitle": "Plain words are fine. One line will do.",
+            "options": []
+          }
+        },
+        {
+          "id": "rrun-6076d6b6-700c-484e-8416-dc14167d6878",
+          "at": 1794373595256,
+          "role": "bot",
+          "kind": "routine.run",
+          "text": "Routine “Check GitHub queue” failed"
+        },
+        {
+          "id": "rrun-22148e94-ecb8-4cb7-988e-2e607d507101",
+          "at": 1794373614970,
+          "role": "bot",
+          "kind": "routine.run",
+          "text": "Routine “Check GitHub queue” completed"
+        }
+      ],
+      "hasMore": false
+    }
+  }
+]

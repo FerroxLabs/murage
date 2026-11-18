@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { recallNoticeText } from '@/lib/recall-copy';
 import type { Message } from "@/state/store";
 
 /** DELEGATION-HOLD F5: the server's row for a reply that ran without remembered context (memory/dispatch.ts turnRefusedLine
@@ -13,7 +14,7 @@ export function WithoutMemoryNoteRow({ text }: { text: string }) {
   return (
     <div className="flex justify-start">
       <div role="status" data-testid="without-memory-note" className="min-w-0 max-w-full rounded-2xl border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary [overflow-wrap:anywhere]">
-        {text}
+        {recallNoticeText(text) ?? text}
       </div>
     </div>
   );

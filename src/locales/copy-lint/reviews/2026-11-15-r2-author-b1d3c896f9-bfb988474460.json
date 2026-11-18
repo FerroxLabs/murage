@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "b1d3c896f9bf0b953cafa658aad90fb5998c5245",
+  "date": "2026-11-15",
+  "base": "7ed777368bf7c1c63db51363c159e19e14df7825",
+  "scope": "1115-COPY-LEDGER-REVIEW: retained accepted verdicts, corrected last-changing locale-line author",
+  "strings": {
+    "de:sendNotice.toolTurnRefused": {
+      "text": "Ich konnte dieses Werkzeug in diesem Durchgang nicht verwenden und habe deshalb hier angehalten. Deine nächste Nachricht funktioniert wie gewohnt.",
+      "en": "I couldn't use that tool on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "de:sendNotice.stepTurnRefused": {
+      "text": "Ich konnte diesen Schritt in diesem Durchgang nicht ausführen und habe deshalb hier angehalten. Deine nächste Nachricht funktioniert wie gewohnt.",
+      "en": "I couldn't use that step on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "es:sendNotice.toolTurnRefused": {
+      "text": "No pude usar esa herramienta en este turno, así que me detuve aquí. Tu próximo mensaje funcionará como siempre.",
+      "en": "I couldn't use that tool on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "es:sendNotice.stepTurnRefused": {
+      "text": "No pude realizar ese paso en este turno, así que me detuve aquí. Tu próximo mensaje funcionará como siempre.",
+      "en": "I couldn't use that step on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "hi:sendNotice.toolTurnRefused": {
+      "text": "मैं इस बार उस टूल का इस्तेमाल नहीं कर सका, इसलिए यहीं रुक गया। आपका अगला संदेश हमेशा की तरह काम करेगा।",
+      "en": "I couldn't use that tool on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "hi:sendNotice.stepTurnRefused": {
+      "text": "मैं इस बार वह चरण पूरा नहीं कर सका, इसलिए यहीं रुक गया। आपका अगला संदेश हमेशा की तरह काम करेगा।",
+      "en": "I couldn't use that step on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "ja:sendNotice.toolTurnRefused": {
+      "text": "このターンではそのツールを使えなかったため、ここで停止しました。次のメッセージは通常どおり処理されます。",
+      "en": "I couldn't use that tool on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "ja:sendNotice.stepTurnRefused": {
+      "text": "このターンではその手順を実行できなかったため、ここで停止しました。次のメッセージは通常どおり処理されます。",
+      "en": "I couldn't use that step on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "pt-br:sendNotice.toolTurnRefused": {
+      "text": "Não consegui usar essa ferramenta neste turno, então parei aqui. Sua próxima mensagem funcionará normalmente.",
+      "en": "I couldn't use that tool on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "pt-br:sendNotice.stepTurnRefused": {
+      "text": "Não consegui executar essa etapa neste turno, então parei aqui. Sua próxima mensagem funcionará normalmente.",
+      "en": "I couldn't use that step on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "zh:sendNotice.toolTurnRefused": {
+      "text": "我无法在这一轮使用该工具，所以停在了这里。你的下一条消息会照常处理。",
+      "en": "I couldn't use that tool on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "zh:sendNotice.stepTurnRefused": {
+      "text": "我无法在这一轮执行该步骤，所以停在了这里。你的下一条消息会照常处理。",
+      "en": "I couldn't use that step on this turn, so I stopped here. Your next message will work as usual.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    }
+  },
+  "files": {}
+}

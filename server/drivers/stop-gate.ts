@@ -19,6 +19,8 @@ export type StopWhy = "asked" | "closing";
 
 /** What a turn ended with, as the engine knows it. `final`: emitted as is under any mark (a gate incident, a refusal, a shutdown timeout). */
 export type Verdict = {
+  readsComplete?: true;
+  helperRow?: import('../turn-settle.ts').HelperRow;
   ok: boolean;
   stopReason: string | null;
   /** A terminal error: a string becomes the runtime.error message, an object is spread into the runtime.error event. */
@@ -28,6 +30,10 @@ export type Verdict = {
   /** The line a closing ending shows (exit code, last words) when the engine knows more than the plain line. */
   closedLine?: string;
   final?: true;
+  /** M5: the turn's refusal was joined to a lease (R.lease). Records and releases, emits NO turn.completed: the lease's bus.refuseTurn is the terminal. */
+  leaseMode?: true;
+  /** The entry leaves the gate only after this settles (R.teardown, blockIfUnconfirmed): admission waits for the teardown. Never rejects the finish. */
+  releaseAfter?: Promise<unknown>;
 };
 
 export class GateStopped extends Error {
@@ -44,6 +50,8 @@ export interface GateEntry {
   readonly threadId: string;
   /** Set by the engine as soon as it mints the turn id (before any ending). */
   turnId: string | undefined;
+  /** The source context the turn was sent under. The server settles a turn only through it, so every event of this entry is emitted with it. */
+  readonly source: unknown;
   readonly signal: AbortSignal;
   /** An asked Stop reached this turn. */
   asked: boolean;
@@ -68,7 +76,8 @@ export interface GateEntry {
 export type GateEnv = {
   /** Display name in the closing line ("Claude", "Codex", "the Cloud computer"). */
   engineName: string;
-  emit: (event: Record<string, unknown>) => void;
+  /** `source`: what the entry was entered with (`enter`'s `source`), so an ending made outside the send (the quit, the owner's Stop) still carries it. */
+  emit: (event: Record<string, unknown>, source?: unknown) => void;
   base: (threadId: string, turnId: string) => Record<string, unknown>;
   /** Antigravity keeps its ruled pre-prompt shape: one turn.completed and no turn.started. Default true. "mark-only": turn.started comes from
    *  markStarted() alone (a live turn announces itself), and a pre-prompt ending emits none (MurageMain ruling 11-08). */
@@ -96,12 +105,14 @@ export function createStopGate(env: GateEnv) {
     notifyIfEmpty();
   };
 
-  const enter = (threadId: string, o?: { turnId?: string; announceStart?: boolean | "mark-only" }): GateEntry => {
+  const enter = (threadId: string, o?: { turnId?: string; announceStart?: boolean | "mark-only"; source?: unknown }): GateEntry => {
     const controller = new AbortController();
     const announce = o?.announceStart ?? env.announceStart ?? true;
+    const emit = (event: Record<string, unknown>): void => env.emit(event, o?.source);
     const e: InternalEntry = {
       threadId,
       turnId: o?.turnId,
+      source: o?.source,
       signal: controller.signal,
       controller,
       asked: false,
@@ -113,33 +124,41 @@ export function createStopGate(env: GateEnv) {
         if (e.started || e.done) return;
         e.started = true;
         if (!announce) return;
-        env.emit({ ...env.base(threadId, e.turnId ?? ""), ...payload, type: "turn.started" });
+        emit({ ...env.base(threadId, e.turnId ?? ""), ...payload, type: "turn.started" });
       },
       finish(v) {
         if (e.done) return;
         e.done = true;
         const turnId = e.turnId ?? "";
         const w = v.final ? null : why(e);
+        if (v.leaseMode) {
+          e.started = true;
+          const release = () => leave(e);
+          if (v.releaseAfter) void v.releaseAfter.then(release, release); else release();
+          return;
+        }
         try {
           if (!e.started && announce === true) {
             e.started = true;
-            env.emit({ ...env.base(threadId, turnId), type: "turn.started" });
+            emit({ ...env.base(threadId, turnId), type: "turn.started" });
           }
           e.started = true;
           if (w === "asked") {
-            env.emit({ ...v.extra, ...env.base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: v.extra?.cost ?? null });
+            emit({ ...v.extra, ...env.base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: v.extra?.cost ?? null });
           } else if (w === "closing") {
-            env.emit({ ...env.base(threadId, turnId), type: "runtime.error", message: v.closedLine ?? engineClosedLine(env.engineName, null) });
-            env.emit({ ...v.extra, ...env.base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "exit_before_result", cost: v.extra?.cost ?? null });
+            emit({ ...env.base(threadId, turnId), type: "runtime.error", message: v.closedLine ?? engineClosedLine(env.engineName, null) });
+            emit({ ...v.extra, ...env.base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "exit_before_result", cost: v.extra?.cost ?? null });
           } else {
             if (v.error !== undefined) {
               const detail = typeof v.error === "string" ? { message: v.error } : v.error;
-              env.emit({ ...env.base(threadId, turnId), type: "runtime.error", ...detail });
+              emit({ ...env.base(threadId, turnId), type: "runtime.error", ...detail });
             }
-            env.emit({ ...env.base(threadId, turnId), type: "turn.completed", ok: v.ok, stopReason: v.stopReason, cost: null, ...v.extra });
+            emit({ ...env.base(threadId, turnId), type: "turn.completed", ok: v.ok, stopReason: v.stopReason, cost: null, ...(v.readsComplete ? { readsComplete: true } : {}), ...(v.helperRow ? { helperRow: v.helperRow } : {}), ...v.extra });
           }
         } finally {
-          leave(e);
+          // the one admission release: after releaseAfter when the engine's teardown must be confirmed first (blockIfUnconfirmed)
+          const release = () => leave(e);
+          if (v.releaseAfter) void v.releaseAfter.then(release, release); else release();
         }
       },
     };
@@ -155,9 +174,10 @@ export function createStopGate(env: GateEnv) {
   };
 
   /** interruptTurn(id), resetSession(id), stopAll(): marks the entries asked and aborts their signals. Touches the gate first, before any await. */
-  const ask = (threadId?: string): void => {
+  const ask = (threadId?: string, turnId?: string): void => {
     for (const e of [...entries]) {
       if (threadId !== undefined && e.threadId !== threadId) continue;
+      if (turnId !== undefined && e.turnId !== turnId) continue;
       e.asked = true;
       mark(e);
     }

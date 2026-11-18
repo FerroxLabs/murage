@@ -13,7 +13,7 @@ import {
   APP_CATALOG_CACHE_FILE, CATALOG_FRESH_MS, cachedCatalog, catalogApp, catalogPage, CURATED_SLUGS, knownApps,
   loadCatalog, resetAppCatalogState, searchCatalog, type CatalogBackend,
 } from "./app-catalog.ts";
-import { catalogBackend, listToolkits, setManagedBrokerAccess } from "./composio.ts";
+import { catalogBackend, listToolkits, resetManagedBrokerState, setManagedBrokerAccess } from "./composio.ts";
 import { fakeCatalogApps, fakeCatalogBroker, OWNER_INVENTORY_SLUGS, type FakeBroker } from "./app-catalog.fixture.ts";
 
 const BROKER = "https://broker.example.test";
@@ -21,7 +21,12 @@ const managed = (): AppConfig => ({});
 let broker: FakeBroker;
 let warn: ReturnType<typeof vi.spyOn>;
 
-function useBroker(fake: FakeBroker, token = "a".repeat(64)) {
+// Each case gets its own broker token: shared broker reads are single-flighted
+// per owner and path (36938d15f2), so a walk a hanging case left running would
+// otherwise be joined by the next case and never answer.
+let caseToken = 0;
+let defaultToken = "";
+function useBroker(fake: FakeBroker, token = defaultToken) {
   broker = fake;
   vi.stubGlobal("fetch", fake.fetch);
   setManagedBrokerAccess({ url: BROKER, token });
@@ -30,6 +35,11 @@ const backend = () => catalogBackend(managed()) as CatalogBackend;
 const logged = () => warn.mock.calls.map((call: unknown[]) => String(call[0]));
 
 beforeEach(() => {
+  // A broker 5xx/429 in one case opens the shared connected-apps admission
+  // backoff (7339e6eb18, centralized in 1d03322f31); without this reset every
+  // later case is answered "held" (503) and never reaches its fake broker.
+  resetManagedBrokerState();
+  defaultToken = (++caseToken).toString(16).padStart(64, "a");
   resetAppCatalogState({ disk: true });
   warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -152,7 +162,7 @@ describe("Part D: the whole catalog against a fake 1,600-app broker (contract 2)
     expect(broker.calls.map(url => url.searchParams.get("limit"))).toEqual(["500", "500", "500", "500"]);
     const disk = JSON.parse(readFileSync(join(DATA_DIR, APP_CATALOG_CACHE_FILE), "utf8"));
     expect(disk.apps).toHaveLength(1_600);
-    expect(JSON.stringify(disk)).not.toContain("a".repeat(64));
+    expect(JSON.stringify(disk)).not.toContain(defaultToken);
     // featured: the curated common apps in their own order, then the most used
     expect(view.featured.slice(0, CURATED_SLUGS.length).map(card => card.slug)).toEqual(CURATED_SLUGS);
     expect(view.featured.length).toBeGreaterThan(CURATED_SLUGS.length);

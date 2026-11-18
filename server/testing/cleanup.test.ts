@@ -21,7 +21,7 @@ let scratch: string;
 const holders: ChildProcess[] = [];
 
 const spawnHolder = () => {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" });
   holders.push(child);
   return child;
 };
@@ -107,6 +107,31 @@ describe("removeTempDir outside the OS temp directory", () => {
     expect(existsSync(inside)).toBe(false);
     await expect(removeTempDir(join(process.cwd(), ".."), { budgetMs: 50 })).rejects.toBeInstanceOf(SafeWipeRefused);
     await expect(removeTempDir(process.cwd(), { budgetMs: 50 })).rejects.toBeInstanceOf(SafeWipeRefused);
+  });
+});
+
+describe("removeTempDir under the real OS temp while the worker owns TMPDIR", () => {
+  // server/testing/setup.ts points TMPDIR at a per-worker folder; suites that need short socket paths
+  // still make their folders directly under the real OS temp, and teardown must keep removing them.
+  it("admits a folder under the recorded OS temp, and refuses it when nothing recorded that root", async () => {
+    const key = Symbol.for("murage.test.osTmpdir"), slot = globalThis as Record<symbol, unknown>;
+    const osTmp = slot[key];
+    expect(typeof osTmp).toBe("string");
+    const worker = realpathSync(tmpdir());
+    expect(worker).not.toBe(realpathSync(osTmp as string));
+    const outside = mkdtempSync(join(realpathSync(osTmp as string), "murage-cleanup-ostmp-"));
+    writeFileSync(join(outside, "x"), "x");
+    try {
+      delete slot[key];
+      expect(() => removeTempDirSync(outside, { budgetMs: 50 })).toThrow(SafeWipeRefused);
+      expect(existsSync(join(outside, "x"))).toBe(true);
+      slot[key] = osTmp;
+      removeTempDirSync(outside);
+      expect(existsSync(outside)).toBe(false);
+    } finally {
+      slot[key] = osTmp;
+      if (existsSync(outside)) safeWipeSync(outside, { tmpdir: osTmp as string });
+    }
   });
 });
 
