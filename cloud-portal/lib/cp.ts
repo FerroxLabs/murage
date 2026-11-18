@@ -72,6 +72,8 @@ export interface CloudSummary {
 }
 export interface TermsStatus {
   current: { cloudTerms: string; termsOfService: string; privacyPolicy: string };
+  /** The Worker's checkout and re-accept screen id; the re-accept form sends it back so a page from before a wording change is refused. */
+  screenVersion: string;
   accepted: { cloudTerms: string; termsOfService: string; privacyPolicy: string; acceptedAt: number } | null;
   reacceptRequired: boolean; changed: { title: string; versionId: string }[]; noticeSentAt: number | null; effectiveAt: number | null; planEndsAt?: number | null;
   wording: { reaccept: string; arbitration: string; nonAcceptance?: string };

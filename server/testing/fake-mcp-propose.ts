@@ -18,9 +18,24 @@ export interface McpServerEntry { command: string; args?: string[]; env?: Record
 
 type Reply = { result?: { tools?: Array<{ name: string }>; content?: Array<{ text?: string }>; isError?: boolean }; error?: { message?: string } };
 
+/** One line per spawn in FAKE_PROPOSE_LOG.spawn: the stanza's key names only (never values), the exit code and the first stderr line. */
+function note(entry: Record<string, unknown>): void {
+  if (process.env.FAKE_PROPOSE_LOG) try { appendFileSync(`${process.env.FAKE_PROPOSE_LOG}.spawn`, JSON.stringify(entry) + "\n"); } catch { /* diagnostics only */ }
+}
+
 function session(server: McpServerEntry) {
-  const child = spawn(server.command, server.args ?? [], { env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "ignore"] });
-  const waiting = new Map<number, (reply: Reply) => void>();
+  const child = spawn(server.command, server.args ?? [], { windowsHide: true, env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "pipe"] });
+  note({ spawn: true, stanzaKeys: Object.keys(server).sort(), envNames: Object.keys(server.env ?? {}).sort(), argCount: server.args?.length ?? 0 });
+  let firstError: string | undefined;
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => { firstError ??= chunk.split("\n")[0]!.slice(0, 200); });
+  child.on("close", code => note({ exit: code, firstError: firstError ?? null }));
+  const waiting = new Map<number, { resolve(reply: Reply): void; reject(error: Error): void }>();
+  let failure: Error | undefined;
+  const fail = (error: Error) => { failure = error; for (const pending of [...waiting.values()]) pending.reject(error); };
+  child.on("error", fail);
+  child.stdin.on("error", fail);
+  child.once("exit", () => fail(new Error("MCP process exited before replying")));
   let buffered = "", next = 1;
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
@@ -31,13 +46,15 @@ function session(server: McpServerEntry) {
       buffered = buffered.slice(nl + 1);
       let message: Reply & { id?: number };
       try { message = JSON.parse(line); } catch { continue; }
-      if (typeof message.id === "number") waiting.get(message.id)?.(message);
+      if (typeof message.id === "number") waiting.get(message.id)?.resolve(message);
     }
   });
   const call = (method: string, params: unknown) => new Promise<Reply>((resolve, reject) => {
+    if (failure) return reject(failure);
     const id = next++;
-    const timer = setTimeout(() => reject(new Error(`mcp ${method} timed out`)), 60_000);
-    waiting.set(id, reply => { clearTimeout(timer); resolve(reply); });
+    const failed = (error: Error) => { clearTimeout(timer); waiting.delete(id); reject(error); };
+    const timer = setTimeout(() => failed(new Error(`mcp ${method} timed out`)), 60_000);
+    waiting.set(id, { resolve: reply => { clearTimeout(timer); waiting.delete(id); resolve(reply); }, reject: failed });
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
   });
   return { call, close: () => child.kill() };

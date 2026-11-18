@@ -1,6 +1,33 @@
+import { askExecWipe, deliverWipeGuardTerminal, wipeGuardTurnEnvironment } from './murage-exec-wipe.ts';
+import { resolveModelLabel } from "../../shared/model-label.ts";
+import { connectedAppsServerName } from '../../shared/connected-app-names.ts';
+import { guardEngineRelease } from '../decision/provider-release.ts';
+import { noLimitsPowerFallbackActive, takeNoLimitsPowerFallbackNotice } from "../host-power.ts";
+import { deliverNative, type NativeAskSlot } from './native-ask.ts';
+import { RequestTransport } from './request-transport.ts';
+import { withRequestDelivery } from "./request-delivery.ts";
+import { HOOK_LOADER, type CanonSet } from "../hook-canon.ts";
+import { shellArg } from "../hook-shell-arg.ts";
+import { HookRepairFailed } from "./scoped-cli-home.ts";
+import { canonFile, prepareHookCanon, releaseHookCanon, ownHookCanon, checkHookCanon, checkAllHookCanon, HOOK_CHECK_DENIED } from "../hook-safety.ts";
+import { registerBusyloopRequestSite, fluxRouteFor, noFluxTraffic } from "../../shared/flux-route.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
+import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
+import { assertNativeIngressAdmission } from "./engine-input.ts";
+import { engineJsonLine } from "./engine-wire.ts";
+import { composeClose, fencedOf, fencedRefusalRegistry, fencedSubmit, isMemoryRefusal, refusalFor, type CloseResult, type FencedRefusal, type RefusalOwner } from "./engine-input.ts";
+import { DENY_TIMEOUT_NOTE } from "./hook-control.ts";
+import { EngineInputRevoked } from "./engine-input.ts";
+import { refuseConsumingTurn } from "../consuming-turn-response.ts";
+import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
+import { CliMountRelay, mountedTurn, assertRelayAvailable } from "./cli-mount-relay.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { botFolderOrThrow } from "../bot-folder.ts";
 import { oneShots } from "../engine-one-shots.ts";
-import { cloudTurnBot, cloudTurnEnvironment } from "../cloud-home/turn-process.ts";
+import { cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, TURN_SIGNIN_EPOCH } from "../cloud-home/turn-process.ts";
+import { cloudRenderMcp } from "../cloud-home/engine-render.ts";
+import { cloudEngineSignedInSomewhere, forgetBotSignIns } from "../cloud-home/signin-status.ts";
+import { markCloudSigninRefused, queryCloudBotState } from "../cloud-home/bot-state.ts";
 import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // Antigravity driver — Google's `agy` CLI in headless stream-JSON mode,
 // modeled on claude.ts but fully self-contained. Per-turn CLI process; the conversation continues across
@@ -26,7 +53,7 @@ import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.t
 import { registerIntake } from "../harness/intake.ts";
 import { awaitCliRootClose, awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused } from "../procs.ts";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -57,9 +84,12 @@ import { engineClosedLine } from "./stop-copy.ts";
 import { createStopGate, GateStopped, type Classify, type GateEntry } from "./stop-gate.ts";
 import { providerCloseDeadlineMs } from "./child-teardown.ts";
 import { EngineStderrCapture, acpStopReasonMessage, engineStderrRedacted } from "./acp/core.ts";
-import { writeFileAtomic } from "../atomic.ts";
 import { ASK_STOP_NOTE, ASK_STOP_PROMPT, ASK_STOP_REASON, replyCarriesAskStopNote } from "./ask-stop.ts";
-import { ANTIGRAVITY_RELAY_ASK_MS, antigravityMountRecords, antigravityRelayAsk, antigravityWorkspaceHookFiles, awaitRelayHookLoaded, openAntigravityRelay, type AntigravityRelay } from "./antigravity-relay.ts";
+import { ANTIGRAVITY_RELAY_ASK_MS, antigravityMountRecords, antigravityLauncherMasks, antigravityRelayAsk, antigravityWorkspaceHookFiles, awaitRelayHookLoaded, CLOUD_BROKER_DIR as DEFAULT_CLOUD_BROKER_DIR, launcherPlaceholder, openAntigravityRelay, type AntigravityRelay } from "./antigravity-relay.ts";
+/** Test-only: the folder a Cloud home's relay socket and log live in (default: the home's own broker folder). */
+let brokerDirForTests: string | undefined;
+export function setAntigravityBrokerDirForTests(dir: string | undefined): void { brokerDirForTests = dir; }
+import { AGY_SIGNIN_STOP_REASON, agyAuthFromResult, agyAuthFromStderr, agySigninProviderError } from "./antigravity-auth.ts";
 import type { HookAnswer, HookDelivery } from "./codex-hook.ts";
 import { wakeAwareTimeout } from "../sleep-clock.ts";
 
@@ -80,6 +110,8 @@ export function antigravityResultFailure(payload: { message?: unknown; error?: u
 export const ANTIGRAVITY_DENIED_NOTE =
   "Antigravity could not run a command on this turn, so it stopped without a reply.";
 /** Shown when agy started without Murage's check loaded: the turn is refused before the prompt reaches it. */
+export const ANTIGRAVITY_SAFETY_RELAY_UNAVAILABLE =
+  "Antigravity could not start tool checks. Try again or switch engine.";
 export const ANTIGRAVITY_HOOK_NOT_LOADED =
   "Antigravity did not load Murage's check for commands and tools, so Murage did not start this turn. Try again; if it keeps happening, update Antigravity with `agy update`.";
 /** Shown when the turn's folder has its own Antigravity hooks file: agy would load it beside Murage's check (agy 1.4.4
@@ -139,15 +171,13 @@ process.stdin.on("end", () => {
 /** Write the hook program under Murage's data dir (once per content) and return the hooks.json an Ask turn's scoped
  *  home carries. The hook runs as `<this program> <script>`; the child gets ELECTRON_RUN_AS_NODE so a packaged app
  *  runs it as node. agy runs a hook through `sh -c` (Windows: `cmd /c`, which keeps an outer pair of quotes). */
-export function antigravityAskStopHooks(dataDir = DATA_DIR, execPath = process.execPath, platform: NodeJS.Platform = process.platform): string {
+export function antigravityAskStopHooks(dataDir = DATA_DIR, execPath = process.execPath, platform: NodeJS.Platform = process.platform, keep?: (set: CanonSet) => void): string {
   const dir = join(dataDir, "native", "antigravity-ask");
   const script = join(dir, `ask-hook-${createHash("sha256").update(ANTIGRAVITY_ASK_HOOK_SOURCE).digest("hex").slice(0, 16)}.cjs`);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  let existing: string | null = null;
-  try { existing = readFileSync(script, "utf8"); } catch { existing = null; }
-  if (existing !== ANTIGRAVITY_ASK_HOOK_SOURCE) writeFileAtomic(script, ANTIGRAVITY_ASK_HOOK_SOURCE, { mode: 0o600 });
-  const forward = (path: string) => (platform === "win32" ? path.replace(/\\/g, "/") : path);
-  const quoted = `"${forward(execPath)}" "${forward(script)}"`;
+  const layer = platform === "win32" ? "cmd" : "posix";
+  const quoted = `${shellArg(execPath, layer, "Antigravity")} -e "${HOOK_LOADER.antigravity}" ${shellArg(script, layer, "Antigravity")} ${createHash("sha256").update(ANTIGRAVITY_ASK_HOOK_SOURCE).digest("hex")}`;
+  const canon = prepareHookCanon([canonFile(script, ANTIGRAVITY_ASK_HOOK_SOURCE, "script", "antigravity", join(dataDir, "native"))], "V-A3", "Antigravity");
+  if (keep) keep(canon); else releaseHookCanon(canon);
   const command = platform === "win32" ? `"${quoted}"` : quoted;
   return `${JSON.stringify({ "murage-ask-stop": { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command, timeout: 15 }] }] } }, null, 2)}\n`;
 }
@@ -174,8 +204,10 @@ export interface AntigravityConfig {
   fullAuto: boolean;
 }
 
-// Fallback catalog, mirroring a live `agy models` on agy 1.4.3. The running
-// agy's own list (read in refreshModels) wins over this whenever it answers.
+// Fallback catalog, retaining the agy 1.4.3 rows and exact slugs published at
+// https://antigravity.google/docs/cli/headless/#select-a-model-effort-or-agent
+// (2026-11-14). The running agy's own list (read in refreshModels) wins
+// over this whenever it answers.
 export const STATIC_ANTIGRAVITY_MODELS: ModelCatalog = {
   default: "gemini-4-argon-high",
   options: [
@@ -192,6 +224,20 @@ export const STATIC_ANTIGRAVITY_MODELS: ModelCatalog = {
     { id: "claude-sonnet-5-5-medium", label: "Claude Sonnet 5.5 (Medium)" },
     { id: "claude-sonnet-5-5-low", label: "Claude Sonnet 5.5 (Low)" },
     { id: "gpt-oss-120b-medium", label: "GPT-OSS 120B (Medium)" },
+    { id: "gemini-4-carbon-high", label: "Gemini 4 Carbon (High)" },
+    { id: "gemini-4-carbon-medium", label: "Gemini 4 Carbon (Medium)" },
+    { id: "gemini-4-carbon-low", label: "Gemini 4 Carbon (Low)" },
+    { id: "gemini-4-hydrogen-xhigh", label: "Gemini 4 Hydrogen (XHigh)" },
+    { id: "gemini-4-hydrogen-high", label: "Gemini 4 Hydrogen (High)" },
+    { id: "gemini-4-hydrogen-medium", label: "Gemini 4 Hydrogen (Medium)" },
+    { id: "gemini-4-hydrogen-low", label: "Gemini 4 Hydrogen (Low)" },
+    { id: "gemini-pro-orchestrator", label: "Orchestrator (Carbon)" },
+    { id: "gemini-pro-orchestrator-argon", label: "Orchestrator (Argon)" },
+    { id: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash (High)" },
+    { id: "gemini-3.7-flash-medium", label: "Gemini 3.7 Flash (Medium)" },
+    { id: "gemini-3.6-flash-high", label: "Gemini 3.6 Flash (High)" },
+    { id: "gemini-3.6-flash-medium", label: "Gemini 3.6 Flash (Medium)" },
+    { id: "gemini-3.1-pro-high", label: "Gemini 3.1 Pro (High)" },
   ],
 };
 
@@ -201,7 +247,7 @@ export function parseAntigravityModelsOutput(stdout: string): Array<{ id: string
   for (const line of stdout.split(/\r?\n/)) {
     const [id, ...rest] = line.split("\t");
     if (!id || rest.length === 0 || !AGY_MODEL_ID.test(id.trim())) continue;
-    rows.push({ id: id.trim(), label: rest.join(" ").trim() || id.trim() });
+    rows.push({ id: id.trim(), label: resolveModelLabel(id.trim(), { catalogLabel: rest.join(" ") }) });
   }
   return rows;
 }
@@ -210,7 +256,7 @@ export function parseAntigravityModelsOutput(stdout: string): Array<{ id: string
 export function catalogFromAgyList(rows: Array<{ id: string; label: string }>, base: ModelCatalog = STATIC_ANTIGRAVITY_MODELS): ModelCatalog {
   if (!rows.length) return base;
   const has = rows.some((row) => row.id === base.default);
-  return { default: has ? base.default : rows[0]!.id, options: rows.map((row) => ({ ...row })), source: "live" };
+  return { default: has ? base.default : rows[0]!.id, options: rows.map((row) => ({ ...row, label: resolveModelLabel(row.id, { catalogLabel: row.label }) })), source: "live" };
 }
 
 function antigravityEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -246,9 +292,9 @@ export function readAntigravityModelCatalog(env: Record<string, string | undefin
   const home = env.HOME || env.USERPROFILE || homedir();
   let settings: Record<string, unknown> = {};
   try {
-    settings = JSON.parse(
+    settings = registerBusyloopPayloadSite("read", JSON.parse(
       readFileSync(join(home, ".gemini", "antigravity-cli", "settings.json"), "utf8"),
-    ) as Record<string, unknown>;
+    )) as Record<string, unknown>;
   } catch {
     return STATIC_ANTIGRAVITY_MODELS;
   }
@@ -280,6 +326,7 @@ export function readAntigravityModelCatalog(env: Record<string, string | undefin
 // rebuilt from a fresh object (the ensureOpenCodeInjectModel discipline, 0.1.52 A8).
 export const ANTIGRAVITY_COMPUTER_MCP_KEY = "murage-computer";
 export const ANTIGRAVITY_AGENTS_MCP_KEY = "murage-agents";
+export const ANTIGRAVITY_BROWSER_MCP_KEY = "murage-browser";
 /** The owner's own servers ride the same global file under this prefix, so one
  * of theirs named like a server of the owner's own agy config never collides,
  * and a stale one left by a crashed turn can be found and removed. */
@@ -366,6 +413,9 @@ export function antigravityMcpServers(integrations: SendTurnInput["integrations"
   const agents = antigravityAgentsMcpServer(integrations);
   if (computer) servers[ANTIGRAVITY_COMPUTER_MCP_KEY] = computer;
   if (agents) servers[ANTIGRAVITY_AGENTS_MCP_KEY] = agents;
+  if (integrations?.browser) servers[ANTIGRAVITY_BROWSER_MCP_KEY] = { ...integrations.browser };
+  if (integrations?.memory) servers['murage-memory'] = { ...integrations.memory };
+  if (integrations?.composio) servers[connectedAppsServerName(integrations.composio.env)] = { ...integrations.composio };
   Object.assign(servers, antigravityCustomMcpServers(integrations));
   return servers;
 }
@@ -389,6 +439,11 @@ function decodeConfig(raw: unknown): AntigravityConfig {
   };
 }
 
+/** Final stream-json user envelope; stdin receives this exact string. */
+export function serializeAntigravityInput(message: unknown, beforeWrite?: () => void): string {
+  return engineJsonLine(message, beforeWrite);
+}
+
 export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
   driverKind: DRIVER_KIND,
   // Named for what people look for in the engine list (upstream OpenMausBot #3173, Apache-2.0).
@@ -406,6 +461,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
   defaultConfig: () => decodeConfig({}),
 
   async create(input: DriverCreateInput<AntigravityConfig>): Promise<ProviderInstance> {
+
     // The engine as Settings names this instance, for every line the chat shows.
     const ENGINE = input.displayName?.trim() || "Antigravity";
     const { instanceId, config } = input;
@@ -456,7 +512,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     try { removeAntigravityLegacyMcpEntries(realHomeOf(env)); } catch { /* the file keeps its bytes */ }
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread; a second send while busy is a caller bug
-    const active = new Map<string, { stop: () => void; close: () => void; turnId: string; asks: Map<string, (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => boolean> }>();
+    const answerTransport = new RequestTransport();
+    const active = new Map<string, { stop: () => void; close: () => void; confirmed?: () => Promise<boolean>; turnId: string; noLimits: () => boolean; asks: Map<string, (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => Promise<boolean>> }>();
+    /** LLD-agy: a turn settled in lease mode keeps its stop confirmation here, so the lease's port close (which arrives after the
+     * settle removed the live entry) confirms the child's stop instead of finding no turn. */
+    const leaseClosing = new Map<string, { turnId: string; confirmed: () => Promise<boolean> }>();
     const pending = new Set<string>();
     let disposed = false;
     let verifiedVersion: string | null | undefined;
@@ -484,10 +544,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     // hang AFTER emitting `result` (so it's already removed from `active`), and
     // dispose()/stopAll() must still be able to reap it. Removed on process exit.
     const children = new Set<ChildProcess>();
+    const powerSession = {};
     const closeFinalizers = new Map<ChildProcess, () => void>();
+    const mountedRelays = new Map<string, CliMountRelay>();
 
-    const emit = (event: RuntimeEvent) => {
-      for (const l of [...listeners]) l(event);
+    const emissionSource = new AsyncLocalStorage<SendTurnInput["sourceContext"]>();
+    const emit = (event: RuntimeEvent, source = emissionSource.getStore()) => {
+      if (deliverWipeGuardTerminal(event, terminal => emit(terminal, source))) return;
+      for (const l of [...listeners]) l(event, source);
     };
 
     // The shared stop owns POSIX escalation; retain finalizers until its
@@ -503,6 +567,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         return confirmed;
       }));
       if (stopped.includes(false)) throw new Error("Antigravity shutdown is still pending; its processes remain owned");
+      for (const [turnId, relay] of mountedRelays) {
+        if (!(await relay.finish())) throw new Error("MOUNT_RELAY_STOP_UNCONFIRMED");
+        mountedRelays.delete(turnId);
+      }
     };
     const base = (threadId: string, turnId: string) => ({
       eventId: newEventId(),
@@ -517,38 +585,76 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     const gate = createStopGate({
       engineName: ENGINE,
       announceStart: "mark-only",
-      emit: (event) => emit(event as unknown as RuntimeEvent),
+      emit: (event, source) => {
+        // Detached startup retries outlive sendTurn's finally. Every gate
+        // ending must free their admission slot before observers can resend.
+        if (event.type === "turn.completed" && typeof event.threadId === "string") pending.delete(event.threadId);
+        emit(event as unknown as RuntimeEvent, source as SendTurnInput["sourceContext"]);
+      },
       base: (threadId, turnId) => base(threadId, turnId),
     });
     // A rejection with no mark stays a rejection (a fence refusal, a folder that cannot be scoped); no verdict comes from a throw.
     const classify: Classify = () => null;
 
-    const startTurn = async (turn: SendTurnInput, entry: GateEntry, turnId: string) => {
+    const startTurn = async (turn: SendTurnInput, entry: GateEntry, turnId: string, relayAttempt = 0, powerRetried = false): Promise<{ turnId: string }> => {
+      const originalTurn = turn;
+      assertNativeIngressAdmission(turn, "antigravity");
+      const boundMounted = (turn.releaseBinding ?? null) !== null && mountedTurn(turn);
+      if (boundMounted) assertRelayAvailable(turn);
+      let mountRelay: CliMountRelay | undefined;
       // Murage's Full access still stops before deleting outside its folder,
       // paying and messaging someone new (server/stop-line.ts). Print mode has
       // no way to ask, so agy's own permissions are skipped on a bot turn only
       // with Murage's relay hook in front of every tool (relayWanted below);
       // without it the turn runs in accept-edits (file edits only, no shell,
       // no mounted tools).
-      const skipPermissions = config.fullAuto && !turn.stopLine && !turn.routeAsks;
+      const noLimits = () => (turn.permissionNow?.() ?? turn).noLimits === true;
+      const unmanagedPermissions = config.fullAuto && !turn.stopLine && !turn.routeAsks;
+      const skipPermissions = noLimits() || unmanagedPermissions; // A missing relay cannot restore native No limits refusals.
       // The Ask hard stop (ANTIGRAVITY_ASK_READS): reads only, every other tool denied by a hook before it runs.
-      let askStop = turn.askLevel === true && !skipPermissions;
+      const bound = (turn.releaseBinding ?? null) !== null;
+      let engineLaunched = false;
+      /** LLD-agy: a bound turn the driver refuses directly has no process to claim, so the refusal is registered with a null target and
+       * the lease takes the close at once (the lease's interrupt then finds its closer; interruptTurn below is its fallback). */
+      const refuseBoundAsk = (site: 684 | 889 | 908 | 937 | 1335): never => {
+        pending.delete(turn.threadId);
+        refusalFor(new EngineInputRevoked({ state: "checking", reason: "not-built" }), `agy.direct.${site}`, { engine: ENGINE, threadId: turn.threadId, binding: turn.releaseBinding, target: null, kind: "turn" });
+        if (!engineLaunched) turn.admissionNotLaunched?.();
+        if (turn.releaseBinding) refuseConsumingTurn(turn.releaseBinding);
+        throw new EngineInputRevoked({ state: "checking", reason: "not-built" });
+      };
+      let askFromFolderHooks = false;
+      let relayUnavailable = false;
+      // Server-managed Ask turns use the checked relay and the broker's card.
+      // Standalone callers and unavailable relays retain the read-only hook.
+      const managedAsks = Boolean(turn.permissionNow) && (turn.routeAsks === true || turn.stopLine === true);
+      const askPosture = () => !noLimits() && (askFromFolderHooks || (turn.permissionNow?.() ?? turn).askLevel === true);
+      const askStop = () => !noLimits() && (askFromFolderHooks || ((turn.permissionNow?.() ?? turn).askLevel === true && !unmanagedPermissions && (!managedAsks || relayUnavailable)));
       // Auto and Full access (lanes/release103/AGY-AUTO-DESIGN.md): skip agy's own permissions, and relay every tool
       // call to Murage's broker through a hook first (antigravity-relay.ts). A relay that cannot be set up keeps
       // accept-edits with no tools. The Chief's proposal turn keeps accept-edits (server/index.ts, proposalOnly).
-      let relayWanted = config.fullAuto && !askStop && !turn.proposalOnly && (turn.stopLine === true || turn.routeAsks === true);
+      let relayWanted = (bound && askStop()) || noLimits() || (config.fullAuto || Boolean(turn.permissionNow)) && (!askStop() || Boolean(turn.permissionNow)) && !turn.proposalOnly && (turn.stopLine === true || turn.routeAsks === true);
       /** This turn's relayed asks, by request id, answered by respondToRequest. */
-      const relayAsks = new Map<string, (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => boolean>();
+      const relayAsks = new Map<string, (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => Promise<boolean>>();
       /** Something was refused at Ask: the note is due unless the reply already carries it. */
       let askStopRefused = false;
       /** An Auto or Full access turn run as at Ask because its folder has its own hooks file: the folder's line says
        *  why, so Ask's own line ("Choose Auto ...") is not asked of the model nor shown (the owner is on Auto). */
-      let askFromFolderHooks = false;
       let askStopReply = "";
       /** Murage ended this Ask turn because a change ran (the hook did not hold). Not the owner's Stop: the turn
        *  settles as ended with the note (ANTIGRAVITY_ASK_STOP_REASON), keeps whatever reply agy gave, and runs nothing more. */
       let askStopHalted = false;
       const { threadId } = turn;
+      let wipeCoverageNoticed = false;
+      const noticeMissingWipeCheck = (reason: string) => {
+        if (!noLimits() || wipeCoverageNoticed) return;
+        wipeCoverageNoticed = true;
+        console.warn(`${ENGINE} No limits: Murage's wipe check is unavailable (${reason}); native full access remains enabled`);
+        const itemId = `wipe-coverage-${turnId}`;
+        emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", toolKind: "notice",
+          title: "Antigravity runs with its own full access here. Murage's wipe check could not be connected for this turn." });
+        emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+      };
 
       // r4 item 6 (D4 M8f): the value is acquired here and the gate is read by the step: a Stop, Stop All or dispose that landed while the
       // version was read ends the turn before any version verdict. The verdict below is an ending like any other: entry.finish reads the gate at emission.
@@ -579,10 +685,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // agy loads the workspace's own hooks (<cwd>/.agents/hooks.json and the rest, every turn) beside Murage's relay
       // hook, and nothing turns that off: one could answer or run on its own. Checked at every turn start; a turn that
       // finds one runs as at Ask, with a line that names the file.
-      const workspaceHooks = relayWanted ? antigravityWorkspaceHookFiles([cwd]) : [];
-      if (workspaceHooks.length) {
+      const workspaceHooks = relayWanted ? antigravityWorkspaceHookFiles([cwd], process.env.MURAGE_CLOUD_ROLE === "home" ? launcherPlaceholder : undefined) : [];
+      if (workspaceHooks.length && !noLimits()) {
+        if (bound) refuseBoundAsk(684);
         console.warn(`${ENGINE} relay: the turn's folder has its own hooks file (${workspaceHooks[0]}); this turn runs as at Ask`);
-        askStop = true;
         relayWanted = false;
         askFromFolderHooks = true;
       }
@@ -592,7 +698,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // line is much smaller than the prompts a channel can legitimately
       // build, and putting this on `--print <prompt>` caused ENAMETOOLONG.
       turn = renderMurageTurn(turn, NEUTRAL_TOOL_SURFACE, { agents: antigravityMcpServers(turn.integrations)[ANTIGRAVITY_AGENTS_MCP_KEY] ? ANTIGRAVITY_AGENTS_MCP_KEY : undefined });
-      const prompt = `${askStop ? `${askFromFolderHooks ? ANTIGRAVITY_FOLDER_HOOKS_ASK_PROMPT : ASK_STOP_PROMPT}\n\n` : ""}${turn.system ? `${turn.system}\n\n${turn.text}` : turn.text}`;
+      const prompt = `${askStop() ? `${askFromFolderHooks ? ANTIGRAVITY_FOLDER_HOOKS_ASK_PROMPT : ASK_STOP_PROMPT}\n\n` : ""}${turn.system ? `${turn.system}\n\n${turn.text}` : turn.text}`;
       const resumeCursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
 
       let settled = false;
@@ -631,6 +737,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // Assigned once the child exists. A child can emit `result` and then
       // hang, so settling must still arrange for process and MCP cleanup.
       let armPostSettleCleanup = () => {};
+      /** This turn's refusal (M4) and the driver closes joined to it: every claim names it as owner, and settle attaches a lease-only R. */
+      const turnRef: RefusalOwner & { releaseBinding?: typeof turn.releaseBinding } = { teardowns: [], releaseBinding: turn.releaseBinding };
       const settle = (
         ok: boolean,
         stopReason: string | null,
@@ -641,6 +749,12 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       ) => {
         if (settled) return;
         settled = true;
+        // M4 P1 ATTACH: the turn's R by its dispatch generation, also when no driver site claimed it (a lease-only refusal).
+        const fenced = fencedOf(turnRef);
+        const live = active.get(threadId);
+        const stopConfirmed = live?.turnId === turnId ? live.confirmed : undefined;
+        mountRelay?.retire();
+        if (mountRelay) void mountRelay.finish();
         active.delete(threadId);
         for (const finish of [...relayAsks.values()]) finish("deny", "system", "the turn has ended");
         armPostSettleCleanup();
@@ -648,6 +762,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           const itemId = `ask-stop-${turnId}`;
           emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: ASK_STOP_NOTE, toolKind: "notice" });
           emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+        }
+        // M5: a turn refusal joined to a lease ends in lease mode: the host's refuseTurn is the one terminal, so the gate records and
+        // releases the entry only after the R's teardown, and this emits no turn.completed.
+        if (fenced?.lease && fenced.kind === "turn") {
+          // one per thread: the next lease-mode settle replaces it and the port close takes it
+          if (stopConfirmed) leaseClosing.set(threadId, { turnId, confirmed: stopConfirmed });
+          entry.finish({ ok: false, stopReason: "memory-refused", final: true, leaseMode: true, releaseAfter: fenced.teardown });
+          return;
         }
         // the one ending: an asked Stop is the stopped pair, a dispose nobody asked is the engine closing, read at emission
         entry.finish({
@@ -659,12 +781,22 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         });
       };
 
+      // The login epoch this turn runs with, read BEFORE the cancellation, disposal and submission checks below: a Stop that
+      // lands during this await is recorded in earlyStops and honoured by the check right after it, and nothing awaits between the fence
+      // and the stdin write. The launcher admits the turn only if it stages this epoch, so a sign-in refusal is recorded against
+      // the account that ran (a token refresh in between keeps the epoch, so the refusal still lands). Best effort: unread means no mark, never a failed turn.
+      const cloudBot = process.env.MURAGE_CLOUD_ROLE === "home" ? turn.warmIdentity?.botId : undefined;
+      let turnEpoch = 0;
+      if (cloudBot) {
+        try { turnEpoch = (await gate.step(entry, queryCloudBotState(cloudBot))).engines.antigravity?.epoch ?? 0; } catch (error) { if (error instanceof GateStopped) throw error; /* no mark for an unread status */ }
+      }
       // The submission fence (SendTurnInput.beforeSubmit), on every turn and
       // also when it keeps `--conversation`: with no await between it and the
       // stdin write below. sendTurn has not handed its id back yet, so a
       // refusal throws, having spawned and written nothing.
+      let launchAttempt: number | void;
       try {
-        turn.beforeSubmit?.();
+        launchAttempt = turn.beforeSubmit?.();
       } catch (refusal) {
         pending.delete(threadId);
         throw refusal;
@@ -679,19 +811,68 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // direct adapter caller cannot expose token-bearing tools to a child
       // that has no interactive permission channel.
       let relay: AntigravityRelay | null = null;
+      let scoped: ReturnType<typeof buildAntigravityScopedHome> | null = null;
+      let stopForHookFailure = () => { hookRevoked = true; stopRequested = true; };
+      let askCanon: CanonSet | undefined;
+      let hookRevoked = false;
+      const revokeHooks = () => {
+        hookRevoked = true;
+        for (const finish of [...relayAsks.values()]) finish("deny", "system", HOOK_CHECK_DENIED);
+      };
+      const checkHooks = (at: "V-A4" | "V-A5") => {
+        const ok = [relay?.canon, scoped?.canon, askCanon].every(set => checkHookCanon(set, at, ENGINE));
+        if (!ok) { revokeHooks(); if (at === "V-A5") stopForHookFailure(); else setImmediate(() => stopForHookFailure()); }
+        return ok && !hookRevoked;
+      };
+      const onCloudHome = process.env.MURAGE_CLOUD_ROLE === "home";
+      // the home's broker folder; a test points it at its own temporary folder (setAntigravityBrokerDirForTests), never an env var
+      const CLOUD_BROKER_DIR = brokerDirForTests ?? DEFAULT_CLOUD_BROKER_DIR;
       let mcpMounts: ReturnType<typeof antigravityMountRecords> = [];
       const relayDir = join(DATA_DIR, "native", "antigravity-relay", `${tag}-${turnId}`.slice(0, 120));
+      /** AG1: an owner answer the fence refused on the relay (at the hook socket's release, or as the answer's transport refusal) is a
+       *  claim of kind turn on this launch. Both join one R; the driver-closed one stops the child and ends by its kind, once. */
+      const claimRelayRefusal = (error: unknown, site: "hook.socket.agy" | "agy.ask"): FencedRefusal | undefined => {
+        const R = refusalFor(error, site, { engine: ENGINE, threadId, binding: turn.releaseBinding, target: entry, kind: "turn", owner: turnRef });
+        if (R?.closer === "driver" && !R.teardownSettled) { stop(); closeRefusedSubmission(R); }
+        return R;
+      };
       if (relayWanted) {
         const relayPreTool = (delivery: HookDelivery): Promise<HookAnswer> => new Promise((answer) => {
-          if (settled || stopRequested) return answer({ decision: "deny", reason: "the turn has ended" });
-          const ask = antigravityRelayAsk(delivery, cwd, relayDir);
+          if (!checkHooks("V-A4")) return answer({ decision: "deny", reason: HOOK_CHECK_DENIED });
+          if (settled || stopRequested) return answer({ decision: "deny", reason: bound ? "Murage: the turn ended" : "the turn has ended" });
+          if (bound && askStop()) return answer(typeof delivery.tool_name === "string" && (ANTIGRAVITY_ASK_READS as readonly string[]).includes(delivery.tool_name) ? { decision: "allow" } : { decision: "deny", reason: ASK_STOP_NOTE });
+          const ask = antigravityRelayAsk(delivery, cwd, relayDir, onCloudHome ? [`${CLOUD_BROKER_DIR}/agyr-`, ".gemini/config"] : undefined);
+          if (askStop()) {
+            if ((ANTIGRAVITY_ASK_READS as readonly string[]).includes(ask.tool)) return answer({ decision: "allow" });
+            askStopRefused = true;
+            return answer({ decision: "deny", reason: ASK_STOP_REASON });
+          }
+          const operationInput=(turn.permissionNow?.()??turn).noLimits===true&&ask.tool==='run_command'?{...(ask.toolCall.input as Record<string,unknown>),cwd:(ask.toolCall.input as Record<string,unknown>).cwd??cwd}:ask.toolCall.input;
           const requestId = newId();
-          const finish = (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => {
-            if (!relayAsks.delete(requestId)) return false;
-            timer.clear();
-            answer(behavior === "allow" ? { decision: "allow" } : { decision: "deny", reason: message?.trim() || (source === "timeout" ? "nobody answered in time, so it did not run" : "the owner did not allow it") });
-            emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior, source });
-            return true;
+          const slot: NativeAskSlot = { closed: false };
+          let retiredResolution = false;
+          const finish = (behavior: 'allow' | 'deny', source: 'user' | 'timeout' | 'system', message?: string) => {
+            if (hookRevoked) { behavior = 'deny'; source = 'system'; message = HOOK_CHECK_DENIED; }
+            const controlReason = source === "timeout" ? DENY_TIMEOUT_NOTE : source === "system" ? "Murage: the turn ended" : message?.trim() || "the owner did not allow it";
+            const frame = behavior === 'allow' ? { decision: 'allow' as const } : { decision: 'deny' as const, reason: bound ? controlReason : message?.trim() || (source === 'timeout' ? 'nobody answered in time, so it did not run' : 'the owner did not allow it'), ...(bound && source === 'user' ? { source: 'owner' as const } : {}) };
+            // Revocation closes the owner's card synchronously, before any
+            // buffered approval or child shutdown can race it. The fixed deny
+            // still drains through its captured transport and has no grant.
+            if (source === 'system' && !retiredResolution && !slot.closed && !slot.writing) {
+              retiredResolution = true; relayAsks.delete(requestId); timer.clear();
+              emit({ ...base(threadId, turnId), type: 'request.resolved', requestId, behavior: 'deny', source: 'system' });
+            }
+            return deliverNative(slot, source === 'user' ? 'answer' : 'retire', JSON.stringify(frame),
+              () => new Promise<boolean>((resolve, reject) => answer({ ...frame, onTransport: (accepted, error) => { if (error !== undefined && isMemoryRefusal(error)) reject(error); else resolve(accepted); } })), () => false, accepted => {
+                relayAsks.delete(requestId); timer.clear();
+                answerTransport.confirm(threadId, requestId, Promise.resolve(accepted));
+                // A checked denial at Ask retains the Ask explanation when the
+                // engine ends its turn, including the managed broker path.
+                if (accepted && behavior === 'deny' && askPosture()) askStopRefused = true;
+                if (!retiredResolution) emit({ ...base(threadId, turnId), type: 'request.resolved', requestId,
+                  behavior: accepted ? behavior : 'deny', source: accepted ? source : 'unavailable' });
+              },()=>behavior!=='allow'||(turn.permissionNow?.()??turn).noLimits!==true||answerTransport.guardRelease(threadId,requestId,()=>guardEngineRelease({threadId,turnId,requestId,providerInstanceId:instanceId},operationInput)),
+              undefined, error => claimRelayRefusal(error, "agy.ask")?.teardown);
           };
           // awake time (1.0.10 C3): a sleep with the card open does not count toward the relay ask bound
           const timer = wakeAwareTimeout(() => finish("deny", "timeout"), ANTIGRAVITY_RELAY_ASK_MS);
@@ -699,11 +880,12 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           emit({
             ...base(threadId, turnId),
             type: "request.opened",
+            executionCwd: cwd,
             requestId,
             requestType: "permission",
             tool: ask.tool,
             summary: ask.summary.slice(0, 300),
-            toolCall: ask.toolCall,
+            toolCall: (turn.permissionNow?.()??turn).noLimits===true?{...ask.toolCall,input:operationInput}:ask.toolCall,
             ...(ask.toolIdentity ? { toolIdentity: ask.toolIdentity } : {}),
             ...(ask.filePaths ? { filePaths: ask.filePaths } : {}),
             ...(ask.toolInputMissing ? { toolInputMissing: ask.toolInputMissing } : {}),
@@ -711,44 +893,85 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             toolEngine: "antigravity" as const,
           });
         });
+        /** AG1 (G0-HK): the relay arm's claim of an answer the fence refused at the hook socket, before the transport receipt. */
+        const relayRefused = (error: unknown) => { claimRelayRefusal(error, "hook.socket.agy"); };
         // r4 item 5: a Stop, Stop All or dispose that landed while the relay was opening is read here, before anything spawns or is written:
         // the relay is closed and the turn ends as the stopped pair (asked) or the engine closing (dispose alone), never as a "disposed" settle.
         relay = await gate.step(
           entry,
-          openAntigravityRelay(relayDir, relayPreTool).catch((error: unknown) => {
+          openAntigravityRelay(relayDir, relayPreTool, process.execPath, onCloudHome ? CLOUD_BROKER_DIR : undefined, turn.releaseBinding ?? null, relayRefused).catch(async (error: unknown) => {
+            if (error instanceof HookRepairFailed) throw error;
+            if (noLimits()) {
+              try { return await openAntigravityRelay(relayDir, relayPreTool, process.execPath, onCloudHome ? CLOUD_BROKER_DIR : undefined, turn.releaseBinding ?? null, relayRefused); }
+              catch (retryError) { if (retryError instanceof HookRepairFailed) throw retryError; }
+              noticeMissingWipeCheck("relay setup failed twice");
+              return null;
+            }
             console.warn(`${ENGINE} relay: could not set up Murage's check (${error instanceof Error ? error.message : String(error)}); this turn runs in accept-edits`);
             return null;
           }),
           { onStopped: (opened) => opened?.close() },
         );
       }
+      // Managed Ask relies on the relay. Make setup failure visible before
+      // deciding whether this consuming turn must refuse without a launch.
+      relayUnavailable = relay === null;
+      if (bound && askStop() && !relay) refuseBoundAsk(889);
+      if (bound && (gate.why(entry) || stopRequested || disposed)) {
+        pending.delete(threadId);
+        relay?.close();
+        settle(!disposed, disposed ? "disposed" : "cancelled");
+        return { turnId };
+      }
       const relayed = relay !== null;
-      const mountedServers = antigravityMcpServers(skipPermissions || relayed ? turn.integrations : undefined);
-      mcpMounts = antigravityMountRecords(mountedServers, { computer: ANTIGRAVITY_COMPUTER_MCP_KEY, agents: ANTIGRAVITY_AGENTS_MCP_KEY });
-      let scoped: ReturnType<typeof buildAntigravityScopedHome> | null = null;
+      let mountedServers = antigravityMcpServers(skipPermissions || relayed ? turn.integrations : undefined);
+      mcpMounts = antigravityMountRecords(mountedServers, { computer: ANTIGRAVITY_COMPUTER_MCP_KEY, agents: ANTIGRAVITY_AGENTS_MCP_KEY, browser: ANTIGRAVITY_BROWSER_MCP_KEY, memory: turn.integrations?.memory ? "murage-memory" : undefined, connector: turn.integrations?.composio ? connectedAppsServerName(turn.integrations.composio.env) : undefined });
+      if (boundMounted) {
+        try {
+          mountRelay = await CliMountRelay.create(turn, mountedServers, {}, null);
+          mountedRelays.set(turnId, mountRelay);
+          const ownedRelay = mountRelay;
+          void ownedRelay.stopped.then(() => { if (mountedRelays.get(turnId) === ownedRelay) mountedRelays.delete(turnId); });
+          mountedServers = mountRelay.servers as typeof mountedServers;
+        } catch {
+          relay?.close();
+          refuseBoundAsk(908);
+        }
+      }
+
       let childEnv = env;
+      // On a Cloud home the launcher gives every turn an empty tmpfs HOME of its own (the owner's mirror below is
+      // desktop-only, and cloudTurnLaunch replaces HOME anyway): Murage's MCP servers and the Ask hook go to the
+      // launcher as typed render parts, which it writes into ~/.gemini/config of that HOME.
       try {
-        scoped = buildAntigravityScopedHome({
+        if (!onCloudHome) scoped = buildAntigravityScopedHome({
           realHome: realHomeOf(env),
           scopeRoot: antigravityScopeRoot(),
           name: `${tag}-${turnId}`.slice(0, 120),
           servers: mountedServers,
-          ...(askStop ? { askStopHooks: antigravityAskStopHooks() } : relay ? { askStopHooks: relay.hooksJson } : {}),
+          ...(askStop() && !relay ? { askStopHooks: antigravityAskStopHooks(DATA_DIR, process.execPath, process.platform, set => { askCanon = set; }) } : relay ? { askStopHooks: relay.hooksJson } : {}),
         });
+        for (const set of [relay?.canon, scoped?.canon, askCanon]) if (set) ownHookCanon(set, { engine: ENGINE, revoke: revokeHooks, stop: () => stopForHookFailure() });
         // The relay's hooks.json is what keeps a skip-permissions turn in check: it must read back exactly as written.
-        if (relay && readFileSync(join(scoped.home, ".gemini", "config", "hooks.json"), "utf8") !== relay.hooksJson) {
+        if (scoped && relay && readFileSync(join(scoped.home, ".gemini", "config", "hooks.json"), "utf8") !== relay.hooksJson) {
           throw new Error("the scoped hooks.json did not read back as written");
         }
-        childEnv = { ...env, HOME: scoped.home, USERPROFILE: scoped.home };
+        if (scoped) childEnv = { ...env, HOME: scoped.home, USERPROFILE: scoped.home };
       } catch (error) {
         // Fails closed: never a start in the owner's real home with their personal MCP servers, hooks and skills.
         scoped?.dispose();
+        releaseHookCanon(askCanon);
         relay?.close();
+        if (mountRelay) { mountRelay.retire(); await mountRelay.finish(); }
         pending.delete(threadId);
+        if (bound && askStop()) refuseBoundAsk(937);
         // A structured code, rendered in the owner's language by the chat (ScopeUnavailableError); the cause stays attached.
+        if (error instanceof HookRepairFailed) throw error;
         throw engineFolderUnavailable(ENGINE, error);
       }
-      const restoreMcp = () => { scoped?.dispose(); relay?.close(); };
+      const restoreMcp = () => { scoped?.dispose();
+        releaseHookCanon(askCanon); relay?.close();
+        if (mountRelay) { mountRelay.retire(); void mountRelay.finish(); } };
 
       const args = [
         "--input-format", "stream-json",
@@ -768,17 +991,39 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // spawnCli resolves npm .cmd shims / shebang scripts on Windows and
       // owns the process-group vs windowsHide difference (see procs.ts)
       // The instance environment is shared by every turn; this turn's copy names its bot.
-      const turnEnv: NodeJS.ProcessEnv = { ...childEnv };
+      const turnEnv: NodeJS.ProcessEnv = await gate.step(entry, wipeGuardTurnEnvironment({
+        turn, turnId, env: childEnv, signal: entry.signal,
+        isLive: () => !entry.done && !settled && !stopRequested,
+        subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        askWipe: (request, signal) => askExecWipe({
+          provider: DRIVER_KIND,
+          emit, register: (id, finish) => { relayAsks.set(id, finish); },
+          remove: id => { relayAsks.delete(id); },
+          confirm: id => { answerTransport.confirm(threadId, id, Promise.resolve(true)); },
+          canAllow: (id, input) => answerTransport.guardRelease(threadId, id,
+            () => guardEngineRelease({ threadId, turnId, requestId: id, providerInstanceId: instanceId }, input)),
+        }, threadId, turnId, () => !entry.done && !settled && !stopRequested, request, signal),
+      }));
       cloudTurnBot(turnEnv, turn.warmIdentity?.botId);
+      if (cloudBot && turnEpoch >= 1) turnEnv[TURN_SIGNIN_EPOCH] = String(turnEpoch);
+      const markSigninRefused = () => { if (cloudBot && turnEpoch >= 1) void markCloudSigninRefused(cloudBot, turnEpoch).then(() => forgetBotSignIns(cloudBot)); };
+      if (onCloudHome) {
+        const stanzas = cloudRenderMcp(mountedServers);
+        if (Object.keys(stanzas).length) cloudTurnRender(turnEnv, "mcp", stanzas);
+        // the launcher's own copy of the Ask hook (deploy/cloud-home/murage-turn-launch.py AGY_ASK_HOOK_SOURCE)
+        if (askStop()) cloudTurnRender(turnEnv, "hooks", "ask");
+        // Auto and Full: the relay's socket and token reach the launcher, which renders the hook root-owned in the turn's HOME
+        else if (relay?.cloud) cloudTurnRender(turnEnv, "hooks", { profile: "relay", ...relay.cloud });
+      }
       // the Ask hook runs as `<this program> <script>`; a packaged app is its own node only with this set
-      if (askStop || relayed) turnEnv.ELECTRON_RUN_AS_NODE = "1";
+      if (askStop() || relayed) turnEnv.ELECTRON_RUN_AS_NODE = "1";
       let child: ReturnType<typeof spawnCli>;
       try {
         child = gate.launch(entry, () => spawnCli(config.cli, args, {
           cwd,
           env: turnEnv,
           stdio: ["pipe", "pipe", "pipe"],
-        }, engineJob(), undefined, threadId));
+        }, engineJob({ noLimits: noLimits(), powerSession }), undefined, threadId));
       } catch (error) {
         restoreMcp();
         pending.delete(threadId);
@@ -788,11 +1033,21 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         settle(false, "spawn_error", null, undefined, { ...describeSpawnFailure(error instanceof Error ? error : new Error(String(error)), config.cli) });
         return { turnId };
       }
+      if (noLimits()) {
+        const title = takeNoLimitsPowerFallbackNotice(powerSession);
+        if (title) {
+          const itemId = `power-fallback-${turnId}`;
+          emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", toolKind: "notice", title });
+          emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+        }
+      }
       children.add(child);
+      engineLaunched = true;
       // The child's identity goes into the scope's manifest at once: a restart after a crash must not recover the home of an agy that is still running.
       scoped?.adoptChild(child.pid);
 
       let childClosed = false;
+      let retryingRelay = false;
       let postSettleReaper: ReturnType<typeof setTimeout> | undefined;
       let windowsStopRetry: ReturnType<typeof setTimeout> | undefined;
       let mcpFinalized = false;
@@ -802,6 +1057,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         restoreMcp();
       };
       const stop = () => {
+        mountRelay?.retire();
+        if (mountRelay) void mountRelay.finish();
         killCliTree(child); // process groups are POSIX-only
         if (process.platform === "win32" && !childClosed && !windowsStopRetry) {
           windowsStopRetry = setTimeout(() => { if (!childClosed) killCliTree(child); }, 3_000);
@@ -811,6 +1068,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           if (stopped) closeFinalizers.get(child)?.();
         });
       };
+      mountRelay?.attach(child, (_nativeError, refusal) => {
+        stop();
+        // LLM: a ledger refusal sealed the relay. The mount has no process of its own to claim (target null): the lease takes the
+        // close at once and its refuseTurn is the terminal, so this writes no ledger line; a native relay failure keeps the line.
+        const R = refusal !== undefined ? refusalFor(refusal, "agy.mount", { engine: ENGINE, threadId, binding: turn.releaseBinding, target: null, kind: "turn" }) : undefined;
+        if (!R?.lease) emit({ ...base(threadId, turnId), type: "runtime.error", message: LEDGER_REFUSAL_LINE });
+        settle(false, "memory-refused");
+      });
       /** The Ask hard stop's own end: the child is stopped at once, as for a Stop, but the turn is not the owner's. */
       const haltForAskStop = () => {
         askStopHalted = true;
@@ -820,6 +1085,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         stopRequested = true;
         stop();
       };
+      stopForHookFailure = () => { if (askPosture()) { askStopRefused = true; haltForAskStop(); } else requestStop(); };
       /** Dispose's own end: the child is stopped as for a Stop, but the turn ends as the engine closing. */
       const closeStop = () => {
         closing = true;
@@ -843,11 +1109,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       const handleLine = (line: string) => {
         let o: any;
         try {
-          o = JSON.parse(line);
+          o = registerBusyloopPayloadSite("read", JSON.parse(line));
         } catch {
           return;
         }
         appendNative(threadId, { dir: "in", source: "agy.stream", msg: o }, { rawChars: line.length });
+        // A revoked hook authority cannot be revived by a buffered success.
+        // The existing close path completes this turn after requestStop.
+        if (hookRevoked || retryingRelay) return;
         const payload = o[o.event] ?? {};
         switch (o.event) {
           case "init": {
@@ -863,28 +1132,38 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           case "step_update": {
             // A tool agy finished (DONE) or failed (ERROR) that never reached the relay ran, or started, without
             // Murage's check: the turn stops at once. A call the relay denied is answered, so its ERROR is not one.
-            if (relay && payload.step_type === "tool" && (payload.state === "DONE" || payload.state === "ERROR") && !relay.answered(`${payload.conversation_id ?? o.conversation_id ?? conversationId}:${payload.step_index}`) && !settled && !stopRequested && !closing) {
+            if (payload.step_type === "tool" && ["DONE", "ERROR"].includes(payload.state)) {
+              const ok = checkHooks("V-A5");
+              checkAllHookCanon("V-A5");
+              if (!ok) return;
+            }
+            const key = `${payload.conversation_id ?? o.conversation_id ?? conversationId}:${payload.step_index}`;
+            if (payload.step_type === "tool" && (payload.state === "DONE" ? (relay ? relay.decision(key) !== "allow" : askStop() && !(ANTIGRAVITY_ASK_READS as readonly string[]).includes(payload.tool_name)) : relay && payload.state === "ERROR" && relay.decision(key) === undefined) && !settled && !stopRequested && !closing) {
               console.warn(`${ENGINE} relay: ${String(payload.tool_name ?? "a tool")} ran without Murage's check; stopping the turn`);
               const itemId = `relay-skipped-${turnId}`;
               emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: ANTIGRAVITY_HOOK_SKIPPED, toolKind: "notice" });
               emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
-              requestStop();
+              // An Ask trip is a policy stop, never an owner cancellation.
+              if (askPosture()) { askStopRefused = true; haltForAskStop(); }
+              else requestStop();
             }
             if (payload.step_type === "tool") {
               const itemId = `${conversationId ?? o.conversation_id ?? "conv"}:${payload.step_index}`;
               if (payload.state === "ACTIVE") {
-                emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId, title: payload.tool_name });
+                // Parameters are execution evidence; keep them whole, separate from the display title.
+                emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId, title: payload.tool_name,
+                  ...(payload.tool_info?.parameters !== undefined ? { input: payload.tool_info.parameters } : {}) });
               } else if (payload.state === "DONE") {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
                 // A tool that is not a read finished on an Ask turn: the hook did not hold. Stop the child at once; the
                 // turn then ends with the note, as Murage's Ask stop and not as the owner's Stop (haltForAskStop).
-                if (askStop && !(ANTIGRAVITY_ASK_READS as readonly string[]).includes(String(payload.tool_name ?? "")) && !settled && !stopRequested && !closing && !askStopHalted) {
+                if (askStop() && !(ANTIGRAVITY_ASK_READS as readonly string[]).includes(String(payload.tool_name ?? "")) && !settled && !stopRequested && !closing && !askStopHalted) {
                   askStopRefused = true;
                   console.warn(`${ENGINE} ask stop: ${String(payload.tool_name ?? "a tool")} ran on an Ask turn; stopping the turn`);
                   haltForAskStop();
                 }
               } else if (payload.state === "ERROR") {
-                if (askStop && /denied by pre-tool hook/i.test(String(payload.tool_info?.error?.message ?? ""))) askStopRefused = true;
+                if (askStop() && /denied by pre-tool hook/i.test(String(payload.tool_info?.error?.message ?? ""))) askStopRefused = true;
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: false });
               } else {
                 working(stepFingerprint(payload));
@@ -911,7 +1190,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             if (response) {
               emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: response });
               emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text: response });
-            } else if (Array.isArray(payload.denied_actions) && payload.denied_actions.length > 0 && askStop) {
+            } else if (Array.isArray(payload.denied_actions) && payload.denied_actions.length > 0 && askStop()) {
               // At Ask the refusal is the Ask stop's: its own note, once (settle).
               askStopRefused = true;
             } else if (Array.isArray(payload.denied_actions) && payload.denied_actions.length > 0 && !askStopRefused && !relayed) {
@@ -939,6 +1218,15 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
               break;
             }
             // After the Ask stop halted the child, its result (whatever its status) ends the turn as that stop.
+            // Tier 1: only a provider-owned code or status (UNAUTHENTICATED, invalid_grant, HTTP 401) is a sign-in refusal; the prose
+            // of the result never is. One structured 401 and nothing else: no starter runs, nothing is posted into the thread.
+            const signinRefused = payload.status !== "SUCCESS" && !stoppedResult && !askStopHalted && agyAuthFromResult(payload);
+            if (signinRefused) {
+              markSigninRefused();
+              const usage = payload.usage ? { input: (payload.usage.input_tokens || 0) + (payload.usage.cache_read_tokens || 0), output: payload.usage.output_tokens || 0 } : keptUsage;
+              settle(false, AGY_SIGNIN_STOP_REASON, null, usage, { message: antigravityResultFailure(payload), authRequired: true, providerError: { ...agySigninProviderError } });
+              break;
+            }
             const failure = payload.status !== "SUCCESS" && !stoppedResult && !askStopHalted ? antigravityResultFailure(payload) : undefined;
             // result.usage is the turn total (the per-step agent_response
             // figures above are its parts, not additions to it)
@@ -976,6 +1264,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       child.stderr.on("data", (c) => stderr.push(c));
 
       child.on("error", (e) => {
+        if (retryingRelay) return;
         // S4 power: a launch the block could not cover wrote no prompt (turn-attribution.ts notWritten).
         if ((e as NodeJS.ErrnoException).code === HOST_POWER_CODE) turn.notWritten?.();
         settle(false, "spawn_error", null, undefined, { ...describeSpawnFailure(e, config.cli) });
@@ -992,6 +1281,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           clearTimeout(postSettleReaper);
           clearTimeout(windowsStopRetry);
           finalizeMcp();
+          if (retryingRelay) return;
           if (!settled && stopRequested) {
           // The process ended because Murage stopped the turn: settle as
           // cancelled like the ACP, Pi, Claude and Codex drivers, with no
@@ -1000,14 +1290,26 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           } else if (!settled && askStopHalted) {
           // The process ended because the Ask stop halted it: the turn ends, with the note, and no error card.
           settle(true, ANTIGRAVITY_ASK_STOP_REASON, null, keptUsage);
+          } else if (!settled && hostPowerRefused(child) && noLimits() && !powerRetried && noLimitsPowerFallbackActive(powerSession)) {
+            retryingRelay = true; // the old startup must never settle the replacement
+            active.delete(threadId); pending.add(threadId);
+            entry.live = false; entry.stopLive = undefined;
+            gate.handoff(entry, async () => { await gate.step(entry, startTurn(originalTurn, entry, turnId, relayAttempt, true)); }, classify);
           } else if (!settled && hostPowerRefused(child)) {
           // S4 power (design sections 2 and 8): the wrapper refused before the engine ran; the prompt was not delivered.
           turn.notWritten?.();
             settle(false, "exit_before_result", null, undefined, hostPowerMessage());
           } else if (!settled) {
+            const last = stderr.lastWords();
+            const signinRefused = agyAuthFromStderr(last);
+            if (signinRefused) {
+              markSigninRefused();
+              settle(false, AGY_SIGNIN_STOP_REASON, null, keptUsage, { message: engineClosedLine(ENGINE, code, undefined, last), authRequired: true, providerError: { ...agySigninProviderError } });
+            } else {
             const closedLine = engineClosedLine(ENGINE, code, undefined, stderr.lastWords());
             // the usage already reported rides every ending after the turn ran: a dispose, and a child that crashed on its own (ruling U)
             settle(false, "exit_before_result", null, keptUsage, closedLine, closedLine);
+            }
           }
         };
         closeFinalizers.set(child, finalize);
@@ -1017,12 +1319,13 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         });
       });
 
-      active.set(threadId, { stop: requestStop, close: closeStop, turnId, asks: relayAsks });
+      // AGK: the Stop confirmation covers the relay AND the child: CliMountRelay.finish() awaits the attached child's tree stop itself.
+      active.set(threadId, { stop: requestStop, close: closeStop, turnId, noLimits, asks: relayAsks, confirmed: () => mountRelay ? mountRelay.finish() : awaitCliTreeStopped(child) });
       pending.delete(threadId);
 
       // Antigravity's ruled shape: turn.started is announced here, at the prompt (mark-only), and an earlier ending has none
       entry.markStarted();
-      if (workspaceHooks.length) {
+      if (workspaceHooks.length && !noLimits()) {
         const itemId = `workspace-hooks-${turnId}`;
         emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: antigravityWorkspaceHooksNote(workspaceHooks[0]!), toolKind: "notice" });
         emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
@@ -1033,12 +1336,31 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // terminal result, then exits cleanly. Conversation continuity still
       // uses --conversation on the next per-turn process.
       const inputMessage = { event: "user", message: { content: prompt } };
+      /** The child tree's confirmed stop, the close part of a refused submission. */
+      const childStopped = async (): Promise<CloseResult> => ((await awaitCliTreeStopped(child)) ? { confirmed: true } : { confirmed: false, reason: "timeout" });
+      /** A refused write ends by its fence kind (model r4 0.5, P1/P5): kind turn (the lease refused, this claim joined its R) is memory-refused;
+       * kind submission (no lease R: the boundary took it) keeps submission_refused. The settle is the composite's first part beside the
+       * child's confirmed stop; a lease-closed claim settles only. */
+      const closeRefusedSubmission = (R: FencedRefusal) => {
+        const reason = R.kind === "turn" ? "memory-refused" : "submission_refused";
+        const ended = () => { settle(false, reason); return Promise.resolve(); };
+        if (R.closer === "driver") turnRef.teardowns?.push(R.close(composeClose({ settleFenced: ended }, childStopped)));
+        else settle(false, reason);
+      };
       const writePrompt = () => {
         appendNative(threadId, { dir: "out", source: "agy.stream", msg: inputMessage });
         try {
-          child.stdin.end(`${JSON.stringify(inputMessage)}\n`);
+          const wire = serializeAntigravityInput(inputMessage, turn.beforeSubmit);
+          fencedSubmit(turn, () => gate.launch(entry, () => registerBusyloopRequestSite(fluxRouteFor(noFluxTraffic({ citation: "server/drivers/antigravity.ts:antigravityEnvironment; server/drivers/antigravity.test.ts:routing isolation", reason: "agy uses its own Google session; routing environment is stripped and the driver exposes no provider URL override" })), child.stdin.end(wire))), wire, () => {
+            if (gate.why(entry) || entry.done || stopRequested) throw new GateStopped(gate.why(entry));
+          });
         } catch (error) {
           stop();
+          // A refused write is classified by its own path and claimed before the submission settle: the settle runs first inside the
+          // one composite close, with the child's confirmed stop beside it (never a close before the settle). A lease R of this dispatch
+          // generation is joined (kind turn); with none, this claim is the first R, kind submission.
+          const R = refusalFor(error, "agy.prompt", { engine: ENGINE, threadId, binding: turn.releaseBinding, target: entry, kind: "submission", owner: turnRef });
+          if (R) { closeRefusedSubmission(R); return; }
           settle(false, "stdin_write_failed", null, undefined, `Murage could not send this message to ${ENGINE}: ${error instanceof Error ? error.message : String(error)}`);
         }
       };
@@ -1048,44 +1370,61 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         // With agy's own permissions skipped, the relay hook is the only check: the prompt is written only once agy's
         // log shows it loaded the hook. Anything else refuses the turn with nothing written.
         // agy's count cannot tell a project's hook from Murage's: the check is exact (relayHookLoadState).
-        const expectHooks = { hooksPath: join(scoped!.home, ".gemini", "config", "hooks.json"), workspaceDirs: [cwd] };
+        // On a home there is no scoped home: the hook lives in the launcher's HOME for this turn, and the launcher masks
+        // <cwd>/<root>/hooks.json (all four customization roots) with an empty placeholder that agy counts and names (RelayHookExpect.launcherMasks).
+        const hasHookHome = onCloudHome ? Boolean(hookRelay.cloud && turnEnv.HOME) : scoped !== null;
+        const expectHooks = onCloudHome
+          ? { hooksPath: join(turnEnv.HOME!, ".gemini", "config", "hooks.json"), workspaceDirs: [cwd], launcherMasks: antigravityLauncherMasks([cwd]) }
+          : { hooksPath: join(scoped?.home ?? "", ".gemini", "config", "hooks.json"), workspaceDirs: [cwd] };
         // the wait is a startup await after sendTurn returned: detached, and read against the gate before the prompt is written
         gate.handoff(entry, async () => {
-          const loaded = await gate.step(entry, awaitRelayHookLoaded(hookRelay.logPath, expectHooks, () => settled || stopRequested || closing || childClosed));
-          if (settled || stopRequested) return;
-          if (loaded.state !== "loaded") {
+          const loaded = hasHookHome ? await gate.step(entry, awaitRelayHookLoaded(hookRelay.logPath, { ...expectHooks, allowWorkspaceHooks: noLimits() }, () => settled || stopRequested || closing || childClosed)) : { state: "refused" as const };
+          if (settled || stopRequested) { turn.attemptNotWritten?.(launchAttempt); return; }
+          if (loaded.state !== "loaded" && noLimits()) noticeMissingWipeCheck(`hook ${loaded.state}`);
+          if (loaded.state !== "loaded" && !noLimits()) {
+            if (bound && askStop()) { stop(); turn.notWritten?.(); try { refuseBoundAsk(1335); } catch {} if (!fencedOf(turnRef)?.lease) emit({ ...base(threadId, turnId), type: "runtime.error", message: LEDGER_REFUSAL_LINE }); settle(false, "memory-refused"); return; }
             console.warn(`${ENGINE} relay: agy did not load Murage's hook (${loaded.state}); the turn is refused before its prompt`);
             const itemId = `relay-unloaded-${turnId}`;
-            emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: loaded.state === "foreign" ? antigravityForeignHooksNote(loaded.file) : ANTIGRAVITY_HOOK_NOT_LOADED, toolKind: "notice" });
+            emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: noLimits() ? ANTIGRAVITY_SAFETY_RELAY_UNAVAILABLE : loaded.state === "foreign" ? antigravityForeignHooksNote(loaded.file) : ANTIGRAVITY_HOOK_NOT_LOADED, toolKind: "notice" });
             emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
             stop();
-            turn.notWritten?.();
-            settle(false, "hook_not_loaded");
+            if (turn.attemptNotWritten) turn.attemptNotWritten(launchAttempt); else turn.notWritten?.();
+            settle(false, noLimits() ? "safety_relay_unavailable" : "hook_not_loaded");
             return;
           }
           // The submission fence again, with no await between it and this write (SendTurnInput.beforeSubmit).
+          let writeAttempt: number | void;
+          turn.attemptSettled?.(launchAttempt);
           try {
-            turn.beforeSubmit?.();
+            writeAttempt = turn.beforeSubmit?.();
+            turn.attemptNotWritten?.(launchAttempt);
           } catch {
+            turn.attemptNotWritten?.(launchAttempt);
             stop();
+            // the boundary recorded this refusal itself; only a caller with no attempt API still gets the legacy withdraw
+            if (!turn.attemptNotWritten) turn.notWritten?.();
             settle(false, "submission_refused");
             return;
           }
           gate.launch(entry, () => writePrompt());
+          turn.attemptWritten?.(writeAttempt);
         }, classify);
       }
 
       return { turnId };
     };
 
-    const sendTurn = async (turn: SendTurnInput) => {
+    const sendTurn = (turn: SendTurnInput): Promise<{ turnId: string }> => emissionSource.run(turn.prewarm ? undefined : turn.sourceContext, () => sendTurnCaptured(turn));
+    const sendTurnCaptured = async (turn: SendTurnInput) => {
+      assertNativeIngressAdmission(turn, "antigravity");
+      assertConsumingMountAdmission(turn, "server");
       turn = { ...turn, cwd: botFolderOrThrow(turn) };
       const { threadId } = turn;
       if (disposed) throw new Error("Antigravity instance is disposed");
       if (active.has(threadId) || pending.has(threadId)) throw new Error("a turn is already running on this thread");
       pending.add(threadId);
       const turnId = newId();
-      const entry = gate.enter(threadId, { turnId });
+      const entry = gate.enter(threadId, { turnId, source: turn.prewarm ? undefined : turn.sourceContext });
       try {
         return await gate.run(entry, () => startTurn(turn, entry, turnId), classify);
       } finally {
@@ -1117,6 +1456,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // No auth field: agy auth is keyring-backed with no reliable file marker
       // (~/.gemini/antigravity-cli/ exists after first run even when logged
       // out), so any file heuristic would overstate "signed in". Leave undefined.
+      // On a Cloud home the launcher DOES know (the bot's root-only store holds the token, which this server cannot
+      // read): a sign-in anywhere on the home is "they already pay for this". Otherwise still undefined.
+      if ((await cloudEngineSignedInSomewhere(DRIVER_KIND)) === true) return { state: "available", version, authenticated: true, setUpOnHome: true };
       return { state: "available", version };
     };
 
@@ -1145,6 +1487,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         textEnv = { ...env, HOME: textScope.home, USERPROFILE: textScope.home };
       } catch (error) {
         // Fails closed: a helper prompt never runs in the owner's real home.
+        if (error instanceof HookRepairFailed) throw error;
         throw engineFolderUnavailable(ENGINE, error);
       }
       return new Promise<string>((resolve, reject) => {
@@ -1202,7 +1545,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             stdoutBuffer = stdoutBuffer.slice(newline + 1);
             if (!line.trim()) continue;
             try {
-              const event = JSON.parse(line);
+              const event = registerBusyloopPayloadSite("read", JSON.parse(line));
               if (event.event !== "result") continue;
               const result = event.result ?? {};
               if (result.status === "SUCCESS" && typeof result.response === "string") response = result.response;
@@ -1226,7 +1569,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         });
 
         try {
-          child.stdin.end(`${JSON.stringify({ event: "user", message: { content: prompt } })}\n`);
+          registerBusyloopRequestSite(fluxRouteFor(noFluxTraffic({ citation: "server/drivers/antigravity.ts:antigravityEnvironment; server/drivers/antigravity.test.ts:routing isolation", reason: "agy uses its own Google session; routing environment is stripped and the driver exposes no provider URL override" })), child.stdin.end(`${JSON.stringify({ event: "user", message: { content: prompt } })}\n`));
         } catch (error) {
           killCliTree(child);
           finish(error instanceof Error ? error : new Error(String(error)));
@@ -1234,7 +1577,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       });
     };
 
-    return {
+    return withRequestDelivery({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
@@ -1259,6 +1602,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           // unset on purpose — the host desktop requires per-action human
           // approval (see contracts.ts), which print mode cannot deliver in
           // any mode; that returns with the native ACP path (agy issue #31).
+          browserMcp: config.fullAuto,
+          memoryMcp: config.fullAuto,
+          composioMcp: config.fullAuto,
           computerMcp: config.fullAuto,
           // The same approval limitation applies to bot-to-bot calls. The
           // harness only injects the short-lived agents proxy when this flag
@@ -1269,17 +1615,34 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           customMcp: config.fullAuto,
         },
         sendTurn,
-        interruptTurn: async (threadId) => {
+        interruptTurn: async (threadId, turnId) => {
           // the gate first, before any await: a turn still starting ends as the stopped pair, a live one is stopped through its mark
-          gate.ask(threadId);
+          const current = active.get(threadId);
+          // LLI-agy: a refusal the DRIVER is closing already owns this turn's one close: join its teardown, never a second stop. When
+          // the lease won the close (or there is no refusal) the body below runs: it is the lease's fallback close.
+          const R = fencedRefusalRegistry.byTurn(turnId ?? current?.turnId);
+          if (R?.closer === "driver") {
+            const closed = await R.teardown;
+            return closed.confirmed ? { closeConfirmed: true } : { closeConfirmed: false, reason: closed.reason === "timeout" ? "timeout" : "stop-failed" };
+          }
+          const settled = leaseClosing.get(threadId);
+          if (R?.closer === "lease" && turnId && current?.turnId !== turnId && settled?.turnId === turnId) {
+            leaseClosing.delete(threadId);
+            return await settled.confirmed() ? { closeConfirmed: true } : { closeConfirmed: false, reason: "timeout" };
+          }
+          if (turnId && current?.turnId !== turnId) return { closeConfirmed: false, reason: "stop-failed" };
+          gate.ask(threadId, turnId);
+          if (current?.confirmed) return await current.confirmed()
+            ? { closeConfirmed: true } : { closeConfirmed: false, reason: "timeout" };
         },
         // Only a relayed turn (Auto, Full access) has asks: each is one tool call agy is waiting to run.
         respondToRequest: async (threadId, requestId, decision) => {
-          const finish = active.get(threadId)?.asks.get(requestId);
-          if (!finish || decision.behavior === "answer") return "unavailable";
-          // the hook cannot run a narrowed call in place of the one asked, so a narrowing is a deny with its reason
-          if (decision.behavior === "allow" && decision.updatedInput) return finish("deny", "user", "Murage allowed only a narrower form of this call; ask again in that form") ? "rejected" : "unavailable";
-          if (!finish(decision.behavior, "user", decision.message)) return "unavailable";
+          const current=active.get(threadId),finish=current?.asks.get(requestId);
+          if (!current || !finish || decision.behavior === "answer") return "unavailable";
+          // The hook cannot substitute inputs. No limits releases the original
+          // call, whose actual input is still checked for a wipe by finish.
+          if (decision.behavior === "allow" && decision.updatedInput && !current.noLimits()) return await finish("deny", "user", "Murage allowed only a narrower form of this call; ask again in that form") ? "rejected" : "unavailable";
+          if (!(await finish(decision.behavior, "user", decision.message))) return "unavailable";
           return decision.behavior === "allow" ? "allowed-once" : "rejected";
         },
         hasSession: (threadId) => active.has(threadId),
@@ -1303,6 +1666,6 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         await reapChildren(); // retain listeners on uncertainty
         listeners.clear();
       },
-    };
+    }, answerTransport);
   },
 };

@@ -19,6 +19,20 @@ const confirmFake = (child: ChildProcess): Promise<boolean> => closedFakes.has(c
   ? Promise.resolve(true) : new Promise(resolve => child.once("close", () => resolve(true)));
 const budget = { closeMs: 40, maxMs: 400 };
 
+it("close knowledge distinguishes an unknown turn from its tracked and confirmed child", async () => {
+  const child = fakeChild(), teardowns = new TurnTeardowns(confirmFake);
+  expect(teardowns.knows("thread", "turn")).toBe(false);
+  const teardown = teardowns.track("thread", "turn", child);
+  expect(teardowns.knows("thread", "turn")).toBe(true);
+  expect(teardowns.knows("other-thread", "turn")).toBe(false);
+  expect(teardowns.knows("thread", "other-turn")).toBe(false);
+  teardown.markStopRequested();
+  child.emit("close", 0, null);
+  await teardowns.closed("thread", "turn");
+  expect(teardowns.knows("thread", "turn")).toBe(true);
+  await expect(teardowns.closed("thread", "unknown")).rejects.toMatchObject({ code: "provider_stop_unconfirmed" });
+});
+
 describe("ChildTeardown", () => {
   // U24 design R5: the Windows job route answers every caller at JOB_STOP_CAP_MS while its attempt continues; a late empty-job
   // answer must release the teardown without another Stop.
@@ -182,6 +196,27 @@ describe("ChildTeardown", () => {
 });
 
 describe("TurnTeardowns", () => {
+  it("a pooled child handed back to a pool and parked again keeps one lease name for its life", async () => {
+    const teardowns = new TurnTeardowns(confirmFake);
+    const child = fakeChild(7);
+    teardowns.track("thread", "acp-process-1", child).detach();
+    // a closed lease is remembered, so a second track of the same name refuses ...
+    expect(() => teardowns.track("thread", "acp-process-1", child)).toThrow("PROVIDER_LEASE_ALREADY_TRACKED");
+    // ... except for a hand-back, which is no close: the live child is parked again under its own name
+    teardowns.handedBack("acp-process-1");
+    const again = teardowns.track("thread", "acp-process-1", child);
+    expect(teardowns.pending("thread")).toBe(true);
+    child.emit("close", 0, null);
+    await expect(teardowns.wait("thread", "acp-process-1", budget)).resolves.toEqual({ closeConfirmed: true });
+    expect(again.closed).toBe(true);
+    // a real close stays remembered: the same name is never leased again
+    expect(() => teardowns.track("thread", "acp-process-1", fakeChild(8))).toThrow("PROVIDER_LEASE_ALREADY_TRACKED");
+    // and a live lease is never forgotten by a hand-back call
+    const live = fakeChild(9);
+    teardowns.track("thread", "acp-process-2", live);
+    teardowns.handedBack("acp-process-2");
+    expect(() => teardowns.track("thread", "acp-process-2", live)).toThrow("PROVIDER_LEASE_ALREADY_TRACKED");
+  });
   it("scopes waits to the exact turn and forgets a child once it closed", async () => {
     const teardowns = new TurnTeardowns(confirmFake);
     const old = fakeChild(1), current = fakeChild(2), other = fakeChild(3);
@@ -196,6 +231,19 @@ describe("TurnTeardowns", () => {
     await expect(whole).resolves.toEqual({ closeConfirmed: true });
     expect(teardowns.pending("thread")).toBe(false);
     expect(teardowns.pending("other-thread")).toBe(true);
+  });
+
+  it("knows a turn's child while tracked and once closed, never another thread's or an unknown turn", async () => {
+    const teardowns = new TurnTeardowns(confirmFake);
+    const child = fakeChild(5);
+    expect(teardowns.knows("thread", "turn")).toBe(false);
+    teardowns.track("thread", "turn", child);
+    expect(teardowns.knows("thread", "turn")).toBe(true);
+    expect(teardowns.knows("other-thread", "turn")).toBe(false);
+    child.emit("close", 0, null);
+    await expect(teardowns.closed("thread", "turn")).resolves.toBeUndefined();
+    expect(teardowns.knows("thread", "turn")).toBe(true);
+    expect(teardowns.knows("thread", "unknown-turn")).toBe(false);
   });
 
   it("is unconfirmed while any tracked child outlives the budget", async () => {

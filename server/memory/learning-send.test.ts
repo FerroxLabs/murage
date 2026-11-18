@@ -185,7 +185,6 @@ describe("transaction protocol (T18c, T18d)", () => {
     const gate = gateOver();
     transaction(db => {
       expect(() => gate.send(() => undefined)).toThrow(/MEMORY_SEND_FENCED/);
-      expect(() => gate.admit()).toThrow(/MEMORY_SEND_FENCED/);
       expect(db.isTransaction).toBe(true);
     });
     expect(gate.released).toBe(0);
@@ -236,17 +235,30 @@ describe("release accounting (T3b, T6b, T6c)", () => {
     } finally { holder.close(); }
     expect(gate.released).toBe(1);
   });
-  it("notWritten withdraws only an open, unwritten admission, once", () => {
+  it("the gate has one release form: send (H1-SENDLOCK)", () => {
+    const gate = gateOver() as unknown as Record<string, unknown>;
+    expect(gate.admit).toBeUndefined(); expect(gate.wrote).toBeUndefined(); expect(gate.notWritten).toBeUndefined();
+  });
+});
+
+describe("the write holds the lock (H1-SENDLOCK T-H1)", () => {
+  it("another connection cannot commit a hide between the check and the bytes leaving; it commits after the COMMIT", () => {
     const gate = gateOver();
-    gate.notWritten();                    // before any admit: no-op
-    expect(gate.released).toBe(0);
-    gate.admit(); gate.wrote();           // earlier attempt written
-    gate.admit(); gate.notWritten();      // later admission withdrawn
-    gate.notWritten();                    // a second withdrawal: no-op
-    expect(gate.released).toBe(1);
-    const fresh = gateOver();
-    fresh.admit(); fresh.notWritten();
-    expect(fresh.released).toBe(0);
+    const other = second();
+    try {
+      other.exec("PRAGMA busy_timeout = 0");
+      const order: string[] = [];
+      gate.send(() => {
+        // the bytes leave here: a hide on another connection must wait for the gate's COMMIT
+        try { other.exec("INSERT INTO memory_deny(kind,id,epoch,created_at) VALUES('scope','h1-race',1,1)"); order.push("hide-committed"); }
+        catch (error) { expect(String((error as Error).message)).toMatch(/locked|busy/i); order.push("hide-busy"); }
+        order.push("bytes");
+      });
+      other.exec("INSERT INTO memory_deny(kind,id,epoch,created_at) VALUES('scope','h1-race',1,1)");
+      order.push("hide-after-commit");
+      expect(order).toEqual(["hide-busy", "bytes", "hide-after-commit"]);
+      expect(gate.released).toBe(1);
+    } finally { other.close(); }
   });
 });
 

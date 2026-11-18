@@ -8,12 +8,16 @@ import { afterEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ attempts: [] as number[], fail: true, owed: true }));
 vi.mock("./embeddings.ts", () => ({ MemoryEmbeddings: class { identity = "backoff"; embed(texts: string[]) { return Promise.resolve(texts.map(() => [1])); } } }));
 vi.mock("./index.ts", () => ({ MemoryIndex: class {
+  static async create() { return new this(); }
+  resetDone() { return null; }
+  stopInfo() { return null; }
   rebuilt = false;
   prepareModel() {}
+  async applyBatch() { this.upsert(); return { status: "done" as const }; }
   upsert() {}
   vector() {}
   search() { return { hits: [], vectorRows: 0 }; }
-  purgeRolledCheckpoints() { state.attempts.push(Date.now()); if (state.fail) throw new Error("merge failed"); return { removed: 0, examined: 0, merged: false, done: true }; }
+  purgeRolledCheckpoints() { state.attempts.push(Date.now()); if (state.fail) throw new Error("merge failed"); state.owed = false; return { removed: 0, examined: 0, merged: false, done: true }; }
   maintenanceOwed() { return state.owed; }
   close() {}
 } }));
@@ -28,15 +32,15 @@ it("successful upserts do not cancel or reset a pending failure back-off", async
   const realProcess = process, listeners = new Map<string, (message: unknown) => void>();
   const workerProcess = Object.create(realProcess) as NodeJS.Process;
   Object.defineProperties(workerProcess, {
-    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect") { listeners.set(event, listener); return workerProcess; } return realProcess.on(event, listener); } },
-    send: { value: () => true },
+    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect") { listeners.set(event, listener); return workerProcess; } return workerProcess; } },
+    send: { value: (_m: unknown, cb?: (e: Error | null) => void) => { if (typeof cb === "function") cb(null); return true; } },
     resourceUsage: { value: () => realProcess.resourceUsage() },
   });
   vi.stubGlobal("process", workerProcess);
   await import("./worker.ts");
   const emit = listeners.get("message")!;
   const MIN = 60_000, start = Date.now();
-  emit({ type: "init", indexPath: "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
+  await emit({ type: "init", indexPath: "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
   await vi.advanceTimersByTimeAsync(10);
   expect(state.attempts.length).toBe(1);                       // the first merge fails; the retry is due in 5 min
   let n = 0;
@@ -60,7 +64,7 @@ it("successful upserts do not cancel or reset a pending failure back-off", async
   // success resets the back-off: a batch now starts maintenance again at once
   state.owed = true;
   emit({ type: "index", requestId: "last", records: [{ id: "last", version: 1, scopeId: "s", text: "t", deleted: false }] });
-  state.owed = false;                                           // the batch saw the debt; the pass then ends (no spin in the fixture)
+  // The successful maintenance producer clears its debt after the batch observes it.
   await vi.advanceTimersByTimeAsync(100);
   expect(state.attempts.length).toBe(4);
 });

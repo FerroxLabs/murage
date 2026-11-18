@@ -1,0 +1,3 @@
+# muragesite c8e6ce21612c73a563690e016a78202f6ef84660 apps/web/lib/murage/news.ts:25-26 (NEWS_CONSENT_TEXT, the news route's words when the caller sends none)
+export const NEWS_CONSENT_TEXT =
+  'Keep me up to date on new releases, insights, how-tos and tutorials. Unsubscribe at any time.';

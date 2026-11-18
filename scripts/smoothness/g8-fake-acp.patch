@@ -1,0 +1,14 @@
+diff --git a/server/testing/fake-acp-cli.ts b/server/testing/fake-acp-cli.ts
+index ab6b9f955..ec6e35344 100755
+--- a/server/testing/fake-acp-cli.ts
++++ b/server/testing/fake-acp-cli.ts
+@@ -2328,7 +2328,8 @@ function handle(msg: any) {
+         }
+         void driveMcp(agentsMcp, [
+           { name: "list_bots", args: () => ({}) },
+-          { name: "delegate_bot", args: (list) => ({ bot_id: /id: ([\w-]+)/.exec(list)?.[1] ?? "", message: "LEAD_TASK please do the work", reason: "handover" }) },
++          // FAKE_ACP_DELEGATE_TO (as in delegate-peer): the peer to hand over to; default the first listed bot
++          { name: "delegate_bot", args: (list) => ({ bot_id: process.env.FAKE_ACP_DELEGATE_TO ?? /id: ([\w-]+)/.exec(list)?.[1] ?? "", message: "LEAD_TASK please do the work", reason: "handover" }) },
+         ])
+           .then((reply) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `lead handed over: ${reply}` } } } }); complete(); })
+           .catch((e) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `lead error: ${(e as Error).message}` } } } }); complete(); });

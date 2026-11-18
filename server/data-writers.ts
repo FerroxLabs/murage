@@ -10,6 +10,10 @@ export interface DataWriterStops {
   stopEngineHistory(): Promise<boolean>;
   /** Ends the log checkpointer; true once its thread has really exited. Must run after the database is closed. */
   stopWalMaintenance(): Promise<boolean>;
+  /** Joins the search worker and closes its reader before releasing the data lease. */
+  stopSearchIndex?(): Promise<boolean>;
+  /** Joins receipts checkpoint workers before releasing the installation lease. */
+  stopLedgerCheckpoints?(): Promise<boolean>;
 }
 
 /** True only when the database is closed AND the engine-history worker AND the checkpointer have really exited. False keeps
@@ -17,8 +21,8 @@ export interface DataWriterStops {
 export async function stopDataWriters(steps: DataWriterStops): Promise<boolean> {
   const engines = steps.stopEngineHistory(); // admission closes in this call, before anything else here
   steps.closeDatabase();                     // the server connection closes before the checkpointer's
-  const [enginesGone, checkpointerGone] = await Promise.all([engines, steps.stopWalMaintenance()]);
-  return enginesGone && checkpointerGone;
+  const [enginesGone, checkpointerGone, searchGone, ledgerGone] = await Promise.all([engines, steps.stopWalMaintenance(), steps.stopSearchIndex?.() ?? true, steps.stopLedgerCheckpoints?.() ?? true]);
+  return enginesGone && checkpointerGone && searchGone && ledgerGone;
 }
 
 /** Stops the data writers once, on whichever shutdown path gets there first. A stop that arrives before the writers ever started

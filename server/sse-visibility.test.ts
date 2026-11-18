@@ -270,6 +270,7 @@ describe("the desktop secret itself", () => {
         process.execPath,
         ["--experimental-strip-types", "--input-type=module", "--eval", probe],
         {
+          windowsHide: true,
           cwd: join(dirname(fileURLToPath(import.meta.url)), ".."),
           env: { ...process.env, ...env },
           encoding: "utf8",

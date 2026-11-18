@@ -144,8 +144,10 @@ it("startTurn admits through the claim boundary and releases what it did not mou
   // SL-L L3 (1.0.4): the turn's waits pass no deadline, so nothing fails
   // after an hour in line; one "still waiting" line is written instead.
   expect(code).not.toMatch(/directRuns\.acquire\([^)]*RESOURCE_WAIT_TIMEOUT_MS/);
-  expect(code).toContain("directRuns.acquire(run,resources,onWait,undefined,yieldPolicy,longWait)");
-  expect(code).toContain("directRuns.acquire(run,rest,onWait,undefined,undefined,longWait)");
+  // fc43c2145c: the browser yield policy is gone (browser execution is released while a conversation waits
+  // for its owner instead), so the turn takes its resources in one wait with no yield and no second acquire.
+  expect(code).toContain("directRuns.acquire(run,resources,onWait,undefined,undefined,longWait)");
+  expect(code.match(/directRuns\.acquire\(/g)?.length).toBe(1);
   expect(code).toContain("stillWaitingRemainingMs(firstWaitAt,Date.now())");
 });
 

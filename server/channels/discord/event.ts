@@ -1,3 +1,4 @@
+import { channelSigninCodeRefusal } from "../signin-code.ts";
 import { z } from "zod";
 import { channelReply } from "../reply-text.ts";
 
@@ -22,6 +23,8 @@ export function normalizeDiscordMessage(raw: unknown, identity: DiscordIdentity)
   return { deliveryId: `discord:${e.applicationId}:${e.dmId}:${e.id}`, dmId: e.dmId, text: e.content, occurredAt: e.occurredAt, sender: { name: e.authorName ?? undefined, username: e.authorUsername ?? undefined } };
 }
 export function discordPrompt(text: string): { prompt: string; response?: string } {
+  const refusal = channelSigninCodeRefusal(text);
+  if (refusal) return { prompt: "", response: refusal };
   if (/^\/(?:approve|deny|allow|reject|pair)(?:\s|$)/i.test(text) || /^(?:approve|deny|allow|reject|yes|no)$/i.test(text.trim()))
     return { prompt: "", response: channelReply("channelReply.approvalsInMurage", { channel: "Discord" }) };
   return { prompt: `[UNTRUSTED DISCORD CHANNEL MESSAGE]\n${text}\n[/UNTRUSTED DISCORD CHANNEL MESSAGE]` };

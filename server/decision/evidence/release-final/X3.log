@@ -1,0 +1,42 @@
+COMMAND node_modules/.bin/vitest run server/decision/routine-policy.test.ts -t A7a
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/routine-policy.test.ts > A7a core validates exact routine run source, bot and generation
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=62 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/routine-policy.test.ts > A7a core validates exact routine wake source, bot and generation
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS app_trigger_bindings ( trigger_id TEXT PRIMARY  ms=62 source=exec:CREATE TABLE IF NOT EXISTS app_trigger_b
+
+ ❯ server/decision/routine-policy.test.ts (5 tests | 4 failed | 1 skipped) 2747ms
+   ↓ R4b R4c M29 owner routines override captured ceiling only while bot is unlimited; draft stays Ask
+   × A7a core validates exact routine run source, bot and generation 737ms
+   × A7a core validates exact routine wake source, bot and generation 648ms
+   × A7a core validates exact routine peer source, bot and generation 677ms
+   × A7a core validates exact routine project-room source, bot and generation 679ms
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 1 skipped (5)
+   Start at  07:37:44
+   Duration  11.63s (transform 7.07s, setup 8.32s, import 411ms, tests 2.75s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine run source, bot and generation
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine wake source, bot and generation
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine peer source, bot and generation
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine project-room source, bot and generation
+AssertionError: expected 'other' to be 'owner-routine' // Object.is equality
+
+Expected: "owner-routine"
+Received: "other"
+
+ ❯ server/decision/routine-policy.test.ts:10:65
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+

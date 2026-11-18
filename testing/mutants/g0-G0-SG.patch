@@ -1,0 +1,13 @@
+diff --git a/server/drivers/stop-gate.ts b/server/drivers/stop-gate.ts
+index 6aabddf200..f3341ad116 100644
+--- a/server/drivers/stop-gate.ts
++++ b/server/drivers/stop-gate.ts
+@@ -129,7 +129,7 @@ export function createStopGate(env: GateEnv) {
+         if (v.leaseMode) {
+           e.started = true;
+           const release = () => leave(e);
+-          if (v.releaseAfter) void v.releaseAfter.then(release, release); else release();
++          release();
+           return;
+         }
+         try {

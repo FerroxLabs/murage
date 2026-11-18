@@ -2,7 +2,8 @@ import { runInNewContext } from "node:vm";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { deriveManagedComposioCredentials, MANAGED_COMPOSIO_UPDATE_OPTIONS } from "./managed-composio.mjs";
+import { MANAGED_COMPOSIO_UPDATE_OPTIONS } from "./managed-composio.mjs";
+import { deriveManagedComposioCredentials } from "./testing/composio-fixture.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
 import { trackedCredentialUpdate } from "./secure-credentials.mjs";
 

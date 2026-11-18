@@ -7,7 +7,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -59,7 +59,7 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 async function openChat(page: Page, width: number, height: number) {
   await page.setViewportSize({ width, height });
   await page.route("**/api/whats-new?*", (route) => route.fulfill({ json: { show: false } }));
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   const sidebar = await openSidebar(page);
   await sidebar.getByText("Dax", { exact: true }).first().click();
@@ -83,7 +83,7 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     await openBotProfile(page, "Dax");
     const dialog = page.getByRole("dialog", { name: "Bot settings: Dax", exact: true });
     await expect(dialog).toBeVisible();
-    if (width < 640) await dialog.locator("select").first().selectOption("permissions");
+    if (width < 640) await dialog.getByRole("combobox", { name: "Section", exact: true }).selectOption("permissions");
     else await dialog.getByRole("button", { name: "Permissions", exact: true }).click();
     const group = dialog.getByRole("radiogroup", { name: "Image approval" });
     const card = group.locator("..");

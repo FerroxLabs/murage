@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { LocalImageController } from './local-image-controller';
+import { LocalImageController, watchLocalImageVisibility } from './local-image-controller';
 import { forgetLocalMedia, refreshLocalMedia, type MediaApi } from './media-resolve';
 import { localImageBudget, reserveLocalImage } from './local-image-budget';
 const saveFixture = vi.hoisted(() => ({ native: true, nativeCall: vi.fn(), report: vi.fn(), handoff: vi.fn<(blob: Blob, filename: string) => Promise<void>>(async () => {}) }));
@@ -184,4 +184,20 @@ it.each(['begin', 'chunk', 'end'])('F13 native %s rejection restores Save and re
     }
     c.dispose();
   }
+});
+it('MEDLB-L1 a picture wanted with no IntersectionObserver is shown, and a print asks for every picture', () => {
+  const calls: boolean[] = []; const target = { visibility: (v: boolean) => { calls.push(v); } };
+  const listeners = new Set<() => void>();
+  const env = { addEventListener: (_t: "beforeprint", l: () => void) => listeners.add(l), removeEventListener: (_t: "beforeprint", l: () => void) => listeners.delete(l) };
+  const stop = watchLocalImageVisibility({} as Element, target, env);
+  expect(calls).toEqual([true]); expect(listeners.size).toBe(1);
+  stop(); expect(listeners.size).toBe(0);
+  calls.length = 0;
+  const seen: Array<(entries: Array<{ isIntersecting: boolean }>) => void> = []; let disconnected = 0;
+  class FakeObserver { constructor(cb: (entries: Array<{ isIntersecting: boolean }>) => void) { seen.push(cb); } observe() {} disconnect() { disconnected++; } }
+  const stop2 = watchLocalImageVisibility({} as Element, target, { ...env, IntersectionObserver: FakeObserver as unknown as typeof IntersectionObserver });
+  expect(calls).toEqual([]);
+  seen[0]!([{ isIntersecting: false }]); [...listeners].forEach(l => l());
+  expect(calls).toEqual([false, true]);
+  stop2(); expect(disconnected).toBe(1); expect(listeners.size).toBe(0);
 });

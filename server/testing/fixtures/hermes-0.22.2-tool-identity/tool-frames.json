@@ -1,0 +1,3086 @@
+[
+  {
+    "scenario": "terminal",
+    "wireLine": 9,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow for session",
+            "optionId": "allow_session"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow_always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          },
+          {
+            "kind": "reject_always",
+            "name": "Deny always",
+            "optionId": "deny_always"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "content": {
+                "text": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"printf s0-terminal\"},\"truncated\":false}\n$ <terminal> (plugin approval rule)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "rawInput": {
+            "command": "<terminal> (plugin approval rule)",
+            "description": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"printf s0-terminal\"},\"truncated\":false}"
+          },
+          "status": "pending",
+          "title": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"printf s0-terminal\"},\"truncated\":false}: <terminal> (plugin approval rule)",
+          "toolCallId": "perm-check-1"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "terminal",
+    "wireLine": 11,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "perm-check-1",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "terminal",
+    "wireLine": 12,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "$ printf s0-terminal",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "locations": [],
+          "title": "terminal: printf s0-terminal",
+          "toolCallId": "tc-dabce6f013c5",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "terminal",
+    "wireLine": 13,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "terminal result\n- **output:** s0-terminal\n- **exit_code:** 0",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "status": "completed",
+          "toolCallId": "tc-dabce6f013c5",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "execute-code",
+    "wireLine": 19,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow for session",
+            "optionId": "allow_session"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow_always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          },
+          {
+            "kind": "reject_always",
+            "name": "Deny always",
+            "optionId": "deny_always"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "content": {
+                "text": "{\"murage\":1,\"v\":1,\"tool\":\"execute_code\",\"input\":{\"code\":\"print(sum(range(10)))\"},\"truncated\":false}\n$ <execute_code> (plugin approval rule)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "rawInput": {
+            "command": "<execute_code> (plugin approval rule)",
+            "description": "{\"murage\":1,\"v\":1,\"tool\":\"execute_code\",\"input\":{\"code\":\"print(sum(range(10)))\"},\"truncated\":false}"
+          },
+          "status": "pending",
+          "title": "{\"murage\":1,\"v\":1,\"tool\":\"execute_code\",\"input\":{\"code\":\"print(sum(range(10)))\"},\"truncated\":false}: <execute_code> (plugin approval rule)",
+          "toolCallId": "perm-check-2"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "execute-code",
+    "wireLine": 21,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "perm-check-2",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "execute-code",
+    "wireLine": 22,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Running Python helper script:\n\n```python\nprint(sum(range(10)))\n```",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "locations": [],
+          "title": "execute_code: print(sum(range(10)))",
+          "toolCallId": "tc-425364ff6421",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "execute-code",
+    "wireLine": 23,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Exit code: 0\n\nOutput:\n45\n",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "status": "completed",
+          "toolCallId": "tc-425364ff6421",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "execute-code-long",
+    "wireLine": 28,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow for session",
+            "optionId": "allow_session"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow_always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          },
+          {
+            "kind": "reject_always",
+            "name": "Deny always",
+            "optionId": "deny_always"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "content": {
+                "text": "{\"murage\":1,\"v\":1,\"tool\":\"execute_code\",\"input\":{\"code\":\"# harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding\\nprint(\\\"s0-long-code\\\")\"},\"truncated\":false}\n$ <execute_code> (plugin approval rule)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "rawInput": {
+            "command": "<execute_code> (plugin approval rule)",
+            "description": "{\"murage\":1,\"v\":1,\"tool\":\"execute_code\",\"input\":{\"code\":\"# harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding\\nprint(\\\"s0-long-code\\\")\"},\"truncated\":false}"
+          },
+          "status": "pending",
+          "title": "{\"murage\":1,\"v\":1,\"tool\":\"execute_code\",\"input\":{\"code\":\"# harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding\\nprint(\\\"s0-long-code\\\")\"},\"truncated\":false}: <execute_code> (plugin approval rule)",
+          "toolCallId": "perm-check-3"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "execute-code-long",
+    "wireLine": 30,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "perm-check-3",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "execute-code-long",
+    "wireLine": 31,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Running Python helper script:\n\n```python\n# harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless\n... (4613 chars total, truncated)\n```",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "locations": [],
+          "title": "execute_code: # harmless padding harmless padding harmless padding harmless padding harmles...",
+          "toolCallId": "tc-c0a92541bc07",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "execute-code-long",
+    "wireLine": 32,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Exit code: 0\n\nOutput:\ns0-long-code\n",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "status": "completed",
+          "toolCallId": "tc-c0a92541bc07",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-file",
+    "wireLine": 37,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Preparing write to /tmp/s0-work/edit.txt. Approval prompt shows the diff.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/edit.txt"
+            }
+          ],
+          "title": "write_file: /tmp/s0-work/edit.txt",
+          "toolCallId": "tc-be66ae4d5b45",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-file",
+    "wireLine": 38,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow edit",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "newText": "first\n",
+              "path": "/tmp/s0-work/edit.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "rawInput": {
+            "tool": "write_file",
+            "arguments": {
+              "path": "/tmp/s0-work/edit.txt",
+              "content": "first\n"
+            }
+          },
+          "status": "pending",
+          "title": "Approve edit: /tmp/s0-work/edit.txt",
+          "toolCallId": "edit-approval-1"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-file",
+    "wireLine": 40,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "edit-approval-1",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-file",
+    "wireLine": 41,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ write_file completed for `/tmp/s0-work/edit.txt`\nFiles: `/tmp/s0-work/edit.txt`",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "completed",
+          "toolCallId": "tc-be66ae4d5b45",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch",
+    "wireLine": 46,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Preparing replace edit for /tmp/s0-work/edit.txt. Approval prompt shows the diff.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/edit.txt"
+            }
+          ],
+          "title": "patch: /tmp/s0-work/edit.txt",
+          "toolCallId": "tc-90eb82a2c580",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch",
+    "wireLine": 47,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow edit",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "newText": "second\n",
+              "oldText": "first\n",
+              "path": "/tmp/s0-work/edit.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "rawInput": {
+            "tool": "patch",
+            "arguments": {
+              "path": "/tmp/s0-work/edit.txt",
+              "old_string": "first",
+              "new_string": "second"
+            }
+          },
+          "status": "pending",
+          "title": "Approve edit: /tmp/s0-work/edit.txt",
+          "toolCallId": "edit-approval-2"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch",
+    "wireLine": 49,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "edit-approval-2",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch",
+    "wireLine": 50,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ patch completed for `/tmp/s0-work/edit.txt`\nFiles: `/tmp/s0-work/edit.txt`",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "completed",
+          "toolCallId": "tc-90eb82a2c580",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "read-before-repeat",
+    "wireLine": 55,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "kind": "read",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/edit.txt"
+            }
+          ],
+          "title": "read_file: edit.txt",
+          "toolCallId": "tc-2e7fe233c00a",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "read-before-repeat",
+    "wireLine": 56,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Read /tmp/s0-work/edit.txt — 1 total lines\n\n```\n1|second\n```",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "read",
+          "status": "completed",
+          "toolCallId": "tc-2e7fe233c00a",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-repeat",
+    "wireLine": 61,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Preparing write to /tmp/s0-work/edit.txt. Approval prompt shows the diff.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/edit.txt"
+            }
+          ],
+          "title": "write_file: /tmp/s0-work/edit.txt",
+          "toolCallId": "tc-dad6a906c620",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-repeat",
+    "wireLine": 62,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow edit",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "newText": "third\n",
+              "oldText": "second\n",
+              "path": "/tmp/s0-work/edit.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "rawInput": {
+            "tool": "write_file",
+            "arguments": {
+              "path": "/tmp/s0-work/edit.txt",
+              "content": "third\n"
+            }
+          },
+          "status": "pending",
+          "title": "Approve edit: /tmp/s0-work/edit.txt",
+          "toolCallId": "edit-approval-3"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-repeat",
+    "wireLine": 64,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "edit-approval-3",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-repeat",
+    "wireLine": 65,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "write_file failed for /tmp/s0-work/edit.txt: Refusing to overwrite /tmp/s0-work/edit.txt: /tmp/s0-work/edit.txt exists but this task has not seen its full current content (never read, patched without a prior full read, or only a redacted/partial view). Read the file — every page of it, if it needs offset/limit — or use patch for a targeted edit; a stale conversation copy must not overwrite the current disk content. The file was NOT modified. Reload the current contents with read_file (every page, for a file that needs offset/limit), merge the requested change, then call write_file again. For small edits, prefer patch so existing unrelated changes are preserved.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "failed",
+          "toolCallId": "tc-dad6a906c620",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-v4a",
+    "wireLine": 70,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Preparing patch edit for patch input. Approval prompt shows the diff.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "locations": [],
+          "title": "patch",
+          "toolCallId": "tc-64fea45c0aaf",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-v4a",
+    "wireLine": 71,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow edit",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "newText": "*** Begin Patch\n*** Add File: /tmp/s0-work/v4a.txt\n+v4a\n*** End Patch",
+              "path": "/tmp/s0-work/v4a.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "rawInput": {
+            "tool": "patch",
+            "arguments": {
+              "mode": "patch",
+              "patch": "*** Begin Patch\n*** Add File: /tmp/s0-work/v4a.txt\n+v4a\n*** End Patch"
+            }
+          },
+          "status": "pending",
+          "title": "Approve edit: /tmp/s0-work/v4a.txt",
+          "toolCallId": "edit-approval-4"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-v4a",
+    "wireLine": 73,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "edit-approval-4",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-v4a",
+    "wireLine": 74,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ patch completed for `file`\nFiles: `/tmp/s0-work/v4a.txt`",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "completed",
+          "toolCallId": "tc-64fea45c0aaf",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-c",
+    "wireLine": 79,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 7,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow for session",
+            "optionId": "allow_session"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow_always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          },
+          {
+            "kind": "reject_always",
+            "name": "Deny always",
+            "optionId": "deny_always"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "content": {
+                "text": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"python3 -c \\\"print(42)\\\"\",\"tool_name\":\"read_file\"},\"truncated\":false}\n$ <terminal> (plugin approval rule)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "rawInput": {
+            "command": "<terminal> (plugin approval rule)",
+            "description": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"python3 -c \\\"print(42)\\\"\",\"tool_name\":\"read_file\"},\"truncated\":false}"
+          },
+          "status": "pending",
+          "title": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"python3 -c \\\"print(42)\\\"\",\"tool_name\":\"read_file\"},\"truncated\":false}: <terminal> (plugin approval rule)",
+          "toolCallId": "perm-check-4"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-c",
+    "wireLine": 81,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "perm-check-4",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-c",
+    "wireLine": 82,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "$ python3 -c \"print(42)\"",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "locations": [],
+          "title": "terminal: python3 -c \"print(42)\"",
+          "toolCallId": "tc-2fff4010f4fc",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-c",
+    "wireLine": 83,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 8,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow for session",
+            "optionId": "allow_session"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow_always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          },
+          {
+            "kind": "reject_always",
+            "name": "Deny always",
+            "optionId": "deny_always"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "content": {
+                "text": "script execution via -e/-c flag\n$ python3 -c \"print(42)\"",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "rawInput": {
+            "command": "python3 -c \"print(42)\"",
+            "description": "script execution via -e/-c flag"
+          },
+          "status": "pending",
+          "title": "script execution via -e/-c flag: python3 -c \"print(42)\"",
+          "toolCallId": "perm-check-5"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-c",
+    "wireLine": 85,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "perm-check-5",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-c",
+    "wireLine": 86,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "terminal result\n- **output:** 42\n- **exit_code:** 0\n- **approval:** Command required approval (script execution via -e/-c flag) and was approved by the user.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "status": "completed",
+          "toolCallId": "tc-2fff4010f4fc",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-heredoc",
+    "wireLine": 91,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 9,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow for session",
+            "optionId": "allow_session"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow_always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          },
+          {
+            "kind": "reject_always",
+            "name": "Deny always",
+            "optionId": "deny_always"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "content": {
+                "text": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"python3 - <<'S0PY'\\nprint('heredoc')\\nS0PY\"},\"truncated\":false}\n$ <terminal> (plugin approval rule)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "rawInput": {
+            "command": "<terminal> (plugin approval rule)",
+            "description": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"python3 - <<'S0PY'\\nprint('heredoc')\\nS0PY\"},\"truncated\":false}"
+          },
+          "status": "pending",
+          "title": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"python3 - <<'S0PY'\\nprint('heredoc')\\nS0PY\"},\"truncated\":false}: <terminal> (plugin approval rule)",
+          "toolCallId": "perm-check-6"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-heredoc",
+    "wireLine": 93,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "perm-check-6",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-heredoc",
+    "wireLine": 94,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "$ python3 - <<'S0PY'\nprint('heredoc')\nS0PY",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "locations": [],
+          "title": "terminal: python3 - <<'S0PY' print('heredoc') S0PY",
+          "toolCallId": "tc-58fe43aa1ad2",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-heredoc",
+    "wireLine": 95,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 10,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow for session",
+            "optionId": "allow_session"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow_always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          },
+          {
+            "kind": "reject_always",
+            "name": "Deny always",
+            "optionId": "deny_always"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "content": {
+                "text": "script execution via heredoc\n$ python3 - <<'S0PY'\nprint('heredoc')\nS0PY",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "rawInput": {
+            "command": "python3 - <<'S0PY'\nprint('heredoc')\nS0PY",
+            "description": "script execution via heredoc"
+          },
+          "status": "pending",
+          "title": "script execution via heredoc: python3 - <<'S0PY'\nprint('heredoc')\nS0PY",
+          "toolCallId": "perm-check-7"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-heredoc",
+    "wireLine": 97,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "perm-check-7",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-python-heredoc",
+    "wireLine": 98,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "terminal result\n- **output:** heredoc\n- **exit_code:** 0\n- **approval:** Command required approval (script execution via heredoc) and was approved by the user.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "status": "completed",
+          "toolCallId": "tc-58fe43aa1ad2",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-bash-c",
+    "wireLine": 103,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 11,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow for session",
+            "optionId": "allow_session"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow_always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          },
+          {
+            "kind": "reject_always",
+            "name": "Deny always",
+            "optionId": "deny_always"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "content": {
+                "text": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"bash -c 'printf s0-nested'\"},\"truncated\":false}\n$ <terminal> (plugin approval rule)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "rawInput": {
+            "command": "<terminal> (plugin approval rule)",
+            "description": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"bash -c 'printf s0-nested'\"},\"truncated\":false}"
+          },
+          "status": "pending",
+          "title": "{\"murage\":1,\"v\":1,\"tool\":\"terminal\",\"input\":{\"command\":\"bash -c 'printf s0-nested'\"},\"truncated\":false}: <terminal> (plugin approval rule)",
+          "toolCallId": "perm-check-8"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-bash-c",
+    "wireLine": 105,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "perm-check-8",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-bash-c",
+    "wireLine": 106,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "$ bash -c 'printf s0-nested'",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "locations": [],
+          "title": "terminal: bash -c 'printf s0-nested'",
+          "toolCallId": "tc-af969b4b4df0",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-bash-c",
+    "wireLine": 107,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 12,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow for session",
+            "optionId": "allow_session"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow_always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          },
+          {
+            "kind": "reject_always",
+            "name": "Deny always",
+            "optionId": "deny_always"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "content": {
+                "text": "shell command via -c/-lc flag\n$ bash -c 'printf s0-nested'",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "rawInput": {
+            "command": "bash -c 'printf s0-nested'",
+            "description": "shell command via -c/-lc flag"
+          },
+          "status": "pending",
+          "title": "shell command via -c/-lc flag: bash -c 'printf s0-nested'",
+          "toolCallId": "perm-check-9"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-bash-c",
+    "wireLine": 109,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "perm-check-9",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "shell-bash-c",
+    "wireLine": 110,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "terminal result\n- **output:** s0-nested\n- **exit_code:** 0\n- **approval:** Command required approval (shell command via -c/-lc flag) and was approved by the user.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "status": "completed",
+          "toolCallId": "tc-af969b4b4df0",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "mcp",
+    "wireLine": 115,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 13,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow for session",
+            "optionId": "allow_session"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow_always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          },
+          {
+            "kind": "reject_always",
+            "name": "Deny always",
+            "optionId": "deny_always"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "content": {
+                "text": "{\"murage\":1,\"v\":1,\"tool\":\"mcp__s0__echo\",\"input\":{\"text\":\"s0-mcp\"},\"truncated\":false}\n$ <mcp__s0__echo> (plugin approval rule)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "execute",
+          "rawInput": {
+            "command": "<mcp__s0__echo> (plugin approval rule)",
+            "description": "{\"murage\":1,\"v\":1,\"tool\":\"mcp__s0__echo\",\"input\":{\"text\":\"s0-mcp\"},\"truncated\":false}"
+          },
+          "status": "pending",
+          "title": "{\"murage\":1,\"v\":1,\"tool\":\"mcp__s0__echo\",\"input\":{\"text\":\"s0-mcp\"},\"truncated\":false}: <mcp__s0__echo> (plugin approval rule)",
+          "toolCallId": "perm-check-10"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "mcp",
+    "wireLine": 117,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "perm-check-10",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "mcp",
+    "wireLine": 118,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "{\n  \"text\": \"s0-mcp\"\n}",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "locations": [],
+          "rawInput": {
+            "text": "s0-mcp"
+          },
+          "title": "mcp__s0__echo: s0-mcp",
+          "toolCallId": "tc-44dcecfed36e",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "mcp",
+    "wireLine": 119,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "mcp__s0__echo result\n- **result:** s0-mcp",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "completed",
+          "toolCallId": "tc-44dcecfed36e",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "read_file",
+    "wireLine": 124,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "kind": "read",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/seed.txt"
+            }
+          ],
+          "title": "read_file: seed.txt",
+          "toolCallId": "tc-b763099b5fcf",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "read_file",
+    "wireLine": 125,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Read /tmp/s0-work/seed.txt — 2 total lines\n\n```\n1|alpha\n2|beta\n```",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "read",
+          "status": "completed",
+          "toolCallId": "tc-b763099b5fcf",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "search_files",
+    "wireLine": 130,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Searching for 'alpha' (content) in /tmp/s0-work",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "search",
+          "locations": [
+            {
+              "path": "/tmp/s0-work"
+            }
+          ],
+          "title": "search_files: alpha",
+          "toolCallId": "tc-3831330a9441",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "search_files",
+    "wireLine": 131,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Search results\nFound 1 match; showing 1.\n\n- /tmp/s0-work/seed.txt:1\n  alpha",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "search",
+          "status": "completed",
+          "toolCallId": "tc-3831330a9441",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "tool_describe",
+    "wireLine": 136,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "{\n  \"names\": [\n    \"todo_list\"\n  ]\n}",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "locations": [],
+          "rawInput": {
+            "names": [
+              "todo_list"
+            ]
+          },
+          "title": "tool_describe: Reading tool details · 1 tool",
+          "toolCallId": "tc-e1b0571fd721",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "tool_describe",
+    "wireLine": 137,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "tool_describe result\n- **tools:**\n  - **todo_list:**\n    - **description:** Track a task list for multi-step work (3+ steps). Use for complex tasks with 3+ steps or when the user provides multiple tasks. For 'all N items' tasks, enumerate every instance as its own checklist item so none are silently dropped. Call with no parameters to read the current list.\nList order is priority. Only ONE item in_progress at a time. Break large phases into subtasks via parent. Mark an it\n... (565 chars total, truncated)\n    - **parameters:**\n      - **type:** object\n      - **properties:** {\"todos\": {\"type\": \"array\", \"description\": \"Task items to write.\", \"items\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\"}, \"con\n... (639 chars total, truncated)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "completed",
+          "toolCallId": "tc-e1b0571fd721",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "skills_list",
+    "wireLine": 142,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "{}",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "read",
+          "locations": [],
+          "title": "skills_list",
+          "toolCallId": "tc-f4a4d2de22f0",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "skills_list",
+    "wireLine": 143,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ skills_list completed\n- **message:** No skills found in skills/ directory.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "read",
+          "status": "completed",
+          "toolCallId": "tc-f4a4d2de22f0",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "skill_view",
+    "wireLine": 148,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Loading skill 's0-missing' (SKILL.md)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "read",
+          "locations": [],
+          "title": "skill_view: s0-missing",
+          "toolCallId": "tc-8bc03c4938fc",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "skill_view",
+    "wireLine": 149,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Skill view failed: Skill 's0-missing' not found.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "read",
+          "status": "failed",
+          "toolCallId": "tc-8bc03c4938fc",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "session_search",
+    "wireLine": 154,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Searching past sessions for: s0-missing",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "locations": [],
+          "title": "session_search: recall: \"s0-missing\"",
+          "toolCallId": "tc-98cf7da46219",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "session_search",
+    "wireLine": 155,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Session search results for `s0-missing`\nNo matching sessions found.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "completed",
+          "toolCallId": "tc-98cf7da46219",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "todo_list",
+    "wireLine": 160,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "kind": "other",
+          "locations": [],
+          "title": "todo_list",
+          "toolCallId": "tc-137ddd667d68",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "todo_list",
+    "wireLine": 161,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "todo_list result\n- **revision:** 0\n- **summary:**\n  - **total:** 0\n  - **pending:** 0\n  - **in_progress:** 0\n  - **completed:** 0\n  - **cancelled:** 0",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "completed",
+          "toolCallId": "tc-137ddd667d68",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "clarify",
+    "wireLine": 166,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "{\n  \"questions\": [\n    {\n      \"question\": \"S0 fixture?\",\n      \"choices\": [\n        \"yes\",\n        \"no\"\n      ]\n    }\n  ]\n}",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "locations": [],
+          "title": "clarify: S0 fixture?",
+          "toolCallId": "tc-c183ebcd131f",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "clarify",
+    "wireLine": 167,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "clarify failed: Clarify tool is not available in this execution context.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "failed",
+          "toolCallId": "tc-c183ebcd131f",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "web_search",
+    "wireLine": 172,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Searching the web for: s0-no-network",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "fetch",
+          "locations": [],
+          "title": "web_search: s0-no-network",
+          "toolCallId": "tc-042511bcfd08",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "web_search",
+    "wireLine": 173,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "{\n  \"success\": false,\n  \"error\": \"Keyless Parallel search failed: request failed: HTTPSConnectionPool(host='search.parallel.ai', port=443): Max retries exceeded with url: /mcp (Caused by NameResolutionError(\\\"HTTPSConnection(host='search.parallel.ai', port=443): Failed to resolve 'search.parallel.ai' ([Errno -3] Temporary failure in name resolution)\\\")). Set PARALLEL_API_KEY (https://parallel.ai) or another web backend via `hermes tools` for reliable service.\"\n}",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "fetch",
+          "status": "failed",
+          "toolCallId": "tc-042511bcfd08",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "web_extract",
+    "wireLine": 178,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "kind": "fetch",
+          "locations": [],
+          "title": "web_extract: http://127.0.0.1:18080/page",
+          "toolCallId": "tc-067056619a6f",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "web_extract",
+    "wireLine": 179,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Web extract failed for 1 URL\n- http://127.0.0.1:18080/page\n  Error: Blocked: URL targets a private or internal network address",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "fetch",
+          "status": "failed",
+          "toolCallId": "tc-067056619a6f",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "vision_analyze",
+    "wireLine": 184,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "{\n  \"image_url\": \"/tmp/s0-work/missing.png\",\n  \"question\": \"s0\"\n}",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "read",
+          "locations": [],
+          "title": "vision_analyze: s0",
+          "toolCallId": "tc-93176a5aa4b3",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "vision_analyze",
+    "wireLine": 185,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "vision_analyze failed: Error analyzing image: media file not found: '/tmp/s0-work/missing.png'",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "read",
+          "status": "failed",
+          "toolCallId": "tc-93176a5aa4b3",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "video_analyze",
+    "wireLine": 190,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "{\n  \"video_url\": \"/tmp/s0-work/missing.mp4\",\n  \"question\": \"s0\"\n}",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "locations": [],
+          "rawInput": {
+            "video_url": "/tmp/s0-work/missing.mp4",
+            "question": "s0"
+          },
+          "title": "video_analyze",
+          "toolCallId": "tc-1927b6216985",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "video_analyze",
+    "wireLine": 191,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "video_analyze failed: Error analyzing video: Invalid video source. Provide an HTTP/HTTPS URL or a valid local file path.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "failed",
+          "toolCallId": "tc-1927b6216985",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "show_tip",
+    "wireLine": 196,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "{\n  \"text\": \"s0\",\n  \"selector\": \"[data-tour=\\\"fixture\\\"]\"\n}",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "locations": [],
+          "rawInput": {
+            "text": "s0",
+            "selector": "[data-tour=\"fixture\"]"
+          },
+          "title": "show_tip: s0",
+          "toolCallId": "tc-885b8f089eef",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "show_tip",
+    "wireLine": 197,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "show_tip failed: tip is only available in the Hermes desktop app.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "failed",
+          "toolCallId": "tc-885b8f089eef",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "read_terminal",
+    "wireLine": 202,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "kind": "other",
+          "locations": [],
+          "title": "read_terminal",
+          "toolCallId": "tc-c5d5147cbb0b",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "read_terminal",
+    "wireLine": 203,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "read_terminal failed: read_terminal is only available in the Hermes desktop app.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "failed",
+          "toolCallId": "tc-c5d5147cbb0b",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "read_window_below",
+    "wireLine": 208,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "kind": "other",
+          "locations": [],
+          "title": "read_window_below",
+          "toolCallId": "tc-5ddd99a0ec85",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "read_window_below",
+    "wireLine": 209,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "read_window_below failed: read_window_below is only available in the Hermes desktop app.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "failed",
+          "toolCallId": "tc-5ddd99a0ec85",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "x_search",
+    "wireLine": 214,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "{\n  \"query\": \"\"\n}",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "locations": [],
+          "rawInput": {
+            "query": ""
+          },
+          "title": "x_search",
+          "toolCallId": "tc-585222d68c82",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "x_search",
+    "wireLine": 215,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "x_search failed: query is required for x_search",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "failed",
+          "toolCallId": "tc-585222d68c82",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "memory",
+    "wireLine": 220,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Memory add (memory)\nPreview: S0 isolated fixture note.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "locations": [],
+          "title": "memory: +memory: \"S0 isolated fixture note.\"",
+          "toolCallId": "tc-84b9416e1267",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "memory",
+    "wireLine": 221,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ Memory add saved (memory)\nEntry added.\nEntries: 1\nUsage: 1% — 25/2,200 chars\nPreview: S0 isolated fixture note.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "other",
+          "status": "completed",
+          "toolCallId": "tc-84b9416e1267",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-accept_edits",
+    "wireLine": 228,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "newText": "before\n",
+              "path": "/tmp/s0-work/accept_edits.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/accept_edits.txt"
+            }
+          ],
+          "title": "write_file: /tmp/s0-work/accept_edits.txt",
+          "toolCallId": "tc-61a48029f049",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-accept_edits",
+    "wireLine": 229,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ write_file completed for `/tmp/s0-work/accept_edits.txt`\nFiles: `/tmp/s0-work/accept_edits.txt`",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "completed",
+          "toolCallId": "tc-61a48029f049",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-accept_edits",
+    "wireLine": 234,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "newText": "after\n",
+              "oldText": "before\n",
+              "path": "/tmp/s0-work/accept_edits.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/accept_edits.txt"
+            }
+          ],
+          "title": "patch: /tmp/s0-work/accept_edits.txt",
+          "toolCallId": "tc-ce1d085f8345",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-accept_edits",
+    "wireLine": 235,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ patch completed for `/tmp/s0-work/accept_edits.txt`\nFiles: `/tmp/s0-work/accept_edits.txt`",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "completed",
+          "toolCallId": "tc-ce1d085f8345",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-dont_ask",
+    "wireLine": 242,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "newText": "before\n",
+              "path": "/tmp/s0-work/dont_ask.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/dont_ask.txt"
+            }
+          ],
+          "title": "write_file: /tmp/s0-work/dont_ask.txt",
+          "toolCallId": "tc-b7b75d84a338",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-dont_ask",
+    "wireLine": 243,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ write_file completed for `/tmp/s0-work/dont_ask.txt`\nFiles: `/tmp/s0-work/dont_ask.txt`",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "completed",
+          "toolCallId": "tc-b7b75d84a338",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-dont_ask",
+    "wireLine": 248,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "newText": "after\n",
+              "oldText": "before\n",
+              "path": "/tmp/s0-work/dont_ask.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/dont_ask.txt"
+            }
+          ],
+          "title": "patch: /tmp/s0-work/dont_ask.txt",
+          "toolCallId": "tc-73cbc9b728a1",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-dont_ask",
+    "wireLine": 249,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ patch completed for `/tmp/s0-work/dont_ask.txt`\nFiles: `/tmp/s0-work/dont_ask.txt`",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "completed",
+          "toolCallId": "tc-73cbc9b728a1",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-default",
+    "wireLine": 256,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Preparing write to /tmp/s0-work/default.txt. Approval prompt shows the diff.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/default.txt"
+            }
+          ],
+          "title": "write_file: /tmp/s0-work/default.txt",
+          "toolCallId": "tc-fd0771fa810e",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-default",
+    "wireLine": 257,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 14,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow edit",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "newText": "before\n",
+              "path": "/tmp/s0-work/default.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "rawInput": {
+            "tool": "write_file",
+            "arguments": {
+              "path": "/tmp/s0-work/default.txt",
+              "content": "before\n"
+            }
+          },
+          "status": "pending",
+          "title": "Approve edit: /tmp/s0-work/default.txt",
+          "toolCallId": "edit-approval-5"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-default",
+    "wireLine": 259,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "edit-approval-5",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-default",
+    "wireLine": 260,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ write_file completed for `/tmp/s0-work/default.txt`\nFiles: `/tmp/s0-work/default.txt`",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "completed",
+          "toolCallId": "tc-fd0771fa810e",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-default",
+    "wireLine": 265,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Preparing replace edit for /tmp/s0-work/default.txt. Approval prompt shows the diff.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/default.txt"
+            }
+          ],
+          "title": "patch: /tmp/s0-work/default.txt",
+          "toolCallId": "tc-d6108915952a",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-default",
+    "wireLine": 266,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 15,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow edit",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "newText": "after\n",
+              "oldText": "before\n",
+              "path": "/tmp/s0-work/default.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "rawInput": {
+            "tool": "patch",
+            "arguments": {
+              "path": "/tmp/s0-work/default.txt",
+              "old_string": "before",
+              "new_string": "after"
+            }
+          },
+          "status": "pending",
+          "title": "Approve edit: /tmp/s0-work/default.txt",
+          "toolCallId": "edit-approval-6"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-default",
+    "wireLine": 268,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "completed",
+          "toolCallId": "edit-approval-6",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "patch-default",
+    "wireLine": 269,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "✅ patch completed for `/tmp/s0-work/default.txt`\nFiles: `/tmp/s0-work/default.txt`",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "completed",
+          "toolCallId": "tc-d6108915952a",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-denied",
+    "wireLine": 274,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "Preparing write to /tmp/s0-work/denied.txt. Approval prompt shows the diff.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "locations": [
+            {
+              "path": "/tmp/s0-work/denied.txt"
+            }
+          ],
+          "title": "write_file: /tmp/s0-work/denied.txt",
+          "toolCallId": "tc-c3f9bd9b3911",
+          "sessionUpdate": "tool_call"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-denied",
+    "wireLine": 275,
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 16,
+      "method": "session/request_permission",
+      "params": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow edit",
+            "optionId": "allow_once"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Deny",
+            "optionId": "deny"
+          }
+        ],
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "toolCall": {
+          "content": [
+            {
+              "newText": "must not exist",
+              "path": "/tmp/s0-work/denied.txt",
+              "type": "diff"
+            }
+          ],
+          "kind": "edit",
+          "rawInput": {
+            "tool": "write_file",
+            "arguments": {
+              "path": "/tmp/s0-work/denied.txt",
+              "content": "must not exist"
+            }
+          },
+          "status": "pending",
+          "title": "Approve edit: /tmp/s0-work/denied.txt",
+          "toolCallId": "edit-approval-7"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-denied",
+    "wireLine": 277,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "status": "failed",
+          "toolCallId": "edit-approval-7",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  },
+  {
+    "scenario": "write-denied",
+    "wireLine": 278,
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "b58e37c2-75db-4351-b4db-8919ed1f2c37",
+        "update": {
+          "content": [
+            {
+              "content": {
+                "text": "write_file failed for /tmp/s0-work/denied.txt: Edit approval denied by ACP client; file was not modified.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "kind": "edit",
+          "status": "failed",
+          "toolCallId": "tc-c3f9bd9b3911",
+          "sessionUpdate": "tool_call_update"
+        }
+      }
+    }
+  }
+]

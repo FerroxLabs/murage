@@ -1,3 +1,4 @@
+// control: legacy cases retain their original assertions unless individually labelled red-at-4df086541 below.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Shared OpenAI chat-completions stream runtime (A3). A streamed reply is a
@@ -9,9 +10,15 @@ import { ANY_ADDRESS, KEY_REJECTED_REASON, noteKeyAccepted, noteKeyRejected, res
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
+import { installFluxStartGate } from "../flux-start-gate.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
-import { appendBounded, createOpenAIChatRuntime, MAX_RESPONSE_BYTES, MAX_SSE_LINE_BYTES } from "./openai-chat.ts";
+import { createOpenAIChatRuntime as unboundRuntime, appendBounded, MAX_RESPONSE_BYTES, MAX_SSE_LINE_BYTES } from "./openai-chat.ts";
+const boundFixture = await import("../testing/bound-openai-fixture.ts").catch(() => null);
+const createOpenAIChatRuntime: typeof unboundRuntime = options => {
+  expect(boundFixture, "T-UPSTREAM-BUDGET: provider turns need generation-owned upstream accounting").not.toBeNull();
+  return boundFixture!.createOpenAIChatRuntime(options);
+};
 
 const SECRET = "sk-openai-chat-test-secret";
 /** A Flux host (the fetch stub never leaves the process): Flux's refusal codes are read only on a Flux route. */
@@ -123,6 +130,10 @@ describe("createOpenAIChatRuntime stream contract", () => {
     return instance;
   };
 
+  it("P2 advertises the browser MCP capability", () => {
+    expect(create().adapter.capabilities.browserMcp).toBe(true);
+  });
+
   const runTurn = async (
     threadId: string,
     next: Responder[],
@@ -137,7 +148,8 @@ describe("createOpenAIChatRuntime stream contract", () => {
     return { completed, events: recorder.events, instance };
   };
 
-  it("bounds a long unterminated line and keeps the earlier reply", async () => {
+  // red-at-4df086541: the shared event cap seals instead of returning partial content.
+  it("bounds a long unterminated line without returning a refused reply", async () => {
     const first = encoder.encode(contentFrame("partial answer"));
     const chunk = encoder.encode("x".repeat(1024 * 1024));
     const { response, observed } = measuredBody([first, ...Array<Uint8Array>(16).fill(chunk)]);
@@ -145,11 +157,96 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
     expect(replies(events)).toEqual(["partial answer"]);
-    expect(errors(events)).toEqual([TOO_LARGE]);
-    expect(errorDetails(events)[0]).toContain("stream line exceeded");
+    expect(errors(events)).toEqual(["The model server sent a reply too large to read, so Murage kept what arrived before it."]);
+    expect(errorDetails(events)).toEqual(["TestProvider stream line exceeded 1048576 bytes"]);
     expect(observed.cancelled).toBe(true);
     expect(observed.pulled - first.byteLength).toBeLessThanOrEqual(MAX_SSE_LINE_BYTES + chunk.byteLength);
     expect(calls).toBe(1);
+  });
+
+  // red-at-4df086541: concrete error and nonstream readers must propagate a
+  // generation crossing as terminal, without unsupported-tools/retry fallback.
+  it.each([200, 400, 500])("T-UPSTREAM-BUDGET OpenAI body status %i refuses the crossing chunk", async status => {
+    const budgets = await import("../memory/release-budget.ts").catch(() => null);
+    expect(budgets?.ReleaseBudget, "provider body bytes require shared generation accounting").toBeTypeOf("function");
+    const { consumingFixture } = await import("../testing/consuming-fixture.ts");
+    const f = consumingFixture(undefined, { empty: true }), cancel = vi.fn();
+    const instance = create();
+    const recorder = recordEvents(instance.adapter);
+    responders = [() => {
+      f.budget.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - f.budget.counts.bytes });
+      return new Response(new ReadableStream({ pull(c) { c.enqueue(Buffer.from('{"error":"unsupported tools 🙂"}')); }, cancel }, { highWaterMark: 0 }),
+        { status, headers: { "content-type": "application/json" } });
+    }];
+    try {
+      await instance.adapter.sendTurn({ threadId: "T", text: "fixture", cwd: fixtureBotFolder(), releaseBinding: f.binding });
+      expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "memory-refused" });
+      expect(replies(recorder.events)).toEqual([]); expect(errors(recorder.events)).toEqual([]);
+      expect(calls).toBe(1); expect(cancel).toHaveBeenCalledTimes(1); expect(f.refusals).toBe(1);
+      expect(f.budget.counts.bytes).toBe(budgets!.RELEASE_LIMITS.bytes);
+    } finally { recorder.stop(); await instance.dispose(); instances.splice(instances.indexOf(instance), 1); f.close(); }
+  });
+
+  // control: nonstream provider decoding preserves byte-split UTF-8 at the
+  // exact remaining generation cap after the serialized request was charged.
+  it("T-UPSTREAM-BUDGET OpenAI nonstream split UTF-8 exact cap", async () => {
+    const budgets = await import("../memory/release-budget.ts").catch(() => null);
+    expect(budgets?.ReleaseBudget, "provider body bytes require shared generation accounting").toBeTypeOf("function");
+    const { consumingFixture } = await import("../testing/consuming-fixture.ts");
+    const f = consumingFixture(undefined, { empty: true }), instance = create();
+    const recorder = recordEvents(instance.adapter);
+    const body = Buffer.from(JSON.stringify({ choices: [{ message: { content: "🙂" }, finish_reason: "stop" }] }));
+    responders = [() => {
+      f.budget.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - f.budget.counts.bytes - body.length });
+      return new Response(new ReadableStream({ start(c) { for (const byte of body) c.enqueue(Uint8Array.of(byte)); c.close(); } }),
+        { headers: { "content-type": "application/json" } });
+    }];
+    try {
+      await instance.adapter.sendTurn({ threadId: "T", text: "fixture", cwd: fixtureBotFolder(), releaseBinding: f.binding });
+      expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+      expect(replies(recorder.events)).toEqual(["🙂"]); expect(errors(recorder.events)).toEqual([]);
+      expect(calls).toBe(1); expect(f.refusals).toBe(0); expect(f.budget.counts.bytes).toBe(budgets!.RELEASE_LIMITS.bytes);
+    } finally { recorder.stop(); await instance.dispose(); instances.splice(instances.indexOf(instance), 1); f.close(); }
+  });
+
+  // red-at-4df086541: the actual nonstream helper uses readBoundedBody rather
+  // than the whole-JSON fallback in the streaming turn path.
+  it.each([200, 400, 500])("T-UPSTREAM-BUDGET OpenAI nonstream helper status %i preserves terminal refusal", async status => {
+    const budgets = await import("../memory/release-budget.ts").catch(() => null);
+    const readers = await import("../memory/upstream-reader.ts").catch(() => null);
+    expect(budgets?.ReleaseBudget, "nonstream helpers need generation-owned body accounting").toBeTypeOf("function");
+    expect(readers?.withUpstreamOwner, "nonstream helpers must capture the consuming owner").toBeTypeOf("function");
+    const stop = vi.fn(), counter = new budgets!.ReleaseBudget(stop), other = new budgets!.ReleaseBudget(vi.fn()), cancel = vi.fn();
+    const refuse = (): never => { throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" }); };
+    responders = [() => {
+      counter.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - counter.counts.bytes });
+      return new Response(new ReadableStream({ pull(c) { c.enqueue(Buffer.from('{"error":"🙂"}')); }, cancel }, { highWaterMark: 0 }), { status });
+    }];
+    const instance = create();
+    const pending = readers!.withUpstreamOwner({ budgets: [counter], refuse }, () => instance.generateText!("fixture"));
+    await expect(readers!.withUpstreamOwner({ budgets: [other], refuse }, () => pending)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(stop).toHaveBeenCalledTimes(1); expect(cancel).toHaveBeenCalledTimes(1); expect(calls).toBe(1); expect(other.counts.bytes).toBe(0);
+    await expect(readers!.withUpstreamOwner({ budgets: [counter], refuse }, () => instance.generateText!("fixture"))).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(calls).toBe(1); expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  // control: readBoundedBody, independently of the streaming fallback, keeps
+  // UTF-8 bytes split one at a time exactly at the generation cap.
+  it("T-UPSTREAM-BUDGET OpenAI nonstream helper split UTF-8 exact cap", async () => {
+    const budgets = await import("../memory/release-budget.ts").catch(() => null);
+    const readers = await import("../memory/upstream-reader.ts").catch(() => null);
+    expect(budgets?.ReleaseBudget, "nonstream helpers need generation-owned body accounting").toBeTypeOf("function");
+    expect(readers?.withUpstreamOwner, "nonstream helpers must capture the consuming owner").toBeTypeOf("function");
+    const stop = vi.fn(), counter = new budgets!.ReleaseBudget(stop);
+    const body = Buffer.from(JSON.stringify({ choices: [{ message: { content: "🙂" }, finish_reason: "stop" }] }));
+    responders = [() => {
+      counter.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - counter.counts.bytes - body.length });
+      return new Response(new ReadableStream({ start(c) { for (const byte of body) c.enqueue(Uint8Array.of(byte)); c.close(); } }));
+    }];
+    const instance = create();
+    await expect(readers!.withUpstreamOwner({ budgets: [counter], refuse: () => { throw new Error("MEMORY_CONTEXT_REVOKED"); } },
+      () => instance.generateText!("fixture"))).resolves.toBe("🙂");
+    expect(counter.counts.bytes).toBe(budgets!.RELEASE_LIMITS.bytes); expect(stop).not.toHaveBeenCalled(); expect(calls).toBe(1);
   });
 
   it("keeps the diagnostic prefix within its byte cap for one large chunk", async () => {
@@ -177,19 +274,21 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(observed.pulled).toBeLessThanOrEqual(64_000 + chunk.byteLength);
   });
 
-  it("bounds the total bytes of short valid stream lines and keeps the reply", async () => {
+  // red-at-4df086541: shared scanning work now stops before the larger transport byte cap.
+  it("bounds short valid stream lines by generation work without returning a refused reply", async () => {
     const first = encoder.encode(contentFrame("partial answer"));
     const chunk = encoder.encode(frame({ choices: [], padding: "x".repeat(1000) }).repeat(16));
     const count = Math.ceil(MAX_RESPONSE_BYTES / chunk.byteLength) + 4;
     const { response, observed } = measuredBody([first, ...Array<Uint8Array>(count).fill(chunk), encoder.encode(DONE)]);
     const { completed, events } = await runTurn("t-response-cap", [() => response]);
-    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
-    expect(replies(events)).toEqual(["partial answer"]);
-    expect(errors(events)).toEqual([TOO_LARGE]);
-    expect(errorDetails(events)[0]).toContain("response exceeded");
+    expect(completed).toMatchObject({ ok: false, stopReason: "memory-refused" });
+    expect(replies(events)).toEqual([]);
+    expect(errors(events)).toEqual([]);
+    expect(errorDetails(events)).toEqual([]);
     expect(observed.cancelled).toBe(true);
-    expect(observed.pulled).toBeGreaterThan(MAX_RESPONSE_BYTES);
-    expect(observed.pulled).toBeLessThanOrEqual(MAX_RESPONSE_BYTES + chunk.byteLength);
+    expect(observed.pulled).toBeGreaterThan(first.byteLength);
+    expect(observed.pulled).toBeLessThanOrEqual(16_777_216 + chunk.byteLength);
+    expect(calls).toBe(1);
   });
 
   it("bounds a non-streamed success body before parsing it", async () => {
@@ -202,6 +301,26 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(observed.pulled).toBeLessThanOrEqual(MAX_RESPONSE_BYTES + chunk.byteLength);
   });
 
+  // 7C P2b control: the Stop-wins rule (D 9.6) must not turn a genuine fence refusal into cancelled; with no Stop it stays memory-refused.
+  // The kill proof for Stop-wins itself is openai-chat-tools 10c/10e.
+  it("STOP-WINS control: a fence refusal with no Stop settles memory-refused", async () => {
+    const budgets = await import("../memory/release-budget.ts");
+    const { consumingFixture } = await import("../testing/consuming-fixture.ts");
+    const f = consumingFixture(undefined, { empty: true }), cancel = vi.fn();
+    const instance = create();
+    const recorder = recordEvents(instance.adapter);
+    responders = [() => {
+      f.budget.charge({ bytes: budgets.RELEASE_LIMITS.bytes - f.budget.counts.bytes });
+      return new Response(new ReadableStream({ pull(c) { c.enqueue(Buffer.from(contentFrame("partial"))); }, cancel }, { highWaterMark: 0 }),
+        { status: 200, headers: { "content-type": "text/event-stream" } });
+    }];
+    try {
+      await instance.adapter.sendTurn({ threadId: "T", text: "fixture", cwd: fixtureBotFolder(), releaseBinding: f.binding });
+      expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "memory-refused" });
+      expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+    } finally { recorder.stop(); await instance.dispose(); instances.splice(instances.indexOf(instance), 1); f.close(); }
+  });
+
   it("accepts a large chunk made of short lines", async () => {
     const chunk = frame({ choices: [], padding: "x".repeat(1000) }).repeat(1100);
     expect(encoder.encode(chunk).byteLength).toBeGreaterThan(MAX_SSE_LINE_BYTES);
@@ -210,13 +329,14 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(replies(events)).toEqual(["answer"]);
   });
 
+  // red-at-4df086541: UTF-8 crossing bytes cannot become a partial-content fallback.
   it("counts multibyte line content by bytes", async () => {
     const first = encoder.encode(contentFrame("partial answer"));
     const chunk = encoder.encode("🙂".repeat(MAX_SSE_LINE_BYTES / 4));
     const { response, observed } = measuredBody([first, chunk, encoder.encode("🙂"), encoder.encode(DONE)]);
     const { completed, events } = await runTurn("t-line-byte-cap", [() => response]);
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
-    expect(errors(events)).toEqual([TOO_LARGE]);
+    expect(errors(events)).toEqual(["The model server sent a reply too large to read, so Murage kept what arrived before it."]);
     expect(replies(events)).toEqual(["partial answer"]);
     expect(observed.cancelled).toBe(true);
     expect(observed.pulled).toBe(first.byteLength + MAX_SSE_LINE_BYTES + 4);
@@ -324,7 +444,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
   });
 
   it("1.0.18 (f): a Flux free_cap_reached 429 is sent exactly once, and its code travels on the error", async () => {
-    // Recorded shape: flux-router rate_limiter.py raises HTTPException(429, detail={"error":{...,"state":"free_cap_reached"}}),
+    // Recorded shape: the Flux router's rate limiter raises HTTPException(429, detail={"error":{...,"state":"free_cap_reached"}}),
     // and LiteLLM flattens that dict into the OpenAI envelope's error.message as a Python repr.
     const repr = "{'error': {'type': 'rate_limit_exceeded', 'state': 'free_cap_reached', 'tier': 'free', 'message': \"Your account's monthly free-tier token allowance is exhausted.\"}}";
     const refusal = () => new Response(JSON.stringify({ error: { message: repr, type: "None", param: "None", code: "429" } }), { status: 429, headers: { "content-type": "application/json" } });
@@ -336,7 +456,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
   });
 
   it("FLUX-BURN-COPY-1018: a Flux hourly_burn_limit 429 is sent exactly once, and its code and reset time travel on the error", async () => {
-    // Recorded shape: flux-router forge_hook.py's hourly burn gate raises HTTPException(429, detail={"error": "hourly_burn_limit", ..., "retry_after": s}).
+    // Recorded shape: the Flux service's hourly burn gate raises HTTPException(429, detail={"error": "hourly_burn_limit", ..., "retry_after": s}).
     const refusal = () => new Response(JSON.stringify({ detail: { error: "hourly_burn_limit", subscription_tier: "pro", spent_usd_last_hour: 12.5, inflight_usd: 0.2, threshold_usd: 12, retry_after: 1800 } }), { status: 429, headers: { "content-type": "application/json" } });
     const before = Date.now();
     const { completed, events } = await runTurn("t-flux-hourly", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
@@ -367,11 +487,22 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "credit_exhausted" });
   });
 
-  it("1.0.18 (f, Astra r5): a header-only Flux hold keeps its retries and, when they run out, reaches the error as the hold", async () => {
+  it("UX-L2C-PAUSE r6: a Flux chat 402 key_budget_reached is reported to the spend gate with the key it was sent with", async () => {
+    const reported: Array<{ body: unknown; key: unknown }> = [];
+    installFluxStartGate({ onBudgetReached: (body: unknown, key?: string | null) => { reported.push({ body, key }); return { armed: true }; }, authorizeFluxDispatch: async () => {} } as never);
+    try {
+      const refusal = () => new Response(JSON.stringify({ error: "key_budget_reached", limit: "monthly_spend", key_id: "k1", as_of: "2026-11-10T10:00:00Z" }), { status: 402, headers: { "content-type": "application/json" } });
+      await runTurn("t-hook-402", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
+    } finally { installFluxStartGate(null); }
+    expect(reported.length).toBeGreaterThanOrEqual(1);
+    expect(reported[0]).toMatchObject({ key: SECRET, body: { error: "key_budget_reached", limit: "monthly_spend" } });
+  });
+
+  it("1.0.18 (f, Astra r5): a header-only Flux hold retries exactly once and reaches the error as the hold", async () => {
     const hold = () => new Response(JSON.stringify({ error: { message: "Too many requests" } }), { status: 429, headers: { "content-type": "application/json", "x-flux-hold-reason": "concurrency" } });
     const { completed, events } = await runTurn("t-flux-hold-header", [hold, hold, hold], { retryScale: 0.001, apiUrl: FLUX_URL });
     expect(completed).toMatchObject({ ok: false });
-    expect(calls).toBe(3);
+    expect(calls).toBe(2);
     expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "hold" });
   });
 

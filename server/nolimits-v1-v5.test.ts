@@ -20,13 +20,17 @@ afterEach(() => forgetOutsideState());
 const wire = () => { expect(wireOutsideStore(fileOutsideStore(join(mkdtempSync(join(tmpdir(), "nlmi-v5-")), "outside-state.jsonl")))).toBe(true); };
 
 interface Node { dir?: boolean; ctime: number }
+/** R53-W: the product joins with node:path, so on Windows it asks for `\\w\\a` where the map says `/w/a`. A Windows disk names
+ *  both spellings the same folder; so does this one there (on POSIX a backslash stays a name character). */
+const diskKey = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 /** A disk in memory: lstat and realpath by the map, a listing by the paths one level under a folder. */
 function fakeDisk(nodes: Record<string, Node>, broken: readonly string[] = []) {
   const fs: FsHooks = {
-    lstat: (p) => { if (broken.includes(p)) throw new Error("EIO"); const n = nodes[p]; return n ? { dir: n.dir === true, ctime: n.ctime } : null; },
-    realpath: (p) => { if (broken.includes(p)) throw new Error("EIO"); return nodes[p] ? p : null; },
+    lstat: (p) => { p = diskKey(p); if (broken.includes(p)) throw new Error("EIO"); const n = nodes[p]; return n ? { dir: n.dir === true, ctime: n.ctime } : null; },
+    realpath: (p) => { p = diskKey(p); if (broken.includes(p)) throw new Error("EIO"); return nodes[p] ? p : null; },
   };
   const listDir: ListDir = (p) => {
+    p = diskKey(p);
     if (broken.includes(p)) throw new Error("EIO");
     if (!nodes[p]?.dir) return null;
     return Object.keys(nodes).filter((k) => k !== p && dirname(k) === p).map((k) => ({ name: k.slice(p.length + (p.endsWith("/") ? 0 : 1)), dir: nodes[k]!.dir === true }));
@@ -136,7 +140,8 @@ describe("F6 the cwd window of every coarse span", () => {
     spanTurn("t1", root);
     const windows = downloadRegistry().list().filter((e) => e.kind === "window");
     expect(windows.map((e) => e.path)).toContain(registryKey(root));
-    expect(cwdOutsideMark(root)).toBe("cloned folder");
+    // CLONED-CWD r9 F3: the mark keeps the real label of the matching entry (a span window is not a clone)
+    expect(cwdOutsideMark(root)).toBe("downloaded file");
   });
 });
 

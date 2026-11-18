@@ -8,9 +8,9 @@
 // The hook script is the one server/drivers/codex-hook.ts writes (CODEX_HOOK_SCRIPT), written by this step as murage-hook.mjs.
 // Every run uses a throwaway HOME (and, for the app-shaped run, a throwaway --user-data-dir), stdin from /dev/null and a hard
 // 20 s timeout; only pids this script started (or that appeared during its run carrying its own throwaway folder) are killed.
-//   1. new shape: /usr/bin/env ELECTRON_RUN_AS_NODE=1 "<exe>" "<script>"  -> blocked with "Unexpected end of JSON input".
+//   1. new shape: /usr/bin/env ELECTRON_RUN_AS_NODE=1 "<exe>" "<script>"  -> blocked, "Murage blocked this call" on stderr.
 //      The script blocks a call whose hook event it could not read with a PreToolUse deny on stdout and exit 0 (Codex honours a
-//      printed deny only on exit 0), and a SessionStart with exit 2; both are a block. Either is accepted, the reason must match.
+//      printed deny only on exit 0), and a SessionStart with exit 2; both are a block. Either is accepted (blockedWithoutInput).
 //   2. guard (old shape, ELECTRON_RUN_AS_NODE unset): "<exe>" "<script>" -> exit 2 "hook started without node mode", no app window.
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, existsSync, realpathSync } from "node:fs";
@@ -19,6 +19,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
+import { blockedWithoutInput, bundleCodexHook, HOOK_BLOCK_LINE } from "./bundle-codex-hook.mjs";
 
 const TIMEOUT_MS = 20_000;
 const SETTLE_MS = 3_000;
@@ -28,16 +29,14 @@ if (!existsSync(exe)) { console.error(`FAIL no packaged binary at ${exe}`); proc
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "murage-hook-proof-")));
 const sleep = ms => new Promise(done => setTimeout(done, ms));
-const processes = () => execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n").map(line => /^\s*(\d+)\s+(.*)$/.exec(line)).filter(Boolean).map(m => ({ pid: Number(m[1]), command: m[2] }));
+const processes = () => execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).split("\n").map(line => /^\s*(\d+)\s+(.*)$/.exec(line)).filter(Boolean).map(m => ({ pid: Number(m[1]), command: m[2] }));
 const exePids = () => new Set(processes().filter(p => p.command.startsWith(exe) && p.pid !== process.pid).map(p => p.pid));
 const failures = [];
 const fail = message => { failures.push(message); console.error(`FAIL ${message}`); };
 
 async function script() {
-  // generated the same way the driver ships it: the source's own export, bundled by the repo's esbuild
-  const bundle = join(root, "codex-hook-bundle.mjs");
-  const built = spawnSync("pnpm", ["exec", "esbuild", "server/drivers/codex-hook.ts", "--bundle", "--platform=node", "--format=esm", "--log-level=error", `--outfile=${bundle}`], { encoding: "utf8" });
-  if (built.status !== 0) throw new Error(`could not bundle codex-hook.ts: ${(built.stderr || built.stdout).trim()}`);
+  // generated the same way the driver ships it: the source's own export, bundled as bundle-server.mjs bundles the server
+  const bundle = await bundleCodexHook(join(root, "bundle", "codex-hook-bundle.mjs"));
   const { CODEX_HOOK_SCRIPT, HOOK_SCRIPT_FILE } = await import(pathToFileURL(bundle).href);
   const dir = join(root, "scope");
   spawnSync("mkdir", ["-p", dir]);
@@ -72,11 +71,8 @@ try {
   const hook = await script();
 
   const fresh = await launch("new-shape", "/usr/bin/env", ["ELECTRON_RUN_AS_NODE=1", exe, hook]);
-  const reason = "Murage blocked this call";
-  const exit2 = fresh.code === 2;
-  const printedDeny = fresh.code === 0 && fresh.stdout.includes('"permissionDecision":"deny"') && fresh.stdout.includes(reason);
   if (fresh.timedOut) fail("new shape timed out");
-  else if (!exit2 && !printedDeny) fail(`new shape neither exit 2 nor exit 0 with a deny JSON on stdout containing "${reason}" (exit ${fresh.code})`);
+  else if (!blockedWithoutInput(fresh)) fail(`new shape not blocked: wanted "${HOOK_BLOCK_LINE}" on stderr and exit 2, or exit 0 with a deny JSON on stdout (exit ${fresh.code})`);
   if (fresh.stray.length) fail(`new shape left Murage processes behind: ${fresh.stray.join(",")}`);
 
   const old = await launch("guard", exe, [hook, `--user-data-dir=${join(root, "user-data-guard")}`]);

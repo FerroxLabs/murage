@@ -6,7 +6,7 @@
 // leads with the large one, and a template with no art keeps the old placeholder.
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";

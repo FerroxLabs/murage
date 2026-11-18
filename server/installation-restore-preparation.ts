@@ -1,23 +1,11 @@
-import { resetThreadSummaries, remintChatsGen } from "./thread-summary.ts";
-import { repairRestoredSharing, validateSharingPaused, validateSharingStructure } from "./sharing-restore.ts";
-import { endAllLivePairedRequests } from "./handoff-pair.ts";
-import { reconcileTeamJournalFiles } from "./team-lifecycle.ts";
-import type { BotRecord, GroupRecord, Message } from "./store.ts";
-import { rowToMessage, storedJson } from "./transcript-seq.ts";
-import { migrateMemorySchema } from "./memory/schema.ts";
-import { markIntegrityPassProven } from "./memory/integrity-state.ts";
-import { prepareProjectTablesForRestore } from "./project-tables.ts";
-import { pauseRestoredMemory } from "./memory/restore.ts";
-import { discardInboxProjection } from "./inbox.ts";
 import { EFFORT_LEVELS } from "./contracts.ts";
-import { randomBytes, randomUUID } from "node:crypto";
-import { constants, copyFileSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { copyFileSync, writeFileSync } from "./counted-fs.ts";
+import { constants, lstatSync, mkdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-open.ts";
 import { inspectInstallationArchive, type ArchiveLimits, type InstallationArchiveManifest } from "./installation-archive.ts";
 import { InstallationSnapshotError, inspectInstallationDatabase } from "./installation-database-snapshot.ts";
-import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
-import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
 import { RESTORED_CONNECTIONS_FILE } from "../electron/restored-connections.mjs";
 import { RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
@@ -26,20 +14,15 @@ import { isRestorableDataDirName } from "./data-dir-inventory.ts";
 export const RESTORE_UNRECOGNISED = "Not something Murage restores, so the restore leaves it out";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 import { hermesProfileCarry } from "../shared/hermes-profile-name.ts";
-import { isReservedBotId } from "../shared/bot-identity.ts";
-import { mapRoutineRuns, routinesCommit } from "./routine-runs-journal.ts";
-import { bumpWriteEpoch } from "./app-write-revision.ts";
 import { settleFtsCopy } from "./settle-copy.ts";
-import { neutralizeRestoredSends } from "./send-store.ts";
-import { prepareRestoredEmail } from "./email/restore.ts";
-import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
-import { fenceRestoredContinuations, fenceRestoredSql } from "./restore-fence.ts";
+import { discardInboxProjection } from "./inbox.ts";
+import { validateSharingPaused } from "./sharing-restore.ts";
+import { prepareRestoredDatabase, prepareRestoredRecords, readRestoreJson, writeRestoreJsonAtomic, type RestoreIo } from "./restore-prep-core.ts";
 
 type RecordValue = Record<string, unknown>;
 const object = (value: unknown): value is RecordValue => value !== null && typeof value === "object" && !Array.isArray(value);
 function fail(code: string): never { throw new InstallationSnapshotError(code); }
 const id = (value: unknown): value is string => typeof value === "string" && /^[\w-]{1,160}$/.test(value);
-const MAX_JSON_BYTES = 64 * 1024 ** 2;
 // The one real refusal (1.0.6): a name the restore writes itself, its review
 // notes, its fresh connection profile and its quarantine folder. An archive that
 // carries one could overwrite or pre-seed the restore's own record, so it stops
@@ -47,9 +30,8 @@ const MAX_JSON_BYTES = 64 * 1024 ** 2;
 // does not install (credentials, device pairings, script-access grants, runtime
 // state, unknown leftovers) is left out and listed below instead: never
 // installed, never a reason to fail the whole restore, and still in the backup file.
-const RESTORE_MARKERS = new Set<string>([RESTORE_REVIEW_FILE, RESTORED_CONNECTIONS_FILE, "recovery-quarantine"]);
+const RESTORE_MARKERS = new Set<string>([RESTORE_REVIEW_FILE, RESTORED_CONNECTIONS_FILE, "restore-provenance.json", "recovery-quarantine"]);
 const restoreMarker = (path: string): boolean => RESTORE_MARKERS.has(path.split("/")[0]!.toLowerCase());
-const terminal = new Set(["completed", "failed", "cancelled", "missed", "blocked", "limit"]);
 
 /** A name this system can hold as it is. */
 function localName(name: string): boolean {
@@ -141,13 +123,6 @@ function materializeOwnerEntries(state: string, manifest: InstallationArchiveMan
   noteEach(modifications, renamed, count => `${count} files were restored with different names because this computer does not allow their original names there`);
 }
 
-/** Whether a path is the app-made working folder `workspaces/<bot>/threads/<thread>` of some data directory. */
-function isManagedDesk(path: string, botId: string, threadId: string): boolean {
-  const normal = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  const tail = `workspaces/${botId}/threads/${threadId}`;
-  return normal === tail || normal.endsWith(`/${tail}`);
-}
-
 /** Prepare a private review-only candidate. It never replaces an installation
  * and does not clear the startup barrier. The original archive is unchanged;
  * pending queue/cleanup/skill writes are retained separately as evidence. */
@@ -160,26 +135,21 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
   let disposition: "delete-on-failure" | "retained-preparing" | "ready-for-review" = "delete-on-failure";
   // One token for this restore: every held row, JSON or SQL, carries it, and only an owner action after the restore releases them.
   const generation = randomUUID();
-  let heldContinuations = 0;
-  const read = (path: string): unknown => {
-    if (!files.has(path)) return undefined;
-    const absolute = join(state, ...path.split("/"));
-    if (lstatSync(absolute).size > MAX_JSON_BYTES) fail("RESTORE_COMPONENT_TOO_LARGE");
-    try { return JSON.parse(readFileSync(absolute, "utf8")); }
-    catch { fail("INVALID_RESTORE_COMPONENT"); }
+  const io: RestoreIo = {
+    state, files,
+    read: path => readRestoreJson(state, files, path),
+    write: (path, value) => {
+      const absolute = join(state, ...path.split("/"));
+      mkdirSync(dirname(absolute), { recursive: true, mode: 0o700 });
+      writeFileSync(absolute, JSON.stringify(value) + "\n", { mode: 0o600, flush: true });
+    },
+    quarantine: path => {
+      const destination = join(state, "recovery-quarantine", inspected.manifest.snapshotId, ...path.split("/"));
+      mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+      renameSync(join(state, ...path.split("/")), destination);
+    },
   };
-  const write = (path: string, value: unknown) => {
-    const absolute = join(state, ...path.split("/"));
-    mkdirSync(dirname(absolute), { recursive: true, mode: 0o700 });
-    writeFileSync(absolute, JSON.stringify(value) + "\n", { mode: 0o600, flush: true });
-  };
-  const quarantine = (path: string) => {
-    if (!files.has(path)) return;
-    const destination = join(state, "recovery-quarantine", inspected.manifest.snapshotId, ...path.split("/"));
-    mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-    renameSync(join(state, ...path.split("/")), destination);
-    quarantined.push(path);
-  };
+  const { read, write } = io;
   try {
     // No future archive may place its own marker/quarantine over ours.
     const stored = [...files, ...(inspected.manifest.links ?? []).map(link => link.path), ...(inspected.manifest.copies ?? []).map(copy => copy.path)];
@@ -202,201 +172,43 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
       for (const path of [...files]) if (path === name || path.startsWith(`${name}/`)) files.delete(path);
       modifications.push({ component: name, action: RESTORE_UNRECOGNISED });
     }
-    for (const path of ["routines.json", "calendar-calls.json", "webhooks.json", "delegation-receipts.json", "section-contexts.json"]) {
-      if (files.has(path)) assertInstallationRecords(path, read(path));
-    }
-    const storedConfig = read("config.json");
-    const config = storedConfig === undefined ? {} : storedConfig;
-    if (config !== undefined) {
-      if (!object(config)) fail("INVALID_RESTORE_CONFIG");
-      if (config.notifications !== undefined && !notificationPreferencesSchema.safeParse(config.notifications).success) fail("INVALID_RESTORE_CONFIG");
-      const safe: RecordValue = {};
-      safe.engineDiscovery = "explicit";
-      const instances: RecordValue = Object.fromEntries(Object.entries(DEFAULT_INSTANCES).map(([key, value]) => [key, { driver: value.driver, enabled: false }]));
-      for (const key of ["profile", "language", "rooms", "localVm", "browserProfiles", "notifications"]) if (Object.hasOwn(config, key)) safe[key] = config[key];
-      // Once 0.1.61 has pinned Hermes profiles, a restore must not pin them
-      // again from whatever Hermes' sticky default is on this computer.
-      if (config.hermesProfilesPinned === true) safe.hermesProfilesPinned = true;
-      // The new-bot effort default comes back only when it is a level this
-      // version knows: an unknown one would fail the whole stored config.
-      if (object(config.newBots) && typeof config.newBots.effort === "string" && (EFFORT_LEVELS as readonly string[]).includes(config.newBots.effort)) safe.newBots = { effort: config.newBots.effort };
-      safe.features = { browser: false, skillRecorder: false, showToolCalls: object(config.features) && config.features.showToolCalls === true };
-      if (config.instances !== undefined) {
-        if (!object(config.instances)) fail("INVALID_RESTORE_CONFIG");
-        Object.assign(instances, Object.fromEntries(Object.entries(config.instances).map(([key, value]) => {
-          if (!id(key) || !object(value) || typeof value.driver !== "string") fail("INVALID_RESTORE_CONFIG");
-          // The Hermes profile an engine runs is its identity, not a grant.
-          const hermes = hermesProfileCarry(value.driver, value.config);
-          return [key, { driver: value.driver, ...(typeof value.displayName === "string" ? { displayName: value.displayName } : {}), enabled: false, ...(hermes ? { config: hermes } : {}) }];
-        })));
-      }
-      safe.instances = instances;
-      write("config.json", safe);
-      modifications.push({ component: "config.json", action: "Provider/MCP credentials excluded; engine and experimental execution disabled" });
-    }
-    const ownership = new Map<string, string>();
-    const botIds = new Set<string>();
-    let messageAllowReset = false;
-    let prospectLearningReset = false;
-    let imageApprovalReset = false;
-    for (const path of ["bots.json", "groups.json"]) {
-      const records = read(path);
-      if (records === undefined) continue;
-      if (!Array.isArray(records)) fail("INVALID_RESTORE_ROSTER");
-      const ids = new Set<string>();
-      const prepared = records.map(value => {
-        if (!object(value) || !id(value.id) || !id(value.threadId) || ids.has(value.id)) fail("INVALID_RESTORE_ROSTER");
-        // The Cloud home's own browser check lives under this prefix; no restored bot or group may name it.
-        if (isReservedBotId(value.id)) fail("RESERVED_RESTORE_ID");
-        ids.add(value.id);
-        if (path === "bots.json") botIds.add(value.id);
-        const owner = `${path}:${value.id}`;
-        const claim = (thread: unknown) => {
-          if (!id(thread) || (ownership.has(thread) && ownership.get(thread) !== owner)) fail("DUPLICATE_RESTORE_THREAD");
-          ownership.set(thread, owner);
-        };
-        claim(value.threadId);
-        const record = { ...value };
-        if (value.tasks !== undefined) {
-          if (!Array.isArray(value.tasks)) fail("INVALID_RESTORE_ROSTER");
-          const seen = new Set<string>();
-          record.tasks = value.tasks.map(task => {
-            if (!object(task) || !id(task.threadId) || seen.has(task.threadId)) fail("INVALID_RESTORE_ROSTER");
-            seen.add(task.threadId); claim(task.threadId);
-            const copy = { ...task, autoApprove: false, alwaysAllow: [], resumeCursors: {} };
-            delete (copy as RecordValue).lastInstanceId;
-            delete (copy as RecordValue).resumeSeals;
-            delete (copy as RecordValue).resumePolicies;
-            delete (copy as RecordValue).replayPending;
-            // The bot's own working folder for this conversation names the old installation's data directory: the next turn pins this one's.
-            const deskPath = (task as RecordValue).cwd;
-            if (path === "bots.json" && typeof deskPath === "string" && isManagedDesk(deskPath, String(value.id), String(task.threadId))) delete (copy as RecordValue).cwd;
-            return copy;
-          });
+    // The config.json rewrite is the desktop's own step (a Cloud reset keeps its sign-ins and engines): the shared core runs it
+    // between the record validation and the roster steps, where it always ran.
+    const rewriteConfig = () => {
+      const storedConfig = read("config.json");
+      const config = storedConfig === undefined ? {} : storedConfig;
+      if (config !== undefined) {
+        if (!object(config)) fail("INVALID_RESTORE_CONFIG");
+        if (config.notifications !== undefined && !notificationPreferencesSchema.safeParse(config.notifications).success) fail("INVALID_RESTORE_CONFIG");
+        const safe: RecordValue = {};
+        safe.engineDiscovery = "explicit";
+        const instances: RecordValue = Object.fromEntries(Object.entries(DEFAULT_INSTANCES).map(([key, value]) => [key, { driver: value.driver, enabled: false }]));
+        for (const key of ["profile", "language", "rooms", "localVm", "browserProfiles", "notifications"]) if (Object.hasOwn(config, key)) safe[key] = config[key];
+        // Once 0.1.61 has pinned Hermes profiles, a restore must not pin them
+        // again from whatever Hermes' sticky default is on this computer.
+        if (config.hermesProfilesPinned === true) safe.hermesProfilesPinned = true;
+        // The new-bot effort default comes back only when it is a level this
+        // version knows: an unknown one would fail the whole stored config.
+        if (object(config.newBots) && typeof config.newBots.effort === "string" && (EFFORT_LEVELS as readonly string[]).includes(config.newBots.effort)) safe.newBots = { effort: config.newBots.effort };
+        safe.features = { browser: false, skillRecorder: false, showToolCalls: object(config.features) && config.features.showToolCalls === true };
+        if (config.instances !== undefined) {
+          if (!object(config.instances)) fail("INVALID_RESTORE_CONFIG");
+          Object.assign(instances, Object.fromEntries(Object.entries(config.instances).map(([key, value]) => {
+            if (!id(key) || !object(value) || typeof value.driver !== "string") fail("INVALID_RESTORE_CONFIG");
+            // The Hermes profile an engine runs is its identity, not a grant.
+            const hermes = hermesProfileCarry(value.driver, value.config);
+            return [key, { driver: value.driver, ...(typeof value.displayName === "string" ? { displayName: value.displayName } : {}), enabled: false, ...(hermes ? { config: hermes } : {}) }];
+          })));
         }
-        delete record.lastInstanceId;
-        if (path === "bots.json") {
-          Object.assign(record, { busy: false, activity: "idle", autoApprove: false, autoReview: "off", alwaysAllow: [], approvePeerComms: true, computer: "off", autoStartVps: false, browser: false, useMyChrome: false, composio: false, speakReplies: false, resumeCursors: {}, rewound: true });
-          delete record.resumePolicies; delete record.replayPending;
-          // The owner's browser connection belongs to the old computer's
-          // browser and extension profile; it is chosen again (plan 4.3).
-          delete record.browserTransport; delete record.browserExtensionProfileId; delete record.browserExtensionBrowser;
-          // Full permissive never comes back from a backup: the owner turns it on again, here, by typing the name.
-          // The checker choice (browserActionCheck) is a preference, not authority, and is kept.
-          delete record.browserApproval;
-          // "Make images without asking" is spend authority the old computer
-          // granted: a restored bot asks again until the owner chooses it here.
-          // "Ask before each image" and the guard only ever ask more, so they stay.
-          if (record.imageApproval === "allow") { delete record.imageApproval; imageApprovalReset = true; }
-          // "Who this bot can message" widens reach: an owner-only field that
-          // never comes back from a backup (SPEC-P 3.12, contract 4.3).
-          if (record.messageAllow !== undefined) { delete record.messageAllow; messageAllowReset = true; }
-          // Learning from customer and audience messages is an opt-in grant (design 11): a restore brings back no grants.
-          if (object(record.learning) && (record.learning.prospectLearning === true || (Array.isArray(record.learning.prospectThreadIds) && record.learning.prospectThreadIds.length))) {
-            record.learning = { ...record.learning, prospectLearning: false, prospectThreadIds: [] }; prospectLearningReset = true;
-          }
-        } else {
-          if (!Array.isArray(value.memberIds) || value.memberIds.some(member => !id(member) || !botIds.has(member))) fail("INVALID_RESTORE_MEMBERSHIP");
-          Object.assign(record, { working: false, busyBotId: null });
-        }
-        heldContinuations += fenceRestoredContinuations(record, generation);
-        return record;
-      });
-      write(path, prepared);
-      modifications.push({ component: path, action: "Preserved identities/tasks; cleared active sessions and automatic authority" });
-      if (path === "bots.json" && messageAllowReset) modifications.push({ component: path, action: "Who each bot can message was reset to its team." });
-      if (path === "bots.json" && prospectLearningReset) modifications.push({ component: path, action: "Learning from customer and audience messages was turned off; choose it again if you want it." });
-      if (path === "bots.json" && imageApprovalReset) modifications.push({ component: path, action: "Bots set to make images without asking now follow their permission level." });
-    }
-    if (heldContinuations > 0) modifications.push({ component: "bots.json/groups.json", action: `${heldContinuations} saved continuation${heldContinuations === 1 ? "" : "s"} kept on hold: authorize each one again to continue` });
-    const routines = read("routines.json");
-    if (routines !== undefined) {
-      if (!object(routines) || routines.version !== 1 || !Array.isArray(routines.routines) || (routines.runs !== undefined && !Array.isArray(routines.runs))) fail("INVALID_RESTORE_ROUTINES");
-      // The same policy as bots and tasks (audit A-06): a restored routine
-      // follows its bot again (whose level is reset to Ask above) and keeps no
-      // "Always allow for this routine" grants.
-      routines.routines = routines.routines.map(value => {
-        if (!object(value) || !id(value.id)) fail("INVALID_RESTORE_ROUTINES");
-        const copy: RecordValue = { ...value, enabled: false, alwaysAllow: [] };
-        delete copy.permissionMode;
-        return copy;
-      });
-      if (routines.runs !== undefined) routines.runs = routines.runs.map(value => {
-        if (!object(value) || !id(value.id) || typeof value.status !== "string") fail("INVALID_RESTORE_ROUTINES");
-        if (terminal.has(value.status)) return value;
-        return { ...value, status: "cancelled", error: "Pending work suspended after restoration; review its outcome before starting new work", finishedAt: Date.now() };
-      });
-      write("routines.json", routines);
-      mapRoutineRuns(state, value => terminal.has(String(value.status)) ? value
-        : { ...value, status: "cancelled", error: "Pending work suspended after restoration; review its outcome before starting new work", finishedAt: Date.now() }, routinesCommit(routines));
-      modifications.push({ component: "routines.json", action: "Routines paused; each follows its bot's approval level again, with no routine grants" });
-    }
-    const calls = read("calendar-calls.json");
-    if (calls !== undefined) {
-      if (!object(calls) || calls.version !== 1 || !Array.isArray(calls.calls)) fail("INVALID_RESTORE_CALENDAR");
-      calls.calls = calls.calls.map(value => { if (!object(value) || !id(value.id)) fail("INVALID_RESTORE_CALENDAR"); return { ...value, nextRunAt: null }; });
-      write("calendar-calls.json", calls);
-    }
-    const webhooks = read("webhooks.json");
-    if (webhooks !== undefined) {
-      if (!object(webhooks) || webhooks.version !== 1 || !Array.isArray(webhooks.webhooks) || !Array.isArray(webhooks.deliveries)) fail("INVALID_RESTORE_WEBHOOKS");
-      webhooks.webhooks = webhooks.webhooks.map(value => {
-        if (!object(value) || !id(value.id)) fail("INVALID_RESTORE_WEBHOOKS");
-        const copy = { ...value, enabled: false, verificationPending: true, secretHash: randomBytes(32).toString("hex") };
-        delete (copy as RecordValue).secret;
-        return copy;
-      });
-      write("webhooks.json", webhooks);
-    }
-    for (const path of ["delegations.json", "browser-cleanups.json"]) quarantine(path);
-    for (const path of files) {
-      if (/^skill-state\/[^/]+\/staged\.json$/.test(path)) quarantine(path);
-      else if (/^skill-state\/[^/]+\/skills\.json$/.test(path)) {
-        const manifest = read(path);
-        if (!object(manifest)) fail("INVALID_RESTORE_SKILLS");
-        for (const entry of Object.values(manifest)) { if (!object(entry)) fail("INVALID_RESTORE_SKILLS"); entry.enabled = false; }
-        write(path, manifest);
+        safe.instances = instances;
+        write("config.json", safe);
+        modifications.push({ component: "config.json", action: "Provider/MCP credentials excluded; engine and experimental execution disabled" });
       }
-    }
-    const expireMessage = (value: unknown): RecordValue => {
-      if (!object(value) || !id(value.id) || !["bot", "user"].includes(String(value.role)) || typeof value.kind !== "string" || typeof value.at !== "number") fail("INVALID_RESTORE_MESSAGE");
-      const message = { ...value };
-      if (object(message.card) && !message.card.answered && (message.card.requestId || message.card.routineRequest || message.card.skillRequest)) {
-        message.card = { ...message.card, answered: "Expired after restore", dismissed: true };
-      }
-      // A Murage for Chrome setup card would continue the owner's old request
-      // on the next settled turn; it expires like any other waiting card.
-      if (object(message.card) && object(message.card.browserSetup) && message.card.browserSetup.resumed !== true) {
-        message.card = { ...message.card, answered: "Expired after restore", dismissed: true,
-          browserSetup: { ...message.card.browserSetup, continueRequested: false, error: "This was waiting when the backup was made. Ask again." } };
-      }
-      for (const key of ["connector", "mcpSignIn", "secret"]) if (object(message[key])) message[key] = { ...message[key], dismissed: true, resumed: false };
-      if (object(message.goalRun) && message.goalRun.status === "working") message.goalRun = { ...message.goalRun, status: "blocked", detail: "Restored work requires outcome review before a fresh run" };
-      if (message.queued === true) message.queued = false;
-      return message;
     };
-    // messages-<thread>.json.imported is message-db.ts's record of a transcript already imported into messages.db: nothing reads
-    // it again, so it is copied through as written (path and size checked like any component, never parsed, expired or imported).
-    // Re-validating it refused whole restores: 1.0.2's lenient import accepted transcripts with duplicate ids.
-    for (const path of files) if (/^messages-[\w-]+\.json\.imported$/.test(path)) {
-      const stat = lstatSync(join(state, ...path.split("/")));
-      if (!stat.isFile()) fail("INVALID_RESTORE_COMPONENT");
-      if (stat.size > MAX_JSON_BYTES) fail("RESTORE_COMPONENT_TOO_LARGE");
-    }
-    for (const path of files) if (/^messages-[\w-]+\.json$/.test(path)) {
-      const value = read(path);
-      const graph = new InstallationTranscriptGraph(fail);
-      const messages = Array.isArray(value) ? value : object(value) && Array.isArray(value.messages) ? value.messages : null;
-      if (!messages) fail("INVALID_RESTORE_MESSAGE");
-      for (const message of messages) graph.add(message);
-      graph.validate(object(value) ? value.activeLeafId ?? null : null);
-      if (Array.isArray(value)) write(path, value.map(expireMessage));
-      else if (object(value) && Array.isArray(value.messages)) write(path, { ...value, messages: value.messages.map(expireMessage) });
-      else fail("INVALID_RESTORE_MESSAGE");
-    }
-    const sharingBots = (read("bots.json") ?? []) as Record<string, unknown>[], sharingGroups = (read("groups.json") ?? []) as Record<string, unknown>[];
-    modifications.push(...repairRestoredSharing(sharingBots, sharingGroups, Date.now()).map(action => ({ component: "bots.json/groups.json", action })));
-    validateSharingStructure(sharingBots, sharingGroups);
+    const { sharingBots, sharingGroups, botIds } = prepareRestoredRecords(io, { generation, profile: "archive", quarantineId: inspected.manifest.snapshotId, modifications, quarantined, afterValidate: rewriteConfig });
+    const persistRosters = () => {
+      for (const [path, roster] of [["bots.json", sharingBots], ["groups.json", sharingGroups]] as const) writeRestoreJsonAtomic(join(state, path), roster);
+    };
     if (files.has("messages.db")) {
       const db = new DatabaseSync(join(state, "messages.db"));
       try {
@@ -410,47 +222,9 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         writeFileSync(preparingPath, JSON.stringify({ version: 1, status: "preparing", snapshotId: inspected.manifest.snapshotId, archiveSha256: inspected.sha256 }) + "\n", { mode: 0o600, flush: true });
         renameSync(preparingPath, reviewPath);
         disposition = "retained-preparing";
-        remintChatsGen(db);
-        if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_meta'").get()){migrateMemorySchema(db);markIntegrityPassProven(db);} // inspectInstallationDatabase proved every row in full above
-        bumpWriteEpoch(db); // a restored file is not the file any cached figure was counted from
-        validateSharingStructure(sharingBots, sharingGroups, db);
-        modifications.push(...reconcileTeamJournalFiles(state, db, sharingBots as unknown as BotRecord[], sharingGroups as unknown as GroupRecord[]).map(action => ({ component: "bots.json/groups.json", action })));
-        validateSharingPaused(sharingBots, sharingGroups, db);
-        db.exec("BEGIN IMMEDIATE");
-        const update = db.prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?");
-        for (const row of db.prepare("SELECT thread_id,id,json FROM messages").iterate()) {
-          if (typeof row.json !== "string" || Buffer.byteLength(row.json) > MAX_JSON_BYTES) fail("INVALID_RESTORE_MESSAGE");
-          const before = rowToMessage({ json: row.json }); // U4 S3: the one decoder, and storedJson below the one encoder
-          const after = expireMessage(before);
-          if (after.id !== row.id) fail("INVALID_RESTORE_MESSAGE");
-          const encoded = storedJson(after as unknown as Message);
-          if (encoded !== row.json) update.run(encoded, row.thread_id, row.id);
-        }
-        // Handoffs queued in the backup never run after a restore: kept as evidence beside the other quarantined files, then removed from the table.
-        if (db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name='pending_delegations'").get()) {
-          const evidence = queuedDelegationsByThread(db), queued = Object.values(evidence).flat();
-          if (queued.length) {
-            const destination = join(state, "recovery-quarantine", inspected.manifest.snapshotId, files.has("delegations.json") ? "delegations-table.json" : "delegations.json");
-            mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-            writeFileSync(destination, JSON.stringify(evidence) + "\n", { mode: 0o600, flush: true });
-            endAllLivePairedRequests(db, "restore-quarantine");   // a queued hand-off's request is not left live behind its removed row
-            db.exec("DELETE FROM pending_delegations");
-            modifications.push({ component: "messages.db", action: `${queued.length} queued handoff${queued.length === 1 ? "" : "s"} moved to recovery-quarantine; none runs after the restore` });
-          }
-        }
-        modifications.push(...fenceRestoredSql(db, generation));
-        modifications.push(...prepareProjectTablesForRestore(db, { groups: sharingGroups as Array<{ id: string; channelProject?: unknown }>, botIds, now: Date.now() }));
-        const heldSends = neutralizeRestoredSends(db, generation);
-        if (heldSends) modifications.push({ component: "messages.db", action: `${heldSends} message${heldSends === 1 ? "" : "s"} that were waiting to be sent were kept as "Send again" chips and will not run until you resend them` });
-        // The Inbox projection is derived data from an untrusted archive: it is
-        // emptied here and rebuilt from the restored messages on first open.
-        discardInboxProjection(db);
-        if (pauseRestoredMemory(db)) modifications.push({component:"messages.db",action:"Memory paused; worker leases and provider disclosures invalidated; indexes require rebuild"});
-        // bot email (section 7): every binding waits for the owner's Reconnect; nothing polls, mounts or sends before it
-        const emailBindings = prepareRestoredEmail(db);
-        if (emailBindings) modifications.push({ component: "messages.db", action: `${emailBindings} bot email address${emailBindings === 1 ? "" : "es"} will reconnect when you choose Reconnect email` });
-        resetThreadSummaries(db);
-        db.exec("COMMIT");
+        prepareRestoredDatabase(db, { generation, profile: "archive", quarantineId: inspected.manifest.snapshotId, modifications, state, files, sharingBots, sharingGroups, botIds,
+          beforeCommit: db => db.exec("DROP TABLE IF EXISTS restore_pending"),
+          persistRosters });
       } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
       finally { db.close(); }
       // The candidate settles itself before it can be activated (SMOOTH-FTS-MERGE R6 section 3): an archive from a build before the
@@ -466,8 +240,7 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
       }
       const finished = new DatabaseSync(join(state, "messages.db"), { readOnly: true });
       try { inspectInstallationDatabase(finished); } finally { finished.close(); }
-    }
-    write("bots.json", sharingBots); write("groups.json", sharingGroups);
+    } else persistRosters();
     validateSharingPaused(sharingBots, sharingGroups);
     materializeOwnerEntries(state, inspected.manifest, modifications);
     write(RESTORED_CONNECTIONS_FILE, { version: 1, id: randomUUID() });

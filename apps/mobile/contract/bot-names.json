@@ -1,0 +1,4 @@
+{
+  "note": "Bot names that real customers' bots have used. A shipped phone or desktop string takes the bot's name as a placeholder and never writes one of these in (src/locales/bot-name-guard.test.ts reads this with the shipped library's agent names and the contract fixtures' bot names).",
+  "names": ["Sable", "Ember", "Lena"]
+}

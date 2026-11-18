@@ -8,6 +8,9 @@ import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DatabaseSync } from "node:sqlite";
+import { runInNewContext } from "node:vm";
+import * as ts from "typescript";
+import { EventBus } from "./harness/bus.ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import type { RuntimeEvent } from "./contracts.ts";
@@ -175,13 +178,48 @@ describe("1. only an engine's own reply proves a hand-off ran", () => {
     const index = readFileSync(join(serverDir, "index.ts"), "utf8");
     expect(index.match(/providerReplyOf\(event\)/g)).toHaveLength(1);
     // the two rows that carry it: the engine's reply text and a tool the engine started
-    expect(index).toContain("pushMessage({ role: \"bot\", kind: \"text\", text: shown, turnId: event.turnId }, before, reply);");
+    // MAIN RULING 1115-PMSENDS-R2 item 3: store the public display projection; behavior is checked independently below.
+    expect(index).toContain("pushMessage({ role: \"bot\", kind: \"text\", text: itemText, turnId: event.turnId }, before, reply);");
     expect(index.match(/\}, undefined, reply\);/g)).toHaveLength(1);
+  });
+  it("stores the masked public display of a provider reply without its secret-shaped value", () => {
+    // MAIN RULING 1115-PMSENDS-R2 item 3: execute the real fold branch with the real audience collector and durable Store.
+    const w = ownerWorld("owner");
+    const bus = new EventBus();
+    bus.omitLog(() => true);
+    bus.attach([{ instanceId: "fixture", driverKind: "claudeAgent", adapter: { onEvent: () => () => {} } } as never]);
+    const secret = "sk-" + "fixtureonly".repeat(5);
+    const event = { ...base(w.target.threadId, "display-turn"), type: "item.completed", itemType: "assistant_text", origin: "engine", text: `Visible reply: ${secret}` } as RuntimeEvent;
+    bus.publish(event, bus.admitNewTurn("fixture", w.target.threadId));
+    const display = bus.audienceFor(event).map(value => value.event).find(value => value.type === event.type) as unknown as { text: string };
+    expect(display.text).toContain("«redacted»");
+    expect(display.text).not.toContain(secret);
+    // Select the production assistant-text branch structurally; no copy of its masking/storage decision lives in this test.
+    const source = ts.createSourceFile("index.ts", readFileSync(join(serverDir, "index.ts"), "utf8"), ts.ScriptTarget.Latest, true);
+    const branches: ts.IfStatement[] = [];
+    const visit = (node: ts.Node): void => {
+      if (ts.isIfStatement(node) && node.expression.getText(source) === 'event.itemType === "assistant_text"' && node.thenStatement.getText(source).includes("const itemText")) branches.push(node);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(branches).toHaveLength(1);
+    const code = ts.transpileModule(`switch (event.type) { case "item.completed": ${branches[0]!.thenStatement.getText(source)} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    runInNewContext(code, {
+      event, store: w.store, bot: w.target, group: undefined, speaker: undefined,
+      displayField: (field: string) => Object.getOwnPropertyDescriptor(display, field)?.value,
+      reply: providerReplyOf(event), toolRowByItem: new Map(), lastReply: new Map(), memoryEchoReplies: new Map(),
+      isMemoryProvenanceEcho: () => false, materialiseQuestionFences: () => {},
+      pushMessage: (raw: Parameters<typeof w.store.appendMessage>[1], _before: string | undefined, proof: ProviderReply) => w.store.appendMessage(w.target.threadId, raw, "display-reply", undefined, proof),
+    });
+    expect(w.store.messageById(w.target.threadId, "display-reply")!.text).toBe(display.text);
+    expect(JSON.stringify(w.store.messagesFor(w.target.threadId))).not.toContain(secret);
+    expect((event as { text: string }).text).toContain(secret);
   });
   it("every emit of an engine reply or tool start in a driver chooses its origin, and the choice is the table's", () => {
     const expected: Record<string, { engine: number; murage: number }> = {
-      "drivers/claude.ts": { engine: 4, murage: 4 } /* + the marks-durability record of an engine permission ask, here and in codex.ts (NLINT-FIX4 B3 2e749c0d5: recordOutsideInstallChange input labels the engine tool call, emits nothing) */, "drivers/codex.ts": { engine: 4, murage: 6 } /* + the slow-hooks wait line (B13 41c9ed743), Murage's own status, never engine text; + the unsupported tool calls notice (U14 a12fb20e9), Murage's own, read from the rollout */, "drivers/acp/core.ts": { engine: 5, murage: 9 } /* + the AcpOutsideCall type and the object acpOutsideCall builds (NOLIMITS v1 0d74c2cf0, handed to the server's outside rules, no item emitted) and the NLINT-FIX4 record input (2e749c0d5) */ /* + the Ask stop notice (d612d17e0), Murage's own; + the 1.0.8 #19 notice when the engine stops before an approval's delivery is confirmed (1d0085e06), Murage's own; + the Grok pin models-wait line (09cf10fa5), Murage's own; + S5 site 26: the same fresh-session notice from the data-root-moved renewal (9cdca5ad4), Murage's own */,
-      "drivers/pi.ts": { engine: 2, murage: 2 } /* the compaction row (PI-SETTLE): Murage opens it, no engine tool started; + the slow session-start wait line (U14), Murage's own */, "drivers/antigravity.ts": { engine: 2, murage: 5 } /* five Murage notices, each a Murage-written line (never engine text), each on its own condition: the Ask stop note (d612d17e0); the line for a command accept-edits denied with no reply (94f51f40e); a tool that ran without the relay's check, turn stopped (ec5c4749a); the relay hook not loaded or a foreign hooks file, turn refused before its prompt (ec5c4749a, reworded 130d2c5f8 and 2b206b8db); the folder's own hooks file, turn runs as at Ask (2b206b8db) */, "drivers/boxagent.ts": { engine: 2, murage: 1 }, "drivers/openai-chat.ts": { engine: 4, murage: 0 } /* 1.0.9 tools: + the text a model writes before its tool calls, and the tool start the model asked for; both are the engine's own */,
+      "drivers/claude.ts": { engine: 4, murage: 4 } /* + the marks-durability record of an engine permission ask, here and in codex.ts (NLINT-FIX4 B3 2e749c0d5: recordOutsideInstallChange input labels the engine tool call, emits nothing) */, "drivers/codex.ts": { engine: 4, murage: 6 } /* + the slow-hooks wait line (B13 41c9ed743), Murage's own status, never engine text; + the unsupported tool calls notice (U14 a12fb20e9), Murage's own, read from the rollout */, "drivers/acp/core.ts": { engine: 5, murage: 11 } /* + the Copilot "no longer offers <model>, using <fallback>" notice (9db0e93f4): Murage-authored, no engine reply; + the provider tool-budget omission notice: Murage-authored, never an engine reply */ /* + the AcpOutsideCall type and the object acpOutsideCall builds (NOLIMITS v1 0d74c2cf0, handed to the server's outside rules, no item emitted) and the NLINT-FIX4 record input (2e749c0d5) */ /* + the Ask stop notice (d612d17e0), Murage's own; + the 1.0.8 #19 notice when the engine stops before an approval's delivery is confirmed (1d0085e06), Murage's own; + the Grok pin models-wait line (09cf10fa5), Murage's own; + S5 site 26: the same fresh-session notice from the data-root-moved renewal (9cdca5ad4), Murage's own */,
+      // MAIN RULING 1115-PMSENDS-R2 item 5: exact notice producers are enumerated in REPORT.md.
+      "drivers/pi.ts": { engine: 2, murage: 3 } /* + the macOS power-protection fallback notice (host-power.ts), Murage-authored; the compaction row (PI-SETTLE): Murage opens it, no engine tool started; + the slow session-start wait line (U14), Murage's own */, "drivers/antigravity.ts": { engine: 2, murage: 7 } /* seven Murage notices: + the macOS power-protection fallback and missing-wipe-check notices, both Murage-authored; five existing Murage-written lines (never engine text), each on its own condition: the Ask stop note (d612d17e0); the line for a command accept-edits denied with no reply (94f51f40e); a tool that ran without the relay's check, turn stopped (ec5c4749a); the relay hook not loaded or a foreign hooks file, turn refused before its prompt (ec5c4749a, reworded 130d2c5f8 and 2b206b8db); the folder's own hooks file, turn runs as at Ask (2b206b8db) */, "drivers/boxagent.ts": { engine: 2, murage: 1 }, "drivers/openai-chat.ts": { engine: 4, murage: 0 } /* 1.0.9 tools: + the text a model writes before its tool calls, and the tool start the model asked for; both are the engine's own */,
     };
     for (const [file, want] of Object.entries(expected)) {
       const text = readFileSync(join(serverDir, file), "utf8");
@@ -443,6 +481,6 @@ describe("4. the start is a runtime capability, so the static analysis only has 
   });
   it("the memory redispatch literals in index.ts carry the turn's own prompt by value (the lint's reading, checked here against the source)", () => {
     const index = readFileSync(join(serverDir, "index.ts"), "utf8");
-    expect(index.match(/\{ \.\.\.opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf \}/g)).toHaveLength(2);
+    expect(index.match(/\{ \.\.\.opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf, \.\.\.\(packRefusedHere \? \{ packSuppressed: true as const \} : \{\}\) \}/g)).toHaveLength(2);
   });
 });

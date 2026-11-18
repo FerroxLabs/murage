@@ -1,3 +1,4 @@
+import type { ReleaseContext } from "../memory/release-transaction.ts";
 import { botFolderOrThrow, BotFolderUnavailableError } from "../bot-folder.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -19,6 +20,7 @@ import {
   type MemoryExtractionDispatch, type MemoryGroundingInput,
 } from "../memory/extract.ts";
 import { MemorySendFenced } from "../memory/learning-send-fence.ts";
+import { fencedRefusalRegistry } from "./engine-input.ts";
 import type { LearningGate } from "../memory/learning-send.ts";
 import { fixedPrompt } from "../memory/fixed-prompt.ts";
 type MemorySendFence = LearningGate;
@@ -54,10 +56,10 @@ function runtimeFailure(event: Extract<RuntimeEvent, { type: "runtime.error" }>)
 }
 
 /** One background session: the whole prompt in, the engine's answer text out. `gate` is the call's one learning gate
- * (memory/learning-send.ts): the runner admits through it (check and release under the write lock) immediately before it writes the
- * prompt to the engine, with no await between, on every write (a relaunch's too), withdraws an admission that wrote nothing
- * (`notWritten`), and marks each write (`wrote`); a refusal writes nothing and the session rejects with that error. */
+ * (memory/learning-send.ts): the runner writes the prompt inside `gate.send` (check, release and the write under one write lock),
+ * on every write (a relaunch's too); a refusal writes nothing and the session rejects with that error. */
 export type MemorySessionRunner = (prompt: string, signal: AbortSignal, limits: { maxBytes: number; gate?: LearningGate; cwd?: string }) => Promise<string>;
+
 
 export interface CliMemoryLearningOptions {
   /** How one session runs. Default: a hidden turn on the instance's adapter in its bot folder. */
@@ -80,6 +82,8 @@ function stripFence(text: string): string {
 /** Attach extractMemory and groundMemory to a CLI or ACP instance (mutates and returns it). */
 export function withCliMemoryLearning<T extends ProviderInstance>(live: T, options: CliMemoryLearningOptions = {}): T {
   const adapter = live.adapter;
+  // Fail closed (H1-SENDLOCK): only an adapter whose learning prompt write runs inside the gate's lock learns on this login.
+
   const interactive = new Set<string>();
   const idle: Array<() => void> = [];
   const wake = () => { if (interactive.size === 0) for (const resume of idle.splice(0)) resume(); };
@@ -113,12 +117,14 @@ export function withCliMemoryLearning<T extends ProviderInstance>(live: T, optio
     // No gate, no send (r6 section 0, no exemption): a learning call without its gate is refused here and nothing reaches the engine.
     // The one gateless entry is checkReply below: a separately named, non-learning check whose only text is the fixed ENGINE_REPLY_PROMPT.
     if (!fence) return Promise.reject(new MemorySendFenced());
+    try { fence.check(); } catch (error) { return Promise.reject(error); }
+    if (adapter.capabilities?.fencedLearningWrite !== true) return Promise.reject(new Error("CLI_LEARNING_WRITE_NOT_FENCED"));
     const maxBytes = Math.min(MAX_ANSWER_BYTES, Math.max(4_096, maximumOutputTokens * 8));
     return exclusive(async () => {
       await untilIdle(signal);
       if (signal.aborted) throw new Error("MEMORY_EXTRACTION_ABORTED");
       // The words waited in this queue: a Forget, delete or edit that committed meanwhile drops the call here (a cheap exit), and the
-      // runner admits through the same gate, under the write lock, right before its write.
+      // runner writes inside the same gate's send, under the write lock.
       fence.check();
       const answer = stripFence(await runCli(flattenMemoryMessages(messages), signal, { maxBytes, gate: fence, cwd }));
       if (!answer || Buffer.byteLength(answer) > maxBytes) throw new Error(answer ? "MEMORY_EXTRACTION_RESPONSE_LIMIT" : "MEMORY_EXTRACTION_EMPTY_REPLY");
@@ -176,17 +182,19 @@ export const hiddenTurnRunner = (live: ProviderInstance, _oneShotFolder?: () => 
   timer.unref?.();
   try {
     if (signal.aborted) throw new Error("MEMORY_EXTRACTION_ABORTED");
-    // The gate's admit rides as the turn's submission fence (SendTurnInput.beforeSubmit, codex.ts:2516 / acp/core.ts:5445 / claude.ts
-    // :5544): every adapter calls it with no await before the prompt write, on every write (a relaunch's too), and it checks and releases
-    // under the write lock. A refusal or busy lock writes nothing and the turn settles failed. A new admission means the one before it
-    // was written (the adapter relaunched after it); `notWritten` withdraws only the open, unwritten admission (r8 review change 1).
-    const beforeSubmit = gate ? () => { gate.wrote(); try { gate.admit(); } catch (error) { state.fenced = error instanceof Error ? error : new MemorySendFenced(); finish(); throw error; } } : undefined;
-    const notWritten = gate ? () => gate.notWritten() : undefined;
-    const sending = adapter.sendTurn({ threadId, text: prompt, sessionReset: true, cwd, stopLine: true, proposalOnly: true, background: true, usageFeature: "memory", ...(beforeSubmit ? { beforeSubmit, notWritten } : {}) });
+    // The gate rides as the turn's fenced write (SendTurnInput.fencedWrite, H1-SENDLOCK): every adapter runs its prompt write inside it
+    // (engine-input.ts fencedSubmit), after beforeSubmit and its halt check, so the check and the bytes leaving hold one write lock and a
+    // hide another connection commits meanwhile waits for the COMMIT. Each write (a relaunch's too) is one release. A refusal or busy lock
+    // writes nothing: state.fenced is set, the session finishes and the turn settles refused; settlement reads the cumulative released.
+    const fencedWrite = gate ? <R>(write: () => R, validate?: (context: ReleaseContext) => void): R => {
+      try { return gate.send(write, validate); }
+      catch (error) { state.fenced = error instanceof Error ? error : new MemorySendFenced(); finish(); throw error; }
+    } : undefined;
+    const beforePrepare = gate ? () => { try { gate.check(); } catch (error) { state.fenced = error instanceof Error ? error : new MemorySendFenced(); finish(); throw error; } } : undefined;
+    const sending = adapter.sendTurn({ threadId, text: prompt, sessionReset: true, cwd, stopLine: true, proposalOnly: true, background: true, usageFeature: "memory", beforePrepare, ...(fencedWrite ? { fencedWrite } : {}) });
     // sendTurn may stay pending until the turn ends: the wait is on the turn's own end, never on it.
     sending.catch(error => { state.failure ??= error instanceof BotFolderUnavailableError ? error : engineFailure(error instanceof Error ? error.message : String(error)); finish(); });
     await finished;
-    gate?.wrote();
     // refused or busy with nothing released on any attempt: that typed error (settled at nothing); after a release, an interrupted
     // attempt like any other (settlement reads the cumulative released, r8 section 6)
     if (state.fenced) throw (gate?.released ?? 0) > 0 ? Object.assign(new Error("MEMORY_EXTRACTION_REQUEST_FAILED"), { interrupted: true }) : state.fenced;
@@ -199,7 +207,12 @@ export const hiddenTurnRunner = (live: ProviderInstance, _oneShotFolder?: () => 
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);
     unsubscribe();
-    void Promise.resolve().then(() => adapter.interruptTurn(threadId)).catch(() => undefined)
+    // MLH: a fenced refusal a closer owns is joined (its one close, awaited), never stopped again by a lookup interrupt (K3).
+    const refused = state.fenced ? fencedRefusalRegistry.byError(state.fenced) : undefined;
+    if (refused?.closer) {
+      await refused.teardown;
+      try { await adapter.resetSession?.(threadId); } catch { /* the retired session is the engine's to drop */ }
+    } else void Promise.resolve().then(() => adapter.interruptTurn(threadId)).catch(() => undefined)
       .then(() => adapter.resetSession?.(threadId)).catch(() => undefined);
   }
 };

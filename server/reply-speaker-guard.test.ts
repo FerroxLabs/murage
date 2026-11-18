@@ -157,3 +157,15 @@ it("a turn that ends without turn.completed is swept after the current task",asy
  expect(turns.item("room","t1",'Again.\nReed: "shipped it"',speakers)).toMatchObject({firstCut:true});
  expect(turns.item("room","t2",'Again.\nReed: "shipped it"',speakers)).toMatchObject({firstCut:false});
 });
+
+it("buffered items keep independent speaker streams until their own completion", () => {
+ const turns=createReplySpeakerTurns();
+ expect(turns.delta("room","turn","Please supply the missing input.\nUs",speakers,"first")).toBe("Please supply the missing input.\n");
+ expect(turns.delta("room","turn","Second reply.",speakers,"second")).toBe("Second reply.");
+ expect(turns.delta("room","turn","er: I supplied it.",speakers,"first")).toBe("");
+ turns.item("room","turn","Please supply the missing input.\nUser: I supplied it.",speakers,"first");
+ expect(turns.delta("room","turn"," Still safe.",speakers,"second")).toBe(" Still safe.");
+ turns.completed("room","turn");
+ expect(turns.size()).toBe(0);
+ expect(turns.delta("room","turn","Fresh.",speakers,"first")).toBe("Fresh.");
+});

@@ -49,7 +49,7 @@ export function projectRoutineUsageRun(db: DatabaseSync, groupId: string, reques
 }
 
 /** Preserve pre-upgrade routine threads as Activity links, without moving them. */
-export function linkLegacyProjectRoutineRuns(db: DatabaseSync, runs: ReadonlyArray<{ id: string; groupId?: string; threadId?: string; target: string; createdAt: number }>): void {
+export function linkLegacyProjectRoutineRuns(db: DatabaseSync, runs: Iterable<{ id: string; groupId?: string; threadId?: string; target: string; createdAt: number }>): void {
   for (const run of runs) {
     if (run.target !== "room-goal" || !run.groupId || !run.threadId || !projectSettingsFor(db, run.groupId)) continue;
     if (db.prepare("SELECT 1 FROM project_activity WHERE group_id=? AND kind='routine_run' AND json_extract(detail,'$.runId')=?").get(run.groupId, run.id)) continue;
@@ -76,7 +76,7 @@ const lowerOf = (a: RoutinePermissionMode, b: RoutinePermissionMode): RoutinePer
   ROUTINE_PERMISSION_MODES[Math.min(ROUTINE_PERMISSION_MODES.indexOf(a), ROUTINE_PERMISSION_MODES.indexOf(b))]!;
 
 /** The ceiling of an owner's own scheduled or manual run, or undefined (any other trigger, another audience, no routine, no bot). */
-export function projectRoutineCeiling(run: ProjectRoutineRunFacts, routine: { permissionMode?: RoutinePermissionMode } | undefined, bot: AutoApprover | null | undefined): RoutinePeerSource | undefined {
+export function projectRoutineCeiling(run: ProjectRoutineRunFacts, routine: { permissionMode?: RoutinePermissionMode; permissionExplicit?: boolean } | undefined, bot: AutoApprover | null | undefined): RoutinePeerSource | undefined {
   const trigger = run.triggerSource ?? (run.manual ? "manual" : "schedule");
   if (trigger !== "schedule" && trigger !== "manual") return undefined;
   if (run.notOwnerAudience || run.humanPrincipal !== undefined || !routine || !bot) return undefined;
@@ -93,9 +93,13 @@ export interface ProjectRoutineAuthorityCurrent {
 }
 export function persistedProjectRoutineOptions(db: DatabaseSync, request: RoomRequest,
   current: (routineId: string, groupId: string, threadId: string, targetBotId: string, runId: string) => ProjectRoutineAuthorityCurrent | undefined,
+  phase: "admission" | "turn" = "admission",
 ): { routineAuthority?: RoutinePeerSource; projectRoutine?: true } {
+  // Admission cannot start waiting work. An already bound native turn keeps
+  // its ceiling while its own approval waits, with every identity revalidated.
+  const states = phase === "turn" ? ["running", "waiting_owner"] : ["queued", "running"];
   if (request.verb !== "routine" || request.fromKind !== "routine" || request.origin !== "server" || !request.unattended || request.notOwnerAudience
-      || !["queued", "running"].includes(request.state) || !request.toBotId || !request.targetThreadId) return {};
+      || !states.includes(request.state) || !request.toBotId || !request.targetThreadId) return {};
   // Old archives may not have this optional table until initialization completes.
   if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='project_routine_authority'").get()) return {};
   const row = db.prepare("SELECT * FROM project_routine_authority WHERE request_id=?").get(request.id);
@@ -109,4 +113,12 @@ export function persistedProjectRoutineOptions(db: DatabaseSync, request: RoomRe
   if (!now || now.sourceBotId !== row.source_bot_id || now.ownerBinding !== row.owner_binding || now.audienceBinding !== row.audience_binding || now.triggerSource !== row.trigger
       || !ROUTINE_PERMISSION_MODES.includes(now.permissionMode)) return {};
   return { projectRoutine: true, routineAuthority: { permissionMode: lowerOf(row.ceiling as RoutinePermissionMode, now.permissionMode), triggerSource: row.trigger as "manual" | "schedule" } };
+}
+
+/** Lazy startup adapters: no intermediate history arrays or eager clones. */
+export function* filterRoutineStartup<T>(input: Iterable<T>, predicate: (value: T) => unknown): IterableIterator<T> {
+  for (const value of input) if (predicate(value)) yield value;
+}
+export function* mapRoutineStartup<T, U>(input: Iterable<T>, project: (value: T) => U): IterableIterator<U> {
+  for (const value of input) yield project(value);
 }

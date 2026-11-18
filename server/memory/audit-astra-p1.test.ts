@@ -4,6 +4,7 @@
 // Astra's cross-audit of the write-time lane (int102-gate/audit-astra/REPORT.md): seven P1s, each reproduced here first and fixed after.
 // 1-5 are leaks (a line, a note, a card or a prompt shown after the owner forgot what it rests on); 6-7 are over-withholds (a clean later
 // reply withheld by a revoke that never reached it). Each test is the report's reproduction in the form the production writers produce it.
+import { deliveredToolText } from "./testing/delivered-tool-text.ts";
 import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -15,7 +16,7 @@ import { lineageBackfillSlice, lineageCertProgress, resetLineageBackfillForTest 
 import { addTurnParents, closeTurnLineage, openTurnLineage } from "./lineage-write.ts";
 import type { LineageReader, LineageRef, MemoryRef } from "./lineage-types.ts";
 import { drainRevokeMarker } from "./memory-revocation.ts";
-import { buildPrompt, promptPart, recordTurnObject, sendFence, turnToolText } from "./prompt-parts.ts";
+import { buildPrompt, promptPart, recordTurnObject, sendFence } from "./prompt-parts.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { linkMemoryDisclosureOutput } from "./disclosures.ts";
 import { downgradeMemorySchema, upgradeDevelopmentV10Carry, validateMemorySchema } from "./schema.ts";
@@ -33,9 +34,9 @@ const OWNER_READER: LineageReader = { audience: { owner: true, scopeIds: [] } };
 const msg = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: id, at: Date.now(), ...extra });
 const owner = (id: string, extra: Partial<Message> = {}): Message => msg(id, { role: "user", ...extra });
 const verdict = (thread: string, id: string, author: "owner" | "generated" = "generated") => denyLookup(database(), { threadId: thread, lines: [{ messageId: id, author }] }, CONTENT).get(id)!;
-const inTurn = (thread: string, turnId: string, write: () => void) => {
+const inTurn = (thread: string, turnId: string, write: (turn: import("./lineage-types.ts").TurnLineage) => void) => {
   const turn = openTurnLineage(database(), { threadId: thread, turnId });
-  try { write(); } finally { closeTurnLineage(turn); }
+  try { write(turn); } finally { closeTurnLineage(turn); }
 };
 const drain = () => expect(drainRevokeMarker(database()).pending).toBe(false);
 
@@ -89,7 +90,7 @@ describe("Astra audit P1", () => {
     appendMessage("A", owner("ao1"));
     inTurn("A", "turn-a", () => { appendMessage("A", msg("a1", { parentId: "ao1" })); recordTurnObject(db, "A", note); });
     appendMessage("B", owner("bo1"));
-    inTurn("B", "turn-b", () => { turnToolText("B", "the note's words", [{ kind: "memory", ref: note }]); appendMessage("B", msg("b1", { parentId: "bo1" })); });
+    inTurn("B", "turn-b", turn => { deliveredToolText(turn, "the note's words", [{ kind: "memory", ref: note }]); appendMessage("B", msg("b1", { parentId: "bo1" })); });
     expect(verdict("B", "b1").state).toBe("shown");
     commitRevoke(db, { kind: "line", threadId: "A", messageIds: ["a1"], cause: "forget" });
     drain();

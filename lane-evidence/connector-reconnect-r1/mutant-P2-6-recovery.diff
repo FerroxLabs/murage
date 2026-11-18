@@ -1,0 +1,11 @@
+--- a/server/composio.ts
++++ b/server/composio.ts
+@@ -1802,7 +1802,7 @@
+         out[slug] = { ...service, status: "NEEDS_RECONNECT", needsReconnect: true };
+         continue;
+       }
+-      clearNeedsReconnect(owner, slug);
++      /* mutant: retain the incident after verified recovery */
+       if (retire.length) void retireReplacedAccounts(cfg, slug, retire);
+       continue;
+     }

@@ -1,3 +1,4 @@
+import {ensureScannerMeter,writeFileSync} from "./io-meter.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -26,7 +27,7 @@
 // A crash before commit leaves the old cursors: the same records replay. Nothing here sends a notification, opens a
 // source database read-write, or touches the network.
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, lstatSync, openSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { HEALTH_LIMITS, type CoverageValue, type EvidenceSourceRole } from "../../shared/health-protocol.mjs";
@@ -105,7 +106,7 @@ export function acquireLease(outputRoot: string, platform: NodeJS.Platform = pro
   try { closeSync(openSync(file, "wx", 0o600)); } catch { /* exists */ }
   try { const st = lstatSync(file); if (st.isSymbolicLink() || !st.isFile() || st.nlink !== 1) return null; } catch { return null; }
   let db: DatabaseSync;
-  try { db = new DatabaseSync(file, { timeout: 0, allowExtension: false }); } catch { return null; }
+  try { ensureScannerMeter(); db = new DatabaseSync(file, { timeout: 0, allowExtension: false }); } catch { return null; }
   try {
     db.exec("PRAGMA locking_mode=EXCLUSIVE");
     db.exec("BEGIN EXCLUSIVE");

@@ -1,3 +1,4 @@
+import { insertFixtureRows } from './testing/approval-card.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // NEEDS YOU COUNT, 1.0.12: GROWTH GATES G1, G1k, G2 to G5 (docs/designs/NEEDS-YOU-COUNT-1012.md section 3).
@@ -28,7 +29,7 @@ const corrected = typeof jsFilter === "function";
 const NOW = 1_800_000_000_000, HOUR = 3_600_000;
 const CARD_THREADS = 200;
 const CORRECTION_SQL = `SELECT thread_id, live, snoozed_until, COUNT(*) AS n
-  FROM inbox_items INDEXED BY inbox_items_v_decisions_4
+  FROM inbox_items INDEXED BY inbox_items_v_decisions_5
   WHERE expired=0 AND decision=1 AND kind='routine.run' AND status IN ('waiting','needs-you')
   GROUP BY thread_id, live, snoozed_until`;
 const results: Record<string, unknown> = { tree: corrected ? "1.0.12" : "1.0.10" };
@@ -54,9 +55,9 @@ const ins = "INSERT INTO messages(thread_id,id,at,role,kind,text,json)";
 const filler = (db: DatabaseSync, from: number, to: number) => db.prepare(seq(`${ins}
   SELECT 'other' || (i / 100), 'f' || i, CAST(?3 AS INTEGER) + i, 'user', 'text', 'line ' || i, json_object('id','f' || i,'at',CAST(?3 AS INTEGER) + i,'role','user','kind','text','text','line ' || i) FROM n`)).run(from, to - 1, NOW - 10_000_000);
 /** Open cards over CARD_THREADS conversations, half approvals and half questions. */
-const cards = (db: DatabaseSync, from: number, to: number, at0 = NOW - 5_000_000) => db.prepare(seq(`${ins}
+const cards = (db: DatabaseSync, from: number, to: number, at0 = NOW - 5_000_000) => insertFixtureRows(db, seq(`${ins}
   SELECT 'c' || (i % ${CARD_THREADS}), 'card' || i, CAST(?3 AS INTEGER) + i, 'bot', 'options', NULL,
-    json_object('id','card' || i,'at',CAST(?3 AS INTEGER) + i,'role','bot','kind','options','card',json_object('requestId','req' || i,'title','Approve ' || i,'options',json_array('Allow','Deny'),'tool',CASE WHEN i % 2 THEN 'Bash' END)) FROM n`)).run(from, to - 1, at0);
+    json_object('id','card' || i,'at',CAST(?3 AS INTEGER) + i,'role','bot','kind','options','card',json_object('requestId','req' || i,'title','Approve ' || i,'options',json_array('Allow','Deny'),'tool',CASE WHEN i % 2 THEN 'Bash' END)) FROM n`), from, to - 1, at0);
 /** Runs on cards, spread over `threads` conversations, newer than every card. */
 const runs = (db: DatabaseSync, from: number, to: number, threads: number, at0 = NOW - 1_000_000) => db.prepare(seq(`${ins}
   SELECT 'r' || (i % CAST(?4 AS INTEGER)), 'run' || i, CAST(?3 AS INTEGER) + i, 'bot', 'routine.run', NULL,
@@ -66,8 +67,8 @@ const history = (db: DatabaseSync, kind: "completed" | "resolved" | "expired", f
   const at0 = NOW - 9_000_000;
   if (kind === "completed") return db.prepare(seq(`${ins} SELECT 'h' || (i % 300), 'hd' || i, CAST(?3 AS INTEGER) + i, 'bot', 'routine.run', NULL,
     json_object('id','hd' || i,'at',CAST(?3 AS INTEGER) + i,'role','bot','kind','routine.run','routineRun',json_object('runId','hd' || i,'routineId','rt' || (i % 20),'routineName','Routine ' || (i % 20),'status',CASE WHEN i % 4 THEN 'completed' ELSE 'failed' END,'summary','Done ' || i,'error','x')) FROM n`)).run(from, to - 1, at0);
-  return db.prepare(seq(`${ins} SELECT 'h' || (i % 300), 'h${kind[0]}' || i, CAST(?3 AS INTEGER) + i, 'bot', 'options', NULL,
-    json_object('id','h${kind[0]}' || i,'at',CAST(?3 AS INTEGER) + i,'role','bot','kind','options','card',json_object('requestId','h${kind[0]}' || i,'title','Old','options',json_array('Allow','Deny'),${kind === "resolved" ? "'answered','Allow'" : "'expired',1"})) FROM n`)).run(from, to - 1, at0);
+  return insertFixtureRows(db, seq(`${ins} SELECT 'h' || (i % 300), 'h${kind[0]}' || i, CAST(?3 AS INTEGER) + i, 'bot', 'options', NULL,
+    json_object('id','h${kind[0]}' || i,'at',CAST(?3 AS INTEGER) + i,'role','bot','kind','options','card',json_object('requestId','h${kind[0]}' || i,'title','Old','options',json_array('Allow','Deny'),${kind === "resolved" ? "'answered','Allow'" : "'expired',1"})) FROM n`), from, to - 1, at0);
 };
 const threadsOf = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => ({ threadId: `${prefix}${i}`, label: `${prefix} ${i}` }));
 const ownerOf = (runThreads: number): inbox.InboxAccess => ({ owner: true, threads: [...threadsOf("c", CARD_THREADS), ...threadsOf("r", runThreads), ...threadsOf("h", 300)] });
@@ -87,7 +88,7 @@ const inScope = (db: DatabaseSync, access: inbox.InboxAccess, atLeast: number) =
   expect(listInbox(db, { view: "decisions", includeSnoozed: true }, access, NOW).total + 0, "fixture rows are in this audience").toBeGreaterThanOrEqual(atLeast);
 const correctionRead = (db: DatabaseSync) => db.prepare(CORRECTION_SQL).all();
 const population = (db: DatabaseSync) => ({
-  walked: Number((db.prepare("SELECT COUNT(*) AS n FROM inbox_items INDEXED BY inbox_items_v_decisions_4 WHERE expired=0 AND decision=1").get() as { n: number }).n),
+  walked: Number((db.prepare("SELECT COUNT(*) AS n FROM inbox_items INDEXED BY inbox_items_v_decisions_5 WHERE expired=0 AND decision=1").get() as { n: number }).n),
   owedOpen: Number((db.prepare("SELECT COALESCE(SUM(owed_open),0) AS n FROM inbox_counts").get() as { n: number }).n),
 });
 /** A cache miss on purpose: what the first poll after a write pays. */
@@ -169,7 +170,7 @@ describe.runIf(process.env.NYC_GROWTH === "1")("Needs you count growth gates", (
     expect(before.walked).toBe(2_000);
     const timeBefore = measure("G2.read.before", () => correctionRead(db));
     // diagnostic only (not a gate): the index walk alone, no table lookups, before and after
-    const walkOnly = () => db.prepare("SELECT COUNT(*) FROM inbox_items INDEXED BY inbox_items_v_decisions_4 WHERE expired=0 AND decision=1").get();
+    const walkOnly = () => db.prepare("SELECT COUNT(*) FROM inbox_items INDEXED BY inbox_items_v_decisions_5 WHERE expired=0 AND decision=1").get();
     measure("G2.walkOnly.before", walkOnly);
     history(db, "completed", 0, 50_000);
     history(db, "resolved", 0, 50_000);
@@ -202,7 +203,7 @@ describe.runIf(process.env.NYC_GROWTH === "1")("Needs you count growth gates", (
     const db = new Proxy(raw, { get(target, property) {
       const value = Reflect.get(target, property) as unknown;
       if (property !== "prepare") return typeof value === "function" ? value.bind(target) : value;
-      return (sql: string) => { if (sql.includes("inbox_items_v_decisions_4") && sql.includes("GROUP BY thread_id, live, snoozed_until")) reads++; return target.prepare(sql); };
+      return (sql: string) => { if (sql.includes("inbox_items_v_decisions_5") && sql.includes("GROUP BY thread_id, live, snoozed_until")) reads++; return target.prepare(sql); };
     } });
     raw.prepare(`${ins} VALUES('c0','write',?, 'bot','text',NULL,json_object('id','write','at',?,'role','bot','kind','text','text','one write'))`).run(NOW, NOW);
     bumpMessagesVersion();

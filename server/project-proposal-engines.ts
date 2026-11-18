@@ -25,6 +25,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import type { ConsumingTurnBinding } from './consuming-turn-response.ts';
 
 /** `tool`: the turn also mounts project_propose (`serverAlias`: reached by
  * name through use_tool, so mounted under a per-turn alias). Null: the block
@@ -208,6 +209,18 @@ export type ProposalTurnOutcome = ValidatedProposal | { text: string; partial?: 
  * drops them, and the owner's request has timed out by then anyway. */
 export class ChiefProposalTurns {
   readonly #turns = new Map<string, PendingProposal>();
+  readonly #bindings = new Map<string, ConsumingTurnBinding>();
+  bind(threadId: string, generation: string, binding: ConsumingTurnBinding): void {
+    const turn = this.#turns.get(threadId);
+    if (!turn || turn.generation !== generation || binding.identity.threadId !== threadId
+      || binding.identity.dispatchGeneration !== generation || binding.identity.botId !== turn.botId) throw new Error("MEMORY_CONTEXT_REVOKED");
+    if (this.#bindings.has(threadId)) throw new Error("PROPOSAL_ALREADY_BOUND");
+    this.#bindings.set(threadId, binding);
+  }
+  bindingFor(threadId: string, generation: string): ConsumingTurnBinding | undefined {
+    const binding = this.#bindings.get(threadId);
+    return binding?.identity.dispatchGeneration === generation ? binding : undefined;
+  }
   /** Ended proposal threads: an engine's late events (a stop's terminal
    * event, a child exit) stay ignored after the wait is over. Bounded. */
   readonly #ended = new Set<string>();
@@ -245,6 +258,7 @@ export class ChiefProposalTurns {
     const turn = this.#turns.get(threadId);
     if (!turn || turn.generation !== generation) return;
     this.#turns.delete(threadId);
+    this.#bindings.delete(threadId);
     this.#ended.add(threadId);
     if (this.#ended.size > 256) this.#ended.delete(this.#ended.values().next().value!);
     turn.onEnd?.();

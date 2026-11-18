@@ -3,7 +3,7 @@
 //
 // Health placement (Sean 11-01): the Inbox shows what needs the owner first, identical issues fold, every issue answers
 // what happened, does it matter and what can I do, and a note never counts or adds a red dot.
-import { SETTINGS_SECTIONS } from "@/lib/settings-sections";
+import { SETTINGS_SECTIONS, sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sections";
 import { readFileSync, readdirSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -187,11 +187,12 @@ describe("the Health level", () => {
     expect(source("../state/store.tsx")).toContain('showHealthPage(frame.notification, () => dispatch({ type: "showHealth" }))');
   });
   it("Settings has one line to the Health screen, outside every desktop-only guard", () => {
-    const settings = source("SettingsModal.tsx");
+    // 1.0.19: the About page file lists the card, and about-rows.tsx holds the row that opens the Health screen.
+    const settings = source("settings/pages/AboutPage.tsx");
     const line = settings.split("\n").find((text) => text.includes("<SettingsHealthRow />"))!;
     expect(line).toBeTruthy();
     expect(line).not.toContain("desktop === true");
-    expect(settings).toContain('dispatch({ type: "showHealth" })');
+    expect(source("settings/pages/about-rows.tsx")).toContain('dispatch({ type: "showHealth" })');
   });
 });
 
@@ -218,8 +219,10 @@ describe("deleted conversations: real state and retry", () => {
     expect(settingsPagesHere(true)).toBe(true);
     expect(settingsPagesHere(undefined)).toBe(false);
     expect(settingsPagesHere(false)).toBe(false);
-    // the rule above holds only while every place these buttons open is desktop only
-    for (const id of ["backups", "storage", "memory", "engines", "models"]) expect(SETTINGS_SECTIONS.find((entry) => entry.id === id)?.desktopOnly).toBe(true);
+    // the rule above holds only while every place these buttons open is desktop only, or (Models & engines, read-only on a
+    // phone since G9 gap check H3) a page that opens there rather than falling back to General
+    for (const id of ["backups", "storage", "memory"]) expect(SETTINGS_SECTIONS.find((entry) => entry.id === id)?.desktopOnly).toBe(true);
+    for (const id of ["engines", "models"] as const) expect(settingsSectionRedirect(SETTINGS_SECTIONS, id, false, sectionsForSurface(SETTINGS_SECTIONS, false))).toBeNull();
   });
   it("engines share a deletion, so the figures take the largest, never the sum", () => {
     expect(deletionFigures([issue(1, DELETION, { metrics: { pending: 3, oldestPendingHours: 50 } }), issue(2, DELETION, { metrics: { pending: 5 } })])).toEqual({ pending: 5, oldestHours: 50 });

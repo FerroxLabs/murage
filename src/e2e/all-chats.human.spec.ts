@@ -2,7 +2,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,7 +30,7 @@ test.beforeAll(async () => {
     }
     const old=store.createTask(bot.id,'Old contract discussion',false);
     old.createdAt=now-200*86400e3;
-    const message=store.appendMessage(old.threadId,{role:'user',kind:'text',text:'cerulean lease renewal clause',at:now-199*86400e3});
+    const message=store.appendMessage(old.threadId,{role:'user',kind:'text',origin:'desktop',text:'cerulean lease renewal clause',at:now-199*86400e3});
     store.appendMessage(old.threadId,{role:'bot',kind:'text',text:'cerulean forgotten clause',withheldFromBots:'forgotten',at:now-199*86400e3+1});
     store.saveBots();
     writeFileSync(join(process.env.MURAGE_DATA_DIR,'chats-fixture.json'),JSON.stringify({bot:bot.id,old:old.threadId,message:message.id}));
@@ -57,6 +57,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
 
 async function open(page: Page) {
+  await page.addInitScript(() => { localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   await openSidebar(page);
   await page.locator('[data-door="chats"]').first().click();

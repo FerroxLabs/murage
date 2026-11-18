@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// Native email producer owner: sc-mail. Isolated fixture consumer owner: new3-g2e.
 // Linux CI only. Bot email through server/index.ts against a loopback fake of Flux (the server's fetch is replaced in the fixture):
 //   1. 5.2 arrival: mail from two #28 batches is ONE owner-only notice row in the bot's main chat ("and 2 more"), and no turn starts.
 //   2. 5.4 marks through startTurnAdmitting: a turn called email_read; the next turn resumes the same engine
@@ -9,11 +10,12 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { turnSecret } from "../turn-credential.ts";
+import { withTurnSecrets } from "../testing/fixture-dump.ts";
 
 type Fixture = { fixture: VerificationServer; headers: Record<string, string>; model: string };
 
 async function launch(instrumentationSource?: string): Promise<Fixture> {
-  const fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';${instrumentationSource ?? ""}` });
+  const fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';(await import(${JSON.stringify(new URL('../testing/email-store-preload.mjs', import.meta.url).href)})).installMemoryEmailStore();${instrumentationSource ?? ""}` });
   const headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await (await fetch(new URL("/api/desktop-secret", fixture.info.url))).json() as { secret: string }).secret };
   const instances = await (await fetch(new URL("/api/instances", fixture.info.url), { headers })).json() as any;
   return { fixture, headers, model: instances.instances.find((engine: any) => engine.instanceId === "verification").models.options[0].id };
@@ -27,7 +29,7 @@ async function api(f: Fixture, method: string, path: string, body?: unknown) {
   expect(answer.status, `${method} ${path}: ${JSON.stringify(answer.body)}`).toBeLessThan(300);
   return answer.body;
 }
-const dump = (f: Fixture) => { try { return existsSync(f.fixture.fixtureDumpPath) ? JSON.parse(readFileSync(f.fixture.fixtureDumpPath, "utf8")) : null; } catch { return null; } };
+const dump = (f: Fixture) => { try { return existsSync(f.fixture.fixtureDumpPath) ? withTurnSecrets(JSON.parse(readFileSync(f.fixture.fixtureDumpPath, "utf8"))) : null; } catch { return null; } };
 function agentsEnv(value: any): Record<string, string> | undefined {
   if (!value || typeof value !== "object") return undefined;
   if (typeof value.env?.MURAGE_COMMS_TOKEN === "string" || typeof value.env?.MURAGE_CRED_FILE === "string") return value.env;
@@ -48,6 +50,10 @@ async function holdTurn(f: Fixture, bot: { id: string; threadId: string }, marke
   await api(f, "POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: `${marker}\n__fixture_hold_authority__` });
   await expect.poll(() => JSON.stringify(dump(f)?.prompt ?? "").includes(marker), { timeout: 20000 }).toBe(true);
   const held = dump(f);
+  expect(held.fixtureMounts).toBeDefined();
+  for (const server of Object.values(held.wireMcpConfig.mcpServers) as Array<{ env?: Record<string, string> }>) {
+    for (const key of ["MURAGE_COMMS_TOKEN", "MURAGE_BOT_ID", "MURAGE_THREAD_ID", "MURAGE_EMAIL"]) expect(server.env?.[key]).toBeUndefined();
+  }
   try { await during(agentsEnv(held.mcpConfig)!, held); }
   finally {
     writeFileSync(join(f.fixture.fixtureFinishGateDir, String(held.pid)), "");
@@ -92,14 +98,21 @@ const FAKE_FLUX = `
 
 describe.skipIf(process.platform !== "linux")("bot email through server/index.ts: arrival notices and turn marks", () => {
   let f: Fixture;
+  let arrivalBot: { id: string; threadId: string } | undefined;
   beforeAll(async () => { f = await launch(FAKE_FLUX); }, 60000);
   afterAll(async () => { await f?.fixture.close(); });
-  const rows = async (bot: { threadId: string }) => (await api(f, "GET", `/api/threads/${bot.threadId}/messages`)).messages as any[];
-
-  it("two batches of mail make one grouped owner notice, with no subject and no turn", async () => {
+  // Both workflows need this same admitted inbox, including when either ID runs alone.
+  async function arrivalFixture() {
+    if (arrivalBot) return arrivalBot;
     await expect.poll(async () => (await call(f, "GET", "/api/email/status?refresh=1")).status, { timeout: 20000 }).toBe(200);
     const bot = await makeBot(f, "Arrival fixture");
     await api(f, "POST", `/api/email/bots/${bot.id}/setup`, { username: "fixture", displayName: "Fixture" });
+    return arrivalBot = bot;
+  }
+  const rows = async (bot: { threadId: string }) => (await api(f, "GET", `/api/threads/${bot.threadId}/messages`)).messages as any[];
+
+  it("two batches of mail make one grouped owner notice, with no subject and no turn", async () => {
+    const bot = await arrivalFixture();
     await expect.poll(async () => (await rows(bot)).filter(row => row.murage?.status?.key === "email_arrived").map(row => row.text).join("|"), { timeout: 30000 })
       .toBe("New email for Arrival fixture from alex@example.com and 2 more");
     const notices = (await rows(bot)).filter(row => row.murage?.status?.key === "email_arrived");
@@ -109,6 +122,7 @@ describe.skipIf(process.platform !== "linux")("bot email through server/index.ts
   }, 90000);
 
   it("a turn that read mail leaves its engine session holding it: the resumed session's next reply is marked", async () => {
+    await arrivalFixture();
     const bot = (await api(f, "GET", "/api/bots?messages=0")).bots.find((item: any) => item.name === "Arrival fixture") as { id: string; threadId: string };
     await holdTurn(f, bot, "EMAIL_READ_HOLD", async env => {
       expect(env.MURAGE_EMAIL).toBe("send");

@@ -1,3 +1,4 @@
+import { createMemoryEmailRuntime } from "../testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -28,7 +29,7 @@ let proofAnswer: { status: number; body: Record<string, unknown> } | null;
 let clock: number;
 
 function makeRuntime(): EmailRuntime {
-  const made = new EmailRuntime({
+  const made = createMemoryEmailRuntime({
     accountKey: () => accountKey, database: () => db, transaction: fn => fn(), fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", now: () => clock,
     workspaceRoot: () => undefined, bot: id => (id === BOT.id ? BOT as unknown as BotRecord : undefined),
     cardHost: {

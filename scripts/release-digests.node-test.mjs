@@ -15,11 +15,10 @@ import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { after, describe, it } from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "yaml";
 
-import { compareDraftAssets, publishDraft, stagedDigests, uploadDraft } from "./release-guard.mjs";
 import {
   DEFAULT_DIGEST_POLL_ATTEMPTS,
   DEFAULT_DIGEST_POLL_INTERVAL_MS,
@@ -29,6 +28,14 @@ import {
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+// Digest behavior is qualified independently of Signal evidence. Stub only in
+// an isolated module copy; production has no injectable prerequisite bypass.
+const guardFixture = mkdtempSync(join(tmpdir(), "murage-digest-guard-module-"));
+after(() => safeWipeSync(guardFixture));
+copyFileSync(join(ROOT, "scripts/release-guard.mjs"), join(guardFixture, "release-guard.mjs"));
+writeFileSync(join(guardFixture, "signal-release-prerequisites.mjs"), "export function assertSignalReleaseReady() {}\n");
+const { compareDraftAssets, publishDraft, stagedDigests, uploadDraft } = await import(pathToFileURL(join(guardFixture, "release-guard.mjs")));
+
 const VERSION = "1.2.3";
 const FILES = { "Murage-1.2.3-arm64.dmg": "signed mac bytes", "latest-mac.yml": "feed bytes" };
 const sha256 = (text) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
@@ -92,6 +99,23 @@ function recordingSleep() {
 }
 
 describe("digest hold before publication", () => {
+  it("keeps the original staged digests if local bytes change during draft lookup", () => withStagedAssets(dir => {
+    const assets = draftAssets({ "latest-mac.yml": { digest: sha256("replaced feed") } });
+    const gh = github([assets]);
+    const run = (command, args) => {
+      if (args.includes("GET")) writeFileSync(join(dir, "latest-mac.yml"), "replaced feed");
+      return gh.run(command, args);
+    };
+    assert.throws(() => publishDraft(VERSION, 7, dir, run), /refusing to publish/);
+    assert.deepEqual(gh.patches(), []);
+  }));
+
+  it("requires local bytes even when every remote digest is well formed", () => withStagedAssets(() => {
+    const gh = github([draftAssets()]);
+    assert.throws(() => publishDraft(VERSION, 7, undefined, gh.run), /holding publication/);
+    assert.deepEqual(gh.patches(), []);
+  }));
+
   it("holds a missing digest after the bounded wait and never publishes", () => withStagedAssets(async (dir) => {
     assert.equal(DEFAULT_DIGEST_POLL_ATTEMPTS * DEFAULT_DIGEST_POLL_INTERVAL_MS, 60_000);
     for (const pending of [{ digest: null }, { digest: undefined }, { digest: "" }]) {
@@ -248,6 +272,14 @@ process.stdout.write("HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\n\
       for (const script of ["release-guard.mjs", "release-digests.mjs"]) {
         copyFileSync(join(ROOT, "scripts", script), join(dir, "scripts", script));
       }
+      writeFileSync(join(dir, "scripts/signal-release-prerequisites.mjs"), "export function assertSignalReleaseReady() {}\n");
+      // Option A (Sean 2026-11-18T06:42Z): 1.0.19 signs as 1.0.18 shipped; controller-admitted signing + SAC
+      // qualification are the first post-release item. publish-prepared therefore runs the real
+      // qualification-asset exclusion and then compares the draft against the local staged bytes;
+      // no SAC promotion double is supplied, so a guard that still asked for one fails here.
+      copyFileSync(join(ROOT, "scripts/qualsign-release-exclusion.mjs"), join(dir, "scripts/qualsign-release-exclusion.mjs"));
+      mkdirSync(join(dir, "infra/windows-signing/qualsign"), { recursive: true });
+      copyFileSync(join(ROOT, "infra/windows-signing/qualsign/refused-sha256.txt"), join(dir, "infra/windows-signing/qualsign/refused-sha256.txt"));
       for (const [name, body] of Object.entries(FILES)) writeFileSync(join(dir, "assets", name), body);
       writeFileSync(join(dir, "views.json"), JSON.stringify(views));
       writeFileSync(join(dir, "calls"), "");
@@ -279,12 +311,12 @@ process.stdout.write("HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\n\
   it("proves digests after upload and before a publish step that cannot bypass the proof", () => {
     assert.ok(uploadIndex >= 0 && proofIndex > uploadIndex, "proof runs after upload");
     assert.ok(publishIndex > proofIndex, "publish runs after the proof");
-    assert.equal(steps[proofIndex].run.trim(), 'node scripts/release-digests.mjs verify "$VERSION" "$RELEASE_ID" assets');
+    assert.equal(steps[proofIndex].run.trim(), 'node scripts/release-guard.mjs verify-digests');
     assert.equal(steps[proofIndex]["continue-on-error"], undefined);
     assert.equal(release.jobs.assemble["continue-on-error"], undefined);
     // No always()/failure()/cancelled(): a failed proof leaves Publish skipped.
     assert.equal(steps[publishIndex].if, "${{ inputs.publish }}");
-    assert.match(steps[publishIndex].run, /node scripts\/release-guard\.mjs publish "\$VERSION" "\$RELEASE_ID" assets/);
+    assert.match(steps[publishIndex].run, /node scripts\/release-guard\.mjs publish-prepared/);
   });
 
   it("fails the checked-in proof step on a null digest so the release is never published", () => {

@@ -1,0 +1,69 @@
+.github/workflows/package-win.yml:133:          $metadata = Get-Content -Raw -LiteralPath qualification-evidence/gepa-package-metadata.json | ConvertFrom-Json
+.github/workflows/release.yml:935:          $metadata = Get-Content -Raw -LiteralPath qualification-evidence/gepa-package-metadata.json | ConvertFrom-Json
+docs/verification/windows-hide-desktop-gate.md:159:$commit = (Get-Content C:\murage-ci\app\resources\build-provenance.json -Raw | ConvertFrom-Json).commit
+docs/verification/windows-hide-desktop-gate.md:161:$fixture = (Get-Content C:\murage-ci\results\h1\task-status.json -Raw | ConvertFrom-Json).fixture
+docs/verification/windows-hide-desktop-gate.md:173:$commit = (Get-Content C:\murage-ci\app\resources\build-provenance.json -Raw | ConvertFrom-Json).commit
+evidence/signal-b5/baseline/service.ts.txt:134:          input: "$ErrorActionPreference = 'Stop'\n@($env:MURAGE_SIGNAL_DIRS | ConvertFrom-Json) | ForEach-Object { $item = Get-Item -LiteralPath $_ -Force; $attributes = [int]$item.Attributes; $sddl = $null; if (($attributes -band 1024) -eq 0) { $sddl = (Get-Acl -LiteralPath $_).Sddl }; @{ attributes = $attributes; sddl = $sddl } | ConvertTo-Json -Compress }\n" });
+native/backup-age/real-main-qualification/complete-lpac-extension.ps1:57:$classification=Get-Content -LiteralPath (Join-Path $prior 'classification-readonly.json') -Raw|ConvertFrom-Json
+native/backup-age/real-main-qualification/complete-lpac-extension.ps1:64:$manifest=Get-Content -LiteralPath (Join-Path $prior 'journey-manifest.json') -Raw|ConvertFrom-Json
+native/backup-age/real-main-qualification/complete-lpac-extension.ps1:68:$baseline=Get-Content -LiteralPath (Join-Path $prior 'real-main-qualification\evidence\source-files.json') -Raw|ConvertFrom-Json
+native/backup-age/real-main-qualification/preflight.ps1:8:  $previous=Get-Content -LiteralPath (Join-Path $Parent 'preflight-result.json') -Raw | ConvertFrom-Json
+native/backup-age/real-main-qualification/preflight.ps1:39:  $result.seed=Get-Content -LiteralPath (Join-Path $root 'evidence\seed-preflight.json') -Raw | ConvertFrom-Json
+native/backup-age/real-main-qualification/prepare-lpac-extension.ps1:11:$manifest=Get-Content -LiteralPath (Join-Path $prior 'journey-manifest.json') -Raw|ConvertFrom-Json
+native/backup-age/real-main-qualification/prepare-lpac-extension.ps1:25:$baseline=Get-Content -LiteralPath (Join-Path $prior 'real-main-qualification\evidence\source-files.json') -Raw|ConvertFrom-Json
+native/backup-age/real-main-qualification/register-journey.ps1:24:$manifest=Get-Content -LiteralPath (Join-Path $Parent 'journey-manifest.json') -Raw | ConvertFrom-Json
+native/backup-age/real-main-qualification/run.ps1:4:$spec = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
+native/backup-age/real-main-qualification/run.ps1:98:  $baseline=Get-Content -LiteralPath (Join-Path $evidence 'source-files.json') -Raw | ConvertFrom-Json
+native/backup-age/real-main-qualification/run.ps1:179:  $verified=Get-Content -LiteralPath (Join-Path $evidence 'data-verification.json') -Raw | ConvertFrom-Json
+scripts/ci-windows-standard-user.ps1:10:$values = Get-Content -Raw -LiteralPath $Settings | ConvertFrom-Json
+scripts/prove-engine-job-win.ps1:151:    $r = "$json" | ConvertFrom-Json
+scripts/win-gate/run-win-tests.ps1:27:    $files = @(Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json)
+scripts/windows-hide-desktop-gate.ps1:22:$handoff=Get-Content -LiteralPath $HandoffReceipt -Raw | ConvertFrom-Json
+scripts/windows/build-fixture-update.ps1:33: $p=Get-Content -LiteralPath $package -Raw | ConvertFrom-Json
+scripts/windows/desktop-task.ps1:10:$requestData = Get-Content -LiteralPath $Request -Raw | ConvertFrom-Json
+scripts/windows/desktop-task.ps1:69:  $report = Get-Content -LiteralPath (Join-Path $output 'windows.json') -Raw | ConvertFrom-Json
+scripts/windows/desktop-task.ps1:86:      if(Test-Path -LiteralPath $dispatchFile){$dispatch=Get-Content -LiteralPath $dispatchFile -Raw | ConvertFrom-Json;$dispatched=@($dispatch.shellRows | Where-Object {$_.row -eq 'https-opened' -and $_.osDispatch -eq 'fulfilled'}).Count -eq 1}
+scripts/windows/dry-check.ps1:42:function Copy-Receipt { $valid | ConvertTo-Json -Depth 10 | ConvertFrom-Json -AsHashtable }
+scripts/windows/finalize-receipt.ps1:7:  $cleanup=Get-Content -LiteralPath (Join-Path $Output 'cleanup.json') -Raw | ConvertFrom-Json
+scripts/windows/finalize-receipt.ps1:9:  $assertions=Get-Content -LiteralPath (Join-Path $fixture 'child-assertions.json') -Raw | ConvertFrom-Json
+scripts/windows/finalize-receipt.ps1:23:    $paired=Get-Content -LiteralPath $pairFile -Raw | ConvertFrom-Json
+scripts/windows/finalizer-check.ps1:37:      $paired=Get-Content -LiteralPath (Join-Path $fixture 'pair.json') -Raw | ConvertFrom-Json
+scripts/windows/finalizer-check.ps1:41:      $receipt=Get-Content -LiteralPath (Join-Path $fixture 'scenario.json') -Raw | ConvertFrom-Json
+scripts/windows/gate-paths.ps1:57:  $stage=Get-Content -LiteralPath $stageFile -Raw | ConvertFrom-Json
+scripts/windows/gate-paths.ps1:66:  $provenance=Get-Content -LiteralPath (Assert-GatePath 'C:\murage-ci\app\resources\build-provenance.json') -Raw | ConvertFrom-Json
+scripts/windows/job-check.ps1:18:$owned=@(Get-Content -LiteralPath $File -Raw | ConvertFrom-Json)
+scripts/windows/native-broker.ps1:5:    $request=Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+scripts/windows/ownership-worker.ps1:7:$data=Get-Content -LiteralPath $Payload -Raw | ConvertFrom-Json
+scripts/windows/ownership.ps1:223:    (Get-Content -LiteralPath $resultFile -Raw | ConvertFrom-Json).value
+scripts/windows/p11c-check.ps1:47:  $report=Get-Content -LiteralPath (Join-Path $output 'failure.json') -Raw | ConvertFrom-Json
+scripts/windows/p11c-check.ps1:59: $report=Get-Content -LiteralPath (Join-Path $output 'failure.json') -Raw | ConvertFrom-Json
+scripts/windows/p11c-native-check.ps1:22: $response=Get-Content -LiteralPath (Join-Path $dir ($id+'.response.json')) -Raw | ConvertFrom-Json
+scripts/windows/p11c-native-check.ps1:33:  $answer=Get-Content -LiteralPath (Join-Path $dir ($id+'.response.json')) -Raw | ConvertFrom-Json
+scripts/windows/p11d-check.ps1:44: $response=Get-Content -LiteralPath (Join-Path $directory ($id+'.response.json')) -Raw | ConvertFrom-Json
+scripts/windows/parse-native.ps1:11:foreach($entry in @(Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json)) {
+scripts/windows/run-interactive.ps1:35:  $marker=Get-Content -LiteralPath 'C:\murage-ci\gate-user.json' -Raw | ConvertFrom-Json
+scripts/windows/run-interactive.ps1:92:  $status = Get-Content -LiteralPath $statusFile -Raw | ConvertFrom-Json
+scripts/windows/run-interactive.ps1:124:$requestDataForFinalizer=Get-Content -LiteralPath $request -Raw | ConvertFrom-Json
+scripts/windows/run-ledger.ps1:16:  $entries=@(Get-Content -LiteralPath $Ledger -ErrorAction Stop | ForEach-Object {$_ | ConvertFrom-Json})
+scripts/windows/scenario-common.ps1:56:        $control=Get-Content -LiteralPath $controlRequest -Raw | ConvertFrom-Json
+scripts/windows/scenario-common.ps1:86:  $assertions=Get-Content -LiteralPath (Join-Path $Fixture 'assertions.json') -Raw | ConvertFrom-Json
+scripts/windows/sentinel-scenario.ps1:6:    $d=Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+scripts/windows/sentinel-scenario.ps1:25:  $value=(Get-Content -LiteralPath $File -Raw | ConvertFrom-Json).summary.lastCheckedAt
+scripts/windows/sentinel-scenario.ps1:33:    $view=Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
+scripts/windows/sentinel-scenario.ps1:64:$d=Get-Content -LiteralPath $descriptor -Raw | ConvertFrom-Json
+scripts/windows/stage.ps1:57:  $provenance=Get-Content -LiteralPath $provenanceFile -Raw | ConvertFrom-Json
+scripts/windows/updates-handoff.ps1:13:$marker=Get-Content -LiteralPath 'C:\murage-ci\gate-user.json' -Raw | ConvertFrom-Json
+scripts/windows/winbox-gate.ps1:35:  $request=Get-Content -LiteralPath $WorkerRequest -Raw | ConvertFrom-Json
+scripts/windows/winbox-gate.ps1:63:      $provenance=Get-Content -LiteralPath (Join-Path $installRoot 'resources\build-provenance.json') -Raw | ConvertFrom-Json
+scripts/windows/winbox-gate.ps1:72:      $status.phases=@(Get-Content -LiteralPath (Join-Path $request.fixture 'phases.json') -Raw | ConvertFrom-Json)
+scripts/windows/winbox-gate.ps1:79:    if(Test-Path -LiteralPath $partial){$status.phases=@(Get-Content -LiteralPath $partial -Raw | ConvertFrom-Json)}
+scripts/windows/winbox-gate.ps1:139:  $scenario=Get-Content -LiteralPath (Join-Path $output 'worker-status.json') -Raw | ConvertFrom-Json
+scripts/windows/winbox-gate.ps1:184:      $offenders=@(Get-Content -LiteralPath $offendersFile -Raw | ConvertFrom-Json)
+scripts/windows/winbox-proof-audit.node-test.mjs:36:  assert.match(fallback,/\$offenders=@\(Get-Content -LiteralPath \$offendersFile -Raw \| ConvertFrom-Json\)/);
+scripts/windows/windows-hide-gate-checks.ps1:15:  $manifest = $raw | ConvertFrom-Json
+scripts/windows/windows-hide-gate-checks.ps1:16:  $embedded = Get-Content -LiteralPath (Join-Path $package 'resources/ui/build-commit.json') -Raw | ConvertFrom-Json
+server/channels/signal/service.ts:138:          input: "$ErrorActionPreference = 'Stop'\n@($env:MURAGE_SIGNAL_DIRS | ConvertFrom-Json) | ForEach-Object { $item = Get-Item -LiteralPath $_ -Force; $attributes = [int]$item.Attributes; $sddl = $null; if (($attributes -band 1024) -eq 0) { $sddl = (Get-Acl -LiteralPath $_).Sddl }; @{ attributes = $attributes; sddl = $sddl } | ConvertTo-Json -Compress }\n" });
+server/channels/signal/storage.test.ts:357:      expect(options.input).toContain("$env:MURAGE_SIGNAL_ROOTS | ConvertFrom-Json");
+server/channels/signal/storage.ts:32:  $roots = @($env:MURAGE_SIGNAL_ROOTS | ConvertFrom-Json)
+server/full-access-corpus-108.test.ts:193:  r`Get-Content package.json -Raw | ConvertFrom-Json | Select-Object name,version`,
+server/reader-ps-variants-1015.test.ts:119:  { lines: ["$json = Get-Content .\\data.json -Raw | ConvertFrom-Json", "$json.items.Count"] },

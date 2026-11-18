@@ -1,3 +1,4 @@
+// control: legacy cases retain their original assertions unless individually labelled red-at-4df086541 below.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -7,7 +8,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { recordEvents } from "../testing/events.ts";
-import { decodeMinimaxConfig, loadLocalMiniMaxConfig, MinimaxDriver } from "./minimax.ts";
+import { decodeMinimaxConfig, loadLocalMiniMaxConfig, MinimaxDriver as rawDriver } from "./minimax.ts";
+import { bindOpenAIFixture } from "../testing/bound-openai-fixture.ts";
+const MinimaxDriver = { ...rawDriver, create: async (...args: Parameters<typeof rawDriver.create>) => bindOpenAIFixture(await rawDriver.create(...args)) };
 
 describe("MinimaxDriver", () => {
   const saved = {
@@ -43,6 +46,8 @@ describe("MinimaxDriver", () => {
     expect(MinimaxDriver.models).toEqual({
       default: "MiniMax-M3",
       options: [
+        // MAIN RULING 1114-MODELS-FRESH: published M3.1 Flash joins the catalog; default stays M3.
+        { id: "MiniMax-M3.1-Flash", label: "MiniMax M3.1 Flash", contextWindow: 1_000_000 },
         { id: "MiniMax-M3", label: "MiniMax M3", contextWindow: 1_000_000 },
         { id: "MiniMax-M2.7", label: "MiniMax M2.7", contextWindow: 204_800 },
         { id: "MiniMax-M2.7-highspeed", label: "MiniMax M2.7 Highspeed", contextWindow: 204_800 },

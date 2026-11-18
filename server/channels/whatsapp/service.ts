@@ -873,7 +873,7 @@ export class WhatsAppService {
   private async stopLive(): Promise<void> {
     this.live = false; this.authorised = false; this.generation++;
     clearTimeout(this.timer); clearTimeout(this.retryTimer);
-    for (const ledger of this.ledgers.values()) ledger.stop();
+    await Promise.all([...this.ledgers.values()].map(ledger => ledger.stop()));
     this.ledgers.clear(); this.connectedAt = undefined; this.runningMode = null;
     this.state = "idle"; this.qr = null; this.pairingCode = null;
     await this.releaseTransport();

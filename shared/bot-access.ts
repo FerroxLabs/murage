@@ -19,9 +19,15 @@ export function accessRequestExpired(request: { createdAt: number; expiresAt?: n
 const identifier = z.string().min(1).max(180).regex(/^[A-Za-z0-9_.-]+$/);
 export const accessGrantSchema = z.object({ toolkit: identifier, accountId: identifier, tools: z.array(identifier).min(1).max(30) }).strict();
 export const accessRequestSchema = z.object({ id: identifier, requestedBy: identifier, requesterBinding: z.string(), targetBinding: z.string(), createdAt: z.number().int().nonnegative(), expiresAt: z.number().int().nonnegative().optional(), grants: z.array(accessGrantSchema).min(1).max(12), allowWrites: z.boolean() }).strict();
-export const connectedAppAccessSchema = z.object({ revision: z.number().int().nonnegative(), roleBinding: z.string(), mode: z.enum(["unrestricted", "restricted"]), allowWrites: z.boolean(), grants: z.array(accessGrantSchema).max(30), requests: z.array(accessRequestSchema).max(12) }).strict();
+export const appAccessDenialSchema = z.object({
+  id: identifier, toolkit: identifier, accountId: identifier.optional(), tools: z.array(identifier).max(30),
+  ops: z.array(z.enum(["read", "write"])).min(1).max(2), source: z.enum(["request-denied", "grant-revoked"]),
+  at: z.number().int().nonnegative(), revision: z.number().int().nonnegative(),
+}).strict();
+export const connectedAppAccessSchema = z.object({ revision: z.number().int().nonnegative(), roleBinding: z.string(), mode: z.enum(["unrestricted", "restricted"]), allowWrites: z.boolean(), grants: z.array(accessGrantSchema).max(30), requests: z.array(accessRequestSchema).max(12), denials: z.array(appAccessDenialSchema).max(64).default([]) }).strict();
 export type AccessGrant = z.infer<typeof accessGrantSchema>;
-export type ConnectedAppAccess = z.infer<typeof connectedAppAccessSchema>;
+// Optional in in-memory legacy construction; parsing always supplies [].
+export type ConnectedAppAccess = Omit<z.infer<typeof connectedAppAccessSchema>, "denials"> & { denials?: z.infer<typeof appAccessDenialSchema>[] };
 export interface PendingPermissionStatus { kind: "tool" | "question" | "peer" | "connection" | "access"; ageSeconds: number; blockedReason: "Waiting for owner review" | "Access request is stale" | "Access request expired" | "Connected apps are disabled"; }
 /** B43 grant presets: owner shortcuts that tick one account's checkboxes. A preset
  * expands to explicit catalog slugs only (never `*`), and it never touches the

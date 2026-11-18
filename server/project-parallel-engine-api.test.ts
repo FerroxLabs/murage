@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, expect, it, onTestFailed, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 let fixture: VerificationServer;
 
 // A failed run prints the end of its fixture server's log, so a failure on a
@@ -27,14 +28,14 @@ beforeAll(async () => {
   for (const name of ["accepted", "stop-accepted", "retry-accepted", "mixed-accepted"]) mkdirSync(join(fixtureRoot, name));
   const fake = join(here, "testing", "fake-acp-cli.ts");
   chmodSync(fake, 0o755);
-  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
     const fs=await import('node:fs');const path=await import('node:path');
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
-    cfg.instances.cardlead={driver:'grokAgent',displayName:'Card lead fixture',environment:{FAKE_ACP_MODE:'project-card-lead'},config:{cli:${JSON.stringify(fake)},fullAuto:true}};
-    cfg.instances.parallel={driver:'grokAgent',displayName:'Parallel fixture',environment:{FAKE_ACP_MODE:'parallel-card',FAKE_ACP_ACCEPT_DIR:${JSON.stringify(join(fixtureRoot, 'accepted'))},FAKE_ACP_GATE_FILE:${JSON.stringify(join(fixtureRoot, 'finish'))}},config:{cli:${JSON.stringify(fake)},fullAuto:true}};
-    cfg.instances.parallelstop={driver:'grokAgent',displayName:'Parallel Stop fixture',environment:{FAKE_ACP_MODE:'cancel-ack',FAKE_ACP_ACCEPT_DIR:${JSON.stringify(join(fixtureRoot, 'stop-accepted'))}},config:{cli:${JSON.stringify(fake)},fullAuto:true}};
-    cfg.instances.parallelretry={driver:'grokAgent',displayName:'Retry fixture',environment:{FAKE_ACP_MODE:'parallel-card-retry',FAKE_ACP_ACCEPT_DIR:${JSON.stringify(join(fixtureRoot, 'retry-accepted'))},FAKE_ACP_FAIL_ONCE_FILE:${JSON.stringify(join(fixtureRoot, 'retry-failed'))},FAKE_ACP_GATE_FILE:${JSON.stringify(join(fixtureRoot, 'retry-finish'))}},config:{cli:${JSON.stringify(fake)},fullAuto:true}};
-    cfg.instances.mixedretry={driver:'grokAgent',displayName:'Mixed retry fixture',environment:{FAKE_ACP_MODE:'parallel-card-retry',FAKE_ACP_ACCEPT_DIR:${JSON.stringify(join(fixtureRoot, 'mixed-accepted'))},FAKE_ACP_FAIL_ONCE_FILE:${JSON.stringify(join(fixtureRoot, 'mixed-failed'))},FAKE_ACP_GATE_FILE:${JSON.stringify(join(fixtureRoot, 'mixed-finish'))}},config:{cli:${JSON.stringify(fake)},fullAuto:true}};
+    cfg.instances.cardlead={driver:'grokAgent',displayName:'Card lead fixture',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MODE:'project-card-lead'},config:{cli:${JSON.stringify(fake)},fullAuto:true}};
+    cfg.instances.parallel={driver:'grokAgent',displayName:'Parallel fixture',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MODE:'parallel-card',FAKE_ACP_ACCEPT_DIR:${JSON.stringify(join(fixtureRoot, 'accepted'))},FAKE_ACP_GATE_FILE:${JSON.stringify(join(fixtureRoot, 'finish'))}},config:{cli:${JSON.stringify(fake)},fullAuto:true}};
+    cfg.instances.parallelstop={driver:'grokAgent',displayName:'Parallel Stop fixture',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MODE:'cancel-ack',FAKE_ACP_ACCEPT_DIR:${JSON.stringify(join(fixtureRoot, 'stop-accepted'))}},config:{cli:${JSON.stringify(fake)},fullAuto:true}};
+    cfg.instances.parallelretry={driver:'grokAgent',displayName:'Retry fixture',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MODE:'parallel-card-retry',FAKE_ACP_ACCEPT_DIR:${JSON.stringify(join(fixtureRoot, 'retry-accepted'))},FAKE_ACP_FAIL_ONCE_FILE:${JSON.stringify(join(fixtureRoot, 'retry-failed'))},FAKE_ACP_GATE_FILE:${JSON.stringify(join(fixtureRoot, 'retry-finish'))}},config:{cli:${JSON.stringify(fake)},fullAuto:true}};
+    cfg.instances.mixedretry={driver:'grokAgent',displayName:'Mixed retry fixture',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MODE:'parallel-card-retry',FAKE_ACP_ACCEPT_DIR:${JSON.stringify(join(fixtureRoot, 'mixed-accepted'))},FAKE_ACP_FAIL_ONCE_FILE:${JSON.stringify(join(fixtureRoot, 'mixed-failed'))},FAKE_ACP_GATE_FILE:${JSON.stringify(join(fixtureRoot, 'mixed-finish'))}},config:{cli:${JSON.stringify(fake)},fullAuto:true}};
     fs.writeFileSync(file,JSON.stringify(cfg));
   ` });
   proof = (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;
@@ -137,7 +138,14 @@ it("a 429 at start retries once with one desk prompt and unchanged card identity
     const running = (await board()).find((entry: any) => entry.id === card.id);
     expect(running).toMatchObject({ state: "doing", generation: 1, attempt: 1 });
     const messages = (await api("GET", `/api/threads/${running.deskThreadId}/messages`)).body.messages;
-    expect(messages.filter((message: any) => message.role === "user" && message.requestId === running.requestId)).toHaveLength(1);
+    // Hydrate only host identity from this isolated fixture: a withheld public row still has to exist, exactly once.
+    const stored = new DatabaseSync(join(fixture.info.dataDir, "messages.db"));
+    try {
+      const promptIds = new Set((stored.prepare("SELECT id FROM messages WHERE thread_id=? AND role='user' AND json_extract(json,'$.requestId')=?")
+        .all(running.deskThreadId, running.requestId) as Array<{ id: string }>).map(row => row.id));
+      expect(promptIds.size).toBe(1);
+      expect(messages.filter((message: any) => promptIds.has(message.id))).toHaveLength(1);
+    } finally { stored.close(); }
     const room = (await api("GET", `/api/threads/${group.threadId}/messages`)).body.messages;
     expect(room.filter((message: any) => message.murage?.kind === "status" && message.tool?.name?.includes("started 'Retry card'"))).toHaveLength(1);
     writeFileSync(join(fixtureRoot, "retry-finish"), "finish");

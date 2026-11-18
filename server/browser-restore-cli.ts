@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The Cloud launcher's browser-restore step, run AS the browser user in the bot's browser home
 // (deploy/cloud-home/murage-turn-launch.py, modes browser-restore and browser-restore-mark).

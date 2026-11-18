@@ -209,6 +209,8 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
       return <ComputerMark size={size} className={className} />;
     case "piAgent":
       return <PiMark size={size} className={className} />;
+    case "deepseekAgent":
+      return <DeepSeekMark size={size} className={className} />;
     case "copilotAgent":
       return <Suspense fallback={<MarkSpace size={size} className={className} />}><LazyCopilotMark size={size} className={className} /></Suspense>;
     default:

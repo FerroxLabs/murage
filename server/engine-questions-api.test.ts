@@ -23,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -88,16 +89,17 @@ posixOnly("engine questions through the harness", () => {
       JSON.stringify({
         engineDiscovery: "explicit",
         instances: {
-          fuigoish: { driver: "grokAgent", environment: { FAKE_ACP_MODE: "fuigo-question", FAKE_ACP_DUMP: join(dumps, "fuigo.json") }, config: { cli: FAKE_ACP, fullAuto: false } },
-          elicit: { driver: "grokAgent", environment: { FAKE_ACP_MODE: "elicitation-form", FAKE_ACP_DUMP: join(dumps, "elicit.json") }, config: { cli: FAKE_ACP, fullAuto: false } },
+          fuigoish: { driver: "grokAgent", environment: { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_MCP_LIST: "all:ready", FAKE_ACP_MODE: "fuigo-question", FAKE_ACP_DUMP: join(dumps, "fuigo.json") }, config: { cli: FAKE_ACP, fullAuto: false } },
+          elicit: { driver: "grokAgent", environment: { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_MCP_LIST: "all:ready", FAKE_ACP_MODE: "elicitation-form", FAKE_ACP_DUMP: join(dumps, "elicit.json") }, config: { cli: FAKE_ACP, fullAuto: false } },
           codex: { driver: "codex", environment: { FAKE_CODEX_MODE: "user-input", FAKE_CODEX_DUMP: join(dumps, "codex.json") }, config: { cli: FAKE_CODEX, fullAuto: true } },
           pi: { driver: "piAgent", environment: { FAKE_PI_MODE: "permission", FAKE_PI_DUMP: join(dumps, "pi.jsonl") }, config: { cli: FAKE_PI, fullAuto: false } },
         },
       }),
     );
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...powerBlockTestEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
@@ -130,32 +132,36 @@ posixOnly("engine questions through the harness", () => {
   it("Codex requestUserInput: every question on the card, answers per id, never auto-approved even in fullAuto", async () => {
     const bot = await makeBot("Codex asker", "codex", "gpt-fake-default");
     const card = await ask(bot, "set it up");
+    expect(card.card.requestHandle).toBe(`q.${card.id}`);
+    expect(card.card.requestId).toBeUndefined();
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 c70d4d533c: display uses host handles; native wire answers and all rejection/no-auto-approval checks stay exact.
     expect(card.card).toMatchObject({
       title: "Your bot has a question",
       questions: [
-        { id: "db", header: "Database", options: [{ label: "Postgres", description: "Relational, durable" }, { label: "Redis", description: "In-memory, fast" }] },
-        { id: "token", secret: true, allowOther: true },
-        { id: "region", allowOther: true },
+        { id: "q.0", header: "Database", options: [{ label: "Postgres", description: "Relational, durable" }, { label: "Redis", description: "In-memory, fast" }] },
+        { id: "q.1", secret: true, allowOther: true },
+        { id: "q.2", allowOther: true },
       ],
     });
-    expect(card.card.tool).toBeUndefined();
+    // MAIN RULING INT-CONFLICT-DEFAULT 1bdf426716 c70d4d533c: registry preserves question tool origin; no allow key, auto-approval, or permission answer is admitted
+    expect(card.card.tool).toBe("request_user_input");
     expect(card.card.allowKey).toBeUndefined();
     expect(decisions().some((row) => row.decision === "auto-approved" && row.botId === bot.id)).toBe(false);
     expect((await messages(bot.threadId)).some((m) => /auto-approved/.test(m.tool?.name ?? ""))).toBe(false);
 
     // an approval is not an answer
-    expect((await request("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(400);
+    expect((await request("POST", `/api/bots/${bot.id}/respond`, { requestHandle: card.card.requestHandle, action: "allow" })).status).toBe(400);
     // a label that was never offered is refused before the engine sees it
     const bad = await request("POST", `/api/bots/${bot.id}/respond`, {
-      requestId: card.card.requestId,
-      behavior: "answer",
-      answers: [{ id: "db", selected: ["Mongo"] }, { id: "token", selected: [], other: "t" }, { id: "region", selected: ["eu-west"] }],
+      requestHandle: card.card.requestHandle,
+      action: "answer",
+      answers: [{ questionHandle: "q.0", optionHandles: ["o.0.99"] }, { questionHandle: "q.1", optionHandles: [], other: "t" }, { questionHandle: "q.2", optionHandles: [], other: "Frankfurt" }],
     });
     expect(bad.status).toBe(400);
     const answered = await request("POST", `/api/bots/${bot.id}/respond`, {
-      requestId: card.card.requestId,
-      behavior: "answer",
-      answers: [{ id: "db", selected: ["Redis"] }, { id: "token", selected: [], other: "tok_secret_9" }, { id: "region", selected: [], other: "Frankfurt" }],
+      requestHandle: card.card.requestHandle,
+      action: "answer",
+      answers: [{ questionHandle: "q.0", optionHandles: ["o.0.1"] }, { questionHandle: "q.1", optionHandles: [], other: "tok_secret_9" }, { questionHandle: "q.2", optionHandles: [], other: "Frankfurt" }],
     });
     expect(answered.body).toEqual({ ok: true, outcome: "answered" });
     await settled(bot);
@@ -165,7 +171,8 @@ posixOnly("engine questions through the harness", () => {
     // the card keeps the answers read-only, minus the secret one
     const after = (await messages(bot.threadId)).find((m) => m.id === card.id);
     expect(after.card.answered).toBe("answer");
-    expect(after.card.answers).toEqual([{ id: "db", selected: ["Redis"] }, { id: "region", selected: [], other: "Frankfurt" }]);
+    // MAIN RULING INT-CONFLICT-DEFAULT 3ad2b8f428 c70d4d533c: original answer ids stay execution-only; the exact engine receipt above still proves every answer.
+    expect(after.card.answers).toBeUndefined();
     expect(JSON.stringify(await messages(bot.threadId))).not.toContain("tok_secret_9");
     expect(JSON.stringify(decisions())).not.toContain("tok_secret_9");
   }, 60_000);
@@ -173,14 +180,15 @@ posixOnly("engine questions through the harness", () => {
   it("Fuigo ask_user_question over ACP: text-keyed answers with Other plus notes; a skip is a cancelled outcome", async () => {
     const bot = await makeBot("Fuigo asker", "fuigoish", "fake-model");
     const card = await ask(bot);
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 c70d4d533c: display uses host handles; native wire answers and all rejection/no-auto-approval checks stay exact.
     expect(card.card.questions).toMatchObject([
-      { id: "q1", question: "Which database?", multiSelect: false, allowOther: true },
-      { id: "q2", question: "Which frameworks?", multiSelect: true, allowOther: true },
+      { id: "q.0", question: "Which database?", multiSelect: false, allowOther: true },
+      { id: "q.1", question: "Which frameworks?", multiSelect: true, allowOther: true },
     ]);
     const answered = await request("POST", `/api/bots/${bot.id}/respond`, {
-      requestId: card.card.requestId,
-      behavior: "answer",
-      answers: [{ id: "q1", selected: [], other: "SQLite" }, { id: "q2", selected: ["React", "Vue"] }],
+      requestHandle: card.card.requestHandle,
+      action: "answer",
+      answers: [{ questionHandle: "q.0", optionHandles: [], other: "SQLite" }, { questionHandle: "q.1", optionHandles: ["o.1.0", "o.1.1"] }],
     });
     expect(answered.body).toEqual({ ok: true, outcome: "answered" });
     await settled(bot);
@@ -191,7 +199,7 @@ posixOnly("engine questions through the harness", () => {
     });
 
     const again = await ask(bot);
-    expect((await request("POST", `/api/bots/${bot.id}/respond`, { requestId: again.card.requestId, behavior: "skip" })).body).toEqual({ ok: true, outcome: "rejected" });
+    expect((await request("POST", `/api/bots/${bot.id}/respond`, { requestHandle: again.card.requestHandle, action: "skip" })).body).toEqual({ ok: true, outcome: "rejected" });
     await settled(bot);
     expect(JSON.parse(readFileSync(join(dumps, "fuigo.json"), "utf8")).decision).toEqual({ outcome: "cancelled" });
     // appendDecision queues the row and writes it after /respond returns, so it
@@ -205,21 +213,22 @@ posixOnly("engine questions through the harness", () => {
   it("ACP elicitation form: schema fields become questions and the accept carries typed content", async () => {
     const bot = await makeBot("Elicitor", "elicit", "fake-model");
     const card = await ask(bot, "deploy");
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 c70d4d533c: display uses host handles; native wire answers and all rejection/no-auto-approval checks stay exact.
     expect(card.card.questions).toMatchObject([
-      { id: "environment", options: [{ label: "staging" }, { label: "production" }] },
-      { id: "features", multiSelect: true },
-      { id: "confirm", options: [{ label: "Yes" }, { label: "No" }] },
+      { id: "q.0", options: [{ label: "staging" }, { label: "production" }] },
+      { id: "q.1", multiSelect: true },
+      { id: "q.2", options: [{ label: "Yes" }, { label: "No" }] },
     ]);
     // a single-select takes one pick
     expect((await request("POST", `/api/bots/${bot.id}/respond`, {
-      requestId: card.card.requestId,
-      behavior: "answer",
-      answers: [{ id: "environment", selected: ["staging", "production"] }, { id: "features", selected: ["cdn"] }, { id: "confirm", selected: ["Yes"] }],
+      requestHandle: card.card.requestHandle,
+      action: "answer",
+      answers: [{ questionHandle: "q.0", optionHandles: ["o.0.0", "o.0.1"] }, { questionHandle: "q.1", optionHandles: ["o.1.1"] }, { questionHandle: "q.2", optionHandles: ["o.2.0"] }],
     })).status).toBe(400);
     const answered = await request("POST", `/api/bots/${bot.id}/respond`, {
-      requestId: card.card.requestId,
-      behavior: "answer",
-      answers: [{ id: "environment", selected: ["production"] }, { id: "features", selected: ["cache", "cdn"] }, { id: "confirm", selected: ["No"] }],
+      requestHandle: card.card.requestHandle,
+      action: "answer",
+      answers: [{ questionHandle: "q.0", optionHandles: ["o.0.1"] }, { questionHandle: "q.1", optionHandles: ["o.1.0", "o.1.1"] }, { questionHandle: "q.2", optionHandles: ["o.2.1"] }],
     });
     expect(answered.body).toEqual({ ok: true, outcome: "answered" });
     await settled(bot);
@@ -232,18 +241,19 @@ posixOnly("engine questions through the harness", () => {
   it("pi select: the dialog's options on the card, {value} back to pi, and auto mode never answers it", async () => {
     const bot = await makeBot("Pi asker", "pi", "ollama-cloud/glm-5.2");
     const card = await ask(bot);
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 c70d4d533c: display uses host handles; native wire answers and all rejection/no-auto-approval checks stay exact.
     expect(card.card).toMatchObject({
       subtitle: "Run bash: echo hi?",
       options: ["Allow once", "Deny"],
-      questions: [{ id: "q1", question: "Run bash: echo hi?", options: [{ label: "Allow once" }, { label: "Deny" }], allowOther: false }],
+      questions: [{ id: "q.0", question: "Run bash: echo hi?", options: [{ label: "Allow once" }, { label: "Deny" }], allowOther: false }],
     });
     expect(decisions().some((row) => row.decision === "auto-approved" && row.botId === bot.id)).toBe(false);
     // free text is refused where the dialog offers only its options
     expect((await request("POST", `/api/bots/${bot.id}/respond`, {
-      requestId: card.card.requestId, behavior: "answer", answers: [{ id: "q1", selected: [], other: "maybe" }],
+      requestHandle: card.card.requestHandle, action: "answer", answers: [{ questionHandle: "q.0", optionHandles: [], other: "maybe" }],
     })).status).toBe(400);
     const answered = await request("POST", `/api/bots/${bot.id}/respond`, {
-      requestId: card.card.requestId, behavior: "answer", answers: [{ id: "q1", selected: ["Allow once"] }],
+      requestHandle: card.card.requestHandle, action: "answer", answers: [{ questionHandle: "q.0", optionHandles: ["o.0.0"] }],
     });
     expect(answered.body).toEqual({ ok: true, outcome: "answered" });
     await settled(bot);

@@ -498,11 +498,18 @@ describe("whether this install has ever been set up", () => {
     expect(setupView(state, restored).firstRun).toBe(false);
   });
 
+  it("says yes when the only thing present is a Flux key (a Cloud home is born with one; a desktop may connect first)", () => {
+    const keyed = live({ flux: FLUX_SAVED });
+    expect(setupIsFirstRun(checklist().read(keyed), keyed)).toBe(true);
+    expect(setupView(checklist().read(keyed), keyed).firstRun).toBe(true);
+    const used = live({ flux: FLUX_SAVED, botReplyExists: true });
+    expect(setupIsFirstRun(checklist().read(used), used)).toBe(false);
+  });
+
   it("says no on any ONE trace of a workspace that has been used", () => {
     const traces: Array<[string, Partial<SetupLiveState>]> = [
       ["a name on the profile", { ownerName: "Sean" }],
       ["a reply an engine actually produced", { botReplyExists: true }],
-      ["a saved key", { flux: FLUX_SAVED }],
       ["a connected account", { connectedApps: 1 }],
       ["a routine", { routines: { total: 1, briefId: null, briefRan: false } }],
       ["a crew", { crewSize: 1 }],
@@ -511,6 +518,56 @@ describe("whether this install has ever been set up", () => {
       const used = live(patch);
       expect(setupIsFirstRun(checklist().read(used), used), why).toBe(false);
     }
+  });
+
+  it("says no to a restored install, whatever else it holds", () => {
+    const restored = live({ flux: FLUX_SAVED, restoredInstall: true });
+    expect(setupIsFirstRun(checklist().read(restored), restored)).toBe(false);
+  });
+
+  it("says no once the owner has written anywhere, or a second conversation holds messages", () => {
+    for (const patch of [{ ownerMessageExists: true }, { otherThreadHasMessages: true }]) {
+      const used = live({ flux: FLUX_SAVED, ...patch });
+      expect(setupIsFirstRun(checklist().read(used), used)).toBe(false);
+    }
+  });
+
+  describe("read through the workspace, as the server does", () => {
+    const greetingOnly: SetupMessageReading[] = [
+      { role: "bot", kind: "text", text: "Hi, I'm Ember.", at: 1 },
+      { role: "bot", kind: "options", at: 2 },
+    ];
+    const used: SetupMessageReading[] = [
+      ...greetingOnly,
+      { role: "user", kind: "text", text: "Plan my week", at: 3 },
+      { role: "bot", kind: "activity", at: 4, tool: { providerError: { httpStatus: 402, provider: "flux-router" } } },
+    ];
+    const chief = { id: "chief", threadId: "chief-thread", modelSelection: { instanceId: "fuigo", model: "flux-auto" } };
+    const firstRunFor = (messagesFor: (threadId: string) => readonly SetupMessageReading[], tasks: string[] = [], restoredInstall = false): boolean => {
+      const reading = readWorkspace(
+        { bots: [{ ...chief, ...(tasks.length ? { tasks: tasks.map((threadId) => ({ threadId })) } : {}) }], messagesFor, routesThroughFlux: () => true },
+        "chief",
+      );
+      const state = live({ flux: FLUX_SAVED, restoredInstall, ...reading });
+      return setupIsFirstRun(checklist().read(state), state);
+    };
+
+    it("a Cloud home born with a key and only the seeded Chief gets the welcome", () => {
+      expect(firstRunFor(() => greetingOnly)).toBe(true);
+    });
+
+    it("a used workspace whose turns all failed does not (owner messages, task threads, no settled reply)", () => {
+      expect(firstRunFor((threadId) => (threadId === "chief-thread" ? used : greetingOnly), ["chief-thread", "task-a", "task-b"])).toBe(false);
+      expect(firstRunFor(() => used)).toBe(false);
+    });
+
+    it("a second conversation holding messages does not", () => {
+      expect(firstRunFor((threadId) => (threadId === "task-a" ? greetingOnly : threadId === "chief-thread" ? greetingOnly : []), ["chief-thread", "task-a"])).toBe(false);
+    });
+
+    it("a restored install does not, even when it reads like the seeded one", () => {
+      expect(firstRunFor(() => greetingOnly, [], true)).toBe(false);
+    });
   });
 
   it("is not fooled by a step that settles itself before anybody has typed", () => {
@@ -824,5 +881,22 @@ describe("what counts as an agent this machine can actually use", () => {
   it("still ignores an engine that is not there and one that is switched off", () => {
     expect(setupAgentsReading([instance({ instanceId: "codex", snapshot: { state: "unavailable" } })])).toEqual([]);
     expect(setupAgentsReading([instance({ instanceId: "codex", enabled: false })])).toEqual([]);
+  });
+});
+
+describe("busyloop first-job recovery threshold", () => {
+  it("only the setup host gets the early threshold until its job finishes or is skipped", () => {
+    const setup = checklist();
+    expect(setup.firstJobPending("chief")).toBe(false);
+    const state = setup.recordChief("chief");
+    expect(setup.firstJobPending("chief")).toBe(true);
+    expect(setup.firstJobPending("other")).toBe(false);
+    state.steps.flow.done = true;
+    writeFileSync(file, JSON.stringify(state));
+    expect(checklist().firstJobPending("chief")).toBe(false);
+    state.steps.flow.done = false;
+    state.steps.flow.skipped = true;
+    writeFileSync(file, JSON.stringify(state));
+    expect(checklist().firstJobPending("chief")).toBe(false);
   });
 });

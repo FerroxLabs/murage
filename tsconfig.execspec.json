@@ -1,0 +1,1 @@
+{ "extends": "./tsconfig.server.json", "include": ["server/email/exec-spec/restore"], "exclude": [] }

@@ -10,6 +10,8 @@
 //                  proposal as a block in the reply, after a gated read) | tooluse | permission | host-confirm | gate | question | editor | interleave | todo | turn-error | no-models | exit-early | exit-127 | close-before-ready | crash-mid-turn | stream
 //                  stream = long work that keeps streaming: one text delta every FAKE_PI_STREAM_EVERY_MS
 //                  (default 500) for FAKE_PI_STREAM_FOR_MS (default 8000), then "long reply done" and a clean turn_end
+//                  unshowable = a select with no options (cancelled by the driver; FAKE_PI_ASK_GATE holds it)
+//                  permission2 = two `select` asks open at once (ask-1, ask-2)
 //                  permission = a `select` ask ("Run bash: echo hi?", Allow once / Deny) — since 0.1.52 ASK3 a select
 //                  is a QUESTION for the owner (its answer is {value}); host-confirm = a `confirm` ask, the permission
 //                  shape; question = an `input` ask; editor = an `editor` ask with prefill
@@ -47,12 +49,15 @@
 //   FAKE_PI_ABORT_MS / FAKE_PI_ABORT_MARKER delay the abort reply, then write the session-flush marker in this engine.
 //   FAKE_PI_ABORT_SILENT=1 never completes abort, for the bounded wait test.
 
+import { r3Barrier, r3HoldRetirement, r3Holding, r3Record, r3Root } from "./r3-engine-barrier.ts";
+import { r3PiCallback } from "./r3-pi-callback.ts";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { logProposalTurn, proposalReply, proposeThroughMcp, type McpServerEntry } from "./fake-mcp-propose.ts";
 import { fakeReviewReply } from "./fake-review.ts";
 import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
 import { PI_GATE_TITLE_PREFIX, piGateMessage } from "../drivers/pi-permission-gate.ts";
+import { fixtureRequested } from "./fixture-request.ts";
 
 /** Whether the real gate asks for this call in these fixtures: the reads here are outside the folder, so every call asks, except the one tool a proposal-only turn runs (Rule 14). */
 const gateAsks = (toolName: string, only?: string): boolean => (only ? toolName !== only : true);
@@ -80,7 +85,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
 }
 
 const lingerMs = Math.min(10_000, Number(process.env.FAKE_PI_LINGER_MS) || 0);
-const lingerThenExit = () => setTimeout(() => process.exit(0), lingerMs);
+const lingerThenExit = () => { if (!r3HoldRetirement()) setTimeout(() => process.exit(0), lingerMs); };
 if (lingerMs > 0) process.on("SIGTERM", lingerThenExit);
 
 if (process.env.FAKE_PI_DUMP) {
@@ -119,7 +124,7 @@ if (process.env.FAKE_PI_DUMP) {
           (k) => process.env[k] !== undefined,
         ),
         mcpConfig,
-        gate: process.env.MURAGE_PI_GATE ? { secretLength: process.env.MURAGE_PI_GATE.length, only: process.env.MURAGE_PI_GATE_ONLY ?? null } : null,
+        gate: process.env.MURAGE_PI_GATE ? { secretLength: process.env.MURAGE_PI_GATE.length, only: process.env.MURAGE_PI_GATE_ONLY ?? null, mode: process.env.MURAGE_PI_GATE_MODE ?? null } : null,
       }) + "\n",
     );
   } catch {
@@ -144,28 +149,19 @@ const send = (obj: any) => process.stdout.write(JSON.stringify(obj) + "\n");
 const FIXTURE_FRAME_LIMIT = 32 * 1024 * 1024;
 const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
 const fixtureLargeText = () => "é".repeat(7 * 1024 * 1024);
-// Markers count only on the prompt's last line (the current request): the
-// harness replays earlier messages into a fresh process's prompt, and an old
-// marker there must not re-trigger a fixture on a later, ordinary turn.
-// A room turn's prompt is the room transcript followed by the harness's
-// "(Reply to the conversation above as NAME.)" trailer, so its current request
-// is the last transcript line before that trailer.
-const ROOM_REPLY_TRAILER = /^\(Reply to the conversation above as .+\.\)$/;
-const fixtureRequested = (text: string, marker: string) => {
-  const lines = text.trimEnd().split("\n");
-  if (lines.length > 1 && ROOM_REPLY_TRAILER.test(lines.at(-1) ?? "")) { lines.pop(); while (lines.length > 1 && !lines.at(-1)?.trim()) lines.pop(); }
-  return (lines.pop() ?? "").includes(marker);
-};
+// Markers count only on the prompt's last line (fixture-request.ts): old replayed markers must not re-trigger a fixture.
 let sessionCounter = 0;
 let currentSessionFile: string | null = null;
 
 // The end of a run as real pi writes it (pi 1.4.0 traces, reports-1012/pi-settle/r2-evidence).
 const finishRun = (input: number, output: number) => {
+  r3HoldRetirement();
   const message = { role: "assistant", stopReason: "stop", usage: { input, output } };
   send({ type: "message_end", message });
   send({ type: "turn_end", message, toolResults: [] });
   send({ type: "agent_end", willRetry: false });
   send({ type: "agent_settled", aborted: false });
+  r3HoldRetirement();
 };
 
 // FAKE_PI_SCRIPT: a JSON array played on prompt. Each entry is a pi frame, or {wait: ms}, {exit: code},
@@ -237,6 +233,25 @@ const streamPermissionTurn = () => {
   send({ type: "message_start", message: { role: "assistant" } });
   send({ type: "extension_ui_request", id: "ask-1", method: "select", title: "Run bash: echo hi?", options: ["Allow once", "Deny"] });
   // wait for the answer before finishing
+};
+
+// unshowable (G4 PI1+; shared with the memapi-pi lane): a `select` with no options, a dialog Murage cannot show, which the driver cancels
+// itself. FAKE_PI_ASK_GATE path: the ask is sent only once that file exists (`<path>.waiting` while held), so a test can revoke first.
+const streamUnshowableTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
+  const ask = () => send({ type: "extension_ui_request", id: "ask-unshowable", method: "select", title: "Pick one", options: [] });
+  const gate = process.env.FAKE_PI_ASK_GATE;
+  if (!gate || existsSync(gate)) return ask();
+  writeFileSync(`${gate}.waiting`, launchId);
+  const poll = setInterval(() => { if (!existsSync(gate)) return; clearInterval(poll); ask(); }, 25);
+};
+
+// permission2: two select asks open at once (PIJ: the second is still pending when the first is refused and the turn closes).
+const streamTwoPermissionTurn = () => {
+  streamPermissionTurn();
+  send({ type: "extension_ui_request", id: "ask-2", method: "select", title: "Run bash: echo two?", options: ["Allow once", "Deny"] });
 };
 
 // host-confirm: the pi-mcp-extension's gate before a host computer tool runs —
@@ -362,7 +377,7 @@ process.stdin.on("data", (chunk) => {
   }
 });
 if (process.env.FAKE_PI_PID_FILE) writeFileSync(process.env.FAKE_PI_PID_FILE, String(process.pid));
-process.stdin.on("end", () => (lingerMs > 0 ? lingerThenExit() : process.exit(0)));
+process.stdin.on("end", () => { if (!r3Holding) { if (lingerMs > 0) lingerThenExit(); else process.exit(0); } });
 
 // FAKE_PI_SESSION_GATE: answer the session handshake only once the gate file
 // exists, so the driver's sendTurn stays pending until the test releases it.
@@ -557,6 +572,8 @@ function handle(cmd: any) {
       }
       else if (mode === "tooluse") streamToolTurn();
       else if (mode === "permission") streamPermissionTurn();
+      else if (mode === "unshowable") streamUnshowableTurn();
+      else if (mode === "permission2") streamTwoPermissionTurn();
       else if (mode === "host-confirm") streamHostConfirmTurn();
       else if (mode === "gate") streamGateTurn();
       else if (mode === "question") streamQuestionTurn();
@@ -568,6 +585,24 @@ function handle(cmd: any) {
       else streamTurn();
       return;
     case "extension_ui_response":
+      if (r3Root && cmd.id === "ask-host") {
+        void (async () => {
+          await r3Barrier(cmd);
+          if (process.env.FAKE_R3_FILTER) {
+            r3PiCallback();
+            streamTextTurn("R3-LATE-OUTPUT");
+            setTimeout(() => process.exit(0), 30);
+            return;
+          }
+          r3Record("accepted"); r3Record("tool-ran");
+          for (const id of ["r3-late-1", "r3-late-2"]) {
+            r3Record("callback-attempt"); sendGateAsk(id, JSON.stringify({ tool: "read", input: { path: process.cwd() } }));
+          }
+          r3Record("output-attempt"); streamTextTurn("R3-LATE-OUTPUT");
+          setTimeout(() => process.exit(0), 100);
+        })();
+        return;
+      }
       // record the exact reply shape so a test can assert {value} vs {confirmed} vs {cancelled}
       if (process.env.FAKE_PI_DUMP) {
         try {
@@ -584,6 +619,7 @@ function handle(cmd: any) {
       if (cmd.id === "ask-1" || cmd.id === "ask-host" || cmd.id === "ask-host-2" || cmd.id === "ask-q" || cmd.id === "ask-e") finishPermissionTurn();
       return;
     case "abort":
+      if (r3Holding) return;
       aborted = true;
       {
         const message = { role: "assistant", stopReason: "aborted", usage: { input: 0, output: 0 } };
