@@ -7,6 +7,10 @@
 // entries so the suite is deterministic with or without agent CLIs installed
 // and exercises the shadow-instance behavior end to end.
 // Part 4 of 4: the smaller API groups.
+// This file fires many revokes within a minute (bots, rooms and settings changes). The revoke marker's per-minute write budget and the drain pace
+// (server/memory/revoke-budget.ts) have their own tests; here both are lifted in the server child, exactly as index-2.test.ts does, so a turn is not
+// held behind marker work they are pacing. Set before the harness module starts the child.
+vi.hoisted(() => { process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET = "1"; });
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -20,6 +24,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
 
 // These cases need connected apps, which run through Flux Router only: the
 // harness points its build at a fake broker when this is set.
@@ -27,8 +32,13 @@ vi.hoisted(() => { process.env.MURAGE_TEST_FAKE_FLUX_BROKER = "1"; });
 import { z } from "zod";
 import { openSse } from "./testing/sse.ts";
 import { intakeChips, intakeNarrowPickChips, type IntakeCandidate, type IntakeCardData } from "../shared/intake-turn.ts";
-import { BASE, DESKTOP_HEADERS, DESKTOP_QUERY, DESKTOP_SECRET, desktopTicketed, FAKE_CLAUDE_CLI, PAIRED_PHONE, PORT, SERVER_DIR, STATE_ONLY_SELECTION, api, boxStubPort, browserMount, browserNativeEvents, browserSession, connectorAliasFixture, delayedJsonBody, desktopApi, fakeClaudeDump, home, readJsonFileWhenReady, setConnectorAliasFixture, startInternalFixtureTurn, stopFixtureTurn, storedMessageCount, turnMemoryOutcomes } from "./testing/index-harness.ts";
+import { BASE, DESKTOP_HEADERS, DESKTOP_QUERY, DESKTOP_SECRET, desktopTicketed, FAKE_CLAUDE_CLI, PAIRED_PHONE, PORT, SERVER_DIR, STATE_ONLY_SELECTION, indexDisplayApis, boxStubPort, browserMount, browserNativeEvents, browserSession, connectorAliasFixture, delayedJsonBody, fakeClaudeDump, home, readJsonFileWhenReady, setConnectorAliasFixture, startInternalFixtureTurn, stopFixtureTurn, storedMessageCount, turnMemoryOutcomes, waitEnginesGone } from "./testing/index-harness.ts";
 import { browserEngineRefusesHost } from "./testing/index-harness.ts";
+import { fixtureExecutionMessage } from "./testing/display-fixture.ts";
+// MAIN RULING 2026-11-14 INT-CONFLICT-DEFAULT c9db6389b64 a62419d6d5 3ad2b8f428: native execution evidence belongs to durable rows actually displayed; normal actions use their opaque public handles.
+const { api, desktopApi } = indexDisplayApis();
+const messageEvidence = (displayed: any[] | undefined) => (displayed ?? []).map(fixtureExecutionMessage);
+
 
 
 describe("section context API", () => {
@@ -1709,8 +1719,12 @@ describe("internal capability authority", () => {
       await expect.poll(() => turnMemoryOutcomes(bot.threadId).at(-1), { timeout: 5_000 }).toBe("cancelled");
       const before = storedMessageCount(bot.threadId);
       const response = await held.finish();
-      expect(response.status).toBe(401);
+      // MAIN RULING 2026-11-14 INT-CONFLICT-DEFAULT 5be0eafbea over c9db6389b64: a captured writer whose turn retires during the body sends only the fixed terminal denial; early retired-token authentication still returns 401.
+      expect(response.status).toBe(409);
+      expect(response.body).toBe(LEDGER_REFUSAL_LINE);
       expect(storedMessageCount(bot.threadId)).toBe(before);
+      expect((await api("GET", "/api/health")).status).toBe(200);
+      expect(await api("GET", "/api/health")).toMatchObject({ status: 200, body: { app: "murage" } });
     } finally {
       held?.close();
       await api("POST", `/api/bots/${bot.id}/interrupt`);
@@ -1722,6 +1736,7 @@ describe("internal capability authority", () => {
     const bot = (await desktopApi("POST", "/api/bots")).body.bot;
     const createdIds: string[] = [];
     let routineId = "", runId = "";
+    const enginePids: number[] = [];
     try {
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { section: "Event budget test", chiefOfStaff: true,
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
@@ -1731,6 +1746,7 @@ describe("internal capability authority", () => {
       const queued = await desktopApi("POST", `/api/routines/${routineId}/run`);
       expect(queued.status).toBe(201); runId = queued.body.run.id;
       const first = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      enginePids.push(first.pid);
       const env = first.mcpConfig.mcpServers.agents.env;
       const threadId = env.MURAGE_THREAD_ID;
       expect(threadId).toBeTruthy();
@@ -1753,13 +1769,14 @@ describe("internal capability authority", () => {
       const resumed = await desktopApi("POST", `/api/bots/${bot.id}/secret-cards/${messageId}/dismiss`, { threadId });
       expect(resumed.status).toBe(200);
       const second = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      enginePids.push(second.pid);
       const nextToken = second.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
       expect(nextToken).not.toBe(env.MURAGE_COMMS_TOKEN);
       // The fifth create no longer dead-ends: the owner is asked, and "Not now" gives the bot a plain answer.
       const pendingCreate = create({ ...headers, authorization: `Bearer ${nextToken}` }, threadId, 4);
       let limitCard: { card: { requestId: string; title: string; subtitle: string; options: string[] } } | undefined;
       await expect.poll(async () => {
-        const messages = (await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages as Array<{ card?: { tool?: string; answered?: string } }> | undefined;
+        const messages = messageEvidence((await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages) as Array<{ card?: { tool?: string; answered?: string } }>;
         limitCard = messages?.find(item => item.card?.tool === "more_new_bots" && !item.card.answered) as typeof limitCard;
         return Boolean(limitCard);
       }).toBe(true);
@@ -1782,6 +1799,7 @@ describe("internal capability authority", () => {
       if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
         .find((item: { id: string }) => item.id === bot.id)?.busy, { timeout: 10_000 }).toBe(false).catch(() => {});
+      await waitEnginesGone(enginePids);
       for (const id of createdIds) await desktopApi("DELETE", `/api/bots/${id}`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
@@ -1834,7 +1852,7 @@ describe("internal capability authority", () => {
       const together = Promise.all(Array.from({ length: 4 }, () => createNamed({ ...headers, authorization: `Bearer ${nextToken}` }, threadId, "Ledger scout")));
       let limitCard: { card: { requestId: string; subtitle: string } } | undefined;
       await expect.poll(async () => {
-        const messages = (await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages as Array<{ card?: { tool?: string; answered?: string } }> | undefined;
+        const messages = messageEvidence((await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages) as Array<{ card?: { tool?: string; answered?: string } }>;
         limitCard = messages?.find(item => item.card?.tool === "more_new_bots" && !item.card.answered) as typeof limitCard;
         return Boolean(limitCard);
       }).toBe(true);
@@ -2030,6 +2048,7 @@ describe("internal capability authority", () => {
     const bot = (await desktopApi("POST", "/api/bots")).body.bot;
     const made: string[] = [];
     let routineId = "", runId = "";
+    const enginePids: number[] = [];
     try {
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { section: "Last place test", chiefOfStaff: true,
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
@@ -2042,6 +2061,7 @@ describe("internal capability authority", () => {
       const queued = await desktopApi("POST", `/api/routines/${routineId}/run`);
       expect(queued.status).toBe(201); runId = queued.body.run.id;
       const first = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      enginePids.push(first.pid);
       const env = first.mcpConfig.mcpServers.agents.env;
       const threadId = env.MURAGE_THREAD_ID;
       const headers = { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" };
@@ -2064,11 +2084,12 @@ describe("internal capability authority", () => {
       rmSync(fakeClaudeDump, { force: true });
       expect((await desktopApi("POST", `/api/bots/${bot.id}/secret-cards/${messageId}/dismiss`, { threadId })).status).toBe(200);
       const second = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      enginePids.push(second.pid);
       headers.authorization = `Bearer ${second.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN}`;
       const both = Promise.all([create("Scout"), create("Ranger")]);
       let limitCard: { card: { requestId: string } } | undefined;
       await expect.poll(async () => {
-        const messages = (await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages as Array<{ card?: { tool?: string; answered?: string } }> | undefined;
+        const messages = messageEvidence((await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages) as Array<{ card?: { tool?: string; answered?: string } }>;
         limitCard = messages?.find(item => item.card?.tool === "more_new_bots" && !item.card.answered) as typeof limitCard;
         return Boolean(limitCard);
       }, { timeout: 15_000 }).toBe(true);
@@ -2082,9 +2103,10 @@ describe("internal capability authority", () => {
       expect(stored.eventBudget.admissions.filter((item: { kind: string }) => item.kind === "create")).toHaveLength(5);
       writeFileSync(join(home, "finish-fake", String(second.pid)), "finish");
     } finally {
-      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { all: true });
       if (runId) await desktopApi("POST", `/api/routine-runs/${runId}/cancel`);
       if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
+      await waitEnginesGone(enginePids);
       for (const id of made) await desktopApi("DELETE", `/api/bots/${id}`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
@@ -2113,7 +2135,7 @@ describe("internal capability authority", () => {
       const openLimitCard = async (tool: string) => {
         let card: { card: { requestId: string; subtitle: string } } | undefined;
         await expect.poll(async () => {
-          const messages = (await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages as Array<{ card?: { tool?: string; answered?: string } }> | undefined;
+          const messages = messageEvidence((await desktopApi("GET", `/api/threads/${threadId}/messages`)).body.messages) as Array<{ card?: { tool?: string; answered?: string } }>;
           card = messages?.find(item => item.card?.tool === tool && !item.card.answered) as typeof card;
           return Boolean(card);
         }).toBe(true);
@@ -2241,8 +2263,8 @@ describe("internal capability authority", () => {
       permissionClient.write(JSON.stringify({ t: "ask", id: requestId, tool: "Read",
         input: { file_path: join(home, "n6-outside-recipient-folder", "N6_SYNTHETIC_PERMISSION_ONLY.txt") } }) + "\n");
       stage("permission sent; await recipient decision");
-      const messages = async (id: string) => (await api("GET", "/api/bots?messages=100")).body.bots
-        .find((bot: { id: string }) => bot.id === id).messages as Array<{
+      const messages = async (id: string) => messageEvidence((await api("GET", "/api/bots?messages=100")).body.bots
+        .find((bot: { id: string }) => bot.id === id).messages) as Array<{
           card?: { requestId?: string; tool?: string; title?: string }; tool?: { name?: string };
         }>;
       // The decision is made once; these polls only wait for it to be
@@ -2307,7 +2329,7 @@ describe("internal capability authority", () => {
       let requestId = "";
       await expect.poll(async () => {
         const state = (await api("GET", "/api/bots?messages=100")).body;
-        const card = state.bots.find((bot: { id: string }) => bot.id === source.id)?.messages
+        const card = messageEvidence(state.bots.find((bot: { id: string }) => bot.id === source.id)?.messages)
           .find((message: { card?: { tool?: string; requestId?: string } }) => message.card?.tool === "ask_bot")?.card;
         requestId = card?.requestId ?? "";
         return Boolean(requestId);
@@ -2318,7 +2340,10 @@ describe("internal capability authority", () => {
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
         .find((bot: { id: string }) => bot.id === source.id)?.busy).toBe(false);
       await desktopApi("POST", `/api/threads/${source.threadId}/respond`, { requestId, behavior: "allow" });
-      expect((await pending).status).toBe(401);
+      const retired = await pending;
+      // MAIN RULING 2026-11-14 INT-CONFLICT-DEFAULT c9db6389b64 5be0eafbea: this already-captured writer retired while awaiting approval; require the exact fixed denial, with every no-effect assertion retained.
+      expect(retired.status).toBe(409);
+      expect(await retired.text()).toBe(LEDGER_REFUSAL_LINE);
       const state = (await desktopApi("GET", "/api/bots?messages=0")).body;
       expect(state.groups.filter((group: { memberIds: string[] }) => group.memberIds.includes(source.id) && group.memberIds.includes(target.id))).toHaveLength(0);
       expect(storedMessageCount(target.threadId)).toBe(targetMessagesBefore);
@@ -2335,6 +2360,7 @@ describe("internal capability authority", () => {
   it("bounds handoffs and lets a fresh source turn read its historical receipt", async () => {
     const source = (await desktopApi("POST", "/api/bots")).body.bot;
     const target = (await desktopApi("POST", "/api/bots")).body.bot;
+    const outsider = (await desktopApi("POST", "/api/bots")).body.bot;
     try {
       const first = await startInternalFixtureTurn(source.id);
       const results = await Promise.all(Array.from({ length: 18 }, async (_, index) => {
@@ -2355,9 +2381,19 @@ describe("internal capability authority", () => {
       const historical = await fetch(url, { headers: second.headers });
       expect(historical.status).toBe(200);
       expect(await historical.json()).toHaveProperty("status");
+      const other = await startInternalFixtureTurn(outsider.id);
+      const foreign = await fetch(`${BASE}/api/internal/delegations/${receipt}?fromBotId=${outsider.id}&fromThreadId=${outsider.threadId}&wait_ms=0`, { headers: other.headers });
+      expect(foreign.status).toBe(403);
+      expect(await foreign.json()).not.toHaveProperty("result");
+      const unknown = await fetch(`${BASE}/api/internal/delegations/unknown-fixture-task?fromBotId=${source.id}&fromThreadId=${source.threadId}&wait_ms=0`, { headers: second.headers });
+      expect(unknown.status).toBe(409);
+      expect(await unknown.text()).toBe(LEDGER_REFUSAL_LINE);
+      expect((await api("GET", "/api/health")).status).toBe(200);
     } finally {
       await api("POST", `/api/bots/${source.id}/interrupt`);
       await api("POST", `/api/bots/${target.id}/interrupt`);
+      await api("POST", `/api/bots/${outsider.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${outsider.id}`);
       await desktopApi("DELETE", `/api/bots/${target.id}`);
       await desktopApi("DELETE", `/api/bots/${source.id}`);
     }

@@ -1,9 +1,13 @@
+import { SKILL_PAGE_SIZE, type SkillPagination } from "../../shared/skill-pagination";
+import { SkillPageControls } from "./skills/SkillPageControls";
 import { LazyOverlay } from "@/components/LazyOverlay";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import { plainText } from "@/lib/plain-text";
 import { LibraryArt } from "./LibraryArt";
+import { SkillsBrowser } from "./library/SkillsBrowser";
+import { useMediaQuery } from "@/lib/media-query";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
 import { assignSkillsToBot } from "@/lib/onboarding-intake";
 import { invalidateSkillCount } from "@/lib/bot-skill-count";
@@ -94,6 +98,7 @@ interface Facet {
 }
 
 interface LibrarySearchResponse {
+  pagination: SkillPagination;
   teams: Array<{ slug: string }>;
   skills: SkillHit[];
 }
@@ -399,6 +404,21 @@ export function TeamLibraryPanel({
 }) {
   const { state, dispatch } = useStore();
   const dialogRef = useRef<HTMLDivElement>(null);
+  // The fallback includes the shell's 24px padding on each side. Observe
+  // the panel itself when available, so the seam follows its actual width.
+  const compactViewport = useMediaQuery("(max-width: 907.98px)");
+  const [compactSkills, setCompactSkills] = useState(compactViewport);
+  useEffect(() => {
+    const node = dialogRef.current;
+    if (!node || typeof ResizeObserver === "undefined") { setCompactSkills(compactViewport); return; }
+    const update = () => {
+      const width = node.getBoundingClientRect().width;
+      if (width > 0) setCompactSkills(width < 860);
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(node); update();
+    return () => observer.disconnect();
+  }, [compactViewport]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<TeamTab>(initialTab ?? "explore");
   /** Teams or skills. A real switch, not a derived one: the person who arrived
@@ -437,7 +457,18 @@ export function TeamLibraryPanel({
   // Closing the panel ends a check that is still reading the package.
   const closePanel = () => { check.stop(); onClose(); };
   const [dragging, setDragging] = useState(false);
-  const [search, setSearch] = useState("");
+  const [search, setSearchValue] = useState("");
+  const [skillOffset, setSkillOffset] = useState(0);
+  const [skillPagination, setSkillPagination] = useState<SkillPagination | null>(null);
+  const [searchRetry, setSearchRetry] = useState(0);
+  const searchRequest = useRef(0);
+  const resetSkillPage = () => {
+    ++searchRequest.current;
+    setSkillHits([]);
+    setSkillPagination(null);
+    setSkillOffset(0);
+  };
+  const setSearch = (value: string) => { if (value === search) return; resetSkillPage(); setSearchValue(value); };
   // Ranked retrieval, served by the local FTS5 index (server/skill-search.ts).
   // `teamOrder` is a list of slugs, not entries: the catalog is already loaded
   // here, so shipping the entries back per keystroke would re-send 68 KB to
@@ -448,7 +479,8 @@ export function TeamLibraryPanel({
   const [searchUnavailable, setSearchUnavailable] = useState(false);
   const [facets, setFacets] = useState<Facet[]>([]);
   const [totalSkills, setTotalSkills] = useState(0);
-  const [activeFacet, setActiveFacet] = useState<string | null>(null);
+  const [activeFacet, setActiveFacetValue] = useState<string | null>(null);
+  const setActiveFacet = (value: string | null) => { if (value === activeFacet) return; resetSkillPage(); setActiveFacetValue(value); };
   const [showAllFacets, setShowAllFacets] = useState(false);
   const [error, setError] = useState("");
   const [scoutFolder, setScoutFolder] = useState("");
@@ -543,9 +575,9 @@ export function TeamLibraryPanel({
   // Ranked search across both corpora. Debounced because it fires per
   // keystroke; sequenced because responses can land out of order and a stale
   // one must never overwrite a newer one.
-  const searchRequest = useRef(0);
   useEffect(() => {
     const query = search.trim();
+    const token = ++searchRequest.current;
     if (!query && !activeFacet) {
       setTeamOrder(null);
       setSkillHits([]);
@@ -553,31 +585,33 @@ export function TeamLibraryPanel({
       setSearchUnavailable(false);
       return;
     }
-    const token = ++searchRequest.current;
     setSearching(true);
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const params = new URLSearchParams(activeFacet ? { term: activeFacet, limit: "60" } : { q: query, limit: "40" });
+          const params = new URLSearchParams({ q: query, limit: String(SKILL_PAGE_SIZE), offset: String(skillOffset) });
+          if (activeFacet) params.set("term", activeFacet);
           // SAFETY: this endpoint is owned by the app and returns ranked hits.
           const response = (await api(`/api/library/search?${params}`)) as LibrarySearchResponse;
           if (token !== searchRequest.current) return;
           setTeamOrder((response.teams ?? []).map((hit) => hit.slug));
           setSkillHits(response.skills ?? []);
+          setSkillPagination(response.pagination);
           setSearchUnavailable(false);
         } catch {
           if (token !== searchRequest.current) return;
           // An unreachable index must not blank the team list.
           setTeamOrder(null);
           setSkillHits([]);
+          setSkillPagination(null);
           setSearchUnavailable(true);
         } finally {
           if (token === searchRequest.current) setSearching(false);
         }
       })();
     }, 120);
-    return () => clearTimeout(timer);
-  }, [search, activeFacet]);
+    return () => { clearTimeout(timer); ++searchRequest.current; };
+  }, [search, activeFacet, skillOffset, searchRetry]);
 
   useLayerContainer(dialogRef, {
     initialFocus: null,
@@ -1102,18 +1136,15 @@ export function TeamLibraryPanel({
                   From a folder
                 </button>
               </div>
-              {tab === "explore" && (
+              {tab === "explore" && view !== "skills" && (
                 <label className="flex h-11 w-full items-center gap-2.5 rounded-xl bg-raised/70 px-3.5 sm:w-[320px]">
                   <Search size={17} className="shrink-0 text-ink-secondary" />
                   <input
                     value={search}
                     onChange={(event) => {
                       setSearch(event.target.value);
-                      // Typing is a new intent; a facet left active would
-                      // silently filter the results being typed for.
-                      if (event.target.value.trim()) setActiveFacet(null);
                     }}
-                    placeholder={`Search ${view}`}
+                    placeholder={activeFacet ? "Search in " + facetLabel(activeFacet) : "Search " + view}
                     aria-label={`Search ${view}`}
                     className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
                   />
@@ -1133,13 +1164,13 @@ export function TeamLibraryPanel({
               )}
             </div>
 
-            <BoxBody className="px-6 pb-7 pt-5 sm:px-8">
+            <BoxBody className={cn("px-6 pb-7 pt-5 sm:px-8", tab === "explore" && view === "skills" && "flex flex-col overflow-clip px-0 pb-0 pt-0 sm:px-0")}>
               {tab === "explore" && (
-                <div>
+                <div className={cn(view === "skills" && "flex min-h-0 flex-1 flex-col")}>
                   {/* THE PANEL'S MISSING TABS. It had `activeFacet` and a
                       search box and nothing else, so "Add a skill to Bruce"
                       and "browse teams" arrived at the same screen. */}
-                  <div role="tablist" aria-label="Library view" className="mb-4 inline-flex rounded-xl bg-raised/60 p-1">
+                  <div role="tablist" aria-label="Library view" className={cn("mb-4 inline-flex shrink-0 self-start rounded-xl bg-raised/60 p-1", view === "skills" && "mx-5 mt-3")}>
                     {(["bots", "teams", "skills"] as const).map((candidate) => (
                       <button
                         key={candidate}
@@ -1160,10 +1191,13 @@ export function TeamLibraryPanel({
                       invisible state that makes an "Add a skill" flow feel
                       like it did nothing. */}
                   {view === "skills" && (
-                    <h2 className="mb-3 text-[15px] font-semibold text-ink">
+                    <h2 className={cn("text-[15px] font-semibold text-ink", preselectedBot ? "mx-5 mb-3" : "sr-only")}>
                       Skills{preselectedBot && <span className="text-ink-secondary"> · for {preselectedBot.name}</span>}
                     </h2>
                   )}
+                  {Boolean(view === "skills") ? (
+                    <SkillsBrowser bots={assignableBots} compact={compactSkills} onClose={closePanel} />
+                  ) : <>
                   {/* Browse, with nothing typed. Krug: search only helps
                       someone who already knows what to ask for. */}
                   {view === "skills" && facets.length > 0 && (
@@ -1174,7 +1208,7 @@ export function TeamLibraryPanel({
                         </div>
                         {totalSkills > 0 && (
                           <div className="text-[11.5px] text-ink-secondary/80">
-                            {totalSkills.toLocaleString()} skills included
+                            {totalSkills.toLocaleString()} {totalSkills === 1 ? "skill" : "skills"} across {facets.length} {facets.length === 1 ? "topic" : "topics"}
                           </div>
                         )}
                       </div>
@@ -1183,6 +1217,7 @@ export function TeamLibraryPanel({
                           <button
                             key={facet.term}
                             aria-pressed={activeFacet === facet.term}
+                            aria-label={facetLabel(facet.term) + " (" + facet.count + (facet.count === 1 ? " skill)" : " skills)")}
                             onClick={() => {
                               setActiveFacet(activeFacet === facet.term ? null : facet.term);
                               setSearch("");
@@ -1215,7 +1250,10 @@ export function TeamLibraryPanel({
                     {searching && <Loader2 size={12} className="animate-spin" />}
                   </div>
                   {searchUnavailable && !searching && (
-                    <p role="status" className="mb-3 text-[12.5px] text-warning" data-testid="library-search-unavailable">Search is unavailable right now, so this shows all teams.</p>
+                    <div role="status" className="mb-3 text-[12.5px] text-warning" data-testid="library-search-unavailable">
+                      <p>{view === "skills" ? "Skills couldn't be loaded." : "Search is unavailable right now, so this shows all teams."}</p>
+                      <button type="button" onClick={() => setSearchRetry(value => value + 1)} className="mt-2 min-h-11 rounded-lg bg-control px-3 text-ink">Try again</button>
+                    </div>
                   )}
                   {catalogLoading && (
                     <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
@@ -1283,11 +1321,11 @@ export function TeamLibraryPanel({
 
                   {/* Skills. 2,010 of the 2,237 that ship are named by no team,
                       so without this section they are reachable from nowhere. */}
-                  {view === "skills" && (activeFacet || (!browsing && skillHits.length > 0)) && (
+                  {view === "skills" && (activeFacet || (!browsing && (skillHits.length > 0 || skillPagination))) && (
                     <section className={cn(activeFacet ? "" : "mt-7 border-t border-hairline/35 pt-6")}>
                       {!activeFacet && (
                         <h3 className="mb-3 text-[12px] font-medium text-ink-secondary">
-                          Skills <span className="opacity-60">{skillHits.length}</span>
+                          Skills <span className="opacity-60">{skillPagination?.total ?? skillHits.length}</span>
                           {/* SEAM: when the panel is opened for a specific
                               agent, say so. A pre-filled target the user cannot
                               see is exactly the invisible state Krug warns
@@ -1312,8 +1350,14 @@ export function TeamLibraryPanel({
                           />
                         ))}
                       </div>
-                      {activeFacet && skillHits.length === 0 && !searching && (
-                        <p className="px-1 py-6 text-[12.5px] text-ink-secondary">Nothing in this topic yet.</p>
+                      {skillPagination && <SkillPageControls page={skillPagination} busy={searching} onPage={(offset) => {
+                        ++searchRequest.current;
+                        setSearching(true);
+                        setSkillHits([]);
+                        setSkillOffset(offset);
+                      }} />}
+                      {activeFacet && skillHits.length === 0 && !searching && !searchUnavailable && (
+                        <p className="px-1 py-6 text-[12.5px] text-ink-secondary">{search.trim() ? "No skills match “" + search.trim() + "” in this topic." : "Nothing in this topic yet."}</p>
                       )}
                     </section>
                   )}
@@ -1347,6 +1391,7 @@ export function TeamLibraryPanel({
                       )}
                     </div>
                   )}
+                  </>}
                 </div>
               )}
 

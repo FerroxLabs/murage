@@ -1,3 +1,4 @@
+import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // The fake reuse gate row (ENGINE-PERSIST design section 6). A stdio server slow enough
@@ -15,6 +16,7 @@ import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { ClaudeDriver } from "./claude.ts";
 import { reuseStats } from "./reuse-stats.ts";
+import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -25,13 +27,26 @@ describe.skipIf(process.platform === "win32")("reuse gate row (fake CLI, real ps
   let scratch: string;
   let dispatches: string[];
   let info: ReturnType<typeof vi.spyOn>;
+  let admissionChecked = false;
   const sessions = new Map<string, string>();
   const extra = {
     integrations: { agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok", MURAGE_TURN_DEPTH: "0" } } },
     warmIdentity: { botId: "b1", audience: "owner" as const },
   } satisfies Partial<SendTurnInput>;
   const run = async (threadId: string, text: string, more: Partial<SendTurnInput> = {}) => {
-    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra, ...more });
+    // red-at-4df086541; design 397: the original external agents and
+    // permission mounts refuse before launch. The independent process-tree
+    // control uses the real tool-less adapter; every reuse assertion below
+    // and the fake CLI's actual slow child remain unchanged.
+    if (!admissionChecked) {
+      expect(() => assertConsumingMountAdmission(fixtureMountTurn({ threadId, text, ...extra, ...more }), "external", true)).toThrow("MEMORY_CONTEXT_REVOKED");
+      expect(recorder.events).toEqual([]); expect(dispatches).toEqual([]);
+      expect(instance.adapter.hasSession(threadId)).toBe(false);
+      admissionChecked = true;
+    }
+    const sent = await instance.adapter.sendTurn(fixtureMountTurn({ cwd: fixtureBotFolder(), threadId, text,
+      ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}),
+      warmIdentity: extra.warmIdentity, ...more, draftOnly: true }));
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     const started = [...recorder.events].reverse().find((e) => e.type === "session.started" && e.threadId === threadId) as { sessionId?: string } | undefined;
     if (started?.sessionId) sessions.set(threadId, started.sessionId);
@@ -42,6 +57,7 @@ describe.skipIf(process.platform === "win32")("reuse gate row (fake CLI, real ps
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
     sessions.clear();
+    admissionChecked = false;
     dispatches = [];
     scratch = mkdtempSync(join(tmpdir(), "murage-reuse-row-"));
     process.env.CLAUDE_CONFIG_DIR = join(scratch, "claude-config");

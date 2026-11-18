@@ -1,0 +1,604 @@
+[
+  {
+    "id": "en:browser.BrowserPreflight.1",
+    "path": "src/locales/en.json",
+    "old": "Open chrome://inspect/#remote-debugging in Chrome, turn it on, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+    "new": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+    "note": "Reason: Name remote debugging explicitly so the owner knows which capability they are enabling. Corrected string: Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts."
+  },
+  {
+    "id": "en:browser.BrowserSetupCard.2",
+    "path": "src/locales/en.json",
+    "old": "Set up also enables browser tools in this workspace.",
+    "new": "Setup also enables browser tools in this workspace.",
+    "note": "Reason: The noun is setup; set up is the verb. Corrected string: Setup also enables browser tools in this workspace."
+  },
+  {
+    "id": "en:browser.BrowserSetupCard.10",
+    "path": "src/locales/en.json",
+    "old": "Open chrome://inspect/#remote-debugging in Chrome, turn it on, keep Chrome open, and click Allow when Chrome asks.",
+    "new": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+    "note": "Reason: Name remote debugging explicitly rather than saying turn it on. Corrected string: Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks."
+  },
+  {
+    "id": "en:browser.BrowserSetupCard.16",
+    "path": "src/locales/en.json",
+    "old": "Share a tab in the extension. If it is paused or stopped, check the page and resume there first.",
+    "new": "Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task.",
+    "note": "Reason: The extension offers Resume for paused tasks, not stopped tasks. server/browser-extension-setup.ts starts a new stopped task through Continue. Corrected string: Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task."
+  },
+  {
+    "id": "en:browser.extensionScope",
+    "path": "src/locales/en.json",
+    "old": "{name} can use tabs you share, signed in as you. You choose each site's access, and actions that send, post or change something need separate approval.",
+    "new": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+    "note": "Reason: The unconditional promise of separate approval is inaccurate when Full access is enabled; BrowserApprovalMode permits sending and submitting without asking. Corrected string: {name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting."
+  },
+  {
+    "id": "en:browser.server.browser-extension-setup.23",
+    "path": "src/locales/en.json",
+    "old": "Start a new browser task in Murage for Chrome, then choose Continue again.",
+    "new": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+    "note": "Reason: The extension side panel has no control to start a stopped task; Resume is offered only for paused tasks. Corrected string: This browser task stopped. Ask the bot to start a new browser task, then choose Continue again."
+  },
+  {
+    "id": "en:browser.server.browser-extension-setup.24",
+    "path": "src/locales/en.json",
+    "old": "Start a new browser task in Murage for Chrome, then choose Continue again.",
+    "new": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+    "note": "Reason: The extension side panel has no control to start a stopped task; Resume is offered only for paused tasks. Corrected string: This browser task stopped. Ask the bot to start a new browser task, then choose Continue again."
+  },
+  {
+    "id": "de:browser.BrowserPreflight.1",
+    "path": "src/locales/de.json",
+    "old": "Öffne chrome://inspect/#remote-debugging in Chrome, schalte es ein, lass Chrome geöffnet und klicke auf Zulassen, wenn Chrome fragt. Nach einem Neustart fragt Chrome erneut.",
+    "new": "Öffne chrome://inspect/#remote-debugging in Chrome, aktiviere dort das Remote-Debugging, lass Chrome geöffnet und klicke auf Zulassen, wenn Chrome fragt. Nach einem Neustart fragt Chrome erneut.",
+    "note": "Reason: Schalte es ein does not identify the debugging capability being enabled. Corrected string: Öffne chrome://inspect/#remote-debugging in Chrome, aktiviere dort das Remote-Debugging, lass Chrome geöffnet und klicke auf Zulassen, wenn Chrome fragt. Nach einem Neustart fragt Chrome erneut."
+  },
+  {
+    "id": "de:browser.BrowserSetupCard.10",
+    "path": "src/locales/de.json",
+    "old": "Öffne chrome://inspect/#remote-debugging in Chrome, schalte es ein, lass Chrome geöffnet und klicke auf Zulassen, wenn Chrome fragt.",
+    "new": "Öffne chrome://inspect/#remote-debugging in Chrome, aktiviere dort das Remote-Debugging, lass Chrome geöffnet und klicke auf Zulassen, wenn Chrome fragt.",
+    "note": "Reason: Name remote debugging rather than using the ambiguous es. Corrected string: Öffne chrome://inspect/#remote-debugging in Chrome, aktiviere dort das Remote-Debugging, lass Chrome geöffnet und klicke auf Zulassen, wenn Chrome fragt."
+  },
+  {
+    "id": "de:browser.BrowserSetupCard.16",
+    "path": "src/locales/de.json",
+    "old": "Gib in der Erweiterung einen Tab frei. Wenn er pausiert oder gestoppt ist, prüfe zuerst die Seite und setze dort fort.",
+    "new": "Gib in der Erweiterung einen Tab frei. Wenn die Aufgabe pausiert ist, prüfe zuerst die Seite und klicke dort auf Fortsetzen. Wenn sie gestoppt ist, wähle hier Weiter, um eine neue Aufgabe zu starten.",
+    "note": "Reason: A stopped task has no Fortsetzen action in the extension. Continue here starts a new task. Corrected string: Gib in der Erweiterung einen Tab frei. Wenn die Aufgabe pausiert ist, prüfe zuerst die Seite und klicke dort auf Fortsetzen. Wenn sie gestoppt ist, wähle hier Weiter, um eine neue Aufgabe zu starten."
+  },
+  {
+    "id": "de:browser.directScope",
+    "path": "src/locales/de.json",
+    "old": "{name} nutzt deine Anmeldungen in eigenen Tabs. Murage beschränkt den Bot auf diese Tabs und gibt Passwörter und Zahlungen an dich zurück. Auswahl pro Website und Nachfragestufen gibt es bei „Mein Chrome, angemeldet“.",
+    "new": "{name} nutzt deine Anmeldungen in eigenen Tabs. Murage beschränkt den Bot auf diese Tabs und überlässt dir die Eingabe von Passwörtern und das Bezahlen. Auswahl pro Website und Nachfragestufen gibt es bei „Mein Chrome, angemeldet“.",
+    "note": "Reason: Gibt Passwörter und Zahlungen zurück literally returns passwords and payments; the control hands those actions to the owner. Corrected string: {name} nutzt deine Anmeldungen in eigenen Tabs. Murage beschränkt den Bot auf diese Tabs und überlässt dir die Eingabe von Passwörtern und das Bezahlen. Auswahl pro Website und Nachfragestufen gibt es bei „Mein Chrome, angemeldet“."
+  },
+  {
+    "id": "de:browser.extensionScope",
+    "path": "src/locales/de.json",
+    "old": "{name} kann Tabs nutzen, die du freigibst, und ist dabei mit deinen Konten angemeldet. Du legst den Zugriff für jede Website fest, und Aktionen, die etwas senden, veröffentlichen oder ändern, brauchen eine eigene Freigabe.",
+    "new": "{name} kann Tabs nutzen, die du freigibst, und ist dabei mit deinen Konten angemeldet. Du legst den Zugriff für jede Website fest und wie oft der Bot vor dem Klicken, Tippen, Senden oder Veröffentlichen nachfragt.",
+    "note": "Reason: Separate approval is not unconditional: Full access can send and submit without asking. Corrected string: {name} kann Tabs nutzen, die du freigibst, und ist dabei mit deinen Konten angemeldet. Du legst den Zugriff für jede Website fest und wie oft der Bot vor dem Klicken, Tippen, Senden oder Veröffentlichen nachfragt."
+  },
+  {
+    "id": "de:browser.continueWithout",
+    "path": "src/locales/de.json",
+    "old": "Wähle Nicht jetzt, um ohne fortzufahren.",
+    "new": "Wähle Nicht jetzt, um ohne die Erweiterung fortzufahren.",
+    "note": "Reason: Ohne needs an object here; um ohne fortzufahren is incomplete German. Corrected string: Wähle Nicht jetzt, um ohne die Erweiterung fortzufahren."
+  },
+  {
+    "id": "de:browser.disclosure.chrome",
+    "path": "src/locales/de.json",
+    "old": "dein Chrome",
+    "new": "deinen Chrome",
+    "note": "Reason: This fragment follows nutzt in browser.disclosure.destination and needs the accusative. Corrected string: deinen Chrome"
+  },
+  {
+    "id": "de:browser.server.browser-extension-setup.23",
+    "path": "src/locales/de.json",
+    "old": "Starte in Murage for Chrome eine neue Browseraufgabe und wähle dann erneut Weiter.",
+    "new": "Diese Browseraufgabe wurde gestoppt. Bitte den Bot, eine neue Browseraufgabe zu starten, und wähle dann erneut Weiter.",
+    "note": "Reason: The extension has no control for starting a stopped task. Corrected string: Diese Browseraufgabe wurde gestoppt. Bitte den Bot, eine neue Browseraufgabe zu starten, und wähle dann erneut Weiter."
+  },
+  {
+    "id": "de:browser.server.browser-extension-setup.24",
+    "path": "src/locales/de.json",
+    "old": "Starte in Murage for Chrome eine neue Browseraufgabe und wähle dann erneut Weiter.",
+    "new": "Diese Browseraufgabe wurde gestoppt. Bitte den Bot, eine neue Browseraufgabe zu starten, und wähle dann erneut Weiter.",
+    "note": "Reason: The extension has no control for starting a stopped task. Corrected string: Diese Browseraufgabe wurde gestoppt. Bitte den Bot, eine neue Browseraufgabe zu starten, und wähle dann erneut Weiter."
+  },
+  {
+    "id": "de:browser.server.browser-mode-transition.3",
+    "path": "src/locales/de.json",
+    "old": "Gib zuerst zurück und ändere dann den Browser von {value0}.",
+    "new": "Gib zuerst die Steuerung zurück und ändere dann den Browser von {value0}.",
+    "note": "Reason: Gib zuerst zurück leaves the action's object unstated and reads as incomplete German. Corrected string: Gib zuerst die Steuerung zurück und ändere dann den Browser von {value0}."
+  },
+  {
+    "id": "de:browser.server.route.5",
+    "path": "src/locales/de.json",
+    "old": "Für dich pausiert · Zuerst zurückgeben",
+    "new": "Für dich pausiert · Zuerst die Steuerung zurückgeben",
+    "note": "Reason: State what the owner must hand back. Corrected string: Für dich pausiert · Zuerst die Steuerung zurückgeben"
+  },
+  {
+    "id": "es:browser.BrowserPreflight.1",
+    "path": "src/locales/es.json",
+    "old": "Abre chrome://inspect/#remote-debugging en Chrome, actívalo, mantén Chrome abierto y haz clic en Permitir cuando Chrome lo solicite. Chrome volverá a preguntar después de reiniciarse.",
+    "new": "Abre chrome://inspect/#remote-debugging en Chrome, activa la depuración remota, mantén Chrome abierto y haz clic en Permitir cuando Chrome lo solicite. Chrome volverá a preguntar después de reiniciarse.",
+    "note": "Reason: Actívalo does not identify the capability being enabled. Corrected string: Abre chrome://inspect/#remote-debugging en Chrome, activa la depuración remota, mantén Chrome abierto y haz clic en Permitir cuando Chrome lo solicite. Chrome volverá a preguntar después de reiniciarse."
+  },
+  {
+    "id": "es:browser.BrowserSetupCard.10",
+    "path": "src/locales/es.json",
+    "old": "Abre chrome://inspect/#remote-debugging en Chrome, actívalo, mantén Chrome abierto y haz clic en Permitir cuando Chrome lo solicite.",
+    "new": "Abre chrome://inspect/#remote-debugging en Chrome, activa la depuración remota, mantén Chrome abierto y haz clic en Permitir cuando Chrome lo solicite.",
+    "note": "Reason: Name remote debugging explicitly. Corrected string: Abre chrome://inspect/#remote-debugging en Chrome, activa la depuración remota, mantén Chrome abierto y haz clic en Permitir cuando Chrome lo solicite."
+  },
+  {
+    "id": "es:browser.BrowserSetupCard.16",
+    "path": "src/locales/es.json",
+    "old": "Comparte una pestaña en la extensión. Si está en pausa o detenida, revisa la página y reanúdala allí primero.",
+    "new": "Comparte una pestaña en la extensión. Si la tarea está en pausa, revisa primero la página y pulsa Reanudar allí. Si está detenida, elige Continuar aquí para iniciar una tarea nueva.",
+    "note": "Reason: A stopped task cannot be resumed in the extension; Continue here starts a new task. Corrected string: Comparte una pestaña en la extensión. Si la tarea está en pausa, revisa primero la página y pulsa Reanudar allí. Si está detenida, elige Continuar aquí para iniciar una tarea nueva."
+  },
+  {
+    "id": "es:browser.directScope",
+    "path": "src/locales/es.json",
+    "old": "{name} usa tus inicios de sesión en sus propias pestañas. Murage limita el bot a esas pestañas y te devuelve las contraseñas y los pagos. Las opciones por sitio y los niveles de consulta corresponden a Mi Chrome, con sesión iniciada.",
+    "new": "{name} usa tus inicios de sesión en sus propias pestañas. Murage limita el bot a esas pestañas y te cede el control para introducir contraseñas y realizar pagos. Las opciones por sitio y los niveles de consulta corresponden a Mi Chrome, con sesión iniciada.",
+    "note": "Reason: Te devuelve las contraseñas y los pagos literally returns those things instead of handing their actions to the owner. Corrected string: {name} usa tus inicios de sesión en sus propias pestañas. Murage limita el bot a esas pestañas y te cede el control para introducir contraseñas y realizar pagos. Las opciones por sitio y los niveles de consulta corresponden a Mi Chrome, con sesión iniciada."
+  },
+  {
+    "id": "es:browser.extensionScope",
+    "path": "src/locales/es.json",
+    "old": "{name} puede usar las pestañas que compartas, con tu sesión iniciada. Tú eliges el acceso de cada sitio, y las acciones que envían, publican o modifican algo necesitan una aprobación aparte.",
+    "new": "{name} puede usar las pestañas que compartas, con tu sesión iniciada. Tú eliges el acceso de cada sitio y con qué frecuencia pregunta antes de hacer clic, escribir, enviar o publicar.",
+    "note": "Reason: Full access can send and submit without separate approval, so the current promise is too broad. Corrected string: {name} puede usar las pestañas que compartas, con tu sesión iniciada. Tú eliges el acceso de cada sitio y con qué frecuencia pregunta antes de hacer clic, escribir, enviar o publicar."
+  },
+  {
+    "id": "es:browser.profileWaiting",
+    "path": "src/locales/es.json",
+    "old": "Abre {browser} con Murage para Chrome para conectar tu perfil de {name}. Tu tarea no se ha reiniciado.",
+    "new": "Abre {browser} con Murage for Chrome para conectar tu perfil de {name}. Tu tarea no se ha reiniciado.",
+    "note": "Reason: Keep the installed extension's actual name, Murage for Chrome, consistent with its manifest and setup controls. Corrected string: Abre {browser} con Murage for Chrome para conectar tu perfil de {name}. Tu tarea no se ha reiniciado."
+  },
+  {
+    "id": "es:browser.server.browser-extension-setup.21",
+    "path": "src/locales/es.json",
+    "old": "Murage para Chrome tiene un nuevo perfil de navegador. Abre el panel Navegador, elígelo y vuelve a elegir Continuar.",
+    "new": "Murage for Chrome tiene un nuevo perfil de navegador. Abre el panel Navegador, elígelo y vuelve a elegir Continuar.",
+    "note": "Reason: The extension's actual name is Murage for Chrome, including in its Spanish manifest. Corrected string: Murage for Chrome tiene un nuevo perfil de navegador. Abre el panel Navegador, elígelo y vuelve a elegir Continuar."
+  },
+  {
+    "id": "es:browser.server.browser-extension-setup.23",
+    "path": "src/locales/es.json",
+    "old": "Inicia una nueva tarea de navegador en Murage para Chrome y vuelve a elegir Continuar.",
+    "new": "Esta tarea del navegador se detuvo. Pide al bot que inicie una tarea nueva en el navegador y vuelve a elegir Continuar.",
+    "note": "Reason: The extension has no control to start a stopped task; also preserve its actual product name when naming it. Corrected string: Esta tarea del navegador se detuvo. Pide al bot que inicie una tarea nueva en el navegador y vuelve a elegir Continuar."
+  },
+  {
+    "id": "es:browser.server.browser-extension-setup.24",
+    "path": "src/locales/es.json",
+    "old": "Inicia una nueva tarea de navegador en Murage para Chrome y vuelve a elegir Continuar.",
+    "new": "Esta tarea del navegador se detuvo. Pide al bot que inicie una tarea nueva en el navegador y vuelve a elegir Continuar.",
+    "note": "Reason: The extension has no control to start a stopped task; also preserve its actual product name when naming it. Corrected string: Esta tarea del navegador se detuvo. Pide al bot que inicie una tarea nueva en el navegador y vuelve a elegir Continuar."
+  },
+  {
+    "id": "fr:browser.yourchrome.ask",
+    "path": "src/locales/fr.json",
+    "old": "{name} a besoin de tes identifiants pour ça. Utiliser ton Chrome à partir de maintenant ?",
+    "new": "Pour cette tâche, {name} a besoin d'accéder aux sites où tu es déjà connecté. Utiliser ton Chrome à partir de maintenant ?",
+    "note": "Reason: Identifiants means credentials, while this route uses existing signed-in sessions and hands password entry to the owner. Corrected string: Pour cette tâche, {name} a besoin d'accéder aux sites où tu es déjà connecté. Utiliser ton Chrome à partir de maintenant ?"
+  },
+  {
+    "id": "fr:browser.BrowserPreflight.1",
+    "path": "src/locales/fr.json",
+    "old": "Ouvre chrome://inspect/#remote-debugging dans Chrome, active l'option, garde Chrome ouvert et clique sur Autoriser quand Chrome le demande. Chrome redemande après chaque redémarrage.",
+    "new": "Ouvre chrome://inspect/#remote-debugging dans Chrome, active le débogage à distance, garde Chrome ouvert et clique sur Autoriser quand Chrome le demande. Chrome redemande après chaque redémarrage.",
+    "note": "Reason: Name remote debugging rather than an unspecified option so the permission is clear. Corrected string: Ouvre chrome://inspect/#remote-debugging dans Chrome, active le débogage à distance, garde Chrome ouvert et clique sur Autoriser quand Chrome le demande. Chrome redemande après chaque redémarrage."
+  },
+  {
+    "id": "fr:browser.BrowserSetupCard.10",
+    "path": "src/locales/fr.json",
+    "old": "Ouvre chrome://inspect/#remote-debugging dans Chrome, active l'option, garde Chrome ouvert et clique sur Autoriser quand Chrome le demande.",
+    "new": "Ouvre chrome://inspect/#remote-debugging dans Chrome, active le débogage à distance, garde Chrome ouvert et clique sur Autoriser quand Chrome le demande.",
+    "note": "Reason: Name the debugging capability being enabled. Corrected string: Ouvre chrome://inspect/#remote-debugging dans Chrome, active le débogage à distance, garde Chrome ouvert et clique sur Autoriser quand Chrome le demande."
+  },
+  {
+    "id": "fr:browser.BrowserSetupCard.16",
+    "path": "src/locales/fr.json",
+    "old": "Partage un onglet dans l'extension. S'il est en pause ou arrêté, vérifie d'abord la page et reprends depuis l'extension.",
+    "new": "Partage un onglet dans l'extension. Si la tâche est en pause, vérifie d'abord la page et appuie sur Reprendre dans l'extension. Si elle est arrêtée, choisis Continuer ici pour lancer une nouvelle tâche.",
+    "note": "Reason: A stopped task cannot be resumed in the extension; Continue here starts a new task. Corrected string: Partage un onglet dans l'extension. Si la tâche est en pause, vérifie d'abord la page et appuie sur Reprendre dans l'extension. Si elle est arrêtée, choisis Continuer ici pour lancer une nouvelle tâche."
+  },
+  {
+    "id": "fr:browser.chromeSummary",
+    "path": "src/locales/fr.json",
+    "old": "Ton Chrome · Utilise tes identifiants dans ses propres onglets",
+    "new": "Ton Chrome · Utilise tes sessions ouvertes dans ses propres onglets",
+    "note": "Reason: Identifiants suggests access to usernames and passwords rather than existing signed-in sessions. Corrected string: Ton Chrome · Utilise tes sessions ouvertes dans ses propres onglets"
+  },
+  {
+    "id": "fr:browser.directScope",
+    "path": "src/locales/fr.json",
+    "old": "{name} utilise tes identifiants dans ses propres onglets. Murage limite le bot à ces onglets et te rend la main pour les mots de passe et les paiements. Les choix par site et les niveaux de confirmation relèvent de Mon Chrome, connecté.",
+    "new": "{name} utilise tes sessions ouvertes dans ses propres onglets. Murage limite le bot à ces onglets et te rend la main pour les mots de passe et les paiements. Les choix par site et les niveaux de confirmation relèvent de Mon Chrome, connecté.",
+    "note": "Reason: Use existing sessions, not identifiants, to describe the route's access accurately. Corrected string: {name} utilise tes sessions ouvertes dans ses propres onglets. Murage limite le bot à ces onglets et te rend la main pour les mots de passe et les paiements. Les choix par site et les niveaux de confirmation relèvent de Mon Chrome, connecté."
+  },
+  {
+    "id": "fr:browser.extensionScope",
+    "path": "src/locales/fr.json",
+    "old": "{name} peut utiliser les onglets que tu partages, connecté avec ton compte. Tu choisis l'accès pour chaque site, et les actions qui envoient, publient ou modifient quelque chose demandent une approbation séparée.",
+    "new": "{name} peut utiliser les onglets que tu partages, connecté avec ton compte. Tu choisis l'accès pour chaque site et la fréquence des demandes avant de cliquer, saisir du texte, envoyer ou publier.",
+    "note": "Reason: Full access can send and submit without separate approval, so the current approval promise is unconditional and inaccurate. Corrected string: {name} peut utiliser les onglets que tu partages, connecté avec ton compte. Tu choisis l'accès pour chaque site et la fréquence des demandes avant de cliquer, saisir du texte, envoyer ou publier."
+  },
+  {
+    "id": "fr:browser.disclosure.direct",
+    "path": "src/locales/fr.json",
+    "old": "Utilise tes identifiants dans ses propres onglets. Les choix par site et les niveaux de confirmation relèvent de Mon Chrome, connecté.",
+    "new": "Utilise tes sessions ouvertes dans ses propres onglets. Les choix par site et les niveaux de confirmation relèvent de Mon Chrome, connecté.",
+    "note": "Reason: Identifiants means credentials rather than signed-in sessions. Corrected string: Utilise tes sessions ouvertes dans ses propres onglets. Les choix par site et les niveaux de confirmation relèvent de Mon Chrome, connecté."
+  },
+  {
+    "id": "fr:browser.disclosure.extension",
+    "path": "src/locales/fr.json",
+    "old": "Utilise tes identifiants ; tu choisis ses sites et la fréquence de ses demandes.",
+    "new": "Utilise tes sessions ouvertes ; tu choisis ses sites et la fréquence de ses demandes.",
+    "note": "Reason: Identifiants implies credentials; this disclosure should describe existing signed-in sessions. Corrected string: Utilise tes sessions ouvertes ; tu choisis ses sites et la fréquence de ses demandes."
+  },
+  {
+    "id": "fr:browser.server.browser-extension-setup.23",
+    "path": "src/locales/fr.json",
+    "old": "Lance une nouvelle tâche de navigateur dans Murage for Chrome, puis choisis à nouveau Continuer.",
+    "new": "Cette tâche de navigateur a été arrêtée. Demande au bot de lancer une nouvelle tâche de navigateur, puis choisis à nouveau Continuer.",
+    "note": "Reason: The extension has no control to start a stopped task. Corrected string: Cette tâche de navigateur a été arrêtée. Demande au bot de lancer une nouvelle tâche de navigateur, puis choisis à nouveau Continuer."
+  },
+  {
+    "id": "fr:browser.server.browser-extension-setup.24",
+    "path": "src/locales/fr.json",
+    "old": "Lance une nouvelle tâche de navigateur dans Murage for Chrome, puis choisis à nouveau Continuer.",
+    "new": "Cette tâche de navigateur a été arrêtée. Demande au bot de lancer une nouvelle tâche de navigateur, puis choisis à nouveau Continuer.",
+    "note": "Reason: The extension has no control to start a stopped task. Corrected string: Cette tâche de navigateur a été arrêtée. Demande au bot de lancer une nouvelle tâche de navigateur, puis choisis à nouveau Continuer."
+  },
+  {
+    "id": "hi:browser.BrowserPreflight.1",
+    "path": "src/locales/hi.json",
+    "old": "Chrome में chrome://inspect/#remote-debugging खोलें, इसे चालू करें, Chrome को खुला रखें, और Chrome के पूछने पर Allow पर क्लिक करें। Chrome रीस्टार्ट होने के बाद फिर से पूछता है।",
+    "new": "Chrome में chrome://inspect/#remote-debugging खोलें, रिमोट डीबगिंग चालू करें, Chrome को खुला रखें और Chrome के पूछने पर Allow पर क्लिक करें। Chrome रीस्टार्ट होने के बाद फिर से पूछता है।",
+    "note": "Reason: इसे चालू करें does not identify remote debugging as the capability being enabled. Corrected string: Chrome में chrome://inspect/#remote-debugging खोलें, रिमोट डीबगिंग चालू करें, Chrome को खुला रखें और Chrome के पूछने पर Allow पर क्लिक करें। Chrome रीस्टार्ट होने के बाद फिर से पूछता है।"
+  },
+  {
+    "id": "hi:browser.BrowserSetupCard.10",
+    "path": "src/locales/hi.json",
+    "old": "Chrome में chrome://inspect/#remote-debugging खोलें, इसे चालू करें, Chrome को खुला रखें, और Chrome के पूछने पर Allow पर क्लिक करें।",
+    "new": "Chrome में chrome://inspect/#remote-debugging खोलें, रिमोट डीबगिंग चालू करें, Chrome को खुला रखें और Chrome के पूछने पर Allow पर क्लिक करें।",
+    "note": "Reason: Name remote debugging explicitly rather than इसे. Corrected string: Chrome में chrome://inspect/#remote-debugging खोलें, रिमोट डीबगिंग चालू करें, Chrome को खुला रखें और Chrome के पूछने पर Allow पर क्लिक करें।"
+  },
+  {
+    "id": "hi:browser.BrowserSetupCard.16",
+    "path": "src/locales/hi.json",
+    "old": "एक्सटेंशन में कोई टैब शेयर करें। अगर यह रुका हुआ या बंद है, तो पहले पेज जाँचें और वहीं से फिर शुरू करें।",
+    "new": "एक्सटेंशन में कोई टैब शेयर करें। अगर टास्क रुका हुआ है, तो पहले पेज जाँचें और वहाँ फिर शुरू करें दबाएँ। अगर टास्क रोक दिया गया है, तो नया टास्क शुरू करने के लिए यहाँ जारी रखें चुनें।",
+    "note": "Reason: A stopped task cannot be resumed in the extension; Continue here starts a new task. Use the actual Hindi Resume label, फिर शुरू करें. Corrected string: एक्सटेंशन में कोई टैब शेयर करें। अगर टास्क रुका हुआ है, तो पहले पेज जाँचें और वहाँ फिर शुरू करें दबाएँ। अगर टास्क रोक दिया गया है, तो नया टास्क शुरू करने के लिए यहाँ जारी रखें चुनें।"
+  },
+  {
+    "id": "hi:browser.directScope",
+    "path": "src/locales/hi.json",
+    "old": "{name} अपने अलग टैब में आपके लॉगिन का उपयोग करता है। Murage बॉट को उन्हीं टैब तक सीमित रखता है और पासवर्ड व पेमेंट आपको वापस सौंपता है। हर साइट के लिए चुनाव और पूछने के स्तर मेरा Chrome, साइन इन में मिलते हैं।",
+    "new": "{name} अपने अलग टैब में आपके लॉगिन का उपयोग करता है। Murage बॉट को उन्हीं टैब तक सीमित रखता है और पासवर्ड भरने व भुगतान करने का काम आपको सौंपता है। हर साइट के लिए चुनाव और पूछने के स्तर मेरा Chrome, साइन इन में मिलते हैं।",
+    "note": "Reason: The wording literally hands passwords and payments back; it should say that the owner performs those actions. Corrected string: {name} अपने अलग टैब में आपके लॉगिन का उपयोग करता है। Murage बॉट को उन्हीं टैब तक सीमित रखता है और पासवर्ड भरने व भुगतान करने का काम आपको सौंपता है। हर साइट के लिए चुनाव और पूछने के स्तर मेरा Chrome, साइन इन में मिलते हैं।"
+  },
+  {
+    "id": "hi:browser.extensionScope",
+    "path": "src/locales/hi.json",
+    "old": "{name} आपके शेयर किए गए टैब का उपयोग आपके रूप में साइन इन करके कर सकता है। हर साइट की एक्सेस आप चुनते हैं, और कुछ भेजने, पोस्ट करने या बदलने वाली कार्रवाइयों के लिए अलग से मंज़ूरी चाहिए।",
+    "new": "{name} आपके शेयर किए गए टैब में आपकी साइन-इन की हुई साइटों का इस्तेमाल कर सकता है। हर साइट की एक्सेस और क्लिक करने, टाइप करने, भेजने या पोस्ट करने से पहले वह कितनी बार पूछे, यह आप चुनते हैं।",
+    "note": "Reason: The approval promise must account for Full access, which can send and submit without asking. Corrected string: {name} आपके शेयर किए गए टैब में आपकी साइन-इन की हुई साइटों का इस्तेमाल कर सकता है। हर साइट की एक्सेस और क्लिक करने, टाइप करने, भेजने या पोस्ट करने से पहले वह कितनी बार पूछे, यह आप चुनते हैं।"
+  },
+  {
+    "id": "hi:browser.server.browser-extension-setup.21",
+    "path": "src/locales/hi.json",
+    "old": "Chrome के लिए Murage में एक नई ब्राउज़र प्रोफ़ाइल है। ब्राउज़र पैनल खोलें, उसे चुनें, फिर दोबारा जारी रखें चुनें।",
+    "new": "Murage for Chrome में एक नई ब्राउज़र प्रोफ़ाइल है। ब्राउज़र पैनल खोलें, उसे चुनें, फिर दोबारा जारी रखें चुनें।",
+    "note": "Reason: Keep the installed extension's actual name, Murage for Chrome, rather than Chrome के लिए Murage. Corrected string: Murage for Chrome में एक नई ब्राउज़र प्रोफ़ाइल है। ब्राउज़र पैनल खोलें, उसे चुनें, फिर दोबारा जारी रखें चुनें।"
+  },
+  {
+    "id": "hi:browser.server.browser-extension-setup.23",
+    "path": "src/locales/hi.json",
+    "old": "Chrome के लिए Murage में एक नया ब्राउज़र कार्य शुरू करें, फिर दोबारा जारी रखें चुनें।",
+    "new": "यह ब्राउज़र कार्य रोक दिया गया है। बॉट से नया ब्राउज़र कार्य शुरू करने को कहें, फिर दोबारा जारी रखें चुनें।",
+    "note": "Reason: The extension has no control to start a stopped task; the product name also differs from its manifest. Corrected string: यह ब्राउज़र कार्य रोक दिया गया है। बॉट से नया ब्राउज़र कार्य शुरू करने को कहें, फिर दोबारा जारी रखें चुनें।"
+  },
+  {
+    "id": "hi:browser.server.browser-extension-setup.24",
+    "path": "src/locales/hi.json",
+    "old": "Chrome के लिए Murage में एक नया ब्राउज़र कार्य शुरू करें, फिर दोबारा जारी रखें चुनें।",
+    "new": "यह ब्राउज़र कार्य रोक दिया गया है। बॉट से नया ब्राउज़र कार्य शुरू करने को कहें, फिर दोबारा जारी रखें चुनें।",
+    "note": "Reason: The extension has no control to start a stopped task; the product name also differs from its manifest. Corrected string: यह ब्राउज़र कार्य रोक दिया गया है। बॉट से नया ब्राउज़र कार्य शुरू करने को कहें, फिर दोबारा जारी रखें चुनें।"
+  },
+  {
+    "id": "hi:browser.server.browser-extension-setup.25",
+    "path": "src/locales/hi.json",
+    "old": "Chrome या Murage बंद हो गया, इसलिए यह कार्य रोक दिया गया है। Murage साइड पैनल में फिर से शुरू करें दबाएँ, फिर दोबारा जारी रखें चुनें।",
+    "new": "Chrome या Murage बंद हो गया, इसलिए यह कार्य रुका हुआ है। Murage साइड पैनल में फिर शुरू करें दबाएँ, फिर दोबारा जारी रखें चुनें।",
+    "note": "Reason: The extension's actual Resume button is फिर शुरू करें, and the message should distinguish a paused task from a stopped one. Corrected string: Chrome या Murage बंद हो गया, इसलिए यह कार्य रुका हुआ है। Murage साइड पैनल में फिर शुरू करें दबाएँ, फिर दोबारा जारी रखें चुनें।"
+  },
+  {
+    "id": "ja:browser.yourchrome.ask",
+    "path": "src/locales/ja.json",
+    "old": "{name} がこの操作を行うには、あなたのログイン情報が必要です。今後はお使いの Chrome を使用しますか？",
+    "new": "この操作には、{name} があなたのログイン済みのブラウザを使う必要があります。今後はお使いの Chrome を使用しますか？",
+    "note": "Reason: ログイン情報 suggests credentials rather than an existing signed-in browser session. Corrected string: この操作には、{name} があなたのログイン済みのブラウザを使う必要があります。今後はお使いの Chrome を使用しますか？"
+  },
+  {
+    "id": "ja:browser.BrowserChoice.4",
+    "path": "src/locales/ja.json",
+    "old": "今後は切り替える",
+    "new": "今後このブラウザを使う",
+    "note": "Reason: 今後は切り替える sounds like a future intention rather than confirmation of the browser to use from now on. Corrected string: 今後このブラウザを使う"
+  },
+  {
+    "id": "ja:browser.BrowserPreflight.1",
+    "path": "src/locales/ja.json",
+    "old": "Chrome で chrome://inspect/#remote-debugging を開いて有効にし、Chrome を開いたままにして、Chrome から確認されたら［許可］をクリックしてください。Chrome を再起動すると、再度確認されます。",
+    "new": "Chrome で chrome://inspect/#remote-debugging を開き、リモートデバッグを有効にしてください。Chrome を開いたままにして、Chrome から確認されたら［許可］をクリックしてください。Chrome を再起動すると、再度確認されます。",
+    "note": "Reason: State that remote debugging is enabled; the current sentence leaves the object of 有効にし implicit after a URL. Corrected string: Chrome で chrome://inspect/#remote-debugging を開き、リモートデバッグを有効にしてください。Chrome を開いたままにして、Chrome から確認されたら［許可］をクリックしてください。Chrome を再起動すると、再度確認されます。"
+  },
+  {
+    "id": "ja:browser.BrowserSetupList.6",
+    "path": "src/locales/ja.json",
+    "old": "今後は切り替える",
+    "new": "今後このブラウザを使う",
+    "note": "Reason: 今後は切り替える does not naturally confirm the browser choice from now on. Corrected string: 今後このブラウザを使う"
+  },
+  {
+    "id": "ja:browser.BrowserSetupCard.10",
+    "path": "src/locales/ja.json",
+    "old": "Chrome で chrome://inspect/#remote-debugging を開いて有効にし、Chrome を開いたままにして、Chrome から確認されたら［許可］をクリックしてください。",
+    "new": "Chrome で chrome://inspect/#remote-debugging を開き、リモートデバッグを有効にしてください。Chrome を開いたままにして、Chrome から確認されたら［許可］をクリックしてください。",
+    "note": "Reason: Name remote debugging explicitly as the capability being enabled. Corrected string: Chrome で chrome://inspect/#remote-debugging を開き、リモートデバッグを有効にしてください。Chrome を開いたままにして、Chrome から確認されたら［許可］をクリックしてください。"
+  },
+  {
+    "id": "ja:browser.BrowserSetupCard.16",
+    "path": "src/locales/ja.json",
+    "old": "拡張機能でタブを共有してください。一時停止または停止している場合は、まずページを確認してから拡張機能で再開してください。",
+    "new": "拡張機能でタブを共有してください。タスクが一時停止中の場合は、まずページを確認してから拡張機能で［再開］を押してください。タスクが停止済みの場合は、ここで［続行］を選択して新しいタスクを開始してください。",
+    "note": "Reason: The extension offers 再開 only for paused tasks; a stopped task needs a new task through Continue here. Corrected string: 拡張機能でタブを共有してください。タスクが一時停止中の場合は、まずページを確認してから拡張機能で［再開］を押してください。タスクが停止済みの場合は、ここで［続行］を選択して新しいタスクを開始してください。"
+  },
+  {
+    "id": "ja:browser.chromeSummary",
+    "path": "src/locales/ja.json",
+    "old": "お使いの Chrome · 専用タブであなたのログイン情報を使用します",
+    "new": "お使いの Chrome · 専用タブでログイン済みの状態でサイトを使用します",
+    "note": "Reason: ログイン情報 implies credentials; the route uses existing signed-in sessions. Corrected string: お使いの Chrome · 専用タブでログイン済みの状態でサイトを使用します"
+  },
+  {
+    "id": "ja:browser.directScope",
+    "path": "src/locales/ja.json",
+    "old": "{name} は専用タブであなたのログイン情報を使用します。Murage はボットの操作をそれらのタブに限定し、パスワードや支払いの操作はあなたに戻します。サイトごとの設定や確認レベルは「自分の Chrome（ログイン済み）」で利用できます。",
+    "new": "{name} は専用タブでログイン済みの状態でサイトを使用します。Murage はボットの操作をそれらのタブに限定し、パスワードや支払いの操作はあなたに戻します。サイトごとの設定や確認レベルは「自分の Chrome（ログイン済み）」で利用できます。",
+    "note": "Reason: Describe existing signed-in state rather than access to ログイン情報. Corrected string: {name} は専用タブでログイン済みの状態でサイトを使用します。Murage はボットの操作をそれらのタブに限定し、パスワードや支払いの操作はあなたに戻します。サイトごとの設定や確認レベルは「自分の Chrome（ログイン済み）」で利用できます。"
+  },
+  {
+    "id": "ja:browser.extensionScope",
+    "path": "src/locales/ja.json",
+    "old": "{name} は、あなたが共有したタブをあなたとしてログインした状態で使用できます。各サイトへのアクセスはあなたが選択でき、送信、投稿、変更を伴う操作には個別の承認が必要です。",
+    "new": "{name} は、あなたが共有したタブをあなたとしてログインした状態で使用できます。各サイトへのアクセスと、クリック、入力、送信、投稿の前に確認する頻度はあなたが選択できます。",
+    "note": "Reason: Full access can send and submit without separate approval, so the current blanket approval promise is inaccurate. Corrected string: {name} は、あなたが共有したタブをあなたとしてログインした状態で使用できます。各サイトへのアクセスと、クリック、入力、送信、投稿の前に確認する頻度はあなたが選択できます。"
+  },
+  {
+    "id": "ja:browser.profileWaiting",
+    "path": "src/locales/ja.json",
+    "old": "{name} のプロファイルを接続するには、Murage for Chrome を使用して {browser} を開いてください。タスクは再開されていません。",
+    "new": "{name} のプロファイルを接続するには、Murage for Chrome がインストールされている {browser} を開いてください。タスクは再開されていません。",
+    "note": "Reason: The extension does not open the browser; open the browser with the extension installed. Corrected string: {name} のプロファイルを接続するには、Murage for Chrome がインストールされている {browser} を開いてください。タスクは再開されていません。"
+  },
+  {
+    "id": "ja:browser.disclosure.direct",
+    "path": "src/locales/ja.json",
+    "old": "専用タブであなたのログイン情報を使用します。サイトごとの設定や確認レベルは「自分の Chrome（ログイン済み）」で利用できます。",
+    "new": "専用タブでログイン済みの状態でサイトを使用します。サイトごとの設定や確認レベルは「自分の Chrome（ログイン済み）」で利用できます。",
+    "note": "Reason: ログイン情報 implies credentials instead of existing signed-in state. Corrected string: 専用タブでログイン済みの状態でサイトを使用します。サイトごとの設定や確認レベルは「自分の Chrome（ログイン済み）」で利用できます。"
+  },
+  {
+    "id": "ja:browser.disclosure.extension",
+    "path": "src/locales/ja.json",
+    "old": "あなたのログイン情報を使用します。使用するサイトと確認の頻度はあなたが選択できます。",
+    "new": "ログイン済みの状態でサイトを使用します。使用するサイトと確認の頻度はあなたが選択できます。",
+    "note": "Reason: Describe existing signed-in state rather than credentials. Corrected string: ログイン済みの状態でサイトを使用します。使用するサイトと確認の頻度はあなたが選択できます。"
+  },
+  {
+    "id": "ja:browser.server.browser-extension-setup.23",
+    "path": "src/locales/ja.json",
+    "old": "Murage for Chrome で新しいブラウザタスクを開始してから、もう一度 [続行] を選択してください。",
+    "new": "このブラウザタスクは停止しました。ボットに新しいブラウザタスクの開始を依頼してから、もう一度［続行］を選択してください。",
+    "note": "Reason: The extension has no control for starting a stopped task. Corrected string: このブラウザタスクは停止しました。ボットに新しいブラウザタスクの開始を依頼してから、もう一度［続行］を選択してください。"
+  },
+  {
+    "id": "ja:browser.server.browser-extension-setup.24",
+    "path": "src/locales/ja.json",
+    "old": "Murage for Chrome で新しいブラウザタスクを開始してから、もう一度 [続行] を選択してください。",
+    "new": "このブラウザタスクは停止しました。ボットに新しいブラウザタスクの開始を依頼してから、もう一度［続行］を選択してください。",
+    "note": "Reason: The extension has no control for starting a stopped task. Corrected string: このブラウザタスクは停止しました。ボットに新しいブラウザタスクの開始を依頼してから、もう一度［続行］を選択してください。"
+  },
+  {
+    "id": "pt-br:browser.BrowserPreflight.1",
+    "path": "src/locales/pt-br.json",
+    "old": "Abra chrome://inspect/#remote-debugging no Chrome, ative a opção, mantenha o Chrome aberto e clique em Permitir quando o Chrome solicitar. O Chrome solicitará novamente após reiniciar.",
+    "new": "Abra chrome://inspect/#remote-debugging no Chrome, ative a depuração remota, mantenha o Chrome aberto e clique em Permitir quando o Chrome solicitar. O Chrome solicitará novamente após reiniciar.",
+    "note": "Reason: Name remote debugging instead of an unspecified option so the permission is clear. Corrected string: Abra chrome://inspect/#remote-debugging no Chrome, ative a depuração remota, mantenha o Chrome aberto e clique em Permitir quando o Chrome solicitar. O Chrome solicitará novamente após reiniciar."
+  },
+  {
+    "id": "pt-br:browser.BrowserSetupCard.10",
+    "path": "src/locales/pt-br.json",
+    "old": "Abra chrome://inspect/#remote-debugging no Chrome, ative a opção, mantenha o Chrome aberto e clique em Permitir quando o Chrome solicitar.",
+    "new": "Abra chrome://inspect/#remote-debugging no Chrome, ative a depuração remota, mantenha o Chrome aberto e clique em Permitir quando o Chrome solicitar.",
+    "note": "Reason: Name the debugging capability being enabled. Corrected string: Abra chrome://inspect/#remote-debugging no Chrome, ative a depuração remota, mantenha o Chrome aberto e clique em Permitir quando o Chrome solicitar."
+  },
+  {
+    "id": "pt-br:browser.BrowserSetupCard.16",
+    "path": "src/locales/pt-br.json",
+    "old": "Compartilhe uma guia na extensão. Se ela estiver pausada ou interrompida, verifique a página e retome por lá primeiro.",
+    "new": "Compartilhe uma guia na extensão. Se a tarefa estiver pausada, verifique primeiro a página e clique em Retomar na extensão. Se estiver interrompida, escolha Continuar aqui para iniciar uma nova tarefa.",
+    "note": "Reason: A stopped task cannot be resumed in the extension; Continue here starts a new task. Corrected string: Compartilhe uma guia na extensão. Se a tarefa estiver pausada, verifique primeiro a página e clique em Retomar na extensão. Se estiver interrompida, escolha Continuar aqui para iniciar uma nova tarefa."
+  },
+  {
+    "id": "pt-br:browser.directScope",
+    "path": "src/locales/pt-br.json",
+    "old": "{name} usa seus logins em guias próprias. O Murage mantém o bot restrito a essas guias e devolve a você senhas e pagamentos. Escolhas por site e níveis de confirmação pertencem ao modo Meu Chrome, com login.",
+    "new": "{name} usa seus logins em guias próprias. O Murage mantém o bot restrito a essas guias e devolve a você o controle de senhas e pagamentos. Escolhas por site e níveis de confirmação pertencem ao modo Meu Chrome, com login.",
+    "note": "Reason: Devolve a você senhas e pagamentos literally returns passwords and payments rather than handing control of those actions to the owner. Corrected string: {name} usa seus logins em guias próprias. O Murage mantém o bot restrito a essas guias e devolve a você o controle de senhas e pagamentos. Escolhas por site e níveis de confirmação pertencem ao modo Meu Chrome, com login."
+  },
+  {
+    "id": "pt-br:browser.extensionScope",
+    "path": "src/locales/pt-br.json",
+    "old": "{name} pode usar as guias que você compartilhar, conectado como você. Você escolhe o acesso de cada site, e ações que enviam, publicam ou alteram algo exigem aprovação separada.",
+    "new": "{name} pode usar as guias que você compartilhar, conectado como você. Você escolhe o acesso de cada site e com que frequência ele pede confirmação antes de clicar, digitar, enviar ou publicar.",
+    "note": "Reason: Full access can send and submit without separate approval, so the current promise is too broad. Corrected string: {name} pode usar as guias que você compartilhar, conectado como você. Você escolhe o acesso de cada site e com que frequência ele pede confirmação antes de clicar, digitar, enviar ou publicar."
+  },
+  {
+    "id": "pt-br:browser.profileWaiting",
+    "path": "src/locales/pt-br.json",
+    "old": "Abra o {browser} com o Murage para Chrome para conectar seu perfil de {name}. Sua tarefa não foi reiniciada.",
+    "new": "Abra o {browser} com o Murage for Chrome para conectar seu perfil de {name}. Sua tarefa não foi reiniciada.",
+    "note": "Reason: Preserve the extension's actual name, Murage for Chrome, as used in its Portuguese manifest. Corrected string: Abra o {browser} com o Murage for Chrome para conectar seu perfil de {name}. Sua tarefa não foi reiniciada."
+  },
+  {
+    "id": "pt-br:browser.server.browser-extension-setup.21",
+    "path": "src/locales/pt-br.json",
+    "old": "O Murage para Chrome tem um novo perfil de navegador. Abra o painel Navegador, selecione-o e escolha Continuar novamente.",
+    "new": "O Murage for Chrome tem um novo perfil de navegador. Abra o painel Navegador, selecione-o e escolha Continuar novamente.",
+    "note": "Reason: Use the installed extension's actual name, Murage for Chrome. Corrected string: O Murage for Chrome tem um novo perfil de navegador. Abra o painel Navegador, selecione-o e escolha Continuar novamente."
+  },
+  {
+    "id": "pt-br:browser.server.browser-extension-setup.23",
+    "path": "src/locales/pt-br.json",
+    "old": "Inicie uma nova tarefa de navegador no Murage para Chrome e escolha Continuar novamente.",
+    "new": "Esta tarefa de navegador foi interrompida. Peça ao bot para iniciar uma nova tarefa de navegador e escolha Continuar novamente.",
+    "note": "Reason: The extension has no control to start a stopped task; its name should also match the manifest when used. Corrected string: Esta tarefa de navegador foi interrompida. Peça ao bot para iniciar uma nova tarefa de navegador e escolha Continuar novamente."
+  },
+  {
+    "id": "pt-br:browser.server.browser-extension-setup.24",
+    "path": "src/locales/pt-br.json",
+    "old": "Inicie uma nova tarefa de navegador no Murage para Chrome e escolha Continuar novamente.",
+    "new": "Esta tarefa de navegador foi interrompida. Peça ao bot para iniciar uma nova tarefa de navegador e escolha Continuar novamente.",
+    "note": "Reason: The extension has no control to start a stopped task; its name should also match the manifest when used. Corrected string: Esta tarefa de navegador foi interrompida. Peça ao bot para iniciar uma nova tarefa de navegador e escolha Continuar novamente."
+  },
+  {
+    "id": "zh:browser.yourchrome.ask",
+    "path": "src/locales/zh.json",
+    "old": "{name} 需要使用你的登录信息。今后改用你的 Chrome 吗？",
+    "new": "{name} 需要使用你已登录的网站来完成此操作。今后改用你的 Chrome 吗？",
+    "note": "Reason: 登录信息 suggests credentials instead of the existing signed-in state used by this route. Corrected string: {name} 需要使用你已登录的网站来完成此操作。今后改用你的 Chrome 吗？"
+  },
+  {
+    "id": "zh:browser.BrowserPreflight.1",
+    "path": "src/locales/zh.json",
+    "old": "在 Chrome 中打开 chrome://inspect/#remote-debugging 并将其开启，保持 Chrome 打开，并在 Chrome 询问时点击“允许”。Chrome 重启后会再次询问。",
+    "new": "在 Chrome 中打开 chrome://inspect/#remote-debugging，开启远程调试，保持 Chrome 打开，并在 Chrome 询问时点击“允许”。Chrome 重启后会再次询问。",
+    "note": "Reason: 将其开启 does not name the debugging capability being enabled. Corrected string: 在 Chrome 中打开 chrome://inspect/#remote-debugging，开启远程调试，保持 Chrome 打开，并在 Chrome 询问时点击“允许”。Chrome 重启后会再次询问。"
+  },
+  {
+    "id": "zh:browser.BrowserSetupCard.10",
+    "path": "src/locales/zh.json",
+    "old": "在 Chrome 中打开 chrome://inspect/#remote-debugging 并将其开启，保持 Chrome 打开，并在 Chrome 询问时点击“允许”。",
+    "new": "在 Chrome 中打开 chrome://inspect/#remote-debugging，开启远程调试，保持 Chrome 打开，并在 Chrome 询问时点击“允许”。",
+    "note": "Reason: Name remote debugging explicitly instead of 将其开启. Corrected string: 在 Chrome 中打开 chrome://inspect/#remote-debugging，开启远程调试，保持 Chrome 打开，并在 Chrome 询问时点击“允许”。"
+  },
+  {
+    "id": "zh:browser.BrowserSetupCard.16",
+    "path": "src/locales/zh.json",
+    "old": "在扩展程序中共享一个标签页。如果它已暂停或停止，请先检查页面并在那里恢复。",
+    "new": "在扩展程序中共享一个标签页。如果任务已暂停，请先检查页面并在扩展程序中点击“继续”。如果任务已停止，请在此处选择“继续”以启动新任务。",
+    "note": "Reason: A stopped task cannot be resumed in the extension; Continue here starts a new task. The extension's Resume button is 继续. Corrected string: 在扩展程序中共享一个标签页。如果任务已暂停，请先检查页面并在扩展程序中点击“继续”。如果任务已停止，请在此处选择“继续”以启动新任务。"
+  },
+  {
+    "id": "zh:browser.chromeSummary",
+    "path": "src/locales/zh.json",
+    "old": "你的 Chrome · 在独立的标签页中使用你的登录信息",
+    "new": "你的 Chrome · 在独立的标签页中使用你的登录状态",
+    "note": "Reason: 登录信息 suggests credentials rather than existing signed-in state. Corrected string: 你的 Chrome · 在独立的标签页中使用你的登录状态"
+  },
+  {
+    "id": "zh:browser.directScope",
+    "path": "src/locales/zh.json",
+    "old": "{name} 会在其专用标签页中使用你的登录信息。Murage 会将机器人限制在这些标签页内，并将密码和付款操作交还给你处理。按网站设置和询问级别仅适用于“我的 Chrome（已登录）”。",
+    "new": "{name} 会在其专用标签页中使用你的登录状态。Murage 会将机器人限制在这些标签页内，并将密码和付款操作交还给你处理。按网站设置和询问级别仅适用于“我的 Chrome（已登录）”。",
+    "note": "Reason: Use 登录状态 to describe existing signed-in sessions rather than access to credentials. Corrected string: {name} 会在其专用标签页中使用你的登录状态。Murage 会将机器人限制在这些标签页内，并将密码和付款操作交还给你处理。按网站设置和询问级别仅适用于“我的 Chrome（已登录）”。"
+  },
+  {
+    "id": "zh:browser.extensionScope",
+    "path": "src/locales/zh.json",
+    "old": "{name} 可以以你的登录身份使用你共享的标签页。你可以为每个网站设置访问权限，涉及发送、发布或更改内容的操作需要单独批准。",
+    "new": "{name} 可以以你的登录身份使用你共享的标签页。你可以为每个网站设置访问权限，并选择机器人在点击、输入、发送或发布前询问你的频率。",
+    "note": "Reason: Full access can send and submit without separate approval, so the current approval promise is too broad. Corrected string: {name} 可以以你的登录身份使用你共享的标签页。你可以为每个网站设置访问权限，并选择机器人在点击、输入、发送或发布前询问你的频率。"
+  },
+  {
+    "id": "zh:browser.profileWaiting",
+    "path": "src/locales/zh.json",
+    "old": "请使用 Murage for Chrome 打开 {browser}，以便为 {name} 连接您的浏览器配置文件。您的任务尚未重新启动。",
+    "new": "请打开已安装 Murage for Chrome 的 {browser}，以连接你用于 {name} 的浏览器配置文件。任务尚未恢复。",
+    "note": "Reason: The extension does not open the browser; the owner opens a browser with the extension installed. Also keep the surrounding 你 register. Corrected string: 请打开已安装 Murage for Chrome 的 {browser}，以连接你用于 {name} 的浏览器配置文件。任务尚未恢复。"
+  },
+  {
+    "id": "zh:browser.cause.uncertain.action",
+    "path": "src/locales/zh.json",
+    "old": "检查页面并在 Chrome 中恢复",
+    "new": "检查页面并在 Chrome 中点击“继续”",
+    "note": "Reason: The extension's actual Resume control is labeled 继续, not 恢复. Corrected string: 检查页面并在 Chrome 中点击“继续”"
+  },
+  {
+    "id": "zh:browser.cause.connection_lost.action",
+    "path": "src/locales/zh.json",
+    "old": "检查页面并在 Chrome 中恢复",
+    "new": "检查页面并在 Chrome 中点击“继续”",
+    "note": "Reason: Match the extension's actual Resume button, 继续. Corrected string: 检查页面并在 Chrome 中点击“继续”"
+  },
+  {
+    "id": "zh:browser.cause.paused.action",
+    "path": "src/locales/zh.json",
+    "old": "在 Chrome 中恢复",
+    "new": "在 Chrome 中点击“继续”",
+    "note": "Reason: Match the extension's actual Resume button, 继续. Corrected string: 在 Chrome 中点击“继续”"
+  },
+  {
+    "id": "zh:browser.disclosure.direct",
+    "path": "src/locales/zh.json",
+    "old": "在独立的标签页中使用你的登录信息。按网站设置和询问级别仅适用于“我的 Chrome（已登录）”。",
+    "new": "在独立的标签页中使用你的登录状态。按网站设置和询问级别仅适用于“我的 Chrome（已登录）”。",
+    "note": "Reason: 登录信息 suggests credentials rather than existing signed-in state. Corrected string: 在独立的标签页中使用你的登录状态。按网站设置和询问级别仅适用于“我的 Chrome（已登录）”。"
+  },
+  {
+    "id": "zh:browser.disclosure.extension",
+    "path": "src/locales/zh.json",
+    "old": "使用你的登录信息；由你选择其可访问的网站以及询问频率。",
+    "new": "使用你的登录状态；由你选择其可访问的网站以及询问频率。",
+    "note": "Reason: Describe signed-in state rather than credentials. Corrected string: 使用你的登录状态；由你选择其可访问的网站以及询问频率。"
+  },
+  {
+    "id": "zh:browser.server.browser-extension-setup.23",
+    "path": "src/locales/zh.json",
+    "old": "请在 Murage for Chrome 中启动一个新的浏览器任务，然后再次选择“继续”。",
+    "new": "此浏览器任务已停止。请让机器人启动一个新的浏览器任务，然后再次选择“继续”。",
+    "note": "Reason: The extension has no control to start a stopped task. Corrected string: 此浏览器任务已停止。请让机器人启动一个新的浏览器任务，然后再次选择“继续”。"
+  },
+  {
+    "id": "zh:browser.server.browser-extension-setup.24",
+    "path": "src/locales/zh.json",
+    "old": "请在 Murage for Chrome 中启动一个新的浏览器任务，然后再次选择“继续”。",
+    "new": "此浏览器任务已停止。请让机器人启动一个新的浏览器任务，然后再次选择“继续”。",
+    "note": "Reason: The extension has no control to start a stopped task. Corrected string: 此浏览器任务已停止。请让机器人启动一个新的浏览器任务，然后再次选择“继续”。"
+  },
+  {
+    "id": "zh:browser.server.browser-extension-setup.25",
+    "path": "src/locales/zh.json",
+    "old": "Chrome 或 Murage 已关闭，因此此任务已暂停。请在 Murage 侧边栏中点击“恢复”，然后再次选择“继续”。",
+    "new": "Chrome 或 Murage 已关闭，因此此任务已暂停。请在 Murage 侧边栏中点击“继续”，然后在此处再次选择“继续”。",
+    "note": "Reason: The extension's Resume button is labeled 继续, not 恢复. Distinguish the extension button from Continue on this card. Corrected string: Chrome 或 Murage 已关闭，因此此任务已暂停。请在 Murage 侧边栏中点击“继续”，然后在此处再次选择“继续”。"
+  }
+]

@@ -64,7 +64,7 @@ function crash(scenario: string, id = ""): void {
   closeDatabase();
   const env: NodeJS.ProcessEnv = { HOME: homedir(), USERPROFILE: homedir(), MURAGE_DATA_DIR: DATA_DIR, BOOT_SETTLE_108_CHILD: "1", MURAGE_TEST_ENV_SCRUBBED: "1" };
   for (const key of ["PATH", "SystemRoot", "MURAGE_ENGINE_EXCLUSION_PATH"]) if (process.env[key]) env[key] = process.env[key];
-  const child = spawnSync(process.execPath, [CHILD, scenario, id], { cwd: join(dirname(CHILD), "..", ".."), env, encoding: "utf8", timeout: 60_000 });
+  const child = spawnSync(process.execPath, [CHILD, scenario, id], { windowsHide: true, cwd: join(dirname(CHILD), "..", ".."), env, encoding: "utf8", timeout: 60_000 });
   expect(child.stdout.includes("NOT_REACHED") ? `${scenario} never reached its death point:\n${child.stdout}\n${child.stderr}` : "").toBe("");
   expect(child.status, `${scenario}: ${child.stderr}`).toBe(9);
 }

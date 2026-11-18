@@ -1,20 +1,24 @@
+import { fixtureLink } from "./testing/platform-fixtures.ts";
 // IMG-SEED (F5-T4, media design M4): uploaded, generated, saved and workspace
 // images resolve through one exact-byte reference flow, all-or-nothing and
 // before any approval or billing. A numeric seed is never a substitute.
 import { attachmentsHomeOf } from "./attachment-read.ts";
-import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
+import { database, closeDatabase } from "./database.ts";
+import { openTurnLineage, closeTurnLineage } from "./memory/lineage-write.ts";
+import { bindFixtureTurn, fixtureHttp } from "./testing/consuming-fixture.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { initializeArtifacts, registerArtifact, type ArtifactScope } from "./artifacts.ts";
 import { __resetMediaAssetsForTests, mediaAssetsRoute, mediaWorkspaceRevision, type MediaAssetsDeps } from "./media-assets.ts";
 import { conversationImageAttachments, resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { imageReferences } from "./image-operations.ts";
-import type { DelegatedRequest, DelegatedResult } from "./route-delegation.ts";
+import { sendDelegated, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
 import { Store } from "./store.ts";
 import { COMPANION_HEADER } from "./sse-visibility.ts";
 import { composeMessage } from "../src/lib/composer-attachments.ts";
@@ -47,13 +51,14 @@ interface Fixture {
   botId: string; threadId: string; otherBotId: string; otherThreadId: string;
 }
 const cleanups: Array<() => void> = [];
-beforeEach(() => { removeTempDirSync(DATA_DIR); faults.saveImageAfter = -1; __resetMediaAssetsForTests(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); faults.saveImageAfter = -1; __resetMediaAssetsForTests(); });
 afterEach(() => { for (const cleanup of cleanups.splice(0)) { try { cleanup(); } catch { /* best effort */ } } });
 
 function fixture(): Fixture {
   const store = new Store(selection);
   const bot = store.createBot({ name: "Reference bot" }), other = store.createBot({ name: "Other bot" });
-  const db = new DatabaseSync(join(mkdtempSync(join(tmpdir(), "murage-imgref-db-")), "messages.db")); cleanups.push(() => db.close()); initializeArtifacts(db);
+  // Provenance and artifact lookups use the same database as the real Store.
+  const db = database(); cleanups.push(closeDatabase); initializeArtifacts(db);
   const attachments = join(DATA_DIR, "attachments"), workspaces = join(DATA_DIR, "workspaces"), storage = join(DATA_DIR, "artifact-files");
   mkdirSync(attachments, { recursive: true });
   for (const item of [bot, other]) mkdirSync(join(workspaces, item.id), { recursive: true });
@@ -82,7 +87,19 @@ function request(method: string, path: string, body?: unknown, options: { deskto
   return { method, path, url: new URL(`http://127.0.0.1:1${path}`), headers: options.headers ?? {}, desktop: options.desktop ?? false, readBody: async () => body };
 }
 const claim = (f: Fixture, threadId = f.threadId, botId = f.botId) => ({ botId, threadId, generation: "turn-1" });
-const internal = (f: Fixture, body: unknown, who = claim(f)) => resolveImageReferenceRoute(request("POST", "/api/internal/resolve-image-reference", body), who, f.deps);
+const internal = async (f: Fixture, body: unknown, who = claim(f)): Promise<DelegatedResult> => {
+  const result = await resolveImageReferenceRoute(request("POST", "/api/internal/resolve-image-reference", body), who, f.deps);
+  if (!result.prepareBody) return result;
+  const turn = openTurnLineage(f.db, { threadId: who.threadId, turnId: randomUUID() });
+  try {
+    const bound = bindFixtureTurn(f.db, turn, who.botId);
+    const http = fixtureHttp(bound.binding, "POST /api/internal/resolve-image-reference");
+    sendDelegated(http.writer, "POST", result);
+    const reply = http.output.findLast(item => item.body !== undefined);
+    if (!reply?.body) throw new Error("reference fixture response was refused");
+    return { status: reply.status, body: JSON.parse(reply.body) };
+  } finally { closeTurnLineage(turn); }
+};
 const desktop = (f: Fixture, body: unknown, options: { desktop?: boolean; headers?: Record<string, string> } = {}) =>
   mediaAssetsRoute(request("POST", MEDIA_ROUTES.reference, body, { desktop: true, ...options }), f.deps);
 const ok = (result: DelegatedResult) => { expect(result.status, JSON.stringify(result.body)).toBe(200); return result.body as ResolveImageReferenceResponse; };
@@ -223,13 +240,13 @@ describe("resolve-image-reference: authority", () => {
     refusal(await internal(f, { source: { kind: "workspace", relativePath: "mine.png" } }, claim(f, f.threadId, f.otherBotId)), 404, "unavailable");
   });
 
-  it.skipIf(process.platform === "win32")("refuses links, private files, changed revisions and files that are not images", async () => {
+  it("refuses links, private files, changed revisions and files that are not images", async () => {
     const f = fixture();
     writeFileSync(join(f.root, "real.png"), png(0x91));
     const outside = mkdtempSync(join(tmpdir(), "murage-imgref-outside-")); cleanups.push(() => removeTempDirSync(outside));
     writeFileSync(join(outside, "x.png"), png(0x92));
-    symlinkSync(join(outside, "x.png"), join(f.root, "linked.png"));
-    symlinkSync(outside, join(f.root, "linked-dir"));
+    fixtureLink(join(outside, "x.png"), join(f.root, "linked.png"), "file");
+    fixtureLink(outside, join(f.root, "linked-dir"), "dir");
     mkdirSync(join(f.root, "memory")); writeFileSync(join(f.root, "memory", "face.png"), png(0x93));
     refusal(await internal(f, { source: { kind: "workspace", relativePath: "linked.png" } }), 403, "denied", 0);
     refusal(await internal(f, { source: { kind: "workspace", relativePath: "linked-dir/x.png" } }), 403, "denied", 0);

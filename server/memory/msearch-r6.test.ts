@@ -6,6 +6,8 @@
 //  P1  an expired revalidation advanced the revision stamp and returned records it had not read again;
 //  P2  the word scan restarted at every write, had no deadline, and an expanding tail could prolong it;
 //  P2  the recent fallback cut to 128 matches before authorization.
+import { openTestIndex, put, workerTick } from "./testing/open-index.ts";
+import { DatabaseSync } from "node:sqlite";
 import v8 from "node:v8";
 import vm from "node:vm";
 import { mkdirSync, rmSync } from "node:fs";
@@ -14,9 +16,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { MemoryIndex, type IndexedMemory } from "./index.ts";
+import { type MemoryIndex, type IndexedMemory } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPageSliced } from "./index-reader.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { readableMemoryRecord } from "./readable.ts";
 import { recentMemoryHits } from "./recent.ts";
 import { setMemoryMode } from "./repository.ts";
@@ -68,12 +71,51 @@ function deniedByWalk(id: string, scope: string, text = TEXT, status = "indexed"
   addRecord(id, scope, text, "owner-statement", status);
   db.prepare("INSERT INTO memory_derivations VALUES('p-middle',1,?,1)").run(id);
 }
-function world(records: IndexedMemory[]) {
+async function world(records: IndexedMemory[]) {
   closeMemoryIndexReader(); clearMemorySearchCache();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  const index = new MemoryIndex(INDEX_PATH());
+  const index = await openTestIndex(INDEX_PATH());
   index.prepareModel("model");
-  index.upsert(records);
+  await seedRows(index, records);
+  return index;
+}
+/** A complete pre-MEMW corpus, rather than asking the new writer to ingest
+ * past its deliberate merge-floor freeze. This is fixture construction only:
+ * one closed offline database, then the real checked open before any recall. */
+async function inheritedWorld(records: IndexedMemory[]) {
+  closeMemoryIndexReader(); clearMemorySearchCache();
+  for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
+  const db = new DatabaseSync(INDEX_PATH());
+  try {
+    db.exec(`CREATE TABLE entries(id TEXT NOT NULL,version INTEGER NOT NULL,scope_id TEXT NOT NULL,text TEXT NOT NULL,PRIMARY KEY(id,version));
+      CREATE VIRTUAL TABLE lexical USING fts5(id UNINDEXED,version UNINDEXED,text,tokenize='unicode61');
+      CREATE TABLE vectors(id TEXT NOT NULL,version INTEGER NOT NULL,model TEXT NOT NULL,part INTEGER NOT NULL,vector BLOB NOT NULL,PRIMARY KEY(id,version,model,part));
+      CREATE TABLE index_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID;
+      CREATE TABLE lexical_keys(id TEXT NOT NULL,version INTEGER NOT NULL,fts_rowid INTEGER NOT NULL UNIQUE,PRIMARY KEY(id,version));`);
+    const row = db.prepare("INSERT INTO entries VALUES(?,?,?,?)"), word = db.prepare("INSERT INTO lexical(id,version,text) VALUES(?,?,?)"), key = db.prepare("INSERT INTO lexical_keys VALUES(?,?,?)");
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const record of records) {
+        row.run(record.id,record.version,record.scopeId,record.text);
+        const written = word.run(record.id,record.version,record.text);
+        key.run(record.id,record.version,written.lastInsertRowid);
+      }
+      db.exec("INSERT INTO index_meta VALUES('lexical_keys_complete','1'); COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+    expect(db.prepare("SELECT count(*) AS n FROM entries").get()!.n).toBe(records.length);
+    expect(db.prepare("SELECT count(*) AS n FROM lexical").get()!.n).toBe(records.length);
+  } finally { db.close(); }
+  const index = await openTestIndex(INDEX_PATH());
+  index.prepareModel("model");
+  // An inherited lexical corpus owes the postings backfill. Finish that real
+  // checked work before asking an unhurried read to prove complete coverage.
+  while (index.postingsOwed()) {
+    const step = await index.fillPostings({maxRows:512,maxMs:25});
+    if (step.busy) await workerTick(index);
+    await index.sealAndTruncate();
+    if (index.stopInfo()) throw new Error("inherited recall fixture stopped during postings fill");
+  }
+  expect(index.postingsOwed()).toBe(false);
   return index;
 }
 const emptyBridge: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0, coverageComplete: true }) };
@@ -105,7 +147,7 @@ function expectLoopFree(run: { longest: number; p99: number }): void {
 describe("P1: a population no reader can read decides nothing the reader sees", () => {
   /** 10 readable records, and (with `denied`) 99,990 records refused by state, by a forgotten record, or by scope. Each denied
    * record is still in the word index (the index lags the authoritative tables, as it does after a forget). */
-  function fixture(denied: boolean, count = 99_990) {
+  async function fixture(denied: boolean, count = 99_990) {
     const scope = ensureScope("bot", "a"), foreign = ensureScope("bot", "b");
     const records: IndexedMemory[] = [];
     for (let n = 0; n < 10; n++) { const id = `z-kept-${n}`; readable(id, scope); records.push(entry(id, scope, TEXT)); }
@@ -123,7 +165,7 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
         }
       });
     }
-    world(records).close();
+    (await (records.length > 5_000 ? inheritedWorld(records) : world(records))).close();
   }
   const KEPT = Array.from({ length: 10 }, (_, n) => `z-kept-${n}`);
   /** What the crowded search must answer. Stepping 75,000 denied matches newest first takes 0.3 s on a Linux runner and 2.3-2.5 s on
@@ -143,7 +185,7 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
   }
 
   it("a search the deadline cuts (a fake clock past TOOL_SEARCH_BUDGET_MS) says partial and incomplete; with no deadline the scan keeps exactly the ten", async () => {
-    fixture(true, 2_000);
+    await fixture(true, 2_000);
     const access = accessOf();
     // The search reads its deadline from Date.now() once, then the scan checks it before every chunk: every later reading is past it.
     const realNow = Date.now.bind(Date);
@@ -169,7 +211,9 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
   }, 120_000);
 
   it("99,990 records denied by state, forgetting, scope and a forgotten parent leave all ten readable hits, identical to the corpus without them, with the loop free", { tags: ["nightly"], timeout: 300_000 }, async () => {
-    (() => fixture(true))();
+    // The checked writer makes fixture construction asynchronous. Finish it
+    // before measuring recall; background seeding is not part of a search.
+    await fixture(true);
     await new Promise(resolve => setTimeout(resolve, 500)); collectGarbage();
     const crowded = await measured(() => searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     console.log(`R6-100K-STATE max event-loop stall ${Math.round(crowded.longest * 10) / 10} ms (p99 ${Math.round(crowded.p99 * 10) / 10}), ${Math.round(crowded.ms)} ms, hits ${crowded.value.hits.length}, partial ${String(crowded.value.partial ?? false)}`);
@@ -183,7 +227,7 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     closeMemoryIndexReader(); closeDatabase(); clearMemorySearchCache();
     removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     reconcileMemoryRoster(ROSTER); setMemoryMode("active");
-    fixture(false);
+    await fixture(false);
     const alone = await searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     const plain = (answer: typeof alone) => JSON.parse(JSON.stringify(answer).replace(/"scopeId":"[^"]*"/g, '"scopeId":"S"'));
     expect(plain(crowded.value)).toEqual(plain(alone));
@@ -191,11 +235,11 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
 
   it("99,990 records only a two-step ancestry refuses (no query can spare them): the readable hits are all returned inside the limit, or the answer says it is partial", { tags: ["nightly"], timeout: 300_000 }, async () => {
     const scope = ensureScope("bot", "a");
-    (() => {
+    await (async () => {
       const records: IndexedMemory[] = [];
       for (let n = 0; n < 10; n++) { const id = `z-kept-${n}`; readable(id, scope); records.push(entry(id, scope, TEXT)); }
       bulk(() => { for (let n = 0; n < 99_990; n++) { const id = `a-denied-${String(n).padStart(6, "0")}`; deniedByWalk(id, scope); records.push(entry(id, scope, TEXT)); } });
-      world(records).close();
+      (await inheritedWorld(records)).close();
     })();
     await new Promise(resolve => setTimeout(resolve, 500)); collectGarbage();
     const run = await measured(() => searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
@@ -231,7 +275,7 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     db.prepare("INSERT INTO memory_tombstones VALUES('t-f','record','forgotten',NULL,NULL,1,'owner-forget',0)").run();
     addRecord("no-evidence", scope, TEXT, "tool-observation");
     const ids = ["good", "deleted-source", "stale-revision", "tombstoned-source", "archived", "owner", "forgotten", "no-evidence"];
-    world(ids.map(id => entry(id, scope, TEXT))).close();
+    (await world(ids.map(id => entry(id, scope, TEXT)))).close();
     const access = accessOf();
     for (const mode of ["current", "historical"] as const) {
       const page = await lexicalPageSliced(QUERY, access.scopeIds, 50, 0, undefined, { eligible: true, historical: mode === "historical" });
@@ -249,7 +293,7 @@ describe("P1: an expired revalidation returns nothing it did not read again", ()
   it("a record forgotten after it was accepted is not answered when the deadline ends the second read", async () => {
     const scope = ensureScope("bot", "a");
     readable("kept", scope); readable("withdrawn", scope);
-    world(["kept", "withdrawn"].map(id => entry(id, scope, TEXT))).close();
+    (await world(["kept", "withdrawn"].map(id => entry(id, scope, TEXT)))).close();
     let stamps = 0, skew = 0, forgotten = false;
     const originalNow = performance.now.bind(performance), db = database(), prepare = db.prepare.bind(db);
     // The first read of the revision stamp happens when the records are accepted; the second starts the revalidation. Just before
@@ -281,7 +325,16 @@ describe("P2: the word scan reads one snapshot and stops at its deadline", () =>
   const same = "harbour lantern notes for the Friday review";
 
   it("a writer that commits at every yield cannot restart or starve the scan, and the page is the snapshot's", async () => {
-    const index = world(ids.map(id => entry(id, "s", same)));
+    const index = await world(ids.map(id => entry(id, "s", same)));
+    // Give the concurrent writer a compact, sealed starting index. A snapshot
+    // intentionally cannot admit an unrelated mandatory reader drain; the test
+    // still requires a real commit at every yield and one unchanged snapshot.
+    await index.finishRewrite();
+    for(let step=0;index.maintenanceOwed();step++){
+      if(step>10000)throw new Error("snapshot fixture did not settle");
+      await workerTick(index);
+    }
+    await index.sealAndTruncate();
     const expected = (await lexicalPageSliced(QUERY, ["s"], 50, 0))!.hits.map(hit => hit.id);
     closeMemoryIndexReader();
     let yields = 0;
@@ -290,14 +343,16 @@ describe("P2: the word scan reads one snapshot and stops at its deadline", () =>
     const originalNow = performance.now.bind(performance);
     let reads = 0;
     (performance as { now: () => number }).now = () => originalNow() + Math.floor(reads++ / 20) * 7;
-    let page;
+    let page, writerFailure:unknown;
     try {
       page = await lexicalPageSliced(QUERY, ["s"], 50, 0, async () => {
-        index.upsert([entry(`a-late-${yields++}`, "s", same)]);
+        try { await put(index, [entry(`a-late-${yields++}`, "s", same)]); }
+        catch(error) { writerFailure=error;throw error; }
         await new Promise<void>(resolve => setImmediate(resolve));
       });
     } finally { (performance as { now: () => number }).now = originalNow; }
     index.close();
+    expect(writerFailure).toBeUndefined();
     expect(yields).toBeGreaterThan(1);
     expect(page).not.toBeNull();
     expect(page!.hits.map(hit => hit.id)).toEqual(expected);
@@ -305,7 +360,7 @@ describe("P2: the word scan reads one snapshot and stops at its deadline", () =>
   }, 120_000);
 
   it("at its deadline the scan answers what it read, flagged partial, with no further windows read", async () => {
-    const index = world(ids.map(id => entry(id, "s", same)));
+    const index = await world(ids.map(id => entry(id, "s", same)));
     let yields = 0;
     const page = await lexicalPageSliced(QUERY, ["s"], 50, 0, async () => { yields++; await new Promise<void>(resolve => setTimeout(resolve, 25)); }, { deadlineAt: Date.now() + 5 });
     const late = await lexicalPageSliced(QUERY, ["s"], 50, 0, undefined, { deadlineAt: Date.now() - 1 });
@@ -321,7 +376,7 @@ describe("P2: the word scan reads one snapshot and stops at its deadline", () =>
     const scope = ensureScope("bot", "a");
     const records: IndexedMemory[] = [];
     bulk(() => { for (let n = 0; n < 3000; n++) { const id = `r-${String(n).padStart(4, "0")}`; readable(id, scope); records.push(entry(id, scope, TEXT)); } });
-    world(records).close();
+    (await world(records)).close();
     const answer = await searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20, lexical: (q, scopes, limit, offset) => lexicalPageSliced(q, scopes, limit, offset, undefined, { eligible: true, deadlineAt: Date.now() - 1 }) });
     expect(answer.partial).toBe(true);
     expect(answer.coverageComplete).toBe(false);
@@ -351,3 +406,19 @@ describe("P2: the recent fallback authorizes before it selects", () => {
     expect(recentMemoryHits(QUERY, accessOf()).map(hit => hit.id)).toEqual(["z-ok"]);
   });
 });
+
+/** Seed in small groups, servicing the checked writer before the next group. */
+async function seedRows(index: MemoryIndex, rows: Parameters<MemoryIndex["applyBatch"]>[0]) {
+  for (let at = 0; at < rows.length;) {
+    await index.sealAndTruncate();
+    for (let steps = 0; index.segmentCount() > 48; steps++) {
+      if (steps === 5000 || index.stopInfo()) throw new Error("fixture segment gate did not clear");
+      const step = await index.maintenanceStep();
+      if (step.drain) await index.sealAndTruncate();
+    }
+    // Each inserted row can flush a segment. Leave the next gate check between batches.
+    const count = Math.min(16, 49 - index.segmentCount());
+    await put(index, rows.slice(at, at + count));
+    at += count;
+  }
+}

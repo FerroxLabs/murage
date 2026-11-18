@@ -1,7 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
+import { schemaStep } from "./read-only-start.ts";
 
 /** Shared by image startup recovery and the strict installation archive schema. */
-export function initializeImageOperations(db: DatabaseSync): void {
+export function initializeImageOperations(db: DatabaseSync): void { schemaStep(db, "image_operations", initializeImageOperationsNow); }
+/** The statements themselves. A read-only start never runs them on its file: a missing table reads as empty (schemaStep, read-only-start.ts). */
+function initializeImageOperationsNow(db: DatabaseSync): void {
   db.exec("CREATE TABLE IF NOT EXISTS image_operations(id TEXT PRIMARY KEY, generation TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL, state TEXT NOT NULL, result TEXT, updated_at INTEGER NOT NULL)");
   // Startup recovery and request lookup follow PENDING operations, never completed history: each partial index holds only the
   // rows in the states the query asks for, and its WHERE is spelled exactly as in image-operations.ts so SQLite uses it.

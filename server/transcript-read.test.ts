@@ -82,7 +82,7 @@ it("bounds admission and rejects work at shutdown without an inline fallback of 
 });
 
 it("a worker launch failure rejects the request and leaves the reader usable for the caller's fallback decision", async () => {
-  const reader = new TranscriptReader(fixture(), { workerPath: join(tmpdir(), "missing-transcript-worker.mjs") }); readers.push(reader);
+  const reader = new TranscriptReader(fixture(), { createWorker: () => { throw new Error("fixture worker unavailable"); } }); readers.push(reader);
   await expect(reader.forgotten(0)).rejects.toThrow();
   expect(reader.isStopped).toBe(false);
 });

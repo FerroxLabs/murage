@@ -57,7 +57,7 @@ export interface BackgroundHooks {
    *  (BACKGROUND_WAL_PAUSE_MS), still at least one slice per BACKGROUND_DEFER_PROGRESS_MS. */
   walPressure?: () => boolean;
   /** Runs a slice under its I/O source, so the budget names this work when it writes too much (io-budget.ts withSource). */
-  withSource?: <T>(run: () => T) => T;
+  withSource?: <T>(run: () => T, job: BackgroundJob) => T;
   /** False once the connection is closed or replaced: the run ends quietly. */
   stillOpen?: () => boolean;
   /** The integrity pass moved or finished. */
@@ -369,7 +369,7 @@ export function startBackgroundUpgradeWork(db: DatabaseSync, hooks: BackgroundHo
       const sliceStarted = performance.now();
       // every slice is a named holder: a stall line that falls in one says which job held the loop
       const run = () => heldStep(`upgrade.${job}`, () => table.get(job)!.slice());
-      const result = derivedSlice(db, job, () => hooks.withSource ? hooks.withSource(run) : run());
+      const result = derivedSlice(db, job, () => hooks.withSource ? hooks.withSource(run, job) : run());
       // at most half the time: the pause after a slice is at least as long as the slice, so the background never writes back to back
       delay = Math.max(delay, Math.round(performance.now() - sliceStarted));
       handle.slices++;

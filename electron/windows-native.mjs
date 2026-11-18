@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The engine-exclusion addon (native/engine-exclusion/exclusion.c, version 10) for Electron's own Windows calls that used to start
+// The engine-exclusion addon (native/engine-exclusion/exclusion.c, version 11) for Electron's own Windows calls that used to start
 // PowerShell (murage-releases #1): a folder's drive type and format (backup-folder-check.mjs), a process's exact creation time
 // (data-dir-lease.mjs), a file's owner SID and the computer's domains (backup-windows-acl.mjs), the update signature check
 // (windows-update-signature.mjs). The packaged app's copy is
@@ -13,26 +13,36 @@ import {existsSync} from "node:fs";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 
-export const WINDOWS_NATIVE_VERSION=10;
-const here=path.dirname(fileURLToPath(import.meta.url));
+export const WINDOWS_NATIVE_VERSION=11;
+// import.meta is empty when this file is bundled to CommonJS (esbuild format "cjs", as link-removal.electron.test.ts does); the
+// bundle's own __filename stands in there. Resolved on use, never at load.
+function moduleFile(){
+ const url=import.meta.url;
+ if(typeof url==="string"&&url)return fileURLToPath(url);
+ return typeof __filename==="string"?__filename:path.join(process.cwd(),"windows-native.cjs");
+}
 let loaded;
 function candidates(){
  const out=[];
  if(typeof process.resourcesPath==="string"&&process.resourcesPath)out.push(path.join(process.resourcesPath,"engine-exclusion.node"));
  const resources=process.env.MURAGE_RESOURCES_PATH;
  if(resources)out.push(path.join(resources,"engine-exclusion.node"));
- out.push(path.join(here,"..","dist-native","engine-exclusion",`${process.platform}-${process.arch}`,"engine-exclusion.node"));
+ out.push(path.join(path.dirname(moduleFile()),"..","dist-native","engine-exclusion",`${process.platform}-${process.arch}`,"engine-exclusion.node"));
  return out;
+}
+/** Whether an addon may be used: the right version and NO test hook (R16: any export starting with anchorTest is the test-hooks build, never packaged). */
+export function windowsAddonIsUsable(addon){
+ return typeof addon?.version==="function"&&addon.version()===WINDOWS_NATIVE_VERSION&&!Object.keys(addon).some(name=>name.startsWith("anchorTest"));
 }
 /** The addon, or null (not Windows, not there, or another version). Looked for once. */
 export function windowsNative(){
  if(loaded!==undefined)return loaded;
  loaded=null;
  if(process.platform!=="win32")return loaded;
- const require=createRequire(import.meta.url);
+ const require=createRequire(moduleFile());
  for(const file of candidates()){
   if(!existsSync(file))continue;
-  try{const addon=require(file);if(typeof addon?.version==="function"&&addon.version()===WINDOWS_NATIVE_VERSION){loaded=addon;break;}}
+  try{const addon=require(file);if(windowsAddonIsUsable(addon)){loaded=addon;break;}}
   catch{/* the next candidate */}
  }
  return loaded;

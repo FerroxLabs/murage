@@ -10,7 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { downgradeMemorySchema, LINEAGE_META_KEYS_V12, MEMORY_SCHEMA_V9, MEMORY_SCHEMA_V10, MEMORY_SCHEMA_VERSION, migrateMemorySchema, validateMemorySchema, WRITETIME_TABLES } from "./schema.ts";
 import { migrateMemorySchema as migrateAs101, MEMORY_SCHEMA_VERSION as VERSION_101 } from "./testing/schema-1.0.1.ts";
-import { OPTIONAL_INDEXES as REGISTERED, buildOptionalIndexOffThread, optionalIndexReady } from "./optional-index.ts";
+import { OPTIONAL_INDEXES as REGISTERED, REQUIRED_INDEXES, buildOptionalIndexOffThread, optionalIndexReady } from "./optional-index.ts";
 import { denyGeneration, denyLookup, fenceVerdict, memoryLookup, refsLookup, sessionLookup } from "./deny-read.ts";
 import { addTurnParents, closeTurnLineage, currentLsn, currentTurnLineage, internFootprint, openTurnLineage, reserveLsns, writeCaptureLineage, writeLineage, writeRecordLineage, writeSessionLineage } from "./lineage-write.ts";
 import { inheritMarks } from "./revoke-commit.ts";
@@ -167,7 +167,7 @@ it("P3-11: v10 -> v9 leaves no optional index (the RC's known-object list does n
   migrateMemorySchema(db);
   // the memory schema's optional indexes: the registry also holds messages_thread_seq (transcript-seq.ts, ROOM-ORDER-DESIGN r8 "Column and
   // index"), an index on the messages table this memory-only file does not have; its own downgrade is transcript-seq.server.test.ts
-  const OPTIONAL_INDEXES = REGISTERED.filter(item => item.table.startsWith("memory_"));
+  const OPTIONAL_INDEXES = [...REQUIRED_INDEXES, ...REGISTERED].filter(item => item.table.startsWith("memory_"));
   const index = () => db.prepare("SELECT 1 FROM sqlite_schema WHERE name IN ('memory_disclosures_live','memory_records_pinned')").get();
   expect(index()).toBeUndefined(); // optional: open builds none of them
   for (const item of OPTIONAL_INDEXES) expect(await buildOptionalIndexOffThread(db, item, { inline: true })).toBe(true);

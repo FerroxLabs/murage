@@ -6,9 +6,12 @@
 
 const open = new Map<string, Set<string>>();
 
-export function noteHumanWait(threadId: string, requestId: string, waiting: boolean): void {
+/** With a generation, membership is that generation's own: releasing an old generation's handle never removes a successor's
+ * handle that reuses the same request id (design1019-approval-attention). */
+export function noteHumanWait(threadId: string, requestId: string, waiting: boolean, generation?: string): void {
+  const member = generation ? `${generation}\u0000${requestId}` : requestId;
   const cards = open.get(threadId) ?? new Set<string>();
-  if (waiting) cards.add(requestId); else cards.delete(requestId);
+  if (waiting) cards.add(member); else cards.delete(member);
   if (cards.size) open.set(threadId, cards); else open.delete(threadId);
 }
 

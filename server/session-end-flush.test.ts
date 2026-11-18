@@ -18,14 +18,19 @@ import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const DESKTOP_SECRET = "f1f1f1f1f1f1f1f1".repeat(4);
-/** The app's shape: Electron's private parent port, one listener, fed from the IPC channel (engine-change-and-close.test.ts). */
+/** The app's shape: Electron's private EventEmitter parent port, fed from the IPC channel (engine-change-and-close.test.ts). */
 const PARENT_PORT_PRELUDE = `data:text/javascript,${encodeURIComponent(`
-  let listener;
-  process.on("message", (data) => listener?.({ data }));
-  Object.defineProperty(process, "parentPort", { value: {
-    on(event, callback) { if (event === "message") listener = callback; },
-    postMessage(message) { process.send?.(message); },
-  } });
+  const { EventEmitter } = await import("node:events");
+  const port = new EventEmitter();
+  process.on("message", data => port.emit("message", { data }));
+  port.postMessage = message => {
+    if (message?.type === "murage:highlevel-bootstrap-request") {
+      queueMicrotask(() => port.emit("message", { data: { type: "murage:highlevel-bootstrap", requestId: message.requestId, error: "storage" } }));
+      return;
+    }
+    process.send?.(message);
+  };
+  Object.defineProperty(process, "parentPort", { value: port });
 `)}`;
 
 let child: ChildProcess | undefined;
@@ -45,6 +50,7 @@ async function serve(packaged: boolean) {
   let stderr = "";
   const replies: Array<{ type?: string; ok?: boolean; secret?: string }> = [];
   child = spawn(process.execPath, [...(packaged ? ["--import", PARENT_PORT_PRELUDE] : []), join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET },
     stdio: ["ignore", "pipe", "pipe", "ipc"],

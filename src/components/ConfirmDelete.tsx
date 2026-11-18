@@ -24,6 +24,7 @@ export function ConfirmDelete({
   title,
   items,
   preview,
+  extraLine,
   onCancel,
   onConfirm,
 }: {
@@ -40,13 +41,34 @@ export function ConfirmDelete({
   /** What is being deleted, for the saved-files count and the backups line
    * (GET /api/deletion-preview). */
   preview?: { botId?: string; groupId?: string; threadId?: string };
+  /** One more plain line under the detail (bulk archived delete: the addresses stay). */
+  extraLine?: string;
   onCancel: () => void;
-  onConfirm: () => void;
+  /** A parked inbox's confirm token rides along only when the preview offered one. */
+  onConfirm: (options?: { emailConfirm: string }) => void;
 }) {
-  const [typed, setTyped] = useState("");
+  // What is being deleted. The typed words, the preview and the one-shot guard all belong to it: a dialog that is handed another
+  // target (even one with the same name) starts again from nothing.
+  const target = preview ? JSON.stringify([preview.botId ?? "", preview.groupId ?? "", preview.threadId ?? ""]) : "";
+  // Render-time adjustment: when the target changes (including a return to an earlier one) the typed value is dropped and a new
+  // activation number starts, before anything is shown, so an old value is never exposed for even one render.
+  const [act, setAct] = useState({ target, seq: 0, value: "" });
+  if (act.target !== target) setAct({ target, seq: act.seq + 1, value: "" });
+  const typed = act.target === target ? act.value : "";
+  const setTyped = (value: string) => setAct({ target, seq: act.seq, value });
   const inputRef = useRef<HTMLInputElement>(null);
   const matches = typed.trim().toLowerCase() === name.trim().toLowerCase();
-  const counts = useDeletionCounts(preview);
+  const gated = Boolean(preview?.botId) && !preview?.threadId;
+  const { counts, email, ready } = useDeletionPreview(preview);
+  const canConfirm = matches && (!gated || ready);
+  const sentFor = useRef<number | null>(null);
+  const confirm = () => {
+    if (sentFor.current === act.seq) return; // a double click or Enter plus a click sends one Delete per activation
+    sentFor.current = act.seq;
+    // Presence matters: forward any string token offered by the preview.
+    if (gated && email && typeof email.confirm === "string") onConfirm({ emailConfirm: email.confirm });
+    else onConfirm();
+  };
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const layer = useFocusTrap(dialogRef, true, { name: "confirm-delete", kind: "dialog", initialFocus: "input", onEscape: onCancel });
@@ -81,6 +103,10 @@ export function ConfirmDelete({
             {preview && deletionConsequenceLines(counts?.savedFiles, counts?.messages, counts?.engines).map((line) => (
               <p key={line} className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{line}</p>
             ))}
+            {gated && email && (
+              <p data-testid="confirm-delete-email" className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{`This also removes ${email.address}.`}</p>
+            )}
+            {extraLine && <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{extraLine}</p>}
             {items && items.length > 0 && (
               <ul
                 aria-label="What will be deleted"
@@ -101,7 +127,7 @@ export function ConfirmDelete({
             ref={inputRef}
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && matches) onConfirm(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && canConfirm) confirm(); }}
             className="mt-1.5 w-full rounded-lg border border-hairline/50 bg-app px-3 py-2 text-[13px] text-ink outline-none focus:border-accent"
             placeholder={name}
             autoComplete="off"
@@ -117,8 +143,8 @@ export function ConfirmDelete({
             Cancel
           </button>
           <button
-            onClick={onConfirm}
-            disabled={!matches}
+            onClick={confirm}
+            disabled={!canConfirm}
             className="rounded-lg bg-danger px-3.5 py-2 text-[13px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
           >
             Delete {kind}
@@ -129,17 +155,46 @@ export function ConfirmDelete({
     </div></LayerSurface>;
 }
 
-/** How many messages and saved files a Delete takes with it; null until known. */
-export function useDeletionCounts(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): { savedFiles: number; messages: number | null; engines: string[] } | null {
-  const [counts, setCounts] = useState<{ savedFiles: number; messages: number | null; engines: string[] } | null>(null);
+type DeletionCounts = { savedFiles: number; messages: number | null; engines: string[] };
+type DeletionEmail = { address: string; confirm?: string };
+/** How long a Delete waits for its preview before it goes ahead without the email line. */
+export const DELETION_PREVIEW_WAIT_MS = 3000;
+
+type PreviewSnap = { key: string; counts: DeletionCounts | null; email: DeletionEmail | null; ready: boolean };
+const NO_PREVIEW: PreviewSnap = { key: "", counts: null, email: null, ready: false };
+
+/** The preview of a Delete: counts, plus the bot's email address when it has one. `ready` is true once the preview answered or
+ * DELETION_PREVIEW_WAIT_MS passed; an answer after that never adds an address or a token. The result is stored with the query it
+ * answered, and read only while the query is the same: asked about another target, it is empty and not ready at once. */
+export function useDeletionPreview(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): { counts: DeletionCounts | null; email: DeletionEmail | null; ready: boolean } {
   const query = preview ? new URLSearchParams(Object.entries(preview).filter((entry): entry is [string, string] => Boolean(entry[1]))).toString() : "";
+  const [snap, setSnap] = useState<PreviewSnap>({ ...NO_PREVIEW, key: query });
+  // Render-time adjustment: a new query (including a return to an earlier one) drops the stored answer before anything is shown.
+  if (snap.key !== query) setSnap({ ...NO_PREVIEW, key: query });
   useEffect(() => {
     if (!query) return;
     let live = true;
-    api(`/api/deletion-preview?${query}`).then((body: { savedFiles?: unknown; messages?: unknown; engines?: unknown }) => {
-      if (live && typeof body?.savedFiles === "number") setCounts({ savedFiles: body.savedFiles, messages: typeof body.messages === "number" ? body.messages : null, engines: Array.isArray(body.engines) ? body.engines.filter((item): item is string => typeof item === "string") : [] });
-    }).catch(() => {});
-    return () => { live = false; };
+    let waiting = true;
+    const update = (patch: Partial<PreviewSnap>) => setSnap((prev) => ({ ...(prev.key === query ? prev : { ...NO_PREVIEW, key: query }), ...patch }));
+    const timer = setTimeout(() => { waiting = false; if (live) update({ ready: true }); }, DELETION_PREVIEW_WAIT_MS);
+    api(`/api/deletion-preview?${query}`).then((body: { savedFiles?: unknown; messages?: unknown; engines?: unknown; email?: unknown }) => {
+      if (!live) return;
+      const patch: Partial<PreviewSnap> = {};
+      if (typeof body?.savedFiles === "number") patch.counts = { savedFiles: body.savedFiles, messages: typeof body.messages === "number" ? body.messages : null, engines: Array.isArray(body.engines) ? body.engines.filter((item): item is string => typeof item === "string") : [] };
+      const found = body?.email as { address?: unknown; confirm?: unknown } | null | undefined;
+      if (waiting && typeof found?.address === "string" && found.address) patch.email = { address: found.address, ...(typeof found.confirm === "string" ? { confirm: found.confirm } : {}) };
+      if (waiting) { waiting = false; clearTimeout(timer); patch.ready = true; }
+      update(patch);
+    }).catch(() => {
+      if (waiting) { waiting = false; clearTimeout(timer); if (live) update({ ready: true }); }
+    });
+    return () => { live = false; clearTimeout(timer); };
   }, [query]);
-  return counts;
+  if (!query) return { counts: null, email: null, ready: true };
+  return snap.key === query ? { counts: snap.counts, email: snap.email, ready: snap.ready } : { counts: null, email: null, ready: false };
+}
+
+/** How many messages and saved files a Delete takes with it; null until known. */
+export function useDeletionCounts(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): DeletionCounts | null {
+  return useDeletionPreview(preview).counts;
 }

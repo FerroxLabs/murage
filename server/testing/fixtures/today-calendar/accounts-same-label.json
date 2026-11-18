@@ -1,0 +1,224 @@
+{
+  "synthetic": true,
+  "accounts": [
+    {
+      "accountId": "account-A",
+      "label": "Work",
+      "state": "active",
+      "provider": "googlecalendar"
+    },
+    {
+      "accountId": "account-B",
+      "label": "Work",
+      "state": "active",
+      "provider": "googlecalendar"
+    }
+  ],
+  "selection": [
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-A",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-B",
+      "accountLabel": "Work",
+      "calendarId": "calendar-B",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    }
+  ],
+  "foreign": {
+    "accountId": "account-foreign",
+    "homeId": "home-B",
+    "brokerPrincipal": "principal-B"
+  },
+  "refusals": [
+    {
+      "state": "foreign",
+      "error": "account_not_owned"
+    },
+    {
+      "state": "revoked",
+      "error": "account_revoked"
+    },
+    {
+      "state": "pending",
+      "error": "auth_required"
+    }
+  ],
+  "tooManyCalendars": [
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-0",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-1",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-2",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-3",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-4",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-5",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-6",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-7",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-8",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-9",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-10",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-11",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-12",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-13",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-14",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-15",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-16",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-17",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-18",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-19",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    },
+    {
+      "provider": "googlecalendar",
+      "accountId": "account-A",
+      "accountLabel": "Work",
+      "calendarId": "calendar-20",
+      "calendarLabel": "Calendar",
+      "sourceZone": "America/New_York"
+    }
+  ]
+}

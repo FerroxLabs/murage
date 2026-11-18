@@ -20,7 +20,9 @@ const unit = "murage-turn-0123456789abcdef.scope";
 const SEED = "/tmp/murage-render-0123456789abcdef/trusted_folders.seed";
 const scratch = "native/provider-turns/fuigoAgent-0123456789ab";
 const route = { provider: "murage_0123456789abcdef", baseUrl: "https://fixture.example/v1", model: "fixture-model", apiKey: "fixture-route-key", protocol: "openai" };
-const seeded = (seeds: Record<string, unknown>, extra: Record<string, unknown> = {}) => rig.request("fuigoAgent", { unit, scratch: [scratch], render: { route, ...seeds }, ...extra });
+// A routed Fuigo turn names both base URLs, as the server's applyProviderRoute does; the launcher refuses one that does not.
+const routedEnv = { FUIGO_API_BASE_URL: route.baseUrl, FUIGO_MODELS_BASE_URL: route.baseUrl };
+const seeded = (seeds: Record<string, unknown>, extra: Record<string, unknown> = {}) => rig.request("fuigoAgent", { unit, scratch: [scratch], render: { route, ...seeds }, env: routedEnv, ...extra });
 const ok = (request: Record<string, unknown>) => { const result = rig.plan(request); if (!result.ok) throw new Error(result.error); return result.ok; };
 const refused = (request: Record<string, unknown>) => rig.plan(request).error;
 
@@ -34,7 +36,7 @@ onPosix("the launcher takes the seeds (R4)", () => {
     expect(plan.argv).not.toContain("--child");
   });
   it("a turn with no seeds keeps today's argv and files", () => {
-    const plan = ok(rig.request("fuigoAgent", { unit, scratch: [scratch], render: { route } }));
+    const plan = ok(rig.request("fuigoAgent", { unit, scratch: [scratch], render: { route }, env: routedEnv }));
     expect(plan.argv).toContain("--child");
     expect(plan.argv).not.toContain("--child-fuigo-seed");
     expect(plan.files).not.toHaveProperty([SEED]);

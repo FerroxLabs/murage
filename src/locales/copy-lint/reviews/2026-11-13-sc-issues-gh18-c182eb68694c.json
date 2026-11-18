@@ -1,0 +1,1455 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol-sc-issues-r3",
+    "account": "sc-issues-r3 independent review of inherited sc-issues copy"
+  },
+  "author": "sc-issues",
+  "date": "2026-11-13",
+  "base": "7c9ce6fe3e783b19a9cda1969d7aa9de676ec356",
+  "scope": "GH18",
+  "strings": {
+    "en:freshStart.applying": {
+      "text": "{botName} will start fresh once the changes are saved.",
+      "en": "{botName} will start fresh once the changes are saved.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.label": {
+      "text": "Start fresh for this bot",
+      "en": "Start fresh for this bot",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.helper": {
+      "text": "Review old blocks without bringing back deleted information.",
+      "en": "Review old blocks without bringing back deleted information.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.confirmTitle": {
+      "text": "Start fresh for {botName}?",
+      "en": "Start fresh for {botName}?",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.consequence": {
+      "text": "New conversations start clean. Deleted and withdrawn information stays hidden.",
+      "en": "New conversations start clean. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.done": {
+      "text": "{botName} starts fresh in {freshSessions} chats. Cleared {clearedBlocks} old blocks. Deleted and withdrawn information stays hidden.",
+      "en": "{botName} starts fresh in {freshSessions} chats. Cleared {clearedBlocks} old blocks. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.nothing": {
+      "text": "{botName} already starts fresh.",
+      "en": "{botName} already starts fresh.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.checking": {
+      "text": "Checking old memory blocks…",
+      "en": "Checking old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.committing": {
+      "text": "Clearing old memory blocks…",
+      "en": "Clearing old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.preview": {
+      "text": "Start fresh in {freshSessions} chats and clear {staleBlocks} old blocks.",
+      "en": "Start fresh in {freshSessions} chats and clear {staleBlocks} old blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.deletionPending": {
+      "text": "Memory deletion is still finishing.",
+      "en": "Memory deletion is still finishing.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.lineageUnready": {
+      "text": "Memory is still being checked.",
+      "en": "Memory is still being checked.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.botBusy": {
+      "text": "Wait for {botName} to finish replying.",
+      "en": "Wait for {botName} to finish replying.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.limitExceeded": {
+      "text": "This check did not finish. No blocks were cleared.",
+      "en": "This check did not finish. No blocks were cleared.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.policyUnavailable": {
+      "text": "These blocks cannot be cleared. Deleted and withdrawn information stays hidden.",
+      "en": "These blocks cannot be cleared. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.unsupported": {
+      "text": "This version cannot clear these blocks.",
+      "en": "This version cannot clear these blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.failed": {
+      "text": "Could not complete this request. Nothing was changed.",
+      "en": "Could not complete this request. Nothing was changed.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.unknown": {
+      "text": "The result is not available yet. Check again.",
+      "en": "The result is not available yet. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.stale": {
+      "text": "This check has expired or changed. Check again.",
+      "en": "This check has expired or changed. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.retained": {
+      "text": "{count} blocks stay in place.",
+      "en": "{count} blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.retainedCapped": {
+      "text": "More than 5,000 blocks stay in place.",
+      "en": "More than 5,000 blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.confirm": {
+      "text": "Start fresh",
+      "en": "Start fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.cancel": {
+      "text": "Cancel",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.close": {
+      "text": "Close",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.checkAgain": {
+      "text": "Check again",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.setAdvanced": {
+      "text": "Set in Advanced",
+      "en": "Set in Advanced",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.back": {
+      "text": "Back",
+      "en": "Back",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.about": {
+      "text": "About starting fresh",
+      "en": "About starting fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:freshStart.help": {
+      "text": "Start fresh can clear revoked marks for this bot only when removing them cannot reveal withdrawn information. It starts new engine sessions with authorized replay; deleted and withdrawn information stays hidden. Blocks with missing history stay in place. A blocked check does not mean the bot can never reply. The separate audience-only startup repair clears a narrower set of stale session blocks automatically.",
+      "en": "Start fresh can clear revoked marks for this bot only when removing them cannot reveal withdrawn information. It starts new engine sessions with authorized replay; deleted and withdrawn information stays hidden. Blocks with missing history stay in place. A blocked check does not mean the bot can never reply. The separate audience-only startup repair clears a narrower set of stale session blocks automatically.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "en:ux.l4a.screen.bot.memory.intro": {
+      "text": "What {name} remembers between chats. Start fresh in Advanced starts new sessions. Deleted and withdrawn information stays hidden.",
+      "en": "What {name} remembers between chats. Start fresh in Advanced starts new sessions. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.applying": {
+      "text": "{botName} beginnt neu, sobald die Änderungen gespeichert sind.",
+      "en": "{botName} will start fresh once the changes are saved.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.label": {
+      "text": "Für diesen Bot neu anfangen",
+      "en": "Start fresh for this bot",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.helper": {
+      "text": "Alte Sperren prüfen, ohne gelöschte Informationen wiederherzustellen.",
+      "en": "Review old blocks without bringing back deleted information.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.confirmTitle": {
+      "text": "Für {botName} neu anfangen?",
+      "en": "Start fresh for {botName}?",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.consequence": {
+      "text": "Neue Gespräche beginnen von vorn. Gelöschte und zurückgezogene Informationen bleiben verborgen.",
+      "en": "New conversations start clean. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.done": {
+      "text": "{botName} beginnt in {freshSessions} Chats neu. {clearedBlocks} alte Sperren wurden entfernt. Gelöschte und zurückgezogene Informationen bleiben verborgen.",
+      "en": "{botName} starts fresh in {freshSessions} chats. Cleared {clearedBlocks} old blocks. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.nothing": {
+      "text": "{botName} beginnt bereits neu.",
+      "en": "{botName} already starts fresh.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.checking": {
+      "text": "Alte Speichersperren werden geprüft…",
+      "en": "Checking old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.committing": {
+      "text": "Alte Speichersperren werden entfernt…",
+      "en": "Clearing old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.preview": {
+      "text": "In {freshSessions} Chats neu anfangen und {staleBlocks} alte Sperren entfernen.",
+      "en": "Start fresh in {freshSessions} chats and clear {staleBlocks} old blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.deletionPending": {
+      "text": "Das Löschen der gespeicherten Informationen läuft noch.",
+      "en": "Memory deletion is still finishing.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.lineageUnready": {
+      "text": "Die gespeicherten Informationen werden noch geprüft.",
+      "en": "Memory is still being checked.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.botBusy": {
+      "text": "Warte, bis {botName} fertig geantwortet hat.",
+      "en": "Wait for {botName} to finish replying.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.limitExceeded": {
+      "text": "Diese Prüfung wurde nicht abgeschlossen. Es wurden keine Sperren entfernt.",
+      "en": "This check did not finish. No blocks were cleared.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.policyUnavailable": {
+      "text": "Diese Sperren können nicht entfernt werden. Gelöschte und zurückgezogene Informationen bleiben verborgen.",
+      "en": "These blocks cannot be cleared. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.unsupported": {
+      "text": "Diese Version kann diese Sperren nicht entfernen.",
+      "en": "This version cannot clear these blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.failed": {
+      "text": "Die Anfrage konnte nicht abgeschlossen werden. Es wurde nichts geändert.",
+      "en": "Could not complete this request. Nothing was changed.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.unknown": {
+      "text": "Das Ergebnis liegt noch nicht vor. Erneut prüfen.",
+      "en": "The result is not available yet. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.stale": {
+      "text": "Diese Prüfung ist abgelaufen oder hat sich geändert. Erneut prüfen.",
+      "en": "This check has expired or changed. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.retained": {
+      "text": "{count} Sperren bleiben bestehen.",
+      "en": "{count} blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.retainedCapped": {
+      "text": "Mehr als 5.000 Sperren bleiben bestehen.",
+      "en": "More than 5,000 blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.confirm": {
+      "text": "Neu anfangen",
+      "en": "Start fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.cancel": {
+      "text": "Abbrechen",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.close": {
+      "text": "Schließen",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.checkAgain": {
+      "text": "Erneut prüfen",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.setAdvanced": {
+      "text": "Unter Erweitert festlegen",
+      "en": "Set in Advanced",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.back": {
+      "text": "Zurück",
+      "en": "Back",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.about": {
+      "text": "Über den Neuanfang",
+      "en": "About starting fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:freshStart.help": {
+      "text": "Ein Neuanfang entfernt widerrufene Markierungen für diesen Bot nur, wenn dadurch keine zurückgezogenen Informationen sichtbar werden. Er startet neue Engine-Sitzungen mit erlaubtem Gesprächsverlauf; gelöschte und zurückgezogene Informationen bleiben verborgen. Sperren mit fehlendem Verlauf bleiben bestehen. Eine blockierte Prüfung bedeutet nicht, dass der Bot nie antworten kann. Die separate Reparatur beim Start entfernt automatisch eine engere Auswahl alter Sitzungssperren, die nur den Empfängerkreis betreffen.",
+      "en": "Start fresh can clear revoked marks for this bot only when removing them cannot reveal withdrawn information. It starts new engine sessions with authorized replay; deleted and withdrawn information stays hidden. Blocks with missing history stay in place. A blocked check does not mean the bot can never reply. The separate audience-only startup repair clears a narrower set of stale session blocks automatically.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "de:ux.l4a.screen.bot.memory.intro": {
+      "text": "Was {name} zwischen Chats behält. „Neu anfangen“ unter Erweitert startet neue Sitzungen. Gelöschte und zurückgezogene Informationen bleiben verborgen.",
+      "en": "What {name} remembers between chats. Start fresh in Advanced starts new sessions. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.applying": {
+      "text": "{botName} empezará de nuevo cuando se guarden los cambios.",
+      "en": "{botName} will start fresh once the changes are saved.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.label": {
+      "text": "Empezar de nuevo con este bot",
+      "en": "Start fresh for this bot",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.helper": {
+      "text": "Revisa los bloqueos antiguos sin recuperar información eliminada.",
+      "en": "Review old blocks without bringing back deleted information.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.confirmTitle": {
+      "text": "¿Empezar de nuevo con {botName}?",
+      "en": "Start fresh for {botName}?",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.consequence": {
+      "text": "Las conversaciones nuevas empiezan desde cero. La información eliminada y retirada permanece oculta.",
+      "en": "New conversations start clean. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.done": {
+      "text": "{botName} empieza de nuevo en {freshSessions} chats. Se quitaron {clearedBlocks} bloqueos antiguos. La información eliminada y retirada permanece oculta.",
+      "en": "{botName} starts fresh in {freshSessions} chats. Cleared {clearedBlocks} old blocks. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.nothing": {
+      "text": "{botName} ya empieza desde cero.",
+      "en": "{botName} already starts fresh.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.checking": {
+      "text": "Comprobando bloqueos antiguos de memoria…",
+      "en": "Checking old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.committing": {
+      "text": "Quitando bloqueos antiguos de memoria…",
+      "en": "Clearing old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.preview": {
+      "text": "Empezar de nuevo en {freshSessions} chats y quitar {staleBlocks} bloqueos antiguos.",
+      "en": "Start fresh in {freshSessions} chats and clear {staleBlocks} old blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.deletionPending": {
+      "text": "La eliminación de memoria aún está terminando.",
+      "en": "Memory deletion is still finishing.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.lineageUnready": {
+      "text": "La memoria aún se está comprobando.",
+      "en": "Memory is still being checked.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.botBusy": {
+      "text": "Espera a que {botName} termine de responder.",
+      "en": "Wait for {botName} to finish replying.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.limitExceeded": {
+      "text": "No se completó esta comprobación. No se quitó ningún bloqueo.",
+      "en": "This check did not finish. No blocks were cleared.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.policyUnavailable": {
+      "text": "Estos bloqueos no se pueden quitar. La información eliminada y retirada permanece oculta.",
+      "en": "These blocks cannot be cleared. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.unsupported": {
+      "text": "Esta versión no puede quitar estos bloqueos.",
+      "en": "This version cannot clear these blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.failed": {
+      "text": "No se pudo completar la solicitud. No se cambió nada.",
+      "en": "Could not complete this request. Nothing was changed.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.unknown": {
+      "text": "El resultado aún no está disponible. Vuelve a comprobarlo.",
+      "en": "The result is not available yet. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.stale": {
+      "text": "Esta comprobación caducó o cambió. Vuelve a comprobarlo.",
+      "en": "This check has expired or changed. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.retained": {
+      "text": "Se mantienen {count} bloqueos.",
+      "en": "{count} blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.retainedCapped": {
+      "text": "Se mantienen más de 5000 bloqueos.",
+      "en": "More than 5,000 blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.confirm": {
+      "text": "Empezar de nuevo",
+      "en": "Start fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.cancel": {
+      "text": "Cancelar",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.close": {
+      "text": "Cerrar",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.checkAgain": {
+      "text": "Volver a comprobar",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.setAdvanced": {
+      "text": "Configurar en Avanzado",
+      "en": "Set in Advanced",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.back": {
+      "text": "Atrás",
+      "en": "Back",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.about": {
+      "text": "Acerca de empezar de nuevo",
+      "en": "About starting fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:freshStart.help": {
+      "text": "Empezar de nuevo solo quita marcas revocadas de este bot cuando hacerlo no puede revelar información retirada. Inicia nuevas sesiones del motor con el historial autorizado; la información eliminada y retirada permanece oculta. Los bloqueos cuyo historial falta se mantienen. Una comprobación bloqueada no significa que el bot nunca pueda responder. La reparación independiente al iniciar quita automáticamente un conjunto más limitado de bloqueos de sesión antiguos que solo afectan a los destinatarios.",
+      "en": "Start fresh can clear revoked marks for this bot only when removing them cannot reveal withdrawn information. It starts new engine sessions with authorized replay; deleted and withdrawn information stays hidden. Blocks with missing history stay in place. A blocked check does not mean the bot can never reply. The separate audience-only startup repair clears a narrower set of stale session blocks automatically.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "es:ux.l4a.screen.bot.memory.intro": {
+      "text": "Lo que {name} recuerda entre chats. Empezar de nuevo, en Avanzado, inicia nuevas sesiones. La información eliminada y retirada permanece oculta.",
+      "en": "What {name} remembers between chats. Start fresh in Advanced starts new sessions. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.applying": {
+      "text": "{botName} repartira à zéro une fois les modifications enregistrées.",
+      "en": "{botName} will start fresh once the changes are saved.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.label": {
+      "text": "Repartir à zéro pour ce bot",
+      "en": "Start fresh for this bot",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.helper": {
+      "text": "Vérifie les anciens blocages sans restaurer les informations supprimées.",
+      "en": "Review old blocks without bringing back deleted information.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.confirmTitle": {
+      "text": "Repartir à zéro pour {botName} ?",
+      "en": "Start fresh for {botName}?",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.consequence": {
+      "text": "Les nouvelles conversations repartent à zéro. Les informations supprimées et retirées restent masquées.",
+      "en": "New conversations start clean. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.done": {
+      "text": "{botName} repart à zéro dans {freshSessions} discussions. {clearedBlocks} anciens blocages ont été levés. Les informations supprimées et retirées restent masquées.",
+      "en": "{botName} starts fresh in {freshSessions} chats. Cleared {clearedBlocks} old blocks. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.nothing": {
+      "text": "{botName} repart déjà à zéro.",
+      "en": "{botName} already starts fresh.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.checking": {
+      "text": "Vérification des anciens blocages de mémoire…",
+      "en": "Checking old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.committing": {
+      "text": "Suppression des anciens blocages de mémoire…",
+      "en": "Clearing old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.preview": {
+      "text": "Repartir à zéro dans {freshSessions} discussions et lever {staleBlocks} anciens blocages.",
+      "en": "Start fresh in {freshSessions} chats and clear {staleBlocks} old blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.deletionPending": {
+      "text": "La suppression de la mémoire est encore en cours.",
+      "en": "Memory deletion is still finishing.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.lineageUnready": {
+      "text": "La mémoire est encore en cours de vérification.",
+      "en": "Memory is still being checked.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.botBusy": {
+      "text": "Attends que {botName} ait fini de répondre.",
+      "en": "Wait for {botName} to finish replying.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.limitExceeded": {
+      "text": "Cette vérification n’a pas abouti. Aucun blocage n’a été levé.",
+      "en": "This check did not finish. No blocks were cleared.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.policyUnavailable": {
+      "text": "Ces blocages ne peuvent pas être levés. Les informations supprimées et retirées restent masquées.",
+      "en": "These blocks cannot be cleared. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.unsupported": {
+      "text": "Cette version ne peut pas lever ces blocages.",
+      "en": "This version cannot clear these blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.failed": {
+      "text": "Impossible de terminer cette demande. Rien n’a été modifié.",
+      "en": "Could not complete this request. Nothing was changed.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.unknown": {
+      "text": "Le résultat n’est pas encore disponible. Vérifie à nouveau.",
+      "en": "The result is not available yet. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.stale": {
+      "text": "Cette vérification a expiré ou changé. Vérifie à nouveau.",
+      "en": "This check has expired or changed. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.retained": {
+      "text": "{count} blocages restent en place.",
+      "en": "{count} blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.retainedCapped": {
+      "text": "Plus de 5 000 blocages restent en place.",
+      "en": "More than 5,000 blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.confirm": {
+      "text": "Repartir à zéro",
+      "en": "Start fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.cancel": {
+      "text": "Annuler",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.close": {
+      "text": "Fermer",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.checkAgain": {
+      "text": "Vérifier à nouveau",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.setAdvanced": {
+      "text": "Configurer dans Avancé",
+      "en": "Set in Advanced",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.back": {
+      "text": "Retour",
+      "en": "Back",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.about": {
+      "text": "À propos du nouveau départ",
+      "en": "About starting fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:freshStart.help": {
+      "text": "Repartir à zéro ne supprime les marques révoquées de ce bot que si cela ne peut révéler aucune information retirée. De nouvelles sessions du moteur sont lancées avec l’historique autorisé ; les informations supprimées et retirées restent masquées. Les blocages dont l’historique manque restent en place. Une vérification bloquée ne signifie pas que le bot ne pourra jamais répondre. La réparation distincte au démarrage supprime automatiquement un ensemble plus restreint d’anciens blocages de session liés uniquement aux destinataires.",
+      "en": "Start fresh can clear revoked marks for this bot only when removing them cannot reveal withdrawn information. It starts new engine sessions with authorized replay; deleted and withdrawn information stays hidden. Blocks with missing history stay in place. A blocked check does not mean the bot can never reply. The separate audience-only startup repair clears a narrower set of stale session blocks automatically.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "fr:ux.l4a.screen.bot.memory.intro": {
+      "text": "Ce que {name} retient entre les discussions. Repartir à zéro dans Avancé lance de nouvelles sessions. Les informations supprimées et retirées restent masquées.",
+      "en": "What {name} remembers between chats. Start fresh in Advanced starts new sessions. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.applying": {
+      "text": "बदलाव सहेजे जाने के बाद {botName} नए सिरे से शुरू करेगा।",
+      "en": "{botName} will start fresh once the changes are saved.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.label": {
+      "text": "इस बॉट के लिए नए सिरे से शुरू करें",
+      "en": "Start fresh for this bot",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.helper": {
+      "text": "मिटाई गई जानकारी वापस लाए बिना पुरानी रोक जाँचें।",
+      "en": "Review old blocks without bringing back deleted information.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.confirmTitle": {
+      "text": "{botName} के लिए नए सिरे से शुरू करें?",
+      "en": "Start fresh for {botName}?",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.consequence": {
+      "text": "नई बातचीत नए सिरे से शुरू होती है। मिटाई गई और वापस ली गई जानकारी छिपी रहती है।",
+      "en": "New conversations start clean. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.done": {
+      "text": "{botName} {freshSessions} चैट में नए सिरे से शुरू करता है। {clearedBlocks} पुरानी रोक हटाई गईं। मिटाई गई और वापस ली गई जानकारी छिपी रहती है।",
+      "en": "{botName} starts fresh in {freshSessions} chats. Cleared {clearedBlocks} old blocks. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.nothing": {
+      "text": "{botName} पहले से नए सिरे से शुरू करता है।",
+      "en": "{botName} already starts fresh.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.checking": {
+      "text": "मेमोरी की पुरानी रोक जाँची जा रही हैं…",
+      "en": "Checking old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.committing": {
+      "text": "मेमोरी की पुरानी रोक हटाई जा रही हैं…",
+      "en": "Clearing old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.preview": {
+      "text": "{freshSessions} चैट में नए सिरे से शुरू करें और {staleBlocks} पुरानी रोक हटाएँ।",
+      "en": "Start fresh in {freshSessions} chats and clear {staleBlocks} old blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.deletionPending": {
+      "text": "मेमोरी मिटाने का काम अभी पूरा हो रहा है।",
+      "en": "Memory deletion is still finishing.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.lineageUnready": {
+      "text": "मेमोरी अभी जाँची जा रही है।",
+      "en": "Memory is still being checked.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.botBusy": {
+      "text": "{botName} का जवाब पूरा होने तक प्रतीक्षा करें।",
+      "en": "Wait for {botName} to finish replying.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.limitExceeded": {
+      "text": "यह जाँच पूरी नहीं हुई। कोई रोक नहीं हटाई गई।",
+      "en": "This check did not finish. No blocks were cleared.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.policyUnavailable": {
+      "text": "ये रोक नहीं हटाई जा सकतीं। मिटाई गई और वापस ली गई जानकारी छिपी रहती है।",
+      "en": "These blocks cannot be cleared. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.unsupported": {
+      "text": "यह संस्करण इन रोक को नहीं हटा सकता।",
+      "en": "This version cannot clear these blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.failed": {
+      "text": "यह अनुरोध पूरा नहीं हो सका। कुछ भी नहीं बदला गया।",
+      "en": "Could not complete this request. Nothing was changed.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.unknown": {
+      "text": "नतीजा अभी उपलब्ध नहीं है। फिर से जाँचें।",
+      "en": "The result is not available yet. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.stale": {
+      "text": "इस जाँच की समय सीमा समाप्त हो गई है या यह बदल गई है। फिर से जाँचें।",
+      "en": "This check has expired or changed. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.retained": {
+      "text": "{count} रोक बनी रहती हैं।",
+      "en": "{count} blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.retainedCapped": {
+      "text": "5,000 से अधिक रोक बनी रहती हैं।",
+      "en": "More than 5,000 blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.confirm": {
+      "text": "नए सिरे से शुरू करें",
+      "en": "Start fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.cancel": {
+      "text": "रद्द करें",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.close": {
+      "text": "बंद करें",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.checkAgain": {
+      "text": "फिर से जाँचें",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.setAdvanced": {
+      "text": "उन्नत में सेट करें",
+      "en": "Set in Advanced",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.back": {
+      "text": "वापस",
+      "en": "Back",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.about": {
+      "text": "नए सिरे से शुरू करने के बारे में",
+      "en": "About starting fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:freshStart.help": {
+      "text": "नए सिरे से शुरू करने पर इस बॉट के वापस लिए गए चिह्न तभी हटते हैं जब इससे वापस ली गई जानकारी दिखाई न दे सके। अधिकृत इतिहास के साथ इंजन के नए सत्र शुरू होते हैं; मिटाई गई और वापस ली गई जानकारी छिपी रहती है। जिन रोक का इतिहास मौजूद नहीं है, वे बनी रहती हैं। जाँच रुकने का मतलब यह नहीं कि बॉट कभी जवाब नहीं दे सकता। शुरू होते समय अलग सुधार अपने आप केवल प्राप्तकर्ताओं से संबंधित पुरानी सत्र रोक का अधिक सीमित समूह हटाता है।",
+      "en": "Start fresh can clear revoked marks for this bot only when removing them cannot reveal withdrawn information. It starts new engine sessions with authorized replay; deleted and withdrawn information stays hidden. Blocks with missing history stay in place. A blocked check does not mean the bot can never reply. The separate audience-only startup repair clears a narrower set of stale session blocks automatically.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "hi:ux.l4a.screen.bot.memory.intro": {
+      "text": "{name} चैट के बीच क्या याद रखता है। उन्नत में नए सिरे से शुरू करने पर नए सत्र शुरू होते हैं। मिटाई गई और वापस ली गई जानकारी छिपी रहती है।",
+      "en": "What {name} remembers between chats. Start fresh in Advanced starts new sessions. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.applying": {
+      "text": "変更が保存されると、{botName} が新しく始めます。",
+      "en": "{botName} will start fresh once the changes are saved.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.label": {
+      "text": "このボットを新しく始める",
+      "en": "Start fresh for this bot",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.helper": {
+      "text": "削除済みの情報を復元せずに、古いブロックを確認します。",
+      "en": "Review old blocks without bringing back deleted information.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.confirmTitle": {
+      "text": "{botName} を新しく始めますか？",
+      "en": "Start fresh for {botName}?",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.consequence": {
+      "text": "新しい会話は最初から始まります。削除済みや撤回済みの情報は非表示のままです。",
+      "en": "New conversations start clean. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.done": {
+      "text": "{botName} が {freshSessions} 件のチャットで新しく始めます。古いブロックを {clearedBlocks} 件解除しました。削除済みや撤回済みの情報は非表示のままです。",
+      "en": "{botName} starts fresh in {freshSessions} chats. Cleared {clearedBlocks} old blocks. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.nothing": {
+      "text": "{botName} はすでに新しく始める状態です。",
+      "en": "{botName} already starts fresh.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.checking": {
+      "text": "メモリの古いブロックを確認中…",
+      "en": "Checking old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.committing": {
+      "text": "メモリの古いブロックを解除中…",
+      "en": "Clearing old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.preview": {
+      "text": "{freshSessions} 件のチャットで新しく始め、古いブロックを {staleBlocks} 件解除します。",
+      "en": "Start fresh in {freshSessions} chats and clear {staleBlocks} old blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.deletionPending": {
+      "text": "メモリの削除はまだ完了していません。",
+      "en": "Memory deletion is still finishing.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.lineageUnready": {
+      "text": "メモリを確認しています。",
+      "en": "Memory is still being checked.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.botBusy": {
+      "text": "{botName} の返信が終わるまでお待ちください。",
+      "en": "Wait for {botName} to finish replying.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.limitExceeded": {
+      "text": "この確認は完了しませんでした。ブロックは解除していません。",
+      "en": "This check did not finish. No blocks were cleared.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.policyUnavailable": {
+      "text": "これらのブロックは解除できません。削除済みや撤回済みの情報は非表示のままです。",
+      "en": "These blocks cannot be cleared. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.unsupported": {
+      "text": "このバージョンでは、これらのブロックを解除できません。",
+      "en": "This version cannot clear these blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.failed": {
+      "text": "リクエストを完了できませんでした。変更はありません。",
+      "en": "Could not complete this request. Nothing was changed.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.unknown": {
+      "text": "結果をまだ確認できません。もう一度確認してください。",
+      "en": "The result is not available yet. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.stale": {
+      "text": "この確認は期限切れか、内容が変更されています。もう一度確認してください。",
+      "en": "This check has expired or changed. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.retained": {
+      "text": "{count} 件のブロックはそのまま残ります。",
+      "en": "{count} blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.retainedCapped": {
+      "text": "5,000 件を超えるブロックはそのまま残ります。",
+      "en": "More than 5,000 blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.confirm": {
+      "text": "新しく始める",
+      "en": "Start fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.cancel": {
+      "text": "キャンセル",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.close": {
+      "text": "閉じる",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.checkAgain": {
+      "text": "もう一度確認",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.setAdvanced": {
+      "text": "詳細設定で変更",
+      "en": "Set in Advanced",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.back": {
+      "text": "戻る",
+      "en": "Back",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.about": {
+      "text": "新しく始める操作について",
+      "en": "About starting fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:freshStart.help": {
+      "text": "この操作でボットの撤回マークを解除するのは、撤回済みの情報が表示されるおそれがない場合だけです。許可された履歴を引き継いでエンジンの新しいセッションを開始します。削除済みや撤回済みの情報は非表示のままです。履歴が見つからないブロックは残ります。確認が止まっても、ボットが今後返信できないという意味ではありません。起動時の別の修復処理では、受信者だけに関係する古いセッションブロックの、さらに限られた範囲を自動的に解除します。",
+      "en": "Start fresh can clear revoked marks for this bot only when removing them cannot reveal withdrawn information. It starts new engine sessions with authorized replay; deleted and withdrawn information stays hidden. Blocks with missing history stay in place. A blocked check does not mean the bot can never reply. The separate audience-only startup repair clears a narrower set of stale session blocks automatically.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "ja:ux.l4a.screen.bot.memory.intro": {
+      "text": "{name} がチャット間で記憶する内容です。詳細設定の「新しく始める」で新しいセッションを開始します。削除済みや撤回済みの情報は非表示のままです。",
+      "en": "What {name} remembers between chats. Start fresh in Advanced starts new sessions. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.applying": {
+      "text": "{botName} começará do zero quando as alterações forem salvas.",
+      "en": "{botName} will start fresh once the changes are saved.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.label": {
+      "text": "Começar do zero com este bot",
+      "en": "Start fresh for this bot",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.helper": {
+      "text": "Revise bloqueios antigos sem recuperar informações excluídas.",
+      "en": "Review old blocks without bringing back deleted information.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.confirmTitle": {
+      "text": "Começar do zero com {botName}?",
+      "en": "Start fresh for {botName}?",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.consequence": {
+      "text": "As novas conversas começam do zero. Informações excluídas e retiradas continuam ocultas.",
+      "en": "New conversations start clean. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.done": {
+      "text": "{botName} começa do zero em {freshSessions} conversas. {clearedBlocks} bloqueios antigos foram removidos. Informações excluídas e retiradas continuam ocultas.",
+      "en": "{botName} starts fresh in {freshSessions} chats. Cleared {clearedBlocks} old blocks. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.nothing": {
+      "text": "{botName} já começa do zero.",
+      "en": "{botName} already starts fresh.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.checking": {
+      "text": "Verificando bloqueios antigos de memória…",
+      "en": "Checking old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.committing": {
+      "text": "Removendo bloqueios antigos de memória…",
+      "en": "Clearing old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.preview": {
+      "text": "Começar do zero em {freshSessions} conversas e remover {staleBlocks} bloqueios antigos.",
+      "en": "Start fresh in {freshSessions} chats and clear {staleBlocks} old blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.deletionPending": {
+      "text": "A exclusão da memória ainda está sendo concluída.",
+      "en": "Memory deletion is still finishing.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.lineageUnready": {
+      "text": "A memória ainda está sendo verificada.",
+      "en": "Memory is still being checked.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.botBusy": {
+      "text": "Aguarde {botName} terminar de responder.",
+      "en": "Wait for {botName} to finish replying.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.limitExceeded": {
+      "text": "Esta verificação não foi concluída. Nenhum bloqueio foi removido.",
+      "en": "This check did not finish. No blocks were cleared.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.policyUnavailable": {
+      "text": "Estes bloqueios não podem ser removidos. Informações excluídas e retiradas continuam ocultas.",
+      "en": "These blocks cannot be cleared. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.unsupported": {
+      "text": "Esta versão não pode remover estes bloqueios.",
+      "en": "This version cannot clear these blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.failed": {
+      "text": "Não foi possível concluir a solicitação. Nada foi alterado.",
+      "en": "Could not complete this request. Nothing was changed.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.unknown": {
+      "text": "O resultado ainda não está disponível. Verifique novamente.",
+      "en": "The result is not available yet. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.stale": {
+      "text": "Esta verificação expirou ou mudou. Verifique novamente.",
+      "en": "This check has expired or changed. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.retained": {
+      "text": "{count} bloqueios continuam em vigor.",
+      "en": "{count} blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.retainedCapped": {
+      "text": "Mais de 5.000 bloqueios continuam em vigor.",
+      "en": "More than 5,000 blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.confirm": {
+      "text": "Começar do zero",
+      "en": "Start fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.cancel": {
+      "text": "Cancelar",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.close": {
+      "text": "Fechar",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.checkAgain": {
+      "text": "Verificar novamente",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.setAdvanced": {
+      "text": "Definir em Avançado",
+      "en": "Set in Advanced",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.back": {
+      "text": "Voltar",
+      "en": "Back",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.about": {
+      "text": "Sobre começar do zero",
+      "en": "About starting fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:freshStart.help": {
+      "text": "Começar do zero só remove marcas revogadas deste bot quando isso não pode revelar informações retiradas. Inicia novas sessões do motor com o histórico autorizado; informações excluídas e retiradas continuam ocultas. Bloqueios sem histórico permanecem. Uma verificação bloqueada não significa que o bot nunca poderá responder. O reparo separado na inicialização remove automaticamente um conjunto mais restrito de bloqueios antigos de sessão que afetam apenas os destinatários.",
+      "en": "Start fresh can clear revoked marks for this bot only when removing them cannot reveal withdrawn information. It starts new engine sessions with authorized replay; deleted and withdrawn information stays hidden. Blocks with missing history stay in place. A blocked check does not mean the bot can never reply. The separate audience-only startup repair clears a narrower set of stale session blocks automatically.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "pt-br:ux.l4a.screen.bot.memory.intro": {
+      "text": "O que {name} lembra entre conversas. Começar do zero em Avançado inicia novas sessões. Informações excluídas e retiradas continuam ocultas.",
+      "en": "What {name} remembers between chats. Start fresh in Advanced starts new sessions. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.applying": {
+      "text": "更改保存后，{botName} 将重新开始。",
+      "en": "{botName} will start fresh once the changes are saved.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.label": {
+      "text": "让此机器人重新开始",
+      "en": "Start fresh for this bot",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.helper": {
+      "text": "检查旧的屏蔽记录，不恢复已删除的信息。",
+      "en": "Review old blocks without bringing back deleted information.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.confirmTitle": {
+      "text": "让 {botName} 重新开始？",
+      "en": "Start fresh for {botName}?",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.consequence": {
+      "text": "新对话将从头开始。已删除和已撤回的信息仍保持隐藏。",
+      "en": "New conversations start clean. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.done": {
+      "text": "{botName} 在 {freshSessions} 个聊天中重新开始。已清除 {clearedBlocks} 条旧屏蔽记录。已删除和已撤回的信息仍保持隐藏。",
+      "en": "{botName} starts fresh in {freshSessions} chats. Cleared {clearedBlocks} old blocks. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.nothing": {
+      "text": "{botName} 已处于重新开始的状态。",
+      "en": "{botName} already starts fresh.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.checking": {
+      "text": "正在检查旧的记忆屏蔽记录…",
+      "en": "Checking old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.committing": {
+      "text": "正在清除旧的记忆屏蔽记录…",
+      "en": "Clearing old memory blocks…",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.preview": {
+      "text": "在 {freshSessions} 个聊天中重新开始，并清除 {staleBlocks} 条旧屏蔽记录。",
+      "en": "Start fresh in {freshSessions} chats and clear {staleBlocks} old blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.deletionPending": {
+      "text": "记忆删除仍在进行中。",
+      "en": "Memory deletion is still finishing.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.lineageUnready": {
+      "text": "仍在检查记忆。",
+      "en": "Memory is still being checked.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.botBusy": {
+      "text": "请等待 {botName} 完成回复。",
+      "en": "Wait for {botName} to finish replying.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.limitExceeded": {
+      "text": "此检查未完成。未清除任何屏蔽记录。",
+      "en": "This check did not finish. No blocks were cleared.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.policyUnavailable": {
+      "text": "无法清除这些屏蔽记录。已删除和已撤回的信息仍保持隐藏。",
+      "en": "These blocks cannot be cleared. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.unsupported": {
+      "text": "此版本无法清除这些屏蔽记录。",
+      "en": "This version cannot clear these blocks.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.failed": {
+      "text": "无法完成此请求。未做任何更改。",
+      "en": "Could not complete this request. Nothing was changed.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.unknown": {
+      "text": "结果尚不可用。请再次检查。",
+      "en": "The result is not available yet. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.stale": {
+      "text": "此检查已过期或已发生变化。请再次检查。",
+      "en": "This check has expired or changed. Check again.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.retained": {
+      "text": "{count} 条屏蔽记录将保留。",
+      "en": "{count} blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.retainedCapped": {
+      "text": "超过 5,000 条屏蔽记录将保留。",
+      "en": "More than 5,000 blocks stay in place.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.confirm": {
+      "text": "重新开始",
+      "en": "Start fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.cancel": {
+      "text": "取消",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.close": {
+      "text": "关闭",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.checkAgain": {
+      "text": "再次检查",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.setAdvanced": {
+      "text": "在高级设置中调整",
+      "en": "Set in Advanced",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.back": {
+      "text": "返回",
+      "en": "Back",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.about": {
+      "text": "关于重新开始",
+      "en": "About starting fresh",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:freshStart.help": {
+      "text": "只有在不会暴露已撤回信息时，此操作才会清除此机器人的撤销标记。它会使用获准的历史记录启动新的引擎会话；已删除和已撤回的信息仍保持隐藏。缺少历史记录的屏蔽记录将保留。检查受阻并不表示机器人以后无法回复。启动时的独立修复会自动清除范围更小、仅涉及接收者的旧会话屏蔽记录。",
+      "en": "Start fresh can clear revoked marks for this bot only when removing them cannot reveal withdrawn information. It starts new engine sessions with authorized replay; deleted and withdrawn information stays hidden. Blocks with missing history stay in place. A blocked check does not mean the bot can never reply. The separate audience-only startup repair clears a narrower set of stale session blocks automatically.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    },
+    "zh:ux.l4a.screen.bot.memory.intro": {
+      "text": "{name} 在聊天之间记住的内容。高级设置中的“重新开始”会启动新会话。已删除和已撤回的信息仍保持隐藏。",
+      "en": "What {name} remembers between chats. Start fresh in Advanced starts new sessions. Deleted and withdrawn information stays hidden.",
+      "verdict": "pass",
+      "note": "Reviewed against Murage UX bar: action and consequence agree; deleted/withdrawn information stays hidden; saved completion and pending results remain distinct. Advanced Help carries technical detail."
+    }
+  },
+  "files": {}
+}

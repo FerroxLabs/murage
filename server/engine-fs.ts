@@ -1,3 +1,5 @@
+import { walkOwnedDirectories } from "./owned-directory-walk.ts";
+import { lexicalKey } from "../shared/stored-root-path.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -9,13 +11,14 @@
 // `fsOps` is the raw read layer and `mutOps` the raw write layer: tests replace members to inject a failure or to record every
 // call. They are the ONLY place the deletion code touches node:fs and node:sqlite (engine-plan-structure.test.ts): the planners
 // reach the world through the strict reader below, the executor through both layers, and the worker through the driver alone.
-import { chmodSync, closeSync, utimesSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, unlinkSync, writeSync, type Stats } from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { chmodSync, closeSync, utimesSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, unlinkSync, type Stats } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { uptime } from "node:os";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-open.ts";
 import zlib from "node:zlib";
 import { heldFileOf, loadExclusionAddon, type Barrier, type FileWriters, type NativeProcess } from "./engine-exclusion.ts";
-import { MAX_LINE_BYTES, mentions as mentionsIn, PlanError, rolloutEvidence, type DbReader, type EngineFs, type FileRef, type HeldFile, type JsonLine } from "./engine-plan-core.ts";
+import { MAX_LINE_BYTES, pathApiFor, mentions as mentionsIn, PlanError, rolloutEvidence, type DbReader, type EngineFs, type FileRef, type HeldFile, type JsonLine } from "./engine-plan-core.ts";
 
 export interface RawDb { all(sql: string, params: Array<string | number>): Array<Record<string, unknown>>; close(): void }
 
@@ -57,6 +60,7 @@ export const fsOps = {
   readAt: readAtRaw,
   closeFd: (fd: number): void => closeSync(fd),
   lstat: lstatSync,
+  realpath: realpathSync.native,
   readdir: readdirSync,
   readFile: readFileSync,
   readlink: readlinkSync,
@@ -348,7 +352,7 @@ function guarded<T>(path: string, work: () => T): T {
 }
 
 /** The strict reader, over whatever `fsOps` is at the time of each call. */
-export function realEngineFs(): EngineFs {
+export function realEngineFs(): EngineFs & { pinRecoveryDestination: typeof pinRecoveryDestination } {
   const lstat = (path: string): Stats | null => {
     try { return fsOps.lstat(path) as Stats; } catch (error) {
       if (isAbsent(error)) return null;
@@ -360,7 +364,7 @@ export function realEngineFs(): EngineFs {
     return stat && stat.isFile() && !stat.isSymbolicLink() ? stat : null;
   };
   return {
-    lstat,
+    lstat, pinRecoveryDestination,
     syncedHome: (path) => isSyncedHome(path),
     readdir(path) {
       const stat = lstat(path);
@@ -538,4 +542,31 @@ function isSyncedHome(path: string, given: Partial<SyncedHomeEnv> = {}): boolean
     }
   }
   return false;
+}
+
+/** Read-only DR4 admission for a moved journal. Only a root recorded by the
+ * data-root owner may be linked; the executor receives canonical paths only. */
+function pinRecoveryDestination(dataDir: string, path: string, kind: "directory" | "file", linkedRoots: unknown): string {
+  const p = pathApiFor(dataDir), rel = p.relative(dataDir, path), parts = rel.split(p.sep);
+  const refuse = (): never => { throw new PlanError(path, new Error("Engine recovery destination is not an owned path.")); };
+  if (!rel || p.isAbsolute(rel) || parts.some(part => !part || part === "." || part === "..")) refuse();
+  const lstat = (name: string): Stats | null => {
+    try { return fsOps.lstat(name); } catch (error) { if (isAbsent(error)) return null; throw new PlanError(name, error); }
+  };
+  let base = fsOps.realpath(dataDir), walk = kind === "file" ? parts.slice(0, -1) : parts;
+  if (parts[0] === "providers") {
+    const root = p.join(base, "providers"), stat = lstat(root);
+    if (stat?.isSymbolicLink()) {
+      const saved = (linkedRoots as { providers?: { target?: unknown; dev?: unknown; ino?: unknown } } | null)?.providers;
+      if (!saved || typeof saved.target !== "string" || typeof saved.dev !== "number" || typeof saved.ino !== "number") return refuse();
+      const target = fsOps.realpath(root), now = lstat(target);
+      if (lexicalKey(target, process.platform) !== lexicalKey(saved.target, process.platform) || !now?.isDirectory() || now.isSymbolicLink() || (now.dev === saved.dev && now.ino !== 0 && saved.ino !== 0 && now.ino !== saved.ino)) refuse();
+      base = target; walk = walk.slice(1);
+    }
+  }
+  const parent = walkOwnedDirectories(base, walk, { lstat, mkdir: () => refuse(), created: () => {}, refuse });
+  if (kind === "directory") return parent;
+  const leaf = p.join(parent, parts.at(-1)!), stat = lstat(leaf);
+  if (stat && (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)) refuse();
+  return leaf;
 }

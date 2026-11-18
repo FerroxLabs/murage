@@ -1,0 +1,67 @@
+COMMAND node_modules/.bin/vitest run server/decision/exec-mode.test.ts -t "R1 Python evidence"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/')
+[memory] index build before listen name=memory_records_pinned ms=3
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=55 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/exec-mode.test.ts (29 tests | 4 failed | 25 skipped) 2599ms
+   ↓ R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' 'mkfs.ext4 /dev/sda'
+   ↓ R14 A8a M25 M26 M60 M61 executable/data benign echo "rm -rf ~"
+   ↓ R14 A8a M25 M26 M60 M61 executable/data benign # rm -rf /
+   ↓ R14 A8a M25 M26 M60 M61 executable/data benign cat <<EOF
+rm -rf ~
+EOF
+   ↓ R14 A8a M25 M26 M60 M61 executable/data benign python3 -c "print('shutil.rmtree(\"/\")')"
+   ↓ R14 A8a M25 M26 M60 M61 executable/data benign node -e "const s='rm -rf ~'"
+   ↓ R14 A8a M25 M26 M60 M61 executable/data benign git commit -m "remove mkfs notes"
+   ↓ R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' '$(rm -rf ~)'
+   ↓ R14 A8a M25 M26 M60 M61 executable/data benign echo \$(rm -rf ~)
+   ↓ R14 A8a M25 M26 M60 M61 executable/data benign cat <<'EOF'
+$(rm -rf ~)
+EOF
+   ↓ R15 A8a real twin mkfs.ext4 /dev/sda
+   ↓ R15 A8a real twin sh -c 'rm -rf ~'
+   ↓ R15 A8a real twin rm -rf /
+   ↓ R15 A8a real twin bash <<EOF
+rm -rf ~
+EOF
+   ↓ R15 A8a real twin python3 -c "import shutil;shutil.rmtree('/')"
+   ↓ R15 A8a real twin node -e "require('child_process').execSync('rm -rf ~')"
+   ↓ R15 A8a real twin dd if=/dev/zero of=/dev/sda
+   ↓ R15 A8a real twin echo "$(rm -rf ~)"
+   ↓ R15 A8a real twin echo `rm -rf ~`
+   ↓ R15 A8a real twin cat <<EOF
+$(rm -rf ~)
+EOF
+   ↓ R1 aliases retain nested Python wipe evidence
+   × R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/') 719ms
+   × R1 Python evidence reaches real decision and sink: from shutil import rmtree as r; r('/') 630ms
+   × R1 Python evidence reaches real decision and sink: __import__('shutil').rmtree('/') 625ms
+   × R1 Python evidence reaches real decision and sink: import subprocess; subprocess.run(['rm','-rf','/']) 619ms
+   ↓ fork bomb executes but its printed documentation is inert
+   ↓ PowerShell root deletion and nested command are executable evidence
+   ↓ engine execute kinds and argv preserve executable arguments
+   ↓ connected-app multi-execute binds each catalog operation and exact account
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 25 skipped (29)
+   Start at  07:37:23
+   Duration  11.11s (transform 6.67s, setup 7.94s, import 421ms, tests 2.60s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/')
+ FAIL  server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: from shutil import rmtree as r; r('/')
+ FAIL  server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: __import__('shutil').rmtree('/')
+ FAIL  server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: import subprocess; subprocess.run(['rm','-rf','/'])
+TypeError: Cannot read properties of undefined (reading 'why')
+ ❯ server/decision/exec-mode.test.ts:9:317
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+

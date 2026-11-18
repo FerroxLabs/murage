@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // Where this computer can be reached, and what it is called there.
 //
 // The addresses a phone might dial, the tailnet one told apart from the rest,
@@ -253,7 +254,7 @@ async function refreshTailnetNameOnce(
       execFile(
         cli,
         ["status", "--json"],
-        {
+        withHideInherit({
           timeout: Math.max(250, left),
           // SIGTERM is a request, and the budget above is only worth as much
           // as the thing that enforces it: a wedged CLI that ignores the
@@ -269,7 +270,7 @@ async function refreshTailnetNameOnce(
           // deciding how much memory this process uses.
           maxBuffer: 16 * 1024 * 1024,
           env: tailscaleChildEnvironment(cli),
-        },
+        }),
         (error, stdout) => {
           if (error) {
             onAttempt?.(cli, error.message.split("\n")[0]);
@@ -394,10 +395,10 @@ export async function refreshBrowserServe(port: number, options: {
     const left = deadline - Date.now();
     if (left <= 0) break;
     const result = await new Promise<{error: ExecFileException | null; output: string}>(resolve=>{
-      run(cli,["serve","status","--json"],{
+      run(cli,["serve","status","--json"],withHideInherit({
         timeout:Math.max(1,left),killSignal:"SIGKILL",maxBuffer:1024*1024,
         env:tailscaleChildEnvironment(cli),
-      },(error,stdout)=>resolve({error,output:String(stdout ?? "")}));
+      }),(error,stdout)=>resolve({error,output:String(stdout ?? "")}));
     });
     if (!result.error) return inspectBrowserServe(result.output,port);
     if (result.error.code !== "ENOENT") break;

@@ -3,17 +3,22 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { parse } from "yaml";
 import { afterEach, expect, it, vi } from "vitest";
 import { ZipFile } from "yazl";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
+import { appendPeFixtureCertificate, unsignedPeFixture } from "./fixtures/windows-pe-signing.mjs";
+import { unsignedWindowsPePin, verifySignedWindowsPe } from "../shared/windows-signed-pe.mjs";
+import { windowsGepaFixture } from "./fixtures/windows-gepa.mjs";
 vi.mock("../shared/windows-backup-tools.mjs", async () => {
-  const { createHash } = await import("node:crypto"); const sha = value => createHash("sha256").update(value).digest("hex");
-  return { WINDOWS_BACKUP_RAW_SHA256: { age: sha("raw age fixture"), keygen: sha("raw keygen fixture"), license: sha("raw license fixture") }, WINDOWS_BACKUP_ARCHIVE: { url: "https://invalid.example/never-used", sha256: "0".repeat(64) } };
+  const { createHash } = await import("node:crypto"); const { unsignedPeFixture } = await import("./fixtures/windows-pe-signing.mjs");
+  const sha = value => createHash("sha256").update(value).digest("hex"), pe = text => Buffer.concat([unsignedPeFixture(), Buffer.from(text)]);
+  return { WINDOWS_BACKUP_RAW_SHA256: { age: sha(pe("raw age fixture")), keygen: sha(pe("raw keygen fixture")), license: sha("raw license fixture") }, WINDOWS_BACKUP_ARCHIVE: { url: "https://invalid.example/never-used", sha256: "0".repeat(64) } };
 });
 vi.mock("../shared/backup-restic-pin.mjs", async original => {
-  const actual = await original(); const { createHash } = await import("node:crypto");
-  return { ...actual, RESTIC_PINS: { ...actual.RESTIC_PINS, "win32-x64": { ...actual.RESTIC_PINS["win32-x64"], originalSha256: createHash("sha256").update("raw restic fixture").digest("hex") } } };
+  const actual = await original(); const { createHash } = await import("node:crypto"); const { unsignedPeFixture } = await import("./fixtures/windows-pe-signing.mjs");
+  return { ...actual, RESTIC_PINS: { ...actual.RESTIC_PINS, "win32-x64": { ...actual.RESTIC_PINS["win32-x64"], originalSha256: createHash("sha256").update(Buffer.concat([unsignedPeFixture(), Buffer.from("raw restic fixture")])).digest("hex") } } };
 });
 import { WINDOWS_BACKUP_ARCHIVE } from "../shared/windows-backup-tools.mjs";
 import { stageWindowsBackupTools, verifyWindowsBackupTools } from "./prepare-windows-backup-tools.mjs";
@@ -30,14 +35,30 @@ vi.mock("./prepare-fuigo.mjs", () => ({
 vi.mock("./prepare-browser.mjs", () => ({ verifyBrowserBundle: vi.fn() }));
 // The packaged-import guard has its own suite (windows-native-imports.test.mjs); the fixtures here are not real PE files.
 vi.mock("./windows-native-imports.mjs", () => ({ assertWindowsNativeImports: vi.fn(() => ({})) }));
+// Anchored native execution is proved on the native gate; these fixtures exercise signing order.
+vi.mock("./anchored-read-resource.mjs", () => ({ proveAnchoredReadResource: vi.fn(() => "loaded") }));
+import { loadEngineExclusionResource } from "./engine-exclusion-resource.mjs";
+import { nativeAuthenticodeIn } from "../server/browser-windows-identity.ts";
+import { proveAnchoredReadResource } from "./anchored-read-resource.mjs";
 // The engine-exclusion addon gate has its own suite (engine-exclusion-build.test.mjs); this one is about signing, and has no packaged Electron to load it with.
-vi.mock("./engine-exclusion-resource.mjs", () => ({
-  validateEngineExclusionResource: (resources) => path.join(resources, "engine-exclusion.node"),
-  loadEngineExclusionResource: () => "loaded",
-}));
-// The GEPA runtime is required before signing (GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED);
-// its bundle verification has its own suite (server/gepa-resource.test.ts).
-vi.mock("../server/gepa-resource.ts", () => ({ verifyGepaBundle: vi.fn() }));
+// R16/R25: afterPack must hand the validator the build's own receipt; `exclusionRun.receipt` swaps in a test receipt and runs the REAL validator on it.
+const exclusionRun = vi.hoisted(() => ({ calls: [], receipt: undefined }));
+vi.mock("./engine-exclusion-resource.mjs", async importOriginal => {
+  const actual = await importOriginal();
+  return {
+    validateEngineExclusionResource: (resources, platform, arch, receipt) => {
+      exclusionRun.calls.push([platform, arch, receipt]);
+      if (exclusionRun.receipt === undefined) return path.join(resources, "engine-exclusion.node");
+      return actual.validateEngineExclusionResource(resources, platform, arch, exclusionRun.receipt);
+    },
+    loadEngineExclusionResource: vi.fn(() => "loaded"),
+  };
+});
+// Exercise the real frozen GEPA inventory as well as its packaging call order.
+vi.mock("../server/gepa-resource.ts", async original => {
+  const actual = await original();
+  return { ...actual, verifyGepaBundle: vi.fn(actual.verifyGepaBundle) };
+});
 import { verifyGepaBundle } from "../server/gepa-resource.ts";
 const GEPA_RECEIPT = "a".repeat(64);
 import { verifyBrowserBundle } from "./prepare-browser.mjs";
@@ -46,24 +67,29 @@ vi.mock("../server/browser-windows-identity.ts", async importOriginal => ({
   verifyWindowsBrowserImage: vi.fn(() => ({ signed: true })),
   verifyWindowsBrowserSignatures: vi.fn(async () => {}),
   // the packaged addon's WinVerifyTrust check (no PowerShell fallback exists any more)
-  nativeAuthenticodeIn: vi.fn(resources => ({ resources, authenticode: async () => ({ status: "Valid", publisher: "Ferrox Labs, LLC" }) })),
+  nativeAuthenticodeIn: vi.fn(resources => ({ resources, authenticode: async () => ({ status: "Valid", publisher: "Ferrox Labs, LLC", embedded: true, timestamp: true }) })),
 }));
 import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures } from "../server/browser-windows-identity.ts";
 import afterPack from "./after-pack.mjs";
 import { browserBundlePaths } from "../server/browser-bundle-release.ts";
 import { verifyFuigoExecutable } from "./prepare-fuigo.mjs";
 
+const peBytes = text => Buffer.concat([unsignedPeFixture(), Buffer.from(text)]);
 const temporaryDirectories = [];
 afterEach(() => {
   vi.resetAllMocks();
+  vi.unstubAllEnvs();
+  exclusionRun.calls.length = 0;
+  exclusionRun.receipt = undefined;
   for (const directory of temporaryDirectories.splice(0)) removeTempDirSync(directory);
 });
 
 const CONTROL_PLANE = fs.readFileSync(path.join(import.meta.dirname, "..", "electron", "cloud-control-plane.mjs"));
 
 /** resources/app.asar holding electron/cloud-control-plane.mjs, in the asar format (size pickle, header pickle, file data). The prod-pin gate has its own suite (packaged-prod-pin.test.mjs); here the package carries the real module so that gate passes for real. */
-function writeAppAsar(resources, member = CONTROL_PLANE) {
-  const json = Buffer.from(JSON.stringify({ files: { electron: { files: { "cloud-control-plane.mjs": { size: member.length, offset: "0" } } } } }), "utf8");
+function writeAppAsar(resources, member = CONTROL_PLANE, gepaHash = GEPA_RECEIPT) {
+  const metadata = Buffer.from(JSON.stringify({ murageGepaManifests: { "win32-x64": gepaHash } }));
+  const json = Buffer.from(JSON.stringify({ files: { "package.json": { size: metadata.length, offset: String(member.length) }, electron: { files: { "cloud-control-plane.mjs": { size: member.length, offset: "0" } } } } }), "utf8");
   const padded = Buffer.alloc(Math.ceil(json.length / 4) * 4);
   json.copy(padded);
   const header = Buffer.alloc(8);
@@ -72,26 +98,37 @@ function writeAppAsar(resources, member = CONTROL_PLANE) {
   const size = Buffer.alloc(8);
   size.writeUInt32LE(4, 0);
   size.writeUInt32LE(header.length + padded.length, 4);
-  fs.writeFileSync(path.join(resources, "app.asar"), Buffer.concat([size, header, padded, member]));
+  fs.writeFileSync(path.join(resources, "app.asar"), Buffer.concat([size, header, padded, member, metadata]));
 }
 
 function fixture() {
+  // The Azure credentials the package step carries; afterPack refuses a Windows package without them.
+  for (const key of ["AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"]) vi.stubEnv(key, "fixture-value");
+  proveAnchoredReadResource.mockReturnValue("loaded");
+  loadEngineExclusionResource.mockReturnValue("loaded");
   verifyWindowsBrowserImage.mockReturnValue({ signed: true });
+  verifyWindowsBrowserSignatures.mockImplementation(async () => {});
+  nativeAuthenticodeIn.mockImplementation(resources => ({ resources, authenticode: async () => ({ status: "Valid", publisher: "Ferrox Labs, LLC", embedded: true, timestamp: true }) }));
   const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "murage-windows-signing-"));
+  const gui = unsignedPeFixture();
+  fs.writeFileSync(path.join(appOutDir, "Murage.exe"), gui);
   temporaryDirectories.push(appOutDir);
   const resources = path.join(appOutDir, "resources");
   for (const name of ["fuigo", "fuigo-probe", "cloudflared", "licenses"]) fs.mkdirSync(path.join(resources, name), { recursive: true });
-  writeAppAsar(resources);
+  const gepa = windowsGepaFixture(path.join(resources, "gepa-worker"), path.join(appOutDir, "gepa-metadata.json"), { signed: true });
+  writeAppAsar(resources, CONTROL_PLANE, gepa.hash);
   const executable = path.join(resources, "fuigo", "fuigo.exe");
-  fs.writeFileSync(executable, "pinned fixture");
+  fs.writeFileSync(executable, peBytes("pinned fixture"));
   const recovery = path.join(resources, "murage-recovery.exe");
-  fs.writeFileSync(recovery, "recovery fixture");
+  fs.writeFileSync(recovery, peBytes("recovery fixture"));
   const browser = browserBundlePaths(path.join(resources, "browser-engine"), "win32-x64");
   fs.mkdirSync(path.dirname(browser.chrome), { recursive: true });
-  fs.writeFileSync(browser.engine, "pinned browser engine");
-  fs.writeFileSync(browser.chrome, "pinned browser chrome");
-  fs.writeFileSync(path.join(resources, "cloudflared", "cloudflared.exe"), "vendor fixture");
-  fs.writeFileSync(path.join(resources, "engine-exclusion.node"), Buffer.concat([Buffer.from("MZ"), Buffer.alloc(4096)])); // the engine-exclusion addon (the gate refuses a package without it)
+  fs.writeFileSync(browser.engine, peBytes("pinned browser engine"));
+  fs.writeFileSync(browser.chrome, peBytes("pinned browser chrome"));
+  fs.writeFileSync(path.join(resources, "cloudflared", "cloudflared.exe"), peBytes("vendor fixture"));
+  fs.writeFileSync(path.join(resources, "anchored-read.node"), peAddon());
+  fs.writeFileSync(path.join(resources, "presence-guard.node"), peAddon());
+  fs.writeFileSync(path.join(resources, "engine-exclusion.node"), peAddon()); // the engine-exclusion addon (the gate refuses a package without it)
   for (const name of ["fuigo-LICENSE.txt", "fuigo-README.md", "fuigo-THIRD_PARTY_NOTICES.md", "cloudflared-LICENSE.txt", "cloudflared-README.md"]) {
     fs.writeFileSync(path.join(resources, "licenses", name), "fixture");
   }
@@ -128,9 +165,7 @@ function fixture() {
       { name: "sharp", version: "0.35.5", path: sharpPath },
     ],
   }));
-  const header = Buffer.alloc(128);
-  header.write("MZ", 0); header.writeUInt32LE(0x40, 0x3c);
-  header.write("PE\0\0", 0x40); header.writeUInt16LE(0x8664, 0x44);
+  const header = unsignedPeFixture();
   for (const name of ["onnxruntime_binding.node", "onnxruntime.dll", "DirectML.dll", "dxcompiler.dll", "dxil.dll"])
     fs.writeFileSync(path.join(native, name), header);
   const sharpNative = path.join(server, sharpPath, "node_modules/@img/sharp-win32-x64/lib");
@@ -142,28 +177,94 @@ function fixture() {
   fs.writeFileSync(helperManifest, JSON.stringify({ schema: 1, target: "win32-x64", executable: "launcher.exe", binarySha256: createHash("sha256").update(header).digest("hex") }));
   const backupDirectory = path.join(resources, "backup-tools", "x64"); fs.mkdirSync(backupDirectory, { recursive: true });
   const backupHelper = path.join(backupDirectory, "murage-backup-age.exe"); fs.writeFileSync(backupHelper, header);
-  for (const [file, bytes] of [["age.exe", "raw age fixture"], ["age-keygen.exe", "raw keygen fixture"], ["LICENSE", "raw license fixture"], ["restic.exe", "raw restic fixture"]]) fs.writeFileSync(path.join(backupDirectory, file), bytes);
+  for (const [file, bytes] of [["age.exe", "raw age fixture"], ["age-keygen.exe", "raw keygen fixture"], ["LICENSE", "raw license fixture"], ["restic.exe", "raw restic fixture"]]) fs.writeFileSync(path.join(backupDirectory, file), file.endsWith(".exe") ? peBytes(bytes) : bytes);
+  // Include every reviewed packaged path, plus all our built resources and GEPA's onedir images.
+  const catalogue = JSON.parse(fs.readFileSync(new URL("./windows-sac-allowlist.json", import.meta.url), "utf8")).files;
+  for (const item of catalogue) {
+    const file = path.join(appOutDir, item.path);
+    if (!fs.existsSync(file)) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, header); }
+  }
   const signIf = vi.fn(async file => {
     expect(verifyFuigoExecutable).toHaveBeenCalledWith(executable, "win32-x64");
     expect(verifyBrowserBundle).toHaveBeenCalledWith(path.join(resources, "browser-engine"), "win32-x64");
-    fs.appendFileSync(file, " signed fixture");
+    fs.writeFileSync(file, appendPeFixtureCertificate(fs.readFileSync(file)));
     return true;
   });
-  return { executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf, context: { appOutDir, arch: "x64", electronPlatformName: "win32", packager: { signIf, config: { extraMetadata: { murageGepaManifests: { "win32-x64": GEPA_RECEIPT } } } } } };
+  // The signing builder supplies a clean source repository for package provenance.
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "murage-signing-source-"));
+  temporaryDirectories.push(projectDir);
+  fs.writeFileSync(path.join(projectDir, "package.json"), JSON.stringify({ name: "signing-fixture", version: "1.0.19" }));
+  const git = args => execFileSync("git", args, { cwd: projectDir, encoding: "utf8" }).trim();
+  git(["init", "-q"]);
+  git(["add", "package.json"]);
+  git(["-c", "user.name=ci", "-c", "user.email=fixture@example.test", "commit", "-qm", "signing fixture"]);
+  // Option A (Sean 2026-11-18T06:42Z): the package is signed as 1.0.18 shipped, through the builder's own signIf
+  // (Azure Trusted Signing in production); the fixture signer appends a certificate table to each PE it is handed.
+  const context = { appOutDir, arch: "x64", electronPlatformName: "win32",
+    packager: { projectDir, signIf, appInfo: { updaterCacheDirName: "signing-fixture-updater" }, config: { publish: null, forceCodeSigning: true,
+      win: { azureSignOptions: { publisherName: "Ferrox Labs, LLC", endpoint: "https://eus.codesigning.azure.net", codeSigningAccountName: "fixture-signing-account", certificateProfileName: "fixture-profile" } },
+      extraMetadata: { murageGepaManifests: { "win32-x64": gepa.hash } } } } };
+  return { executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf, gepa, context };
 }
 
-it("verifies pinned inventory before signing engines and updater helper", async () => {
+
+
+// RETIRED "RED substituted GUI PE is rejected", "RED final-boundary substitution of %s" (5 cases) and "independent Invalid
+// trust for %s" for Murage.exe and ffmpeg.dll. Option A (Sean 2026-11-18T06:42Z): 1.0.19 signs as 1.0.18 shipped; controller-admitted signing + SAC qualification are the first post-release item.
+// Their mechanism (per-PE source pins and the afterSign freeze) belongs to the controller. Murage.exe is signed by
+// electron-builder after this hook and refused, if not validly ours, by the installer gate in release.yml.
+// The three addon cases of "independent Invalid trust" are kept below as "rejects signIf success without a valid signature".
+
+it("verifies pinned inventory before signing engines, updater helper and addons", async () => {
   const { context, executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf } = fixture();
   await afterPack(context);
-  expect(verifyGepaBundle).toHaveBeenCalledWith(path.join(context.appOutDir, "resources", "gepa-worker"), "win32-x64", GEPA_RECEIPT);
-  expect(signIf.mock.calls.map(([file]) => file)).toEqual([executable, browser.engine, browser.chrome, recovery, backupHelper, helper]);
-  expect(fs.readFileSync(recovery, "utf8")).toBe("recovery fixture signed fixture");
-  expect(fs.readFileSync(browser.engine, "utf8")).toBe("pinned browser engine signed fixture");
-  expect(fs.readFileSync(browser.chrome, "utf8")).toBe("pinned browser chrome signed fixture");
-  expect(verifyWindowsBrowserSignatures).toHaveBeenCalledWith([browser.engine, browser.chrome, recovery, backupHelper, helper], process.env.SystemRoot, expect.objectContaining({ resources: path.join(context.appOutDir, "resources") }));
+  expect(JSON.parse(fs.readFileSync(path.join(context.appOutDir, "resources", "build-provenance.json"), "utf8"))).toEqual({
+    commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: context.packager.projectDir, encoding: "utf8" }).trim(),
+    tree: execFileSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: context.packager.projectDir, encoding: "utf8" }).trim(),
+    version: "1.0.19",
+  });
+  expect(verifyGepaBundle).toHaveBeenCalledWith(path.join(context.appOutDir, "resources", "gepa-worker"), "win32-x64", context.packager.config.extraMetadata.murageGepaManifests["win32-x64"]);
+  // The 1.0.18 sign list, in its order, then the native addons 1.0.19 ships. Nothing else is signed here.
+  const addons = ["engine-exclusion.node", "anchored-read.node", "presence-guard.node"].map(name => path.join(context.appOutDir, "resources", name));
+  const expected = [executable, browser.engine, browser.chrome, recovery, backupHelper, helper, ...addons];
+  expect(signIf.mock.calls.map(([file]) => file)).toEqual(expected);
+  for (const [file, text] of [[recovery, "recovery fixture"], [browser.engine, "pinned browser engine"], [browser.chrome, "pinned browser chrome"], [executable, "pinned fixture"]]) {
+    expect(fs.readFileSync(file)).toEqual(appendPeFixtureCertificate(peBytes(text)));
+  }
+  // Every file signed here is then checked through the packaged addon's own WinVerifyTrust.
+  expect(verifyWindowsBrowserSignatures).toHaveBeenCalledWith(expected, process.env.SystemRoot, expect.objectContaining({ resources: path.join(context.appOutDir, "resources") }));
   verifyWindowsBackupTools(backupDirectory);
   expect(JSON.parse(fs.readFileSync(helperManifest, "utf8")).binarySha256).toBe(createHash("sha256").update(fs.readFileSync(helper)).digest("hex"));
-  expect(fs.readFileSync(executable, "utf8")).toBe("pinned fixture signed fixture");
+});
+
+// CONTRACTS-B 1.5 R16/R25 (Astra r1 block 2): the /MT receipt check is part of the Windows packaging path, through afterPack itself.
+const peAddon = () => { const b = unsignedPeFixture(); b.writeUInt16LE(0x2022, 86); return b; };
+const receiptFile = (context, value, raw) => {
+  const file = path.join(context.appOutDir, "receipt.json");
+  fs.writeFileSync(file, raw ?? JSON.stringify(value));
+  return file;
+};
+it("afterPack gives the Windows addon check the build script's own receipt for the target", async () => {
+  const { context } = fixture();
+  await afterPack(context);
+  expect(exclusionRun.calls).toHaveLength(1);
+  const [platform, arch, receipt] = exclusionRun.calls[0];
+  expect([platform, arch]).toEqual(["win32", "x64"]);
+  expect(receipt).toBe(path.resolve(import.meta.dirname, "..", "dist-native", "engine-exclusion", "win32-x64", "build.json"));
+});
+it("afterPack refuses a Windows addon whose receipt is missing, malformed or not /MT, and accepts /MT", async () => {
+  const run = async (make) => {
+    const { context } = fixture();
+    fs.writeFileSync(path.join(context.appOutDir, "resources", "engine-exclusion.node"), peAddon());
+    exclusionRun.receipt = make(context);
+    return afterPack(context);
+  };
+  await expect(run(context => path.join(context.appOutDir, "no-such-build.json"))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_MISSING");
+  await expect(run(context => receiptFile(context, null, "not json"))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_MISSING");
+  await expect(run(context => receiptFile(context, { crt: "MTd" }))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_CRT");
+  await expect(run(context => receiptFile(context, { crt: "other" }))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_CRT");
+  await expect(run(context => receiptFile(context, {}))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_CRT");
+  await expect(run(context => receiptFile(context, { crt: "MT" }))).resolves.toBeUndefined();
 });
 
 it("never signs a package whose control-plane module differs from the source", async () => {
@@ -205,17 +306,24 @@ it("never signs any engine when the browser bundle pin is rejected", async () =>
   expect(signIf).not.toHaveBeenCalled();
 });
 
-it.each(["agent-browser.exe", "chrome-headless-shell.exe", "murage-recovery.exe", "launcher.exe", "murage-backup-age.exe"])("fails closed when packaged signing is skipped for %s", async (name) => {
+it.each(["fuigo.exe", "agent-browser.exe", "chrome-headless-shell.exe", "murage-recovery.exe", "launcher.exe", "murage-backup-age.exe", "engine-exclusion.node", "anchored-read.node", "presence-guard.node"])("fails closed when packaged signing is skipped for %s", async (name) => {
   const { context, signIf } = fixture();
-  signIf.mockImplementation(async file => path.basename(file) !== name);
+  signIf.mockImplementation(async file => { if (path.basename(file) === name) return false; fs.writeFileSync(file, appendPeFixtureCertificate(fs.readFileSync(file))); return true; });
   await expect(afterPack(context)).rejects.toThrow(`Windows signing did not complete: ${name}`);
+  expect(loadEngineExclusionResource).not.toHaveBeenCalled();
+  expect(verifyWindowsBrowserSignatures).not.toHaveBeenCalled();
+  expect(fs.existsSync(path.join(context.appOutDir, "resources", "app-update.yml"))).toBe(false);
 });
 
 it("refuses tampered raw backup tools before signing and detects signing-time mutation", async () => {
   const first = fixture(); fs.appendFileSync(path.join(first.backupDirectory, "age.exe"), "tampered");
   await expect(afterPack(first.context)).rejects.toThrow("WINDOWS_BACKUP_RAW_MISMATCH"); expect(first.signIf).not.toHaveBeenCalled();
-  const second = fixture(); second.signIf.mockImplementation(async file => { if (file === second.backupHelper) fs.appendFileSync(path.join(second.backupDirectory, "age-keygen.exe"), "incorrect signature"); return true; });
+  const second = fixture(); second.signIf.mockImplementation(async file => { fs.writeFileSync(file, appendPeFixtureCertificate(fs.readFileSync(file))); if (file === second.backupHelper) fs.appendFileSync(path.join(second.backupDirectory, "age-keygen.exe"), "incorrect signature"); return true; });
+  // Option A: the upstream backup assets stay raw (as 1.0.18 shipped), so the raw pin is what refuses the mutation.
   await expect(afterPack(second.context)).rejects.toThrow("WINDOWS_BACKUP_RAW_MISMATCH"); expect(verifyWindowsBrowserSignatures).not.toHaveBeenCalled();
+  // The three upstream assets are never handed to the signer.
+  const third = fixture(); await afterPack(third.context);
+  expect(third.signIf.mock.calls.map(([file]) => path.basename(file)).filter(name => ["age.exe", "age-keygen.exe", "restic.exe"].includes(name))).toEqual([]);
 });
 
 it("requires the backup helper instead of accepting the copy step's missing-file warning", async () => {
@@ -242,7 +350,7 @@ it("copies all five backup resources (age, keygen, license, helper, restic) indi
 it("stages only pinned named ZIP members and refuses archive mismatch or existing collisions", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "murage-backup-stage-")); temporaryDirectories.push(root);
   const zip = new ZipFile(), chunks = []; const done = new Promise((resolve, reject) => { zip.outputStream.on("data", chunk => chunks.push(chunk)); zip.outputStream.on("end", resolve); zip.outputStream.on("error", reject); });
-  for (const [file, value] of [["age/age.exe", "raw age fixture"], ["age/age-keygen.exe", "raw keygen fixture"], ["age/LICENSE", "raw license fixture"], ["age/ignored.txt", "not extracted"]]) zip.addBuffer(Buffer.from(value), file);
+  for (const [file, value] of [["age/age.exe", "raw age fixture"], ["age/age-keygen.exe", "raw keygen fixture"], ["age/LICENSE", "raw license fixture"], ["age/ignored.txt", "not extracted"]]) zip.addBuffer(file.endsWith(".exe") ? peBytes(value) : Buffer.from(value), file);
   zip.end(); await done; const bytes = Buffer.concat(chunks), archive = path.join(root, "fixture.zip"); fs.writeFileSync(archive, bytes);
   WINDOWS_BACKUP_ARCHIVE.sha256 = createHash("sha256").update(bytes).digest("hex");
   const output = await stageWindowsBackupTools({ root, archive }); verifyWindowsBackupTools(output, { restic: false }); expect(() => verifyWindowsBackupTools(output)).toThrow("restic.exe");
@@ -281,7 +389,7 @@ it("release signature gate exempts only exact verified upstream paths and still 
   await expect(run(undefined)).rejects.toThrow(); expect(verifySigned).not.toHaveBeenCalled();
   fs.writeFileSync(path.join(f.backupDirectory, "LICENSE"), "raw license fixture"); fs.appendFileSync(path.join(f.backupDirectory, "age.exe"), "changed");
   await expect(run(undefined)).rejects.toThrow("WINDOWS_BACKUP_RAW_MISMATCH"); expect(verifySigned).not.toHaveBeenCalled();
-  fs.writeFileSync(path.join(f.backupDirectory, "age.exe"), "raw age fixture");
+  fs.writeFileSync(path.join(f.backupDirectory, "age.exe"), peBytes("raw age fixture"));
   verifyWindowsBrowserSignatures.mockRejectedValueOnce(new Error("Windows browser requires a valid Ferrox Labs signature"));
   await expect(run(undefined)).rejects.toThrow("valid Ferrox Labs signature");
   // This exercises the shared gate function and the CI step's source shape; it does not claim a real Authenticode verification.
@@ -363,3 +471,161 @@ it("copies the configured browser EXEs without electron-builder's early signing 
   expect(transformer.mock.calls.map(([file]) => path.basename(file))).not.toContain("agent-browser.exe");
   expect(transformer.mock.calls.map(([file]) => path.basename(file))).not.toContain("chrome-headless-shell.exe");
 });
+
+it("refuses a failed signed anchored-reader packaged smoke before archiving", async () => {
+  const f = fixture();
+  proveAnchoredReadResource.mockImplementationOnce(() => { throw Error("ANCHORED_RESOURCE_PROOF_FAILED"); });
+  await expect(afterPack(f.context)).rejects.toThrow("ANCHORED_RESOURCE_PROOF_FAILED");
+  expect(f.signIf).toHaveBeenCalledWith(path.join(f.context.appOutDir, "resources", "anchored-read.node"));
+  expect(verifyWindowsBrowserSignatures).not.toHaveBeenCalled();
+});
+
+it("refuses a console-subsystem Murage before signing or scheduling can flash a terminal", async () => {
+  const { context, signIf } = fixture();
+  const file = path.join(context.appOutDir, "Murage.exe");
+  const bytes = fs.readFileSync(file); bytes.writeUInt16LE(3, bytes.readUInt32LE(60) + 24 + 68); fs.writeFileSync(file, bytes);
+  await expect(afterPack(context)).rejects.toThrow("WINDOWS_GUI_SUBSYSTEM_REQUIRED");
+  expect(signIf).not.toHaveBeenCalled();
+});
+
+
+// "SAC refuses an unsigned packaged addon" is folded into "fails closed when packaged signing is skipped for %s" above (same three addons, same refusal).
+
+it("refuses a Windows package whose signer is not the 1.0.18 Azure configuration, before anything is signed", async () => {
+  const config = parse(fs.readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8"));
+  expect(config.forceCodeSigning).toBe(true);
+  expect(config.win.signtoolOptions).toBeUndefined();
+  expect(Object.keys(config.win.azureSignOptions).sort()).toEqual(["certificateProfileName", "codeSigningAccountName", "endpoint", "publisherName"]);
+  expect(config.win.azureSignOptions.publisherName).toBe("Ferrox Labs, LLC");
+  // The shipped configuration itself is accepted.
+  const shipped = fixture(); shipped.context.packager.config.win = config.win;
+  await expect(afterPack(shipped.context)).resolves.toBeUndefined();
+  expect(shipped.signIf).toHaveBeenCalled();
+  for (const win of [undefined, {}, { azureSignOptions: {} }, { azureSignOptions: { publisherName: "Another Publisher" } }, { azureSignOptions: { publisherName: ["Ferrox Labs, LLC"] } },
+    { signtoolOptions: { publisherName: "Ferrox Labs, LLC" } },
+    { azureSignOptions: { publisherName: "Ferrox Labs, LLC" }, signtoolOptions: { sign: "./scripts/windows-builder-custom-sign.mjs" } }]) {
+    const f = fixture(); f.context.packager.config.win = win;
+    await expect(afterPack(f.context)).rejects.toThrow("WINDOWS_SIGNING_CONFIG_MISMATCH");
+    expect(f.signIf).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(f.context.appOutDir, "resources", "app-update.yml"))).toBe(false);
+  }
+});
+
+// The full builder-config admission (assertAzureSigning) runs inside afterPack itself: each row changes one field of the
+// accepted fixture config and the package is refused before any file is signed or any update metadata is written.
+const azure = config => config.win.azureSignOptions;
+it.each([
+  ["signing not forced", config => { config.forceCodeSigning = false; }],
+  ["forceCodeSigning absent", config => { delete config.forceCodeSigning; }],
+  ["foreign endpoint", config => { azure(config).endpoint = "https://eus.codesigning.example.net"; }],
+  ["http endpoint", config => { azure(config).endpoint = "http://eus.codesigning.azure.net"; }],
+  ["endpoint absent", config => { delete azure(config).endpoint; }],
+  ["signing account absent", config => { delete azure(config).codeSigningAccountName; }],
+  ["signing account blank", config => { azure(config).codeSigningAccountName = " "; }],
+  ["certificate profile absent", config => { delete azure(config).certificateProfileName; }],
+  ["signExecutable false", config => { config.win.signExecutable = false; }],
+  ["signAndEditExecutable false", config => { config.win.signAndEditExecutable = false; }],
+  ["verifyUpdateCodeSignature false", config => { config.win.verifyUpdateCodeSignature = false; }],
+])("refuses the Windows package before any signing when the builder config has %s", async (_name, change) => {
+  const control = fixture();
+  await expect(afterPack(control.context)).resolves.toBeUndefined();
+  expect(control.signIf).toHaveBeenCalled();
+  const f = fixture(); change(f.context.packager.config);
+  await expect(afterPack(f.context)).rejects.toThrow("WINDOWS_SIGNING_CONFIG_MISMATCH");
+  expect(f.signIf).not.toHaveBeenCalled();
+  expect(fs.existsSync(path.join(f.context.appOutDir, "resources", "app-update.yml"))).toBe(false);
+});
+
+// Option A (Sean 2026-11-18T06:42Z): fail closed when the Azure signing environment is missing; never an unsigned installer.
+it.each(["AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"].flatMap(key => [[key, undefined], [key, ""]]))("refuses the Windows package before any signing when %s is %j", async (key, value) => {
+  const control = fixture();
+  await expect(afterPack(control.context)).resolves.toBeUndefined();
+  expect(control.signIf).toHaveBeenCalled();
+  const f = fixture(); vi.stubEnv(key, value);
+  await expect(afterPack(f.context)).rejects.toThrow(`WINDOWS_AZURE_SIGNING_ENV_REQUIRED: ${key}`);
+  expect(f.signIf).not.toHaveBeenCalled();
+  expect(fs.existsSync(path.join(f.context.appOutDir, "resources", "app-update.yml"))).toBe(false);
+});
+
+it("signs and signature-checks every addon declared by Windows packaging", async () => {
+  const f = fixture();
+  const config = parse(fs.readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8"));
+  const declared = config.win.extraResources.filter(row => /\.node$/i.test(row.to)).map(row => row.to);
+  expect(declared.sort()).toEqual(["anchored-read.node", "engine-exclusion.node", "presence-guard.node"]);
+  // A newly shipped addon must join afterPack's sign list before this can pass.
+  await afterPack(f.context);
+  const signed = f.signIf.mock.calls.map(([file]) => file), checked = verifyWindowsBrowserSignatures.mock.calls[0][0];
+  for (const name of declared) {
+    const file = path.join(f.context.appOutDir, "resources", name);
+    expect(signed).toContain(file);
+    expect(checked).toContain(file);
+    expect(fs.readFileSync(file)).toEqual(appendPeFixtureCertificate(peAddon()));
+  }
+});
+
+// RETIRED "SAC refuses an unlisted PE even when renamed" (4 cases). Option A (Sean 2026-11-18T06:42Z): 1.0.19 signs as 1.0.18 shipped; controller-admitted signing + SAC qualification are the first post-release item.
+// Its mechanism (complete PE source-set membership) belongs to the controller. On the 1.0.18 path the installer gate
+// in release.yml refuses any *.exe under release/ that is not validly signed by an allowed publisher.
+
+
+// Re-pointed from the SAC inventory (Option A (Sean 2026-11-18T06:42Z): 1.0.19 signs as 1.0.18 shipped; controller-admitted signing + SAC qualification are the first post-release item): the refusal now comes from the real
+// WinVerifyTrust-backed verifier afterPack runs over everything it signed; only the native answer is a fixture.
+it.each(["engine-exclusion.node", "anchored-read.node", "presence-guard.node", "murage-recovery.exe", "fuigo.exe"])("rejects signIf success without a valid signature: %s", async name => {
+  const { context } = fixture();
+  const actual = await vi.importActual("../server/browser-windows-identity.ts");
+  verifyWindowsBrowserSignatures.mockImplementation(actual.verifyWindowsBrowserSignatures);
+  const asked = [];
+  nativeAuthenticodeIn.mockReturnValue({ authenticode: async file => { asked.push(path.basename(file)); return { status: path.basename(file) === name ? "NotSigned" : "Valid", publisher: "Ferrox Labs, LLC", embedded: true, timestamp: true }; } });
+  await expect(afterPack(context)).rejects.toThrow("Windows browser requires a valid Ferrox Labs signature");
+  expect(asked).toContain(name);
+  // Control: the same package with every answer Valid is accepted, so the refusal above is the signature verdict.
+  const clean = fixture();
+  verifyWindowsBrowserSignatures.mockImplementation(actual.verifyWindowsBrowserSignatures);
+  nativeAuthenticodeIn.mockReturnValue({ authenticode: async () => ({ status: "Valid", publisher: "Ferrox Labs, LLC", embedded: true, timestamp: true }) });
+  await expect(afterPack(clean.context)).resolves.toBeUndefined();
+});
+
+it.each(["Some Other Publisher", undefined])("rejects a signed addon whose publisher is %s", async publisher => {
+  const { context } = fixture();
+  const actual = await vi.importActual("../server/browser-windows-identity.ts");
+  verifyWindowsBrowserSignatures.mockImplementation(actual.verifyWindowsBrowserSignatures);
+  nativeAuthenticodeIn.mockReturnValue({ authenticode: async file => ({ status: "Valid", publisher: path.basename(file) === "presence-guard.node" ? publisher : "Ferrox Labs, LLC", embedded: true, timestamp: true }) });
+  await expect(afterPack(context)).rejects.toThrow("Windows browser requires a valid Ferrox Labs signature");
+});
+
+it("loads and version-checks the signed checker only after all signIf calls, and before any signature is trusted", async () => {
+  const { context, signIf } = fixture();
+  loadEngineExclusionResource.mockImplementationOnce(file => {
+    expect(path.basename(file)).toBe("engine-exclusion.node");
+    expect(signIf).toHaveBeenCalledWith(file);
+    // The loaded checker is the signed image of the exact unsigned addon: source bytes plus only a certificate table.
+    expect(() => verifySignedWindowsPe(fs.readFileSync(file), unsignedWindowsPePin(peAddon()))).not.toThrow();
+    expect(nativeAuthenticodeIn).not.toHaveBeenCalled();
+    expect(verifyWindowsBrowserSignatures).not.toHaveBeenCalled();
+    return "loaded signed checker";
+  });
+  await afterPack(context);
+  expect(loadEngineExclusionResource).toHaveBeenCalledTimes(1);
+  expect(proveAnchoredReadResource).toHaveBeenCalledTimes(1);
+  const checkerCall = loadEngineExclusionResource.mock.invocationCallOrder[0];
+  expect(checkerCall).toBeGreaterThan(Math.max(...signIf.mock.invocationCallOrder));
+  expect(verifyWindowsBrowserSignatures.mock.invocationCallOrder[0]).toBeGreaterThan(checkerCall);
+});
+// RETIRED "requires the independently pinned runner checker before signing or loading the target checker" and
+// "both Windows CI jobs recheck the real final SAC inventory after packaging". Option A (Sean 2026-11-18T06:42Z): 1.0.19 signs as 1.0.18 shipped; controller-admitted signing + SAC qualification are the first post-release item.
+// The runner-checker pin and the SAC inventory workflow steps do not exist on the 1.0.18 path; the signature check that
+// remains in both jobs is the installer gate, asserted by "release signature gate exempts only exact verified upstream paths".
+
+// Re-pointed: the SAC inventory half is retired (Option A (Sean 2026-11-18T06:42Z): 1.0.19 signs as 1.0.18 shipped; controller-admitted signing + SAC qualification are the first post-release item); the foreign-addon removal it also covered stays.
+it("removes foreign-platform onnxruntime addons from the Windows package before signing", async () => {
+  const f = fixture();
+  const foreign = ["darwin/arm64", "linux/arm64", "linux/x64"].map(target => path.join(f.context.appOutDir, "resources/server/node_modules/onnxruntime-node/bin/napi-v6", target, "onnxruntime_binding.node"));
+  for (const file of foreign) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, peAddon()); }
+  await afterPack(f.context);
+  expect(foreign.every(file => !fs.existsSync(file))).toBe(true);
+  expect(fs.existsSync(path.join(f.context.appOutDir, "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/x64/onnxruntime_binding.node"))).toBe(true);
+});
+
+// RETIRED "SAC rejects a frozen GEPA image without the Murage publisher signature" (4 cases). Option A (Sean 2026-11-18T06:42Z): 1.0.19 signs as 1.0.18 shipped; controller-admitted signing + SAC qualification are the first post-release item.
+// Its mechanism (the afterSign SAC inventory) no longer runs. The GEPA images' signatures are refused before packaging by
+// native/gepa/verify-windows.ps1 (Valid, timestamped, our publisher, every PE) and their bytes by verifyGepaBundle above.

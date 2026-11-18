@@ -19,10 +19,12 @@ function desktopStop(host:ReturnType<typeof createBackupScheduleHost>,action:str
  let trigger!:()=>void,finish!:()=>void,settled=false;
  const pending=new Promise<void>(resolve=>{finish=resolve;});
  const noop=()=>{}, disposable={dispose:noop,invalidate:noop};
- const scope={backupScheduleHost:host,internalBackupQuit:false,quitRequested:false,backgroundLifecycle:null,cuaCleanedUp:false,
+ const scope={backupScheduleHost:host,bannerNative:null,attentionSurfaces:null,internalBackupQuit:false,quitRequested:false,backgroundLifecycle:null,cuaCleanedUp:false,
   desktopCleanup:pending,desktopShutdownStarted:false,serverStopReason:{logOnce:noop},stopDeskPresence:noop,sentinelHost:null,
   stopAutomaticRemoteBackups:noop,localEngineLogin:{shutdown:async()=>{}},modelSignIn:disposable,mcpServers:disposable,
-  notificationAuthorization:disposable,showApprovalNotification:disposable,desktopBackupTool:disposable,desktopResticTool:null,
+  notificationAuthorization:disposable,showApprovalNotification:disposable,
+  // Module lets cleanupDesktopForExit now disposes (Notify 1.0.19, b0cdd0b7a, electron/main.mjs:5883); null as at startup.
+  desktopBackupTool:disposable,desktopResticTool:null,
   remoteBackupAttestation:{abort:noop},managedComposioShutdown:{abort:noop},app:{on:(_event:string,cb:()=>void)=>{trigger=cb;},quit:noop},
   setImmediate:noop,slog:noop,dialog:{showErrorBox:noop},explicitBackupReturn,returnToWorkspaceAfterBackup:null as unknown,
   // Names the merged before-quit and Return callback use (b9 return authority, quit join, shutdown cause).
@@ -286,7 +288,7 @@ it.each(['settled','daily','manual','capturing','armed'])('T-downgrade: BASE18 h
  now+=86400000;fail=false;await dispatch();const tomorrow={phase:c.status().phase,captures};await dispatch();
  h.stopPolling();console.log(JSON.stringify({first,repeated,tomorrow,final:captures,events}));
  `;
- const result=JSON.parse(execFileSync(process.execPath,['--experimental-strip-types','--input-type=module','-e',script],{encoding:'utf8'}));
+ const result=JSON.parse(execFileSync(process.execPath,['--experimental-strip-types','--input-type=module','-e',script],{ windowsHide: true,encoding:'utf8'}));
  const expected=kind==='daily'||kind==='armed'?1:0;
  expect(result.first.captures).toBe(expected);
  expect(result.first.phase).toBe(['daily','armed','capturing'].includes(kind)?'needs-review':'skipped');

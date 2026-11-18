@@ -1,3 +1,4 @@
+import { fixtureMcpServers, bindFixtureAdapter } from "./testing/mcp-admission-fixture.ts";
 import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -58,7 +59,7 @@ const engines = [
   ].map(([file, name]) => [`ACP ${file}`, `acp/${file}`, name, "fake-acp-cli.ts"]),
 ] as const;
 let root: string | undefined;
-afterEach(() => { if (root) removeTempDirSync(root); root = undefined; launches.length = 0; });
+afterEach(() => { vi.restoreAllMocks(); if (root) removeTempDirSync(root); root = undefined; launches.length = 0; });
 
 for (const [label, module, exported, fixture] of engines) describe(label, () => {
   async function create() {
@@ -71,11 +72,18 @@ for (const [label, module, exported, fixture] of engines) describe(label, () => 
       mkdirSync(environment.FUIGO_HOME);
       writeFileSync(join(environment.FUIGO_HOME, "auth.json"), "{}");
     }
+    if (module === "acp/openclaw") {
+      environment.OPENCLAW_CONFIG_PATH = join(root, "openclaw.json");
+      writeFileSync(environment.OPENCLAW_CONFIG_PATH, "{}");
+    }
     const cli = resolve("server/testing", fixture!);
     chmodSync(cli, 0o755);
     const loaded = await driverImporters[module!]();
+    if (module === "acp/custom") vi.spyOn(loaded.customAcpSupport as { fluxReach: () => "flux" | "elsewhere" | "unknown" }, "fluxReach").mockReturnValue("elsewhere");
     const driver = loaded[exported!] as import("./contracts.ts").AnyProviderDriver;
-    return driver.create({ instanceId: `marks-${module}`, displayName: label, enabled: true, environment, config: driver.decodeConfig({ cli, fullAuto: false }) });
+    const instance = await driver.create({ instanceId: `marks-${module}`, displayName: label, enabled: true, environment, config: driver.decodeConfig({ cli, fullAuto: false }) });
+    bindFixtureAdapter(instance.adapter);
+    return instance;
   }
   it("D3-e spawn and protocol cwd equal the bot folder", async () => {
     const instance = await create();
@@ -223,12 +231,12 @@ process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }) + '\\n
 }
 it("D3-e chat MCP child runs in the bot folder", async () => {
   const file = mcpFixture();
-  const opened = await openChatMcpServers({ fixture: { command: process.execPath, args: [file], env: {} } }, { cwd: root });
+  const opened = await openChatMcpServers(fixtureMcpServers({ fixture: { command: process.execPath, args: [file], env: {} } }), { cwd: root });
   try { expect(opened.failed).toEqual([]); expect(launches.at(-1)?.cwd).toBe(root); }
   finally { for (const session of opened.sessions) session.close(); await Promise.all(opened.sessions.map(session => session.teardown.wait({ closeMs: 3000, maxMs: 8000 }))); }
 });
 it("D3-f chat MCP refuses a missing folder before spawning", async () => {
-  await expect(openChatMcpServers({ fixture: { command: "unused", args: [] } })).rejects.toThrow(BotFolderUnavailableError);
+  await expect(openChatMcpServers(fixtureMcpServers({ fixture: { command: "unused", args: [] } }))).rejects.toThrow(BotFolderUnavailableError);
   expect(launches).toEqual([]);
 });
 it("boxagent is NOT-ENGINE and remote relative commands never enter approval context", async () => {
@@ -324,7 +332,8 @@ done
 
 async function chatRuntime() {
   const { OpenAICompatDriver } = await import("./drivers/openai-compat.ts");
-  return OpenAICompatDriver.create({ instanceId: "marks-chat", displayName: "fixture", enabled: true, environment: {}, config: OpenAICompatDriver.decodeConfig({ url: "https://fixture.invalid/v1", key: "fixture", model: "fixture" }) });
+  const instance = await OpenAICompatDriver.create({ instanceId: "marks-chat", displayName: "fixture", enabled: true, environment: {}, config: OpenAICompatDriver.decodeConfig({ url: "https://fixture.invalid/v1", key: "fixture", model: "fixture" }) });
+  bindFixtureAdapter(instance.adapter); return instance;
 }
 it("D3-e openai-chat propagates the bot folder to its MCP child", async () => {
   ensureDirs();

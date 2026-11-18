@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 
 const ROOT = new URL("..", import.meta.url);
-const ORIGIN = "https://mac.tailnet123.ts.net";
+const ORIGIN = "https://mac.tail000000.ts.net";
 
 function extract(path: string, pattern: RegExp): string {
   const match = readFileSync(new URL(path, ROOT), "utf8").match(pattern);
@@ -480,7 +480,7 @@ describe("the native event scripts", () => {
   });
 
   it("never hands it to a page on another origin, even one with the same global", async () => {
-    for (const origin of ["https://evil.example", "https://mac.tailnet123.ts.net:8444", "null"]) {
+    for (const origin of ["https://evil.example", "https://mac.tail000000.ts.net:8444", "null"]) {
       for (const { result, seen } of [await ios(origin), android(origin)]) {
         expect(result, origin).toBe(false);
         expect(seen, origin).toEqual([]);

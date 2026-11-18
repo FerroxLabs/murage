@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const context = {}; context.globalThis = context;
 vm.runInNewContext(readFileSync(new URL("./recovery/messages.js", import.meta.url), "utf8"), context);
-const { messages, captureMessages, fallback, sentence } = context.murageRecoveryMessages;
+const { messages, captureMessages, fallback, sentence, undoRetry } = context.murageRecoveryMessages;
 
 test("backup folder permissions and invalid key locations have plain actionable copy", () => {
   for (const action of [undefined, "backup", "backup-encrypted"]) {
@@ -36,7 +36,8 @@ test("every recovery refusal has its own plain sentence", () => {
 });
 
 test("no sentence shows a code, tool jargon, an em dash or safe", () => {
-  for (const text of [...Object.values(messages), ...Object.values(captureMessages), fallback]) {
+  assert.equal(typeof undoRetry, "string");
+  for (const text of [...Object.values(messages), ...Object.values(captureMessages), fallback, undoRetry]) {
     assert.doesNotMatch(text, /[A-Z]{2,}_[A-Z_]+|age-keygen|fidelity|—|\bsaf(?:e|ely)\b/i, text);
     assert.match(text, /\.$/, text);
   }
@@ -75,8 +76,11 @@ test("a sentence names the item in the data folder when the refusal has one, and
 test("the ownership sentence names the button each window shows", () => {
   const html = readFileSync(new URL("./recovery/index.html", import.meta.url), "utf8");
   const renderer = readFileSync(new URL("./recovery/renderer.js", import.meta.url), "utf8");
-  assert.match(html, /data-action="retry">Retry startup</);
-  assert.match(renderer, /"Return to workspace":"Retry startup"/);
+  // MAIN RULING c45c8358c4: the ordinary retry button gained an id for focused recovery actions.
+  assert.match(html, /data-action="retry" id="retry-startup">Retry startup</);
+  // MAIN RULING 4f033c5f1d (BOOT-INDEX): one-time index recovery has its own
+  // Open Murage again action; ordinary recovery still names Retry startup.
+  assert.match(renderer, /\(state.context\?\.backupMode\|\|state.context\?\.updatePause\)\?"Return to workspace":state.context\?\.oneTimeStep\?"Open Murage again":"Retry startup"/);
   assert.match(sentence("RECOVERY_OWNERSHIP_REQUIRED", { backupMode: false }), /choose Retry startup\.$/);
   assert.match(sentence("RECOVERY_OWNERSHIP_REQUIRED", { backupMode: true }), /choose Return to workspace\.$/);
 });

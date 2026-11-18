@@ -15,13 +15,19 @@ import { murageLine } from "./murage-line.ts";
 import { turnProducedSomething, turnWroteText, wantsEmptyTurnLine } from "./failed-turn-line.ts";
 import { expectSameReads, measureReads } from "./testing/bounded-reads.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { database } from "./database.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 let store: Store, small: string, large: string;
 type Loaded = { threads: Map<string, { messages: Message[] }> };
 
 function seed(threadId: string, history: number) {
-  for (let i = 0; i < history; i++) store.appendMessage(threadId, { role: i % 2 ? "bot" : "user", kind: "text", text: `earlier ${i}`, ...(i % 2 ? { turnId: `old-${i}` } : {}) });
+  for (let i = 0; i < history; i++) {
+    store.appendMessage(threadId, { role: i % 2 ? "bot" : "user", kind: "text", text: `earlier ${i}`, ...(i % 2 ? { turnId: `old-${i}` } : {}) });
+    // This synchronous history seed has no serving loop to recover its WAL.
+    // Finish setup writes in bounded groups before the measured turn reads.
+    if ((i + 1) % 100 === 0) database().exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  }
   store.appendMessage(threadId, { role: "user", kind: "text", text: "hi", turnId: "turn-1" });
   // turn.retrying as the fold persists it (index.ts pushMessage): an activity row with no provider reply, stamped murageLine,
   // carrying the turn's id, with no actorKind

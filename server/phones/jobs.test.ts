@@ -1,3 +1,5 @@
+import { serviceQueueFixture, clearServiceQueueFixture } from '../testing/service-queue-fixture.ts';
+import { Store } from '../store.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -17,7 +19,10 @@ function makeRig() {
   const infos: any[] = [];
   let ids = 0;
   let tokens = 0;
+  clearServiceQueueFixture('phone');
+  const fixture = serviceQueueFixture(new Store(() => ({ instanceId: 'fixture', model: 'fixture' })));
   const j = new PhoneJobs({
+    authorityFor: fixture.authorityFor,
     now: () => t,
     setTimer: (ms, fn) => { const id = ++n; timers.set(id, { at: t + ms, fn }); return () => { timers.delete(id); }; },
     push: { park: (job) => { infos.push(job); parked.push(job.operationId); }, withdraw: (job) => withdrawn.push(job.operationId) },
@@ -27,6 +32,7 @@ function makeRig() {
     },
     leaseToken: () => `lease${String(++tokens).padStart(38, "0")}`.padEnd(43, "x"),
   });
+  fixture.queue(j.approvalQueue());
   const advance = (ms: number) => {
     const end = t + ms;
     for (;;) {

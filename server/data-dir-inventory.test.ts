@@ -26,14 +26,64 @@ import { scanDataDirWrites, unclassifiedStaticWrites } from "./testing/data-dir-
 
 const ROOT = join(import.meta.dirname, "..");
 
+it("T-BACKUP excludes Signal credentials like WhatsApp and retains channel receipt history", () => {
+  const credentials = classifyDataDirEntry("whatsapp");
+  expect(credentials).toMatchObject({ backup: "excluded", why: expect.stringContaining("Credential") });
+  expect(classifyDataDirEntry("signal")).toEqual(credentials);
+  expect(classifyDataDirEntryForBackup("signal")).toEqual(credentials);
+  expect(DATA_DIR_RESTORABLE).not.toContain("signal");
+  expect(isRestorableDataDirName("signal")).toBe(false);
+  expect(classifyDataDirEntry("channels")).toMatchObject({ backup: "retained" });
+  expect(classifyDataDirEntry("signal-other")).toBeUndefined();
+  expect(classifyDataDirEntry(".signal-owner-only.json")).toMatchObject({ backup: "excluded" });
+  expect(isRestorableDataDirName(".signal-owner-only.json")).toBe(false);
+});
+
+it("fence recovery notice obligations stay installation-local across backup and restore", () => {
+  expect(classifyDataDirEntry("fence-notices")).toMatchObject({ backup: "excluded" });
+  expect(DATA_DIR_RESTORABLE).not.toContain("fence-notices");
+  expect(isRestorableDataDirName("fence-notices")).toBe(false);
+});
+
+it.each(["walstop", "walok", "walattempt"])("classifies the memory worker %s marker without restoring it", suffix => {
+  const name = `memory-index.db-${suffix}`;
+  expect(classifyDataDirEntry(name)).toMatchObject({ backup: "excluded" });
+  expect(classifyDataDirEntryForBackup(name)).toEqual(classifyDataDirEntry(name));
+  expect(DATA_DIR_RESTORABLE).not.toContain(name);
+  expect(isRestorableDataDirName(name)).toBe(false);
+  expect(classifyDataDirEntry(`${name}-other`)).toBeUndefined();
+});
+
+it("classifies local restore source archives without changing their existing unknown-name backup behavior", () => {
+  const existing = classifyDataDirEntryForBackup("unrecognised-restore-source-fixture");
+  expect(existing).toMatchObject({ backup: "excluded", skip: "unrecognised" });
+  expect(classifyDataDirEntry("restore-archives")).toEqual(existing);
+  expect(classifyDataDirEntryForBackup("restore-archives")).toEqual(existing);
+  expect(DATA_DIR_RESTORABLE).not.toContain("restore-archives");
+  expect(isRestorableDataDirName("restore-archives")).toBe(false);
+  expect(classifyDataDirEntry("restore-archives-other")).toBeUndefined();
+});
+
+it("classifies the restore alert marker without changing its existing backup behavior", () => {
+  const existing = classifyDataDirEntryForBackup("unrecognised-restore-marker-fixture");
+  expect(existing).toMatchObject({ backup: "excluded", skip: "unrecognised" });
+  expect(Object.hasOwn(DATA_DIR_ENTRIES, "restore-stuck-at")).toBe(true);
+  expect(classifyDataDirEntry("restore-stuck-at")).toEqual(existing);
+  expect(classifyDataDirEntryForBackup("restore-stuck-at")).toEqual(existing);
+  expect(DATA_DIR_RESTORABLE).not.toContain("restore-stuck-at");
+  expect(isRestorableDataDirName("restore-stuck-at")).toBe(false);
+  expect(classifyDataDirEntry("restore-stuck-at-other")).toBeUndefined();
+});
+
 // ---------------------------------------------------------------------------
 // 1. Static scan
 // ---------------------------------------------------------------------------
 
 /** A scan hit that is not the Murage data folder: file -> joined name -> why. */
 const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
+  "server/settle-copy.ts": { "<<name>>": "deletes only the fixed SEARCH_FILES family (search.db, search.db-wal, search.db-shm), all explicitly excluded; T-INVENTORY and per-family M16 tests cover each name" },
   "server/data-roots.ts": { "<<name>>": "RootName is workspaces or providers, both classified top-level roots" },
-  "server/cloud-home/supervisor.ts": { "<<name>>": "Fixed root volume layout under /data (home, home/secrets, server-home, proxy, caddy, browser); the application DATA_DIR is /data/home, not this volume root" },
+  "server/cloud-home/home-volume-spec.ts": { "<<name>>": "Fixed root volume layout under /data (moved here from supervisor.ts for the root launcher); the application DATA_DIR is /data/home, not this volume root" },
   "server/setup-backup.ts": { "<<SETUP_BACKUP_FILE_NAME>>": "setup-backup.json (classified), the name shared/setup-backup-record.mjs exports" },
   "server/drivers/claude.ts": { "<<CLAUDE_SIGNIN_ANSWERS_FILE>>": "claude-signin-answers.json (classified): the sign-in card's remembered answers, the name drivers/claude-signin-answers.ts exports" },
   "server/user-chrome.ts": { DevToolsActivePort: "Chrome's own user-data folder, read only" },
@@ -47,6 +97,7 @@ const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
   "server/project-migration.ts": { "<<name>>": "deletes only project-rows-before-prune-*.db.partial and its side files, and side files beside a final copy (all classified), matched by name before removal" },
   "server/installation-app-schema-downgrade.ts": { "<<LEGACY_DELEGATIONS_FILE>>": "delegations.json (classified): the 1.0.1 queue file the downgrade writes back" },
   "server/index.ts": { "<<relative>>": "relative paths inside DATA_DIR/workspaces" },
+  "electron/composio-admission-store.mjs": { "<<ADMISSION_FILE>>": "composio-admission.json (classified, owner-file): COMPOSIO_ADMISSION_FILE from electron/composio-release-config.mjs, pinned by the constant-resolution test below" },
   "electron/memory-upgrade-status.mjs": { "<<name>>": "deletes only memory-upgrade-status.json and its memory-upgrade-status.json.<pid>.tmp (both classified), matched by name before removal" },
   "server/database.ts": { "<<UPGRADE_COUNTS_FILE>>": "memory-upgrade-counts.json (classified): the upgrade screen's cached counts", "<<MEMORY_PRE_V2_SNAPSHOT>>": "messages.pre-memory-v2.db, from memory/schema.ts", "<<MEMORY_PRE_V4_SNAPSHOT>>": "messages.pre-memory-v4.db, from memory/schema.ts", "<<MEMORY_PRE_V3_SNAPSHOT>>": "messages.pre-memory-v3.db, from memory/schema.ts" },
 };
@@ -79,17 +130,23 @@ describe("every top-level name Murage writes is classified for backup", () => {
     const DESKTOP_TEMP_FILES: Record<string, string | null> = {
       configPath: "config.json", preferenceFile: "startup-background.json",
       // In Electron's userData, not the data folder.
-      file: null, CREDENTIALS_FILE: null,
+      // MAIN RULING INT-CONFLICT-DEFAULT 15f4ee7d133 / 0bc73861f350: credentials use the shared durable writer; the retired local temp variable is no longer emitted.
+      file: null,
       // electron/cloud-home-store.mjs: sealed Cloud home records and the pending connect, in <userData>/cloud-homes
       // (electron/main.mjs), not the data folder.
       target: null, pendingFile: null,
     };
+    const main = readFileSync(join(ROOT, "electron", "main.mjs"), "utf8");
+    const durable = readFileSync(join(ROOT, "electron", "durable-write.mjs"), "utf8");
+    expect(main).toContain("writeFileDurable(fs, CREDENTIALS_FILE, encrypted)");
+    expect(durable).toContain('const temporary = `${file}.${pid}.tmp`;');
     const found = new Set<string>();
     for (const name of readdirSync(join(ROOT, "electron"))) {
       if (!/\.(?:mjs|cjs|js)$/.test(name) || /node-test|\.test\./.test(name)) continue;
       const source = readFileSync(join(ROOT, "electron", name), "utf8");
       for (const match of source.matchAll(/`\$\{([\w$.]+)\}\.\$\{process\.pid\}\.tmp`/g)) found.add(match[1]);
     }
+    expect(found.has("CREDENTIALS_FILE")).toBe(false);
     expect([...found].filter(variable => !Object.hasOwn(DESKTOP_TEMP_FILES, variable))).toEqual([]);
     for (const [variable, file] of Object.entries(DESKTOP_TEMP_FILES)) {
       expect(found.has(variable), `${variable} is no longer written; remove it here`).toBe(true);
@@ -240,4 +297,13 @@ describe("the Sentinel delivery ledger (1.0.9)", () => {
 it("D17 includes the root provenance record in restorable inventory", () => {
   expect(DATA_DIR_ENTRIES[".murage-root.json"]).toMatchObject({ backup: "record" });
   expect(DATA_DIR_RESTORABLE).toContain(".murage-root.json");
+});
+
+
+it("inventories every memory worker marker explanation in English", () => {
+  const inventory = readFileSync(join(ROOT, "docs/verification/memory-worker-markers-english.md"), "utf8");
+  for (const name of ["memory-index.db-walstop", "memory-index.db-walok", "memory-index.db-walattempt"]) {
+    expect(inventory).toContain(name);
+    expect(inventory).toContain(classifyDataDirEntry(name)!.why);
+  }
 });

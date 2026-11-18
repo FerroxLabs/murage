@@ -135,11 +135,20 @@ export interface FirstRunJobWorld {
   /** How a web search would leave this computer, for the one job that makes
    *  one. See `firstRunSearchRouting`. */
   search: FirstRunSearchRouting;
+  /**
+   * Set only on a Cloud home, to the job rows in everyday words (src/lib/first-run-cloud.ts hands them in, so this file stays
+   * free of the page). Absent on the desktop, so a desktop world is the object it always was.
+   */
+  cloud?: { rows: FirstRunCloudRows };
 }
+
+/** One title and one line per job, for a Cloud home. */
+export type FirstRunCloudRows = Readonly<Record<FirstRunJobId, { title: string; sub: string }>>;
 
 export function firstRunJobWorld(
   view: Pick<SetupView, "fluxReady" | "nothingToThinkWith" | "nothingCanAnswer" | "connectedJobApps">,
   search: FirstRunSearchRouting,
+  cloudRows?: FirstRunCloudRows,
 ): FirstRunJobWorld {
   return {
     fluxReady: view.fluxReady,
@@ -148,6 +157,7 @@ export function firstRunJobWorld(
     connected: view.connectedJobApps ?? [],
     appsUnreadable: view.connectedJobApps === null,
     search,
+    ...(cloudRows ? { cloud: { rows: cloudRows } } : {}),
   };
 }
 
@@ -170,7 +180,8 @@ export function firstRunJobWorld(
  */
 export function missingForJob(job: FirstRunJobShape, world: FirstRunJobWorld): readonly FirstRunJobNeed[] {
   const missing: FirstRunJobNeed[] = job.needs.filter((app) => !world.connected.includes(app));
-  if ((job.flux === "required" || world.nothingCanAnswer) && !world.fluxReady) missing.unshift("flux");
+  // A Cloud home never asks for a Flux key: no customer is shown one, so no job waits on it.
+  if ((job.flux === "required" || world.nothingCanAnswer) && !world.fluxReady && world.cloud === undefined) missing.unshift("flux");
   return missing;
 }
 
@@ -316,7 +327,8 @@ export interface FirstRunJobRow {
 }
 
 export function firstRunJobRows(world: FirstRunJobWorld): readonly FirstRunJobRow[] {
-  return FIRST_RUN_COPY.chat.jobs.rows.map((row, index) => {
+  return FIRST_RUN_COPY.chat.jobs.rows.map((desktopRow, index) => {
+    const row = world.cloud ? { ...desktopRow, ...world.cloud.rows[desktopRow.id] } : desktopRow;
     const shape = FIRST_RUN_JOB_SHAPES[row.id];
     const missing = missingForJob(shape, world);
     return {
@@ -424,6 +436,8 @@ export function chiefState(world: FirstRunJobWorld): FirstRunChiefState {
 }
 
 export function chiefStatusLine(world: FirstRunJobWorld, engineName: string): string {
+  // The status lines talk about this computer and a connection; a Cloud home has neither to report.
+  if (world.cloud) return "";
   const lines = FIRST_RUN_COPY.chat.jobs.status;
   const state = chiefState(world);
   if (state === "connected") return lines.connected;
@@ -471,7 +485,7 @@ export function chiefQuestion(ownerName: string): string {
 export function chiefLead(world: FirstRunJobWorld): string {
   const words = FIRST_RUN_COPY.chat.jobs;
   const state = chiefState(world);
-  return state === "no-brain" || state === "signed-out" ? words.leadNoBrain : words.lead;
+  return !world.cloud && (state === "no-brain" || state === "signed-out") ? words.leadNoBrain : words.lead;
 }
 
 // ── the escape hatch, on a machine with nothing ────────────────────────

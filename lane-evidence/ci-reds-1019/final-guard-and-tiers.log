@@ -1,0 +1,3 @@
+it-remote: ci-reds on murage-vt6 (load here 41)
+Windows child-process guard: 208 launches in 6308 tracked sources; 0 failures.
+ok: 4671 Vitest files; 3172 gate, 1536 extended

@@ -15,11 +15,11 @@ test("actual ad-hoc resign keeps the pinned payload but is not production trust"
   const root=mkdtempSync(path.join(tmpdir(),"murage-age-attestation-test-"));
   try{
     const signed=path.join(root,"age");copyFileSync(new URL("../dist-native/backup-age/arm64/age",import.meta.url),signed);
-    execFileSync("/usr/bin/codesign",["--force","--sign","-",signed],{stdio:"pipe",timeout:10000});
+    execFileSync("/usr/bin/codesign",["--force","--sign","-",signed],{ windowsHide: true,stdio:"pipe",timeout:10000});
     assert.equal(normalizedAgePayloadHash(original()),AGE_PAYLOAD_SHA256);
     assert.equal(normalizedAgePayloadHash(readFileSync(signed)),AGE_PAYLOAD_SHA256);
     assert.equal(trustedBackupAgeExecutable(signed),false);
-    assert.throws(()=>execFileSync("/usr/bin/codesign",["--verify","--strict","-R","=anchor apple generic",signed],{stdio:"pipe",timeout:10000}));
+    assert.throws(()=>execFileSync("/usr/bin/codesign",["--verify","--strict","-R","=anchor apple generic",signed],{ windowsHide: true,stdio:"pipe",timeout:10000}));
   }finally{safeWipeSync(root);}
 });
 test("code tampering, load-command bounds, overlapping segments and undeclared tail fail",{skip:!qualified},()=>{

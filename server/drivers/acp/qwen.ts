@@ -1,3 +1,4 @@
+import { isReadOnly } from "../../read-only-start.ts";
 // Qwen Code — Alibaba's `qwen --acp` CLI. Custom-only in Murage:
 // the official pane has no Qwen Cloud catalog; live local hosts land in
 // Custom and are written into ~/.qwen/settings.json modelProviders.
@@ -10,7 +11,8 @@
 // changing the model. That is Kimi finding B
 // (docs/plans/flux-router-integration.md), and it is why a Flux id short-
 // circuits `resolveTurnModel` below instead of falling through to the writer.
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../../counted-fs.ts";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +27,7 @@ import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost
 import { displayConfigPath, isPlainObject, NativeConfigRefusal, readNativeJsonConfig } from "../native-config-file.ts";
 import { engineUpdateRequired } from "../scoped-cli-home.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
+import { engineReach } from "../../flux-engine-reach.ts";
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
 
@@ -150,14 +153,14 @@ export const QWEN_ISOLATION_MIN = [0, 10, 0] as const;
  * A CLI whose version is unknown (the probe is retried once) or older than the first one with
  * the switches is rejected: the turn does not start and the owner is told to update Qwen.
  */
-export function qwenIsolationArgs(serverNames: readonly string[] | undefined, cliVersion: string | undefined): string[] {
+export function qwenIsolationArgs(serverNames: readonly string[] | undefined, cliVersion: string | undefined, noLimits = false): string[] {
   requireQwenIsolationVersion(cliVersion);
   const names = serverNames?.length ? serverNames : ["murage-no-servers"];
   // Qwen's ask mode, whatever its own default or the owner's setting: in its
   // "auto" mode Qwen's own classifier approves a shell command or a computer
   // click without asking Murage (qwen 0.25.3 ran them at Ask with no card), so
   // Murage's access level never applied.
-  return [...names.map((name) => `--allowed-mcp-server-names=${name}`), "-e", "none", "--exclude-tools=skill", "--approval-mode", "default"];
+  return [...names.map((name) => `--allowed-mcp-server-names=${name}`), "-e", "none", "--exclude-tools=skill", ...(noLimits ? [] : ["--exclude-tools=web_fetch"]), "--approval-mode", "default"];
 }
 
 /** Throws the update-required error for a Qwen that is unknown or older than QWEN_ISOLATION_MIN. Also run when the turn's env is
@@ -207,8 +210,15 @@ async function resolveModels(env: Record<string, string | undefined>): Promise<M
   return mergeFluxCatalog({ default: catalog.options[0]?.id ?? "", options: catalog.options }, DRIVER_KIND);
 }
 
+/** U05: where Qwen sends model requests: OPENAI_BASE_URL, then its own settings, then its compiled default. */
+function qwenFluxReach(env: Record<string, string | undefined>): import("../../flux-engine-reach.ts").FluxReach {
+  return engineReach(env, { hostEnv: ["OPENAI_BASE_URL"], configFiles: [join(qwenHome(env), "settings.json"), join(qwenHome(env), ".env")], compiledDefault: "https://portal.qwen.ai/v1" });
+}
+
 const support: AcpSupport = {
   driverKind: DRIVER_KIND,
+  // U05: OPENAI_BASE_URL, else modelProviders / .env in ~/.qwen, else Qwen's own OAuth backend.
+  fluxReach: (env) => qwenFluxReach(env),
   displayName: "Qwen",
   // Qwen starts each server handed at session/new (it is allowed by name,
   // qwenIsolationArgs, rig 0.15.6), with no readiness signal.
@@ -262,7 +272,7 @@ const support: AcpSupport = {
   spawnArgs: (_config, turn, ctx) => [
     "--acp",
     // The owner's personal MCP servers, extensions and skills stay out of the bot turn.
-    ...qwenIsolationArgs(ctx?.mcpServerNames, ctx?.cliVersion),
+    ...qwenIsolationArgs(ctx?.mcpServerNames, ctx?.cliVersion, (turn.permissionNow?.() ?? turn).noLimits === true),
     // A model-connection turn (a pasted key or a ChatGPT/Grok plan sign-in)
     // needs it for the same reason: the route's OPENAI_* env must win over a
     // saved Qwen OAuth selectedType, or the turn goes to Qwen's cloud.
@@ -330,8 +340,9 @@ const support: AcpSupport = {
    */
   applyFluxMemory: (env, { decision }) => {
     // A flux-* pick with no key runs on Qwen's own login: not a Flux request (applyTurnEnv already
-    // pointed the system settings at the memory-off file).
-    if (!isFluxUrl(env.OPENAI_BASE_URL)) return;
+    // pointed the system settings at the memory-off file). A Qwen whose own settings name Flux (or
+    // cannot be read) reaches Flux without the env, so the headers ride there too (fail closed).
+    if (!isFluxUrl(env.OPENAI_BASE_URL) && qwenFluxReach(env) === "elsewhere") return;
     writeQwenSystemSettings(env, decision.headers);
   },
   // Qwen's own managed auto-memory is off in every bot session (a named provider route included):
@@ -368,6 +379,7 @@ const support: AcpSupport = {
 /** A one-purpose, content-addressed settings file in the system layer (outranks the user's settings,
  *  which are left untouched). Always carries memory off; carries the Flux Memory headers when given. */
 function writeQwenSystemSettings(env: Record<string, string | undefined>, headers?: Record<string, string>): void {
+  if (isReadOnly()) return;
   const text = qwenSettingsJson(headers);
   const dir = join(DATA_DIR, "native", "flux-memory");
   const file = join(dir, `qwen-${createHash("sha256").update(text).digest("hex").slice(0, 16)}.json`);
@@ -378,4 +390,5 @@ function writeQwenSystemSettings(env: Record<string, string | undefined>, header
   env.QWEN_CODE_SYSTEM_SETTINGS_PATH = file;
 }
 
+export const qwenAcpSupport = support;
 export const QwenAgentDriver = createAcpDriver(support);

@@ -132,7 +132,11 @@ describe("credentials and key health (2.3, 2.4, section 8)", () => {
   });
 
   it("the owner sign-in runs only in the desktop shell and never hands a token to the page", async () => {
-    expect(await signInEmailOwner(undefined)).toBeNull();
+    // 1.0.19: no bridge is never success (it was null, which the caller read as signed in): a plain line, the Cloud one on a Cloud home
+    const noBridge = await signInEmailOwner(undefined, false);
+    expect(noBridge).toBe("Sign in to bot email from the Murage app on your computer.");
+    expect(await signInEmailOwner(undefined, true)).toBe("Email for bots isn't on Murage Cloud yet.");
+    for (const line of [noBridge, await signInEmailOwner(undefined, true)]) expect(line).not.toMatch(/\u2014|\u2013|\b(safe|unsafe|safety|free|forge|will fail)\b/i);
     let started = 0;
     expect(await signInEmailOwner({ start: async () => { started++; return { ok: true }; }, cancel: async () => {} })).toBeNull();
     expect(await signInEmailOwner({ start: async () => ({ ok: false, code: "cancelled", message: "Sign-in was cancelled. Nothing was changed." }), cancel: async () => {} }))

@@ -16,12 +16,13 @@ export function virtualProgram(files: Record<string, string>): ts.Program {
   const options: ts.CompilerOptions = { ...parsed.options, noEmit: true, incremental: false, noUnusedLocals: false, noUnusedParameters: false, types: ["node"] };
   const host = ts.createCompilerHost(options);
   const norm = (name: string): string => name.replace(/\\/g, "/");
+  const virtualFiles = Object.fromEntries(Object.entries(files).map(([name, source]) => [norm(name), source]));
   const readFile = host.readFile.bind(host), exists = host.fileExists.bind(host), getSource = host.getSourceFile.bind(host);
-  host.fileExists = name => norm(name) in files || exists(name);
-  host.readFile = name => files[norm(name)] ?? readFile(name);
-  host.getSourceFile = (name, languageVersion, onError, shouldCreate) => files[norm(name)] !== undefined
-    ? ts.createSourceFile(name, files[norm(name)], languageVersion, true) : getSource(name, languageVersion, onError, shouldCreate);
-  return ts.createProgram({ rootNames: Object.keys(files), options, host });
+  host.fileExists = name => norm(name) in virtualFiles || exists(name);
+  host.readFile = name => virtualFiles[norm(name)] ?? readFile(name);
+  host.getSourceFile = (name, languageVersion, onError, shouldCreate) => virtualFiles[norm(name)] !== undefined
+    ? ts.createSourceFile(name, virtualFiles[norm(name)], languageVersion, true) : getSource(name, languageVersion, onError, shouldCreate);
+  return ts.createProgram({ rootNames: Object.keys(virtualFiles), options, host });
 }
 
 /** The diagnostics in one virtual file, as short strings. */

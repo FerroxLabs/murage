@@ -1,21 +1,27 @@
+import { onRunTerminal as inboxRollupOnRunTerminal, onRunRemoved as inboxRollupOnRunRemoved, onRunsReplaced as inboxRollupOnRunsReplaced } from "./inbox-routine-lifecycle.ts";
 import { rebaseScheduledAttachmentPaths } from "./scheduled-attachment-paths.ts";
 import { REQUIRED_MCP_SERVERS, startsWithNotDone, toolsUnavailableRunError } from "./drivers/mcp-readiness.ts";
 import { readOwnerTimeZone, nextOwnerDailyOccurrence } from "./cloud-home/timezone.ts";
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { ROUTINE_INSTRUCTIONS_MAX, routineInstructionsTooLongMessage } from "../shared/routine-instructions.ts";
 import { RetiredTurnRegistry } from "./turn-dispatch-guard.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { awaitWriterGate, isDatabaseBusy, writersHeldForIndexBuild } from "./database.ts";
 
+import { prepareBotCreateRollback, recoverBotCreates } from "./bot-create-rollback.ts";
+import { inTxScope } from "./tx-scope.ts";
 import { DATA_DIR } from "./config.ts";
 import { rateLimited } from "./observe.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import { cancelCoalesced, flushCoalesced, scheduleCoalesced, writeFileAtomic } from "./atomic.ts";
-import { RoutineRunsJournal, routinesCommit } from "./routine-runs-journal.ts";
-import { isTracked, plainCopy, track, untracked } from "./tracked-state.ts";
+import { bootStep } from "./read-only-start.ts";
+import { RoutineRunsJournal, routineRunsFileName, routinesCommit } from "./routine-runs-journal.ts";
+import { labelWorkCollection } from "./work-collections.ts";
+import { isTracked, plainCopy, track, trackedRoot, untracked, type TrackedWrite } from "./tracked-state.ts";
 import { PersistedStateRecoveryError, readPersistedJson } from "./persisted-state.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { fenceEmailDerived } from "./email/external-marks.ts";
@@ -154,6 +160,8 @@ export interface RoutineInstructionPromotion {
 }
 
 export interface Routine {
+  /** Durable ordering for definitions created between owner checkpoints. */
+  proposalOrder?: number;
   watch?: RoutineWatchBinding;
   id: string;
   name: string;
@@ -187,6 +195,9 @@ export interface Routine {
    * current level can lower it (server/routine-permissions.ts). Older files
    * receive a ceiling on load. */
   permissionMode?: RoutinePermissionMode;
+  permissionExplicit?: boolean;
+  permissionInherited?: true;
+  permissionPending?: true;
   /** "Always allow for this routine": exact-command and stop-line keys the
    * owner allowed from a card in one of this routine's runs. Only granted
    * through the desktop from a pending card, removable in the editor, and
@@ -318,6 +329,8 @@ export interface RoutineRun {
   seatGrantedAt?: number;
   /** 1.0.4 SL-I I3: queued again after its engine's limit refused it before any work; dispatched at `until`. */
   limitWait?: RoutineLimitWait;
+  /** PAUSE100: no turn has started; kept across restart without an offline age limit. */
+  spendWait?: string;
   /** The harness's own cards open in this run (this computer's one-time
    * consent, a paid image, a bot-to-bot contact), by requestId. They are held
    * open in a scheduled or manual run, like permission cards. */
@@ -367,6 +380,11 @@ export const EVENT_EXTENSION = 4;
 export const EVENT_FULL_ACCESS_LIMIT = 16;
 /** The most hand-offs or new bots one run can ever do, however many times the owner allows more. */
 export const EVENT_MAX_LIMIT = 64;
+/** No limits runaway ceiling; lower permission levels retain EVENT_MAX_LIMIT. */
+export const EVENT_NO_LIMITS_CEILING = 4096;
+// Only identical text exchanged by the same two bots shares a loop key.
+// Distinct jobs keep the generous per-run ceiling, regardless of recipient.
+export const EVENT_NO_LIMITS_PAIR_REPEATS = EVENT_MAX_LIMIT;
 /** Why a run's ledger was closed, so the bot can be told the true reason. */
 export type EventBudgetClosedReason = "connection" | "stopped" | "watch";
 export interface EventActionBudget {
@@ -374,7 +392,7 @@ export interface EventActionBudget {
   version: 2;
   limits: { create: number; handoff: number };
   /** `receipt` is what the admitted action actually produced (the delegation id, the new bot's id), so the same action asked again returns it instead of doing the work twice. */
-  admissions: Array<{ id: string; kind: "create" | "handoff"; receipt?: string }>;
+  admissions: Array<{ id: string; kind: "create" | "handoff"; receipt?: string; pair?: string }>;
   /** Kinds the owner answered "Not now" to: no more actions of that kind in this run, and no further cards for it. */
   declined?: Array<"create" | "handoff">;
   closed: boolean;
@@ -384,9 +402,11 @@ export type EventAdmission =
   | { ok: true }
   | { ok: false; reason: "limit"; kind: "create" | "handoff"; used: number; limit: number }
   | { ok: false; reason: "closed"; closedReason?: EventBudgetClosedReason }
-  | { ok: false; reason: "unavailable" };
+  | { ok: false; reason: "unavailable" }
+  | { ok: false; reason: "loop" }
+  | { ok: false; reason: "ceiling" };
 const eventAdmissionId = z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/);
-const eventAdmissionList = z.array(z.object({ id: eventAdmissionId, kind: z.enum(["create", "handoff"]), receipt: z.string().min(1).max(200).optional() }).strict());
+const eventAdmissionList = z.array(z.object({ id: eventAdmissionId, kind: z.enum(["create", "handoff"]), receipt: z.string().min(1).max(200).optional(), pair: z.string().min(1).max(500).optional() }).strict());
 // Older runs stored the declined request keys ("handoff:<hash>"); they load as the kind they belonged to.
 const eventDeclinedList = z.array(z.string().min(1).max(200)).max(EVENT_MAX_LIMIT * 2);
 function declinedKinds(marks: string[]): Array<"create" | "handoff"> {
@@ -403,8 +423,8 @@ const eventActionBudgetV1 = z.object({
   .transform((value): EventActionBudget => ({ ...value, version: 2 }));
 const eventActionBudgetV2 = z.object({
   version: z.literal(2),
-  limits: z.object({ create: z.number().int().min(EVENT_BASE_LIMIT).max(EVENT_MAX_LIMIT), handoff: z.number().int().min(EVENT_BASE_LIMIT).max(EVENT_MAX_LIMIT) }).strict(),
-  admissions: eventAdmissionList.max(EVENT_MAX_LIMIT * 2), declined: eventDeclinedList.optional(), closed: z.boolean(),
+  limits: z.object({ create: z.number().int().min(EVENT_BASE_LIMIT).max(EVENT_NO_LIMITS_CEILING), handoff: z.number().int().min(EVENT_BASE_LIMIT).max(EVENT_NO_LIMITS_CEILING) }).strict(),
+  admissions: eventAdmissionList.max(EVENT_NO_LIMITS_CEILING * 2), declined: eventDeclinedList.optional(), closed: z.boolean(),
   closedReason: z.enum(["connection", "stopped", "watch"]).optional(),
 }).strict().refine(value => uniqueAdmissions(value)
   && value.admissions.filter(item => item.kind === "create").length <= value.limits.create
@@ -419,6 +439,10 @@ const eventActionBudgetSchema = z.union([eventActionBudgetV1, eventActionBudgetV
 function newEventActionBudget(): EventActionBudget { return { version: 2, limits: { create: EVENT_BASE_LIMIT, handoff: EVENT_BASE_LIMIT }, admissions: [], closed: false }; }
 
 export interface RoutineRequestReceipt {
+  /** Stable single-file location for intent, result and cleanup. */
+  journalRoutineId?: string;
+  /** Monotonic newest-first receipt order, independent of journal file order. */
+  journalOrder?: number;
   requestId: string;
   messageId: string;
   botId: string;
@@ -460,6 +484,7 @@ export type AutomationUndoBefore =
 
 /** Written with the receipt before the change is applied. */
 export interface RoutineRequestIntent {
+  routineId?: string;
   kind?: "webhook";
   before: AutomationUndoBefore | null;
   expectedUpdatedAt?: number;
@@ -523,11 +548,14 @@ function routineRequestOwnerKey(owner: RoutineRequestOwner): string {
 }
 
 export interface RoutineManagerOptions {
+  onRoutineRunTerminal?: (change: { runId: string; before: RoutineRunTerminalProjection; after: RoutineRunTerminalProjection; revision: number }) => void;
   /** 1.0.11 APP-TRIGGERS: the indexed store of connected-app event runs (server/app-trigger-store.ts). App runs never enter
    * the legacy run collection, its cloning, retained-run dedupe or history-wide permission lookup (section 4.3). */
   appRunStore?: AppEventRunStore;
   /** The bot's current level when a routine's ceiling is pinned. */
   botMode?: (botId: string) => RoutinePermissionMode | undefined;
+  /** Capability switch: a disabled channel never admits a provider turn. */
+  channelMessagesEnabled?: (botId: string) => boolean;
   /** Host evaluator must validate the retained receipt, exact candidate and current source authority. */
   validateInstructionPromotion?: (routine: Readonly<Routine>, proposal: Readonly<RoutineInstructionPromotion>) => boolean;
   validateInstructionEvidence?: (context: Pick<Routine, "botId" | "groupId" | "target">, evidence: NonNullable<RoutineInstructionRevision["evidence"]>) => boolean;
@@ -592,11 +620,11 @@ export interface RoutineManagerOptions {
   /** Keyed frames only: every payload on this bus is `{ kind, … }`, which
    * is what lets the server number and replay them. */
   emit?: (payload: Record<string, unknown>) => void;
-  botState: (botId: string) => "ready" | "busy" | "missing";
+  botState: (botId: string) => "ready" | "busy" | "missing" | "staged";
   /** A shared channel conversation can be busy with other work while its bot
    * still has a free thread slot; its next message waits for the conversation. */
   threadBusy?: (botId: string, threadId: string) => boolean;
-  goalState?: (groupId: string, coordinatorBotId: string) => "ready" | "busy" | "missing";
+  goalState?: (groupId: string, coordinatorBotId: string) => "ready" | "busy" | "missing" | "staged";
   createTask: (botId: string, title: string, activate?: boolean) => { threadId: string } | null;
   /** Does this bot still have this conversation? A routine's own
    * conversation is reused only while it does. Without it, every run gets a
@@ -608,6 +636,7 @@ export interface RoutineManagerOptions {
    * an earlier run (or the owner) already worked there. */
   onRunDispatch?: (run: RoutineRun, reused: boolean) => void;
   /** Telegram messages continue the bot's current conversation. */
+  channelMessagesOff?: (botId: string, principal?: HumanPrincipal) => { line: string; threadId?: string } | undefined;
   channelThread?: (botId: string, principal?: HumanPrincipal) => { threadId: string } | null;
   /** FENCE-RACE-1018 r2: is a memory rebuild still owed for this refused provider turn of this run? Then a channel run follows
    *  the rebuild (the refusal is not its terminal). Every ending of the rebuild that emits no terminal the run binds settles the
@@ -639,6 +668,7 @@ export interface RoutineManagerOptions {
   ) => Promise<void>;
   /** 1.0.4 SL-I I3: is this failure the engine's limit, refused before the run did anything (a turn's
    * failure, or a dispatch refusal such as a paused plan)? Null: an ordinary failure. */
+  spendHold?: (run: Readonly<RoutineRun>) => string | null;
   limitRefusal?: (run: RoutineRun, refusal: { event?: RuntimeEvent; message?: string }) => RoutineLimitRefusal | null;
   startGoal?: (
     groupId: string,
@@ -815,6 +845,7 @@ function retainRoutineInstructions(routine: Routine): RoutineInstructionRevision
 }
 
 function cloneRoutine(tracked: Routine): Routine {
+  routineWorkCounters.cloneRoutine++;
   const routine = untracked(tracked);
   return {
     ...routine,
@@ -838,12 +869,14 @@ function seatWaitUse(kind: string): string {
 }
 
 function cloneRun(tracked: RoutineRun): RoutineRun {
+  routineWorkCounters.cloneRun++;
   const run = untracked(tracked);
   return {
     ...run,
     ...(run.instructionEvidence ? { instructionEvidence: plainCopy(run.instructionEvidence) } : {}),
     ...(run.watch ? { watch: plainCopy(run.watch) } : {}),
     ...(run.seatWait ? { seatWait: plainCopy(run.seatWait) } : {}),
+    ...(run.cardsOpen ? { cardsOpen: [...run.cardsOpen] } : {}),
     ...(run.event ? { event: plainCopy(run.event) } : {}),
     ...(run.eventBudget ? { eventBudget: plainCopy(run.eventBudget) } : {}),
     ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}),
@@ -1059,6 +1092,208 @@ export function automaticRunCap(input: { base: number; ceiling: number; serviceM
   return Math.max(base, Math.min(ceiling, Math.ceil(waiting * serviceMs / windowMs)));
 }
 
+/** Integer-only instrumentation; probes install outside production operations. */
+export const routineWorkCounters = {
+  cloneRun: 0, cloneRoutine: 0, runsMaterialized: 0, recoverySaves: 0,
+  fullCommits: 0, fullVerifiers: 0, journalLines: 0, compactCopied: 0,
+  retired: 0, expiryServiced: 0, zoneExamined: 0, ownerDefinitionsVisited: 0,
+  storeTraversals: 0, trieCalls: {} as Record<string, number>,
+};
+function trieWork(method: string, depth: number): void {
+  const key = `${method}:${depth}`;
+  routineWorkCounters.trieCalls[key] = (routineWorkCounters.trieCalls[key] ?? 0) + 1;
+}
+
+/** Lexicographically sortable IEEE-754 components; fixed 16 hex digits each. */
+export function historyKey(...parts: number[]): string {
+  const buffer = new ArrayBuffer(8), view = new DataView(buffer);
+  return parts.map(part => {
+    const value = Number.isNaN(part) ? -Infinity : part === 0 ? 0 : part;
+    view.setFloat64(0, value, false);
+    const bits = view.getBigUint64(0, false);
+    return ((bits >> 63n) ? (~bits & 0xffffffffffffffffn) : (bits ^ 0x8000000000000000n)).toString(16).padStart(16, "0");
+  }).join("");
+}
+const scheduledNumber = (value: number): number => Number.isFinite(+value) ? +value : +value === Infinity ? Infinity : -Infinity;
+interface HistoryNode<T> {
+  children: Map<string, HistoryNode<T>>;
+  leaf?: { key: string; value: T; eligibleBase: number };
+  size: number;
+  max?: { key: string; value: T; eligibleBase: number };
+  minEligibleBase: number;
+}
+const historyNode = <T>(): HistoryNode<T> => ({ children: new Map(), size: 0, minEligibleBase: Infinity });
+
+/** Fixed-depth radix trie. Enumeration/audit are lifecycle and diagnostic only. */
+export class RoutineHistoryIndex<T> {
+  readonly root: HistoryNode<T> = historyNode<T>();
+  readonly depth: number;
+  constructor(depth = 32) { this.depth = depth; }
+  get size(): number { return this.root.size; }
+  private refresh(node: HistoryNode<T>): void {
+    node.size = node.leaf ? 1 : 0;
+    node.max = node.leaf;
+    node.minEligibleBase = node.leaf?.eligibleBase ?? Infinity;
+    for (let digit = 0; digit < 16; digit++) {
+      const child = node.children.get(digit.toString(16));
+      if (!child) continue;
+      node.size += child.size;
+      if (child.max && (!node.max || child.max.key > node.max.key)) node.max = child.max;
+      node.minEligibleBase = Math.min(node.minEligibleBase, child.minEligibleBase);
+    }
+  }
+  set(key: string, value: T, eligibleBase = -Infinity): void {
+    trieWork("set", this.depth);
+    if (key.length !== this.depth || !/^[0-9a-f]+$/.test(key)) throw new Error("history.key");
+    const path = [this.root];
+    let node = this.root;
+    for (const digit of key) {
+      let child = node.children.get(digit);
+      if (!child) node.children.set(digit, child = historyNode<T>());
+      node = child; path.push(node);
+    }
+    node.leaf = { key, value, eligibleBase: Number.isNaN(eligibleBase) ? -Infinity : eligibleBase };
+    for (let i = path.length - 1; i >= 0; i--) this.refresh(path[i]!);
+  }
+  delete(key: string): void {
+    trieWork("delete", this.depth);
+    const path = [this.root];
+    let node = this.root;
+    for (const digit of key) {
+      const child = node.children.get(digit);
+      if (!child) return;
+      node = child; path.push(node);
+    }
+    node.leaf = undefined;
+    for (let i = path.length - 1; i >= 0; i--) {
+      this.refresh(path[i]!);
+      if (i > 0 && path[i]!.size === 0) path[i - 1]!.children.delete(key[i - 1]!);
+    }
+  }
+  /** Maximum key strictly below bound, or the whole maximum. */
+  latest(bound?: string): T | undefined {
+    trieWork("latest", this.depth);
+    if (bound === undefined) return this.root.max?.value;
+    const before = (node: HistoryNode<T>, depth: number): T | undefined => {
+      if (depth === this.depth) return undefined;
+      const digit = parseInt(bound[depth]!, 16);
+      const same = node.children.get(digit.toString(16));
+      if (same) { const found = before(same, depth + 1); if (found !== undefined) return found; }
+      for (let d = digit - 1; d >= 0; d--) {
+        const max = node.children.get(d.toString(16))?.max;
+        if (max) return max.value;
+      }
+      return undefined;
+    };
+    return before(this.root, 0);
+  }
+  countAfter(bound: string): number {
+    trieWork("countAfter", this.depth);
+    let node: HistoryNode<T> | undefined = this.root, count = 0;
+    for (let i = 0; node && i < this.depth; i++) {
+      const digit = parseInt(bound[i]!, 16);
+      for (let d = digit + 1; d < 16; d++) count += node.children.get(d.toString(16))?.size ?? 0;
+      node = node.children.get(digit.toString(16));
+    }
+    return count;
+  }
+  oldestEligible(cutoff: number): T | undefined {
+    trieWork("oldestEligible", this.depth);
+    let node = this.root;
+    if (!node.size || node.minEligibleBase > cutoff) return undefined;
+    for (let i = 0; i < this.depth; i++) {
+      let chosen: HistoryNode<T> | undefined;
+      for (let d = 0; d < 16; d++) {
+        const child = node.children.get(d.toString(16));
+        if (child?.size && child.minEligibleBase <= cutoff) { chosen = child; break; }
+      }
+      if (!chosen) throw new Error("history.minEligibleBase");
+      node = chosen;
+    }
+    return node.leaf?.value;
+  }
+  *entries(): IterableIterator<[string, T]> {
+    trieWork("entries", this.depth);
+    const visit = function* (node: HistoryNode<T>): IterableIterator<[string, T]> {
+      if (node.leaf) yield [node.leaf.key, node.leaf.value];
+      for (let d = 15; d >= 0; d--) { const child = node.children.get(d.toString(16)); if (child) yield* visit(child); }
+    };
+    yield* visit(this.root);
+  }
+  audit(): string[] {
+    trieWork("audit", this.depth);
+    const errors = new Set<string>();
+    const visit = (node: HistoryNode<T>): { size: number; max?: typeof node.max; min: number } => {
+      let size = node.leaf ? 1 : 0, max = node.leaf, min = node.leaf?.eligibleBase ?? Infinity;
+      for (const child of node.children.values()) {
+        const actual = visit(child); size += actual.size; min = Math.min(min, actual.min);
+        if (actual.max && (!max || actual.max.key > max.key)) max = actual.max;
+      }
+      if (size !== node.size) errors.add("size");
+      if (max?.key !== node.max?.key || max?.value !== node.max?.value) errors.add("max");
+      if (!Object.is(min, node.minEligibleBase)) errors.add("minEligibleBase");
+      return { size, max, min };
+    };
+    visit(this.root);
+    return [...errors];
+  }
+}
+
+export type RoutineRunTerminalProjection = Pick<RoutineRun, "id" | "routineId" | "routineName" | "botId" | "status" | "threadId" | "scheduledFor" | "startedAt" | "finishedAt" | "createdAt" | "error" | "attention" | "seenAt">;
+function terminalProjection(run: RoutineRun): RoutineRunTerminalProjection {
+  const { id, routineId, routineName, botId, status, threadId, scheduledFor, startedAt, finishedAt, createdAt, error, attention, seenAt } = run;
+  return { id, routineId, routineName, botId, status, threadId, scheduledFor, startedAt, finishedAt, createdAt, error, attention, seenAt };
+}
+interface IndexedRun {
+  order: number; id: string; routineId: string; open: boolean; live: boolean; queued: boolean; quarantined: boolean;
+  threadId?: string; channelTurnKey?: string; chatThread?: string; botId: string; groupId?: string; target: RoutineTarget;
+  deliveryKey?: string; openWebhook?: string; limitEngine?: string; startKey?: string; inboxStartKey?: string; startedPresent: boolean;
+  cardKeys: string[]; cardOrderKey: string; eventId?: string; originKind?: RoutineRunTrigger; originInvalid: boolean;
+  ownerKey: string; scheduledKey: string; listKey: string; scheduleKey?: string; invalidScheduled: boolean;
+  retireClass?: "free" | "owed"; owedBase: number; eligibleBase: number;
+  historyKey?: string; outcomeKey?: string; successKey?: string; failedKey?: string;
+  projection: RoutineRunTerminalProjection;
+}
+export class RunIndexes {
+  readonly indexedRuns = new Map<RoutineRun, IndexedRun>();
+  readonly runsById = new Map<string, RoutineRun>();
+  readonly liveRuns = new Set<RoutineRun>();
+  readonly openRuns = new Set<RoutineRun>();
+  readonly queuedRuns = new Set<RoutineRun>();
+  readonly channelTurns = new Map<string, Set<RoutineRun>>();
+  readonly liveByThread = new Map<string, Set<RoutineRun>>();
+  readonly firstLiveRunByThread = new Map<string, RoutineRun>();
+  readonly queuedLimitWaitsByEngine = new Map<string, Set<RoutineRun>>();
+  readonly deliveryByKey = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly openRunsByWebhook = new Map<string, Set<RoutineRun>>();
+  readonly inboxStartsByRoutine = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly startsByRoutine = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly startedPresentByRoutine = new Map<string, number>();
+  readonly cardRuns = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly eventRuns = new Map<string, Set<RoutineRun>>();
+  readonly originKindsByThread = new Map<string, Map<RoutineRunTrigger, number>>();
+  readonly invalidOriginsByThread = new Map<string, number>();
+  readonly scheduledByRoutine = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly scheduledByOwner = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly scheduledAll = new RoutineHistoryIndex<RoutineRun>();
+  readonly chatRunsByThread = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly lastScheduledByRoutine = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly invalidScheduledByRoutine = new Map<string, number>();
+  readonly retirable = new RoutineHistoryIndex<RoutineRun>(16);
+  readonly owedHold = new RoutineHistoryIndex<RoutineRun>();
+  readonly retirementOrder = new RoutineHistoryIndex<RoutineRun>(16);
+  readonly historyBefore = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly outcomes = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly successes = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  readonly failures = new Map<string, RoutineHistoryIndex<RoutineRun>>();
+  constructor() {
+    // Identity-only test seam; includes indexes added by later slices and replacement stores.
+    for (const [name, collection] of Object.entries(this)) labelWorkCollection(`routines.indexes.${name}`, collection);
+  }
+}
+export class ScopeEscape extends Error { constructor(message = "Scoped mutation escaped its declared objects") { super(message); this.name = "ScopeEscape"; } }
+export class RecoveryRequired extends Error { constructor() { super("Routine persistence requires quiescent lifecycle recovery"); this.name = "RecoveryRequired"; } }
+
 export class RoutineManager {
   private startedAt: number;
   private gateOpened = false;
@@ -1087,34 +1322,462 @@ export class RoutineManager {
   /** Top-level routines.json fields this version does not know; written back unchanged (104 S4). */
   private unknownFileFields: Record<string, unknown> = {};
   private unloadedReasons = new Map<string, "schedule" | "watch">();
-  private runsRaw: RoutineRun[] = [];
   private routinesView: Routine[] = this.routinesRaw;
-  private runsView: RoutineRun[] = this.runsRaw;
-  /** Set when a whole list was replaced or an element was put in raw: the next sweep walks the list once. */
-  private walkRoutines = true;
-  private walkRuns = true;
-  /** Runs put into the run list since the last sweep (index writes only; a trim works on the raw list and adds none). */
-  private joinedRuns: RoutineRun[] = [];
-  /** The lists seen through a write watch on the list itself (not on the elements, which tracked-state.ts covers):
-   * a run pushed in is queued for the next sweep, a routine put in or taken out forces a full save, and a run taken
-   * out other than by the history cap does too. Reads and iteration cost nothing extra. */
-  private get routines(): Routine[] { return this.routinesView; }
-  private set routines(list: Routine[]) { this.routinesRaw = list; this.routinesView = this.watchList(list, "routines"); this.walkRoutines = true; this.fullSave = true; }
-  private get runs(): RoutineRun[] { return this.runsView; }
-  /** F2: moves whenever the whole run list is replaced (a load, a commitMutation rollback): run objects held from before are stale. */
+  private routineIdIndex: Map<string, Routine> | undefined;
+  private conversationRoutineIndex: Map<string, Routine> | undefined;
+  private runStore = labelWorkCollection("routines.runStore", new Set<RoutineRun>());
+  private indexes = new RunIndexes();
+  private nextRunOrder = 0;
+  private storeRev = 0;
+  private ownerView?: { revision: number; list: RoutineRun[] };
   private runsGeneration = 0;
-  private set runs(list: RoutineRun[]) { this.runsGeneration++; this.runsRaw = list; this.runsView = this.watchList(list, "runs"); this.walkRuns = true; this.fullSave = true; }
+  private accountedRunCount = 0;
+  private sweepBaseCount = 0;
+  private structuralAdds = 0;
+  private structuralRemoves = 0;
+  private removedRuns = new Map<string, RoutineRun>();
+  private rollbackPending = new Set<RoutineRun>();
+  private readonly maintenance = new AsyncLocalStorage<{ remaining: number }>();
+  private recoveryRequired = false;
+  private recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private recovering = false;
+  private recoveryNeedsIndexRepair = false;
+  private lifecycle = true;
+  private saving = false;
+  /** Distinguish a rejected save entry from a write whose durability is uncertain. */
+  private persistenceAttempts = 0;
+  private fullTransaction = false;
+  /** A full owner transaction can retry its rolled-back tagged write; scoped uncertainty cannot. */
+  private retryableFullTransaction = false;
+  private activeScope?: { objects: Set<object>; append?: RoutineRun };
+  private pendingSettles = new Map<string, { before: RoutineRunTerminalProjection; revision: number }>();
+  private currentDefinitionsByOwner = new Map<string, Map<string, Routine>>();
+  private definitionOwners = new Map<Routine, { owner: string; id: string; zoneKey: string }>();
+  private definitionRevision = 0;
+  private nextProposalOrder = 0;
+  private zoneReconciling = false;
+  private zoneStep?: { epoch: string; revision: number; cursor: number; since: number };
+  private walkRoutines = true;
+
+  private guardList(): void { if (this.activeScope) throw new ScopeEscape("List mutation inside scope"); }
+  private get routines(): Routine[] { return this.routinesView; }
+  private set routines(list: Routine[]) {
+    this.guardList();
+    this.routinesRaw = list.map(routine => this.trackRoutine(routine));
+    this.routinesView = this.watchList(this.routinesRaw, "routines");
+    this.rebuildDefinitionIndex();
+    this.walkRoutines = false; this.fullSave = true;
+  }
+  /** Explicit owner compatibility view. Internal paths use the store or indexes. */
+  private get ownerRunList(): RoutineRun[] {
+    if (!this.ownerView || this.ownerView.revision !== this.storeRev) {
+      routineWorkCounters.runsMaterialized++;
+      this.ownerView = { revision: this.storeRev, list: this.watchList(Array.from(this.runStore), "runs") };
+    }
+    return this.ownerView.list;
+  }
+  /** Explicit owner/test compatibility only. Scheduler internals never read this materialised view. */
+  get runs(): RoutineRun[] { return this.ownerRunList; }
+  set runs(list: RoutineRun[]) { this.replaceStore(list); this.commitMutation(() => {}); }
+  /** Legacy diagnostic callers receive the same guarded owner boundary, never the canonical store. */
+  get runsRaw(): RoutineRun[] { return this.ownerRunList; }
   private watchList<T extends object>(list: T[], kind: "routines" | "runs"): T[] {
-    const isIndex = (key: PropertyKey) => typeof key === "string" && key !== "length" && /^\d+$/.test(key);
+    const structural = new Set(["splice", "shift", "unshift", "sort", "reverse", "copyWithin", "fill", "pop", "push"]);
+    const changed = () => {
+      if (kind === "runs") {
+        const runs = list as unknown as RoutineRun[];
+        for (let index = 0; index < runs.length; index++) if (runs[index]) runs[index] = this.trackRun(runs[index]!);
+        this.replaceStore(runs); this.commitMutation(() => {});
+      }
+      else { this.rebuildDefinitionIndex(); this.fullSave = true; this.fleetDueAt = null; }
+    };
     return new Proxy(list, {
-      set: (target, key, value, receiver) => {
-        if (isIndex(key)) { if (kind === "runs") this.joinedRuns.push(value as unknown as RoutineRun); else { this.fullSave = true; this.walkRoutines = true; } }
-        return Reflect.set(target, key, value, receiver);
+      get: (target, key, receiver) => {
+        const value = Reflect.get(target, key, receiver);
+        if (typeof key === "string" && structural.has(key)) return (...args: unknown[]) => {
+          this.guardList();
+          if (kind === "runs" && key === "push") {
+            const added = this.pushOwnerRuns(args as RoutineRun[]);
+            return Array.prototype.push.apply(target, added as unknown as T[]);
+          }
+          const prepared = (kind === "routines" && ["push", "unshift"].includes(key)) ? args.map(routine => this.trackRoutine(routine as Routine)) : args;
+          const result = Reflect.apply(value, target, prepared);
+          changed(); return result;
+        };
+        return value;
       },
-      deleteProperty: (target, key) => { if (isIndex(key)) this.fullSave = true; return Reflect.deleteProperty(target, key); },
+      set: (target, key, value) => {
+        this.guardList();
+        if (kind === "routines" && typeof key === "string" && /^\d+$/.test(key)) value = this.trackRoutine(value);
+        const done = Reflect.set(target, key, value); if (done) changed(); return done;
+      },
+      deleteProperty: (target, key) => { this.guardList(); const done = Reflect.deleteProperty(target, key); if (done) changed(); return done; },
+      defineProperty: (target, key, descriptor) => { this.guardList(); const done = Reflect.defineProperty(target, key, descriptor); if (done) changed(); return done; },
+      setPrototypeOf: () => { this.guardList(); return false; },
+      preventExtensions: () => { this.guardList(); return false; },
     });
   }
-  private routineRequestReceipts: RoutineRequestReceipt[] = [];
+  private pushOwnerRuns(values: RoutineRun[]): RoutineRun[] {
+    if (!values.length) return [];
+    const ids = new Set<string>();
+    for (const value of values) {
+      if (ids.has(value.id) || this.indexes.runsById.has(value.id)) throw new ScopeEscape("Append ID is already present");
+      ids.add(value.id);
+    }
+    if (this.activeScope || this.fullTransaction || this.saving) throw new ScopeEscape("Nested owner append");
+    if (this.recoveryRequired || this.fullSave || this.pendingCommit !== null || this.generation === undefined || !this.diskIsOurs()) { this.requestRecovery(); throw new RecoveryRequired(); }
+    const added = values.map(value => this.trackRun(value)), inserted: RoutineRun[] = [];
+    let attempted = false;
+    try {
+      for (const run of added) { this.appendRun(run); inserted.push(run); }
+      attempted = true;
+      this.journal.append({ runs: added.map(untracked), routines: [], removed: [] });
+      for (const run of added) this.dirtyRuns.delete(run);
+      this.savedRunCount = this.journalCount();
+      return added;
+    } catch (error) {
+      if (!attempted) {
+        for (const run of inserted) this.removeRun(run, false);
+      } else {
+        this.fullSave = true; this.requestRecovery(); cancelCoalesced(this.file);
+        try {
+          this.journal.append({ runs: [], routines: [], removed: inserted.map(untracked) });
+          for (const run of inserted) this.removeRun(run, false);
+          this.savedRunCount = this.journalCount();
+        } catch (reconciliationError) {
+          for (const run of inserted) { this.rollbackPending.add(run); this.updateRunIndex(run); }
+          if (error instanceof Error) Object.defineProperty(error, "reconciliationError", { value: reconciliationError, configurable: true });
+        }
+      }
+      throw error;
+    } finally { this.drainSettled(); }
+  }
+  private appendRun(value: RoutineRun): RoutineRun {
+    if (this.activeScope && untracked(this.activeScope.append) !== untracked(value)) throw new ScopeEscape("Undeclared append");
+    if (!Number.isSafeInteger(this.nextRunOrder) || this.nextRunOrder >= Number.MAX_SAFE_INTEGER) { this.requestRecovery(true); throw new RecoveryRequired(); }
+    const run = this.trackRun(value);
+    if (this.runStore.has(run)) return run;
+    if (this.indexes.runsById.has(run.id)) throw new Error("runsById.duplicateIds");
+    this.runStore.add(run); this.knownRuns.add(run); this.dirtyRuns.add(run);
+    this.accountedRunCount++; this.structuralAdds++; this.storeRev++; this.ownerView = undefined; this.runRevision++;
+    this.updateRunIndex(run, this.nextRunOrder++);
+    return run;
+  }
+  private clearRunSideMaps(id: string): void {
+    this.openRequests.delete(id); this.requiredToolCalls.delete(id); this.deferrals.delete(id);
+    this.heldByStartup.delete(id); this.unsavedStartTasks.delete(id); this.automaticHeldSince.delete(id);
+    this.endDispatch(id);
+  }
+  private removeRun(run: RoutineRun, tombstone = true): void {
+    this.guardList();
+    if (!this.runStore.has(run)) return;
+    this.removeRunIndex(run); this.runStore.delete(run); this.knownRuns.delete(run); this.dirtyRuns.delete(run);
+    this.rollbackPending.delete(run); this.pendingSettles.delete(run.id); this.clearRunSideMaps(run.id);
+    this.liveDispatch.delete(run.id);
+    this.accountedRunCount--; this.structuralRemoves++; this.storeRev++; this.ownerView = undefined; this.runRevision++;
+    if (tombstone) this.removedRuns.set(run.id, run);
+    inboxRollupOnRunRemoved(run.id, this, run.routineId);
+  }
+  private replaceStore(list: Iterable<RoutineRun>): void {
+    this.guardList();
+    this.runsGeneration++; this.runStore = labelWorkCollection("routines.runStore", new Set()); this.indexes = new RunIndexes();
+    this.knownRuns = new WeakSet(); this.dirtyRuns = new Set(); this.rollbackPending = new Set();
+    this.nextRunOrder = 0; this.accountedRunCount = 0;
+    this.sweepBaseCount = 0; this.structuralAdds = 0; this.structuralRemoves = 0;
+    for (const run of list) this.appendRun(run);
+    inboxRollupOnRunsReplaced([...this.runStore], this);
+    this.fullSave = true;
+  }
+  private rebuildDefinitionIndex(): void {
+    this.routineIdIndex = undefined; this.conversationRoutineIndex = undefined;
+    this.currentDefinitionsByOwner = new Map(); this.definitionOwners = new Map();
+    for (const routine of this.routinesRaw) if (routine) this.updateDefinitionIndex(routine);
+    this.definitionRevision++;
+  }
+  private updateDefinitionIndex(routine: Routine): void {
+    this.routineIdIndex = undefined; this.conversationRoutineIndex = undefined;
+    const previous = this.definitionOwners.get(routine);
+    const owner = routine.watch?.ownerBotId ?? routine.botId;
+    const zoneKey = JSON.stringify([routine.id, owner, routine.botId, routine.enabled, routine.schedule]);
+    if (previous && previous.zoneKey !== zoneKey && !this.zoneReconciling) this.definitionRevision++;
+    if (previous && (previous.owner !== owner || previous.id !== routine.id)) {
+      const bucket = this.currentDefinitionsByOwner.get(previous.owner); bucket?.delete(previous.id);
+      if (!bucket?.size) this.currentDefinitionsByOwner.delete(previous.owner);
+    }
+    let bucket = this.currentDefinitionsByOwner.get(owner);
+    if (!bucket) this.currentDefinitionsByOwner.set(owner, bucket = new Map());
+    bucket.set(routine.id, routine); this.definitionOwners.set(routine, { owner, id: routine.id, zoneKey });
+  }
+  private deriveRunIndex(run: RoutineRun, order: number): IndexedRun {
+    const quarantined = this.rollbackPending.has(run), open = !quarantined && isOpen(run.status), live = !quarantined && isLive(run.status);
+    const source = run.triggerSource ?? (run.manual ? "manual" : "schedule");
+    const scheduledKey = historyKey(scheduledNumber(run.scheduledFor), -order);
+    const settled = !isOpen(run.status) && !quarantined;
+    const base = +(run.finishedAt ?? run.createdAt);
+    const eligibleBase = run.delivery?.state !== "pending" || Number.isNaN(base) ? -Infinity : base;
+    const outcome = !quarantined && (run.status === "failed" || run.status === "completed");
+    return {
+      order, id: run.id, routineId: run.routineId, open, live, queued: open && run.status === "queued", quarantined,
+      channelTurnKey: run.threadId !== undefined && run.channelTurnId !== undefined ? JSON.stringify([run.threadId, run.channelTurnId]) : undefined,
+      threadId: run.threadId, botId: run.botId, target: run.target, groupId: run.groupId,
+      chatThread: !quarantined && typeof run.threadId === "string" && run.threadId
+        && (run.target === "room-goal" ? !!run.groupId : run.triggerSource !== "channel") ? run.threadId : undefined,
+      deliveryKey: !quarantined && (source === "webhook" || source === "channel") ? JSON.stringify([run.webhookId, run.deliveryId]) : undefined,
+      openWebhook: open ? run.webhookId : undefined,
+      limitEngine: open && run.status === "queued" ? run.limitWait?.engineKey : undefined,
+      startKey: !quarantined && Number.isFinite(run.startedAt) ? historyKey(-run.startedAt!, order) : undefined,
+      inboxStartKey: !quarantined && Number.isFinite(run.startedAt ?? run.scheduledFor) ? historyKey((run.startedAt ?? run.scheduledFor), scheduledNumber(run.scheduledFor), -order) : undefined,
+      startedPresent: !quarantined && run.startedAt !== undefined,
+      cardKeys: open && run.threadId !== undefined ? [...new Set(run.cardsOpen ?? [])].map(id => JSON.stringify([run.threadId, id])) : [],
+      cardOrderKey: scheduledKey, eventId: quarantined ? undefined : run.event?.id,
+      originKind: ROUTINE_RUN_TRIGGERS.includes(source) ? source : undefined,
+      originInvalid: !ROUTINE_RUN_TRIGGERS.includes(source),
+      ownerKey: JSON.stringify([run.watch?.ownerBotId ?? run.botId, run.routineId]), scheduledKey,
+      listKey: scheduledKey, scheduleKey: !quarantined && source === "schedule" ? scheduledKey : undefined,
+      invalidScheduled: !quarantined && source === "schedule" && Number.isNaN(+run.scheduledFor),
+      retireClass: settled ? eligibleBase === -Infinity ? "free" : "owed" : undefined,
+      owedBase: base, eligibleBase,
+      historyKey: settled ? historyKey(scheduledNumber(run.finishedAt ?? run.createdAt), scheduledNumber(run.createdAt), -order) : undefined,
+      outcomeKey: outcome && run.finishedAt !== undefined ? historyKey(scheduledNumber(run.finishedAt), order) : undefined,
+      successKey: outcome && run.status === "completed" ? historyKey(scheduledNumber(run.finishedAt ?? run.createdAt), scheduledNumber(run.createdAt), -order) : undefined,
+      failedKey: outcome && run.status === "failed" ? historyKey(scheduledNumber(run.finishedAt ?? run.createdAt), scheduledNumber(run.createdAt), -order) : undefined,
+      projection: terminalProjection(run),
+    };
+  }
+  private bucketAdd<K>(map: Map<K, Set<RoutineRun>>, key: K | undefined, run: RoutineRun): void {
+    if (key === undefined) return;
+    let bucket = map.get(key); if (!bucket) map.set(key, bucket = new Set()); bucket.add(run);
+  }
+  private bucketDelete<K>(map: Map<K, Set<RoutineRun>>, key: K | undefined, run: RoutineRun): void {
+    if (key === undefined) return;
+    const bucket = map.get(key); bucket?.delete(run); if (!bucket?.size) map.delete(key);
+  }
+  private trieAdd(map: Map<string, RoutineHistoryIndex<RoutineRun>>, bucketKey: string | undefined, key: string | undefined, run: RoutineRun): void {
+    if (bucketKey === undefined || key === undefined) return;
+    let bucket = map.get(bucketKey); if (!bucket) map.set(bucketKey, bucket = new RoutineHistoryIndex(key.length)); bucket.set(key, run);
+  }
+  private trieDelete(map: Map<string, RoutineHistoryIndex<RoutineRun>>, bucketKey: string | undefined, key: string | undefined): void {
+    if (bucketKey === undefined || key === undefined) return;
+    const bucket = map.get(bucketKey); bucket?.delete(key); if (!bucket?.size) map.delete(bucketKey);
+  }
+  private bump<K>(map: Map<K, number>, key: K, by: number): void { const n = (map.get(key) ?? 0) + by; if (n) map.set(key, n); else map.delete(key); }
+  private indexMembership(into: RunIndexes, run: RoutineRun, item: IndexedRun, add: boolean): void {
+    const set = (collection: Set<RoutineRun>, present: boolean) => { if (present) { if (add) collection.add(run); else collection.delete(run); } };
+    const bucket = (map: Map<string, Set<RoutineRun>>, key: string | undefined) => add ? this.bucketAdd(map, key, run) : this.bucketDelete(map, key, run);
+    const trie = (map: Map<string, RoutineHistoryIndex<RoutineRun>>, bucketKey: string | undefined, key: string | undefined) => add ? this.trieAdd(map, bucketKey, key, run) : this.trieDelete(map, bucketKey, key);
+    set(into.liveRuns, item.live); set(into.openRuns, item.open); set(into.queuedRuns, item.queued);
+    bucket(into.liveByThread, item.live ? item.threadId : undefined);
+    bucket(into.channelTurns, item.channelTurnKey);
+    if (item.live && item.threadId !== undefined) {
+      const first = into.firstLiveRunByThread.get(item.threadId);
+      if (add) { if (!first || item.order < into.indexedRuns.get(first)!.order) into.firstLiveRunByThread.set(item.threadId, run); }
+      else if (first === run) {
+        let replacement: RoutineRun | undefined;
+        for (const candidate of into.liveByThread.get(item.threadId) ?? []) if (!replacement || into.indexedRuns.get(candidate)!.order < into.indexedRuns.get(replacement)!.order) replacement = candidate;
+        if (replacement) into.firstLiveRunByThread.set(item.threadId, replacement); else into.firstLiveRunByThread.delete(item.threadId);
+      }
+    }
+    bucket(into.queuedLimitWaitsByEngine, item.limitEngine); bucket(into.openRunsByWebhook, item.openWebhook); bucket(into.eventRuns, item.eventId);
+    trie(into.deliveryByKey, item.deliveryKey, historyKey(-item.order));
+    trie(into.chatRunsByThread, item.chatThread, item.listKey);
+    trie(into.startsByRoutine, item.routineId, item.startKey);
+    trie(into.inboxStartsByRoutine, item.routineId, item.inboxStartKey);
+    for (const key of item.cardKeys) trie(into.cardRuns, key, item.cardOrderKey);
+    if (item.startedPresent) this.bump(into.startedPresentByRoutine, item.routineId, add ? 1 : -1);
+    if (!item.quarantined && item.threadId !== undefined) {
+      if (item.originInvalid) this.bump(into.invalidOriginsByThread, item.threadId, add ? 1 : -1);
+      if (item.originKind !== undefined) {
+        let kinds = into.originKindsByThread.get(item.threadId);
+        if (!kinds && add) into.originKindsByThread.set(item.threadId, kinds = new Map());
+        if (kinds) { this.bump(kinds, item.originKind, add ? 1 : -1); if (!kinds.size) into.originKindsByThread.delete(item.threadId); }
+      }
+    }
+    if (!item.quarantined) {
+      trie(into.scheduledByRoutine, item.routineId, item.scheduledKey);
+      trie(into.scheduledByOwner, item.ownerKey, item.scheduledKey);
+      if (add) into.scheduledAll.set(item.listKey, run); else into.scheduledAll.delete(item.listKey);
+    }
+    trie(into.lastScheduledByRoutine, item.routineId, item.scheduleKey);
+    if (item.invalidScheduled) this.bump(into.invalidScheduledByRoutine, item.routineId, add ? 1 : -1);
+    if (item.retireClass) {
+      const key = historyKey(item.order);
+      if (add) into.retirementOrder.set(key, run, item.eligibleBase); else into.retirementOrder.delete(key);
+      if (item.retireClass === "free") { if (add) into.retirable.set(key, run); else into.retirable.delete(key); }
+      else { const owedKey = historyKey(-item.owedBase, -item.order); if (add) into.owedHold.set(owedKey, run); else into.owedHold.delete(owedKey); }
+    }
+    trie(into.historyBefore, item.routineId, item.historyKey);
+    trie(into.outcomes, item.routineId, item.outcomeKey);
+    trie(into.successes, item.routineId, item.successKey); trie(into.failures, item.routineId, item.failedKey);
+  }
+  private updateRunIndex(run: RoutineRun, order?: number): void {
+    const before = this.indexes.indexedRuns.get(run);
+    if (!before && order === undefined) return; // not yet canonical
+    const next = this.deriveRunIndex(run, before?.order ?? order!);
+    if (before) {
+      if (before.open && !next.open && !next.quarantined && !this.pendingSettles.has(before.id)) this.pendingSettles.set(before.id, { before: before.projection, revision: this.runRevision });
+      const { projection: _oldProjection, ...oldKeys } = before;
+      const { projection: _newProjection, ...newKeys } = next;
+      if (JSON.stringify(oldKeys) === JSON.stringify(newKeys)) { before.projection = next.projection; return; }
+      this.indexMembership(this.indexes, run, before, false);
+      if (before.id !== next.id) this.indexes.runsById.delete(before.id);
+    }
+    this.indexes.indexedRuns.set(run, next); this.indexes.runsById.set(next.id, run);
+    this.indexMembership(this.indexes, run, next, true);
+  }
+  private removeRunIndex(run: RoutineRun): void {
+    const item = this.indexes.indexedRuns.get(run); if (!item) return;
+    this.indexMembership(this.indexes, run, item, false);
+    this.indexes.indexedRuns.delete(run); this.indexes.runsById.delete(item.id);
+  }
+  private buildRunIndexes(into: RunIndexes, orderOf: (run: RoutineRun) => number): void {
+    for (const run of this.runStore) {
+      const item = this.deriveRunIndex(run, orderOf(run));
+      into.indexedRuns.set(run, item); into.runsById.set(run.id, run); this.indexMembership(into, run, item, true);
+    }
+  }
+  rebuildRunIndexes(): void {
+    const next = new RunIndexes(); let order = 0;
+    this.buildRunIndexes(next, () => order++); this.indexes = next; this.nextRunOrder = order;
+  }
+  /** Explicit diagnostics only; never called by a tick, save or turn. */
+  verifyRunIndexes(): string[] {
+    routineWorkCounters.fullVerifiers++;
+    const errors = new Set<string>(), orders = new Map<RoutineRun, number>(), used = new Set<number>(), ids = new Set<string>();
+    let previous = -1, valid = true;
+    for (const run of this.runStore) {
+      if (!isTracked(run)) errors.add("runStore.tracked");
+      if (!this.knownRuns.has(run)) errors.add("knownRuns.membership");
+      if (ids.has(run.id)) errors.add("runsById.duplicateIds"); ids.add(run.id);
+      if (!this.indexes.indexedRuns.has(run)) { errors.add("indexedRuns.membership"); valid = false; continue; }
+      const item = this.indexes.indexedRuns.get(run);
+      if (!item || !Number.isSafeInteger(item.order) || item.order < 0) { errors.add("indexedRuns.order.invalid"); valid = false; continue; }
+      if (used.has(item.order)) { errors.add("indexedRuns.order.duplicate"); valid = false; }
+      if (item.order <= previous) { errors.add("indexedRuns.order.sequence"); valid = false; }
+      previous = item.order; used.add(item.order); orders.set(run, item.order);
+    }
+    for (const run of this.indexes.indexedRuns.keys()) if (!this.runStore.has(run)) { errors.add("indexedRuns.membership"); valid = false; }
+    if (this.accountedRunCount !== this.runStore.size || this.runStore.size !== this.sweepBaseCount + this.structuralAdds - this.structuralRemoves) errors.add("runStore.ledger");
+    if (this.ownerView?.revision === this.storeRev && this.ownerView.list.length !== this.runStore.size) errors.add("runStore.ownerView");
+    for (const run of this.rollbackPending) if (!this.runStore.has(run)) errors.add("rollbackPending.membership");
+    if (!valid) return [...errors]; // No order-based scratch construction before these checks.
+    const scratch = new RunIndexes(); this.buildRunIndexes(scratch, run => orders.get(run)!);
+    const compare = (actual: unknown, expected: unknown, name: string): void => {
+      if (actual instanceof RoutineHistoryIndex && expected instanceof RoutineHistoryIndex) {
+        for (const issue of actual.audit()) errors.add(`${name}.${issue}`);
+        const a = new Map(actual.entries()), b = new Map(expected.entries());
+        if (a.size !== b.size || [...b].some(([key, run]) => a.get(key) !== run)) {
+          errors.add(name === "cardRuns" || name.startsWith("cardRuns.") ? "cardRuns.key" : `${name}.entries`);
+        }
+        if (name.startsWith("cardRuns")) {
+          const ar = new Set(a.values()), br = new Set(b.values());
+          if (ar.size !== br.size || [...br].some(run => !ar.has(run))) errors.add("cardRuns.membership");
+        }
+      } else if (actual instanceof Map && expected instanceof Map) {
+        if (actual.size !== expected.size) errors.add(name.startsWith("cardRuns") ? "cardRuns.membership" : `${name}.membership`);
+        for (const [key, value] of expected) {
+          if (!actual.has(key)) { errors.add(name.startsWith("cardRuns") ? "cardRuns.membership" : `${name}.membership`); continue; }
+          compare(actual.get(key), value, name === "indexedRuns" ? name : name.startsWith("cardRuns") ? "cardRuns" : name);
+        }
+        for (const key of actual.keys()) if (!expected.has(key)) errors.add(name.startsWith("cardRuns") ? "cardRuns.membership" : `${name}.membership`);
+      } else if (actual instanceof Set && expected instanceof Set) {
+        if (actual.size !== expected.size || [...expected].some(value => !actual.has(value))) errors.add(`${name}.membership`);
+      } else if (name === "indexedRuns" && actual && expected) {
+        const a = actual as IndexedRun, b = expected as IndexedRun;
+        for (const key of Object.keys(b) as Array<keyof IndexedRun>) if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) errors.add(`indexedRuns.${key}`);
+      } else if (actual !== expected) errors.add(`${name}.value`);
+    };
+    for (const key of Object.keys(scratch) as Array<keyof RunIndexes>) compare(this.indexes[key], scratch[key], key);
+    const expectedDefinitions = new Map<string, Map<string, Routine>>();
+    for (const routine of this.routinesRaw) {
+      const owner = routine.watch?.ownerBotId ?? routine.botId;
+      const recorded = this.definitionOwners.get(routine);
+      if (!recorded || recorded.owner !== owner || recorded.id !== routine.id || recorded.zoneKey !== JSON.stringify([routine.id, owner, routine.botId, routine.enabled, routine.schedule])) errors.add("definitionOwners.membership");
+      let bucket = expectedDefinitions.get(owner); if (!bucket) expectedDefinitions.set(owner, bucket = new Map()); bucket.set(routine.id, routine);
+    }
+    if (this.definitionOwners.size !== this.routinesRaw.length) errors.add("definitionOwners.membership");
+    compare(this.currentDefinitionsByOwner, expectedDefinitions, "currentDefinitionsByOwner");
+    return [...errors];
+  }
+  verifyIndexes(afterSweep = false): string[] {
+    const errors = this.verifyRunIndexes();
+    for (const id of this.openDispatch) if (!this.liveDispatch.has(id)) errors.push("openDispatch.D1");
+    for (const [id, entry] of this.liveDispatch) {
+      const run = this.indexes.runsById.get(id);
+      if ((run && isLive(run.status) || entry.candidates.size || entry.provenanceLost || entry.replay.length || entry.replayTimer) && !this.openDispatch.has(id)) errors.push("openDispatch.D2");
+      if (afterSweep && this.openDispatch.has(id) && (!run || !isLive(run.status))) errors.push("openDispatch.D3");
+    }
+    const journal = this.journal as unknown as { verifyFileIndexes?: () => string[]; durabilityKnown?: boolean };
+    errors.push(...(journal.verifyFileIndexes?.() ?? []));
+    if (journal.durabilityKnown !== false && !this.fullSave && this.savedRunCount !== this.journalCount()) errors.push("journal.savedRunCount");
+    return [...new Set(errors)];
+  }
+  /** Quiescent lifecycle repair; run, definition, dispatch and journal repair are independent. */
+  repairIndexes(): string[] {
+    this.recoveryRequired = true;
+    const ids = new Set<string>();
+    for (const run of this.runStore) { if (ids.has(run.id)) return ["runsById.duplicateIds"]; ids.add(run.id); }
+    this.rebuildRunIndexes(); this.rebuildDefinitionIndex();
+    this.accountedRunCount = this.runStore.size; this.sweepBaseCount = this.runStore.size;
+    this.structuralAdds = 0; this.structuralRemoves = 0; this.ownerView = undefined;
+    this.openDispatch.clear();
+    for (const [id, entry] of this.liveDispatch) {
+      const run = this.lookupRun(id);
+      if (run && isLive(run.status) || entry.candidates.size || entry.provenanceLost || entry.replay.length || entry.replayTimer) this.openDispatch.add(id);
+    }
+    (this.journal as unknown as { rebuildFileIndexes?: () => void }).rebuildFileIndexes?.();
+    return this.verifyIndexes();
+  }
+  private drainSettled(): void {
+    for (const [id, edge] of this.pendingSettles) {
+      this.pendingSettles.delete(id);
+      const run = this.indexes.runsById.get(id);
+      if (!run || isOpen(run.status) || this.rollbackPending.has(run)) continue;
+      this.clearRunSideMaps(id);
+      this.options.onRoutineRunTerminal?.({ runId: id, before: edge.before, after: terminalProjection(run), revision: edge.revision });
+    }
+  }
+  private withMaintenance<T>(work: () => T): T {
+    return this.maintenance.getStore() ? work() : this.maintenance.run({ remaining: 32 }, work);
+  }
+  private serviceRetirement(token = this.maintenance.getStore() ?? { remaining: 32 }): void {
+    const cutoff = this.now() - ROUTINE_DELIVERY_KEEP_MS;
+    while (this.runStore.size > MAX_RUNS && token.remaining > 0) {
+      const run = this.indexes.retirementOrder.oldestEligible(cutoff); if (!run) break;
+      if (run.delivery?.state === "pending") routineWorkCounters.expiryServiced++;
+      this.removeRun(run); routineWorkCounters.retired++; token.remaining--;
+    }
+  }
+  private nextReceiptOrder = 1;
+  private readonly receiptsById = new Map<string, RoutineRequestReceipt>();
+  private receiptsView?: RoutineRequestReceipt[];
+  private get routineRequestReceipts(): RoutineRequestReceipt[] {
+    if (!this.receiptsView) {
+      const values = [...this.receiptsById.values()].reverse();
+      this.receiptsView = track(values, () => {
+        this.fullSave = true; this.receiptsById.clear();
+        for (let i = values.length - 1; i >= 0; i--) { const receipt = this.receiptsView![i]; if (receipt) this.receiptsById.set(receipt.requestId, receipt); }
+      }, write => { if (write.operation !== "track") this.guardRecord(values, write, true); });
+    }
+    return this.receiptsView;
+  }
+  private set routineRequestReceipts(receipts: RoutineRequestReceipt[]) {
+    if (this.activeScope) throw new ScopeEscape("Receipt replacement inside scope");
+    this.receiptsById.clear();
+    for (let i = receipts.length - 1; i >= 0; i--) this.receiptsById.set(receipts[i]!.requestId, receipts[i]!);
+    this.receiptsView = receipts;
+  }
+  private proposalRequest?: string;
+  private setRequestReceipt(id: string, receipt: RoutineRequestReceipt | null): void {
+    if (this.activeScope && this.proposalRequest !== id) throw new ScopeEscape("Undeclared proposal receipt");
+    if (receipt) {
+      const value = isTracked(receipt) ? receipt : plainCopy(receipt);
+      const tracked = isTracked(value) ? value : track(value, () => { this.fullSave = true; }, write => {
+        if (write.operation !== "track" || this.proposalRequest !== id) this.guardRecord(value, write, true);
+      });
+      this.receiptsById.set(id, tracked);
+    } else this.receiptsById.delete(id);
+    this.receiptsView = undefined;
+  }
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   /** The earliest time any routine needs the fleet walk (a due run, a watch expiry), or null when unknown.
@@ -1142,13 +1805,18 @@ export class RoutineManager {
   private fullSave = true;
   /** Runs this manager has already accounted for in a save, and how many runs and routines that save left. */
   private knownRuns = new WeakSet<RoutineRun>();
+  private readonly trackedRunRoots = new WeakMap<object, RoutineRun>();
+  private readonly trackedRoutineRoots = new WeakMap<object, Routine>();
   private savedRunCount = -1;
   private savedRoutineCount = -1;
 
   constructor(options: RoutineManagerOptions) {
     this.options = options;
     this.file = options.file ?? join(DATA_DIR, "routines.json");
-    this.journal = new RoutineRunsJournal(dirname(this.file));
+    if (!inTxScope()) recoverBotCreates(dirname(this.file));
+    // B's optional integer-counter injection keeps journal probes in the same object without a circular import.
+    const Journal = RoutineRunsJournal as new (dataDir: string, counters?: Pick<typeof routineWorkCounters, "journalLines" | "compactCopied">) => RoutineRunsJournal;
+    this.journal = new Journal(dirname(this.file), routineWorkCounters);
     flushCoalesced(); // a load reads the files: deferred writes land first
     let migratedLegacyRuns = false;
     let prePin: string | undefined;
@@ -1160,7 +1828,12 @@ export class RoutineManager {
     // the next save would write over the person's routines.
     rebaseScheduledAttachmentPaths(this.file, ["routines", "runs"]);
     let original = "";
-    const parsedDisk = readPersistedJson(this.file, (path) => (original = readFileSync(path, "utf8")));
+    const parsedDisk = readPersistedJson(this.file, (path) => {
+      original = readFileSync(path, "utf8");
+      const stat = statSync(path);
+      this.lastWritten = { text: original, size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino };
+      return original;
+    });
     try {
       if (parsedDisk === undefined) throw new MissingRoutinesFile();
       const disk = parsedDisk as Partial<RoutineFile>;
@@ -1170,10 +1843,15 @@ export class RoutineManager {
       this.unknownFileFields = Object.fromEntries(Object.entries(disk).filter(([key]) => !KNOWN_FILE_FIELDS.has(key)));
       this.generation = typeof disk.stateGeneration === "string" ? disk.stateGeneration : undefined;
       const journalRuns = this.journal.load(this.runsCommit, this.generation) as RoutineRun[];
+      this.installCommitBaseline(disk);
       const states = this.journal.routineStates;
-      const diskRoutines = Array.isArray(disk.routines)
-        ? disk.routines.map((routine) => (routine && typeof routine.id === "string" ? states.get(routine.id) as Routine | undefined : undefined) ?? routine)
-        : undefined;
+      const diskRoutines = Array.isArray(disk.routines) ? [...disk.routines] : [];
+      for (const [id, state] of [...states].sort(([, a], [, b]) => (Number.isSafeInteger(a.proposalOrder) ? Number(a.proposalOrder) : -1) - (Number.isSafeInteger(b.proposalOrder) ? Number(b.proposalOrder) : -1))) {
+        const at = diskRoutines.findIndex(routine => routine?.id === id);
+        if (state.$deleted === true) { if (at >= 0) diskRoutines.splice(at, 1); }
+        else if (at >= 0) diskRoutines[at] = state as unknown as Routine;
+        else diskRoutines.unshift(state as unknown as Routine);
+      }
       // UX-TRUST-MOMENTS-1012 2.3.3: a stored payment grant is never kept for
       // good (routineGrantKeys drops it); counted once below, no payee
       let refusedGrants = 0;
@@ -1202,11 +1880,17 @@ export class RoutineManager {
               overlap: routine.overlap === "queue" ? "queue" : undefined,
               deliverTo: routine.deliverTo === "list" ? "list" : undefined,
               carryLastReport: routine.carryLastReport === true ? true : undefined,
-              permissionMode: loadRoutinePermissionMode(routine.permissionMode) ?? this.options.botMode?.(routine.botId) ?? "ask",
+              permissionMode: (routine.permissionPending === true || routine.permissionInherited === true && routine.permissionExplicit === false) && routine.permissionMode === undefined
+                ? undefined : loadRoutinePermissionMode(routine.permissionMode) ?? this.options.botMode?.(routine.botId) ?? "ask",
+              permissionExplicit: routine.permissionExplicit === true,
               alwaysAllow: routineGrantKeys(countRefusedGrants(routine.alwaysAllow)),
               skippedRuns: Number.isSafeInteger(routine.skippedRuns) && routine.skippedRuns! > 0 ? routine.skippedRuns : undefined,
               lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
             };
+            // Package choices and explicit owner resets preserve absence; legacy records still pin.
+            if (routine.permissionPending === true && routine.permissionExplicit === undefined) delete loaded.permissionExplicit;
+            if (loaded.permissionMode === undefined) delete loaded.permissionMode;
+            else { delete loaded.permissionInherited; delete loaded.permissionPending; }
             if (schedule.type === "app_event") { loaded.nextRunAt = null; loaded.carryLastReport = undefined; }
             // Keep optional metadata absent when it has no stored value.
             for (const key of ["overlap", "deliverTo", "carryLastReport", "threadId", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
@@ -1217,7 +1901,7 @@ export class RoutineManager {
               catch { return this.keepUnloaded(routine, "watch"); }
             }
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
-            if (loaded.permissionMode !== routine.permissionMode) prePin = original;
+            if (loaded.permissionMode !== routine.permissionMode || loaded.permissionExplicit !== routine.permissionExplicit) prePin = original;
             return [loaded];
           })
         : [];
@@ -1235,11 +1919,11 @@ export class RoutineManager {
         migratedLegacyRuns = true;
       }
       // Journals are per routine; restore the global creation order that
-      // history trimming and channel FIFO dispatch read from this.runs.
+      // history trimming and channel FIFO dispatch use canonical insertion order.
       diskRuns = diskRuns.map((run, index) => ({ run, index }))
         .sort((a, b) => (Number(a.run.createdAt) || 0) - (Number(b.run.createdAt) || 0) || a.index - b.index)
         .map(({ run }) => run);
-      this.runs = diskRuns.length > 0
+      this.replaceStore(diskRuns.length > 0
         ? diskRuns.map((run) => {
             const target = loadTarget(run.target);
             const loaded: RoutineRun = {
@@ -1258,6 +1942,9 @@ export class RoutineManager {
             loaded.event = routineEventForRun(loaded);
             const budget = eventActionBudgetSchema.safeParse(run.eventBudget);
             loaded.eventBudget = budget.success ? budget.data : undefined;
+            // Normalization is an in-memory load view, not a new run revision.
+            // Later recovery or owner edits still differ from this view and persist.
+            if (!migratedLegacyRuns) this.journal.loadedRunView(loaded);
             const watched = this.routines.find(item => item.id === loaded.routineId)?.watch;
             if (run.watch !== undefined || watched) {
               const parsedWatch = z.object({ watchId: z.string().min(1), ownerBotId: z.string().min(1), source: routineWatchInputSchema.shape.source,
@@ -1269,7 +1956,7 @@ export class RoutineManager {
             }
             return loaded;
           })
-        : [];
+        : []);
       this.routineRequestReceipts = Array.isArray(disk.routineRequestReceipts)
         ? disk.routineRequestReceipts.filter((receipt): receipt is RoutineRequestReceipt =>
             typeof receipt?.requestId === "string" &&
@@ -1290,26 +1977,36 @@ export class RoutineManager {
       this.routines = [];
       this.unloadedRoutines = [];
       this.unloadedReasons.clear();
-      this.runs = [];
+      this.replaceStore([]);
       this.routineRequestReceipts = [];
     }
+    for (const [id, value] of this.journal.requestReceipts) {
+      if (value === null) this.setRequestReceipt(id, null);
+      else this.setRequestReceipt(id, value as unknown as RoutineRequestReceipt);
+    }
+    if (this.runsCommit === undefined) this.installCommitBaseline({ version: 1, routines: [], runs: [], routineRequestReceipts: [] });
     // From here on every write to persisted state is tracked (tracked-state.ts).
     this.routines = this.routines.map((routine) => this.trackRoutine(routine));
-    this.runs = this.runs.map((run) => this.trackRun(run));
-    this.routineRequestReceipts = this.trackReceipts(this.routineRequestReceipts);
+    this.routineRequestReceipts = this.trackReceipts(this.routineRequestReceipts.sort((a, b) => (b.journalOrder ?? 0) - (a.journalOrder ?? 0)));
+    for (const receipt of this.receiptsById.values()) if (Number.isSafeInteger(receipt.journalOrder)) this.nextReceiptOrder = Math.max(this.nextReceiptOrder, receipt.journalOrder! + 1);
+    for (const routine of this.routinesRaw) if (Number.isSafeInteger(routine.proposalOrder) && routine.proposalOrder! >= 0) this.nextProposalOrder = Math.max(this.nextProposalOrder, routine.proposalOrder! + 1);
     // A local process cannot still own these turns after a full restart.
     const recovered: RoutineRun[] = [];
+    // Boot tolerance: everything from here to the end of the constructor is the restart recovery (requeue or fail the runs a restart cut short, the
+    // pre-pin copy, the first save). All of it writes, so a read-only start does not run it: the runs stay as the file has them and the next normal
+    // start recovers them.
+    bootStep("routines.restartRecovery", () => {
     // SL-L L4: a run whose initial turn was still waiting for its first seat
     // never started any work, so it goes back in the queue (or yields to the
     // occurrence already queued behind it). Anything else is failed as before.
     const requeued: RoutineRun[] = [];
-    for (const run of this.runs) {
+    for (const run of this.runStore) {
       // Fail closed: only a well-formed wait record proves the run never started.
       const seatWait = run.seatWait as unknown;
       const provenWaiting = typeof seatWait === "object" && seatWait !== null && typeof (seatWait as { kind?: unknown }).kind === "string" &&
         Number.isFinite((seatWait as { at?: unknown }).at);
       if (isLive(run.status) && provenWaiting && run.seatGrantedAt === undefined && run.resumedAt === undefined) {
-        const queuedBehind = this.runs.some((other) => other !== run && other.routineId === run.routineId && other.status === "queued");
+        const queuedBehind = [...this.indexes.queuedRuns].some((other) => other !== run && other.routineId === run.routineId);
         const kind = run.seatWait!.kind;
         if (queuedBehind) {
           run.status = "cancelled";
@@ -1362,10 +2059,41 @@ export class RoutineManager {
         this.options.onRunFailed?.(run);
       }
     }
+    if (this.fullSave) this.save();
+    }, undefined);
+    this.lifecycle = false;
+    this.drainSettled();
+  }
+
+  private installCommitBaseline(original: Partial<RoutineFile>): void {
+    const journal = this.journal as unknown as { baselineCommit?: number };
+    if (journal.baselineCommit !== undefined) { this.runsCommit = journal.baselineCommit; return; }
+    if (this.runsCommit !== undefined) return;
+    const baseline = Math.max(0, this.journal.highestTag);
+    if (!Number.isSafeInteger(baseline) || baseline >= Number.MAX_SAFE_INTEGER) throw new RecoveryRequired();
+    // Boot tolerance: a read-only start does not write the baseline file. It holds the same baseline in memory (nothing commits a run in that
+    // process), names the step, and the next normal start writes the file.
+    bootStep("routines.commitBaseline", () => writeFileAtomic(this.file, JSON.stringify({ ...original, runsCommit: baseline }, null, 2), { mode: 0o600, syncDir: true }), undefined);
+    this.runsCommit = baseline;
   }
 
   listRoutines(): Routine[] {
     return this.routines.map((routine) => this.routineWithHealth(routine));
+  }
+
+  /** Current authority facts without deriving health or cloning retained run history. */
+  routineById(id: string): Routine | null {
+    if (!this.routineIdIndex) {
+      this.routineIdIndex = new Map();
+      for (const routine of this.routines) if (!this.routineIdIndex.has(routine.id)) this.routineIdIndex.set(routine.id, routine);
+    }
+    const routine = this.routineIdIndex.get(id);
+    return routine ? cloneRoutine(routine) : null;
+  }
+
+  /** Approval copy needs only the stored name, without deriving health from retained runs. */
+  routineName(id: string): string | undefined {
+    return this.routines.find((routine) => routine.id === id)?.name;
   }
 
   /** Each routine's name, bot and whether it is on: no run history is read (a turn's working context lists them). */
@@ -1386,24 +2114,114 @@ export class RoutineManager {
    * are attempts: a cancelled run was stopped on purpose and a missed one
    * never started. */
   private routineWithHealth(routine: Routine): Routine {
-    const outcomes = this.runs
-      .filter((run) => run.routineId === routine.id && (run.status === "failed" || run.status === "completed"))
-      .sort((a, b) => (b.finishedAt ?? b.createdAt) - (a.finishedAt ?? a.createdAt) || b.createdAt - a.createdAt);
-    const success = outcomes.findIndex((run) => run.status === "completed");
-    const failures = success < 0 ? outcomes.length : success;
+    const success = this.indexes.successes.get(routine.id)?.latest();
+    const failures = success
+      ? this.indexes.failures.get(routine.id)?.countAfter(this.indexes.indexedRuns.get(success)!.successKey!) ?? 0
+      : this.indexes.failures.get(routine.id)?.size ?? 0;
     return { ...cloneRoutine(routine), ...(failures ? { failureStreak: failures } : {}) };
+  }
+
+  latestRunForRoutine(routineId: string, ownerBotId?: string): RoutineRun | undefined {
+    const run = (ownerBotId === undefined ? this.indexes.scheduledByRoutine.get(routineId)
+      : this.indexes.scheduledByOwner.get(JSON.stringify([ownerBotId, routineId])))?.latest();
+    return run ? cloneRun(run) : undefined;
   }
 
   /** 1.0.18 U6 E32: true once any run of this routine has started. A routine with none reads "First run". */
   hasStartedRun(routineId: string): boolean {
-    return this.runs.some((run) => run.routineId === routineId && run.startedAt !== undefined);
+    return (this.indexes.startedPresentByRoutine.get(routineId) ?? 0) > 0;
   }
 
+  private lookupRun(id: string): RoutineRun | undefined {
+    const run = this.indexes.runsById.get(id);
+    return run && !this.rollbackPending.has(run) ? run : undefined;
+  }
+  private eventRun(id: string): RoutineRun | undefined { const run = this.lookupRun(id); return run?.event?.id === id ? run : undefined; }
+  private runOrder(run: RoutineRun): number {
+    const item = this.indexes.indexedRuns.get(run);
+    if (!item) { this.requestRecovery(true); throw new RecoveryRequired(); }
+    return item.order;
+  }
+  private firstMatching(runs: Iterable<RoutineRun>, predicate: (run: RoutineRun) => boolean): RoutineRun | undefined {
+    let first: RoutineRun | undefined;
+    for (const run of runs) if (predicate(run) && (!first || this.runOrder(run) < this.runOrder(first))) first = run;
+    return first;
+  }
+  private liveRunForThread(threadId: string): RoutineRun | undefined { return this.indexes.firstLiveRunByThread.get(threadId); }
+  private listBefore(a: RoutineRun, b: RoutineRun): number {
+    const av = scheduledNumber(a.scheduledFor), bv = scheduledNumber(b.scheduledFor);
+    return (av === bv ? 0 : av > bv ? -1 : 1) || this.runOrder(a) - this.runOrder(b);
+  }
+  hasLiveRuns(): boolean { return this.indexes.liveRuns.size > 0; }
+  newestLiveRunInThread(threadId: string, predicate: (run: RoutineRun) => boolean = () => true): RoutineRun | null {
+    let newest: RoutineRun | undefined;
+    for (const run of this.indexes.liveByThread.get(threadId) ?? []) if (predicate(run) && (!newest || this.listBefore(run, newest) < 0)) newest = run;
+    return newest ? cloneRun(newest) : null;
+  }
+  private cardRunFor(threadId: string, requestId: string): RoutineRun | undefined {
+    const run = this.indexes.cardRuns.get(JSON.stringify([threadId, requestId]))?.latest();
+    if (run && (!this.runStore.has(run) || !isOpen(run.status) || this.rollbackPending.has(run))) { this.requestRecovery(true); throw new RecoveryRequired(); }
+    return run;
+  }
+  runWithOpenCard(threadId: string, requestId: string): RoutineRun | null {
+    const run = this.cardRunFor(threadId, requestId); return run ? cloneRun(run) : null;
+  }
+  automationRunFor(threadId: string, eventId?: string): RoutineRun | undefined {
+    let selected: RoutineRun | undefined;
+    if (eventId) {
+      const exact = this.lookupRun(eventId);
+      if (exact?.threadId === threadId) selected = exact;
+      for (const candidate of this.indexes.eventRuns.get(eventId) ?? []) if (candidate.threadId === threadId && (!selected || this.listBefore(candidate, selected) < 0)) selected = candidate;
+    } else {
+      for (const candidate of this.indexes.liveByThread.get(threadId) ?? []) {
+        if (candidate.status !== "running") continue;
+        const delta = (candidate.startedAt ?? candidate.createdAt ?? 0) - (selected?.startedAt ?? selected?.createdAt ?? 0);
+        if (!selected || delta > 0 || (!delta && candidate.id.localeCompare(selected.id) > 0)) selected = candidate;
+      }
+    }
+    return selected ? cloneRun(selected) : undefined;
+  }
+  memoryOriginKinds(): (threadId: string) => ReadonlySet<RoutineRunTrigger> | undefined {
+    return threadId => {
+      // Unknown stored sources already fail the backfill's eligibility check. A count preserves that skip without an unbounded set of corrupt strings.
+      if (this.indexes.invalidOriginsByThread.has(threadId)) return undefined;
+      const kinds = this.indexes.originKindsByThread.get(threadId); return kinds ? new Set(kinds.keys()) : undefined;
+    };
+  }
+  latestRunsForOwner(owner: string): Map<string, RoutineRun> {
+    const maxima: RoutineRun[] = [];
+    for (const routine of this.currentDefinitionsByOwner.get(owner)?.values() ?? []) {
+      routineWorkCounters.ownerDefinitionsVisited++;
+      const run = this.indexes.scheduledByOwner.get(JSON.stringify([owner, routine.id]))?.latest();
+      if (run) maxima.push(run);
+    }
+    maxima.sort((a, b) => this.listBefore(a, b));
+    return new Map(maxima.map(run => [run.routineId, cloneRun(run)]));
+  }
+  *runsForStartup(): IterableIterator<RoutineRun> { for (const [, run] of this.indexes.scheduledAll.entries()) yield cloneRun(run); }
+
+  inboxRunOrder(id: string): number | undefined {
+    const run = this.indexes.runsById.get(id); return run ? this.indexes.indexedRuns.get(run)?.order : undefined;
+  }
+  inboxLatestRunId(routineId: string): string | undefined { return this.indexes.inboxStartsByRoutine.get(routineId)?.latest()?.id; }
+  inboxRunAfter(id?: string): RoutineRun | undefined {
+    const run = id && this.indexes.runsById.get(id), item = run && this.indexes.indexedRuns.get(run);
+    const next = id === undefined ? this.indexes.scheduledAll.latest() : item ? this.indexes.scheduledAll.latest(item.scheduledKey) : undefined;
+    return next ? cloneRun(next) : undefined;
+  }
   listRuns(from?: number, to?: number): RoutineRun[] {
-    return this.runs
-      .filter((r) => (from == null || r.scheduledFor >= from) && (to == null || r.scheduledFor <= to))
-      .sort((a, b) => b.scheduledFor - a.scheduledFor)
+    return this.ownerRunList
+      .filter((r) => !this.rollbackPending.has(r) && (from == null || r.scheduledFor >= from) && (to == null || r.scheduledFor <= to))
+      .sort((a, b) => this.listBefore(a, b))
       .map(cloneRun);
+  }
+
+  chatRoutineOf(threadId: string): { botId?: string; groupId?: string; routineId: string; routineName: string } | undefined {
+    const run = this.indexes.chatRunsByThread.get(threadId)?.latest();
+    if (!run) return undefined;
+    return run.target === "room-goal"
+      ? { groupId: run.groupId, routineId: run.routineId, routineName: run.routineName }
+      : { botId: run.botId, routineId: run.routineId, routineName: run.routineName };
   }
 
   private runRevision = 0;
@@ -1415,21 +2233,19 @@ export class RoutineManager {
    * the roster keeps those tasks whatever their age. */
   liveRunThreadIds(botId: string): Set<string> {
     const ids = new Set<string>();
-    for (const run of this.runs) if (run.botId === botId && run.threadId && OPEN_RUN_STATUSES.includes(run.status)) ids.add(run.threadId);
+    for (const run of this.indexes.openRuns) if (run.botId === botId && run.threadId && OPEN_RUN_STATUSES.includes(run.status)) ids.add(run.threadId);
     return ids;
   }
 
   activeRunForBot(botId: string): RoutineRun | null {
-    const run = this.runs.find(
-      (candidate) => candidate.botId === botId && isLive(candidate.status),
-    );
+    const run = this.firstMatching(this.indexes.liveRuns, candidate => candidate.botId === botId);
     return run ? cloneRun(run) : null;
   }
 
   /** Active work that owns the bot's direct conversation. Room goals may use
    * the same bot as their coordinator, but execute in a separate room task. */
   activeBotRunForBot(botId: string): RoutineRun | null {
-    const run = this.runs.find(
+    const run = this.firstMatching(this.indexes.liveRuns,
       (candidate) => candidate.target === "bot" &&
         candidate.botId === botId &&
         isLive(candidate.status),
@@ -1440,7 +2256,7 @@ export class RoutineManager {
   /** Several routines can share a bot's thread slots; Stop must resolve the
    * run by the exact thread it names, never by "the bot's routine". */
   activeBotRunForThread(botId: string, threadId: string): RoutineRun | null {
-    const run = this.runs.find(
+    const run = this.firstMatching(this.indexes.liveRuns,
       (candidate) => candidate.target === "bot" &&
         candidate.botId === botId &&
         candidate.threadId === threadId &&
@@ -1450,7 +2266,8 @@ export class RoutineManager {
   }
 
   activeBotRunsForBot(botId: string): RoutineRun[] {
-    return this.runs
+    return [...this.indexes.liveRuns]
+      .sort((a, b) => this.runOrder(a) - this.runOrder(b))
       .filter((candidate) => candidate.target === "bot" &&
         candidate.botId === botId &&
         isLive(candidate.status))
@@ -1458,7 +2275,7 @@ export class RoutineManager {
   }
 
   routineRequestReceipt(requestId: string): RoutineRequestReceipt | null {
-    const receipt = this.routineRequestReceipts.find((candidate) => candidate.requestId === requestId);
+    const receipt = this.receiptsById.get(requestId);
     // a deep copy: `before` is a nested object inside tracked state
     return receipt ? plainCopy(receipt) : null;
   }
@@ -1482,10 +2299,7 @@ export class RoutineManager {
   forgetRoutineRequestReceipt(request: RoutineRequestCommit): boolean {
     const receipt = this.matchingRoutineRequestReceipt(request);
     if (!receipt) return false;
-    const index = this.routineRequestReceipts.indexOf(receipt);
-    this.commitMutation(() => {
-      this.routineRequestReceipts.splice(index, 1);
-    });
+    this.commitProposal(request, { location: receipt.journalRoutineId ?? `receipt-${request.requestId}` }, () => this.setRequestReceipt(request.requestId, null));
     return true;
   }
 
@@ -1520,11 +2334,13 @@ export class RoutineManager {
     if (existing) return { ...existing };
     const receipt: RoutineRequestReceipt = {
       ...request,
+      journalOrder: this.nextReceiptOrder++,
+      journalRoutineId: intent.kind === "webhook" ? `receipt-${request.requestId}` : intent.routineId ?? randomUUID(),
       ...(intent.kind ? { kind: intent.kind } : {}),
       before: intent.before === null ? null : plainCopy(intent.before),
       ...(intent.expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt: intent.expectedUpdatedAt }),
     };
-    this.commitMutation(() => { this.routineRequestReceipts.unshift(receipt); });
+    this.commitProposal(request, { location: receipt.journalRoutineId! }, () => this.setRequestReceipt(request.requestId, receipt));
     return { ...receipt };
   }
 
@@ -1533,14 +2349,19 @@ export class RoutineManager {
   completeRoutineRequest(request: RoutineRequestCommit, resultId: string, appliedAt: number, appliedUpdatedAt?: number): void {
     const existing = this.matchingRoutineRequestReceipt(request);
     if (existing?.resultId === resultId) return;
-    this.commitMutation(() => { this.rememberRoutineRequest(request, resultId, appliedAt, appliedUpdatedAt); });
+    this.commitProposal(request, { location: existing?.journalRoutineId ?? `receipt-${request.requestId}` }, () => this.rememberRoutineRequest(request, resultId, appliedAt, appliedUpdatedAt));
   }
 
   /** Undo stamped on a receipt whose record lives in another file (a webhook). */
   markRoutineRequestUndone(requestId: string, at: number): void {
     const index = this.routineRequestReceipts.findIndex((candidate) => candidate.requestId === requestId);
     if (index === -1) return;
-    this.commitMutation(() => { this.routineRequestReceipts[index] = { ...this.routineRequestReceipts[index]!, undoneAt: at }; });
+    this.commitMutation(() => { this.setRequestReceipt(requestId, { ...this.routineRequestReceipts[index]!, undoneAt: at }); });
+  }
+
+  /** One detached snapshot for startup classification and atomic bulk cleanup. */
+  routineRequestReceiptSnapshot(): RoutineRequestReceipt[] {
+    return plainCopy(this.routineRequestReceipts);
   }
 
   /** Undo of a routine change (SL-J J2): restore `before` and stamp the
@@ -1558,26 +2379,24 @@ export class RoutineManager {
     const routine = this.routines.find((candidate) => candidate.id === routineId);
     if (!routine) return "missing";
     if (routine.updatedAt !== expectedUpdatedAt) return "changed";
-    const stamp = () => { this.routineRequestReceipts[index] = { ...this.routineRequestReceipts[index]!, undoneAt: this.now() }; };
+    const stamp = () => { this.setRequestReceipt(requestId, { ...this.routineRequestReceipts[index]!, undoneAt: this.now() }); };
     if ("remove" in restore) return this.remove(routineId, undefined, stamp) ? "undone" : "missing";
     return this.update(routineId, restore.patch, undefined, stamp) ? "undone" : "missing";
   }
 
   isActiveThread(threadId: string): boolean {
-    return this.runs.some(
-      (run) => run.threadId === threadId && isLive(run.status),
-    );
+    return !!this.indexes.firstLiveRunByThread.get(threadId);
   }
 
   /** A room goal is running in this room: nobody is at its turns, and its limit ends the run. */
   liveGoalInRoom(groupId: string): boolean {
-    return this.runs.some((run) => run.target === "room-goal" && run.groupId === groupId && isLive(run.status));
+    return !!this.firstMatching(this.indexes.liveRuns, run => run.target === "room-goal" && run.groupId === groupId);
   }
 
   /** Why the run working in this thread exists, and for whom (Full access
    * reads it to tell the owner's channel message from everything else). */
   activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal; notOwnerAudience?: true } | null {
-    const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
+    const run = this.liveRunForThread(threadId);
     if (!run) return null;
     return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}), ...(run.notOwnerAudience === true ? { notOwnerAudience: true as const } : {}) };
   }
@@ -1586,9 +2405,9 @@ export class RoutineManager {
    * manual bot run it is held open (true) and the run waits on the owner. */
   cardOpened(threadId: string, requestId: string, summary: string): boolean {
     if (!this.routineRunForThread(threadId)) return false;
-    const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
+    const run = this.liveRunForThread(threadId);
     if (!run) return false;
-    this.commitMutation(() => {
+    this.commitScoped({ runs: [run] }, () => {
       run.cardsOpen = [...new Set([...(run.cardsOpen ?? []), requestId])];
       if (run.status !== "needs-you") run.status = "waiting";
       run.attention = redactSecretsInText(summary).trim().slice(0, 500) || run.attention;
@@ -1601,10 +2420,10 @@ export class RoutineManager {
    * ended: the caller starts a new turn in the run's conversation, which
    * carries the same run on with a fresh run limit. */
   cardClosed(threadId: string, requestId: string): boolean {
-    const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status) && candidate.cardsOpen?.includes(requestId));
+    const run = this.cardRunFor(threadId, requestId);
     if (!run) return false;
     const resume = run.turnEnded === true;
-    this.commitMutation(() => {
+    this.commitScoped({ runs: [run] }, () => {
       run.cardsOpen = run.cardsOpen!.filter((id) => id !== requestId);
       if (!run.cardsOpen.length) delete run.cardsOpen;
       if (resume) { run.turnEnded = undefined; run.resumedAt = this.now(); }
@@ -1615,22 +2434,30 @@ export class RoutineManager {
   }
 
   /** The stored ceiling for scheduled and manual work, including room goals. */
-  routineRunForThread(threadId: string): { runId: string; routineId: string; botId: string; permissionMode?: RoutinePermissionMode; alwaysAllow: string[] } | null {
-    const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
+  inheritAllPermissions(): void {
+    this.commitMutation(()=>{this.routines=this.routines.map(routine=>({...routine,permissionMode:undefined,permissionExplicit:false,permissionInherited:true as const,permissionPending:undefined}));});
+  }
+
+  routineRunForThread(threadId: string, includeMetadata = false): { runId: string; routineId: string; botId: string; updatedAt?: number; triggerSource?: "schedule" | "manual"; permissionMode?: RoutinePermissionMode; permissionExplicit?:boolean; alwaysAllow: string[] } | null {
+    const run = this.indexes.firstLiveRunByThread.get(threadId);
     if (!run) return null;
     const trigger = run.triggerSource ?? (run.manual ? "manual" : "schedule");
     if (trigger !== "schedule" && trigger !== "manual") return null;
     const routine = this.routines.find((candidate) => candidate.id === run.routineId);
     if (!routine) return null;
-    return { runId: run.id, routineId: routine.id, botId: run.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
+    return { permissionExplicit:routine.permissionPending ? true : routine.permissionExplicit, runId: run.id, routineId: routine.id, botId: run.botId, ...(includeMetadata ? { updatedAt: routine.updatedAt, triggerSource: trigger } : {}), ...(routine.permissionPending ? { permissionMode: "ask" as const } : routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
   }
 
   /** The routine whose own conversation this is (Routine.threadId), with
    * its level (absent = inherit). The composer's level in that conversation
    * is the routine's, so the owner's own turns there are judged at it too. */
-  routineForConversation(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode } | null {
-    const routine = this.routines.find((candidate) => candidate.target === "bot" && candidate.threadId === threadId);
-    return routine ? { routineId: routine.id, botId: routine.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}) } : null;
+  routineForConversation(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode; permissionExplicit?: boolean } | null {
+    if (!this.conversationRoutineIndex) {
+      this.conversationRoutineIndex = new Map();
+      for (const routine of this.routines) if (routine.target === "bot" && routine.threadId && !this.conversationRoutineIndex.has(routine.threadId)) this.conversationRoutineIndex.set(routine.threadId, routine);
+    }
+    const routine = this.conversationRoutineIndex.get(threadId);
+    return routine ? { routineId: routine.id, botId: routine.botId, permissionExplicit: routine.permissionPending ? true : routine.permissionExplicit, ...(routine.permissionPending ? { permissionMode: "ask" as const } : routine.permissionMode ? { permissionMode: routine.permissionMode } : {}) } : null;
   }
 
   /** Remember "Always allow for this routine". The caller has proved the key
@@ -1695,7 +2522,7 @@ export class RoutineManager {
 
   /** `appEventSetup`: only the owner-reviewed connected-app setup (a later slice) creates an app_event routine. A chat card,
    * a bot tool or the public calendar API cannot, so a routine started from outside is never made without that review. */
-  create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">, internal?: { appEventSetup: true }): Routine {
+  create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">, internal?: { appEventSetup?: true }): Routine {
     if ((input.schedule as { type?: unknown } | undefined)?.type === "app_event" && internal?.appEventSetup !== true) {
       throw new Error("Connected-app routines are set up from the app's own review");
     }
@@ -1716,10 +2543,13 @@ export class RoutineManager {
       if (clean.target !== "bot" || clean.runOn !== "ember" || clean.schedule.type !== "interval" || clean.attachments?.length) throw new Error("File watches use an interval on this computer without attachments");
       this.options.validateWatchSource(request.botId, clean.botId, watchInput.source);
     }
+    if (request && !Number.isSafeInteger(this.nextProposalOrder)) { this.requestRecovery(); throw new RecoveryRequired(); }
     const routine: Routine = {
-      id: randomUUID(),
+      ...(request ? { proposalOrder: this.nextProposalOrder++ } : {}),
+      id: request ? this.matchingRoutineRequestReceipt(request)?.journalRoutineId ?? randomUUID() : randomUUID(),
       ...clean,
       permissionMode: clean.permissionMode ?? this.options.botMode?.(clean.botId) ?? "ask",
+      permissionExplicit: clean.permissionMode !== undefined,
       // Only a confirmed chat card supplies `request`; the public calendar
       // API cannot choose an arbitrary transcript as a reporting target.
       sourceThreadId: request?.threadId,
@@ -1731,10 +2561,8 @@ export class RoutineManager {
     routine.instructionHistory = retainRoutineInstructions(routine);
     if (watchInput) delete routine.carryLastReport; // a file watch never starts an agent turn, so there is no report to carry
     if (watchInput && request) routine.watch = { ownerBotId: request.botId, state: createRoutineWatchState({ id: routine.id, ...watchInput }, at) };
-    this.commitMutation(() => {
-      this.routines.unshift(this.trackRoutine(routine));
-      if (request) this.rememberRoutineRequest(request, routine.id, at, routine.updatedAt);
-    });
+    if (request) this.commitProposal(request, { routine: this.trackRoutine(routine), create: true }, () => this.rememberRoutineRequest(request, routine.id, at, routine.updatedAt));
+    else this.commitMutation(() => { this.routines.unshift(this.trackRoutine(routine)); });
     this.emitRoutine(routine);
     return this.routineWithHealth(routine);
   }
@@ -1773,7 +2601,9 @@ export class RoutineManager {
       permissionMode: Object.hasOwn(patch, "permissionMode") ? patch.permissionMode : routine.permissionMode,
       deliverTo: Object.hasOwn(patch, "deliverTo") ? patch.deliverTo : routine.deliverTo,
     });
-    clean.permissionMode ??= this.options.botMode?.(clean.botId) ?? "ask";
+    // Keep a concrete fallback below No limits; permissionExplicit controls
+    // whether the owner's No limits default replaces that fallback.
+    const permissionExplicit = Object.hasOwn(patch,"permissionMode") ? clean.permissionMode !== undefined : routine.permissionExplicit;
     // A connected-app routine keeps its kind and its trigger for life; nothing else becomes one (section 4.1). A different
     // trigger is a new setup: delete this routine and set the new one up.
     if ((routine.schedule.type === "app_event") !== (clean.schedule.type === "app_event")) throw new Error("A routine cannot switch between a schedule and a connected-app trigger");
@@ -1793,7 +2623,7 @@ export class RoutineManager {
     const keepsCursor = clean.enabled && routine.enabled && sameSchedule(clean.schedule, routine.schedule);
     const cancelledRuns: RoutineRun[] = [];
     const reassigned = clean.botId !== routine.botId;
-    this.commitMutation(() => {
+    const mutate = () => {
       if (clean.prompt !== routine.prompt) {
         const history = retainRoutineInstructions(routine);
         const revision = randomUUID();
@@ -1805,6 +2635,7 @@ export class RoutineManager {
         routine.instructionHistory = retainRoutineInstructions(routine);
       }
       Object.assign(routine, clean, {
+        permissionExplicit,
         nextRunAt: !clean.enabled ? null : keepsCursor ? routine.nextRunAt : this.initialOccurrence(clean.schedule, now),
         // `updatedAt` doubles as the optimistic revision on durable routine
         // confirmation cards. Keep it monotonic even for two writes in one ms.
@@ -1813,11 +2644,13 @@ export class RoutineManager {
       if (Object.hasOwn(patch, "timeoutMinutes") && patch.timeoutMinutes == null) {
         delete routine.timeoutMinutes;
       }
+      if (Object.hasOwn(patch, "permissionMode")) { delete routine.permissionInherited; delete routine.permissionPending; }
+      if (Object.hasOwn(patch,"permissionMode") && clean.permissionMode === undefined) routine.permissionMode = this.options.botMode?.(clean.botId) ?? "ask";
       // Object.assign cannot remove a key, and skip is stored as absence.
       if (clean.overlap !== "queue") delete routine.overlap;
       if (clean.deliverTo !== "list") delete routine.deliverTo;
       if (patch.enabled === false || reassigned) {
-        for (const run of this.runs) {
+        for (const run of this.indexes.openRuns) {
           if (run.routineId !== routine.id || run.status !== "queued") continue;
           run.status = "cancelled";
           run.attention = undefined;
@@ -1828,11 +2661,14 @@ export class RoutineManager {
       }
       if (routine.watch && patch.enabled !== undefined) {
         routine.watch.state = pauseRoutineWatch(routine.watch.state, !patch.enabled, Math.max(now, routine.watch.state.updatedAt));
-        if (!patch.enabled) this.watchReads.get(routine.id)?.abort();
+
       }
       if (request) this.rememberRoutineRequest(request, routine.id, now, routine.updatedAt);
       inCommit?.();
-    });
+    };
+    if (request) this.commitProposal(request, { routine, runs: [...this.indexes.openRuns].filter(run => run.routineId === routine.id && run.status === "queued" && (patch.enabled === false || reassigned)) }, mutate);
+    else this.commitMutation(mutate);
+    if (routine.watch && patch.enabled === false) this.watchReads.get(routine.id)?.abort();
     for (const run of cancelledRuns) this.emitRun(run);
     this.emitRoutine(routine);
     return this.routineWithHealth(routine);
@@ -1935,11 +2771,10 @@ export class RoutineManager {
     }
     const at = this.routines.findIndex((r) => r.id === id);
     if (at === -1) return this.removeUnloaded(id);
-    this.watchReads.get(id)?.abort();
     const cancelledRuns: RoutineRun[] = [];
-    this.commitMutation(() => {
-      this.routines.splice(at, 1);
-      for (const run of this.runs) {
+    const mutate = () => {
+      if (!request) this.routines.splice(at, 1);
+      for (const run of this.indexes.openRuns) {
         if (run.routineId !== id || run.status !== "queued") continue;
         run.status = "cancelled";
         run.attention = undefined;
@@ -1948,81 +2783,80 @@ export class RoutineManager {
       }
       if (request) this.rememberRoutineRequest(request, id, this.now());
       inCommit?.();
-    });
+    };
+    if (request) this.commitProposal(request, { routine: this.routines[at]!, remove: true, runs: [...this.indexes.openRuns].filter(run => run.routineId === id && run.status === "queued") }, mutate);
+    else this.commitMutation(mutate);
+    this.watchReads.get(id)?.abort();
     for (const run of cancelledRuns) this.emitRun(run);
     this.options.emit?.({ kind: "routine.deleted", routineId: id });
     return true;
   }
 
   disableForBot(botId: string) {
-    let changed = false;
-    for (const routine of this.routines) {
-      if (routine.botId !== botId || !routine.enabled) continue;
-      if (routine.watch) {
-        this.watchReads.get(routine.id)?.abort();
-        routine.watch.state = pauseRoutineWatch(routine.watch.state, true, Math.max(this.now(), routine.watch.state.updatedAt));
+    this.commitMutation(() => {
+      for (const routine of this.routines) {
+        if (routine.botId !== botId || !routine.enabled) continue;
+        if (routine.watch) {
+          this.watchReads.get(routine.id)?.abort();
+          routine.watch.state = pauseRoutineWatch(routine.watch.state, true, Math.max(this.now(), routine.watch.state.updatedAt));
+        }
+        routine.enabled = false;
+        routine.nextRunAt = null;
+        routine.updatedAt = Math.max(this.now(), routine.updatedAt + 1);
+        this.emitRoutine(routine);
       }
-      routine.enabled = false;
-      routine.nextRunAt = null;
-      routine.updatedAt = Math.max(this.now(), routine.updatedAt + 1);
-      this.emitRoutine(routine);
-      changed = true;
-    }
-    for (const run of this.runs) {
-      if (run.botId !== botId || !isOpen(run.status)) continue;
-      run.status = "cancelled";
-      if (run.target === "room-goal") run.goalStatus = "stopped";
-      run.attention = undefined;
-      run.finishedAt = this.now();
-      run.error = "The assigned bot was deleted";
-      this.emitRun(run);
-      if (run.threadId) {
-        if (run.target === "room-goal" && run.groupId) {
-          void this.options.interruptGoal?.(run.groupId, run.threadId).catch(() => {});
-        } else {
-          void this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "ember").catch(() => {});
+      for (const run of this.runStore) {
+        if (run.botId !== botId || !isOpen(run.status)) continue;
+        run.status = "cancelled";
+        if (run.target === "room-goal") run.goalStatus = "stopped";
+        run.attention = undefined;
+        run.finishedAt = this.now();
+        run.error = "The assigned bot was deleted";
+        this.emitRun(run);
+        if (run.threadId) {
+          if (run.target === "room-goal" && run.groupId) {
+            void this.options.interruptGoal?.(run.groupId, run.threadId).catch(() => {});
+          } else {
+            void this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "ember").catch(() => {});
+          }
         }
       }
-      changed = true;
-    }
-    if (changed) this.save();
+    });
   }
 
   disableForGroup(groupId: string) {
-    let changed = false;
-    for (const routine of this.routines) {
-      if (routine.target !== "room-goal" || routine.groupId !== groupId || !routine.enabled) continue;
-      routine.enabled = false;
-      routine.nextRunAt = null;
-      routine.updatedAt = Math.max(this.now(), routine.updatedAt + 1);
-      this.emitRoutine(routine);
-      changed = true;
-    }
-    for (const run of this.runs) {
-      if (
-        run.target !== "room-goal" ||
-        run.groupId !== groupId ||
-        !isOpen(run.status)
-      ) continue;
-      run.status = "cancelled";
-      run.goalStatus = "stopped";
-      run.attention = undefined;
-      run.finishedAt = this.now();
-      run.error = "The assigned room was deleted";
-      this.emitRun(run);
-      if (run.threadId) {
-        void this.options.interruptGoal?.(groupId, run.threadId).catch(() => {});
+    this.commitMutation(() => {
+      for (const routine of this.routines) {
+        if (routine.target !== "room-goal" || routine.groupId !== groupId || !routine.enabled) continue;
+        routine.enabled = false;
+        routine.nextRunAt = null;
+        routine.updatedAt = Math.max(this.now(), routine.updatedAt + 1);
+        this.emitRoutine(routine);
       }
-      changed = true;
-    }
-    if (changed) this.save();
+      for (const run of this.runStore) {
+        if (
+          run.target !== "room-goal" ||
+          run.groupId !== groupId ||
+          !isOpen(run.status)
+        ) continue;
+        run.status = "cancelled";
+        run.goalStatus = "stopped";
+        run.attention = undefined;
+        run.finishedAt = this.now();
+        run.error = "The assigned room was deleted";
+        this.emitRun(run);
+        if (run.threadId) {
+          void this.options.interruptGoal?.(groupId, run.threadId).catch(() => {});
+        }
+      }
+    });
   }
 
   runNow(id: string, request?: RoutineRequestCommitFor<"run_now">): RoutineRun | null {
     if (request) {
       const receipt = this.matchingRoutineRequestReceipt(request);
       if (receipt?.resultId !== undefined) {
-        const committed = this.runs.find((run) => run.id === receipt.resultId);
+        const committed = this.lookupRun(receipt.resultId);
         return committed ? cloneRun(committed) : null;
       }
     }
@@ -2036,13 +2870,10 @@ export class RoutineManager {
     }
     if (routine.watch && (!routine.enabled || this.now() >= routine.watch.state.definition.expiresAt || routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks)) throw new Error("This file watch is paused, expired or has reached its check limit");
     let run!: RoutineRun;
-    this.commitMutation(() => {
-      run = this.newRun(routine, this.now(), true);
-      // A chat-confirmed "run now" reports back to the conversation that
-      // invoked this one run. It must not silently rebind future schedules.
-      if (request) run.sourceThreadId = request.threadId;
-      if (request) this.rememberRoutineRequest(request, run.id, this.now());
-    });
+    if (request) {
+      run = this.newRun(routine, this.now(), true, false); run.sourceThreadId = request.threadId;
+      this.commitProposal(request, { append: run, location: routine.id }, () => this.rememberRoutineRequest(request, run.id, this.now()));
+    } else this.commitMutation(() => { run = this.newRun(routine, this.now(), true); });
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
@@ -2103,9 +2934,17 @@ export class RoutineManager {
       attachments: cloneAttachments(attachments),
       createdAt: this.now(),
     };
+    if (run.triggerSource === "channel" && this.options.channelMessagesEnabled?.(run.botId) === false) {
+      // Ingress already verified this principal. Keep the early no-engine
+      // completion, and publish the same owner line as the dispatch-time guard.
+      const disabled = this.options.channelMessagesOff?.(run.botId, run.humanPrincipal);
+      if (disabled?.threadId) run.threadId = disabled.threadId;
+      run.status = "completed"; run.finishedAt = this.now();
+      run.output = disabled?.line ?? "Channel messages are off. Turn them on in Settings > Bot permissions > Channel messages.";
+    }
     run.event = routineEventForRun(run);
     run.eventBudget = newEventActionBudget();
-    this.commitMutation(() => { this.runs.push(this.trackRun(run)); });
+    this.commitScoped({ append: run }, () => { this.appendRun(run); });
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
@@ -2113,30 +2952,35 @@ export class RoutineManager {
 
   /** Retained receipts only: history eviction also ends this dedup window. */
   findWebhookDelivery(webhookId: string, deliveryId: string): RoutineRun | null {
-    const run = this.runs.find(candidate => (candidate.triggerSource === "webhook" || candidate.triggerSource === "channel")
-      && candidate.webhookId === webhookId && candidate.deliveryId === deliveryId);
+    const run = this.indexes.deliveryByKey.get(JSON.stringify([webhookId, deliveryId]))?.latest();
     return run ? cloneRun(run) : null;
   }
 
   getEventBudget(eventId: string): EventActionBudget | null {
-    const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
+    const run = this.eventRun(eventId);
     return run?.eventBudget ? plainCopy(run.eventBudget) : null;
   }
 
   /** Charge before the caller performs external work. Uncertain work is not
    * refunded. A missing/evicted/legacy ledger never resets its allocation.
    * The same admission id is charged once, so a retry of one hand-off is free. */
-  admitEventActionDetailed(eventId: string, admissionId: string, kind: "create" | "handoff"): EventAdmission {
+  admitEventActionDetailed(eventId: string, admissionId: string, kind: "create" | "handoff", noLimits?: { pair?: string }): EventAdmission {
     if (!eventAdmissionId.safeParse(admissionId).success || !["create", "handoff"].includes(kind)) return { ok: false, reason: "unavailable" };
-    const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
+    const run = this.eventRun(eventId);
     const budget = run?.eventBudget;
     if (!run || !budget) return { ok: false, reason: "unavailable" };
     if (budget.closed) return { ok: false, reason: "closed", ...(budget.closedReason ? { closedReason: budget.closedReason } : {}) };
     const prior = budget.admissions.find(item => item.id === admissionId);
     if (prior) return prior.kind === kind ? { ok: true } : { ok: false, reason: "unavailable" };
     const used = budget.admissions.filter(item => item.kind === kind).length;
-    if (used >= budget.limits[kind]) return { ok: false, reason: "limit", kind, used, limit: budget.limits[kind] };
-    this.commitMutation(() => { budget.admissions.push({ id: admissionId, kind }); });
+    if (noLimits) {
+      if (used >= EVENT_NO_LIMITS_CEILING) return { ok: false, reason: "ceiling" };
+      if (kind === "handoff" && noLimits.pair && budget.admissions.filter(item => item.kind === kind && item.pair === noLimits.pair).length >= EVENT_NO_LIMITS_PAIR_REPEATS) return { ok: false, reason: "loop" };
+    } else if (used >= Math.min(budget.limits[kind], EVENT_MAX_LIMIT)) return { ok: false, reason: "limit", kind, used, limit: Math.min(budget.limits[kind], EVENT_MAX_LIMIT) };
+    this.commitScoped({ runs: [run!] }, () => {
+      if (noLimits) budget.limits[kind] = Math.max(budget.limits[kind], used + 1);
+      budget.admissions.push({ id: admissionId, kind, ...(noLimits?.pair ? { pair: noLimits.pair } : {}) });
+    });
     return { ok: true };
   }
 
@@ -2147,11 +2991,11 @@ export class RoutineManager {
   /** Raise one kind's limit for this run (the owner allowed it, or Full access
    * already covers it). Never lowers a limit; null when the run cannot take more. */
   raiseEventLimit(eventId: string, kind: "create" | "handoff", to: number): EventActionBudget | null {
-    const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
+    const run = this.eventRun(eventId);
     const budget = run?.eventBudget;
     if (!budget || budget.closed) return null;
     const next = Math.min(EVENT_MAX_LIMIT, Math.max(budget.limits[kind], Math.trunc(to)));
-    if (next !== budget.limits[kind]) this.commitMutation(() => { budget.limits[kind] = next; });
+    if (next !== budget.limits[kind]) this.commitScoped({ runs: [run!] }, () => { budget.limits[kind] = next; });
     return plainCopy(budget);
   }
 
@@ -2166,34 +3010,51 @@ export class RoutineManager {
 
   /** What an already-admitted action produced, if it got that far. */
   eventAdmissionReceipt(eventId: string, admissionId: string): string | undefined {
-    return this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget?.admissions.find(item => item.id === admissionId)?.receipt;
+    return this.eventRun(eventId)?.eventBudget?.admissions.find(item => item.id === admissionId)?.receipt;
   }
 
   /** Remember what an admitted action produced, saved with the run so it holds after a restart. */
   recordEventAdmissionReceipt(eventId: string, admissionId: string, receipt: string): boolean {
-    const admission = this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget?.admissions.find(item => item.id === admissionId);
+    const run = this.eventRun(eventId);
+    const admission = run?.eventBudget?.admissions.find(item => item.id === admissionId);
     if (!admission) return false;
-    if (admission.receipt !== receipt) this.commitMutation(() => { admission.receipt = receipt.slice(0, 200); });
+    if (admission.kind === "create" && receipt.startsWith("bot:") && inTxScope()) {
+      const undo = cloneRun(run!);
+      undo.eventBudget!.admissions = undo.eventBudget!.admissions.filter(item => item.id !== admissionId);
+      prepareBotCreateRollback(dirname(this.file), { run: undo, restore: () => {
+        const budget = run!.eventBudget!, index = budget.admissions.findIndex(item => item.id === admissionId);
+        if (index < 0) return;
+        try { this.commitScoped({ runs: [run!] }, () => { budget.admissions.splice(index, 1); }, true); }
+        catch (error) {
+          // Lifecycle recovery must retain the refund even if its compensating append failed.
+          run!.eventBudget!.admissions = run!.eventBudget!.admissions.filter(item => item.id !== admissionId);
+          throw error;
+        }
+      } });
+    }
+    if (admission.receipt !== receipt) this.commitScoped({ runs: [run!] }, () => { admission.receipt = receipt.slice(0, 200); });
     return true;
   }
 
   /** The owner said "Not now" to more actions of this kind: none for the rest of this run, and no more cards for it. */
   declineEventKind(eventId: string, kind: "create" | "handoff"): void {
-    const budget = this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget;
+    const run = this.eventRun(eventId);
+    const budget = run?.eventBudget;
     if (!budget || budget.closed || budget.declined?.includes(kind)) return;
-    this.commitMutation(() => { budget.declined = [...(budget.declined ?? []), kind]; });
+    this.commitScoped({ runs: [run!] }, () => { budget.declined = [...(budget.declined ?? []), kind]; });
   }
 
   eventKindDeclined(eventId: string, kind: "create" | "handoff"): boolean {
-    return this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget?.declined?.includes(kind) === true;
+    return this.eventRun(eventId)?.eventBudget?.declined?.includes(kind) === true;
   }
 
   /** Give back a charge for an action that never ran (it failed its checks after the owner's OK). A recorded action is never released. */
   releaseEventAdmission(eventId: string, admissionId: string): boolean {
-    const budget = this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget;
+    const run = this.eventRun(eventId);
+    const budget = run?.eventBudget;
     const index = budget?.admissions.findIndex(item => item.id === admissionId) ?? -1;
     if (!budget || index < 0 || budget.admissions[index].receipt) return false;
-    this.commitMutation(() => { budget.admissions.splice(index, 1); });
+    this.commitScoped({ runs: [run!] }, () => { budget.admissions.splice(index, 1); }, true);
     return true;
   }
 
@@ -2202,7 +3063,7 @@ export class RoutineManager {
    * again is a new, charged attempt and never returns a task id nothing can answer. */
   interruptUnresolvedEventTimeouts(resolvable: (taskId: string) => boolean): number {
     const stale: Array<{ receipt: string; set: (value: string) => void }> = [];
-    for (const run of this.runs) for (const admission of run.eventBudget?.admissions ?? []) {
+    for (const run of this.runStore) for (const admission of run.eventBudget?.admissions ?? []) {
       if (admission.receipt?.startsWith("timeout:") && !resolvable(admission.receipt.slice("timeout:".length))) stale.push({ receipt: admission.receipt, set: value => { admission.receipt = value; } });
     }
     if (stale.length === 0) return 0;
@@ -2212,59 +3073,57 @@ export class RoutineManager {
 
   /** Is this admission already charged to the run? */
   eventAdmissionExists(eventId: string, admissionId: string): boolean {
-    return this.runs.find(item => item.id === eventId && item.event?.id === eventId)?.eventBudget?.admissions.some(item => item.id === admissionId) === true;
+    return this.eventRun(eventId)?.eventBudget?.admissions.some(item => item.id === admissionId) === true;
   }
 
   closeEventBudget(eventId: string, reason: EventBudgetClosedReason = "connection"): boolean {
-    const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
+    const run = this.eventRun(eventId);
     if (!run?.eventBudget) return false;
-    if (!run.eventBudget.closed) this.commitMutation(() => { run.eventBudget!.closed = true; run.eventBudget!.closedReason = reason; });
+    if (!run.eventBudget.closed) this.commitScoped({ runs: [run] }, () => { run.eventBudget!.closed = true; run.eventBudget!.closedReason = reason; });
     return true;
   }
 
   activeWebhookRunCount(webhookId: string): number {
-    return this.runs.filter(
-      (run) => run.webhookId === webhookId && isOpen(run.status),
-    ).length;
+    return this.indexes.openRunsByWebhook.get(webhookId)?.size ?? 0;
   }
 
   cancelQueuedWebhook(webhookId: string, message: string): void {
-    let changed = false;
-    for (const run of this.runs) {
-      if (run.webhookId !== webhookId || run.status !== "queued") continue;
-      run.status = "cancelled";
-      run.attention = undefined;
-      run.finishedAt = this.now();
-      run.error = message.slice(0, 500);
-      this.emitRun(run);
-      changed = true;
-    }
-    if (changed) this.save();
+    this.withMaintenance(() => {
+      const changed: RoutineRun[] = [];
+      for (const run of [...(this.indexes.openRunsByWebhook.get(webhookId) ?? [])]) {
+        if (run.status !== "queued") continue;
+        run.status = "cancelled"; run.attention = undefined; run.finishedAt = this.now(); run.error = message.slice(0, 500);
+        this.emitRun(run); changed.push(run);
+      }
+      if (changed.length) this.save({ runs: changed });
+    });
   }
 
   /** interruptGeneration: the turn generation the caller is stopping (see interruptTurn). */
   async cancelRun(id: string, interruptGeneration?: string): Promise<RoutineRun | null> {
-    const run = this.runs.find((r) => r.id === id);
+    return this.withMaintenance(() => this.cancelRunWithBudget(id, interruptGeneration));
+  }
+  private async cancelRunWithBudget(id: string, interruptGeneration?: string): Promise<RoutineRun | null> {
+    const run = this.lookupRun(id);
     if (!run || !isOpen(run.status)) return null;
-    // a cancelled run never starts again: the task an unsaved start kept for it is not kept
-    this.unsavedStartTasks.delete(run.id);
-    this.commitMutation(() => {
+    const routine = run.watch ? this.routines.find(item => item.id === run.routineId) : undefined;
+    const controller = run.watch ? this.watchReads.get(run.routineId) : undefined;
+    this.commitScoped({ runs: [run], routines: routine?.watch ? [routine] : [] }, () => {
       run.status = "cancelled";
       if (run.target === "room-goal") run.goalStatus = "stopped";
       run.attention = undefined;
       run.finishedAt = this.now();
       if (run.eventBudget) { run.eventBudget.closed = true; run.eventBudget.closedReason ??= "stopped"; }
       if (run.watch) {
-        const routine = this.routines.find(item => item.id === run.routineId);
         if (routine?.watch) {
           const now = Math.max(this.now(), routine.watch.state.updatedAt);
           routine.watch.state = pauseRoutineWatch(routine.watch.state, true, now);
           if (routine.enabled) routine.watch.state = pauseRoutineWatch(routine.watch.state, false, now);
         }
         run.watch.outcome = "abandoned";
-        this.watchReads.get(run.routineId)?.abort();
       }
     });
+    controller?.abort();
     this.emitRun(run);
     if (run.threadId) {
       if (run.target === "room-goal" && run.groupId) {
@@ -2284,11 +3143,12 @@ export class RoutineManager {
    * updated runs so connected clients drop their dots. A failed save rolls
    * the stamps back, so a retry still finds them. */
   markAllSeen(): RoutineRun[] {
-    if (!this.runs.some(isUnseenRoutineProblem)) return [];
+    let any = false; for (const run of this.runStore) if (isUnseenRoutineProblem(run)) { any = true; break; }
+    if (!any) return [];
     const stampAt = this.now();
     const updated: RoutineRun[] = [];
     this.commitMutation(() => {
-      for (const run of this.runs) {
+      for (const run of this.runStore) {
         if (!isUnseenRoutineProblem(run)) continue;
         run.seenAt = stampAt;
         updated.push(run);
@@ -2305,19 +3165,18 @@ export class RoutineManager {
    * routine works in it. Removed through the full save, so the run journal
    * writes a tombstone and the run stays gone after a restart. */
   deleteRun(id: string): RoutineRun | null {
-    const at = this.runs.findIndex((run) => run.id === id);
-    if (at === -1) return null;
-    const run = this.runs[at]!;
+    const run = this.lookupRun(id);
+    if (!run) return null;
     if (isOpen(run.status)) throw Object.assign(new Error("This run is still going. Cancel it first, then delete it."), { status: 409 });
     const removed = cloneRun(run);
-    this.commitMutation(() => { this.runs.splice(at, 1); });
+    this.commitMutation(() => { this.removeRun(run); });
     this.liveDispatch.delete(removed.id);
     this.options.emit?.({ kind: "routine.run.deleted", runId: removed.id, routineId: removed.routineId });
     return removed;
   }
 
   markSeen(id: string): RoutineRun | null {
-    const run = this.runs.find((r) => r.id === id);
+    const run = this.lookupRun(id);
     if (!run) return null;
     if (!run.seenAt) {
       run.seenAt = this.now();
@@ -2329,14 +3188,14 @@ export class RoutineManager {
 
   /** ROUTINE-DELIVER-1010: one run by id (a copy), or null. */
   runById(id: string): RoutineRun | null {
-    const run = this.runs.find((item) => item.id === id);
+    const run = this.lookupRun(id);
     return run ? cloneRun(run) : null;
   }
 
   /** Records the chat a pending run's result goes to, before the result is first written there, so a retry or a restart writes
    * to the same chat (routine-delivery.ts decides when a deleted chat may be replaced). Saves this run only, at once; no frame. */
   recordRunDelivery(runId: string, threadId: string): RoutineRun | null {
-    const run = this.runs.find((item) => item.id === runId);
+    const run = this.lookupRun(runId);
     if (!run || run.delivery?.state !== "pending") return run ? cloneRun(run) : null;
     if (run.delivery.threadId !== threadId) {
       const before = run.delivery;
@@ -2349,18 +3208,17 @@ export class RoutineManager {
 
   /** When the next run of the same routine started after this one, if one has: a run's files window never reaches into it. */
   nextRunStartAfter(run: Pick<RoutineRun, "id" | "routineId" | "startedAt">): number | undefined {
-    if (run.startedAt === undefined) return undefined;
-    let next: number | undefined;
-    for (const item of this.runs) {
-      if (item.routineId !== run.routineId || item.id === run.id || item.startedAt === undefined || item.startedAt <= run.startedAt) continue;
-      if (next === undefined || item.startedAt < next) next = item.startedAt;
-    }
-    return next;
+    if (!Number.isFinite(run.startedAt)) return undefined;
+    const index = this.indexes.startsByRoutine.get(run.routineId);
+    let next = index?.latest(historyKey(-run.startedAt!, -Infinity));
+    if (next?.id === run.id) next = index?.latest(this.indexes.indexedRuns.get(next)!.startKey!);
+    return next?.startedAt;
+
   }
 
   /** The run's result has been written (or there was nowhere left to write it): never delivered again. */
   markRunDelivered(runId: string): void {
-    const run = this.runs.find((item) => item.id === runId);
+    const run = this.lookupRun(runId);
     if (!run || run.delivery?.state !== "pending" || isOpen(run.status)) return;
     const before = run.delivery;
     run.delivery = { ...run.delivery, state: "sent" };
@@ -2369,7 +3227,9 @@ export class RoutineManager {
 
   /** Settled runs whose result was not written yet (a crash between the run's end and its delivery). Read once at start-up. */
   pendingDeliveries(): RoutineRun[] {
-    return this.runs.filter((run) => run.delivery?.state === "pending" && !isOpen(run.status)).map(cloneRun);
+    const pending: RoutineRun[] = [];
+    for (const run of this.runStore) if (!this.rollbackPending.has(run) && run.delivery?.state === "pending" && !isOpen(run.status)) pending.push(cloneRun(run));
+    return pending;
   }
 
   /** The cards open on a run's live turn, by run id. In memory: a restart fails live runs. */
@@ -2383,16 +3243,19 @@ export class RoutineManager {
   start() {
     if (this.timer) return;
     this.halted = false;
+    if (this.recoveryRequired) this.requestRecovery();
     this.startedAt = this.now();
     this.gateOpened = false;
     this.gateForced = false;
     void this.tick();
-    this.timer = setInterval(() => void this.tick(), 10_000);
+    this.timer = setInterval(() => this.maintenance.run({ remaining: 32 }, () => void this.tick()), 10_000);
     this.timer.unref?.();
   }
 
   stop() {
     this.halted = true;
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = null;
     if (this.busyRetry) clearTimeout(this.busyRetry);
     this.busyRetry = null;
     if (this.timer) clearInterval(this.timer);
@@ -2415,12 +3278,14 @@ export class RoutineManager {
    * must not block dispatch. Found by an external audit, 2026-09-05. */
   private enforcing = false;
 
-  async enforceRunLimits(): Promise<void> {
-    if (this.enforcing) return;
+  async enforceRunLimits(): Promise<void> { return this.withMaintenance(() => this.enforceRunLimitsWithBudget()); }
+  private async enforceRunLimitsWithBudget(): Promise<void> {
+    if (this.enforcing || this.recoveryRequired) return;
     this.enforcing = true;
     try {
       const now = this.now();
-      for (const run of this.runs) {
+      for (const run of [...this.indexes.liveRuns]) {
+        if (this.recoveryRequired) return;
         if (
           (run.status !== "running" && run.status !== "waiting") ||
           run.startedAt == null ||
@@ -2435,7 +3300,7 @@ export class RoutineManager {
         // is waiting for, and keeps the turn open on the card so answering it
         // carries on. (A room goal keeps its own limit rules.)
         if (run.status === "waiting" && run.target === "bot") {
-          this.commitMutation(() => { run.status = "needs-you"; run.needsYouAt = now; });
+          this.commitScoped({ runs: [run] }, () => { run.status = "needs-you"; run.needsYouAt = now; });
           this.emitRun(run);
           try { this.options.onRunNeedsYou?.(cloneRun(run)); }
           catch (error) { console.error("routine: waiting-on-you notice failed", error); }
@@ -2464,11 +3329,15 @@ export class RoutineManager {
   /** The scheduler tick. It waits (asynchronously) while the revocation index build holds the writer lock, and it NEVER
    * rejects: callers use `void this.tick()`, and a rejection there would end the server. A lock failure that still gets
    * through leaves every run as it was (queued) and the tick runs again shortly; no run fails terminally on contention. */
-  async tick(): Promise<void> {
+  async tick(): Promise<void> { return this.withMaintenance(() => this.tickWithBudget()); }
+  private async tickWithBudget(): Promise<void> {
     try {
+      // A held tick remains a failed tick for the existing five-tick health
+      // threshold. Recovery itself still runs only in its lifecycle context.
+      if (this.recoveryRequired && this.lastTickFault) throw new RecoveryRequired();
       if (writersHeldForIndexBuild()) await awaitWriterGate();
       await this.tickBody();
-      this.tickFailures = 0;
+      if (!this.recoveryRequired) this.tickFailures = 0;
     } catch (error) {
       if (isDatabaseBusy(error)) this.retrySoon();
       else {
@@ -2477,7 +3346,7 @@ export class RoutineManager {
         // Rate limited like the database's busy line: a save that keeps failing logs once a minute, with a count.
         rateLimited("routine-tick-failed", 60_000, (suppressed) => `routine: tick failed (${this.tickFailures} in a row${suppressed ? `, ${suppressed} more since the last line` : ""}): ${this.lastTickFault}`);
       }
-    }
+    } finally { this.drainSettled(); }
   }
 
   /** Consecutive ticks that failed for a reason other than a locked database (reset by the next good tick). */
@@ -2492,7 +3361,7 @@ export class RoutineManager {
    * runs keep failing to save. */
   schedulerStatus(): { stalled: boolean; consecutiveFailures: number; saveFaults: number } {
     const limit = RoutineManager.TICK_FAILURES_BEFORE_STALLED;
-    return { stalled: this.tickFailures >= limit || this.saveFaults >= limit, consecutiveFailures: this.tickFailures, saveFaults: this.saveFaults };
+    return { stalled: this.recoveryRequired && this.tickFailures === 0 || this.tickFailures >= limit || this.saveFaults >= limit, consecutiveFailures: this.tickFailures, saveFaults: this.saveFaults };
   }
 
   private retrySoon(): void {
@@ -2510,11 +3379,14 @@ export class RoutineManager {
   }
 
   private async tickBody(): Promise<void> {
+    if (this.halted || this.recoveryRequired) return;
     this.sweepDispatchBuffers();
-    if (this.halted) return;
+    this.serviceRetirement();
+    if (this.removedRuns.size) this.save({ runs: [], routines: [] });
     if (this.options.dispatchOpen && !this.options.dispatchOpen()) return;
     // Before the guard, on purpose — see enforceRunLimits.
     await this.enforceRunLimits();
+    if (this.recoveryRequired || this.halted) return;
     // After the limits, on purpose: runs already going still stop at their limit while new ones wait.
     if (this.options.dispatchHeld?.()) return;
     if (this.ticking) return;
@@ -2535,19 +3407,22 @@ export class RoutineManager {
         if (next !== null && next !== routine.nextRunAt) { routine.nextRunAt = next; touchedRoutines.push(routine); changed = true; }
       }
       const fleetDue = now >= this.nextFleetDue();
-      const openByRoutine = new Map<string, { open: boolean; scheduledQueued: boolean }>();
-      if (fleetDue) for (const run of this.runs) {
+      const openByRoutine = new Map<string, { open: boolean; scheduledQueued: boolean; spendQueued?: RoutineRun }>();
+      if (fleetDue) for (const run of this.indexes.openRuns) {
         if (!isOpen(run.status)) continue;
         const entry = openByRoutine.get(run.routineId) ?? { open: false, scheduledQueued: false };
         entry.open = true;
-        if (run.status === "queued" && (run.triggerSource ?? (run.manual ? "manual" : "schedule")) === "schedule") entry.scheduledQueued = true;
+        if (run.status === "queued" && (run.triggerSource ?? (run.manual ? "manual" : "schedule")) === "schedule") {
+          entry.scheduledQueued = true;
+          if (run.spendWait) entry.spendQueued = run;
+        }
         openByRoutine.set(run.routineId, entry);
       }
       for (const routine of fleetDue ? this.routines : []) {
         if(this.options.automaticPaused?.())break;
         if (routine.watch && (now >= routine.watch.state.definition.expiresAt || routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks)) {
           if (routine.enabled || routine.nextRunAt !== null) {
-            this.commitMutation(() => { routine.enabled = false; routine.nextRunAt = null; });
+            this.commitScoped({ routines: [routine] }, () => { routine.enabled = false; routine.nextRunAt = null; });
             this.emitRoutine(routine);
           }
           continue;
@@ -2566,13 +3441,23 @@ export class RoutineManager {
         // whose run is still running or waiting when tomorrow comes round
         // stacked another copy every day, and nothing ever cleared them.
         const open = openByRoutine.get(routine.id);
+        const replacingSpend = Boolean(open?.spendQueued);
+        if (open?.spendQueued) {
+          const older = open.spendQueued;
+          older.status = "cancelled"; older.finishedAt = now;
+          older.error = "Skipped because a newer scheduled run is waiting for the spending limit.";
+          routine.skippedRuns = Math.min(Number.MAX_SAFE_INTEGER, (routine.skippedRuns ?? 0) + 1);
+          routine.lastSkippedAt = older.scheduledFor;
+          createdRuns.push(older); this.emitRun(older);
+          open.open = false; open.scheduledQueued = false;
+        }
         const overlapping = routine.schedule.type !== "once" && open?.open === true;
         // "queue" (upstream #1564) lets ONE scheduled occurrence wait behind
         // the active run, never a backlog: while a scheduled run is already
         // queued, later occurrences are skipped as before.
         const scheduledQueued = overlapping && open?.scheduledQueued === true;
         if (!overlapping || (routine.overlap === "queue" && !scheduledQueued)) {
-          if (late > CATCH_UP_MS) {
+          if (late > CATCH_UP_MS && !replacingSpend) {
             const missed = this.newRun(routine, scheduledFor, false);
             createdRuns.push(missed);
             missed.status = "missed";
@@ -2621,7 +3506,7 @@ export class RoutineManager {
       const agingMs = this.options.automaticAgingMs ?? 120_000;
       let automaticRunning = 0, capHeld = 0;
       const liveRoutines = new Set<string>(), liveThreads = new Set<string>();
-      for (const other of this.runs) {
+      for (const other of this.indexes.liveRuns) {
         if (!isLive(other.status)) continue;
         liveRoutines.add(other.routineId);
         if (other.threadId) liveThreads.add(other.threadId);
@@ -2633,12 +3518,12 @@ export class RoutineManager {
         return source === "schedule" || source === "webhook";
       };
       // Project routines run as room work after delivery (index.ts): they hold a place under the cap too.
-      if (cap !== undefined && this.options.activeProjectRoutineRuns && this.runs.some(run => run.status === "queued" && automatic(run))) {
+      if (cap !== undefined && this.options.activeProjectRoutineRuns && [...this.indexes.queuedRuns].some(automatic)) {
         try { automaticRunning += Math.max(0, Number(this.options.activeProjectRoutineRuns()) || 0); } catch { /* unknown: not counted */ }
       }
       // Order: the owner's own and channel runs newest first (as before), then automatic runs OLDEST first, so a
       // freed place under the cap goes to the run that has waited longest, never to the newest arrival.
-      const queuedNow = this.runs.filter(run => run.status === "queued");
+      const queuedNow = [...this.indexes.queuedRuns].sort((a, b) => this.runOrder(a) - this.runOrder(b));
       const byAge = queuedNow.map((run, index) => ({ run, index })).filter(entry => automatic(entry.run))
         .sort((a, b) => (Number(a.run.createdAt) || 0) - (Number(b.run.createdAt) || 0) || a.index - b.index).map(entry => entry.run);
       const dispatchOrder = [...queuedNow.filter(run => !automatic(run)).reverse(), ...byAge];
@@ -2659,7 +3544,7 @@ export class RoutineManager {
       let laterFault: unknown;
       // a stop() while this pass awaited ends it the same way: nothing more leaves the queue
       const recheck = (run: RoutineRun): "go" | "skip" | "replaced" =>
-        this.halted || this.runsGeneration !== generation ? "replaced" : run.status === "queued" ? "go" : "skip";
+        this.halted || this.recoveryRequired || this.runsGeneration !== generation ? "replaced" : run.status === "queued" ? "go" : "skip";
       for (const run of dispatchOrder) {
         // F2: one bad run never holds the queue. Any non-busy throw before the run starts fails THAT run (failRun never
         // throws) and the loop goes on; a run another path settled meanwhile, or one already running, is left as it is.
@@ -2667,6 +3552,12 @@ export class RoutineManager {
         const head = recheck(run);
         if (head === "replaced") break;
         if (head === "skip") continue;
+        const spendWait = this.options.spendHold?.(untracked(run));
+        if (spendWait) {
+          if (run.spendWait !== spendWait) { run.spendWait = spendWait; run.attention = spendWait; this.save({ runs: [run] }); this.emitRun(run); }
+          continue;
+        }
+        if (run.spendWait) { delete run.spendWait; run.attention = undefined; this.save({ runs: [run] }); this.emitRun(run); }
         // 1.0.4 SL-I I3: waiting for its engine's limit to reset
         if (run.limitWait && this.now() < run.limitWait.until) continue;
         // the build can start while this tick is between runs: the next dispatch waits it out before its first mutation
@@ -2684,11 +3575,17 @@ export class RoutineManager {
           this.failRun(run, "Channel binding changed; review it in Murage."); continue;
         }
         if(run.triggerSource==="channel"){try{if(!run.humanPrincipal)throw new Error("HUMAN_LINK_REQUIRED");assertHumanPrincipal(run.humanPrincipal);}catch(error){this.failRun(run,error instanceof Error?error.message:String(error));continue;}}
+        const disabledChannel = run.triggerSource === "channel" ? this.options.channelMessagesOff?.(run.botId, run.humanPrincipal) ?? (this.options.channelMessagesEnabled?.(run.botId) === false ? { line: "Channel messages are off. Turn them on in Settings > Bot permissions > Channel messages.", threadId: run.threadId } : undefined) : undefined;
+        if (disabledChannel) {
+          run.threadId = disabledChannel.threadId;
+          run.status = "completed"; run.output = disabledChannel.line; run.startedAt = this.now(); run.finishedAt = this.now();
+          this.save({ runs: [run] }); this.emitRun(run); continue;
+        }
         const sharedChannel = run.triggerSource === "channel" && run.target === "bot" && !!this.options.channelThread;
         // Channel messages share history: dispatch the oldest queued message
         // first, even though detached routine jobs retain their existing order.
-        if (sharedChannel && this.runs.slice(0, this.runs.indexOf(run)).some(
-          (prior) => prior.botId === run.botId && prior.triggerSource === "channel" && prior.status === "queued",
+        if (sharedChannel && [...this.indexes.queuedRuns].some(
+          (prior) => this.runOrder(prior) < this.runOrder(run) && prior.botId === run.botId && prior.triggerSource === "channel" && prior.status === "queued",
         )) continue;
         // A queued interval represents the latest useful check, not a backlog
         // item. If the bot stayed busy across later occurrences, align this
@@ -2757,6 +3654,11 @@ export class RoutineManager {
         // admission is unchanged; this only holds the run before it.
         const sameRoutineWorking = triggerSource === "schedule" && liveRoutines.has(run.routineId);
         const state = sameRoutineWorking ? "busy" : this.targetState(run);
+        if (state === "staged") {
+          const note = 'This routine waits until you review its bot.';
+          if (run.error !== note) { run.error = note; this.emitRun(run); this.save({ runs: [run] }); }
+          continue;
+        }
         if (state === "busy") continue;
         if (state === "missing") {
           this.failRun(run, this.missingTargetMessage(run.target));
@@ -2851,7 +3753,7 @@ export class RoutineManager {
             : sharedChannel ? "Could not find the conversation for this channel" : "Could not create a task for this run");
           continue;
         }
-        if (sharedChannel && (this.runs.some((active) => active.threadId === task.threadId &&
+        if (sharedChannel && ([...this.indexes.liveRuns].some((active) => active.threadId === task.threadId &&
           isLive(active.status)) || this.options.threadBusy?.(run.botId, task.threadId))) continue;
         const before = { threadId: run.threadId, startedAt: run.startedAt, slotAt: run.slotAt, attention: run.attention, ownerThreadId: owner?.threadId };
         const wasLiveRoutine = liveRoutines.has(run.routineId);
@@ -2875,6 +3777,7 @@ export class RoutineManager {
         const previousEntry = this.liveDispatch.get(run.id);
         if (previousEntry?.replayTimer) clearTimeout(previousEntry.replayTimer);
         this.liveDispatch.set(run.id, { seq: dispatchSeq, candidates: new Map(), provenanceLost: false, lostTurns: new Set(), replay: [], replayAttempt: 0 });
+        this.openDispatch.add(run.id);
         run.channelTurnId = undefined;
         try {
           this.save({ runs: [run], routines: adopted ? [owner] : [] });
@@ -2937,11 +3840,24 @@ export class RoutineManager {
             );
           }
         } catch (error) {
-          failDispatch(error instanceof Error ? error.message : String(error));
+          if ((error as { code?: unknown })?.code === "spend_limit") {
+            // A fresh admission read can discover a hold after the synchronous
+            // pre-check. No engine was called and no message was taken.
+            run.status = "queued"; run.startedAt = undefined; run.slotAt = undefined;
+            run.spendWait = error instanceof Error ? error.message : "Flux work waits";
+            run.attention = run.spendWait;
+            this.liveDispatch.delete(run.id);
+            if (!wasLiveRoutine) liveRoutines.delete(run.routineId);
+            if (!wasLiveThread) liveThreads.delete(task.threadId);
+            if (countedAutomatic) automaticRunning--;
+            this.save({ runs: [run] }); this.emitRun(run);
+          } else failDispatch(error instanceof Error ? error.message : String(error));
         }
         } finally { releaseStart(); }
         } catch (error) {
-          const live = this.runsGeneration === generation ? run : this.runs.find((candidate) => candidate.id === run.id);
+          const live = this.runsGeneration === generation ? run : this.lookupRun(run.id);
+          // A failed persistence prerequisite holds admission. Keep a failed start's exact task for lifecycle retry.
+          if (this.recoveryRequired) { laterFault ??= error; break; }
           // a locked database is contention, not a failure of the run: it stays queued and the tick runs again shortly
           if (isDatabaseBusy(error)) this.retrySoon();
           else if (live?.status === "queued") this.failRun(live, error instanceof Error ? error.message : String(error));
@@ -2956,6 +3872,7 @@ export class RoutineManager {
       if (laterFault !== undefined) throw laterFault;
     } finally {
       this.ticking = false;
+      this.drainSettled();
     }
   }
 
@@ -2973,29 +3890,40 @@ export class RoutineManager {
    *  `since` (a retry of a change whose write failed, owner-zone-reconcile.ts): the moment the zone changed. Everything
    *  is worked out as of then, so a next time that came due during the failed writes moves too. */
   rescheduleForZoneChange(options: { offWallClockOnly?: boolean; since?: number } = {}): Routine[] {
-    const now = options.since ?? this.now();
-    const lastScheduled = new Map<string, number>();
-    for (const run of this.runs) {
-      if ((run.triggerSource ?? (run.manual ? "manual" : "schedule")) !== "schedule") continue;
-      lastScheduled.set(run.routineId, Math.max(lastScheduled.get(run.routineId) ?? -Infinity, run.scheduledFor));
+    return this.rescheduleForZoneChangeStep(options).moved;
+  }
+  rescheduleForZoneChangeStep(options: { offWallClockOnly?: boolean; since?: number } = {}): { done: boolean; moved: Routine[] } {
+    if (this.recoveryRequired) throw new RecoveryRequired();
+    const epoch = JSON.stringify([options.offWallClockOnly === true, options.since ?? null, Intl.DateTimeFormat().resolvedOptions().timeZone, readOwnerTimeZone(dirname(this.file))]);
+    if (!this.zoneStep || this.zoneStep.epoch !== epoch || this.zoneStep.revision !== this.definitionRevision) {
+      this.zoneStep = { epoch, revision: this.definitionRevision, cursor: 0, since: options.since ?? this.now() };
     }
-    const dayOf = (at: number) => new Date(at).toDateString();
-    const moves: Array<{ routine: Routine; next: number | null }> = [];
-    for (const routine of this.routines) {
-      if (!routine.enabled || routine.schedule.type !== "daily" || routine.nextRunAt == null || routine.nextRunAt <= now) continue;
-      if (options.offWallClockOnly) {
-        const at = new Date(routine.nextRunAt);
-        if (`${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}` === routine.schedule.time) continue;
+    const step = this.zoneStep, moved: Routine[] = [], now = step.since;
+    let examined = 0;
+    while (step.cursor < this.routinesRaw.length && examined++ < 8) {
+      routineWorkCounters.zoneExamined++;
+      const routine = this.routinesRaw[step.cursor]!;
+      let next = routine.nextRunAt;
+      if (routine.enabled && routine.schedule.type === "daily" && next != null && next > now) {
+        const at = new Date(next);
+        const alreadyWallClock = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}` === routine.schedule.time;
+        if (!options.offWallClockOnly || !alreadyWallClock) {
+          next = nextOccurrence(routine.schedule, now);
+          const lastRun = this.indexes.lastScheduledByRoutine.get(routine.id)?.latest();
+          const lastSchedule = this.indexes.invalidScheduledByRoutine.get(routine.id) ? NaN : lastRun ? +lastRun.scheduledFor : -Infinity;
+          const last = Math.max(lastSchedule, routine.lastSkippedAt ?? -Infinity);
+          if (next !== null && Number.isFinite(last) && new Date(next).toDateString() === new Date(last).toDateString()) next = nextOccurrence(routine.schedule, next);
+        }
       }
-      let next = nextOccurrence(routine.schedule, now);
-      const last = Math.max(lastScheduled.get(routine.id) ?? -Infinity, routine.lastSkippedAt ?? -Infinity);
-      if (next !== null && Number.isFinite(last) && dayOf(next) === dayOf(last)) next = nextOccurrence(routine.schedule, next);
-      if (next !== routine.nextRunAt) moves.push({ routine, next });
+      if (next !== routine.nextRunAt) {
+        this.zoneReconciling = true;
+        try { this.commitScoped({ routines: [routine] }, () => { routine.nextRunAt = next; }); }
+        finally { this.zoneReconciling = false; }
+        this.emitRoutine(routine); moved.push(cloneRoutine(routine));
+      }
+      step.cursor++;
     }
-    if (!moves.length) return [];
-    this.commitMutation(() => { for (const { routine, next } of moves) routine.nextRunAt = next; });
-    for (const { routine } of moves) this.emitRoutine(routine);
-    return moves.map(({ routine }) => routine);
+    return { done: step.cursor >= this.routinesRaw.length, moved };
   }
 
   /** min(nextRunAt of enabled routines, watch expiry of watched ones): nothing in the fleet walk can happen before it. */
@@ -3052,18 +3980,20 @@ export class RoutineManager {
 
   /** The live room-goal run on a room thread, for Usage's routine share only: its members' turns are spend, not receipts. */
   roomGoalRunForThread(threadId: string): RoutineRun | null {
-    return this.runs.find((r) => r.threadId === threadId && r.target === "room-goal" && isLive(r.status)) ?? null;
+    return this.firstMatching(this.indexes.liveByThread.get(threadId) ?? [], r => r.target === "room-goal") ?? null;
   }
 
   /** RESIDUALS-1018-B row 7 (U28b M2): the live run on a thread as a turn starts, for Usage's routine share only (the
    *  same run handleRuntimeEvent reads), so a turn the run's cancel then stops still counts under its routine. */
   usageRunForThread(threadId: string): Pick<RoutineRun, "routineId" | "routineName" | "triggerSource"> | null {
-    const run = this.runs.find((r) => r.threadId === threadId && isLive(r.status));
+    const run = this.liveRunForThread(threadId);
     return run ? { routineId: run.routineId, routineName: run.routineName, triggerSource: run.triggerSource } : null;
   }
 
-  handleRuntimeEvent(event: RuntimeEvent): RoutineRun | null {
-    const run = this.runs.find((r) => r.threadId === event.threadId && isLive(r.status));
+  private readonly runtimePresentation = new WeakMap<RuntimeEvent, RuntimeEvent>();
+  handleRuntimeEvent(event: RuntimeEvent, audience?: RuntimeEvent): RoutineRun | null { if (audience) this.runtimePresentation.set(event, audience); return this.withMaintenance(() => this.handleRuntimeEventWithBudget(event)); }
+  private handleRuntimeEventWithBudget(event: RuntimeEvent): RoutineRun | null {
+    const run = this.liveRunForThread(event.threadId);
     if (!run) return null;
     if (run.triggerSource === "channel" && this.options.channelThread) {
       // A reused conversation also receives late events from its previous
@@ -3079,8 +4009,8 @@ export class RoutineManager {
           if (owner && entry && owner.runId === run.id && (owner.seq === undefined || owner.seq === entry.seq)) this.holdCandidate(entry, event);
           return null;
         }
-        if (event.type !== "turn.started" || this.runs.some((prior) => prior.id !== run.id &&
-          prior.threadId === event.threadId && prior.channelTurnId === event.turnId)) return null;
+        const prior = this.indexes.channelTurns.get(JSON.stringify([event.threadId, event.turnId]));
+        if (event.type !== "turn.started" || prior && (prior.size > 1 || !prior.has(run))) return null;
         run.channelTurnId = event.turnId;
         this.save({ defer: true, runs: [run] });
       }
@@ -3137,8 +4067,9 @@ export class RoutineManager {
   /** FENCE-RACE-1018 r2 (3.2): the only way an unbound channel run binds. index.ts calls it once, as the last statement of the
    *  acceptance callback, with the turn id the acceptance named. Binds, discards every other candidate, and hands the named buffer
    *  to the replay queue (nothing replays inside the callback). Idempotent for the same turn id. */
-  confirmChannelTurn(token: { runId: string; seq?: number }, turnId: string): void {
-    const run = this.runs.find((r) => r.id === token.runId);
+  confirmChannelTurn(token: { runId: string; seq?: number }, turnId: string): void { return this.withMaintenance(() => this.confirmChannelTurnWithBudget(token, turnId)); }
+  private confirmChannelTurnWithBudget(token: { runId: string; seq?: number }, turnId: string): void {
+    const run = this.lookupRun(token.runId);
     if (!run || !isLive(run.status) || run.triggerSource !== "channel") return;
     const entry = this.liveDispatch.get(token.runId);
     if (!entry || (token.seq !== undefined && entry.seq !== token.seq)) return;
@@ -3173,7 +4104,7 @@ export class RoutineManager {
     const entry = this.liveDispatch.get(runId);
     if (!entry || entry.seq !== seq) return;
     while (entry.replay.length) {
-      const run = this.runs.find((r) => r.id === runId);
+      const run = this.lookupRun(runId);
       if (!run || !isLive(run.status)) { entry.replay.length = 0; entry.replayAttempt = 0; return; }
       const head = entry.replay[0];
       try { this.applyBoundChannelEvent(run, head.event, head.decided === "base"); }
@@ -3190,6 +4121,8 @@ export class RoutineManager {
 
   /** The event handling shared by every run kind (the rest of handleRuntimeEvent). */
   private applyRunEvent(run: RoutineRun, event: RuntimeEvent): RoutineRun | null {
+    const presentation = this.runtimePresentation.get(event) ?? event;
+    const display = (field: string) => (presentation as unknown as Record<string, unknown>)[field] as string ?? "«redacted»";
     // A room goal contains several provider turns. Its orchestrator owns the
     // terminal decision and reports it through finishGoalRun; one member's
     // completion and private coordinator envelope are only intermediate
@@ -3226,7 +4159,7 @@ export class RoutineManager {
       if (event.requestId) open.add(event.requestId);
       this.openRequests.set(run.id, open);
       if (run.status !== "needs-you") run.status = "waiting";
-      run.attention = redactSecretsInText(event.summary).trim().slice(0, 500) || undefined;
+      run.attention = redactSecretsInText(display("summary")).trim().slice(0, 500) || undefined;
     } else if (event.type === "request.resolved") {
       const open = this.openRequests.get(run.id);
       if (event.requestId) open?.delete(event.requestId);
@@ -3239,9 +4172,9 @@ export class RoutineManager {
         run.attention = undefined;
       }
     } else if (event.type === "item.completed" && event.itemType === "assistant_text") {
-      run.output = redactSecretsInText(event.text).trim().slice(0, 2_000);
+      run.output = redactSecretsInText(display("text")).trim().slice(0, 2_000);
     } else if (event.type === "runtime.error") {
-      run.error = redactSecretsInText(event.message).slice(0, 500);
+      run.error = redactSecretsInText(display("message")).slice(0, 500);
     } else if (event.type === "turn.retrying") {
       // the driver will relaunch this same run; a transient blip is not a
       // receipt-worthy failure, so keep the run running and stay quiet
@@ -3317,14 +4250,9 @@ export class RoutineManager {
   /** The routine's last finished run before `run` failed: say the routine recovered. Best-effort, never throws. */
   private noteRecovery(run: RoutineRun) {
     if (!this.options.onRunRecovered) return;
-    let previous: RoutineRun | undefined;
-    for (const other of this.runs) {
-      if (other.id === run.id || other.routineId !== run.routineId || other.finishedAt === undefined) continue;
-      if (other.status !== "failed" && other.status !== "completed") continue;
-      if (other.finishedAt > (run.finishedAt ?? Infinity)) continue;
-      // runs are kept in creation order: on a tie the later one is the newer word
-      if (!previous || other.finishedAt >= previous.finishedAt!) previous = other;
-    }
+    const index = this.indexes.outcomes.get(run.routineId);
+    let previous = index?.latest(historyKey(scheduledNumber(run.finishedAt ?? Infinity), Infinity));
+    if (previous?.id === run.id) previous = index?.latest(this.indexes.indexedRuns.get(previous)!.outcomeKey!);
     if (previous?.status !== "failed") return;
     try { this.options.onRunRecovered(cloneRun(run), cloneRun(previous)); }
     catch (error) { console.error("routine: recovery note failed", error); }
@@ -3333,8 +4261,9 @@ export class RoutineManager {
   /** FENCE-RACE-1018 r2: the one place a late dispatch failure ends a run. It names the run by id, never by thread or captured
    *  object, and acts on the LIVE record: a rolled-back save replaces every run object, and a stale callback of an older
    *  dispatch (the run was requeued and dispatched again) is dropped by its seq. */
-  settleDispatch(token: { runId: string; seq?: number }, message: string): void {
-    const run = this.runs.find((r) => r.id === token.runId);
+  settleDispatch(token: { runId: string; seq?: number }, message: string): void { return this.withMaintenance(() => this.settleDispatchWithBudget(token, message)); }
+  private settleDispatchWithBudget(token: { runId: string; seq?: number }, message: string): void {
+    const run = this.lookupRun(token.runId);
     if (!run || !isLive(run.status)) return;
     if (token.seq !== undefined && this.liveDispatch.get(token.runId)?.seq !== token.seq) return;
     if (run.target === "bot" && this.limitWaitFor(run, { message })) return;
@@ -3349,9 +4278,10 @@ export class RoutineManager {
 
   /** FENCE-RACE-1018 r2: the only place a run gives up a turn. The refused turn id goes into the manager-wide registry (keyed by
    *  turn id alone, so it outlives any run record); the live run of this dispatch, if it is bound to that turn, lets go of it. */
-  passRefusedTurn(token: { runId: string; seq?: number }, turnId: string): void {
+  passRefusedTurn(token: { runId: string; seq?: number }, turnId: string): void { return this.withMaintenance(() => this.passRefusedTurnWithBudget(token, turnId)); }
+  private passRefusedTurnWithBudget(token: { runId: string; seq?: number }, turnId: string): void {
     this.refusedTurns.retire(turnId);
-    const run = this.runs.find((r) => r.id === token.runId);
+    const run = this.lookupRun(token.runId);
     if (!run || !isLive(run.status)) return;
     const entry = this.liveDispatch.get(token.runId);
     if (token.seq !== undefined && entry?.seq !== token.seq) return;
@@ -3368,19 +4298,18 @@ export class RoutineManager {
     catch (error) { console.error("routine: saving a passed-by turn failed", error instanceof Error ? error.message : String(error)); }
   }
 
-  failThread(threadId: string, message: string) {
-    const run = this.runs.find((r) => r.threadId === threadId && isLive(r.status));
+  failThread(threadId: string, message: string): void { return this.withMaintenance(() => this.failThreadWithBudget(threadId, message)); }
+  private failThreadWithBudget(threadId: string, message: string) {
+    const run = this.liveRunForThread(threadId);
     if (!run) return;
     this.failRun(run, message);
     queueMicrotask(() => void this.tick());
   }
 
-  finishGoalRun(runId: string, status: GroupGoalRunStatus, detail: string): RoutineRun | null {
-    const run = this.runs.find(
-      (candidate) => candidate.id === runId &&
-        candidate.target === "room-goal" &&
-        isLive(candidate.status),
-    );
+  finishGoalRun(runId: string, status: GroupGoalRunStatus, detail: string): RoutineRun | null { return this.withMaintenance(() => this.finishGoalRunWithBudget(runId, status, detail)); }
+  private finishGoalRunWithBudget(runId: string, status: GroupGoalRunStatus, detail: string): RoutineRun | null {
+    const candidate = this.lookupRun(runId);
+    const run = candidate?.target === "room-goal" && isLive(candidate.status) ? candidate : undefined;
     if (!run || status === "working") return null;
     const safeDetail = redactSecretsInText(detail).trim();
     run.goalStatus = status;
@@ -3420,8 +4349,10 @@ export class RoutineManager {
   /** The entry also holds the dispatch's pre-acceptance event buffers (one per turn id) and the lost-provenance flag (3.2, held):
    *  they live and die with the dispatch, never in a separate map. */
   private readonly liveDispatch = new Map<string, DispatchEntry>();
+  private readonly openDispatch = new Set<string>();
   /** A run that left live status holds no buffers (FENCE-RACE-1018 r2, cleanup). The entry itself goes with the record. */
   private endDispatch(runId: string): void {
+    this.openDispatch.delete(runId);
     const entry = this.liveDispatch.get(runId);
     if (!entry) return;
     entry.candidates.clear();
@@ -3433,9 +4364,8 @@ export class RoutineManager {
   }
   /** Start of every tick: covers every cancel and recovery path that settles a run without failRun. */
   private sweepDispatchBuffers(): void {
-    for (const [runId, entry] of this.liveDispatch) {
-      if (!entry.candidates.size && !entry.provenanceLost && !entry.replay.length) continue;
-      const run = this.runs.find((r) => r.id === runId);
+    for (const runId of [...this.openDispatch]) {
+      const run = this.lookupRun(runId);
       if (!run || !isLive(run.status)) this.endDispatch(runId);
     }
   }
@@ -3458,7 +4388,8 @@ export class RoutineManager {
     if (!info) return false;
     const n = (run.limitWait?.n ?? 0) + 1;
     if (n >= LIMIT_WAIT_TRIES) { this.failRun(run, info.failLine); queueMicrotask(() => void this.tick()); return true; }
-    const others = this.runs.filter(other => other.id !== run.id && other.status === "queued" && other.limitWait?.engineKey === info!.engineKey).length;
+    const waits = this.indexes.queuedLimitWaitsByEngine.get(info.engineKey);
+    const others = (waits?.size ?? 0) - (waits?.has(run) ? 1 : 0);
     this.requiredToolCalls.delete(run.id);
     run.status = "queued";
     run.startedAt = undefined;
@@ -3492,7 +4423,7 @@ export class RoutineManager {
     }
   }
 
-  private targetState(target: Pick<RoutineRun, "target" | "groupId" | "botId">): "ready" | "busy" | "missing" {
+  private targetState(target: Pick<RoutineRun, "target" | "groupId" | "botId">): "ready" | "busy" | "missing" | "staged" {
     if (target.target === "room-goal") {
       if (!target.groupId || !this.options.goalState) return "missing";
       return this.options.goalState(target.groupId, target.botId);
@@ -3525,13 +4456,7 @@ export class RoutineManager {
     if (routine.carryLastReport !== true || routine.schedule.type === "once" || routine.target !== "bot" || run.target !== "bot") return null;
     if (!plain(run) || run.prompt !== routine.prompt) return null;
     if (!routine.threadId || routine.threadId !== threadId) return null;
-    let prior: RoutineRun | undefined;
-    let priorAt = -Infinity;
-    for (const item of this.runs) {
-      if (item.routineId !== routine.id || item.id === run.id || isOpen(item.status)) continue;
-      const at = item.finishedAt ?? item.createdAt;
-      if (!prior || at > priorAt || (at === priorAt && item.createdAt > prior.createdAt)) { prior = item; priorAt = at; }
-    }
+    const prior = this.indexes.historyBefore.get(routine.id)?.latest();
     if (!prior || prior.status !== "completed") return null;
     if (prior.botId !== run.botId || prior.threadId !== threadId || !plain(prior) || prior.prompt !== routine.prompt) return null;
     const output = prior.output?.trim();
@@ -3545,7 +4470,7 @@ export class RoutineManager {
     return derived ? fenceEmailDerived(report, `routine-run-${prior.id}`) : report;
   }
 
-  private newRun(routine: Routine, scheduledFor: number, manual: boolean): RoutineRun {
+  private newRun(routine: Routine, scheduledFor: number, manual: boolean, insert = true): RoutineRun {
     // The one place a legacy run (and its EventActionBudget) is made. A connected-app routine never reaches it: its runs
     // live in appRunStore with a literal-zero child ceiling (section 7.1).
     if (routine.schedule.type === "app_event") throw new Error("A connected-app routine has no scheduled or manual runs");
@@ -3579,24 +4504,24 @@ export class RoutineManager {
     run.eventBudget = newEventActionBudget();
     if (run.watch) { run.eventBudget.closed = true; run.eventBudget.closedReason = "watch"; }
     const tracked = this.trackRun(run);
-    this.runs.push(tracked);
+    if (insert) this.appendRun(tracked);
     return tracked;
   }
 
   private async checkWatch(run: RoutineRun): Promise<void> {
     const routine = this.routines.find(item => item.id === run.routineId);
     if (!routine?.watch || !run.watch || !routine.enabled || run.watch.watchId !== routine.id) {
-      this.commitMutation(() => { run.status = "cancelled"; if (run.watch) run.watch.outcome = "abandoned"; run.finishedAt = this.now(); });
+      this.commitScoped({ runs: [run] }, () => { run.status = "cancelled"; if (run.watch) run.watch.outcome = "abandoned"; run.finishedAt = this.now(); });
       this.emitRun(run); return;
     }
     const now = Math.max(this.now(), routine.watch.state.updatedAt);
     const admission = reserveRoutineWatchCheck(routine.watch.state, run.id, now);
     if (admission.outcome !== "admitted") {
-      this.commitMutation(() => { run.status = "cancelled"; run.watch!.outcome = "abandoned"; run.finishedAt = now; });
+      this.commitScoped({ runs: [run] }, () => { run.status = "cancelled"; run.watch!.outcome = "abandoned"; run.finishedAt = now; });
       this.emitRun(run); return;
     }
     const controller = new AbortController();
-    this.commitMutation(() => { routine.watch!.state = admission.state; run.status = "running"; run.startedAt = now; });
+    this.commitScoped({ runs: [run], routines: [routine] }, () => { routine.watch!.state = admission.state; run.status = "running"; run.startedAt = now; });
     this.watchReads.set(routine.id, controller);
     let observation: RoutineWatchObservation | null = null;
     let failure: string | undefined;
@@ -3610,7 +4535,7 @@ export class RoutineManager {
     const current = this.routines.find(item => item.id === routine.id);
     if (!current?.watch) {
       if (run.status === "running") {
-        this.commitMutation(() => { run.status = "cancelled"; run.watch!.outcome = "abandoned"; run.finishedAt = this.now(); });
+        this.commitScoped({ runs: [run] }, () => { run.status = "cancelled"; run.watch!.outcome = "abandoned"; run.finishedAt = this.now(); });
         this.emitRun(run);
       }
       return;
@@ -3618,7 +4543,7 @@ export class RoutineManager {
     if (run.status !== "running") return;
     const completedAt = Math.max(this.now(), current.watch.state.updatedAt);
     const automatic = run.triggerSource !== "manual";
-    this.commitMutation(() => {
+    this.commitScoped({ runs: [run], routines: [current] }, () => {
       if (controller.signal.aborted || !current.enabled || automatic && this.options.automaticPaused?.()) {
         current.watch!.state = pauseRoutineWatch(current.watch!.state, true, completedAt);
         if (current.enabled) current.watch!.state = pauseRoutineWatch(current.watch!.state, false, completedAt);
@@ -3641,7 +4566,7 @@ export class RoutineManager {
    * a new line up to RUN_NOTES_MAX, and every repeat or line past that
    * counted in `notesMore`. False when no live run works there. */
   noteRunLine(threadId: string, line: string): boolean {
-    const run = this.runs.find((item) => item.threadId === threadId && isLive(item.status));
+    const run = this.liveRunForThread(threadId);
     if (!run) return false;
     this.appendRunNote(run, line);
     this.save({ runs: [run] });
@@ -3660,7 +4585,7 @@ export class RoutineManager {
    * first seat is recorded: after a grant, or for a card continuation (which
    * has `resumedAt`), nothing changes. */
   runSeatWait(runId: string, kind: string | null): void {
-    const run = this.runs.find((item) => item.id === runId);
+    const run = this.lookupRun(runId);
     if (!run || !isLive(run.status) || run.seatGrantedAt !== undefined || run.resumedAt !== undefined) return;
     if (kind === null) {
       if (run.seatWait === undefined) return;
@@ -3676,7 +4601,7 @@ export class RoutineManager {
 
   /** The live run working in this conversation pinned `bundleId` (first pin only). */
   notePinnedBundle(threadId: string, bundleId: string): void {
-    const run = this.runs.find((item) => item.threadId === threadId && isLive(item.status));
+    const run = this.liveRunForThread(threadId);
     if (!run || run.procedureBundleId) return;
     run.procedureBundleId = bundleId;
     this.save({ runs: [run] });
@@ -3706,6 +4631,7 @@ export class RoutineManager {
     this.noteServiceTime(run);
     this.options.emit?.({ kind: "routine.run", run: cloneRun(run) });
     this.notifyRunChanged(run);
+    inboxRollupOnRunTerminal(run, this);
     // A settled attempt moves the routine's failure streak.
     if (run.status === "completed" || run.status === "failed") {
       const routine = this.routines.find((candidate) => candidate.id === run.routineId);
@@ -3724,7 +4650,7 @@ export class RoutineManager {
   }
 
   private matchingRoutineRequestReceipt(request: RoutineRequestCommit): RoutineRequestReceipt | null {
-    const receipt = this.routineRequestReceipts.find((candidate) => candidate.requestId === request.requestId);
+    const receipt = this.receiptsById.get(request.requestId);
     if (!receipt) return null;
     if (
       receipt.action !== request.action ||
@@ -3753,10 +4679,10 @@ export class RoutineManager {
     const applied = { resultId, appliedAt, ...(appliedUpdatedAt === undefined ? {} : { appliedUpdatedAt }) };
     if (existing) {
       // The receipt written before apply (SL-J J2) gains its result in this same write.
-      this.routineRequestReceipts[this.routineRequestReceipts.indexOf(existing)] = { ...existing, ...applied };
+      this.setRequestReceipt(request.requestId, { ...existing, ...applied });
       return;
     }
-    this.routineRequestReceipts.unshift({ ...request, ...applied });
+    this.setRequestReceipt(request.requestId, { ...request, journalOrder: this.nextReceiptOrder++, ...applied });
   }
 
   /**
@@ -3765,23 +4691,184 @@ export class RoutineManager {
    * state if writing or renaming that file fails so a retry cannot mistake an
    * uncommitted action for a durable one.
    */
+  private guardIncoming(value: unknown, allowed: Set<object>, seen = new WeakSet<object>()): void {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    const owner = trackedRoot(value);
+    if (owner) {
+      if (!allowed.has(owner)) throw new ScopeEscape("Aliased value belongs to an undeclared tracking root");
+      return;
+    }
+    seen.add(value);
+    for (const key of Object.keys(value)) this.guardIncoming((value as Record<string, unknown>)[key], allowed, seen);
+  }
+  private guardRecord(root: object, write: TrackedWrite, receipt = false): void {
+    const scope = this.activeScope;
+    if (!scope) return;
+    if (receipt || !scope.objects.has(root)) throw new ScopeEscape("Write outside declared scope");
+    if (write.operation === "set") this.guardIncoming(write.value, scope.objects);
+    if (write.operation === "defineProperty" && write.descriptor && "value" in write.descriptor) this.guardIncoming(write.descriptor.value, scope.objects);
+    if (write.operation === "setPrototypeOf" || write.operation === "preventExtensions") throw new ScopeEscape("Irreversible record mutation");
+    if (write.target === untracked(root) && (write.key === "id" || write.key === "routineId")) throw new ScopeEscape("Scoped identity change");
+    if (write.operation === "defineProperty") {
+      const descriptor = write.descriptor!, previous = Reflect.getOwnPropertyDescriptor(write.target, write.key!);
+      if ("get" in descriptor || "set" in descriptor ||
+          (previous && !("value" in previous)) ||
+          (previous ? ["configurable", "enumerable", "writable"].some(key => key in descriptor && descriptor[key as keyof PropertyDescriptor] !== previous[key as keyof PropertyDescriptor])
+            : descriptor.configurable !== true || descriptor.writable !== true || descriptor.enumerable !== true)) throw new ScopeEscape("Irreversible descriptor change");
+    }
+  }
+  private restoreRecord(target: RoutineRun | Routine, snapshot: RoutineRun | Routine): void {
+    const record = target as unknown as Record<string, unknown>, before = snapshot as unknown as Record<string, unknown>;
+    for (const key of Object.keys(record)) if (!Object.hasOwn(before, key)) delete record[key];
+    for (const [key, value] of Object.entries(before)) record[key] = plainCopy(value);
+  }
+  private commitScoped(scope: { runs?: RoutineRun[]; routines?: Routine[]; append?: RoutineRun }, mutate: () => void, refund = false): void {
+    if (this.activeScope || this.fullTransaction || this.saving) throw new ScopeEscape("Nested transaction");
+    // A receipt-less admission can be refunded by a bounded journal write while ordinary work stays fenced for recovery.
+    if ((!refund && (this.recoveryRequired || this.fullSave)) || this.pendingCommit !== null || this.generation === undefined || !this.diskIsOurs()) { this.requestRecovery(); throw new RecoveryRequired(); }
+    const runs = scope.runs ?? [], routines = scope.routines ?? [];
+    if (runs.length + routines.length + (scope.append ? 1 : 0) > 4) throw new ScopeEscape("Scope too large");
+    const objects = new Set<object>(); const files = new Set<string>();
+    for (const run of runs) {
+      if (!isTracked(run) || !this.runStore.has(run) || this.rollbackPending.has(run) || objects.has(run)) throw new ScopeEscape("Run is not canonical");
+      objects.add(run); files.add(routineRunsFileName(run.routineId));
+    }
+    for (const routine of routines) {
+      if (!isTracked(routine) || !this.routinesRaw.includes(routine) || objects.has(routine)) throw new ScopeEscape("Routine is not canonical");
+      objects.add(routine); files.add(routineRunsFileName(routine.id));
+    }
+    if (scope.append && isTracked(scope.append) && this.trackedRunRoots.get(untracked(scope.append)) !== scope.append) throw new ScopeEscape("Append uses a foreign tracking root");
+    if (scope.append) this.guardIncoming(scope.append, new Set([...objects, scope.append]));
+    const append = scope.append ? this.trackRun(scope.append) : undefined;
+    if (append) {
+      if (this.indexes.runsById.has(append.id)) throw new ScopeEscape("Append ID is already present");
+      objects.add(append); files.add(routineRunsFileName(append.routineId));
+    }
+    if (!objects.size || files.size !== 1) throw new ScopeEscape("Scope must use one journal file");
+    const beforeRuns = runs.map(cloneRun), beforeRoutines = routines.map(cloneRoutine);
+    const dirtyRuns = runs.map(run => this.dirtyRuns.has(run)), dirtyRoutines = routines.map(routine => this.dirtyRoutines.has(routine));
+    this.runRevision++; this.fleetDueAt = null;
+    let attempted = false;
+    try {
+      this.activeScope = { objects, append };
+      try { mutate(); } finally { this.activeScope = undefined; }
+      if (append && !this.runStore.has(append)) throw new ScopeEscape("Declared append was not inserted");
+      attempted = true;
+      this.journal.append({ runs: [...runs, ...(append ? [append] : [])].map(untracked), routines: routines.map(untracked), removed: [] });
+      for (const run of runs) this.dirtyRuns.delete(run);
+      if (append) this.dirtyRuns.delete(append);
+      for (const routine of routines) this.dirtyRoutines.delete(routine);
+      this.savedRunCount = this.journalCount();
+    } catch (error) {
+      this.activeScope = undefined;
+      runs.forEach((run, i) => this.restoreRecord(run, beforeRuns[i]!));
+      routines.forEach((routine, i) => this.restoreRecord(routine, beforeRoutines[i]!));
+      if (!attempted) {
+        if (append && this.runStore.has(append)) this.removeRun(append, false);
+        runs.forEach((run, i) => { if (!dirtyRuns[i]) this.dirtyRuns.delete(run); });
+        routines.forEach((routine, i) => { if (!dirtyRoutines[i]) this.dirtyRoutines.delete(routine); });
+      } else {
+        this.fullSave = true; this.requestRecovery(); cancelCoalesced(this.file);
+        try {
+          this.journal.append({ runs: runs.map(untracked), routines: routines.map(untracked), removed: append ? [untracked(append)] : [] });
+          if (append && this.runStore.has(append)) this.removeRun(append, false);
+          this.savedRunCount = this.journalCount();
+        } catch (reconciliationError) {
+          if (append && this.runStore.has(append)) { this.rollbackPending.add(append); this.updateRunIndex(append); }
+          if (error instanceof Error) Object.defineProperty(error, "reconciliationError", { value: reconciliationError, configurable: true });
+        }
+      }
+      throw error;
+    } finally { this.drainSettled(); }
+  }
+
+  private commitProposal(request: RoutineRequestCommit, scope: { location?: string; routine?: Routine; create?: boolean; remove?: boolean; runs?: RoutineRun[]; append?: RoutineRun }, mutate: () => void): void {
+    if (this.activeScope || this.fullTransaction || this.saving) throw new ScopeEscape("Nested proposal transaction");
+    if (this.recoveryRequired || this.fullSave || this.pendingCommit !== null || this.generation === undefined || !this.diskIsOurs()) { this.requestRecovery(); throw new RecoveryRequired(); }
+    const routine = scope.routine, runs = scope.runs ?? [], append = scope.append;
+    const location = scope.location ?? routine?.id;
+    if (!location) throw new ScopeEscape("Proposal has no journal location");
+    const oldReceipt = this.matchingRoutineRequestReceipt(request);
+    // Legacy intents gain their stable location on the first bounded action.
+    if (oldReceipt?.journalRoutineId && oldReceipt.journalRoutineId !== location) throw new ScopeEscape("Proposal receipt moved files");
+    if (routine && !scope.create && !this.definitionOwners.has(routine) || runs.some(run => !this.runStore.has(run) || this.rollbackPending.has(run) || run.routineId !== location)) throw new ScopeEscape("Proposal scope is not canonical");
+    const beforeRoutine = routine ? cloneRoutine(routine) : undefined, beforeRuns = runs.map(cloneRun);
+    const dirtyRuns = runs.map(run => this.dirtyRuns.has(run)), dirtyRoutine = routine && this.dirtyRoutines.has(routine);
+    const objects = new Set<object>([...runs, ...(routine ? [routine] : []), ...(append ? [append] : [])]);
+    let attempted = false;
+    this.runRevision++; this.fleetDueAt = null;
+    try {
+      this.proposalRequest = request.requestId; this.activeScope = { objects, append };
+      try { mutate(); if (append) this.appendRun(append); } finally { this.activeScope = undefined; this.proposalRequest = undefined; }
+      const receipt = this.receiptsById.get(request.requestId) ?? null;
+      if (receipt && !receipt.journalRoutineId) this.setRequestReceipt(request.requestId, { ...receipt, journalRoutineId: location });
+      attempted = true;
+      this.journal.proposal({ routineId: location, routine: scope.remove ? { id: location, $deleted: true } as { id: string } : routine && untracked(routine), receiptId: request.requestId, receipt: this.receiptsById.get(request.requestId) ?? null, runs: [...runs, ...(append ? [append] : [])].map(untracked) });
+      if (scope.create && routine) { this.routinesRaw.unshift(routine); this.updateDefinitionIndex(routine); this.definitionRevision++; }
+      if (scope.remove && routine) { const at = this.routinesRaw.indexOf(routine); this.routinesRaw.splice(at, 1); this.rebuildDefinitionIndex(); }
+      runs.forEach(run => this.dirtyRuns.delete(run)); if (append) this.dirtyRuns.delete(append);
+      if (routine) this.dirtyRoutines.delete(routine);
+      this.savedRunCount = this.journalCount(); this.savedRoutineCount = this.routinesRaw.length;
+    } catch (error) {
+      this.activeScope = undefined; this.proposalRequest = undefined;
+      runs.forEach((run, i) => this.restoreRecord(run, beforeRuns[i]!));
+      if (routine && beforeRoutine) this.restoreRecord(routine, beforeRoutine);
+      this.setRequestReceipt(request.requestId, oldReceipt ?? null);
+      if (attempted) {
+        this.fullSave = true; this.requestRecovery(); cancelCoalesced(this.file);
+        try {
+          this.journal.proposal({ routineId: location, routine: scope.create ? { id: location, $deleted: true } as { id: string } : routine && untracked(routine), receiptId: request.requestId, receipt: oldReceipt, runs: runs.map(untracked), removed: append ? [untracked(append)] : [] });
+          if (append && this.runStore.has(append)) this.removeRun(append, false);
+        } catch (reconciliationError) {
+          if (append && this.runStore.has(append)) { this.rollbackPending.add(append); this.updateRunIndex(append); }
+          if (error instanceof Error) Object.defineProperty(error, "reconciliationError", { value: reconciliationError, configurable: true });
+        }
+      } else {
+        if (append && this.runStore.has(append)) this.removeRun(append, false);
+        runs.forEach((run, i) => { if (!dirtyRuns[i]) this.dirtyRuns.delete(run); });
+        if (routine && !dirtyRoutine) this.dirtyRoutines.delete(routine);
+      }
+      throw error;
+    } finally { this.drainSettled(); }
+  }
+
   private commitMutation(mutate: () => void): void {
+    if (this.recoveryRequired && !this.lifecycle && (!this.retryableFullTransaction || this.rollbackPending.size || this.recoveryNeedsIndexRepair)) throw new RecoveryRequired();
+    if (this.activeScope || this.fullTransaction || this.saving) throw new ScopeEscape("Nested full transaction");
+    routineWorkCounters.fullCommits++;
+    this.fullTransaction = true;
     this.runRevision++;
     this.fleetDueAt = null;
     const before = {
       routines: this.routines.map(cloneRoutine),
-      runs: this.runs.map(cloneRun),
-      receipts: this.routineRequestReceipts.map((receipt) => ({ ...receipt })),
+      runs: [...this.runStore].map(cloneRun),
+      receipts: this.routineRequestReceipts.map(receipt => plainCopy(receipt)),
+      fullSave: this.fullSave, recoveryRequired: this.recoveryRequired, retryableFullTransaction: this.retryableFullTransaction,
+      persistenceAttempts: this.persistenceAttempts,
+      dirtyRunIds: new Set([...this.dirtyRuns].map(run => run.id)),
+      dirtyRoutineIds: new Set([...this.dirtyRoutines].map(routine => routine.id)),
+      removed: new Map(this.removedRuns),
     };
+    let attempted = false;
     try {
       mutate();
+      attempted = true;
       this.save();
     } catch (error) {
       this.routines = before.routines.map((routine) => this.trackRoutine(routine));
-      this.runs = before.runs.map((run) => this.trackRun(run));
+      this.replaceStore(before.runs);
       this.routineRequestReceipts = this.trackReceipts(before.receipts);
+      this.removedRuns = before.removed;
+      const beganSave = this.persistenceAttempts !== before.persistenceAttempts;
+      this.retryableFullTransaction = attempted && beganSave ? !before.recoveryRequired || before.retryableFullTransaction : before.retryableFullTransaction;
+      if (!attempted || !beganSave) {
+        this.dirtyRuns = new Set();
+        for (const run of this.runStore) if (before.dirtyRunIds.has(run.id)) this.dirtyRuns.add(run);
+        this.dirtyRoutines = new Set(this.routines.filter(routine => before.dirtyRoutineIds.has(routine.id)));
+        this.fullSave = before.fullSave; this.recoveryRequired = before.recoveryRequired;
+      }
       throw error;
-    }
+    } finally { this.fullTransaction = false; this.drainSettled(); }
   }
 
   /** Inert additive batch; caller commits this file with the bot records. */
@@ -3792,8 +4879,9 @@ export class RoutineManager {
       if ((routine.schedule as { type?: unknown } | undefined)?.type === "app_event") throw new Error("A package cannot bring a connected-app routine; set it up from the app's own review");
       ids.add(routine.id);
     }
-    // An imported routine arrives with its ceiling pinned: imported bots start at Ask, so does the routine.
-    const next = [...this.routines, ...additions.map(routine => routine.permissionMode ? routine : { ...routine, permissionMode: "ask" as const })];
+    // An omitted package choice stays unset and resolves to Ask until an owner chooses.
+    const next = [...this.routines, ...additions.map(routine => routine.permissionMode === undefined
+      ? { ...routine, permissionPending: true as const } : routine)];
     // The bytes take their own generation, and publish records it, so correctness never rests on diskIsOurs() failing:
     // every state line written before this file is spent, and the routines folded into `next` are the whole state.
     const stateGeneration = randomUUID();
@@ -3801,7 +4889,7 @@ export class RoutineManager {
       // runsCommit stays as recorded: a file without it accepts every journal line, including
       // those of a save that was interrupted before its routines.json write (audit A-3).
       bytes: Buffer.from(JSON.stringify({ ...this.unknownFileFields, version: 1, routines: [...next, ...this.unloadedRoutines], routineRequestReceipts: this.routineRequestReceipts, ...(this.runsCommit === undefined ? {} : { runsCommit: this.runsCommit }), stateGeneration } satisfies RoutineFile, null, 2)),
-      publish: () => { this.routines = next.map((routine) => this.trackRoutine(routine)); this.fleetDueAt = null; this.fullSave = true; this.generation = stateGeneration; this.journal.setGeneration(stateGeneration); },
+      publish: () => { this.routines = next.map((routine) => this.trackRoutine(routine)); this.fleetDueAt = null; this.fullSave = true; this.generation = stateGeneration; this.journal.setGeneration(stateGeneration, this.receiptsById.keys()); },
     };
   }
 
@@ -3815,112 +4903,148 @@ export class RoutineManager {
    * written by another path is left out. A save that passes neither rewrites
    * routines.json and compares everything, as before. */
   private save(options: { defer?: boolean; runs?: readonly RoutineRun[]; routines?: readonly Routine[] } = {}) {
+    if (this.activeScope) throw new ScopeEscape("Nested save");
+    // Explicit standalone owner/lifecycle saves retain their full transaction boundary.
+    // Tick/turn/deferred saves already carry a budget and can never enter it.
+    const hinted = options.runs !== undefined || options.routines !== undefined;
+    if (!this.lifecycle && !this.fullTransaction && !this.maintenance.getStore() && !options.defer
+      && (!hinted || this.fullSave && !this.recoveryRequired)) return this.commitMutation(() => {});
+    return this.withMaintenance(() => this.saveWithBudget(options));
+  }
+  private saveWithBudget(options: { defer?: boolean; runs?: readonly RoutineRun[]; routines?: readonly Routine[] }) {
     this.runRevision++;
     const hinted = options.runs !== undefined || options.routines !== undefined;
     if (hinted) {
-      for (const run of options.runs ?? []) this.dirtyRuns.add(run);
-      for (const routine of options.routines ?? []) this.dirtyRoutines.add(routine);
+      for (const run of options.runs ?? []) if (this.runStore.has(run)) this.dirtyRuns.add(run);
+      for (const routine of options.routines ?? []) if (this.definitionOwners.has(routine)) this.dirtyRoutines.add(routine);
     } else this.fullSave = true;
     // only a routine change can move the fleet's earliest due time
     if (!hinted || options.routines?.length) this.fleetDueAt = null;
-    if (options.defer) { scheduleCoalesced(this.file, () => this.saveNow()); return; }
+    if (options.defer) {
+      const token = this.maintenance.getStore()!;
+      scheduleCoalesced(this.file, () => this.maintenance.run(token, () => this.saveNow())); return;
+    }
     this.saveNow();
     cancelCoalesced(this.file);
   }
 
   private saveNow() {
-    // Active receipts own cancellation, timeout, and provider-event routing;
-    // evicting one would strand live work. Treat MAX_RUNS as a soft history
-    // cap and reclaim only the oldest terminal receipts. An unusually large
-    // active queue may exceed it until work settles.
-    const removed: RoutineRun[] = [];
-    let excess = this.runsRaw.length - MAX_RUNS;
-    // on the raw list: the cap's own removals are accounted for (`trimmed`), so the list watch must not see them
-    for (let index = 0; index < this.runsRaw.length && excess > 0;) {
-      // a settled run whose result is still owed to a chat is kept like a live one until it is delivered, for at most a day (ROUTINE-DELIVER-1010)
-      const owed = this.runsRaw[index]!.delivery?.state === "pending" && (this.runsRaw[index]!.finishedAt ?? this.runsRaw[index]!.createdAt) > this.now() - ROUTINE_DELIVERY_KEEP_MS;
-      if (isOpen(this.runsRaw[index]!.status) || owed) {
-        index += 1;
-        continue;
-      }
-      removed.push(...this.runsRaw.splice(index, 1));
-      excess -= 1;
-    }
-    for (const run of removed) { this.dirtyRuns.delete(run); this.liveDispatch.delete(run.id); }
-    this.sweep(removed.length);
+    if (this.activeScope || this.saving) throw new ScopeEscape("Nested save");
+    if (this.recoveryRequired && !this.lifecycle && !this.fullTransaction) throw new RecoveryRequired();
+    this.persistenceAttempts++;
+    this.saving = true;
     try {
-      if (this.fullSave || this.pendingCommit !== null || this.generation === undefined || !this.diskIsOurs()) this.saveFull();
-      else {
-        // written since the last save, in list order; a run or routine that left the lists is not written back
-        // straight from the dirty sets: a run or routine that left a list did so through a path that forces a full save
-        const runs = [...this.dirtyRuns].map(untracked);
-        const routines = [...this.dirtyRoutines].map(untracked);
-        this.journal.append({ runs, routines, removed: removed.map(untracked) });
+      this.serviceRetirement(); this.sweep();
+      if (this.fullSave || this.pendingCommit !== null || this.generation === undefined || !this.diskIsOurs()) {
+        if (!this.lifecycle && !this.fullTransaction) { this.requestRecovery(); throw new RecoveryRequired(); }
+        this.saveFull();
+      } else {
+        this.journal.append({ runs: [...this.dirtyRuns].map(untracked), routines: [...this.dirtyRoutines].map(untracked), removed: [...this.removedRuns.values()].map(untracked) });
       }
-      this.fullSave = false;
-      this.dirtyRuns.clear();
-      this.dirtyRoutines.clear();
+      this.fullSave = false; this.recoveryRequired = false; this.dirtyRuns.clear(); this.dirtyRoutines.clear(); this.removedRuns.clear();
       this.saveFaults = 0;
-      this.savedRunCount = this.runs.length;
-      this.savedRoutineCount = this.routines.length;
+      this.savedRunCount = this.journalCount(); this.savedRoutineCount = this.routines.length; this.retryableFullTransaction = false;
+    } catch (error) { this.fullSave = true; this.requestRecovery(); cancelCoalesced(this.file); throw error; }
+    finally { this.saving = false; if (!this.fullTransaction) this.drainSettled(); }
+  }
+  /** Paired journal membership metadata; B supplies public persistedCount. */
+  /** Fault recovery has its own quiescent lifecycle phase. Its timer is deliberately outside every tick/turn context. */
+  private requestRecovery(indexRepair = false): void {
+    this.recoveryRequired = true;
+    this.recoveryNeedsIndexRepair ||= indexRepair;
+    if (this.lifecycle || this.halted || this.recovering || this.recoveryTimer) return;
+    this.maintenance.exit(() => {
+      this.recoveryTimer = setTimeout(() => {
+        this.recoveryTimer = null; this.recovering = true;
+        try {
+          if (this.recoveryNeedsIndexRepair) {
+            const errors = this.repairIndexes();
+            if (errors.length) throw new Error(errors.join(", "));
+            this.recoveryNeedsIndexRepair = false;
+          }
+          this.recoverPersistence(); this.recoveryNeedsIndexRepair = false;
+          queueMicrotask(() => void this.tick());
+        } catch (error) {
+          this.saveFaults++;
+          rateLimited("routine-lifecycle-recovery", 60_000, () => `routine: lifecycle recovery remains held: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+          this.recovering = false;
+          if (this.recoveryRequired) this.requestRecovery();
+        }
+      }, 1_000);
+      this.recoveryTimer.unref?.();
+    });
+  }
+  /** The host invokes this only with turn admission held, outside a measured tick/turn. */
+  recoverPersistence(): void {
+    if (this.activeScope || this.saving || this.fullTransaction) throw new RecoveryRequired();
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = null;
+    this.lifecycle = true;
+    try {
+      if (this.recoveryNeedsIndexRepair) {
+        const errors = this.repairIndexes();
+        if (errors.length) throw new Error(errors.join(", "));
+        this.recoveryNeedsIndexRepair = false;
+      }
+      if (this.rollbackPending.size) {
+        this.journal.append({ runs: [], routines: [], removed: [...this.rollbackPending].map(untracked) });
+        for (const run of [...this.rollbackPending]) this.removeRun(run, false);
+      }
+      this.saveFull(); this.fullSave = false; this.recoveryRequired = false; this.retryableFullTransaction = false;
+      this.dirtyRuns.clear(); this.dirtyRoutines.clear(); this.removedRuns.clear();
+      this.savedRunCount = this.journalCount(); this.savedRoutineCount = this.routines.length;
     } catch (error) {
-      // what reached the disk is unknown: the next save compares everything
-      this.fullSave = true;
-      throw error;
+      this.fullSave = true; this.recoveryRequired = true; throw error;
+    } finally {
+      this.lifecycle = false; this.drainSettled();
+      if (this.recoveryRequired) this.requestRecovery();
     }
   }
-
+  private journalCount(): number {
+    // The base journal's Map.size is the same constant metadata; remove compatibility arm after B integration.
+    return (this.journal as unknown as { persistedCount?: number; persisted: Map<string, unknown> }).persistedCount
+      ?? (this.journal as unknown as { persisted: Map<string, unknown> }).persisted.size;
+  }
   private trackRun(run: RoutineRun): RoutineRun {
-    if (isTracked(run)) return run;
-    const tracked: RoutineRun = track(run, () => { this.dirtyRuns.add(tracked); this.runRevision++; });
+    if (isTracked(run)) {
+      if (this.trackedRunRoots.get(untracked(run)) === run) return run;
+      run = plainCopy(run);
+    }
+    const cached = this.trackedRunRoots.get(run); if (cached) return cached;
+    let tracked: RoutineRun;
+    tracked = track(run, () => {
+      if (!this.runStore.has(tracked)) return;
+      this.dirtyRuns.add(tracked); this.runRevision++; this.updateRunIndex(tracked);
+    }, write => this.guardRecord(tracked ?? run, write));
+    this.trackedRunRoots.set(run, tracked);
     return tracked;
   }
-
   private trackRoutine(routine: Routine): Routine {
-    if (isTracked(routine)) return routine;
-    // a routine write can move the fleet's earliest due time
-    const tracked: Routine = track(routine, () => { this.dirtyRoutines.add(tracked); this.fleetDueAt = null; });
+    if (isTracked(routine)) {
+      if (this.trackedRoutineRoots.get(untracked(routine)) === routine) return routine;
+      routine = plainCopy(routine);
+    }
+    const cached = this.trackedRoutineRoots.get(routine); if (cached) return cached;
+    let tracked: Routine;
+    tracked = track(routine, () => {
+      if (!this.definitionOwners.has(tracked)) return;
+      this.dirtyRoutines.add(tracked); this.fleetDueAt = null;
+      if (this.definitionOwners.has(tracked)) this.updateDefinitionIndex(tracked);
+    }, write => this.guardRecord(tracked ?? routine, write));
+    this.trackedRoutineRoots.set(routine, tracked);
     return tracked;
   }
-
-  /** Receipts live only in routines.json: any write to them makes the next save a full one. */
   private trackReceipts(receipts: RoutineRequestReceipt[]): RoutineRequestReceipt[] {
-    return isTracked(receipts) ? receipts : track(receipts, () => { this.fullSave = true; });
+    return isTracked(receipts) ? receipts : track(receipts, () => { this.fullSave = true; }, write => this.guardRecord(receipts, write, true));
   }
-
-  /** Bring anything put into the lists without tracking under it, and account for what joined or left them since
-   * the last save. A routine that joined or left, a list replaced, or a run that left other than by the history cap
-   * (`trimmed`) makes this save a full one; a run that joined is written. */
-  private sweep(trimmed: number): void {
-    if (!isTracked(this.routineRequestReceipts)) { this.routineRequestReceipts = this.trackReceipts(this.routineRequestReceipts); this.fullSave = true; }
-    // Incremental: the list watch queues what joined, so the walk over every routine and run happens only after a
-    // list was replaced or an element was put in raw, never per save.
-    if (this.walkRoutines) {
-      this.walkRoutines = false;
-      for (let index = 0; index < this.routinesRaw.length; index++) {
-        const routine = this.routinesRaw[index]!;
-        if (!isTracked(routine)) { this.routinesRaw[index] = this.trackRoutine(routine); this.fullSave = true; }
-      }
+  private sweep(): void {
+    if (this.accountedRunCount !== this.runStore.size || this.runStore.size !== this.sweepBaseCount + this.structuralAdds - this.structuralRemoves) {
+      this.requestRecovery(true); throw new RecoveryRequired();
     }
-    if (this.routinesRaw.length !== this.savedRoutineCount) this.fullSave = true;
-    let joined = 0;
-    if (this.walkRuns) {
-      this.walkRuns = false;
-      this.joinedRuns.length = 0;
-      for (let index = 0; index < this.runsRaw.length; index++) {
-        let run = this.runsRaw[index]!;
-        if (!isTracked(run)) run = this.runsRaw[index] = this.trackRun(run);
-        if (!this.knownRuns.has(run)) { this.knownRuns.add(run); this.dirtyRuns.add(run); joined += 1; }
-      }
-    } else {
-      const queued = this.joinedRuns.splice(0);
-      for (const candidate of queued) {
-        let run = candidate;
-        if (!isTracked(run)) { run = this.trackRun(run); const at = this.runsRaw.indexOf(candidate); if (at >= 0) this.runsRaw[at] = run; this.fullSave = true; }
-        if (!this.knownRuns.has(run)) { this.knownRuns.add(run); this.dirtyRuns.add(run); joined += 1; }
-      }
-    }
-    if (this.runsRaw.length !== this.savedRunCount + joined - trimmed) this.fullSave = true;
+    this.sweepBaseCount = this.runStore.size; this.structuralAdds = 0; this.structuralRemoves = 0;
+    // Receipt membership is maintained by request key; no history snapshot on a tick.
+    if (this.walkRoutines || this.routinesRaw.length !== this.savedRoutineCount) this.fullSave = true;
   }
 
   /** routines.json is still the file this process last wrote (one stat). */
@@ -3934,6 +5058,7 @@ export class RoutineManager {
   }
 
   private saveFull() {
+    routineWorkCounters.recoverySaves++;
     mkdirSync(dirname(this.file), { recursive: true });
     // History first: if routines.json then fails, nothing is lost, and a run
     // that exists only in the journal is still loaded on the next start.
@@ -3952,19 +5077,21 @@ export class RoutineManager {
     } satisfies RoutineFile, null, 2);
     // A live state line means routines.json alone is not the whole state: rewrite it even if it reads the same.
     if (this.pendingCommit === null && !this.journal.hasRoutineLines() && this.fileUnchanged(textFor(this.runsCommit, this.generation))) {
-      this.journal.sync(this.runs.map(untracked));
+      this.journal.sync([...this.runStore].map(untracked));
       return;
     }
     const tag = this.pendingCommit ?? Math.max(this.runsCommit ?? 0, this.journal.highestTag) + 1;
+    if (!Number.isSafeInteger(tag) || tag >= Number.MAX_SAFE_INTEGER) throw new RecoveryRequired();
     this.pendingCommit = tag;
-    this.journal.sync(this.runs.map(untracked), tag);
+    this.journal.sync([...this.runStore].map(untracked), tag);
     const generation = randomUUID();
     const text = textFor(tag, generation);
     writeFileAtomic(this.file, text, { mode: 0o600 });
     this.runsCommit = tag;
     this.pendingCommit = null;
     this.generation = generation;
-    this.journal.setGeneration(generation);
+    (this.journal as unknown as { markCommitted?: (tag: number) => void }).markCommitted?.(tag);
+    this.journal.setGeneration(generation, this.receiptsById.keys());
     try { const stat = statSync(this.file); this.lastWritten = { text, size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino }; }
     catch { this.lastWritten = null; }
     this.journal.compact();

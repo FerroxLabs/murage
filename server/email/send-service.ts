@@ -1,3 +1,6 @@
+import { serviceQueue, producerBase, serviceOwnerNoLimits, type ProducerApprovalQueue, type ServiceAuthorityReader } from "../narrow-denials.ts";
+import { readApproval, presentApproval, settle, type PendingQueueApproval, type ApprovalAnswer } from "../decision/index.ts";
+import { emailCardView } from './cards.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -18,9 +21,20 @@
 import { Buffer } from "node:buffer";
 import { emailRef, normalizeAddresses, payloadHash, sendIdempotencyKey, sha256Hex, uuidv7, type EmailDraft } from "./canonical.ts";
 import type { CredentialRef, FluxEmailClient, FluxOutcome, HeldMessage, SendBody } from "./flux-email-client.ts";
+import { withEmailSpendBot } from "./flux-email-client.ts";
 import { InboxLocks } from "./inbox-lock.ts";
+import { isFrozen } from "./retired-keys.ts";
 import { decideSend, type WhyCode } from "./send-policy.ts";
 import { OPEN_SEND_STATES, TERMINAL_SEND_STATES, type EmailStore, type OwnerReceipt, type PayloadPart, type ReplySource, type SendRow, type SendState, type SendSummary } from "./email-store.ts";
+
+/** A retained No limits decision is bound to this exact payload. It is not an
+ * owner click and never earns a recipient trust grant. */
+export function noLimitsSend(row: SendRow): boolean {
+  return row.receipt?.device==='decision:no-limits' && row.receipt.payloadHash===row.payloadHash;
+}
+function assertNever(value: never): never { throw new Error(`EMAIL_UNHANDLED_OUTCOME:${JSON.stringify(value)}`); }
+/** No request left the process: the client's gate or credential check refused (r7), or the owner credential no longer matches the ref (owner_changed). */
+const notSent = (outcome: FluxOutcome<unknown>): boolean => outcome.kind === "local_refused" || (outcome.kind === "uncertain" && outcome.reason === "owner_changed");
 
 export const HOLD_LIFETIME_MS = 72 * 3_600_000;
 export const SENT_DUPLICATE_WINDOW_MS = 24 * 3_600_000;
@@ -32,9 +46,11 @@ export type EmailOutcome = "sent" | "declined" | "not_sent" | "unknown" | "expir
 /** What the later phases turn into an `email_outcome` status row on the originating thread (4.6). No address, subject or text. */
 export interface EmailOutcomeEvent { sendId: string; botId: string; threadId: string; ref: string; outcome: EmailOutcome; state: SendState; code: string | null }
 
-export type SendClient = Pick<FluxEmailClient, "send" | "reply" | "getApproval" | "listApprovals" | "approve" | "withdrawHeld" | "retryHeld" | "listMessages">;
+export type SendClient = Pick<FluxEmailClient, "send" | "reply" | "getApproval" | "listApprovals" | "approve" | "withdrawHeld" | "retryHeld" | "listMessages" | "currentOwnerRef">;
 
 export interface SendServiceOptions {
+  authorityFor?: ServiceAuthorityReader;
+  botName?: (botId:string)=>string;
   store: EmailStore;
   client: SendClient;
   installId: string;
@@ -48,7 +64,20 @@ export interface SendServiceOptions {
   /** Every row change (the card is a view of the row). */
   onChange?: (row: SendRow) => void;
   locks?: InboxLocks;
+  /** r4 section 2 / r6 4b: the one synchronous fence every move into dispatching or approving checks. True holds the bot's sends: a bot send stays
+   *  `prepared` (due in 30 s), an owner act answers retry_later with no Flux call. Held while a rotation is under way or the inbox owner is unproven. */
+  fence?: (botId: string) => boolean;
+  /** r6 F1: the owner ref a binding-scoped owner call carries (the binding's proven record), or null for try later. Absent: the client's current owner. */
+  ownerRefFor?: (botId: string) => string | null;
 }
+
+/** How long a held bot send waits before the tick decides it again. */
+export const FENCE_RETRY_MS = 30_000;
+/** r4 section 3: a frozen hold is read again every 6 h and once at createdAt + 72 h; unreadable reads back off 1 h, 6 h, then 24 h, and a
+ *  hold still unreadable 7 days past its 72 h ends unknown_expired. */
+export const FROZEN_REREAD_MS = 6 * 3_600_000;
+export const FROZEN_UNREADABLE_BACKOFF_MS = [3_600_000, 6 * 3_600_000, 24 * 3_600_000] as const;
+export const FROZEN_UNREADABLE_LIMIT_MS = 7 * 24 * 3_600_000;
 
 /** `holdForOwner` (NOLIMITS v1 V6 (b)): a marked lane turn: the policy's auto-clear is skipped, so the Send / Don't send card shows. */
 export interface SubmitInput { botId: string; generation: number; threadId: string; draft: EmailDraft; replySource?: ReplySource | null; holdForOwner?: boolean }
@@ -65,7 +94,6 @@ export type AnswerResult =
   | { status: "waiting_sibling"; row: SendRow; siblingSendId: string }
   | { status: "retry_later"; row: SendRow };
 
-const OWNER: CredentialRef = { kind: "owner" };
 const outcomeOf = (state: SendState): EmailOutcome | null =>
   state === "sent" ? "sent" : state === "declined" ? "declined" : state === "refused" ? "not_sent" : state === "expired" ? "expired" : state === "withdrawn" ? "withdrawn" : state === "unknown_expired" ? "unknown" : null;
 
@@ -84,18 +112,92 @@ export function partsDraft(kind: "send" | "reply", parts: PayloadPart[]): EmailD
 }
 
 export class EmailSendService {
+  private readonly approvals:ProducerApprovalQueue;
+  private readonly approvalResults=new Map<string,AnswerResult>();
+  private trustDelivery?: (item:PendingQueueApproval,answer:ApprovalAnswer)=>Promise<void>;
+  configureTrustDelivery(deliver:(item:PendingQueueApproval,answer:ApprovalAnswer)=>Promise<void>){this.trustDelivery=deliver;}
+  pendingApprovals(){return this.approvals.pendingApprovals();}
+  approvalQueue(){return this.approvals;}
+  authorityFor(threadId:string,botId:string){return this.options.authorityFor?.(threadId,botId);}
+  private async acceptApproval(item:PendingQueueApproval,answer:ApprovalAnswer):Promise<void> {
+    const input=item.call.input as {sendId?:string;kind?:string;payloadHash?:string};
+    const approval=readApproval(item.approvalId);
+    // Failed delivery cleanup is not an owner Don't send / Not now decision.
+    // Keep the service's retry/hold result and never apply a synthetic denial.
+    if(approval?.delivery==='failed')return;
+    if(input.kind==='trust'&&approval?.state!=='answered')return;
+    if(input.kind==='trust'){if(!this.trustDelivery)throw new Error('approval-queue-delivery-unavailable');return this.trustDelivery(item,answer);}
+    const row=this.store.getSend(input.sendId??'');
+    if(!row||row.payloadHash!==input.payloadHash)throw new Error('approval-queue-conflict');
+    const current=row.state==='prepared'?(this.move(row,{state:'awaiting_owner'})??this.fresh(row.sendId)):row;
+    const result=answer.behavior==='allow'?await this.ownerSend(current.sendId,current.revision,'decision:owner'):await this.dontSend(current.sendId,current.revision);
+    this.approvals.updateProgress(item.ref, { waitingSibling: result.status === 'waiting_sibling' ? result.siblingSendId : null });
+    this.approvalResults.set(row.sendId,result);
+    if(this.approvalResults.size>256)this.approvalResults.delete(this.approvalResults.keys().next().value!);
+    // A held sibling records the owner's intent even though the group cannot
+    // dispatch yet. Acknowledging it avoids a second, unrelated read retry.
+    if(result.status==='stale'||result.status==='retry_later')throw new Error('approval-queue-delivery-unavailable');
+  }
+  async answerSendApproval(sendId:string,behavior:'allow'|'deny'):Promise<AnswerResult|undefined> {
+    const item=this.pendingApprovals().find(item=>item.ref===sendId);
+    if(!item)return undefined;
+    await this.approvals.answer(item.approvalId,{behavior});
+    return this.approvalResults.get(sendId);
+  }
+  private readonly approvalSyncFlights=new Map<string,Promise<void>>();
+  syncApproval(row:SendRow):Promise<void> {
+    const prior=this.approvalSyncFlights.get(row.sendId);if(prior)return prior;
+    const done=this.syncApprovalNow(row).finally(()=>this.approvalSyncFlights.delete(row.sendId));
+    this.approvalSyncFlights.set(row.sendId,done);return done;
+  }
+  private async syncApprovalNow(row:SendRow):Promise<void> {
+    await this.approvals.idle(row.sendId);
+    row=this.store.getSend(row.sendId)??row;
+    const item=this.pendingApprovals().find(item=>item.ref===row.sendId);
+    const record=item&&readApproval(item.approvalId);
+    if(item){
+      if(!record)return; // queue-first crash: S1 recovery reopens this exact item
+      if(record.state==='open'){
+        if(['awaiting_owner','held','approved_unsent','unknown_expired'].includes(row.state))await presentApproval(record.ref,item.view);
+        else await settle(record.ref,'cancelled');
+        return;
+      }
+    }
+    // A retained RUN failure is execution status, never another permission.
+    if(noLimitsSend(row)||(row.state==='held'&&typeof this.approvals.progressFor(row.sendId).waitingSibling==='string')||!['awaiting_owner','held','approved_unsent','unknown_expired'].includes(row.state))return;
+    const card=emailCardView(row,{botName:this.options.botName?.(row.botId)??row.botId,text:this.textOf(row),approved:address=>this.store.isApproved(row.botId,address)});
+    const {title,subtitle,requestId:_legacyId,answered:_answered,...action}=card;
+    // The payload store owns the send bytes. Keep the body in presentation
+    // only, outside the immutable action copied into approval records/backups.
+    action.emailSend={...action.emailSend,draft:{...action.emailSend.draft,text:''}};
+    const request=this.approvals.open({authority:this.authorityFor(row.threadId,row.botId),ref:row.sendId,tool:'email_send',
+      input:{kind:'send',sendId:row.sendId,payloadHash:row.payloadHash,summary:row.summary,text:this.textOf(row)},action:{...action,requestId:row.sendId},view:{title,subtitle},base:producerBase(true)});
+    if(request.outcome.kind==='run'||request.outcome.kind==='refuse')return;
+    await this.approvals.present(request,request.outcome.ref);
+  }
+
   readonly locks: InboxLocks;
   private readonly now: () => number;
   private readonly newId: () => string;
   private readonly options: SendServiceOptions;
   constructor(options: SendServiceOptions) {
     this.options = options;
+    this.approvals=serviceQueue('email');
+    for(const tool of ['email_send','email_reply','email_trust_offer'])this.approvals.bindAcceptance(tool,(item,answer)=>this.acceptApproval(item,answer));
     this.locks = options.locks ?? new InboxLocks();
     this.now = options.now ?? Date.now;
     this.newId = options.newId ?? (() => uuidv7(this.now()));
   }
   private get store() { return this.options.store; }
   private get client() { return this.options.client; }
+  /** The fence: true means this bot's sends wait. */
+  private held(botId: string): boolean { return this.options.fence?.(botId) === true; }
+  /** The owner credential ref for a binding-scoped owner call on this bot; "" (refused by the client, no request) when none is proven. */
+  private refOf(botId: string): string { return this.ownerFor(botId).kind === "owner" ? (this.ownerFor(botId) as { expectOwnerRef: string }).expectOwnerRef : ""; }
+  private ownerFor(botId: string): CredentialRef {
+    const ref = this.options.ownerRefFor ? this.options.ownerRefFor(botId) : this.options.client.currentOwnerRef?.() ?? null;
+    return { kind: "owner", expectOwnerRef: ref ?? "" };
+  }
 
   // ---- transitions -----------------------------------------------------------------------------------------------------------
 
@@ -129,13 +231,14 @@ export class EmailSendService {
 
   async submit(input: SubmitInput): Promise<SubmitResult> {
     const binding = this.store.getBinding(input.botId);
-    if (!binding || binding.state !== "active" || !binding.inboxId) return { status: "no_inbox" };
+    if (!binding || !binding.inboxId || (binding.state !== "active" && !(serviceOwnerNoLimits(this.authorityFor(input.threadId, input.botId)) && ["paused", "billing_hold", "grace"].includes(binding.state)))) return { status: "no_inbox" };
     const hash = payloadHash(input.draft);
     const now = this.now();
     const prepared = this.store.tx((): SubmitResult => {
-      const rows = this.store.sendsByHash(input.botId, hash);
+      const noLimits = serviceOwnerNoLimits(this.authorityFor(input.threadId, input.botId));
+      const rows = noLimits ? [] : this.store.sendsByHash(input.botId, hash);
       // rule 2: an engine retry in the same turn gets the row it already made
-      const same = rows.find(row => row.generation === input.generation);
+      const same = noLimits ? this.store.sendForAttempt(input.botId, hash, input.generation) : rows.find(row => row.generation === input.generation);
       if (same) return { status: "existing", row: same };
       // rule 3: the same email from another turn while the first is open, uncertain or sent in the last 24 h
       const blocking = rows.find(row => (["prepared", "dispatching", "awaiting_owner", "held", "approving", "approved_unsent", "unknown"] as SendState[]).includes(row.state)
@@ -175,10 +278,33 @@ export class EmailSendService {
       text: this.textOf(row), attachmentCount: row.summary.attachments.length, replySource: row.summary.replySource,
       isApproved: address => this.store.isApproved(row.botId, address),
     });
-    if (decision.needsOwner) return this.move(row, { state: "awaiting_owner", why: decision.why }) ?? this.fresh(row.sendId);
-    const dispatching = this.move(row, { state: "dispatching", why: decision.why, dispatchedAt: this.now() });
-    if (!dispatching) return this.fresh(row.sendId);
-    return this.dispatch(dispatching);
+    if (this.held(row.botId)) return this.move(row, { dueAt: this.now() + FENCE_RETRY_MS }) ?? this.fresh(row.sendId);
+    const planned={...row,state:'awaiting_owner' as const,revision:row.revision+1};
+    const card=emailCardView(planned,{botName:this.options.botName?.(row.botId)??row.botId,text:this.textOf(row),approved:address=>this.store.isApproved(row.botId,address)});
+    const {title,subtitle,requestId:_legacyId,answered:_answered,...action}=card;
+    // The payload store owns the send bytes. Keep the body in presentation
+    // only, outside the immutable action copied into approval records/backups.
+    action.emailSend={...action.emailSend,draft:{...action.emailSend.draft,text:''}};
+    const request=this.approvals.open({authority:this.authorityFor(row.threadId,row.botId),ref:row.sendId,tool:row.kind==='reply'?'email_reply':'email_send',
+      input:{kind:'send',sendId:row.sendId,payloadHash:row.payloadHash,summary:row.summary,text:this.textOf(row)},action:{...action,requestId:row.sendId},view:{title,subtitle},base:producerBase(decision.needsOwner)});
+    const result=await this.approvals.execute(request,async(call)=>{
+      const input=call.input as {payloadHash:string};if(this.fresh(row.sendId).payloadHash!==input.payloadHash)throw new Error('approval-queue-conflict');
+      let current=this.fresh(row.sendId);
+      if(!request.baseBranch){
+        const receipt:OwnerReceipt={sendId:row.sendId,payloadHash:row.payloadHash,revision:current.revision,at:this.now(),device:'decision:no-limits',used:false};
+        current=this.move(current,{receipt})??this.fresh(row.sendId);
+      }
+      if (this.held(row.botId)) return this.move(current, { dueAt: this.now() + FENCE_RETRY_MS }) ?? this.fresh(row.sendId);
+      const dispatching=this.move(current,{state:'dispatching',why:decision.why,dueAt:null,dispatchedAt:this.now()});
+      return dispatching?this.dispatch(dispatching):this.fresh(row.sendId);
+    });
+    if(result.kind==='executed')return result.value;
+    if(result.kind==='refuse')return this.settle(row,'refused',{code:'decision-refused'})??this.fresh(row.sendId);
+    this.approvals.stage(request,result.ref);
+    const waiting=this.move(row,{state:'awaiting_owner',why:decision.why})??this.fresh(row.sendId);
+    await this.approvals.present(request,result.ref);
+    try { this.options.onChange?.(waiting); } catch { /* display only */ }
+    return waiting;
   }
 
   private textOf(row: SendRow): string { return partsDraft(row.kind, this.store.getPayload(row.sendId)).text; }
@@ -191,7 +317,16 @@ export class EmailSendService {
     const outcome: FluxOutcome<SendBody> = await this.locks.shared(row.inboxId, () => row.kind === "reply" && row.replyMessageId
       ? this.client.reply(row.botId, row.inboxId, row.replyMessageId, { text: draft.text, cc: draft.cc, attachments, reply_all: false, client_reference: row.sendId }, idem)
       : this.client.send(row.botId, row.inboxId, { to: draft.to, cc: draft.cc, subject: draft.subject, text: draft.text, attachments, client_reference: row.sendId }, idem));
+    if (outcome.kind === "refused" && outcome.code === "spend_limit") {
+      // This is a definite local non-send, not an uncertain network outcome.
+      // Keep the same payload, consent and idempotency key in the outbox.
+      const current = this.fresh(row.sendId);
+      if (current.state !== "dispatching" || current.stopRequested) return current;
+      return this.move(current, { state: "prepared", code: "spend_limit", dispatchedAt: null, dueAt: null }) ?? this.fresh(row.sendId);
+    }
     let current = this.fresh(row.sendId);
+    // r7 F1b: the client refused locally (no request left the process): no attempt is recorded; the row lands by the table in landRefused
+    if (outcome.kind === "local_refused") return this.landRefused(row.sendId);
     const attempt = { suffix: row.idemSuffix, keyId: outcome.keyId ?? null, at: this.now(), route: row.kind === "reply" ? "#10" : "#9" };
     if (current.state !== "dispatching") return current; // moved on (Remove, account off): the answer has no row to land on
     const withAttempt = this.move(current, { attempts: [...current.attempts, attempt] });
@@ -226,7 +361,25 @@ export class EmailSendService {
         return this.settle(row, row.ownerSent ? "approved_unsent" : "refused", { code: outcome.code }) ?? this.fresh(row.sendId);
       }
       case "uncertain": return this.uncertain(row, { code: outcome.reason }) ?? this.fresh(row.sendId);
+      case "local_refused": return this.landRefused(row.sendId);
+      default: return assertNever(outcome);
     }
+  }
+
+  /** r7 F1b: where a `dispatching` row lands when the call was refused locally (nothing was sent). Chosen from the fresh row, in order; a lost
+   *  CAS (a Stop, Remove or account-off landed after the read) reads again and applies the table again (Stop flags a row at most once). */
+  private landRefused(sendId: string): SendRow {
+    let current = this.fresh(sendId);
+    for (let pass = 0; pass < 3; pass++) {
+      if (current.state !== "dispatching") return current;
+      const next = current.stopRequested ? this.settle(current, "withdrawn", { code: "stopped" })
+        : current.attempts.length > 0 ? this.move(current, { state: "approved_unsent", code: "owner_check", dueAt: null })
+        : current.ownerSent ? this.move(current, { state: "awaiting_owner", ownerSent: false, receipt: null, dueAt: null })
+        : this.move(current, { state: "prepared", dueAt: this.now() + FENCE_RETRY_MS });
+      if (next) return next;
+      current = this.fresh(sendId);
+    }
+    return current;
   }
 
   // ---- owner answers -----------------------------------------------------------------------------------------------------------
@@ -237,10 +390,12 @@ export class EmailSendService {
     if (!row) return { status: "stale", row: null };
     if (row.revision !== revision) return { status: "stale", row };
     const receipt: OwnerReceipt = { sendId, payloadHash: row.payloadHash, revision, at: this.now(), device, used: false };
+    // r4 section 2 / r6: the fence also answers every owner Send: try later, no Flux call, nothing moved
+    if ((this.frozen(row) || this.held(row.botId)) && (["awaiting_owner", "held", "approved_unsent", "unknown_expired"] as SendState[]).includes(row.state)) return { status: "retry_later", row };
     switch (row.state) {
       case "awaiting_owner": {
         // the receipt stays unused until a hold consumes it: a 202 for this dispatch is approved at once with it (one card per email)
-        const next = this.move(row, { state: "dispatching", ownerSent: true, receipt, why: "owner_send", dispatchedAt: this.now() });
+        const next = this.move(row, { state: "dispatching", ownerSent: true, receipt, why: "owner_send", dueAt: null, dispatchedAt: this.now() });
         if (!next) return { status: "stale", row: this.store.getSend(sendId) };
         this.trustRecipients(next);
         return { status: "done", row: await this.dispatch(next) };
@@ -266,9 +421,13 @@ export class EmailSendService {
   /** 4.4, Flux-held: the exact held-id check against #20's frozen text and attachment hashes, then #21 naming exactly those holds. */
   async approve(row: SendRow): Promise<AnswerResult> {
     if (!row.approvalId) return { status: "refresh", row, reason: "moved" };
+    if (this.frozen(row) || this.held(row.botId)) return { status: "retry_later", row };
+    const ownerRef = this.refOf(row.botId);
     return this.locks.exclusive(row.inboxId, async (): Promise<AnswerResult> => {
-      const detail = await this.client.getApproval(OWNER, row.approvalId!);
+      if (this.frozen(this.fresh(row.sendId))) return { status: "retry_later", row: this.fresh(row.sendId) };
+      const detail = await this.client.getApproval({ kind: "owner", expectOwnerRef: ownerRef }, row.approvalId!);
       let current = this.fresh(row.sendId);
+      if (this.frozen(current)) return { status: "retry_later", row: current };
       if (current.state !== "held") return { status: "done", row: current };
       if (detail.kind === "refused" && detail.status === 404) return { status: "done", row: this.uncertain(current) ?? this.fresh(row.sendId) };
       if (detail.kind !== "ok") { if (detail.kind === "refused") this.refusal(detail.code); return { status: "retry_later", row: current }; }
@@ -277,12 +436,14 @@ export class EmailSendService {
         const local = this.store.sendForHeld(held.id, held.client_reference);
         if (!local) return { status: "refresh", row: current, reason: "unknown_held" };
         if (local.state === "declined" || local.state === "withdrawn" || local.state === "withdraw_pending" || local.state === "expired") {
-          const gone = await this.client.withdrawHeld(OWNER, held.id);
+          const gone = await this.client.withdrawHeld(this.ownerFor(row.botId), held.id);
           if (!(gone.kind === "ok" || (gone.kind === "refused" && gone.status === 404))) return { status: "refresh", row: current, reason: "moved" };
           continue;
         }
         if (local.state !== "held") return { status: "refresh", row: current, reason: "moved" };
-        if (!local.ownerSent) return { status: "waiting_sibling", row: current, siblingSendId: local.sendId };
+        // Flux groups holds by recipient. The current No limits receipt authorizes
+        // the frozen local group without another owner answer for an older hold.
+        if (!local.ownerSent && !noLimitsSend(local) && !noLimitsSend(current)) return { status: "waiting_sibling", row: current, siblingSendId: local.sendId };
         if (!this.matchesFrozen(local, held)) return { status: "refresh", row: current, reason: "content_mismatch" };
         approving.push(local);
       }
@@ -295,7 +456,7 @@ export class EmailSendService {
         moved.push(next);
       }
       const heldIds = moved.flatMap(local => local.heldIds);
-      const answer = await this.client.approve(row.approvalId!, heldIds);
+      const answer = await withEmailSpendBot(row.botId, () => this.client.approve(row.approvalId!, heldIds, ownerRef));
       if (answer.kind === "ok") {
         for (const local of moved) {
           const fresh = this.fresh(local.sendId);
@@ -305,6 +466,16 @@ export class EmailSendService {
           else if (entry.status === "sent") this.sent(fresh, entry.message_id ?? null);
           else this.move(fresh, { state: "approved_unsent", code: entry.check ?? entry.status });
         }
+      } else if (answer.kind === "refused" && answer.code === "spend_limit") {
+        for (const local of moved) {
+          const fresh = this.fresh(local.sendId);
+          if (fresh.state === "approving") this.move(fresh, { state: "held", code: "spend_limit", receipt: local.receipt ? { ...local.receipt, used: false } : null });
+        }
+        return { status: "retry_later", row: this.fresh(row.sendId) };
+      } else if (notSent(answer)) {
+        // r7 H7: the owner changed after the CAS into approving, so no request was made: back to held with the receipt unused, never uncertain
+        for (const local of moved) { const fresh = this.fresh(local.sendId); if (fresh.state === "approving") this.move(fresh, { state: "held", receipt: fresh.receipt ? { ...fresh.receipt, used: false } : null }); }
+        return { status: "retry_later", row: this.fresh(row.sendId) };
       } else if (answer.kind === "refused" && answer.code === "approval_scope_mismatch") {
         for (const local of moved) { const fresh = this.fresh(local.sendId); if (fresh.state === "approving") this.move(fresh, { state: "held" }); }
         return { status: "refresh", row: this.fresh(row.sendId), reason: "scope_mismatch" };
@@ -340,22 +511,26 @@ export class EmailSendService {
    * so only then does the next owner Retry need the next key). */
   async retry(row: SendRow): Promise<AnswerResult> {
     if (row.state !== "approved_unsent") return { status: "done", row };
+    if (this.held(row.botId)) return { status: "retry_later", row };
     if (row.heldIds.length > 0 && row.approvalId) {
       const approving = this.move(row, { state: "approving" });
       if (!approving) return { status: "stale", row: this.store.getSend(row.sendId) };
       const attempt = approving.attempts.filter(item => item.route === "#32" && item.answered).length + 1;
-      const answer = await this.client.retryHeld(approving.heldIds[0], `${sendIdempotencyKey(this.options.installId, row.sendId, row.idemSuffix)}:held:${attempt}`);
+      const answer = await withEmailSpendBot(row.botId, () => this.client.retryHeld(approving.heldIds[0], `${sendIdempotencyKey(this.options.installId, row.sendId, row.idemSuffix)}:held:${attempt}`, this.refOf(row.botId)));
       const fresh = this.fresh(row.sendId);
       if (fresh.state !== "approving") return { status: "done", row: fresh };
+      // r7 rule 6: refused locally, no request: no attempt (the :held:<n> key stays), back to approved_unsent(owner_check)
+      if (notSent(answer)) return { status: "retry_later", row: this.move(fresh, { state: "approved_unsent", code: "owner_check", dueAt: null }) ?? this.fresh(row.sendId) };
       const recorded = this.move(fresh, { attempts: [...fresh.attempts, { suffix: row.idemSuffix, keyId: answer.keyId ?? null, at: this.now(), route: "#32", ...(answer.kind === "ok" ? { answered: true } : {}) }] }) ?? this.fresh(row.sendId);
       if (answer.kind === "ok" && answer.body.status === "sent") return { status: "done", row: this.sent(recorded, answer.body.message_id ?? null) ?? this.fresh(row.sendId) };
       if (answer.kind === "ok") return { status: "done", row: this.move(recorded, { state: "approved_unsent", code: answer.body.check ?? answer.body.status ?? "send_failed" }) ?? this.fresh(row.sendId) };
       // a repeat after a lost answer (Flux #516): the hold is not retryable any more, so read it (#20) and land where it is; never a refusal
+      if (answer.kind === "refused" && answer.code === "spend_limit") return { status: "retry_later", row: this.move(recorded, { state: "approved_unsent", code: "spend_limit" }) ?? this.fresh(row.sendId) };
       if (answer.kind === "refused" && answer.code === "held_not_retryable") return { status: "done", row: await this.rereadHold(recorded) };
       if (answer.kind === "refused") { this.refusal(answer.code); return { status: "done", row: this.move(recorded, { state: "approved_unsent", code: answer.code }) ?? this.fresh(row.sendId) }; }
       return { status: "done", row: this.uncertain(recorded) ?? this.fresh(row.sendId) };
     }
-    const next = this.move(row, { state: "dispatching", code: null, dispatchedAt: this.now() });
+    const next = this.move(row, { state: "dispatching", code: null, dueAt: null, dispatchedAt: this.now() });
     if (!next) return { status: "stale", row: this.store.getSend(row.sendId) };
     return { status: "done", row: await this.dispatch(next) };
   }
@@ -364,7 +539,7 @@ export class EmailSendService {
    * unreadable) -> approving, settled by the delivery events or the read-only reconcile. */
   private async rereadHold(row: SendRow): Promise<SendRow> {
     const heldId = row.heldIds[0];
-    const detail = row.approvalId ? await this.client.getApproval(OWNER, row.approvalId) : null;
+    const detail = row.approvalId ? await this.client.getApproval(this.ownerFor(row.botId), row.approvalId) : null;
     const held = detail?.kind === "ok" ? (detail.body.held ?? []).find(item => item.id === heldId) : undefined;
     const current = this.fresh(row.sendId);
     if (current.state !== "approving") return current;
@@ -378,6 +553,7 @@ export class EmailSendService {
    * withdrawn(owner_resent), so its card settles and offers no second Send, and a replacement is made only while none exists for it, so a
    * click racing the first, a second device or a stale card can never mint another send_id and Idempotency-Key for the same email. */
   private async resend(row: SendRow): Promise<AnswerResult> {
+    if (this.held(row.botId)) return { status: "retry_later", row };
     const parts = this.store.getPayload(row.sendId);
     const draft = partsDraft(row.kind, parts);
     const made = this.store.tx((): { old: SendRow; next: SendRow } | null => {
@@ -386,7 +562,7 @@ export class EmailSendService {
       if (!old) return null;
       const fresh = this.newRow({ botId: row.botId, generation: row.generation, threadId: row.threadId, draft, replySource: row.summary.replySource }, row.inboxId, row.payloadHash, row.sendId);
       const receipt: OwnerReceipt = { sendId: fresh.sendId, payloadHash: fresh.payloadHash, revision: 1, at: this.now(), device: "desktop", used: false };
-      const next: SendRow = { ...fresh, state: "dispatching", ownerSent: true, receipt, why: "owner_send", dispatchedAt: this.now() };
+      const next: SendRow = { ...fresh, state: "dispatching", ownerSent: true, receipt, why: "owner_send", dueAt: null, dispatchedAt: this.now() };
       this.store.insertSend(next);
       this.store.putPayload(next.sendId, parts);
       return { old, next };
@@ -455,12 +631,12 @@ export class EmailSendService {
   async withdraw(row: SendRow): Promise<SendRow> {
     if (row.state !== "withdraw_pending") return row;
     for (const heldId of row.heldIds) {
-      const answer = await this.client.withdrawHeld({ kind: "bot", botId: row.botId }, heldId);
+      const answer = await this.client.withdrawHeld({ kind: "bot", botId: row.botId, inboxId: row.inboxId }, heldId);
       if (answer.kind === "ok" || (answer.kind === "refused" && (answer.status === 404 || answer.code === "held_not_found"))) continue;
       const current = this.fresh(row.sendId);
       if (current.state !== "withdraw_pending") return current;
       if (answer.kind === "refused" && answer.code === "held_not_withdrawable") {
-        const hold = row.approvalId ? await this.client.getApproval(OWNER, row.approvalId) : null;
+        const hold = row.approvalId ? await this.client.getApproval({ kind: "bot", botId: row.botId, inboxId: row.inboxId }, row.approvalId) : null;
         const state = hold?.kind === "ok" ? hold.body.held?.find(held => held.id === heldId)?.state : undefined;
         const latest = this.fresh(row.sendId);
         if (latest.state !== "withdraw_pending") return latest;
@@ -476,11 +652,41 @@ export class EmailSendService {
     return (current.code === "declined" ? this.settle(current, "declined") : this.settle(current, "withdrawn", { code: current.code ?? "stopped" })) ?? this.fresh(row.sendId);
   }
 
+  private frozen(row: SendRow): boolean { return isFrozen(this.store, row.botId, row.inboxId); }
+
+  /** r4 section 3: a direct #20 read of a frozen hold with the retired key. sent, send_failed, expired and cancelled settle; sending and
+   *  approved go to the read-only reconcile; pending stays held until the next read; an unreadable hold keeps its credential and backs off. */
+  private async rereadFrozen(row: SendRow): Promise<SendRow> {
+    if (row.state !== "held") return row;
+    const at = this.now();
+    const lastRead = row.createdAt + HOLD_LIFETIME_MS;
+    const nextAfterRead = (): number => { const periodic = at + FROZEN_REREAD_MS; return lastRead > at && lastRead < periodic ? lastRead : periodic; };
+    const detail = row.approvalId ? await this.client.getApproval({ kind: "bot", botId: row.botId, inboxId: row.inboxId }, row.approvalId) : null;
+    const current = this.fresh(row.sendId);
+    if (current.state !== "held") return current;
+    if (!detail || detail.kind !== "ok") {
+      if (at >= lastRead + FROZEN_UNREADABLE_LIMIT_MS) return this.settle(current, "unknown_expired") ?? this.fresh(row.sendId);
+      const gap = FROZEN_UNREADABLE_BACKOFF_MS[Math.min(current.reconcileStep, FROZEN_UNREADABLE_BACKOFF_MS.length - 1)]!;
+      return this.move(current, { reconcileStep: Math.min(current.reconcileStep + 1, FROZEN_UNREADABLE_BACKOFF_MS.length), dueAt: at + gap }) ?? this.fresh(row.sendId);
+    }
+    const held = (detail.body.held ?? []).find(item => item.client_reference === current.sendId || current.heldIds.includes(item.id));
+    const state = held?.state ?? detail.body.state ?? "";
+    if (state === "sent") { const messageId = (held as { message_id?: unknown } | undefined)?.message_id; return this.sent(current, typeof messageId === "string" ? messageId : null) ?? this.fresh(row.sendId); }
+    if (state === "send_failed") return this.move(current, { state: "approved_unsent", code: "send_failed", dueAt: null }) ?? this.fresh(row.sendId);
+    if (state === "expired") return this.settle(current, "expired") ?? this.fresh(row.sendId);
+    if (state === "cancelled" || state === "withdrawn") return this.settle(current, "withdrawn", { code: "cancelled" }) ?? this.fresh(row.sendId);
+    if (state === "sending" || state === "approved") return this.move(current, { state: "approving", reconcileStep: 0, dueAt: at }) ?? this.fresh(row.sendId);
+    return this.move(current, { reconcileStep: 0, dueAt: nextAfterRead() }) ?? this.fresh(row.sendId);
+  }
+
   /** 72 h: Flux expires the hold; a Murage-held card waits the same 72 h. */
   expire(): SendRow[] {
     const cutoff = this.now() - HOLD_LIFETIME_MS;
     const out: SendRow[] = [];
-    for (const row of this.store.sendsInStates(["held", "awaiting_owner"])) if (row.createdAt <= cutoff) { const next = this.settle(row, "expired"); if (next) out.push(next); }
+    // r4 section 3: a frozen hold is never expired by age alone; the tick reads it (rereadFrozen)
+    for (const row of this.store.sendsInStates(["held", "awaiting_owner"])) if (row.createdAt <= cutoff && !(row.state === "held" && this.frozen(row))) { const next = this.settle(row, "expired"); if (next) out.push(next); }
+    // r7: a bot send held `prepared` by the owner fence for 72 h is never sent days late
+    for (const row of this.store.sendsInStates(["prepared"])) if (row.createdAt <= cutoff && this.held(row.botId)) { const next = this.settle(row, "expired", { code: "owner_unproven" }); if (next) out.push(next); }
     return out;
   }
 
@@ -491,24 +697,48 @@ export class EmailSendService {
     return out;
   }
 
-  // ---- uncertain sends: read-only reconcile (9.1) ------------------------------------------------------------------------------
+  /** EMAIL-ACCOUNT-CHANGE: only the sends that never reached Flux (prepared, awaiting_owner) end withdrawn(reason). Every other open row
+   *  may already be in flight or held on the old account: it keeps its state, so a late answer still lands, the reconcile reads it and the
+   *  open row keeps blocking a duplicate. */
+  withdrawUndispatchedForBot(botId: string, reason: "account_off"): SendRow[] {
+    const out: SendRow[] = [];
+    for (const row of this.store.sendsOfBot(botId, ["prepared", "awaiting_owner"])) { const next = this.settle(row, "withdrawn", { code: reason }); if (next) out.push(next); }
+    return out;
+  }
+
+  // ---- uncertain sends: read-only reconcile (9.1)------------------------------------------------------------------------------
 
   /** Reads #11 by client_reference, the pending approvals (#19, #20) and the delivery events; never sends, never approves. */
   async reconcile(row: SendRow): Promise<SendRow> {
     if (row.state !== "unknown" && row.state !== "approving") return row;
     let readable = true;
-    const messages = await this.client.listMessages({ kind: "bot", botId: row.botId }, row.inboxId, { client_reference: row.sendId, direction: "outbound" });
+    const messages = await this.client.listMessages({ kind: "bot", botId: row.botId, inboxId: row.inboxId }, row.inboxId, { client_reference: row.sendId, direction: "outbound" });
     if (messages.kind === "ok") {
       const found = messages.body.data.find(message => message.client_reference === row.sendId) ?? messages.body.data[0];
       if (found) return this.sent(this.fresh(row.sendId), found.id) ?? this.fresh(row.sendId);
     } else readable = false;
     const fromEvents = this.fromEvents(this.fresh(row.sendId));
     if (fromEvents) return fromEvents;
-    if (row.state === "unknown") {
-      const pending = await this.client.listApprovals(OWNER, { state: "pending", inbox_id: row.inboxId });
+    if (this.frozen(row) && row.approvalId) {
+      // The current owner's pending list cannot describe an old account's hold.
+      // Keep reading its exact approval with the database-named retired key.
+      const detail = await this.client.getApproval({ kind: "bot", botId: row.botId, inboxId: row.inboxId }, row.approvalId);
+      const current = this.fresh(row.sendId);
+      if (current.state !== row.state) return current;
+      if (detail.kind === "ok") {
+        const held = detail.body.held?.find(item => item.client_reference === current.sendId || current.heldIds.includes(item.id));
+        const state = held?.state ?? detail.body.state;
+        if (state === "sent") return this.sent(current, null) ?? this.fresh(row.sendId);
+        if (state === "send_failed") return this.move(current, { state: "approved_unsent", code: "send_failed", dueAt: null }) ?? this.fresh(row.sendId);
+        if (state === "expired") return this.settle(current, "expired") ?? this.fresh(row.sendId);
+        if (state === "cancelled" || state === "withdrawn") return this.settle(current, "withdrawn", { code: "cancelled" }) ?? this.fresh(row.sendId);
+      } else readable = false;
+    }
+    if (row.state === "unknown" && !this.frozen(row)) {
+      const pending = await this.client.listApprovals(this.ownerFor(row.botId), { state: "pending", inbox_id: row.inboxId });
       if (pending.kind === "ok") {
         for (const approval of pending.body.data) {
-          const detail = await this.client.getApproval(OWNER, approval.id);
+          const detail = await this.client.getApproval(this.ownerFor(row.botId), approval.id);
           if (detail.kind !== "ok") { readable = false; continue; }
           const held = (detail.body.held ?? []).find(item => item.client_reference === row.sendId);
           if (!held) continue;
@@ -516,7 +746,8 @@ export class EmailSendService {
           if (current.state !== "unknown") return current;
           if (held.state === "send_failed") return this.move(current, { state: "approved_unsent", heldIds: [held.id], approvalId: approval.id, code: "send_failed", dueAt: null }) ?? this.fresh(row.sendId);
           if (current.stopRequested) { const pendingRow = this.move(current, { state: "withdraw_pending", code: "stopped", heldIds: [held.id], approvalId: approval.id }); return pendingRow ? this.withdraw(pendingRow) : this.fresh(row.sendId); }
-          return this.move(current, { state: "held", heldIds: [held.id], approvalId: approval.id, dueAt: null, code: null }) ?? this.fresh(row.sendId);
+          const recovered = this.move(current, { state: "held", heldIds: [held.id], approvalId: approval.id, dueAt: null, code: null }) ?? this.fresh(row.sendId);
+          return noLimitsSend(recovered) ? (await this.approve(recovered)).row ?? recovered : recovered;
         }
       } else readable = false;
     }
@@ -588,8 +819,9 @@ export class EmailSendService {
     for (const row of this.store.sendsInStates(["held", "unknown", "approving"])) {
       const current = this.fresh(row.sendId);
       if (current.state === "unknown" || current.state === "approving") { await this.reconcile(current); continue; }
+      if (current.state === "held" && this.frozen(current)) { await this.rereadFrozen(current); continue; } // r4 section 3: missing from B's pending list means nothing
       if (current.state !== "held" || !current.approvalId || pendingApprovalIds.has(current.approvalId)) continue;
-      const detail = await this.client.getApproval(OWNER, current.approvalId);
+      const detail = await this.client.getApproval(this.ownerFor(current.botId), current.approvalId);
       if (detail.kind !== "ok") continue;
       const latest = this.fresh(row.sendId);
       if (latest.state !== "held") continue;
@@ -603,12 +835,40 @@ export class EmailSendService {
     }
   }
 
+  private spendReplay: Promise<void> | null = null;
+  private spendReplayAfter = "";
+  /** Only definite local non-sends are replayed. An uncertain send is never
+   * reissued here. Every replay passes the live gate with the same identity. */
+  replaySpendWaits(): Promise<void> {
+    if (this.spendReplay) return this.spendReplay;
+    const run = async () => {
+      const page = this.store.spendWaits(this.spendReplayAfter, 50);
+      for (const row of page) {
+        this.spendReplayAfter = row.sendId;
+        if (row.state === "held") await this.approve(row);
+        else if (row.state === "approved_unsent") await this.retry(row);
+        else {
+          const next = this.move(row, { state: "dispatching", code: null, dispatchedAt: this.now() });
+          if (next) await this.dispatch(next);
+        }
+      }
+      if (page.length < 50) this.spendReplayAfter = "";
+    };
+    this.spendReplay = run().then(() => {}, error => { this.spendReplayAfter = ""; throw error; }).finally(() => { this.spendReplay = null; });
+    return this.spendReplay;
+  }
+
   /** Runs what is due: reconciles, withdrawal retries, the 72 h expiry. */
   async tick(): Promise<void> {
+    await this.replaySpendWaits();
+    // r4 section 3: the freeze makes a held row due at once (its first read), then it keeps its own schedule
+    for (const row of this.store.sendsInStates(["held"])) if (row.dueAt === null && this.frozen(row)) this.move(row, { dueAt: this.now() });
     for (const row of this.store.dueSends(this.now())) {
       const current = this.fresh(row.sendId);
       if (current.state === "unknown" || current.state === "approving") await this.reconcile(current);
       else if (current.state === "withdraw_pending") await this.withdraw(current);
+      else if (current.state === "prepared") await this.decide(current, current.why === "waiting_ask");
+      else if (current.state === "held" && this.frozen(current)) await this.rereadFrozen(current);
     }
     this.expire();
   }
@@ -617,9 +877,10 @@ export class EmailSendService {
    * `unknown` and are reconciled read-only; `withdraw_pending` is retried. Nothing is reissued under an old identity. */
   async recover(): Promise<void> {
     for (const row of this.store.sendsInStates(["prepared", "dispatching", "approving", "withdraw_pending"])) {
-      if (row.state === "prepared") await this.decide(row, row.why === "waiting_ask");
+      if (row.state === "prepared" && row.code === "spend_limit") continue; // replayed by tick below with its original authorization
+      else if (row.state === "prepared") await this.decide(row, row.why === "waiting_ask");
       else if (row.state === "withdraw_pending") await this.withdraw(row);
-      else if (row.dueAt === null) this.uncertain(row);
+      else if (row.state === "dispatching" || row.dueAt === null) this.uncertain(row); // r8 H8: at boot no call is in flight, so a dispatching row is unanswered whatever its dueAt
     }
     // read-only reconcile timers resume from their stored due times; whatever fell due while the app was closed runs now, and the 72 h expiry
     await this.tick();
@@ -630,13 +891,15 @@ export class EmailSendService {
    * its card says "This email was waiting before the restore" and offers Don't send only. Nothing is ever approved from here. */
   async adoptHolds(threadOf: (botId: string) => string | undefined): Promise<SendRow[]> {
     const adopted: SendRow[] = [];
-    const pending = await this.client.listApprovals(OWNER, { state: "pending" });
+    // an account-scope owner read: ownerRef() at the call's start (r6 site 6)
+    const scope: CredentialRef = { kind: "owner", expectOwnerRef: this.options.client.currentOwnerRef?.() ?? "" };
+    const pending = await this.client.listApprovals(scope, { state: "pending" });
     if (pending.kind !== "ok") return adopted;
     for (const approval of pending.body.data) {
       const binding = approval.inbox_id ? this.store.bindingByInbox(approval.inbox_id) : null;
       const threadId = binding ? threadOf(binding.botId) : undefined;
       if (!binding || !threadId) continue;
-      const detail = await this.client.getApproval(OWNER, approval.id);
+      const detail = await this.client.getApproval(this.ownerFor(binding.botId), approval.id);
       if (detail.kind !== "ok") continue;
       for (const held of detail.body.held ?? []) {
         if (held.state && held.state !== "pending" && held.state !== "held") continue;

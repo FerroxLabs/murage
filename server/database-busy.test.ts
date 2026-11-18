@@ -4,19 +4,25 @@
 // SQLite budgets (PROPOSAL-v2 10.3): a lock held by another connection never holds the server's one
 // thread for 5 s. Background memory work waits 50 ms and tries later; everything else waits 1 s and is
 // told "try again" (503 DATABASE_BUSY with Retry-After), never a 500 or a 409. The journal is capped, and a high-water WAL is given back at start.
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { beginBounded, currentBusy, DEFAULT_BUSY_MS, holdWritersForIndexBuild, setBusy, SETTLE_LOCK_MS } from "./db-busy.ts";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { BACKGROUND_BUSY_MS, closeDatabase, database, DatabaseBusyError, finishBackgroundUpgradeWorkNow, isDatabaseBusy, JOURNAL_SIZE_LIMIT_BYTES, OWNER_BUSY_MS, storageLine, transaction, withBusyBudget } from "./database.ts";
 import { maintainLineageStorage, WAL_QUIET_BYTES } from "./memory/root-set-compaction.ts";
-import { ioBudget } from "./io-budget.ts";
+import { instrumentDatabase, ioBudget } from "./io-budget.ts";
 import { resetObserveWindows, setObserveSink } from "./observe.ts";
 import { checkpointTruncate, CHECKPOINT_BUSY_MS } from "./sqlite-checkpoint.ts";
 import { walMaintenanceReady } from "./wal-maintenance.ts";
+import { searchCleanupPending, stopSearchIndex } from "./message-search-index.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
+import { prepareMemoryMeterFixture } from "./memory/testing/native-meter-fixture.ts";
+
+beforeAll(() => prepareMemoryMeterFixture(process.env.HOME!));
 let lines: string[], other: DatabaseSync | null = null;
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); lines = []; resetObserveWindows(); setObserveSink(line => lines.push(line)); });
 afterEach(() => { try { other?.close(); } catch { /* closed */ } other = null; closeDatabase(); setObserveSink(); });
@@ -51,6 +57,31 @@ it("work done on behalf of the memory worker takes the background budget without
   expect(() => ioBudget.withSource("memory-worker", () => transaction(() => 1))).toThrow(DatabaseBusyError);
   expect(() => ioBudget.withSource("memory-idle", () => transaction(() => 1))).toThrow(DatabaseBusyError);
   expect(performance.now() - started).toBeLessThan(800);
+});
+
+it("BOOT_RECOVERY keeps the background lock ceiling and restores the owner wait", () => {
+  const db = database();
+  ioBudget.resetAdmissionForFixture();
+  const recovery = ioBudget.claimBootRecovery(() => true)!;
+  expect(recovery).not.toBeNull();
+  holdWriteLock();
+  try {
+    const started = performance.now();
+    expect(() => recovery.run(() => transaction(() => 1))).toThrow(DatabaseBusyError);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(db.prepare("PRAGMA busy_timeout").get()).toEqual({ timeout: OWNER_BUSY_MS });
+  } finally { release(); recovery.close(); }
+});
+
+it("scheduled owner-notebook transactions retain the background lock ceiling", () => {
+  const db = database();
+  holdWriteLock();
+  const started = performance.now();
+  expect(() => ioBudget.withSource("owner-notebook", () => transaction(() => 1))).toThrow(DatabaseBusyError);
+  expect(performance.now() - started).toBeLessThan(500);
+  expect(db.prepare("PRAGMA busy_timeout").get()).toEqual({ timeout: OWNER_BUSY_MS });
+  release();
+  expect(ioBudget.withSource("owner-notebook", () => transaction(() => 2))).toBe(2);
 });
 
 it("an owner action waits its second and then fails with a lock error the HTTP layer maps to a retryable 503 DATABASE_BUSY", () => {
@@ -113,8 +144,15 @@ it("a log left large by an earlier run is NOT checkpointed when the background w
   // starting the background work issues no checkpoint: the log is as the open left it
   expect(statSync(`${file}-wal`).size).toBe(walAfterOpen);
   // the idle sweep (never waiting on a lock) cuts it back; it copies the log through the checkpointer thread, which comes up a moment after the open
-  for (let waited = 0; !walMaintenanceReady() && waited < 5_000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20));
+  // Search reset makes a separate genesis commit. An idle-sweep fixture must
+  // finish that writer before checkpoint + restart, as the WAL fixtures do.
+  for (let waited = 0; (!walMaintenanceReady() || searchCleanupPending(database())) && waited < 5_000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20));
   expect(walMaintenanceReady()).toBe(true);
+  // The derived search worker can hold a read snapshot while building its index.
+  // Release that independent reader before measuring an otherwise idle sweep,
+  // as the dedicated WAL-maintenance fixture does; keep startup assertions above.
+  expect(searchCleanupPending(database())).toBe(false);
+  await stopSearchIndex();
   await maintainLineageStorage({ database: () => database(), idle: () => true, pauseMs: 0 });
   // (the checkpointer copies the log and one tiny write restarts it, wal-maintenance.ts: what is left is that write's one frame, under the quiet size)
   const walAfter = statSync(`${file}-wal`).size;
@@ -128,7 +166,148 @@ it("every HTTP answer for a lock goes through busyJson: 503, code DATABASE_BUSY,
   // e71504028 added no-store to every JSON answer, this one included: a busy answer is never cached and served again.
   expect(source).toContain('res.writeHead(503, { "content-type": "application/json", "cache-control": "no-store", "retry-after": String(DATABASE_BUSY_RETRY_AFTER_S) })');
   expect(source).toContain('code: "DATABASE_BUSY"');
-  expect(source).toContain('if (isDatabaseBusy(e)) return busyJson(res, "request");');
+  expect(source).toContain("if (isDatabaseBusy(e)) {");
+  // 39c936528bd split the named-op reply from the generic request fallback.
+  expect(source).toContain('if (typeof busy.op === "string") return busyJson(res, busy.op);');
+  // MAIN RULING INT-CONFLICT-DEFAULT c4-misc-b: generic fallback shares the guarded named-op block.
+  expect(source).toMatch(/if \(isDatabaseBusy\(e\)\) \{[\s\S]*?if \(typeof busy\.op === "string"\) return busyJson\(res, busy\.op\);\s*return busyJson\(res, "request"\);/);
   expect(source).toContain('if(isDatabaseBusy(error))return busyJson(res,"memory-action");');
   expect(source).not.toMatch(/json\(res, ?409, ?\{ ?error: new DatabaseBusyError/);
+});
+
+const timeout = (db: DatabaseSync) => db.prepare("PRAGMA busy_timeout").get()!.timeout;
+const synchronous = (db: DatabaseSync) => db.prepare("PRAGMA synchronous").get()!.synchronous;
+
+// Real isolated handles; wrapping exec injects faults at the SQLite call boundary.
+describe("T9b bounded foreground BEGIN", () => {
+  for (const instrumented of [false, true]) {
+    it(`keeps FULL and an explicit 10 ms wait under a writer hold (${instrumented ? "instrumented" : "bare"})`, () => {
+      const db = new DatabaseSync(":memory:");
+      const exec = db.exec.bind(db);
+      let atBegin: unknown;
+      let cachedAtBegin: unknown;
+      db.exec = sql => {
+        if (sql === "BEGIN IMMEDIATE") { atBegin = timeout(db); cachedAtBegin = currentBusy(db); }
+        exec(sql);
+      };
+      // Observe below instrumentation: lowerForHold must not widen 10 ms to 50.
+      const restore = instrumented ? instrumentDatabase(db) : () => {};
+      try {
+        db.exec("PRAGMA synchronous=FULL");
+        setBusy(db, DEFAULT_BUSY_MS);
+        holdWritersForIndexBuild(true);
+        beginBounded(db, "settle-test", 10);
+        expect(atBegin).toBe(10);
+        expect(cachedAtBegin).toBe(10);
+        expect(db.isTransaction).toBe(true);
+        expect(timeout(db)).toBe(DEFAULT_BUSY_MS);
+        expect(currentBusy(db)).toBe(DEFAULT_BUSY_MS);
+        expect(synchronous(db)).toBe(2);
+        db.exec("COMMIT");
+        expect(synchronous(db)).toBe(2);
+      } finally {
+        holdWritersForIndexBuild(false);
+        if (db.isTransaction) db.exec("ROLLBACK");
+        restore(); db.close();
+      }
+    });
+
+    it(`restores after real lock contention (${instrumented ? "instrumented" : "bare"})`, () => {
+      const dir = mkdtempSync(join(tmpdir(), "bounded-begin-"));
+      const db = new DatabaseSync(join(dir, "test.db"));
+      const holder = new DatabaseSync(join(dir, "test.db"));
+      const restore = instrumented ? instrumentDatabase(db) : () => {};
+      try {
+        db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL");
+        holder.exec("BEGIN IMMEDIATE");
+        let caught: unknown;
+        try { beginBounded(db, "real-lock", 10); } catch (error) { caught = error; }
+        expect(caught).toBeInstanceOf(DatabaseBusyError);
+        expect(caught).toMatchObject({ op: "real-lock", code: "DATABASE_BUSY", status: 503 });
+        expect((caught as DatabaseBusyError).waitedMs).toBeGreaterThanOrEqual(0);
+        expect(db.isTransaction).toBe(false);
+        expect(timeout(db)).toBe(DEFAULT_BUSY_MS);
+        expect(currentBusy(db)).toBe(DEFAULT_BUSY_MS);
+        expect(synchronous(db)).toBe(2);
+      } finally {
+        if (holder.isTransaction) holder.exec("ROLLBACK");
+        restore(); holder.close(); db.close(); removeTempDirSync(dir);
+      }
+    });
+  }
+
+  it.each([[1, 1], [10.9, 10], [50, 50], [500, 50], [Infinity, 50]])("normalizes %s to %s ms", (requested, expected) => {
+    const db = new DatabaseSync(":memory:");
+    const exec = db.exec.bind(db);
+    let observed: unknown;
+    db.exec = sql => { if (sql === "BEGIN IMMEDIATE") observed = timeout(db); exec(sql); };
+    try {
+      expect(SETTLE_LOCK_MS).toBe(50);
+      beginBounded(db, "clamp", requested);
+      expect(observed).toBe(expected);
+      expect(timeout(db)).toBe(DEFAULT_BUSY_MS);
+    } finally { if (db.isTransaction) db.exec("ROLLBACK"); db.close(); }
+  });
+
+  it.each([NaN, -Infinity, -1, 0, 0.9])("asserts invalid allowance %s before touching the handle", requested => {
+    const db = new DatabaseSync(":memory:");
+    const exec = db.exec.bind(db);
+    const calls: string[] = [];
+    db.exec = sql => { calls.push(sql); exec(sql); };
+    try {
+      expect(() => beginBounded(db, "invalid", requested)).toThrow(/wait|allowance/i);
+      expect(calls).toEqual([]);
+      expect(db.isTransaction).toBe(false);
+    } finally { db.close(); }
+  });
+
+  for (const busy of [false, true]) for (const failRestore of [false, true]) {
+    it(`preserves the BEGIN failure (busy=${busy}, restore failure=${failRestore})`, () => {
+      const db = new DatabaseSync(":memory:");
+      const original = busy ? Object.assign(new Error("database is locked"), { errcode: 5 }) : new Error("disk error");
+      const exec = db.exec.bind(db);
+      let attemptedRestore = false;
+      db.exec = sql => {
+        if (sql === "BEGIN IMMEDIATE") throw original;
+        if (sql === `PRAGMA busy_timeout=${DEFAULT_BUSY_MS}`) {
+          attemptedRestore = true;
+          if (failRestore) throw new Error("restore failure");
+        }
+        exec(sql);
+      };
+      try {
+        let caught: unknown;
+        try { beginBounded(db, "failure", 10); } catch (error) { caught = error; }
+        if (busy) expect(caught).toBeInstanceOf(DatabaseBusyError);
+        else expect(caught).toBe(original);
+        expect(attemptedRestore).toBe(true);
+        expect(db.isTransaction).toBe(false);
+        expect(timeout(db)).toBe(failRestore ? 10 : DEFAULT_BUSY_MS);
+        expect(currentBusy(db)).toBe(failRestore ? 10 : DEFAULT_BUSY_MS);
+      } finally { db.close(); }
+    });
+  }
+
+  it("propagates restoration failure after BEGIN and lets the caller's guard roll back its owned transaction", () => {
+    const db = new DatabaseSync(":memory:");
+    const exec = db.exec.bind(db);
+    const failure = new Error("restore failure");
+    let ownedAtFailure = false;
+    let rollbacks = 0;
+    db.exec = sql => {
+      if (sql === `PRAGMA busy_timeout=${DEFAULT_BUSY_MS}`) { ownedAtFailure = db.isTransaction; throw failure; }
+      if (sql === "ROLLBACK") rollbacks++;
+      exec(sql);
+    };
+    try {
+      expect(() => {
+        try { beginBounded(db, "restore", 10); }
+        finally { if (db.isTransaction) db.exec("ROLLBACK"); }
+      }).toThrow(failure);
+      expect(ownedAtFailure).toBe(true);
+      expect(rollbacks).toBe(1);
+      expect(db.isTransaction).toBe(false);
+      expect(synchronous(db)).toBe(2);
+    } finally { db.close(); }
+  });
 });

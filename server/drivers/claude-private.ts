@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -16,7 +17,8 @@
 //   from the manifest (sweepClaudePrivate, section 14.2 N2).
 // Nothing here logs a path's content.
 
-import { closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
+import { writeSync } from "../counted-fs.ts";
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, unlinkSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { createPrivateWindowsDirectory, writePrivateWindowsData } from "../../electron/browser-extension-windows.mjs";
@@ -246,7 +248,7 @@ export function sweepClaudePrivate(root: string, fs: PrivateFs = defaultFs(), lo
   try {
     const mst = lstatSync(manifest);
     if (!mst.isFile() || mst.isSymbolicLink()) { log(`claude private: ${MANIFEST} is not a regular file; left alone`); return []; }
-    names = JSON.parse(readFileSync(manifest, "utf8"));
+    names = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(manifest, "utf8")));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") { log(`claude private: ${MANIFEST} could not be read; left alone`); return []; }
   }

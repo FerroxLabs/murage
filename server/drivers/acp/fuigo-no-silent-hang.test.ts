@@ -1,3 +1,12 @@
+import { fixtureEngineFence } from "../../testing/mcp-admission-fixture.ts";
+import { fencedTurnInput } from "../engine-input.ts";
+import { buildPrompt, noneRef, promptPart } from "../../memory/prompt-parts.ts";
+
+function steerFence(threadId: string, text: string) {
+  return fencedTurnInput({ threadId, prompt: buildPrompt(undefined, [promptPart(text, [noneRef("owner-turn")])]) },
+    fixtureEngineFence(threadId)).beforeSubmit;
+}
+
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -182,7 +191,7 @@ describe("the tool rule (r4 H3, r5-3, r5-4)", () => {
     vi.stubEnv("MURAGE_FUIGO_FALLBACK_GRACE_MS", "300");
     const { adapter } = await start([chunk(50), endTurn(700)], { environment: { FAKE_ACP_INTERJECT: "fallback", FAKE_ACP_FALLBACK_STALL: "tool" } });
     await recorder!.until((e) => e.type === "content.delta", 10_000);
-    expect(await adapter.steer!("fhang", "also the totals")).toBe("delivered");
+    expect(await adapter.steer!("fhang", "also the totals", steerFence("fhang", "also the totals"))).toBe("delivered");
     const done = await completed();
     expect(done).toMatchObject({ ok: false, stopReason: "no_first_response" });
     expect(errors()).toEqual(["Fuigo had a tool running for 2 seconds without a word, so the turn was stopped."]);

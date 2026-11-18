@@ -22,12 +22,18 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { DecisionRow } from "./decision-log.ts";
 import { OWNER_FIRST_MAX_DEFER_MS } from "./owner-first.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { sessionBoundAcpPermissionEnvironment } from "./testing/acp-permission-fixture.ts";
+import { fixtureDisplayApi } from "./testing/display-fixture.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 let base: string;
 let desktopHeaders: Record<string, string>;
+// The positive permission peers use the shared session-bound fixture, as the sibling permission suites do (it names the opened session and
+// announces MCP readiness once the real catalogs are listed); a bare peer meets the production fence and never reaches its card.
+const GROK_MCP_READY = { FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" };
 const posixOnly = describe.skipIf(process.platform === "win32");
 
 let child: ChildProcess;
@@ -35,14 +41,16 @@ let home: string;
 let stdout = "";
 let stderr = "";
 
-const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+// The public card carries an opaque handle; the shared display fixture joins the stored request id and allow keys back in and
+// answers by the handle that was shown, as the sibling approval suites do.
+const request = fixtureDisplayApi(() => join(home, ".murage", "messages.db"), async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json() };
-};
+});
 // Normal sends, answers and reads remain on the unmarked remote surface.
 const api = (method: string, path: string, body?: unknown) => request(method, path, body);
 const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
@@ -142,26 +150,29 @@ posixOnly("authorization decisions are logged", () => {
         instances: {
           grok: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission" },
+            environment: sessionBoundAcpPermissionEnvironment({ ...GROK_MCP_READY, FAKE_ACP_MODE: "permission" }),
             config: { cli: FAKE_CLI, fullAuto: false },
           },
           // an engine that routes its AskUserQuestion tool through the
           // permission request, the way Claude Code reaches the permission host
           asker: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "question-tool" },
+            environment: sessionBoundAcpPermissionEnvironment({ ...GROK_MCP_READY, FAKE_ACP_MODE: "question-tool" }),
             config: { cli: FAKE_CLI, fullAuto: false },
           },
         },
       }),
     );
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...powerBlockTestEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home,
         USERPROFILE: home,
+        NODE_ENV: "test",
+        MURAGE_ENGINE_EXCLUSION_PATH: process.env.MURAGE_ENGINE_EXCLUSION_PATH,
         MURAGE_PORT: String(port),
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
@@ -298,6 +309,25 @@ posixOnly("authorization decisions are logged", () => {
   );
 
   it(
+    "a replayed Allow writes no second user-approved row",
+    async () => {
+      const bot = await makePermissionBot({ name: "Twice" });
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "run it" })).status).toBe(202);
+      const card = await waitForBotCard(bot.id);
+      expect(card, "no approval card ever appeared").not.toBeNull();
+      const requestId = card.card.requestId as string;
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "allow" })).status).toBe(200);
+      expect(await waitForDecision((r) => r.decision === "user-approved" && r.requestId === requestId)).not.toBeNull();
+      // The same Allow again (a second click, or the Inbox and the conversation both answering): the row is written before the
+      // answer returns, so the log read right after the replay is final for it.
+      await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "allow" });
+      const rows: DecisionRow[] = (await desktopApi("GET", "/api/decisions")).body.decisions ?? [];
+      expect(rows.filter((r) => r.decision === "user-approved" && r.requestId === requestId), "the replayed Allow was logged again").toHaveLength(1);
+    },
+    90_000,
+  );
+
+  it(
     "an unattended block writes the row that says a grant was withheld",
     async () => {
       // Auto mode on AND the exact key granted: an attended turn would sail
@@ -374,13 +404,17 @@ posixOnly("authorization decisions are logged", () => {
       expect(grant.body.error).toMatch(/questions cannot be always allowed/);
 
       expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
-      expect(await waitForDecision((r) => r.decision === "user-denied" && r.requestId === requestId)).not.toBeNull();
+      // a skipped question is its own row ("question-skipped"), never an authorization denial
+      const skipped = await waitForDecision((r) => r.decision === "question-skipped" && r.requestId === requestId);
+      expect(skipped, "the skipped question never reached the decision log").not.toBeNull();
+      expect(skipped!.source).toBe("user");
 
       const rows = (await desktopApi("GET", "/api/decisions")).body.decisions as DecisionRow[];
       const machine = rows.filter(
         (r) => r.botId === bot.id && (r.decision === "auto-approved" || r.decision.startsWith("review-")),
       );
       expect(machine, "a rule or the reviewer decided a question").toEqual([]);
+      expect(rows.filter((r) => r.requestId === requestId && (r.decision === "user-approved" || r.decision === "user-denied")), "a question is not an authorization").toEqual([]);
     },
     90_000,
   );

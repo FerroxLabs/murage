@@ -30,9 +30,10 @@
 // this adds zero dependencies.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-open.ts";
 
 import { DATA_DIR } from "./config.ts";
+import { SKILL_PAGE_SIZE, type SkillPagination } from "../shared/skill-pagination.ts";
 import { noteWrittenFile } from "./io-written.ts";
 import { SKILL_LIBRARY_ROOT, checkLibrarySkill } from "./skills.ts";
 
@@ -500,6 +501,15 @@ function rowToHit(row: { id?: unknown; name?: unknown; description?: unknown; te
   };
 }
 
+/** Library v2 filters and pages after joining the owner's copies and bot
+ * switches. Unlike the legacy search helpers, this read has no result cap. */
+export async function librarySkillRows(): Promise<SkillHit[]> {
+  const db = await ensureIndex();
+  if (!db) throw new Error("The skills library could not be read. Try again.");
+  const rows = db.prepare("SELECT id, name, description, terms FROM skills ORDER BY name COLLATE NOCASE, id").all();
+  return rows.map(rowToHit);
+}
+
 /** Ranked skills for a human query.
  *
  *  bm25 weights (id, name, description, terms) = (0, 8, 1, 3). The name is the
@@ -546,6 +556,32 @@ export async function skillsByFacet(term: string, limit?: number): Promise<Skill
   } catch {
     return [];
   }
+}
+
+/** Bounded pages shared by both library routes. Filtering, counting and paging
+ * happen in SQLite; the renderer never downloads or sorts the whole library.
+ * Name/id break rank ties so adjacent pages cannot repeat or omit skills. */
+export async function searchSkillPage(options: { q?: string; term?: string; offset?: number; limit?: number }): Promise<{ skills: SkillHit[]; pagination: SkillPagination }> {
+  const limit = clampLimit(options.limit ?? SKILL_PAGE_SIZE);
+  const requestedOffset = Number.isSafeInteger(options.offset) && options.offset! > 0 ? options.offset! : 0;
+  const term = (options.term ?? "").trim().toLowerCase().slice(0, 80);
+  const query = (options.q ?? "").trim().slice(0, 200);
+  const expression = toMatchExpression(query);
+  const empty = { skills: [] as SkillHit[], pagination: { offset: 0, limit, total: 0 } };
+  if ((!term && !expression) || (query && !expression)) return empty;
+  const db = await ensureIndex();
+  if (!db) return empty;
+  const clauses: string[] = [];
+  const bindings: string[] = [];
+  if (expression) { clauses.push("skills MATCH ?"); bindings.push(expression); }
+  if (term) { clauses.push("rowid IN (SELECT ref FROM skill_terms WHERE term = ?)"); bindings.push(term); }
+  const where = " WHERE " + clauses.join(" AND ");
+  const total = Number((db.prepare("SELECT count(*) AS n FROM skills" + where).get(...bindings) as { n: number }).n);
+  const offset = Math.min(requestedOffset, total ? Math.floor((total - 1) / limit) * limit : 0);
+  const order = expression ? "bm25(skills, 0.0, 8.0, 1.0, 3.0), name, id" : "name, id";
+  const rows = db.prepare("SELECT id, name, description, terms FROM skills" + where + " ORDER BY " + order + " LIMIT ? OFFSET ?")
+    .all(...bindings, limit, offset) as Array<Record<string, unknown>>;
+  return { skills: rows.map(rowToHit), pagination: { offset, limit, total } };
 }
 
 let facetCache: { fingerprint: string; facets: Facet[] } | null = null;

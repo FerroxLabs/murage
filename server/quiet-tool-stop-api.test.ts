@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -53,14 +54,15 @@ posixOnly("owner Stop during a quiet tool (fake ACP CLI through the server)", ()
       instances: {
         quietTool: {
           driver: "customAcp",
-          environment: { FAKE_ACP_RPC_LOG: rpcLog(), FAKE_ACP_MODE: "stall-after-tool", FAKE_ACP_TOOL_NEVER_FINISHES: "1" },
+          environment: { FAKE_ACP_RPC_LOG: rpcLog(), FAKE_ACP_MODE: "stall-after-tool", FAKE_ACP_TOOL_NEVER_FINISHES: "1", FAKE_ACP_MODELS: "fake-acp-model" },
           config: { cli: FAKE_ACP, fullAuto: false },
         },
       },
     }));
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", "data:text/javascript," + encodeURIComponent(`const { customAcpSupport: localFixtureHost } = await import(${JSON.stringify(new URL("./drivers/acp/custom.ts", import.meta.url).href)}); localFixtureHost.fluxReach = () => "elsewhere";`), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...powerBlockTestEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,

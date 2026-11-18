@@ -38,7 +38,7 @@ beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_
 
 function killDuringBuild(file: string): Promise<{ signal: NodeJS.Signals | null; committed: boolean; walBytes: number }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-e", BUILDER, file, OWNER_PIN.sql], { stdio: ["ignore", "pipe", "inherit"] });
+    const child = spawn(process.execPath, ["-e", BUILDER, file, OWNER_PIN.sql], { windowsHide: true, stdio: ["ignore", "pipe", "inherit"] });
     let output = "", walBytes = 0;
     child.stdout.on("data", chunk => { output += String(chunk); });
     const wal = `${file}-wal`;

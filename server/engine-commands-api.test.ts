@@ -54,12 +54,18 @@ posixOnly("engine commands", () => {
     const listed = (await api("GET", `/api/bots/${bot.id}/engine-commands`)).body;
     // statusline is terminal-only by Claude Code's own report; clear is one
     // Murage keeps out
-    expect(listed.commands).toEqual([
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5: retain the exact native catalog in its private cache and check the public handle projection independently.
+    const nativeCommands = readJson(`${fixture.info.dataDir}/engine-commands.json`).bots[bot.id].claudeAgent.commands;
+    expect(nativeCommands).toEqual([
       { name: "compact", description: "Clear conversation history but keep a summary in context", hint: "<optional custom summarization instructions>" },
       { name: "context", description: "Show current context usage" },
       { name: "review", description: "Review a pull request" },
     ]);
-    expect(readJson(`${fixture.info.dataDir}/engine-commands.json`).bots[bot.id].claudeAgent.commands).toEqual(listed.commands);
+    expect(listed.commands).toEqual(nativeCommands.map(({ name, hint, ...fields }: any) => ({
+      ...fields, ...(hint ? { hint } : {}), label: name, takesArguments: Boolean(hint), handle: expect.stringMatching(/^c\.[0-9a-f]{16}\.[0-9]+$/),
+    })));
+    expect(new Set(listed.commands.map((command: any) => command.handle)).size).toBe(nativeCommands.length);
+    for (const command of listed.commands) expect(command).not.toHaveProperty("name");
   }, 60000);
 
   it("answers the companion surfaces that can see the bot, and no one for a bot that is not there", async () => {

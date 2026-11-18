@@ -6,7 +6,7 @@
 // late confirmation (`steer.confirmed`, a late "delivered") stamps that same binding.
 import { describe, expect, it } from "vitest";
 
-import { steerWithQuoteLineage } from "./steer-lineage.ts";
+import { steerWithQuoteLineage } from "./testing/steer-fixture.ts";
 import { createSteerReceiver, createTurnAttribution } from "./turn-attribution.ts";
 
 function harness() {
