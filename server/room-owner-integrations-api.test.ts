@@ -23,6 +23,29 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { FAKE_FLUX_BROKER_INSTRUMENTATION } from "./testing/fake-flux-broker.ts";
 
+// A supervised owner mount must run, even when the fake engine only records its config.
+const OWNER_TOOLS_STUB = `import { createInterface } from 'node:readline';
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  const result = request.method === 'initialize'
+    ? { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'owner-tools-fixture', version: '1' } }
+    : request.method === 'tools/list' ? { tools: [] } : {};
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + String.fromCharCode(10));
+});`;
+
+// Discovery reaches the native protocol; keep the real browser controller and authority.
+const NATIVE_BROWSER_STUB = `export function createNativeBrowser() {
+  return {
+    request: async method => {
+      if (method !== 'tools/list') throw new Error('Browser fixture only lists tools');
+      return { tools: [{ name: 'agent_browser_snapshot', inputSchema: { type: 'object', properties: {} } }] };
+    },
+    protected: async () => false, resetStream() {}, input() {}, command: async () => '',
+    connect: async () => 'fixture-stream', close: async () => {},
+  };
+}`;
+
 const posixOnly = describe.skipIf(process.platform === "win32");
 let fixture: VerificationServer, headers: Record<string, string>;
 let room: { id: string; threadId: string };
@@ -56,6 +79,7 @@ posixOnly("the owner's integrations in a room turn", () => {
       process.env.MURAGE_AGENT_BROWSER_PATH=process.execPath;
       const { registerHooks } = await import('node:module');
       registerHooks({ load(url, context, nextLoad) {
+        if(url.endsWith('/browser-native-relay.ts'))return {format:'module',shortCircuit:true,source:${JSON.stringify(NATIVE_BROWSER_STUB)}};
         if(!url.endsWith('/browser-engine.ts'))return nextLoad(url, context);
         const source=fs.readFileSync(new URL(url),'utf8');
         const start=source.indexOf('export async function verifyAgentBrowserBinary(');
@@ -72,8 +96,10 @@ posixOnly("the owner's integrations in a room turn", () => {
       cfg.features={...(cfg.features??{}),browser:true};
       // every turn's --mcp-config is dumped, not only the first one's
       cfg.instances.verification.environment={FAKE_CLAUDE_DUMP_EACH_TURN:'1'};
-      // The owner's own local MCP server (never started: the fake CLI only reads the config).
-      cfg.mcpServers={'owner-tools':{command:'owner-tools-fixture',args:['--serve'],env:{OWNER_TOOLS_FIXTURE:'1'}}};
+      // The inert owner server uses the same supervised stdio path as an ordinary mount.
+      const ownerService=path.join(process.env.MURAGE_DATA_DIR,'owner-tools.mjs');
+      fs.writeFileSync(ownerService,${JSON.stringify(OWNER_TOOLS_STUB)});
+      cfg.mcpServers={'owner-tools':{command:process.execPath,args:[ownerService],env:{OWNER_TOOLS_FIXTURE:'1'}}};
       // A workspace connected-apps key (self-hosted): connected apps are configured.
       fs.writeFileSync(file,JSON.stringify(cfg));
     ` });

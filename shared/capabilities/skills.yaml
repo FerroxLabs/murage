@@ -1,0 +1,54 @@
+schema: 1
+entries:
+  - id: skills.library
+    name: The Skills Library
+    status: can
+    questions:
+      - Where can I find skills for my bot?
+      - Does Murage have a library of skills?
+      - How do I add a skill to a bot?
+      - Can I change a library skill?
+      - How do I undo my edits to a skill?
+    answer: >
+      Yes. The Library window's Skills tab holds 2,247 skills across 141 topics. Search, pick a topic,
+      or narrow to On your bots or Your copies. Open a skill to read its instructions and files, then use
+      Add or remove bots to choose which bots use it. Save as my copy keeps your edits yours, and Go back to
+      the original returns a skill to the library version.
+    limits: Skill Guard checks a skill before a bot can use it. Skills are in the desktop app only.
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - 'file:src/components/TeamLibraryPanel.tsx#<SkillsBrowser bots={assignableBots}'
+      - 'file:src/components/library/SkillsBrowser.tsx#label: "Your copies"'
+      - 'file:src/components/library/SkillDetailPane.tsx#Go back to the original'
+      - 'file:src/components/library/BotsPicker.tsx#Add or remove bots'
+      - 'file:server/index.ts#path === "/api/library/topics"'
+    verified: 1.0.19
+    since: 1.0.19
+    doc: features/skills#overview
+    internal: 1.0.19 headline. The 2,247 skills and 141 topics are asserted by server/skills-library-shipped.test.ts against the shipped library; update both when the library changes. Settings → Skills (useSkillsBrowser, features/skills#settings-skills) is the older list and still exists beside the Library tab.
+  - id: skills.claude-code-import
+    name: Bring your Claude Code setup
+    status: can
+    questions:
+      - Can I copy my Claude Code skills into Murage?
+      - Can Murage use my Claude Code tools?
+      - Import my Claude Code setup
+    answer: >
+      Yes. In Settings, turn on Also use my Claude Code setup, press Review to see the names of the skills and
+      tools Murage would copy, then press Import. It is a one-time copy, and Murage reads your Claude Code setup
+      only when you press Review.
+    limits: >
+      Import works only after you review the list. Skills and tools arrive turned off. Keys are never copied: a
+      tool that needs a key arrives without it and says so. Desktop app only.
+    settings_path: Settings → Connected apps → Advanced → Claude Code setup
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - 'file:src/components/ClaudeCodeImportCard.tsx#settings.claudeCode.reviewRequired'
+      - settings-card:connections/claude-code
+      - 'file:server/claude-code-import.ts#enabled: false, disabledReason: DISABLED_REASON'
+    verified: 1.0.19
+    since: 1.0.19
+    internal: 1.0.19 "Bring your Claude Code setup" (a9e405c196, 1692e65430, 401597398f; 2026-11-09/10, after the 1.0.18 bump). Windows reads through the engine-exclusion addon version 11 and refuses without it (server/claude-code-import.ts importPlatform); Mac needs Darwin 20 or later. A Cloud window gets the computer-only stub (ConnectionsPage.tsx ClaudeCodeCard).
+retired: []

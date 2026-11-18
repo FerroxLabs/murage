@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { DISCLOSURES_LIVE_INDEX, downgradeMemorySchema, ensureDisclosuresLiveIndex, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
-import { OPTIONAL_INDEXES, optionalIndexReady, registerOptionalIndex } from "./optional-index.ts";
+import { REQUIRED_INDEXES, buildOptionalIndexOffThread, OPTIONAL_INDEXES, optionalIndexReady, registerOptionalIndex } from "./optional-index.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const dirs: string[] = [], dbs: DatabaseSync[] = [];
@@ -40,6 +40,7 @@ it("an optional index is built only while the reclaim gate allows it, and one pe
     const db = new DatabaseSync(join(dir, "messages.db")); dbs.push(db);
     db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON");
     migrateMemorySchema(db, "active");
+    for (const index of REQUIRED_INDEXES) await buildOptionalIndexOffThread(db, index, { inline: true });
     const idle = { ownerIdleMs: () => 3_600_000, liveTurn: () => false, typingHeld: () => false, routineDueWithin: () => false, healthAnswered: () => true, integrityPending: () => false, revocationWaiting: () => false };
     const indexes = OPTIONAL_INDEXES.filter(item => item.table.startsWith("memory_")); // this file holds only the memory tables
     const first = indexes[0].name; // registration order: the first not-yet-built index is the one an idle window builds
@@ -91,6 +92,7 @@ it("a retry of a failed optional index build passes the same idle gate as the fi
     const db = new DatabaseSync(join(dir, "messages.db")); dbs.push(db);
     db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON");
     migrateMemorySchema(db, "active");
+    for (const index of REQUIRED_INDEXES) await buildOptionalIndexOffThread(db, index, { inline: true });
     const before = { ...optionalIndexStats };
     // the gate is open for the first attempt and closes the moment its worker has started (a turn begins)
     const gate = { ownerIdleMs: () => 3_600_000, liveTurn: () => optionalIndexStats.started > before.started, typingHeld: () => false, routineDueWithin: () => false, healthAnswered: () => true, integrityPending: () => false, revocationWaiting: () => false };

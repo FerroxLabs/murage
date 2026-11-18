@@ -63,7 +63,7 @@ function image(edit?: (name: string, text: string) => string) {
     }
   }
 }
-const check = () => spawnSync("python3", ["-I", checker, "--root", root, "--dot", join(root, "boot.dot")], { encoding: "utf8" });
+const check = () => spawnSync("python3", ["-I", checker, "--root", root, "--dot", join(root, "boot.dot")], { windowsHide: true, encoding: "utf8" });
 
 describe("image boot ordering", () => {
   it("has no ordering cycle in the boot transaction or in any image unit started on its own", () => {
@@ -103,16 +103,16 @@ describe("image boot ordering", () => {
   function runGate(analyze: string | null) {
     const bin = join(root, "bin"); mkdirSync(bin, { recursive: true });
     for (const tool of ["python3", "ls", "grep", "cat"]) {
-      const found = spawnSync("bash", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
+      const found = spawnSync("bash", ["-c", `command -v ${tool}`], { windowsHide: true, encoding: "utf8" }).stdout.trim();
       if (!existsSync(join(bin, tool))) symlinkSync(found, join(bin, tool));
     }
     if (analyze !== null) writeFileSync(join(bin, "systemd-analyze"), `#!/bin/bash\n${analyze}\n`, { mode: 0o755 });
     const script = "set -euo pipefail\n" + block.replaceAll("--root / ", `--root '${root}' `).replaceAll("/etc/systemd/system", join(root, "etc/systemd/system"));
-    return spawnSync("/bin/bash", ["-c", script], { cwd: repo, encoding: "utf8", env: { PATH: bin } });
+    return spawnSync("/bin/bash", ["-c", script], { windowsHide: true, cwd: repo, encoding: "utf8", env: { PATH: bin } });
   }
   it("build-image.sh runs the ordering gate after every unit is enabled", () => {
     expect(begin).toBeGreaterThan(build.lastIndexOf("\nsystemctl enable ")); expect(end).toBeGreaterThan(begin);
-    expect(block).toContain("python3 -I deploy/cloud-home/qualify/unit-order-check.py --root / ||");
+    expect(block).toContain("python3 -I -B deploy/cloud-home/qualify/unit-order-check.py --root / ||");
     image();
     expect(runGate("exit 0").status).toBe(0);
     expect(runGate("echo 'some unrelated unit warning' >&2; exit 1").status).toBe(0); // verify's exit 1 alone is not a cycle

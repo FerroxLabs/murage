@@ -4,6 +4,8 @@ import type {BackupRemoteStatus} from "../../server/backup-remote-host";
 import { copyText } from "@/lib/copy-text";
 import { BOX_SAVE_ROW } from "./ui/BoxShell";
 import {UNKNOWN_ACCOUNT_FIX} from "../../shared/windows-sddl.mjs";
+import type { SettingsMode } from "@/lib/settings-mode";
+import { SetInAdvancedButton } from "./SettingsPrimitives";
 type RetentionPolicy={keepLast?:number;keepDaily?:number;keepWeekly?:number;keepMonthly?:number};
 // Retention methods are optional: an older desktop bridge simply does not offer removal.
 type RemoteBridge=NonNullable<NonNullable<Window["muragebox"]>["backupRemote"]>&{
@@ -199,12 +201,14 @@ export function RemoteMessages({r,area}:{r:RemoteController;area:RemoteArea}){
 }
 /** Always visible above the collapsible off-site details: status, pending and
  * stale lines, so a locked or failing state is never folded away. */
-export function OffsiteStatus({r}:{r:RemoteController}){
+export function OffsiteStatus({r,mode}:{r:RemoteController;mode?:SettingsMode}){
  const {status,bridge,stale}=r;
  return <>
   <p role="status" className="text-[13px] font-medium text-ink">{status?(status.checking?REMOTE_CHECKING:labels[status.state]):bridge?"Checking the off-site copy…":"Off-site copies are unavailable in this window"}</p>
-  {status?.blocked&&<p role="alert" className="break-words text-[13px] text-warning">{DATA_FOLDER_SHARED_TEXT} Folder: {status.blocked.folder}. On Linux or macOS, for example: chmod go-w "{status.blocked.folder}"</p>}
-  {showsRemoteUnavailable(status)&&<p className="text-[13px] text-ink-secondary">Off-site copies need a supported desktop build with its verified backup tool. Backups on this computer are separate.</p>}
+  {status?.blocked&&(mode==="simple"
+   ?<p role="alert" className="break-words text-[13px] text-warning">This folder can be changed by other accounts, so off-site copies are paused. Details are in Advanced. <SetInAdvancedButton anchor="backup-offsite-details" /></p>
+   :<p role="alert" className="break-words text-[13px] text-warning">{DATA_FOLDER_SHARED_TEXT} Folder: {status.blocked.folder}. On Linux or macOS, for example: chmod go-w "{status.blocked.folder}"</p>)}
+  {showsRemoteUnavailable(status)&&<p className="text-[13px] text-ink-secondary">Off-site copies work in the Murage desktop app. Backups on this computer are separate.</p>}
   {status?.pending&&<p role="status" className="text-[13px] text-ink-secondary">Off-site work is in progress. Refresh after it finishes.</p>}
   {stale&&<p role="alert" className="text-[13px] text-warning">Status needs a refresh. Connection and upload actions are locked.</p>}
   <RemoteMessages r={r} area="offsite"/>
@@ -239,14 +243,14 @@ export function OffsiteDetails({r}:{r:RemoteController}){
   if(!api.testConnection){await api.connect(binding.ref,binding.revision);await refresh(expected);if(mounted.current)setNotice("Existing repository connection confirmed. No backup was uploaded.");return;}
   const result=await api.testConnection(binding.ref,binding.revision);
   if(result.state==="trust-required"){if(mounted.current)setTrust({...binding,fingerprint:result.fingerprint,keyType:result.keyType});return;}
-  await refresh(expected);if(mounted.current)setNotice(result.created?"Connected. Murage created the backup repository in this folder. Nothing has been uploaded yet.":"Connected to the existing backup repository. Nothing has been uploaded.");
+  await refresh(expected);if(mounted.current)setNotice(result.created?"Connected. Murage created the off-site copy in this folder. Nothing has been uploaded yet.":"Connected to the existing off-site copy. Nothing has been uploaded.");
  });
  const trustServer=()=>void run("trust",async(api,expected)=>{
   if(!trust||!api.trustServer||!api.testConnection)return;
   await api.trustServer(trust.ref,trust.revision,trust.fingerprint);if(mounted.current)setTrust(null);
   const next=remoteBackupStatus(await api.status());if(!next.remoteRef||!Number.isSafeInteger(next.revision))throw Error("BACKUP_REMOTE_CHANGED");
   const result=await api.testConnection(next.remoteRef,next.revision!);await refresh(expected);
-  if(mounted.current)setNotice(result.state==="connected"?(result.created?"Server trusted and connected. Murage created the backup repository in this folder. Nothing has been uploaded yet.":"Server trusted and connected to the existing backup repository. Nothing has been uploaded."):"Server trusted. Test the connection again.");
+  if(mounted.current)setNotice(result.state==="connected"?(result.created?"Server trusted and connected. Murage created the off-site copy in this folder. Nothing has been uploaded yet.":"Server trusted and connected to the existing off-site copy. Nothing has been uploaded."):"Server trusted. Test the connection again.");
  });
  return <div className="space-y-3">
   <p className="text-[13px] text-ink-secondary">Keep a second encrypted copy away from this computer: in S3-compatible storage (such as Amazon S3, Backblaze B2, Cloudflare R2 or MinIO), or on an SFTP server such as a NAS, a home server or a VPS. Saving settings doesn't connect or upload anything.</p>
@@ -363,21 +367,21 @@ export function OffsiteCleanup({r}:{r:RemoteController}){
  </div>;
 }
 /** Find, download and open Backup mode for an off-site copy. */
-export function OffsiteRecover({r}:{r:RemoteController}){
+export function OffsiteRecover({r,mode}:{r:RemoteController;mode?:SettingsMode}){
  const {bridge,status,busy,run,mounted,version,setNotice,locked,binding,available,setCatalogue,selectedBackup,setSelectedBackup,downloaded,setDownloaded}=r;
  if(!status?.supported||status.configured!==true||r.editing)return <p className="text-[13px] text-ink-secondary">Set up and connect an off-site copy to recover from it here.</p>;
  return <div className="space-y-3">
-  <p className="text-[13px] text-ink-secondary">You can recover an off-site copy even if the original local backup is gone{status.kind==="sftp"?", or on a new computer: add the SFTP destination there, add its new key to the server, choose the same off-site password file and test the connection":""}. Finding and downloading use your {status.kind==="sftp"?"SFTP connection":"storage connection"}. Your current Murage data stays unchanged.</p>
+  {mode!=="simple"&&<p className="text-[13px] text-ink-secondary">You can recover an off-site copy even if the original local backup is gone{status.kind==="sftp"?", or on a new computer: add the SFTP destination there, add its new key to the server, choose the same off-site password file and test the connection":""}. Finding and downloading use your {status.kind==="sftp"?"SFTP connection":"storage connection"}. Your current Murage data stays unchanged.</p>}
   <button className={buttonClass} type="button" disabled={locked||!binding||status.state!=="connected"||!bridge?.listBackups} onClick={()=>void run("list",async(api,expected)=>{if(!binding)return;const value=remoteBackupCatalogue(await api.listBackups(binding.ref,binding.revision));if(mounted.current&&version.current===expected){setCatalogue({...value,...binding});setSelectedBackup("");setDownloaded(null);}})}>{busy==="list"?"Finding backups…":"Find off-site backups"}</button>
   {available&&<>
-   {available.ignored>0&&<p className="text-[12px] text-warning">Some repository entries could not be identified as eligible Murage backups and are not shown.</p>}
-   {available.backups.length===0?<p role="status" className="text-[13px] text-ink-secondary">No eligible Murage backups were found in this repository.</p>:<>
+   {available.ignored>0&&<p className="text-[12px] text-warning">Some items could not be recognized as usable Murage backups and are not shown.</p>}
+   {available.backups.length===0?<p role="status" className="text-[13px] text-ink-secondary">No usable Murage backups were found in this off-site copy.</p>:<>
     <label className="block text-[13px] text-ink-secondary">Backup to recover<select className={inputClass} disabled={locked} value={selectedBackup} onChange={event=>{setSelectedBackup(event.target.value);setDownloaded(null);}}><option value="">Choose a backup</option>{available.backups.map(item=><option key={item.snapshotId} value={item.snapshotId}>{new Date(item.createdAt).toLocaleString()} · {item.snapshotId.slice(0,12)}</option>)}</select></label>
-    <p className="text-[12px] text-ink-secondary">Listed copies are not verified yet. Download checks the selected copy and saves it in a new private folder.</p>
+    {mode!=="simple"&&<p className="text-[12px] text-ink-secondary">Listed copies are not verified yet. Download checks the selected copy and saves it in a new private folder.</p>}
     <button className={buttonClass} type="button" disabled={locked||!binding||!available.backups.some(item=>item.snapshotId===selectedBackup)||!bridge?.downloadBackup} onClick={()=>void run("download",async(api,expected)=>{if(!binding)return;r.setDownloadPhase("choosing");const stop=api.onDownloadPhase?.(phase=>{if(mounted.current&&version.current===expected)r.setDownloadPhase(phase);});let result;try{result=await api.downloadBackup(binding.ref,binding.revision,selectedBackup);}finally{stop?.();}if(!mounted.current||version.current!==expected)return;if(result.cancelled){setNotice("Download cancelled. Your current installation is unchanged.");return;}if(result.saved!==true||typeof result.archivePath!=="string"||!result.archivePath||result.archivePath.length>8192)throw Error("Unconfirmed download");setDownloaded(result.archivePath);setNotice("Encrypted backup downloaded and verified. Nothing has been restored or restarted.");})}>{busy==="download"?(r.downloadPhase==="choosing"?"Choose where to save it…":"Downloading and verifying…"):"Download verified copy"}</button>
    </>}
   </>}
-  {downloaded&&<div className="space-y-2"><p className="break-all text-[13px] text-ink-secondary">Saved backup: {downloaded}</p><p className="text-[13px] text-ink-secondary">Finish current work, then open Backup mode. Choose this backup.age file and your recovery key. It is restored into a new folder for you to review, and your current data stays as it is.</p><button className={buttonClass} type="button" disabled={locked||!window.muragebox?.backup} onClick={()=>void run("restore",async()=>{const result=await window.muragebox!.backup!.restart();if(mounted.current&&result.restarting===false)setNotice("Backup mode was not opened. The downloaded copy is still saved.");})}>Open Backup mode to restore</button></div>}
+  {downloaded&&<div className="space-y-2"><p className="break-all text-[13px] text-ink-secondary">Saved backup: {downloaded}</p>{mode!=="simple"&&<p className="text-[13px] text-ink-secondary">Finish current work, then open Backup mode. Choose this backup.age file and your recovery key. It is restored into a new folder for you to review, and your current data stays as it is.</p>}{mode==="simple"&&<p className="text-[13px] text-ink-secondary">Restore closes this window and opens Backup mode.</p>}<button className={buttonClass} type="button" disabled={locked||!window.muragebox?.backup} onClick={()=>void run("restore",async()=>{const result=await window.muragebox!.backup!.restart();if(mounted.current&&result.restarting===false)setNotice("Backup mode was not opened. The downloaded copy is still saved.");})}>Open Backup mode to restore</button></div>}
   <RemoteMessages r={r} area="restore"/>
  </div>;
 }

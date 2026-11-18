@@ -3,13 +3,19 @@
 // and RS256 keys generated here (RS256 published but never accepted), JWKS served exactly as https://<ref>.supabase.co/auth/v1/.well-known/jwks.json does.
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { releaseItem9HoldForTests } from "../src/held-until-item9-highs";
+// ITEM 9 (TOPUP-OFFERS-LIVE): the journey A3 top-up cases switch auto top-up on; the launch hold is released here only.
+beforeAll(() => releaseItem9HoldForTests(true));
+afterAll(() => releaseItem9HoldForTests(false));
 import { createAuth } from "../src/auth";
 import { resolveCloudAccount, type CurrentUserLoader } from "../src/cloud-accounts";
 import { readConfig } from "../src/config";
 import { HTTPError } from "../src/http";
 import { createWorker } from "../src/index";
-import hookSql from "../supabase/custom-access-token-hook.sql?raw";
+import hookSql from "../supabase/custom-access-token-hook-oauth-guard.sql?raw";
+import epochTableSql from "../supabase/onecode-epoch-table.sql?raw";
+import e1Sql from "../supabase/onecode-enable-e1.sql?raw";
 import {
   JWKS_FAILURE_COOLDOWN_MS, JWKS_TIMEOUT_MS, JwksCache, JwksUnavailable, readSupabaseAuthConfig, stepUpFresh, TokenRejected, verifySupabaseToken,
   type SupabaseAuthConfig,
@@ -53,7 +59,7 @@ function claims(over: Claims = {}): Claims {
   return {
     iss: ISS, aud: "authenticated", exp: nowS + 3600, iat: nowS - 5, sub: SUB, email: "pat@example.test", phone: "",
     app_metadata: { provider: "email", providers: ["email"], email_verified: true }, user_metadata: {},
-    role: "authenticated", aal: "aal1", amr: [{ method: "password", timestamp: nowS - 60 }], session_id: "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc",
+    role: "authenticated", aal: "aal1", amr: [{ method: "oauth", timestamp: nowS - 60 }], session_id: "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc",
     is_anonymous: false, ...over,
   };
 }
@@ -216,34 +222,83 @@ describe("JWKS transport failures (Astra MAKERKIT1 #8)", () => {
   });
 });
 
-describe("Custom Access Token Hook SQL (Astra MAKERKIT1 #6)", () => {
-  const sql = hookSql.replace(/--.*$/gm, "").replace(/\s+/g, " ").toLowerCase();
+describe("Custom Access Token Hook SQL (Astra MAKERKIT1 #6; one canonical installer, CLOUD-ONE-CODE-PROOF r5 F3)", () => {
+  const strip = (t: string) => t.replace(/--.*$/gm, "").replace(/\s+/g, " ").toLowerCase();
+  const sql = strip(hookSql);
   it("ships the function with the schema grant MakerKit needs, execute only for supabase_auth_admin, and no security definer", () => {
     expect(sql).toContain("create or replace function public.custom_access_token_hook(event jsonb)");
     expect(sql).toContain("email_confirmed_at is not null");
     expect(sql).toContain("'{app_metadata,email_verified}'");
     expect(sql).toContain("grant usage on schema public to supabase_auth_admin;");
     expect(sql).toContain("grant execute on function public.custom_access_token_hook(jsonb) to supabase_auth_admin;");
-    expect(sql).toContain("revoke execute on function public.custom_access_token_hook(jsonb) from public, anon, authenticated;");
+    expect(sql).toContain("revoke execute on function public.custom_access_token_hook(jsonb) from public, anon, authenticated, service_role;");
     expect(sql).not.toContain("security definer");
-    expect(sql).not.toContain("user_metadata");
     expect(hookSql).toContain('uri = "pg-functions://postgres/public/custom_access_token_hook"');
+  });
+  it("carries the password fence, the epoch fences E2 and E3, and never writes exp or iat; the superseded installer is gone (test 23, 35 guard)", () => {
+    expect(sql).toContain("a.e->>'method' = 'password'");
+    expect(sql).toContain("from public.onecode_epoch e where e.user_id = uid");
+    expect(sql).toContain("sess_created is null or sess_created < epoch_ts");
+    expect(sql).toContain("epoch_email_proof constant text[] := array['otp', 'magiclink', 'email/signup', 'email_change', 'recovery', 'invite']");
+    expect(sql).toContain("epoch_second_factor constant text[] := array['totp', 'mfa/phone', 'mfa/webauthn', 'mfa/recovery_code']");
+    expect(sql).not.toMatch(/'\{(exp|iat)\}'|jsonb_set\([^)]*'\{(exp|iat)/);
+    // @ts-expect-error import.meta.glob is Vite's (vitest transforms it); the worker tsconfig does not load vite/client types.
+    const files = Object.keys(import.meta.glob("../supabase/*.sql", { query: "?raw" }));
+    expect(files.some((f) => f.endsWith("/custom-access-token-hook.sql"))).toBe(false);
+    expect(files.some((f) => f.endsWith("/custom-access-token-hook-oauth-guard.sql"))).toBe(true);
+  });
+  it("the epoch table gives supabase_auth_admin a read policy and a select grant, and nobody else anything (r7 section 1)", () => {
+    const t = strip(epochTableSql);
+    expect(t).toContain("create policy onecode_epoch_auth_read on public.onecode_epoch as permissive for select to supabase_auth_admin using (true)");
+    expect(t).toContain("grant select on table public.onecode_epoch to supabase_auth_admin");
+    expect(t).toContain("revoke all on table public.onecode_epoch from public, anon, authenticated, service_role, supabase_auth_admin");
+    expect(t).toContain("enable row level security");
+    expect(t).not.toMatch(/(?<!no )force row level security/);
+    const e1 = strip(e1Sql);
+    expect(e1).toContain("set local lock_timeout = '10s'");
+    expect(e1).toContain("set local statement_timeout = '120s'");
+    expect(e1).toContain("delete from auth.sessions where user_id in (select user_id from public.onecode_epoch)");
+    expect(e1).toContain("set local role supabase_auth_admin");
+  });
+});
+
+describe("one-code amr allowlist at the control plane (CLOUD-ONE-CODE-PROOF r5 test 22, r6 test 36; F2)", () => {
+  const at = async (amr: unknown, extra: Claims = {}) => rejected(await sign(claims({ amr, ...extra })));
+  const m = (method: string) => ({ method, timestamp: nowS - 30 });
+  it("refuses password, also with email_verified true and a fresh otp entry beside it", async () => {
+    expect(await at([m("password")])).toBe("amr_method");
+    expect(await at([m("password")], { app_metadata: { provider: "email", email_verified: true } })).toBe("amr_method");
+    expect(await at([m("otp"), m("password")])).toBe("amr_method");
+    expect(await at([m("password"), m("otp")])).toBe("amr_method");
+  });
+  it("refuses passkey, web3, anonymous, sso/saml, a second factor alone, an empty or missing amr and an unknown method", async () => {
+    for (const amr of [[m("passkey")], [m("web3")], [m("anonymous")], [m("sso/saml")], [m("totp")], [m("mfa/webauthn")], [], [m("nonsense")],
+      [m("otp"), m("nonsense")], [{ timestamp: 1 }], ["otp"], [null], "otp", {}]) {
+      expect(await at(amr), JSON.stringify(amr)).toBe("amr_method");
+    }
+    expect(await rejected(await sign(claims({ amr: undefined })))).toBe("amr_method");
+  });
+  it("accepts an emailed code, a magic link with a second factor, and oauth", async () => {
+    for (const amr of [[m("otp")], [m("magiclink"), m("totp")], [m("oauth")], [m("recovery")], [m("email/signup")], [m("otp"), m("mfa/webauthn")]]) {
+      expect(await at(amr), JSON.stringify(amr)).toBe("accepted");
+    }
   });
 });
 
 describe("step-up freshness (aal2 + amr)", () => {
   const at = async (c: Claims) => stepUpFresh(await verify(await sign(claims(c))), config(), NOW);
   it("needs aal2 from TOTP or a WebAuthn MFA factor proved within 10 minutes", async () => {
-    expect(await at({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 30 }, { method: "password", timestamp: nowS - 900 }] })).toBe(true);
-    expect(await at({ aal: "aal2", amr: [{ method: "mfa/webauthn", timestamp: nowS - 599 }] })).toBe(true);
+    expect(await at({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 30 }, { method: "oauth", timestamp: nowS - 900 }] })).toBe(true);
+    expect(await at({ aal: "aal2", amr: [{ method: "mfa/webauthn", timestamp: nowS - 599 }, { method: "otp", timestamp: nowS - 3000 }] })).toBe(true);
   });
   it("refuses aal1, a passkey sign-in alone, a stale factor, and SMS or recovery codes", async () => {
-    expect(await at({ aal: "aal1", amr: [{ method: "passkey", timestamp: nowS - 5 }] })).toBe(false);
-    expect(await at({ aal: "aal1", amr: [{ method: "totp", timestamp: nowS - 5 }] })).toBe(false);
-    expect(await at({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 601 }, { method: "password", timestamp: nowS - 5 }] })).toBe(false);
-    expect(await at({ aal: "aal2", amr: [{ method: "mfa/phone", timestamp: nowS - 5 }] })).toBe(false);
-    expect(await at({ aal: "aal2", amr: [{ method: "mfa/recovery-code", timestamp: nowS - 5 }] })).toBe(false);
-    expect(await at({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS + 600 }] })).toBe(false);
+    // r6 F2: a passkey session is refused at the token, before any step-up question.
+    expect(await rejected(await sign(claims({ aal: "aal1", amr: [{ method: "passkey", timestamp: nowS - 5 }] })))).toBe("amr_method");
+    expect(await at({ aal: "aal1", amr: [{ method: "totp", timestamp: nowS - 5 }, { method: "otp", timestamp: nowS - 3000 }] })).toBe(false);
+    expect(await at({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 601 }, { method: "oauth", timestamp: nowS - 5 }] })).toBe(false);
+    expect(await at({ aal: "aal2", amr: [{ method: "mfa/phone", timestamp: nowS - 5 }, { method: "otp", timestamp: nowS - 3000 }] })).toBe(false);
+    expect(await at({ aal: "aal2", amr: [{ method: "mfa/recovery_code", timestamp: nowS - 5 }, { method: "otp", timestamp: nowS - 3000 }] })).toBe(false);
+    expect(await at({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS + 600 }, { method: "otp", timestamp: nowS - 3000 }] })).toBe(false);
   });
 });
 
@@ -557,9 +612,9 @@ describe("Cloud customer routes on the worker", () => {
   });
 
   it("refuses aal1 and a stale second factor on money routes, and lets a fresh aal2 through the gate", async () => {
-    const aal1 = await sign(claims({ amr: [{ method: "passkey", timestamp: nowS - 5 }] }));
-    const stale = await sign(claims({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 1200 }] }));
-    const fresh = await sign(claims({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 60 }, { method: "password", timestamp: nowS - 3000 }], mfa_factor_id: FACTOR }));
+    const aal1 = await sign(claims({ amr: [{ method: "otp", timestamp: nowS - 3000 }] }));
+    const stale = await sign(claims({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 1200 }, { method: "otp", timestamp: nowS - 3000 }] }));
+    const fresh = await sign(claims({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 60 }, { method: "oauth", timestamp: nowS - 3000 }], mfa_factor_id: FACTOR }));
     await trustFactor();
     for (const [path, body] of [["/v1/billing/portal", {}], ["/v1/account/export-request", {}],
       ["/v1/billing/checkout/resume", {}], ["/v1/account/plan", { plan: "pro", expectedAmountCents: 0 }],
@@ -581,7 +636,7 @@ describe("Cloud customer routes on the worker", () => {
   });
 
   it("journey A3: a top-up change that only switches off or lowers needs sign-in only (aal1); an enable or a raise keeps the step-up", async () => {
-    const aal1 = await sign(claims({ amr: [{ method: "password", timestamp: nowS - 5 }] }));
+    const aal1 = await sign(claims({ amr: [{ method: "oauth", timestamp: nowS - 5 }] }));
     const userId = await trustFactor();
     const topupRow = (enabled: number) => env.DB.prepare(`INSERT OR REPLACE INTO topup_settings (home_id,user_id,enabled,amount_cents,threshold_cents,cap_cents,cap_period,cap_resets,consent_id,updated_at)
       VALUES ('home-a3',?,?,2000,500,10000,'calendar_month','00:00 UTC on the first day of each month',NULL,1)`).bind(userId, enabled).run();
@@ -612,7 +667,7 @@ describe("Cloud customer routes on the worker", () => {
   });
 
   it("lets cancel and withdraw through with sign-in only (aal1, no step-up; Sean 2026-10-10)", async () => {
-    const aal1 = await sign(claims({ amr: [{ method: "password", timestamp: nowS - 3000 }] }));
+    const aal1 = await sign(claims({ amr: [{ method: "oauth", timestamp: nowS - 3000 }] }));
     for (const [path, body] of [["/v1/account/cancel-plan", {}], ["/v1/account/withdraw", { confirm: true }]] as const) {
       const res = await call(path, aal1, { body });
       const code = (await res.json<{ error?: string }>()).error;
@@ -624,21 +679,21 @@ describe("Cloud customer routes on the worker", () => {
     // An account with something to protect (a trusted factor here): a fresh account's first purchase is the bootstrap path instead
     // (test/purchase-bootstrap.test.ts), and every refusal on a purchase route says so (bootstrap: false).
     await trustFactor();
-    const aal1 = await sign(claims({ amr: [{ method: "password", timestamp: nowS - 5 }] }));
+    const aal1 = await sign(claims({ amr: [{ method: "oauth", timestamp: nowS - 5 }] }));
     const r1 = await call("/v1/billing/checkout", aal1, { body: { plan: "pro" } });
     expect([r1.status, await r1.json()]).toEqual([403, { error: "step_up_required",
       step_up: { reason: "aal1", methods: ["totp", "email_code"], max_age_seconds: 600, verified_at: null, bootstrap: false,
         email_code: { available: true, digits: 6, ttl_seconds: 600, grant_ttl_seconds: 600, intent_id: expect.stringMatching(/^si_[0-9a-f]{32}$/) } } }]);
-    const stale = await sign(claims({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 601 }] }));
+    const stale = await sign(claims({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 601 }, { method: "otp", timestamp: nowS - 3000 }] }));
     const r2 = await call("/v1/billing/checkout", stale, { body: { plan: "pro" } });
     expect([r2.status, await r2.json()]).toEqual([403, { error: "step_up_required",
       step_up: { reason: "stale", methods: ["totp", "email_code"], max_age_seconds: 600, verified_at: nowS - 601, bootstrap: false,
         email_code: { available: true, digits: 6, ttl_seconds: 600, grant_ttl_seconds: 600, intent_id: expect.stringMatching(/^si_[0-9a-f]{32}$/) } } }]);
     // An SMS factor raises the session to aal2 but is not accepted: still "stale" with no accepted proof.
-    const sms = await sign(claims({ aal: "aal2", amr: [{ method: "mfa/phone", timestamp: nowS - 5 }] }));
+    const sms = await sign(claims({ aal: "aal2", amr: [{ method: "mfa/phone", timestamp: nowS - 5 }, { method: "otp", timestamp: nowS - 3000 }] }));
     expect(await (await call("/v1/billing/checkout", sms, { body: { plan: "pro" } })).json())
       .toMatchObject({ step_up: { reason: "stale", verified_at: null, bootstrap: false } });
-    const staleTrusted = await sign(claims({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 601 }], mfa_factor_id: FACTOR }));
+    const staleTrusted = await sign(claims({ aal: "aal2", amr: [{ method: "totp", timestamp: nowS - 601 }, { method: "otp", timestamp: nowS - 3000 }], mfa_factor_id: FACTOR }));
     const cfgd = await call("/v1/billing/checkout", staleTrusted, { body: { plan: "pro" }, env: supaEnv({ CLOUD_STEPUP_MAX_AGE_SECONDS: "900" }) });
     // A longer configured window lets the same token through the gate.
     expect((await cfgd.json<{ error?: string }>()).error).not.toMatch(/step_up_required|identity_unavailable/);

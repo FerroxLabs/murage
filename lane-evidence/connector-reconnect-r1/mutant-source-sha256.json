@@ -1,0 +1,11 @@
+{
+  "electron/attention-main.mjs": "002d5bb373f6d40e05ce6731375a7aab275ae7760592c83ff9902ccf9720318f",
+  "electron/main.mjs": "a628b710e01dedca3527efb329bfe084b8df5a4f2acc6f74251a971ca7b479a7",
+  "electron/managed-composio.mjs": "d98a88062440441882e67b574d7a44f0cb9a7cf38f5494d3dd3c9928749c067c",
+  "electron/mcp-signin/refresher.mjs": "9f4de373a2108195d41c856bd4a2db8ff73fde0d71b8f27c659b8ad642af379a",
+  "electron/mcp-signin/service.mjs": "877ce35128cef1f2b869d2472c166fac5e6da5b831dd34ced9bde815675e01cc",
+  "server/composio.ts": "a7d6a0002f046a825a11c5ca69c3b95bf063fddedbf01c9035f9d099f4ddb9c7",
+  "server/connected-app-health.ts": "e1fd236f44e8bbdc525270dea6eaf4480b0f770b958f835c20973f350af8b63b",
+  "server/connector-health-store.ts": "c41df3c791b97973efae04f3c99999dacc17a35bddca204aaf4b94e223642f79",
+  "server/index.ts": "3244d351bdcb712147281cdef712e2cf682951a10de51dd70b7b07cfc834e606"
+}

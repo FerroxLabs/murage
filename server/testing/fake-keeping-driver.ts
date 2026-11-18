@@ -11,11 +11,14 @@
 //                    built and before its session is reported, and waits for `<dir>/go`, so a test can land a revoke at that point.
 //   FAKE_KEEP_REPORT_ONCE  "1": the session is reported only when it starts; turns that continue it report nothing (as an engine that
 //                    resumes an idle process silently does).
+//   FAKE_KEEP_RESTORED directory: a thread with a file `<dir>/<threadId>` starts with a native session already open, as an engine that
+//                    restored its sessions from disk after a restart holds one the harness never saw reported (hasSession is true).
 // Each turn replies "Kept reply".
 import { appendFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AnyProviderDriver, DriverCreateInput, ProviderInstance, RuntimeEvent, RuntimeEventListener } from "../contracts.ts";
+import type { AnyProviderDriver, DriverCreateInput, ProviderInstance, RuntimeEvent, RuntimeEventListener, SourceContext } from "../contracts.ts";
 import { newEventId } from "../contracts.ts";
+import { fencedSubmit } from "../drivers/engine-input.ts";
 
 export const KEEPING_DRIVER_KIND = "fakeKeeping";
 export const KEPT_REPLY = "Kept reply";
@@ -43,12 +46,21 @@ export function makeKeepingDriver(): AnyProviderDriver {
       const hold = input.environment.FAKE_KEEP_HOLD;
       const note = (row: Record<string, unknown>) => { if (dump) appendFileSync(dump, `${JSON.stringify(row)}\n`); };
       const listeners = new Set<RuntimeEventListener>();
+      const sources = new Map<string, SourceContext>();
       const emit = (event: EmittedEvent) => {
         const full = { eventId: newEventId(), provider: KEEPING_DRIVER_KIND, providerInstanceId: input.instanceId, createdAt: new Date().toISOString(), ...event } as RuntimeEvent;
-        for (const listener of Array.from(listeners)) listener(full);
+        // Delayed writes and terminal events keep the exact host admission.
+        for (const listener of Array.from(listeners)) listener(full, sources.get(full.turnId ?? ""));
+        if (full.type === "turn.completed") sources.delete(full.turnId ?? "");
       };
       const sessions = new Map<string, { id: string; context: string[] }>();
       const active = new Map<string, { turnId: string; interrupted: boolean }>();
+      const restoredDir = input.environment.FAKE_KEEP_RESTORED;
+      const restore = (threadId: string) => {
+        if (!restoredDir || !existsSync(join(restoredDir, threadId))) return;
+        rmSync(join(restoredDir, threadId), { force: true });
+        if (!sessions.has(threadId)) sessions.set(threadId, { id: `keep-restored-${threadId.slice(0, 8)}`, context: [] });
+      };
       return {
         instanceId: input.instanceId,
         driverKind: KEEPING_DRIVER_KIND,
@@ -58,9 +70,13 @@ export function makeKeepingDriver(): AnyProviderDriver {
         snapshot: async () => ({ state: "available", version: "0.0.0-keep" }),
         adapter: {
           provider: KEEPING_DRIVER_KIND,
-          capabilities: { sessionModelSwitch: "unsupported" },
+          capabilities: { sessionModelSwitch: "unsupported", fencedWrites: true },
           sendTurn: async (turn) => {
+            restore(turn.threadId);
+            const previous = active.get(turn.threadId);
+            if (previous) sources.delete(previous.turnId);
             const turnId = `keep-turn-${++counter}`;
+            if (turn.sourceContext) sources.set(turnId, turn.sourceContext);
             if (turn.sessionReset) sessions.delete(turn.threadId);
             const entry = { turnId, interrupted: false };
             active.set(turn.threadId, entry);
@@ -78,15 +94,23 @@ export function makeKeepingDriver(): AnyProviderDriver {
               if (!kept || input.environment.FAKE_KEEP_REPORT_ONCE !== "1") emit({ type: "session.started", sessionId: session.id, model: "keep-1", threadId: turn.threadId, turnId });
               await new Promise(resolve => setTimeout(resolve, 60));
               if (entry.interrupted || active.get(turn.threadId) !== entry) return;
-              try { turn.beforeSubmit?.(); } catch {
+              let writing = false;
+              try {
+                turn.beforeSubmit?.();
+                fencedSubmit(turn, () => {
+                  writing = true;
+                  session.context.push(turn.text);
+                  sessions.set(turn.threadId, session);
+                  note({ threadId: turn.threadId, session: session.id, fresh: !kept, prompt: turn.text, context: session.context });
+                }, turn.text);
+              } catch (error) {
+                if (writing) throw error;
                 note({ threadId: turn.threadId, session: session.id, refused: true });
                 active.delete(turn.threadId);
                 emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
                 return;
               }
-              session.context.push(turn.text);
-              sessions.set(turn.threadId, session);
-              note({ threadId: turn.threadId, session: session.id, fresh: !kept, prompt: turn.text, context: session.context });
+              turn.onEngineWrite?.();
               emit({ type: "item.completed", itemType: "assistant_text", origin: "engine", text: KEPT_REPLY, threadId: turn.threadId, turnId });
               active.delete(turn.threadId);
               emit({ type: "turn.completed", ok: true, threadId: turn.threadId, turnId });
@@ -100,13 +124,13 @@ export function makeKeepingDriver(): AnyProviderDriver {
             active.delete(threadId);
             emit({ type: "turn.completed", ok: false, stopReason: "interrupted", threadId, turnId: entry.turnId });
           },
-          resetSession: async (threadId) => { sessions.delete(threadId); note({ threadId, reset: true }); },
+          resetSession: async (threadId) => { restore(threadId); sessions.delete(threadId); note({ threadId, reset: true }); },
           respondToRequest: async () => "unavailable" as const,
-          hasSession: (threadId) => sessions.has(threadId),
-          stopAll: async () => { active.clear(); },
+          hasSession: (threadId) => { restore(threadId); return sessions.has(threadId); },
+          stopAll: async () => { active.clear(); sources.clear(); },
           onEvent: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
         },
-        dispose: async () => { listeners.clear(); active.clear(); sessions.clear(); },
+        dispose: async () => { listeners.clear(); active.clear(); sessions.clear(); sources.clear(); },
       };
     },
   };

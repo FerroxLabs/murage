@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { neutralizeRestoredSends, recoveredSteerLine, SendStore, type AcceptResult, type SendRow } from "./send-store.ts";
 import { Store } from "./store.ts";
+import { initializeSendAttempts } from "./send-attempt-state.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -138,5 +139,91 @@ describe("crash recovery of a via row (Opus S2 M1)", () => {
     // the edit route answers 409 on `if (source.via)`; a line without it would be an ordinary user line the owner could edit into a turn
     expect(line).toMatchObject({ via: "share", origin: "unproven", steered: true, steerUnconfirmed: true });
     expect(Boolean(line?.via)).toBe(true);
+  });
+});
+
+// Queue settlement producer and phone resend consumer owner: p1-conn.
+describe("receipt-backed refusal cleanup", () => {
+  it.each(["refused", "cancelled"] as const)("rolls back a %s admission when empty cleanup cannot be persisted", status => {
+    initializeSendAttempts(db);
+    const s = mem();
+    db.exec(`CREATE TRIGGER fail_empty_release BEFORE UPDATE ON turn_cleanup_owed
+      WHEN NEW.kind='release' AND NEW.status='done'
+      BEGIN SELECT RAISE(FAIL, 'fixture cleanup persistence failure'); END`);
+    expect(() => s.accept(shareInput({ sendId: "entry-cleanup-failure", status }))).toThrow("cleanup_incomplete");
+    expect(s.queuedRows("t1", "bot")).toEqual([]);
+    expect(db.prepare("SELECT count(*) AS n FROM owner_sends").get()).toMatchObject({ n: 0 });
+    expect(db.prepare("SELECT count(*) AS n FROM send_attempts").get()).toMatchObject({ n: 0 });
+    expect(db.prepare("SELECT count(*) AS n FROM turn_cleanup_owed").get()).toMatchObject({ n: 0 });
+    db.exec("DROP TRIGGER fail_empty_release");
+    const retry = newRow(s.accept(shareInput({ sendId: "entry-cleanup-failure", status })));
+    expect(s.attemptFor(retry)).toMatchObject({ phase: "terminal", cleanupOwed: 0 });
+    const next = newRow(s.accept(shareInput({ sendId: "after-cleanup-retry" })));
+    expect(s.drainable("t1", "bot").map(row => row.seq)).toEqual([next.seq]);
+  });
+
+  it("rolls back queue refusal and all partial cleanup when release persistence fails", () => {
+    initializeSendAttempts(db);
+    const s = mem();
+    const first = newRow(s.accept(shareInput({ sendId: "queue-cleanup-failure" })));
+    db.exec(`CREATE TRIGGER fail_empty_release BEFORE UPDATE ON turn_cleanup_owed
+      WHEN NEW.kind='release' AND NEW.status='done'
+      BEGIN SELECT RAISE(FAIL, 'fixture cleanup persistence failure'); END`);
+    expect(() => s.refuse(first.seq)).toThrow("cleanup_incomplete");
+    expect(s.bySeq(first.seq)).toMatchObject({ status: "queued", text: "x" });
+    expect(s.attemptFor(s.bySeq(first.seq)!)).toMatchObject({ phase: "queued", cleanupOwed: 0 });
+    expect(db.prepare("SELECT count(*) AS n FROM send_attempt_bindings").get()).toMatchObject({ n: 0 });
+    expect(db.prepare("SELECT count(*) AS n FROM turn_cleanup_owed").get()).toMatchObject({ n: 0 });
+    db.exec("DROP TRIGGER fail_empty_release");
+    s.refuse(first.seq);
+    expect(s.attemptFor(s.bySeq(first.seq)!)).toMatchObject({ phase: "terminal", cleanupOwed: 0 });
+    const next = newRow(s.accept(shareInput({ sendId: "after-refusal-retry" })));
+    expect(s.drainable("t1", "bot").map(row => row.seq)).toEqual([next.seq]);
+  });
+
+  it("finds cleanup generation bindings through an indexed search on an existing database", () => {
+    initializeSendAttempts(db);
+    // Exercise additive initialization, including databases created before this index.
+    db.exec("DROP INDEX IF EXISTS send_attempt_bindings_generation");
+    initializeSendAttempts(db);
+    const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT attempt_id FROM send_attempt_bindings
+      WHERE thread_id=? AND generation=?`).all("t1", "fixture-generation");
+    const detail = plan.map(row => row.detail).join("\n");
+    expect(detail).toMatch(/SEARCH send_attempt_bindings USING (?:COVERING )?INDEX .*\(thread_id=\? AND generation=\?\)/);
+    expect(detail).not.toMatch(/SCAN send_attempt_bindings/);
+  });
+
+  it("a refused queue entry with no provider binding releases its synthetic cleanup before a resend", () => {
+    initializeSendAttempts(db);
+    const s = mem();
+    const first = newRow(s.accept(shareInput({ sendId: "queued-share" })));
+    s.refuse(first.seq);
+    expect(s.attemptFor(s.bySeq(first.seq)!)).toMatchObject({ phase: "terminal", terminalOutcome: "refused", delivery: "not_submitted", cleanupOwed: 0 });
+    const again = newRow(s.accept({ ...shareInput({ sendId: "queued-share" }), resend: true, actionId: "owner-press" }));
+    expect(s.drainable("t1", "bot").map(row => row.seq)).toEqual([again.seq]);
+    expect(s.bySeq(first.seq)?.status).toBe("refused");
+    expect(again).toMatchObject({ via: "share", queueOnly: true, origin: "unproven", attachments: FILES });
+  });
+
+  it("an admission refused before a provider binding does not block the next queued send", () => {
+    initializeSendAttempts(db);
+    const s = mem();
+    const refused = newRow(s.accept(shareInput({ sendId: "refused-at-entry", status: "refused" })));
+    expect(s.attemptFor(refused)).toMatchObject({ phase: "terminal", delivery: "not_submitted", cleanupOwed: 0 });
+    const next = newRow(s.accept(shareInput({ sendId: "next-share" })));
+    expect(s.drainable("t1", "bot").map(row => row.seq)).toEqual([next.seq]);
+  });
+
+  it("a genuinely bound generation retains cleanup ownership and keeps later sends blocked", () => {
+    initializeSendAttempts(db);
+    const s = mem();
+    const first = newRow(s.accept(shareInput({ sendId: "bound-share" })));
+    s.bindBatch([first.seq], "live-generation", "fixture-provider");
+    s.refuse(first.seq);
+    const next = newRow(s.accept(shareInput({ sendId: "later-share" })));
+    expect(s.attemptFor(s.bySeq(first.seq)!)).toMatchObject({ phase: "terminal", cleanupOwed: 1 });
+    expect(db.prepare("SELECT count(*) AS n FROM turn_cleanup_owed WHERE generation='live-generation' AND kind='release' AND status='pending'").get()).toMatchObject({ n: 1 });
+    expect(s.queuedRows("t1", "bot").map(row => row.seq)).toEqual([next.seq]);
+    expect(s.drainable("t1", "bot")).toEqual([]);
   });
 });

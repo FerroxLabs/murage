@@ -98,6 +98,9 @@ describe('Fable M7: downloads from owned tabs are cancelled (the debugger cannot
   it('the page event then the downloads event cancels and erases the item', async () => {
     const f = await ready(); await f.runtime.debuggerEvent({ tabId: 1 }, 'Page.downloadWillBegin', page);
     await f.runtime.downloadCreated({ id: 7, url: page.url, finalUrl: page.url });
+    // onCreated pauses first; destructive work waits for the three-second grace.
+    expect(f.api.downloads.cancel).not.toHaveBeenCalled();
+    await new Promise(resolve => setTimeout(resolve, 3050));
     expect(f.api.downloads.cancel).toHaveBeenCalledWith(7); expect(f.api.downloads.erase).toHaveBeenCalledWith({ id: 7 });
   });
   it('the downloads event then the page event does the same', async () => {

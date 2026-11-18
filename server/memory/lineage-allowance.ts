@@ -9,6 +9,7 @@
 // silently read without limit. Here a closed allowance is the opposite of unlimited: spending on it stops the read with the
 // limit error (MEMORY_REPLAY_LIMIT), which every check already turns into "not proven, so not shown".
 import type { ReadMeter } from "./root-set-handles.ts";
+import { chargeReleaseWork } from "./release-budget.ts";
 
 /** Index rows one node of the allowance pays for. A node is a judgement (a record read, a group, a source); a row of an index scan is
  * a small share of one, but never free: a read of the history is paid for by the rows it reads. */
@@ -155,6 +156,7 @@ export class LineageAllowance {
   refuse(thread: string): void { this.hit = true; if (thread) allowanceHooks.wanted(thread); }
   /** Pays `count` nodes; stops with the limit error when it cannot. */
   spendNodes(thread: string, count: number): void {
+    chargeReleaseWork(count);
     if (this.closed || this.overTime()) this.exhaust(thread);
     // what is charged never passes what the allowance held: a charge that does not fit is paid up to the room left, and the read it was for is not made
     this.spent += Math.min(count, Math.max(0, this.remaining)); this.remaining -= count;
@@ -162,6 +164,7 @@ export class LineageAllowance {
   }
   /** Pays for `rows` index rows read outside a judge. With no room left nothing is read: it stops first. */
   spendRows(thread: string, rows: number): void {
+    chargeReleaseWork(rows);
     if (this.closed || this.overTime()) this.exhaust(thread);
     if (this.remaining <= 0) this.exhaust(thread);
     this.debt += rows;
@@ -174,10 +177,12 @@ export class LineageAllowance {
    * for the rows it actually read (spendRows), so a bounded read is never started that the allowance could not cover, and a small
    * read is not charged as a large one. */
   reserveRows(thread: string, rows: number): void {
+    chargeReleaseWork();
     if (this.closed || this.overTime() || this.remaining * ROWS_PER_NODE - this.debt < rows) this.exhaust(thread);
   }
   /** How many rows a read of `want` rows may take now: the most the room left can pay for. With no room left nothing is read. */
   rowRoom(thread: string, want: number): number {
+    chargeReleaseWork();
     if (this.closed || this.overTime()) this.exhaust(thread);
     if (this.remaining <= 0) this.exhaust(thread);
     return Math.min(want, this.remaining * ROWS_PER_NODE);
@@ -198,7 +203,7 @@ export class LineageAllowance {
  * the session as the first would have, with its own reason. */
 export function withSecondLook(allowance: LineageAllowance, why: { reason?: string }, check: (allowance: LineageAllowance) => boolean): boolean {
   if (!allowance.timed(() => check(allowance))) return false;
-  if (why.reason !== "lineage-warming" && why.reason !== "checking") return true;
+  if (why.reason !== "lineage-warming" && why.reason !== "checking" && !why.reason?.startsWith("checking:")) return true;
   const second = allowance.secondLook();
   if (!second) return true;
   delete why.reason;

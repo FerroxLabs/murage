@@ -3,12 +3,13 @@
 // the per-bot toggle); this only decides how to show it here.
 import type { Notification } from "../../server/notify.ts";
 import { notificationBridge } from "./cloud-workspace";
+import { collectingAttentionDisplay, type AttentionDisplay } from "./attention-offer";
 import { notificationSoundsEnabled } from "./notification-sounds";
 import { HEALTH_PAGE_BODY, HEALTH_PAGE_TITLE, type HealthPageNotification } from "../../shared/notification-preferences";
 
 export type NotifyFrame = Notification;
 
-export type NotificationTarget = Pick<NotifyFrame, "botId" | "threadId">;
+export type NotificationTarget = Pick<NotifyFrame, "botId" | "threadId"> & { reconnectIncidentId?: string };
 
 /** Recent delivery identities only, never notification text or persisted history. */
 export function createApprovalDeduper(limit = 1024) {
@@ -23,6 +24,21 @@ export function createApprovalDeduper(limit = 1024) {
   };
 }
 const claimApproval = createApprovalDeduper();
+
+// The browser fallback has no main-process ledger. Store opaque incident ids only.
+const browserConnectorReceipts = new Set<string>();
+function connectorAlreadyShown(id: string): boolean {
+  try {
+    const saved = JSON.parse(localStorage.getItem("murage.connector-notices") ?? "[]");
+    if (Array.isArray(saved)) for (const value of saved.slice(-4096)) if (typeof value === "string") browserConnectorReceipts.add(value);
+  } catch { /* Storage can be unavailable; this launch still deduplicates. */ }
+  return browserConnectorReceipts.has(id);
+}
+function rememberConnectorNotice(id: string) {
+  browserConnectorReceipts.add(id);
+  while (browserConnectorReceipts.size > 4096) browserConnectorReceipts.delete(browserConnectorReceipts.values().next().value!);
+  try { localStorage.setItem("murage.connector-notices", JSON.stringify([...browserConnectorReceipts])); } catch { /* Keep this launch's receipt. */ }
+}
 
 /** Ask while handling the settings click. Browsers may reject permission
  * requests that are triggered later by an incoming SSE frame. */
@@ -46,7 +62,7 @@ export function buildNotificationOptions(bot: NotificationBotIdentity): Notifica
   return { tag: `murage:${bot.id}`, icon: bot.avatarUrl ?? undefined };
 }
 
-/** Show one unless the exact destination conversation is already visible.
+/** Return display fields on the router path. Otherwise show one unless its conversation is visible.
  * A focused app may still be showing another task (routine runs are detached),
  * so window focus alone is not proof that the actionable card can be seen. */
 export function showNotification(
@@ -54,10 +70,20 @@ export function showNotification(
   onOpen: (target: NotificationTarget) => void,
   avatarUrl?: string | null,
   visibleThreadId?: string | null,
-) {
+): AttentionDisplay | (() => void) | void {
+  if (collectingAttentionDisplay() || notificationBridge()?.attention) {
+    const fields: AttentionDisplay = {
+      title: frame.title.slice(0, 256), body: frame.body.slice(0, 1024),
+      botId: frame.botId, threadId: frame.threadId,
+      privatePreview: frame.privatePreview === true, silent: !notificationSoundsEnabled(),
+    };
+    if (!fields.privatePreview && typeof avatarUrl === "string" && avatarUrl.length <= 65536 && /^data:image\/png;base64,[a-z0-9+/]*={0,2}$/i.test(avatarUrl)) fields.icon = avatarUrl;
+    return fields;
+  }
   if (typeof Notification === "undefined") return;
   if (frame.kind !== "approval" && document.hasFocus() && visibleThreadId === frame.threadId) return;
   if (Notification.permission !== "granted") return;
+  if (frame.kind === "connector-reconnect" && frame.deliveryId && connectorAlreadyShown(frame.deliveryId)) return;
   if (frame.kind === "approval" && frame.requestId && frame.messageId) {
     if (!claimApproval(frame)) return;
     const bridge = notificationBridge();
@@ -66,6 +92,7 @@ export function showNotification(
       // A failed native delivery is not retried with a second audible channel.
       try {
         void bridge.approvalNotifications.show({
+          ...(frame.approvalId ? { approvalId: frame.approvalId, requestRef: frame.requestRef, actionHash: frame.actionHash } : {}),
           botId: frame.botId, threadId: frame.threadId, requestId: frame.requestId, messageId: frame.messageId,
           ...(frame.requestTurnId ? { requestTurnId: frame.requestTurnId } : {}), title: frame.title, body: frame.body,
           ...(notificationSoundsEnabled() ? {} : { silent: true }),
@@ -77,7 +104,7 @@ export function showNotification(
 
   const open = () => {
     window.focus();
-    onOpen({ botId: frame.botId, threadId: frame.threadId });
+    onOpen({ botId: frame.botId, threadId: frame.threadId, ...(frame.kind === "connector-reconnect" ? { reconnectIncidentId: frame.deliveryId } : {}) });
   };
 
   if (Notification.permission === "granted") {
@@ -88,7 +115,11 @@ export function showNotification(
       // that muted notification sounds.
       ...(notificationSoundsEnabled() ? {} : { silent: true }),
     };
-    new Notification(frame.title, options).onclick = open;
+    const notification = new Notification(frame.title, options);
+    if (frame.kind === "connector-reconnect" && frame.deliveryId) rememberConnectorNotice(frame.deliveryId);
+    notification.onclick = open;
+    // This closer belongs only to the no-router display path.
+    return () => { try { notification.close(); } catch { /* already closed by the OS */ } };
   }
 }
 
@@ -108,6 +139,17 @@ export function showHealthPage(frame: HealthPageNotification, onOpen: () => void
     body: HEALTH_PAGE_BODY, tag: "murage:health",
     ...(notificationSoundsEnabled() ? {} : { silent: true }),
   });
+  notification.onclick = () => { window.focus(); onOpen(); };
+  return true;
+}
+
+/** The one notice of a read-only start (boot tolerance D3): sent by the server once per process, never replayed. The words are the locale's, not the frame's. */
+export function isDiskNotice(notification: unknown): notification is { kind: "disk-low"; id: "disk.read-only-start" } {
+  return typeof notification === "object" && notification !== null && (notification as { kind?: unknown }).kind === "disk-low";
+}
+export function showDiskNotice(words: { title: string; body: string }, onOpen: () => void): boolean {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
+  const notification = new Notification(words.title, { body: words.body, tag: "murage:disk-low", ...(notificationSoundsEnabled() ? {} : { silent: true }) });
   notification.onclick = () => { window.focus(); onOpen(); };
   return true;
 }

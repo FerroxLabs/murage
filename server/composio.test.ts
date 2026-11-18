@@ -77,7 +77,14 @@ describe.sequential("managed broker credentials", () => {
     // instead of an audit of every call site.
     const source = readFileSync(new URL("./composio.ts", import.meta.url), "utf8");
     const body = source.slice(source.indexOf("async function brokerRequest("));
-    expect(body.slice(0, body.indexOf("\n}"))).toContain("activeBroker(cfg)");
+    const requestBody = body.slice(0, body.indexOf("\n}"));
+    expect(requestBody).toContain("brokerRequestUpstream(cfg, path, init)"); // MAIN RULING 1115-COMPOSIO-A6
+    expect(requestBody).not.toMatch(/\bfetch\s*\(/); // MAIN RULING 1115-COMPOSIO-A6
+    const upstream = source.slice(source.indexOf("async function brokerRequestUpstream("));
+    const upstreamBody = upstream.slice(0, upstream.indexOf("\n}"));
+    expect(upstreamBody).toContain("activeBroker(cfg)"); // MAIN RULING 1115-COMPOSIO-A6: single resolver remains private.
+    expect(upstreamBody).toContain("await composioFetch("); // MAIN RULING 1115-COMPOSIO-A6
+    expect(upstreamBody).not.toMatch(/\bfetch\s*\(/); // MAIN RULING 1115-COMPOSIO-A6
     // Only the resolver and the label may read it directly.
     expect(source.split("brokerAccess()").length - 1).toBeLessThanOrEqual(3);
   });

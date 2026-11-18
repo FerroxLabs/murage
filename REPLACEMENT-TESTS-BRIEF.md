@@ -1,0 +1,13 @@
+# WP2a replacement tests brief (builder: NEW files only, no index.ts/worker.ts edits)
+Branch fix/1018-memw-r32-wp2 on hz /work/swarm1018/memw32/wp2. Base commit: the sha WP2a announces after 5b47ffd52 (head at time of writing: 5b47ffd52 on 24fdc9026).
+The replacement verification uses a neutral isolated fixture.
+Helpers: server/memory/testing/open-index.ts (openTestIndex, closeSealed, grantCharge, put = applyBatch that throws unless done).
+New design entry points (server/memory/index.ts): applyBatch(records) -> {status:"done"} | {status:"failed",reason:"segment-gate"|"merge-floor"|"wal-over"|"drain"|"check-owed"|"age-blocked",committed}; maintenanceStep() -> {ran,drain?,gateClear?} (merges/tier when over the segment gate, one tier at L=32 then sealed); segmentCount(table); sealAndTruncate(); purgeRolledCheckpoints/fillPostings/purgeRecords/finishRewrite are async. Segment limit: FTS_SEGMENT_LIMIT and isSegmentLimitError in segment-limit.ts; gate: segmentGateOpen in memw-steps.ts.
+Old test (deleted, see git show HEAD~1:server/memory/fts-segments.test.ts) -> new test:
+ (a) "an index at the 2,000-segment limit recovers and accepts writes" -> segment-limit stop: fixture at the limit; applyBatch returns failed segment-gate (not a thrown SQLITE_FULL); drive maintenanceStep until gateClear; applyBatch then done and search returns the row.
+ (b) "compacts with optimize well before the limit, and leaves a small index alone" -> small index: maintenanceStep does nothing (ran null); 1100 single-row batches with automerge 0 then maintenanceStep merges down before the gate (segmentCount < gate).
+ (c) "a deleted memory is never returned by search, before, during or after recovery" -> at the gate, a deleted=true batch is refused (segment-gate) and search with the authority set still excludes it; after maintenanceStep it commits and stays excluded.
+ (d) memw-index "purgeRecords, finishRewrite, recoverSegments write the same bounded log": the recoverSegments case is replaced by maintenanceStep merge on the same 20k vs 200k fixtures; WAL growth equal.
+ (e) msearch2-r4 T9 (500k/1M postings): the removed settlePostings timing -> assert fillPostings steps stay bounded and the log after sealAndTruncate is header only; the settles list is gone.
+ Also age-order.test.ts dropped expect(index.recoverSegments()).toBe("none") -> expect(await index.maintenanceStep()).toMatchObject({ran:null}) after the writes.
+Every new test needs a named RED mutant (apply, run only that test, see it FAIL with a real vitest Tests line, revert, green control on the same tree). Record rows in /work/swarm1018/memw32/wp2/MUTANTS-wp2.tsv style. Report 20 lines max to the MEMW owner.

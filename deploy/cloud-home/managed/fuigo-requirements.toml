@@ -1,3 +1,5 @@
+fail_closed = true
+allow_managed_hooks_only = true
 [plugins]
 auto_discover = false
 [cli]

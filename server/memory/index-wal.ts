@@ -12,12 +12,16 @@
 // guard and the writable connection open, so the log keeps every frame.
 // Write revision (R2-06): every DatabaseSync here opens memory-index.db only, never messages.db, so no app_write_revision trigger or epoch
 // applies (like memory/age-index.ts).
-import { closeSync, constants, existsSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, unlinkSync, writeSync } from "node:fs";
+import { BgDeferred } from "../bg-admission.ts";
+import { BgRefused, commitCeiling, checkpointCeiling, ioGrantSnapshot, registerBg } from "../io-meter.ts";
+import { helperEnforced, helperHasGrant, helperStepBudget, withHelperGrant } from "./helper-admission.ts";
+import { writeSync } from "../counted-fs.ts";
+import { closeSync, constants, existsSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import { crc32 } from "node:zlib";
-import { DatabaseSync } from "node:sqlite";
-import { checkIndex, indexDamaged, LOG_SUFFIXES, prepareIndexOpen, quarantineIndex, stopMarkerPresent } from "./index-quarantine.ts";
+import { DatabaseSync } from "../sqlite-open.ts";
+import { checkIndex, IndexDamagedError, indexDamaged, LOG_SUFFIXES, prepareIndexOpen, quarantineIndex, stopMarkerPresent } from "./index-quarantine.ts";
 import { walIndexReader } from "../io-written.ts";
 
 // ---- constants (spec 1.1; index.ts re-exports them) ----
@@ -34,9 +38,66 @@ export const CHARGE_ACK_MS = 2_000;
 export const WAL_HEADER_BYTES = 32;
 const INDEX_OPEN_BUSY_MS = 5_000;
 
+/** Runtime page currency: one step and its owed copy fit, leaving 1 MiB for server writes. */
+export function indexStepFrames(pageSize=4096,osPageSize=ioGrantSnapshot().pageSize,room=11*MiB):number {
+  room=Math.min(11*MiB,room);
+  let lo=0,hi=Math.floor(room/pageSize);
+  while(lo<hi){const n=Math.ceil((lo+hi)/2);
+    if(commitCeiling(n,pageSize,osPageSize)+checkpointCeiling(n,pageSize,osPageSize)+4*osPageSize<=room)lo=n;else hi=n-1;}
+  return lo;
+}
+export function runtimeStepWalBytes(pageSize=4096):number {
+  return helperEnforced()?indexStepFrames(pageSize,ioGrantSnapshot().pageSize,helperStepBudget())*(pageSize+24):MEMW_W_STEP_BYTES;
+}
+export function runtimeMergeWalBytes(pageSize=4096):number {
+  return helperEnforced()?runtimeStepWalBytes(pageSize):MEMW_W_MERGE_BYTES;
+}
 export type WalKind = "group" | "fill" | "keys" | "stage_drop" | "delete" | "merge" | "tier" | "seal" | "open" | "stop";
 /** Every write kind. A stop read back from a marker or index_meta with any other kind reports "unknown" (fail closed). */
 export const ALL_WAL_KINDS: ReadonlySet<string> = new Set<WalKind>(["group", "fill", "keys", "stage_drop", "delete", "merge", "tier", "seal", "open", "stop"]);
+
+// ---- index_meta: the closed key set and the put helper (MEMW-OVERSIZE r4.1 G2, G5) ----
+// The WAL envelope of a write counts its index_meta puts: write() adds wal_check, verified_through and (once) file_id to the body's own
+// puts, each priced as one row operation P_op(h, 1) = 13(h + 1) + 2 + 2 frames. The b-tree height h of index_meta is bounded by its row
+// count: every leaf holds at least 1 row and every interior page at least 2 children, so 64 rows give at most 6 edges (a height of 6).
+// The envelope is priced at the more conservative 7: E = 3 x P_op(7, 1) = 3 x 108 = 324 frames (an over-count of one level, kept on
+// purpose). That bound holds only while the table stays small, so the key set is CLOSED: at most META_KEY_LIMIT keys, every value at most
+// META_VALUE_MAX_BYTES, enforced by the one put helper below and, for a file written by any other build, at open by checkGeometry.
+// Depth: SQLite's BTCURSOR_MAX_DEPTH is 20 (btreeInt.h, unchanged since 3.7.x); moveToChild returns SQLITE_CORRUPT past it, so a write on
+// a deeper tree rolls back with 0 frames and is never committed. node:sqlite in the packaged app (Electron 43.8.1 runs the server as Node 24.22.0 via ELECTRON_RUN_AS_NODE) bundles SQLite 3.53.4, the
+// same as the build host test image (node:24); the memory index suite prints sqlite_version() so a reviewer can confirm it. The design text
+// said 3.50.4; BTCURSOR_MAX_DEPTH is 20 in both.
+const LITERAL_META_KEYS: readonly string[] = [
+  // the checked write path (this file)
+  "file_id", "wal_check", "verified_through", "wal_over_stop",
+  // MemoryIndex (index.ts): reset, entries counter, key listing, postings fill, text and debt seeds, delete scrub, merge
+  "reset_done", "merge_owed", "delete_scrub_owed", "delete_scrub_target", "delete_scrub_merge", "delete_scrub_merges", "delete_scrub_completed",
+  "delete_generation", "lexical_keys_cursor", "lexical_keys_complete", "entries_live", "entries_live_recount", "postings_below",
+  "text_bytes_cursor", "text_bytes_seed", "postings_triggers",
+  // text_bytes:<t> and debt_bytes:<t> for the three FTS tables
+  "text_bytes:lexical", "text_bytes:lexical_age", "text_bytes:lexical_retired", "debt_bytes:lexical", "debt_bytes:lexical_age", "debt_bytes:lexical_retired",
+  // the age cutover and the staged bulk (age-index.ts)
+  "lexical_rowids", "age_fill_below", "lexical_generation", "age_sweep_after", "age_fill_remaining", "age_phase", "age_fill_blocked",
+  "age_v0_cursor", "age_va_cursor", "age_vb_cursor", "age_vb_pass", "age_unkeyed", "age_keys_cursor", "age_sum_cursor", "age_sum_done",
+  "age_text_left", "age_rows_left", "age_id_left", "retire_left", "retire_base", "retire_since", "retire_deleted", "retire_merge",
+];
+export const META_KEY_LIMIT = 64;
+export const META_VALUE_MAX_BYTES = 900;
+/** The write envelope of the three index_meta puts every write() adds: 3 x P_op(7, 1) = 3 x (13 x 8 + 2 + 2) frames. */
+export const META_ENVELOPE_FRAMES = 3 * (13 * (7 + 1) + 2 * 1 + 2);
+/** Every key index_meta may hold: the literal keys above and overrun_k:<kind> for each write kind. Closed: a key outside it is refused by
+ * metaPutter and makes checkGeometry quarantine the file. */
+export const META_KEYS: ReadonlySet<string> = new Set([...LITERAL_META_KEYS, ...[...ALL_WAL_KINDS].map(kind => `overrun_k:${kind}`)]);
+/** The one way a body or write() puts an index_meta row: an unknown key or a value over META_VALUE_MAX_BYTES throws (the enclosing txn rolls
+ * back, so the rise is 0 frames). */
+export function metaPutter(db: DatabaseSync): (key: string, value: string) => void {
+  const stmt = db.prepare("INSERT OR REPLACE INTO index_meta VALUES(?,?)");
+  return (key, value) => {
+    if (!META_KEYS.has(key)) throw new Error(`MEMW_META_KEY:${key.slice(0, 64)}`);
+    if (Buffer.byteLength(value, "utf8") > META_VALUE_MAX_BYTES) throw new Error(`MEMW_META_VALUE:${key}`);
+    stmt.run(key, value);
+  };
+}
 /** A stop's kind: a write kind, or "unknown" when the stop was read back without a usable kind (r3.2.8 1.2). */
 export type StopKind = WalKind | "unknown";
 export interface WalCheckpointResult { ok: boolean; busy: number; log: number; checkpointed: number }
@@ -84,6 +145,9 @@ export interface WalTestHooks {
   sealBody?: (db: DatabaseSync) => void;
   /** Called with the stopped writer just before trigger B closes it (TB-CLOSE: a read there opens the lazy -shm reader). */
   triggerB?: (wal: IndexWalWriter) => void;
+  /** Runs after quick_check and before checkGeometry on every open attempt (`rebuilt` is true on the fresh file after a quarantine); a throw of
+   * IndexDamagedError there stands for a geometry failure (E5). */
+  geometry?: (db: DatabaseSync, rebuilt: boolean) => void;
 }
 export const walTestHooks: WalTestHooks = {};
 const modeCounts = { PASSIVE: 0, TRUNCATE: 0 };
@@ -92,6 +156,8 @@ const HELPER_RUN_ID = randomBytes(8).toString("hex");
 export function helperRunId(): string { return walTestHooks.helperRunId ?? HELPER_RUN_ID; }
 /** Checkpoint attempts by mode since the last reset (8d). */
 export function walCheckpointModes(reset = false): { PASSIVE: number; TRUNCATE: number } { const out = { ...modeCounts }; if (reset) { modeCounts.PASSIVE = 0; modeCounts.TRUNCATE = 0; } return out; }
+
+const ioGrantSnapshotIfEnforced=()=>helperEnforced()?ioGrantSnapshot().pageSize:4096;
 
 function exitNow(code: number): never {
   if (walTestHooks.exit) return walTestHooks.exit(code);
@@ -176,6 +242,7 @@ function encodeSidecar(value: object): Buffer {
 }
 /** Writes a sidecar whole and fsyncs it (and its directory when `dirSync` or when the file is new). Throws on any fault. */
 export function writeSidecar(indexPath: string, suffix: string, value: object, dirSync: boolean): void {
+  if(helperEnforced()&&!ioGrantSnapshot().live)return withHelperGrant(ioGrantSnapshot().pageSize,()=>writeSidecar(indexPath,suffix,value,dirSync));
   const path = `${indexPath}${suffix}`, created = !existsSync(path), data = encodeSidecar(value);
   const fd = openSync(path, constants.O_RDWR | constants.O_CREAT, 0o600);
   try {
@@ -265,6 +332,12 @@ export class IndexWalWriter implements IndexWal {
     if (this.stoppedFlag || this.owedCheck) return false;
     if (kind === "seal" || kind === "stop") return true;
     const L = this.last.L;
+    if(helperEnforced()){
+      const h=this.shm(),debt=h?(h.mxFrame-h.nBackfill)*this.pageSize:this.chargeBytes();
+      const pages=Math.ceil(reserve/this.frameBytes);
+      if(debt+pages*this.pageSize>MEMW_TICK_TRUNCATE_BYTES)return false;
+      if(!helperHasGrant(commitCeiling(pages,this.pageSize)+checkpointCeiling(pages,this.pageSize)+4*ioGrantSnapshot().pageSize,true))throw new BgDeferred();
+    }
     if (L + reserve + this.sealRoom > MEMW_C_BYTES) return false;
     if (STEP_KINDS.has(kind) && L > MEMW_STEP_ADMIT_BYTES) return false;
     if (kind === "tier" && L !== WAL_HEADER_BYTES) return false;
@@ -273,6 +346,16 @@ export class IndexWalWriter implements IndexWal {
 
   // -- charge-first --
   /** (log_p - confirmed) x page_size from the -shm header (mxFrame - nBackfill); the full (Lw - 32)/Fz bound when it cannot be read. */
+  indexDebtBytes():number{return this.chargeBytes();}
+  /** Use this handle's existing reader; a second shm descriptor could drop SQLite locks when closed. */
+  walMark():ReturnType<ReturnType<typeof walIndexReader>>{return this.shm();}
+  /** Entire seal: commit, existing debt plus seal copy, two rounded sidecars and native bookkeeping. */
+  sealCeiling():number{
+    const nativePage=ioGrantSnapshotIfEnforced(),debtFrames=Math.ceil(this.chargeBytes()/this.pageSize);
+    return commitCeiling(MEMW_SEAL_FRAMES,this.pageSize,nativePage)
+      +checkpointCeiling(debtFrames+MEMW_SEAL_FRAMES,this.pageSize,nativePage)
+      +2*Math.ceil(SIDECAR_BYTES/nativePage)*nativePage+4*nativePage;
+  }
   private chargeBytes(): number {
     const h = this.shm();
     if (h && h.mxFrame >= h.nBackfill) return (h.mxFrame - h.nBackfill) * this.pageSize;
@@ -294,9 +377,14 @@ export class IndexWalWriter implements IndexWal {
   }
   /** Charge, ack, then the attempt. null: refused / no ack (nothing ran). */
   private async chargedCheckpoint(mode: "PASSIVE" | "TRUNCATE"): Promise<WalCheckpointResult | null> {
+    const frames=Math.ceil(this.chargeBytes()/this.pageSize);
+    const ceiling=checkpointCeiling(frames,this.pageSize,ioGrantSnapshotIfEnforced());
+    if(helperEnforced()&&!helperHasGrant(ceiling))return null;
     if (!(await this.chargeBeforeAttempt(this.chargeBytes()))) return null;
     if (this.stoppedFlag) return null;
-    return walCheckpoint(this.db, mode, 0);
+    try{return withHelperGrant(ceiling,()=>{
+      return walCheckpoint(this.db, mode, 0);
+    },this.db);}catch(error){if(error instanceof BgRefused||error instanceof BgDeferred)return null;throw error;}
   }
   private serial<T>(work: () => Promise<T>): Promise<T> {
     const previous = this.running ?? Promise.resolve();
@@ -312,11 +400,21 @@ export class IndexWalWriter implements IndexWal {
   }
 
   write<T>(kind: WalKind, reserve: number, body: (meta: (key: string, value: string) => void) => T): T {
+    const frames=Math.ceil(reserve/this.frameBytes);
+    if(helperEnforced()&&this.chargeBytes()+frames*this.pageSize>MEMW_TICK_TRUNCATE_BYTES)throw new BgDeferred();
+    const ceiling=commitCeiling(frames,this.pageSize,ioGrantSnapshotIfEnforced())+2*ioGrantSnapshotIfEnforced();
+    try{return withHelperGrant(ceiling,()=>this.writeGranted(kind,reserve,body),this.db,ceiling+checkpointCeiling(frames,this.pageSize,ioGrantSnapshotIfEnforced())+2*ioGrantSnapshotIfEnforced(),true);}
+    catch(error){
+      if(error instanceof BgRefused){this.owedCheck=null;throw new BgDeferred();}
+      throw error;
+    }
+  }
+  private writeGranted<T>(kind: WalKind, reserve: number, body: (meta: (key: string, value: string) => void) => T): T {
     if (this.stoppedFlag) throw new WalStop(this.stopRecord?.kind ?? kind, this.stopRecord?.seq ?? this.seq, "stopped");
     if (this.owedCheck) throw new WalUnresolved(this.owedCheck.type === "open" ? "open_check_owed" : "check_owed");
     const Lb = this.last.L, idb = this.last.id, s = this.seq + 1;
     if (Lb > WAL_HEADER_BYTES && idb === null) throw new WalUnresolved("no_base_header");
-    try { this.marker("in_flight", kind, reserve, s); } catch { return exitNow(1); }
+    try { this.marker("in_flight", kind, reserve, s); } catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error; return exitNow(1); }
     const db = this.db;
     let result: T;
     try {
@@ -324,13 +422,13 @@ export class IndexWalWriter implements IndexWal {
       const sync = Number(db.prepare("PRAGMA synchronous").get()?.synchronous), secure = Number(db.prepare("PRAGMA secure_delete").get()?.secure_delete);
       if (sync !== 2 || secure !== 1) throw new Error("MEMW_TXN_PRAGMAS");
       if (!this.metaReady) db.exec("CREATE TABLE IF NOT EXISTS index_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID");
-      const put = db.prepare("INSERT OR REPLACE INTO index_meta VALUES(?,?)");
-      result = body((key, value) => { put.run(key, value); });
+      const put = metaPutter(db);
+      result = body(put);
       const row: WalCheckRow = { seq: s, Lb, idb, reserve, kind };
-      put.run("wal_check", JSON.stringify(row));
+      put("wal_check", JSON.stringify(row));
       if (kind !== "seal") {
-        put.run("verified_through", String(s - 1));
-        if (!this.fileIdStored) put.run("file_id", this.fileId.toString());
+        put("verified_through", String(s - 1));
+        if (!this.fileIdStored) put("file_id", this.fileId.toString());
       }
       db.exec("COMMIT");
     } catch (error) {
@@ -375,7 +473,7 @@ export class IndexWalWriter implements IndexWal {
     const seq = owed.type === "open" ? this.seq : owed.seq;
     if (!stopMarkerPresent(this.indexPath)) {
       try { writeSidecar(this.indexPath, "-walstop", { fileId: this.fileId.toString(), seq, kind }, true); }
-      catch { return exitNow(1); }
+      catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error; return exitNow(1); }
     }
     point("after-walstop");
     this.counters.live_breach++;
@@ -421,7 +519,7 @@ export class IndexWalWriter implements IndexWal {
       this.stop("live_bound", owed.kind, owed.seq);
     }
     this.checkedEnd = Math.max(this.checkedEnd, Lw);
-    try { this.marker("resolved", owed.kind, owed.reserve, owed.seq); } catch { exitNow(1); }
+    try { this.marker("resolved", owed.kind, owed.reserve, owed.seq); } catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error;exitNow(1); }
     const header = readWalHeader(this.indexPath);
     if (result.log > 0 && !header?.valid) { this.owedCheck = { type: "commit", Lb: E, idb: null, reserve: 0, kind: owed.kind, seq: this.seq, tries: 1 }; return; }
     this.owedCheck = null;
@@ -433,6 +531,10 @@ export class IndexWalWriter implements IndexWal {
     return this.serial(async () => {
       if (this.stoppedFlag) return { truncated: false };
       if (this.owedCheck) { await this.checkUnserial(); if (this.owedCheck || this.stoppedFlag) return { truncated: false }; }
+      if(helperEnforced()&&this.chargeBytes()+MEMW_SEAL_FRAMES*this.pageSize>MEMW_TICK_TRUNCATE_BYTES){
+        const copied=await this.chargedCheckpoint("PASSIVE");
+        if(!copied||!copied.ok||copied.busy||this.chargeBytes()>0)return {truncated:false};
+      }
       this.write("seal", this.sealRoom, () => { walTestHooks.sealBody?.(this.db); });
       await this.checkUnserial();
       if (this.owedCheck || this.stoppedFlag) return { truncated: false };
@@ -459,14 +561,14 @@ export class IndexWalWriter implements IndexWal {
   stop(reason: string, kind: WalKind, seq: number): never {
     if (!stopMarkerPresent(this.indexPath)) {
       try { writeSidecar(this.indexPath, "-walstop", { fileId: this.fileId.toString(), seq, kind }, true); }
-      catch { return exitNow(1); }
+      catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error; return exitNow(1); }
     }
     this.markStopped(kind, seq, reason);
     try {
       if (this.db.isTransaction) this.db.exec("ROLLBACK");
       this.db.exec("BEGIN IMMEDIATE");
       this.db.exec("CREATE TABLE IF NOT EXISTS index_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID");
-      this.db.prepare("INSERT OR REPLACE INTO index_meta VALUES('wal_over_stop',?)").run(JSON.stringify({ reason, time: Date.now(), kind, seq, fileId: this.fileId.toString() }));
+      metaPutter(this.db)("wal_over_stop", JSON.stringify({ reason, time: Date.now(), kind, seq, fileId: this.fileId.toString() }));
       this.db.exec("COMMIT");
     } catch { if (this.db.isTransaction) { try { this.db.exec("ROLLBACK"); } catch { /* the sidecar binds */ } } }
     console.error(`MEMORY_INDEX_WAL_OVER kind=${kind} seq=${seq} reason=${reason}`);
@@ -619,9 +721,24 @@ function readStopMarker(indexPath: string): { kind: StopKind; seq: number; fileI
     fileId: typeof fileId === "string" ? fileId : "unknown" };
 }
 
+/** G5: the geometry the write envelope (G1, G2) assumes, checked on the writable connection after quick_check: page_size 4,096, auto_vacuum 0
+ * (NONE), index_meta at most META_KEY_LIMIT rows (a missing index_meta counts as 0) and every present key in META_KEYS. Anything else throws
+ * IndexDamagedError("geometry:..."), which takes the damaged-file branch of openRule: quarantine and rebuild (neither pragma can be changed
+ * in place on a WAL file). */
+export function checkGeometry(db: DatabaseSync): void {
+  const pageSize = Number(db.prepare("PRAGMA page_size").get()?.page_size);
+  if (pageSize !== 4096) throw new IndexDamagedError(`geometry:page_size=${pageSize}`);
+  const autoVacuum = Number(db.prepare("PRAGMA auto_vacuum").get()?.auto_vacuum);
+  if (autoVacuum !== 0) throw new IndexDamagedError(`geometry:auto_vacuum=${autoVacuum}`);
+  if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='index_meta'").get()) return;
+  const keys = db.prepare("SELECT key FROM index_meta LIMIT ?").all(META_KEY_LIMIT + 1);
+  if (keys.length > META_KEY_LIMIT) throw new IndexDamagedError(`geometry:index_meta_rows>${META_KEY_LIMIT}`);
+  for (const row of keys) if (!META_KEYS.has(String(row.key))) throw new IndexDamagedError(`geometry:index_meta_key=${String(row.key).slice(0, 64)}`);
+}
+
 function openRule(indexPath: string, opts: OpenRuleOptions, rebuilt: boolean): OpenedIndexWal {
   // 0. the whole set; a stray member without its index file is removed.
-  try { prepareIndexOpen(indexPath); } catch { return exitNow(1); }
+  try { prepareIndexOpen(indexPath); } catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error; return exitNow(1); }
   if (existsSync(indexPath) && (!lstatSync(indexPath).isFile() || lstatSync(indexPath).isSymbolicLink())) return exitNow(1);
   const header = dbHeaderWal(indexPath);
   if (header !== "wal" && walLength(indexPath) > 0) return unresolvedExit("db_header_not_wal_with_log");
@@ -634,23 +751,31 @@ function openRule(indexPath: string, opts: OpenRuleOptions, rebuilt: boolean): O
       writable = new DatabaseSync(indexPath, { timeout: INDEX_OPEN_BUSY_MS });
     } else {
       writable = new DatabaseSync(indexPath, { timeout: INDEX_OPEN_BUSY_MS });
+      // G5: a new file (no page yet) takes its geometry before WAL; neither pragma can be changed in place on a WAL file afterwards.
+      if (Number(writable.prepare("PRAGMA page_count").get()?.page_count) === 0) writable.exec("PRAGMA page_size=4096; PRAGMA auto_vacuum=NONE");
       if (String(writable.prepare("PRAGMA journal_mode=WAL").get()?.journal_mode) !== "wal") throw new Error("MEMW_NOT_WAL");
       guard = new DatabaseSync(indexPath, { readOnly: true, timeout: INDEX_OPEN_BUSY_MS });
       guard.prepare("SELECT 1 FROM sqlite_schema LIMIT 1").get();
       if (String(guard.prepare("PRAGMA journal_mode").get()?.journal_mode) !== "wal") throw new Error("MEMW_GUARD_NOT_WAL");
     }
-  } catch { return exitNow(1); }
-  try { checkIndex(writable); }
+  } catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error; return exitNow(1); }
+  if(helperEnforced()&&!registerBg(writable))throw new Error("BG_ENFORCEMENT_UNAVAILABLE");
+  try {
+    checkIndex(writable); walTestHooks.geometry?.(writable, rebuilt); checkGeometry(writable);
+
+  }
   catch (error) {
-    if (!indexDamaged(error)) return exitNow(1);
+    // Loop guard (G5): this whole branch runs once per start. A rebuilt file that still fails (quick_check or geometry) exits and is never
+    // quarantined a second time.
+    if (rebuilt || !indexDamaged(error)) return exitNow(1);
     // r3.2.6 A1'c: writable first, the read-only guard last (no close checkpoint), then the whole set aside (the stop marker stays at
     // its live name), then a fresh file.
-    try { writable.close(); guard.close(); quarantineIndex(indexPath); } catch { return exitNow(1); }
+    try { writable.close(); guard.close(); quarantineIndex(indexPath); } catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error; return exitNow(1); }
     return openRule(indexPath, opts, true);
   }
   try {
     writable.exec("PRAGMA busy_timeout=0; PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON; PRAGMA synchronous=FULL; PRAGMA journal_size_limit=0; PRAGMA cache_spill=OFF; PRAGMA wal_autocheckpoint=0;");
-  } catch { return exitNow(1); }
+  } catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error; return exitNow(1); }
   const pageSize = Number(writable.prepare("PRAGMA page_size").get()?.page_size);
   // 2. file_id, wal_over_stop, wal_check, -walstop.
   let fileIdText: string | null, stopText: string | null, checkText: string | null, metaReady: boolean;
@@ -664,6 +789,11 @@ function openRule(indexPath: string, opts: OpenRuleOptions, rebuilt: boolean): O
   const fileId = storedId ?? randomFileId();
   const wal = new IndexWalWriter(writable, guard, indexPath, { fileId, fileIdStored: storedId !== null, pageSize, seq: newest?.seq ?? 0, metaReady, charge: opts.charge,
     open: { storedId, newest, attemptSide: readSidecar(indexPath, "-walattempt") } });
+  // Q9: controller oweReceiptsToNewIndex replays memory_records via durable projection receipts after rebuilt=true.
+  if(helperEnforced()&&!rebuilt&&wal.indexDebtBytes()>12*MiB){
+    try{wal.closeForQuarantine();quarantineIndex(indexPath);}catch(error){if(error instanceof BgDeferred||error instanceof BgRefused)throw error;return exitNow(1);}
+    return openRule(indexPath,opts,true);
+  }
   const out = (verdict: OpenVerdict): OpenedIndexWal => ({ writable, guard, verdict, wal, rebuilt });
   // The marker binds whoever wrote it (r3.2.8 point 1): no identity check, no unlink, no repair. Only the reset's fresh open ignores it.
   const marker = opts.ignoreMarker ? null : readStopMarker(indexPath);
@@ -673,7 +803,7 @@ function openRule(indexPath: string, opts: OpenRuleOptions, rebuilt: boolean): O
       // read-only guard last (no close checkpoint), then the writer's -shm reader (closeForQuarantine: every handle on the set is closed
       // before any rename), the whole set aside, a fresh file (which then records the reset).
       walTestHooks.triggerB?.(wal);
-      try { wal.closeForQuarantine(); quarantineIndex(indexPath); } catch { return exitNow(1); }
+      try { wal.closeForQuarantine(); quarantineIndex(indexPath); } catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error; return exitNow(1); }
       return openRule(indexPath, opts, true);
     }
     let kind: StopKind = "unknown", seq = -1;

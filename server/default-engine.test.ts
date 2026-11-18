@@ -23,7 +23,10 @@
 // and draining it with background routines would make Murage the thing that
 // broke the tool they bought for their day job.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { DATA_DIR } from "./config.ts";
+import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 
 import { pickDefaultEngine, type EngineReading } from "./default-engine.ts";
 
@@ -139,5 +142,39 @@ describe("an engine with models but no default model", () => {
     const listed = engine({ instanceId: "local", models: { default: "", options: [{ id: "a" }] } });
     expect(pickDefaultEngine([listed, CLAUDE_SIGNED_IN]).instanceId).toBe("claude");
     expect(pickDefaultEngine([CLAUDE_SIGNED_IN]).model).toBe("claude-sonnet-5");
+  });
+});
+
+// Who picked a bot's engine: Murage (re-pickable when Fuigo becomes usable) or the owner (never changed).
+describe("the marker for an engine Murage picked itself", () => {
+  it("a bot made with the default is marked, one made with an explicit selection is not, and any later selection clears it", () => {
+    removeTempDirSync(DATA_DIR);
+    const store = new Store(() => ({ instanceId: "claude", model: "sonnet" }));
+    const ember = store.createBot({});
+    expect(store.bot(ember.id)?.engineAutoPicked).toBe(true);
+    const owned = store.createBot({ modelSelection: { instanceId: "claude", model: "sonnet" } });
+    expect(store.bot(owned.id)?.engineAutoPicked).toBeUndefined();
+    // Cloud home only: Murage's own re-pick carries the marker and keeps it. A desktop never lets a patch write the mark.
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      store.patchBot(ember.id, { modelSelection: { instanceId: "fuigo", model: "flux-auto" }, engineAutoPicked: true });
+      expect(store.bot(ember.id)?.engineAutoPicked).toBe(true);
+    } finally { vi.unstubAllEnvs(); }
+    // The owner's pick (the PATCH route sends only the selection) clears it, so it is never re-picked.
+    store.patchBot(ember.id, { modelSelection: { instanceId: "claude", model: "sonnet" } });
+    expect(store.bot(ember.id)?.engineAutoPicked).toBeUndefined();
+    removeTempDirSync(DATA_DIR);
+  });
+  it("an owner's engine pick on a task of an empty bot (patchTask adoption) clears the mark", () => {
+    removeTempDirSync(DATA_DIR);
+    const store = new Store(() => ({ instanceId: "", model: "" }));
+    const ember = store.createBot({});
+    expect(store.bot(ember.id)?.engineAutoPicked).toBe(true);
+    store.bot(ember.id)!.modelSelection = { instanceId: "", model: "" };
+    const threadId = store.bot(ember.id)!.threadId;
+    store.patchTask(ember.id, threadId, { modelSelection: { instanceId: "claude", model: "sonnet" } });
+    expect(store.bot(ember.id)?.modelSelection.instanceId).toBe("claude");
+    expect(store.bot(ember.id)?.engineAutoPicked).toBeUndefined();
+    removeTempDirSync(DATA_DIR);
   });
 });

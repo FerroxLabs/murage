@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import type { Stats } from "node:fs";
 import { homedir } from "node:os";

@@ -6,7 +6,8 @@
 // excluded from backups, restore, bot packages and diagnostics, and B4's
 // "forget this learning data" removes the bot's folder with it. Such a lesson
 // is only ever a suggestion; applying one is the owner's decision (B7).
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { ensureLearningLocalDir, learningLocalPath } from "../bot-learning.ts";
 import type { LearningLocalLessonSink, Lesson } from "./lessons.ts";

@@ -1,0 +1,245 @@
+{
+  "S0": {
+    "files": [
+      "server/highlevel/operations/registry.ts",
+      "server/highlevel/operations/manifest.ts",
+      "server/highlevel/operations/manifest-data.json",
+      "server/highlevel/operations/reconciliation.ts",
+      "server/highlevel/operations/schemas/*",
+      "server/highlevel/operations/invocation-plans.ts",
+      "server/highlevel/operations/invocation-plan-inventory.json",
+      "server/highlevel/recovery-contract.ts",
+      "server/highlevel/provider-contract.ts",
+      "server/highlevel/provider-manifest.json",
+      "server/highlevel/held-request.ts",
+      "server/highlevel/returned-identities.ts",
+      "server/highlevel/operations/returned-confirmation-schemas.ts",
+      "scripts/highlevel-*-snapshot.ts",
+      "server/highlevel/frozen-*.json",
+      "cloudflare/crm-broker/src/contracts.ts"
+    ],
+    "regions": []
+  },
+  "C1-source": {
+    "files": [
+      "server/highlevel/access.ts",
+      "server/highlevel/runtime.ts",
+      "server/highlevel/private-token.ts",
+      "server/highlevel/offered.ts",
+      "server/highlevel/oauth-source.ts",
+      "server/highlevel/connection-source.ts",
+      "server/highlevel/scope-policy.ts"
+    ],
+    "regions": [
+      "server/index.ts:6585-6597 source selection",
+      "server/index.ts:31521-31576 HighLevel status/token/OAuth/access/disconnect",
+      "shared/highlevel.ts implementation bodies",
+      "shared/own-servers.ts HighLevel rows",
+      "server/drivers/pi-permission-gate.ts HighLevel rows"
+    ]
+  },
+  "C1-Settings": {
+    "files": [
+      "src/components/HighLevelSettings.tsx",
+      "scripts/smoke-highlevel-settings.mjs"
+    ],
+    "regions": [
+      "src/locales/* HighLevel owner copy via S-INT"
+    ]
+  },
+  "C1-broker": {
+    "files": [
+      "cloudflare/crm-broker/src/oauth.ts",
+      "cloudflare/crm-broker/src/flow.ts",
+      "cloudflare/crm-broker/src/grant.ts"
+    ],
+    "regions": []
+  },
+  "C1-secret": {
+    "files": [
+      "server/highlevel/credential-commit.ts",
+      "electron/highlevel-credentials.mjs"
+    ],
+    "regions": [
+      "electron/main.mjs HighLevel bank/bootstrap/commit IPC",
+      "electron/preload.cjs HighLevel commit IPC",
+      "src/types/muragebox.d.ts HighLevel commit IPC",
+      "electron/workspace-credentials.mjs HighLevel bank",
+      "server/config.ts HighLevel bank"
+    ]
+  },
+  "C2-client": {
+    "files": [],
+    "regions": [
+      "server/highlevel/client.ts:462-468,471-529,913-926 concrete admission/shared budget/cache"
+    ]
+  },
+  "C2-host": {
+    "files": [
+      "server/highlevel/host.ts",
+      "server/highlevel/actions.ts",
+      "server/highlevel/review-cards.ts",
+      "server/highlevel/owner-app.ts"
+    ],
+    "regions": [
+      "server/index.ts HighLevel review/value/answer/terminal",
+      "server/route-policy.ts HighLevel admission",
+      "src/state/store.tsx review-value eviction",
+      "src/components/ApprovalCard.tsx HighLevel review",
+      "src/components/PendingApproval.tsx HighLevel review",
+      "src/components/HighLevelReviewValues.tsx HighLevel review"
+    ]
+  },
+  "C2-resolver": {
+    "files": [
+      "server/highlevel/write-recovery.ts",
+      "server/highlevel/reconciliation-read.ts"
+    ],
+    "regions": []
+  },
+  "C2-locator": {
+    "files": [
+      "server/highlevel/recovery-locator.ts",
+      "server/highlevel/recovery-locator-storage.ts"
+    ],
+    "regions": []
+  },
+  "C2-evidence": {
+    "files": [
+      "server/highlevel/dispatch-evidence.ts"
+    ],
+    "regions": []
+  },
+  "C2-journal": {
+    "files": [],
+    "regions": [
+      "server/highlevel/rpc-approval-replay.ts:31-48 sole empty-target exception/v2 binding"
+    ]
+  },
+  "C2-cleanup-via-S-INT": {
+    "files": [],
+    "regions": [
+      "server/index.ts:8515-8519 deletion backlog and conversation-deletion transaction",
+      "server/index.ts C1 disconnect/source replacement hooks reviewed by C1",
+      "server/highlevel/actions.ts terminal/stale hooks reviewed by host"
+    ]
+  },
+  "C3": {
+    "files": [
+      "server/highlevel/anchored-read.ts",
+      "server/highlevel/native-wins.ts"
+    ],
+    "regions": [
+      "auto-approve.ts and drivers native-win/engine hunks"
+    ]
+  },
+  "C4": {
+    "files": [
+      "server/highlevel/call-ledger.ts",
+      "server/runtime-event-out.ts"
+    ],
+    "regions": [
+      "server/store.ts persisted HighLevel mark",
+      "server/harness/bus.ts HighLevel projection",
+      "shared/tool-activity.ts HighLevel event projection",
+      "server/drivers/native.ts and ACP event ingress"
+    ]
+  },
+  "S-INT": {
+    "files": [
+      "server/highlevel/operations/integrated-families.ts",
+      "cloudflare/crm-broker/src/index.ts"
+    ],
+    "regions": [
+      "broker config/migration code artifacts",
+      "serial shared index/locale/test gates",
+      "Cloud supervisor adapter and production/staging/enrollment config require MAIN named assignment"
+    ]
+  },
+  "F1": {
+    "files": [
+      "server/highlevel/operations/contacts.ts"
+    ],
+    "regions": [
+      "matching family descriptors/tests/fakes; shared family edits serialized"
+    ]
+  },
+  "F2": {
+    "files": [
+      "server/highlevel/operations/opportunities.ts"
+    ],
+    "regions": [
+      "matching family descriptors/tests/fakes; shared family edits serialized"
+    ]
+  },
+  "F3": {
+    "files": [
+      "server/highlevel/operations/conversations.ts"
+    ],
+    "regions": [
+      "matching family descriptors/tests/fakes; shared family edits serialized"
+    ]
+  },
+  "F4": {
+    "files": [
+      "server/highlevel/operations/calendars.ts"
+    ],
+    "regions": [
+      "matching family descriptors/tests/fakes; shared family edits serialized"
+    ]
+  },
+  "F5": {
+    "files": [
+      "server/highlevel/operations/automations.ts",
+      "server/highlevel/operations/forms.ts"
+    ],
+    "regions": [
+      "matching family descriptors/tests/fakes; shared family edits serialized"
+    ]
+  },
+  "F6": {
+    "files": [
+      "server/highlevel/operations/location.ts",
+      "server/highlevel/operations/users.ts"
+    ],
+    "regions": [
+      "matching family descriptors/tests/fakes; shared family edits serialized"
+    ]
+  },
+  "F7": {
+    "files": [
+      "server/highlevel/operations/payments.ts"
+    ],
+    "regions": [
+      "matching family descriptors/tests/fakes; shared family edits serialized"
+    ]
+  },
+  "F8": {
+    "files": [],
+    "regions": [
+      "matching family descriptors/tests/fakes; shared family edits serialized"
+    ]
+  },
+  "F9": {
+    "files": [
+      "server/highlevel/operations/social.ts",
+      "server/highlevel/operations/blogs.ts",
+      "server/highlevel/operations/media.ts",
+      "server/highlevel/operations/documents.ts"
+    ],
+    "regions": [
+      "matching family descriptors/tests/fakes; shared family edits serialized"
+    ]
+  },
+  "F10": {
+    "files": [
+      "server/highlevel/operations/funnels.ts",
+      "server/highlevel/operations/courses.ts",
+      "server/highlevel/operations/saas.ts",
+      "server/highlevel/operations/snapshots.ts"
+    ],
+    "regions": [
+      "matching family descriptors/tests/fakes; shared family edits serialized"
+    ]
+  }
+}

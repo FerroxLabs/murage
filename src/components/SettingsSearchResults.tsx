@@ -9,7 +9,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 
 import { api, useStore, type ConfigStatus } from "@/state/store";
-import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
+import { ANALYTICS_NOT_SAVED, analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { askBotTarget, askYourBot } from "@/lib/health-actions";
 import { DISCARD_SETTINGS_CHANGES, settingsDrafts } from "@/lib/settings-drafts";
 import { openHelp } from "./help/HelpHost";
@@ -17,7 +17,9 @@ import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { inNativeShell } from "@/lib/native-shell";
 import { t } from "@/lib/i18n";
 import type { SettingsCard } from "@/lib/settings-cards";
-import { searchSettingsCards, type SettingsSearchHit } from "@/lib/settings-search";
+import { searchSettingsIndex, type SettingsIndexHit } from "@/lib/settings-search";
+import { openSettingsAddress } from "@/lib/open-settings-address";
+import { useApproveAllSurface } from "./ApproveAll";
 import { Switch } from "./SettingsPrimitives";
 
 /** Settings > Bots > Show tool calls: the one saved switch the card and the search result share. */
@@ -45,7 +47,7 @@ export function useShowToolCalls() {
   return { enabled, saving, error, toggle };
 }
 
-interface ToggleRow { checked: boolean; busy?: boolean; onToggle: () => void }
+interface ToggleRow { checked: boolean; busy?: boolean; onToggle: () => void; error?: string }
 
 /** Split `label` around the first case-insensitive match of `query`, for the <mark>. */
 export function markParts(label: string, query: string): [string, string, string] {
@@ -59,20 +61,55 @@ function ResultLabel({ label, query }: { label: string; query: string }): ReactN
   return <>{before}{hit && <mark className="bg-transparent font-semibold text-accent-text">{hit}</mark>}{after}</>;
 }
 
-function ResultPath({ hit }: { hit: SettingsSearchHit }) {
-  return <div className="text-[12.5px] text-ink-secondary">{hit.page}{hit.advanced ? ` › ${t("settings.l1.advancedPath")}` : ""}</div>;
+/** "Nova > Access > Working folder" without the label itself (the row's first line says it). */
+function ResultPath({ hit }: { hit: SettingsIndexHit }) {
+  return <div className="text-[12.5px] text-ink-secondary">{hit.path.slice(0, -1).join(" > ")}</div>;
+}
+
+/** Approve all's state line, from the server's own eligibility answer (ApproveAll.tsx), never decided here. */
+function ApproveAllWhere() {
+  const [surface] = useApproveAllSurface();
+  return <div className="text-[12.5px] text-ink-secondary">{surface.show ? t("settings.search.approveAll.on") : t("settings.search.approveAll.off")}</div>;
 }
 
 const rowClass = "flex min-h-11 w-full items-center justify-between gap-4 rounded-xl border border-hairline/40 bg-card px-4 py-3 text-left";
+const keyOf = (hit: SettingsIndexHit) => (hit.bot ? `${hit.entry.id}@${hit.bot.id}` : hit.entry.id);
 
-export function SettingsSearchResults({ query, desktop, onOpen }: { query: string; desktop: boolean | undefined; onOpen: (card: SettingsCard) => void }) {
+/** SETTINGS-LOCKED-1019 section 6: one search over the app's cards, every bot's rows and the Approve all entry. Every
+ *  Open goes by the entry's existing anchor (app card anchor, `bot-setting-*` row, Needs you tab), so a later layout
+ *  change keeps every result working. 12 rows, then "More results (N)" expands in place. */
+export function SettingsSearchResults({ query, desktop, onOpen, onLeave, currentBotId }: { query: string; desktop: boolean | undefined; onOpen: (card: SettingsCard) => void; onLeave?: () => void; currentBotId?: string }) {
+  const { state, dispatch } = useStore();
   const toolCalls = useShowToolCalls();
   const [analytics, setAnalytics] = useState(analyticsEnabled);
-  const hits = useMemo(() => searchSettingsCards(query, desktop), [query, desktop]);
+  const [analyticsUnsaved, setAnalyticsUnsaved] = useState(false);
+  const [expandedFor, setExpandedFor] = useState<string | null>(null);
+  const bots = useMemo(() => {
+    const visible = state.bots.filter((bot) => !bot.hidden);
+    const chief = askBotTarget(visible);
+    return (chief ? [chief, ...visible.filter((bot) => bot.id !== chief.id)] : visible).map((bot) => ({ id: bot.id, name: bot.name }));
+  }, [state.bots]);
+  // On a bot's page that bot's rows rank first, then the app's cards, then other bots' rows (LOCKED section 6).
+  const found = useMemo(() => searchSettingsIndex(query, { desktop, bots, ...(currentBotId ? { currentBotId } : {}) }), [query, desktop, bots, currentBotId]);
+  const expanded = expandedFor === query;
+  const hits = expanded ? [...found.hits, ...found.more] : found.hits;
+  const leaveFor = (go: () => void) => {
+    if (settingsDrafts.anyUnsaved() && !window.confirm(DISCARD_SETTINGS_CHANGES)) return;
+    settingsDrafts.clear();
+    go();
+  };
+  const open = (hit: SettingsIndexHit) => {
+    const entry = hit.entry;
+    if (entry.scope === "app") { onOpen(entry.card); onLeave?.(); return; }
+    if (entry.scope === "explainer") { leaveFor(() => { dispatch(entry.open); onLeave?.(); }); return; }
+    const name = entry.id.slice(`bot.${entry.section}.`.length);
+    const opened = openSettingsAddress({ scope: "bot", botId: hit.bot?.id ?? null, section: entry.section, name }, { botIds: state.bots.map((bot) => bot.id), selectedBotId: state.selectedId }, dispatch);
+    if (opened) onLeave?.();
+  };
   const toggles: Readonly<Record<string, ToggleRow | undefined>> = {
-    "botDefaults.tool-calls": { checked: toolCalls.enabled, busy: toolCalls.saving, onToggle: () => void toolCalls.toggle() },
+    "botDefaults.tool-calls": { checked: toolCalls.enabled, busy: toolCalls.saving, onToggle: () => void toolCalls.toggle(), error: toolCalls.error },
     // The phone apps never send usage analytics and show no switch for it, so their results do not either.
-    ...(inNativeShell() ? {} : { "general.analytics": { checked: analytics, onToggle: () => { const next = !analytics; setAnalyticsEnabled(next); setAnalytics(next); } } }),
+    ...(inNativeShell() ? {} : { "general.analytics": { checked: analytics, onToggle: () => { const next = !analytics; setAnalyticsUnsaved(!setAnalyticsEnabled(next)); setAnalytics(next); }, error: analyticsUnsaved ? ANALYTICS_NOT_SAVED : undefined } }),
   };
 
   return (
@@ -82,24 +119,33 @@ export function SettingsSearchResults({ query, desktop, onOpen }: { query: strin
     <p role="status" data-settings-result-count className="sr-only">{t("ux.l8.results.count", { count: String(hits.length) })}</p>
     {hits.length === 0 ? <SettingsNoResults query={query.trim()} /> : <ul aria-label={t("settings.l1.resultsFor", { query: query.trim() })} className="flex flex-col gap-2.5">
       {hits.map((hit) => {
-        const toggle = toggles[hit.card.id];
+        const toggle = hit.entry.scope === "app" ? toggles[hit.entry.id] : undefined;
         const label = <div className="text-[14.5px] text-ink"><ResultLabel label={hit.label} query={query} /></div>;
+        const where = <>{label}<ResultPath hit={hit} />{hit.entry.scope === "explainer" && <ApproveAllWhere />}</>;
         return (
-          <li key={hit.card.id}>
+          <li key={keyOf(hit)}>
             {toggle ? (
-              <div className={rowClass}>
-                <div className="min-w-0">{label}<ResultPath hit={hit} /></div>
+              <div className={`${rowClass} flex-wrap`}>
+                <div className="min-w-0">{where}</div>
                 <Switch checked={toggle.checked} disabled={toggle.busy} aria-label={hit.label} onClick={toggle.onToggle} />
+                {toggle.error && <p role="alert" className="basis-full text-[12px] text-danger">{toggle.error}</p>}
               </div>
             ) : (
-              <button type="button" data-settings-result={hit.card.id} onClick={() => onOpen(hit.card)} className={`${rowClass} hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus`}>
-                <div className="min-w-0">{label}<ResultPath hit={hit} /></div>
+              <button type="button" data-settings-result={hit.entry.id} data-settings-result-bot={hit.bot?.id} onClick={() => open(hit)} className={`${rowClass} hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus`}>
+                <div className="min-w-0">{where}</div>
                 <span className="shrink-0 text-[12.5px] text-ink-secondary">{t("settings.l1.open")}</span>
               </button>
             )}
           </li>
         );
       })}
+      {!expanded && found.more.length > 0 && (
+        <li>
+          <button type="button" data-settings-more-results onClick={() => setExpandedFor(query)} className={`${rowClass} justify-center text-[13px] text-ink-secondary hover:border-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus`}>
+            {t("settings.search.more", { count: String(found.more.length) })}
+          </button>
+        </li>
+      )}
     </ul>}
     </>
   );

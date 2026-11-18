@@ -1,0 +1,82 @@
+# Runner patch implementation owner: win-sac-sign; fork build and enrollment owner: MAIN.
+--- a/src/Runner.Worker/Handlers/ScriptHandler.cs
++++ b/src/Runner.Worker/Handlers/ScriptHandler.cs
+@@ -26,6 +26,13 @@
+ 
+         protected override void PrintActionDetails(ActionRunStage stage)
+         {
++#if OS_WINDOWS
++            if (Murage.Signing.RunnerSigningGate.HasCredentials(Environment))
++            {
++                ExecutionContext.Output("Protected Windows signing dispatch");
++                return;
++            }
++#endif
+             // if we're executing a Job Extension, we won't have an 'Action'
+             if (!IsActionStep)
+             {
+@@ -143,6 +150,18 @@
+             Trace.Entering();
+             ArgUtil.NotNull(ExecutionContext, nameof(ExecutionContext));
+             ArgUtil.NotNull(Inputs, nameof(Inputs));
++
++#if OS_WINDOWS
++            if (Murage.Signing.RunnerSigningGate.HasCredentials(Environment))
++            {
++                Inputs.TryGetValue("shell", out var protectedShell);
++                Inputs.TryGetValue("script", out var protectedScript);
++                int protectedExit = await Murage.Signing.RunnerSigningGate.DispatchAsync(Environment,
++                    protectedShell, protectedScript, ExecutionContext.CancellationToken);
++                if (protectedExit != 0) ExecutionContext.Result = TaskResult.Failed;
++                return;
++            }
++#endif
+ 
+             var githubContext = ExecutionContext.ExpressionValues["github"] as GitHubContext;
+             ArgUtil.NotNull(githubContext, nameof(githubContext));
+--- a/src/Runner.Sdk/ProcessInvoker.cs
++++ b/src/Runner.Sdk/ProcessInvoker.cs
+@@ -208,6 +208,9 @@
+             bool highPriorityProcess,
+             CancellationToken cancellationToken)
+         {
++#if OS_WINDOWS
++            Murage.Signing.RunnerSigningGate.AssertCredentialFree(environment);
++#endif
+             ArgUtil.Null(_proc, nameof(_proc));
+             ArgUtil.NotNullOrEmpty(fileName, nameof(fileName));
+ 
+@@ -259,6 +262,9 @@
+                 _proc.StartInfo.StandardOutputEncoding = outputEncoding;
+             }
+ 
++#if OS_WINDOWS
++            _proc.StartInfo.Environment.Clear();
++#endif
+             // Copy the environment variables.
+             if (environment != null && environment.Count > 0)
+             {
+@@ -295,6 +301,9 @@
+ 
+             // Start the process.
+             _stopWatch = Stopwatch.StartNew();
++#if OS_WINDOWS
++            Murage.Signing.RunnerSigningGate.AssertCredentialFree(_proc.StartInfo.Environment);
++#endif
+             _proc.Start();
+ 
+             // Decrease invoked process priority, in platform specifc way, relative to parent
+--- a/src/Runner.Sdk/Runner.Sdk.csproj
++++ b/src/Runner.Sdk/Runner.Sdk.csproj
+@@ -24,4 +24,11 @@
+     <DebugType>portable</DebugType>
+   </PropertyGroup>
+ 
++  <ItemGroup>
++    <Compile Include="$(MurageSigningGateSource)" Link="MurageSigningGate.cs" />
++  </ItemGroup>
++  <Target Name="RequireMurageSigningGate" BeforeTargets="CoreCompile">
++    <Error Condition="'$(MurageSigningGateSource)' == '' Or !Exists('$(MurageSigningGateSource)')"
++           Text="WINDOWS_SIGNING_RUNNER_GATE_SOURCE_REQUIRED" />
++  </Target>
+ </Project>

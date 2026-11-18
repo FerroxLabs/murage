@@ -125,11 +125,14 @@ describe("a shell startup file asks at every level", () => {
   it.each(["source /home/tester/.zshrc", ". /home/tester/.bashrc"])("`%s` asks at every level, on the key guard from Full access up", (cmd) => {
     expect(verdict("Auto", cmd)).toMatchObject({ approve: null, source: "always-ask" });
     expect(verdict("Full access", cmd)).toMatchObject({ approve: null, source: "sensitive-guard" });
-    // NOLIMITS-MEANS-IT 2.3: a gate file runs on a clean owner No limits turn (held=gate:<row>); a marked turn keeps the card
-    expect(verdict("No limits", cmd, OWNER_TURN)).toMatchObject({ source: "no-limits", rule: "held=gate:shell-rc" });
+    // A startup-file read on the authenticated owner's No limits turn uses the central verdict.
+    // MAIN RULING 2026-11-13 wipe-only: a startup-file read uses the No limits verdict, with no legacy gate decision.
+    expect(verdict("No limits", cmd, OWNER_TURN)).toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
     expect(verdict("No limits", cmd, OWNER_TURN).approve).toBeTruthy();
     const marked = verdict("No limits", cmd, { ownerStarted: true, fullAccessOrigin: "owner" });
-    expect(marked).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" }); // the reader holds a marked turn before the key guard
+    // NOLIM 1.0.19: the reader still holds a marked turn before the key guard; unreadable is not a wipe row, so the owner's No limits turn runs it
+    expect(marked).toMatchObject({ source: "no-limits" });
+    expect(marked.approve).toBeTruthy();
   });
 });
 

@@ -193,8 +193,9 @@ final class PhoneAskMintTests: XCTestCase {
         XCTAssertEqual(requests.map { $0.httpMethod! }, ["GET", "GET", "POST"])
         XCTAssertEqual(requests.map { $0.url!.absoluteString }, [origin.serialized + "/healthz", origin.serialized + "/api/phones/self/challenge?key=" + (v["keyId"] as! String), origin.serialized + "/api/phones/self/token"])
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(requests[2].httpBody)) as? [String: Any])
-        XCTAssertEqual(Set(body.keys), ["keyId", "nonce", "expiresAt", "signature", "scope"])
+        XCTAssertEqual(Set(body.keys), ["keyId", "nonce", "expiresAt", "signature", "scope", "want"])
         XCTAssertEqual(body["scope"] as? String, "ask")
+        XCTAssertEqual(body["want"] as? [String], ["deviceId"])
         for field in ["keyId", "nonce", "expiresAt", "signature"] { XCTAssertEqual(String(describing: body[field]!), String(describing: v[field]!)) }
         for request in requests {
             XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
@@ -203,6 +204,92 @@ final class PhoneAskMintTests: XCTestCase {
         XCTAssertEqual(writer.writes.count, 1)
         XCTAssertEqual(writer.writes.first?.0, token)
         XCTAssertEqual(writer.writes.first?.1, origin)
+    }
+
+    func testOldComputerRefusingWantGetsOneRetryWithoutItAndNewComputerIsAskedOnce() async throws {
+        let v = try vector(), origin = try XCTUnwrap(WorkspaceOrigin(string: v["origin"] as! String))
+        let token = ((try fixture()["token"] as! [String: Any])["valid"] as! [String])[0]
+        let keyId = v["keyId"] as! String
+        func hello() throws -> PhoneJobsMintClient.Response { try response(["mobile": 1, "phoneAsk": 2]) }
+        func challenge() throws -> PhoneJobsMintClient.Response { try response(["nonce": v["nonce"]!, "expiresAt": v["expiresAt"]!]) }
+        // old shape: the pre-pin computer answers 400 {"error":"bad request"} to the unknown field
+        do {
+            let suite = "mint-old-" + UUID().uuidString
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+            let writer = Writer()
+            var requests: [URLRequest] = [], prompts = 0
+            let signer = PhoneAskSigner(point: { _ in v["point"] as? String }) { _ in prompts += 1; return v["signature"] as! String }
+            let answers: [PhoneJobsMintClient.Response] = [try hello(), try challenge(), .init(status: 400, body: Data(#"{"error":"bad request"}"#.utf8)),
+                                                           try challenge(), try response(["token": token])]
+            let client = PhoneJobsMintClient(signer: signer, store: writer, send: { request in requests.append(request); return answers[requests.count - 1] },
+                                             pin: AskDevicePin(defaults: defaults), now: { 1_700_000_000_000 })
+            try await client.mint(origin: origin)
+            XCTAssertEqual(requests.count, 5)
+            XCTAssertEqual(prompts, 2, "an old computer's 400 costs exactly one more signer call")
+            let first = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(requests[2].httpBody)) as? [String: Any])
+            let second = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(requests[4].httpBody)) as? [String: Any])
+            XCTAssertNotNil(first["want"])
+            XCTAssertNil(second["want"])
+            XCTAssertEqual(second["scope"] as? String, "ask")
+            XCTAssertEqual(writer.writes.first?.0, token)
+            XCTAssertNil(AskDevicePin(defaults: defaults).paired(origin: origin, keyId: keyId), "a plain token pins nothing")
+        }
+        // new shape: a computer that knows `want` answers once, with the id
+        do {
+            var requests = 0, prompts = 0
+            let signer = PhoneAskSigner(point: { _ in v["point"] as? String }) { _ in prompts += 1; return v["signature"] as! String }
+            let answers: [PhoneJobsMintClient.Response] = [try hello(), try challenge(), try response(["token": token, "deviceId": "phone-a"])]
+            let client = PhoneJobsMintClient(signer: signer, store: Writer(), send: { _ in requests += 1; return answers[requests - 1] }, now: { 1_700_000_000_000 })
+            try await client.mint(origin: origin)
+            XCTAssertEqual(requests, 3)
+            XCTAssertEqual(prompts, 1, "a computer that knows `want` is asked to sign once")
+        }
+        // any other 400, or a second 400, is not retried again
+        do {
+            var requests = 0, prompts = 0
+            let signer = PhoneAskSigner(point: { _ in v["point"] as? String }) { _ in prompts += 1; return v["signature"] as! String }
+            let bad = PhoneJobsMintClient.Response(status: 400, body: Data(#"{"error":"bad request"}"#.utf8))
+            let answers: [PhoneJobsMintClient.Response] = [try hello(), try challenge(), bad, try challenge(), bad]
+            let client = PhoneJobsMintClient(signer: signer, store: Writer(), send: { _ in requests += 1; return answers[requests - 1] }, now: { 1_700_000_000_000 })
+            await expect(.unavailable) { try await client.mint(origin: origin) }
+            XCTAssertEqual(requests, 5)
+            XCTAssertEqual(prompts, 2, "a second 400 is not retried: two signer calls in all")
+        }
+        XCTAssertFalse(PhoneJobsMintClient.isWantRefusal(.init(status: 400, body: Data(#"{"error":"other"}"#.utf8))))
+        XCTAssertFalse(PhoneJobsMintClient.isWantRefusal(.init(status: 403, body: Data(#"{"error":"bad request"}"#.utf8))))
+    }
+
+    func testMintPinsTheIssuedDeviceIdAtPairingAndAnswersWithoutOneLeaveItUnpinned() async throws {
+        let v = try vector(), origin = try XCTUnwrap(WorkspaceOrigin(string: v["origin"] as! String))
+        let token = ((try fixture()["token"] as! [String: Any])["valid"] as! [String])[0]
+        let keyId = v["keyId"] as! String
+        let cases: [([String: Any], String?)] = [(["token": token, "deviceId": "phone-a"], "phone-a"), (["token": token], nil)]
+        for (answer, expected) in cases {
+            let suite = "mint-pin-" + UUID().uuidString
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+            let pin = AskDevicePin(defaults: defaults)
+            let signer = PhoneAskSigner(point: { _ in v["point"] as? String }) { _ in v["signature"] as! String }
+            let answers = try [response(["mobile": 1, "phoneAsk": 2]), response(["nonce": v["nonce"]!, "expiresAt": v["expiresAt"]!]), response(answer)]
+            var calls = 0
+            let client = PhoneJobsMintClient(signer: signer, store: Writer(), send: { _ in calls += 1; return answers[calls - 1] },
+                                             pin: pin, now: { 1_700_000_000_000 })
+            try await client.mint(origin: origin)
+            XCTAssertEqual(pin.paired(origin: origin, keyId: keyId), expected)
+        }
+        // A malformed id is an invalid answer: nothing stored, nothing pinned.
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "mint-pin-bad"))
+        addTeardownBlock { defaults.removePersistentDomain(forName: "mint-pin-bad") }
+        let writer = Writer()
+        let signer = PhoneAskSigner(point: { _ in v["point"] as? String }) { _ in v["signature"] as! String }
+        let answers = try [response(["mobile": 1, "phoneAsk": 2]), response(["nonce": v["nonce"]!, "expiresAt": v["expiresAt"]!]), response(["token": token, "deviceId": "phone/a"])]
+        var calls = 0
+        let client = PhoneJobsMintClient(signer: signer, store: writer, send: { _ in calls += 1; return answers[calls - 1] },
+                                         pin: AskDevicePin(defaults: defaults), now: { 1_700_000_000_000 })
+        await expect(.invalidResponse) { try await client.mint(origin: origin) }
+        XCTAssertTrue(writer.writes.isEmpty)
+        XCTAssertNil(AskDevicePin(defaults: defaults).paired(origin: origin, keyId: keyId))
     }
 
     func testChallengeRefusalRateLimitAndNotOfferedNeverPromptOrStore() async throws {

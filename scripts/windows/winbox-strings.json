@@ -1,0 +1,2459 @@
+{
+  "scope": "Conservative inventory of all quoted source fragments in the proof harness and its tests. Includes English diagnostics, prompts, fixture text, test labels and technical tokens. Runner documentation and evidence prose are not product strings. No product UI or translations changed.",
+  "files": [
+    {
+      "file": "winbox-driver.mjs",
+      "strings": [
+        {
+          "line": 2,
+          "text": "'node:assert/strict'"
+        },
+        {
+          "line": 3,
+          "text": "'node:fs'"
+        },
+        {
+          "line": 4,
+          "text": "'node:path'"
+        },
+        {
+          "line": 5,
+          "text": "'node:url'"
+        },
+        {
+          "line": 6,
+          "text": "'chat'"
+        },
+        {
+          "line": 6,
+          "text": "'shell-tool'"
+        },
+        {
+          "line": 6,
+          "text": "'routine'"
+        },
+        {
+          "line": 6,
+          "text": "'browser'"
+        },
+        {
+          "line": 6,
+          "text": "'sentinel'"
+        },
+        {
+          "line": 7,
+          "text": "'CASCADIA_HOSTING_WINDOW_CLASS'"
+        },
+        {
+          "line": 7,
+          "text": "'ConsoleWindowClass'"
+        },
+        {
+          "line": 7,
+          "text": "'PseudoConsoleWindow'"
+        },
+        {
+          "line": 8,
+          "text": "''"
+        },
+        {
+          "line": 8,
+          "text": "'/'"
+        },
+        {
+          "line": 8,
+          "text": "'\\\\'"
+        },
+        {
+          "line": 9,
+          "text": "`${p.pid}:${p.birth}`"
+        },
+        {
+          "line": 10,
+          "text": "`${w.hwnd}:${w.pid}:${w.birth}:${w.className}`"
+        },
+        {
+          "line": 13,
+          "text": "'missing window samples'"
+        },
+        {
+          "line": 19,
+          "text": "'object'"
+        },
+        {
+          "line": 19,
+          "text": "'invalid sample row'"
+        },
+        {
+          "line": 20,
+          "text": "'unordered samples'"
+        },
+        {
+          "line": 21,
+          "text": "'incomplete sample'"
+        },
+        {
+          "line": 23,
+          "text": "'missing process identity'"
+        },
+        {
+          "line": 25,
+          "text": "'object'"
+        },
+        {
+          "line": 25,
+          "text": "'boolean'"
+        },
+        {
+          "line": 25,
+          "text": "'malformed window'"
+        },
+        {
+          "line": 54,
+          "text": "'0'"
+        },
+        {
+          "line": 55,
+          "text": "`Unresolved visible window owner HWND ${w.hwnd} PID ${w.pid}`"
+        },
+        {
+          "line": 61,
+          "text": "'terminal-class'"
+        },
+        {
+          "line": 61,
+          "text": "'murage-child-window'"
+        },
+        {
+          "line": 69,
+          "text": "`Malformed sample ${index}: ${e.message}`"
+        },
+        {
+          "line": 82,
+          "text": "''"
+        },
+        {
+          "line": 82,
+          "text": "`Missing owner metadata for HWND ${w.hwnd} PID ${w.pid}`"
+        },
+        {
+          "line": 85,
+          "text": "'Sampler failed or interval differs from 200 ms'"
+        },
+        {
+          "line": 86,
+          "text": "'Windows 11 / Windows Terminal / interactive desktop prerequisites unproven'"
+        },
+        {
+          "line": 91,
+          "text": "'Sampler coverage missing or gap exceeds 400 ms'"
+        },
+        {
+          "line": 92,
+          "text": "'Missing final desktop screenshot'"
+        },
+        {
+          "line": 93,
+          "text": "'Scenario or owned cleanup failed'"
+        },
+        {
+          "line": 97,
+          "text": "`Missing successful phase: ${name}`"
+        },
+        {
+          "line": 98,
+          "text": "`Sampler does not cover ${name}`"
+        },
+        {
+          "line": 100,
+          "text": "'1.0.19'"
+        },
+        {
+          "line": 100,
+          "text": "'Packaged RC installation unproven'"
+        },
+        {
+          "line": 103,
+          "text": "'Self-test console was NOT detected'"
+        },
+        {
+          "line": 104,
+          "text": "`${offendingWindows.length} NEW visible console/terminal or Murage child window(s)`"
+        },
+        {
+          "line": 105,
+          "text": "'G-WINBOX'"
+        },
+        {
+          "line": 105,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 105,
+          "text": "'PASS'"
+        },
+        {
+          "line": 105,
+          "text": "'Malformed sample '"
+        },
+        {
+          "line": 111,
+          "text": "`Timeout: ${label}`"
+        },
+        {
+          "line": 121,
+          "text": "'chat'"
+        },
+        {
+          "line": 121,
+          "text": "'chat'"
+        },
+        {
+          "line": 121,
+          "text": "'G-WINBOX real packaged chat turn'"
+        },
+        {
+          "line": 122,
+          "text": "'shell-tool'"
+        },
+        {
+          "line": 122,
+          "text": "'shell'"
+        },
+        {
+          "line": 122,
+          "text": "'Run local shell commands __custom_tool__:gatefallback'"
+        },
+        {
+          "line": 123,
+          "text": "'routine'"
+        },
+        {
+          "line": 124,
+          "text": "'chat'"
+        },
+        {
+          "line": 125,
+          "text": "'POST'"
+        },
+        {
+          "line": 125,
+          "text": "'/api/routines'"
+        },
+        {
+          "line": 125,
+          "text": "'G-WINBOX routine'"
+        },
+        {
+          "line": 125,
+          "text": "'G-WINBOX routine echo'"
+        },
+        {
+          "line": 125,
+          "text": "'interval'"
+        },
+        {
+          "line": 125,
+          "text": "'ask'"
+        },
+        {
+          "line": 126,
+          "text": "'routine creation'"
+        },
+        {
+          "line": 127,
+          "text": "'POST'"
+        },
+        {
+          "line": 127,
+          "text": "`/api/routines/${routine.id}/run`"
+        },
+        {
+          "line": 127,
+          "text": "'routine run identity'"
+        },
+        {
+          "line": 129,
+          "text": "'GET'"
+        },
+        {
+          "line": 129,
+          "text": "'/api/routines'"
+        },
+        {
+          "line": 130,
+          "text": "'failed'"
+        },
+        {
+          "line": 130,
+          "text": "'cancelled'"
+        },
+        {
+          "line": 130,
+          "text": "'interrupted'"
+        },
+        {
+          "line": 130,
+          "text": "`Routine ${run.status}`"
+        },
+        {
+          "line": 131,
+          "text": "'completed'"
+        },
+        {
+          "line": 132,
+          "text": "'routine completed'"
+        },
+        {
+          "line": 133,
+          "text": "'DELETE'"
+        },
+        {
+          "line": 133,
+          "text": "`/api/routines/${routine.id}`"
+        },
+        {
+          "line": 135,
+          "text": "'browser'"
+        },
+        {
+          "line": 136,
+          "text": "'sentinel'"
+        },
+        {
+          "line": 141,
+          "text": "'win32'"
+        },
+        {
+          "line": 141,
+          "text": "'Windows runner only'"
+        },
+        {
+          "line": 143,
+          "text": "'@playwright/test'"
+        },
+        {
+          "line": 143,
+          "text": "'../control-murage.ts'"
+        },
+        {
+          "line": 143,
+          "text": "'../mcp-server.ts'"
+        },
+        {
+          "line": 143,
+          "text": "'./native-launcher.mjs'"
+        },
+        {
+          "line": 143,
+          "text": "'node:http'"
+        },
+        {
+          "line": 144,
+          "text": "'../..'"
+        },
+        {
+          "line": 145,
+          "text": "'data'"
+        },
+        {
+          "line": 145,
+          "text": "'evidence'"
+        },
+        {
+          "line": 148,
+          "text": "'echo-protocol.jsonl'"
+        },
+        {
+          "line": 148,
+          "text": "'echo-mode'"
+        },
+        {
+          "line": 148,
+          "text": "'shell-proof.json'"
+        },
+        {
+          "line": 149,
+          "text": "'echo'"
+        },
+        {
+          "line": 150,
+          "text": "'fake-engine-entry.mjs'"
+        },
+        {
+          "line": 151,
+          "text": "'server/testing/fake-codex-app-server.ts'"
+        },
+        {
+          "line": 151,
+          "text": "'mounts.jsonl'"
+        },
+        {
+          "line": 152,
+          "text": "`\"${node}\" --experimental-strip-types \"${engine}\"`"
+        },
+        {
+          "line": 153,
+          "text": "'gate-echo.cmd'"
+        },
+        {
+          "line": 154,
+          "text": "`@echo off\\r\\n\"${node}\" \"${join(here,'winbox-shell-mcp.mjs')}\" \"${echoLog}\" \"${modeFile}\" \"${shellProof}\"\\r\\n`"
+        },
+        {
+          "line": 155,
+          "text": "'config.json'"
+        },
+        {
+          "line": 155,
+          "text": "'explicit'"
+        },
+        {
+          "line": 156,
+          "text": "'codex'"
+        },
+        {
+          "line": 156,
+          "text": "'happy'"
+        },
+        {
+          "line": 156,
+          "text": "'1'"
+        },
+        {
+          "line": 157,
+          "text": "'codex'"
+        },
+        {
+          "line": 157,
+          "text": "'happy'"
+        },
+        {
+          "line": 157,
+          "text": "'1'"
+        },
+        {
+          "line": 157,
+          "text": "'gatefallback'"
+        },
+        {
+          "line": 157,
+          "text": "'shell'"
+        },
+        {
+          "line": 158,
+          "text": "'gate-echo'"
+        },
+        {
+          "line": 158,
+          "text": "'override-confirmed'"
+        },
+        {
+          "line": 161,
+          "text": "'SystemRoot'"
+        },
+        {
+          "line": 161,
+          "text": "'WINDIR'"
+        },
+        {
+          "line": 161,
+          "text": "'COMSPEC'"
+        },
+        {
+          "line": 161,
+          "text": "'PATHEXT'"
+        },
+        {
+          "line": 161,
+          "text": "'COMPUTERNAME'"
+        },
+        {
+          "line": 161,
+          "text": "'USERNAME'"
+        },
+        {
+          "line": 161,
+          "text": "'HOME'"
+        },
+        {
+          "line": 161,
+          "text": "'USERPROFILE'"
+        },
+        {
+          "line": 161,
+          "text": "'APPDATA'"
+        },
+        {
+          "line": 161,
+          "text": "'LOCALAPPDATA'"
+        },
+        {
+          "line": 161,
+          "text": "'TEMP'"
+        },
+        {
+          "line": 161,
+          "text": "'TMP'"
+        },
+        {
+          "line": 161,
+          "text": "'MURAGE_DATA_DIR'"
+        },
+        {
+          "line": 161,
+          "text": "'MURAGE_USER_DATA'"
+        },
+        {
+          "line": 161,
+          "text": "'MURAGE_GATE_RUN_PREFIX'"
+        },
+        {
+          "line": 161,
+          "text": "'MURAGE_GATE_JOB_NAME'"
+        },
+        {
+          "line": 161,
+          "text": "'MURAGE_GATE_TASK_HELPER'"
+        },
+        {
+          "line": 161,
+          "text": "'MURAGE_GATE_NATIVE_BROKER'"
+        },
+        {
+          "line": 162,
+          "text": "`${fixture};${dirname(node)}`"
+        },
+        {
+          "line": 162,
+          "text": "'off'"
+        },
+        {
+          "line": 162,
+          "text": "'off'"
+        },
+        {
+          "line": 164,
+          "text": "'resources'"
+        },
+        {
+          "line": 164,
+          "text": "'app-update.yml'"
+        },
+        {
+          "line": 166,
+          "text": "'/'"
+        },
+        {
+          "line": 166,
+          "text": "'content-type'"
+        },
+        {
+          "line": 166,
+          "text": "'text/html'"
+        },
+        {
+          "line": 166,
+          "text": "'<!doctype html><title>G-WINBOX</title><h1>Local browser proof</h1>'"
+        },
+        {
+          "line": 167,
+          "text": "'error'"
+        },
+        {
+          "line": 167,
+          "text": "'127.0.0.1'"
+        },
+        {
+          "line": 168,
+          "text": "`http://127.0.0.1:${web.address().port}/`"
+        },
+        {
+          "line": 169,
+          "text": "`provider: generic\\nurl: ${url}\\nchannel: latest\\nupdaterCacheDirName: winbox-fixture-updater\\n`"
+        },
+        {
+          "line": 173,
+          "text": "'1.0.19'"
+        },
+        {
+          "line": 174,
+          "text": "'http://127.0.0.1:'"
+        },
+        {
+          "line": 174,
+          "text": "'packaged main window'"
+        },
+        {
+          "line": 177,
+          "text": "'content-type'"
+        },
+        {
+          "line": 177,
+          "text": "'application/json'"
+        },
+        {
+          "line": 178,
+          "text": "`${method} ${path}: ${JSON.stringify(result)}`"
+        },
+        {
+          "line": 180,
+          "text": "'GET'"
+        },
+        {
+          "line": 182,
+          "text": "'POST'"
+        },
+        {
+          "line": 182,
+          "text": "'/api/bots'"
+        },
+        {
+          "line": 182,
+          "text": "`G-WINBOX ${instance}`"
+        },
+        {
+          "line": 182,
+          "text": "'gpt-fake-default'"
+        },
+        {
+          "line": 183,
+          "text": "'PATCH'"
+        },
+        {
+          "line": 183,
+          "text": "`/api/bots/${bot.id}`"
+        },
+        {
+          "line": 183,
+          "text": "'off'"
+        },
+        {
+          "line": 186,
+          "text": "'send_bot_message'"
+        },
+        {
+          "line": 187,
+          "text": "'wait_for_conversation'"
+        },
+        {
+          "line": 187,
+          "text": "'bot'"
+        },
+        {
+          "line": 187,
+          "text": "'settled'"
+        },
+        {
+          "line": 188,
+          "text": "'get_bot_messages'"
+        },
+        {
+          "line": 189,
+          "text": "'shell'"
+        },
+        {
+          "line": 190,
+          "text": "'__custom_tool__'"
+        },
+        {
+          "line": 190,
+          "text": "'utf8'"
+        },
+        {
+          "line": 193,
+          "text": "'System32'"
+        },
+        {
+          "line": 193,
+          "text": "'WindowsPowerShell'"
+        },
+        {
+          "line": 193,
+          "text": "'v1.0'"
+        },
+        {
+          "line": 193,
+          "text": "'powershell.exe'"
+        },
+        {
+          "line": 194,
+          "text": "'phases.json'"
+        },
+        {
+          "line": 196,
+          "text": "'chat'"
+        },
+        {
+          "line": 196,
+          "text": "'PATCH'"
+        },
+        {
+          "line": 196,
+          "text": "`/api/bots/${b.id}`"
+        },
+        {
+          "line": 196,
+          "text": "`/api/bots/${b.id}/browser`"
+        },
+        {
+          "line": 197,
+          "text": "'POST'"
+        },
+        {
+          "line": 197,
+          "text": "'restart'"
+        },
+        {
+          "line": 197,
+          "text": "'POST'"
+        },
+        {
+          "line": 197,
+          "text": "'take'"
+        },
+        {
+          "line": 198,
+          "text": "'GET'"
+        },
+        {
+          "line": 198,
+          "text": "'packaged browser connected'"
+        },
+        {
+          "line": 200,
+          "text": "'POST'"
+        },
+        {
+          "line": 200,
+          "text": "'navigate'"
+        },
+        {
+          "line": 201,
+          "text": "'browser fetched local page'"
+        },
+        {
+          "line": 202,
+          "text": "'GET'"
+        },
+        {
+          "line": 202,
+          "text": "'GET'"
+        },
+        {
+          "line": 202,
+          "text": "`${path}/frame?generation=${s.generation}`"
+        },
+        {
+          "line": 202,
+          "text": "'browser frame'"
+        },
+        {
+          "line": 203,
+          "text": "''"
+        },
+        {
+          "line": 203,
+          "text": "'base64'"
+        },
+        {
+          "line": 204,
+          "text": "'browser-frame.jpg'"
+        },
+        {
+          "line": 204,
+          "text": "'DELETE'"
+        },
+        {
+          "line": 204,
+          "text": "`/api/bots/${b.id}`"
+        },
+        {
+          "line": 207,
+          "text": "'sentinel-scenario.ps1'"
+        },
+        {
+          "line": 208,
+          "text": "'-NoProfile'"
+        },
+        {
+          "line": 208,
+          "text": "'-File'"
+        },
+        {
+          "line": 208,
+          "text": "'-Mode'"
+        },
+        {
+          "line": 208,
+          "text": "'Open'"
+        },
+        {
+          "line": 208,
+          "text": "'-Fixture'"
+        },
+        {
+          "line": 208,
+          "text": "'-Executable'"
+        },
+        {
+          "line": 210,
+          "text": "'-NoProfile'"
+        },
+        {
+          "line": 210,
+          "text": "'-File'"
+        },
+        {
+          "line": 210,
+          "text": "'-Mode'"
+        },
+        {
+          "line": 210,
+          "text": "'Closed'"
+        },
+        {
+          "line": 210,
+          "text": "'-Fixture'"
+        },
+        {
+          "line": 210,
+          "text": "'-Executable'"
+        },
+        {
+          "line": 211,
+          "text": "'sentinel-closed.json'"
+        },
+        {
+          "line": 211,
+          "text": "'utf8'"
+        },
+        {
+          "line": 211,
+          "text": "''"
+        },
+        {
+          "line": 218,
+          "text": "'utf8'"
+        },
+        {
+          "line": 218,
+          "text": "''"
+        },
+        {
+          "line": 219,
+          "text": "'--run'"
+        },
+        {
+          "line": 220,
+          "text": "'driver-error.json'"
+        },
+        {
+          "line": 223,
+          "text": "'--verdict'"
+        },
+        {
+          "line": 224,
+          "text": "'utf8'"
+        },
+        {
+          "line": 224,
+          "text": "''"
+        },
+        {
+          "line": 224,
+          "text": "'\\n'"
+        },
+        {
+          "line": 226,
+          "text": "'offending-windows.json'"
+        },
+        {
+          "line": 227,
+          "text": "'verdict.json'"
+        },
+        {
+          "line": 228,
+          "text": "'PASS'"
+        }
+      ]
+    },
+    {
+      "file": "winbox-driver.node-test.mjs",
+      "strings": [
+        {
+          "line": 1,
+          "text": "'node:test'"
+        },
+        {
+          "line": 2,
+          "text": "'node:assert/strict'"
+        },
+        {
+          "line": 3,
+          "text": "'./winbox-driver.mjs'"
+        },
+        {
+          "line": 4,
+          "text": "'C:\\\\murage-ci\\\\results\\\\run\\\\fixture\\\\app\\\\Murage.exe'"
+        },
+        {
+          "line": 5,
+          "text": "`C:\\\\test\\\\p${pid}.exe`"
+        },
+        {
+          "line": 6,
+          "text": "'ConsoleWindowClass'"
+        },
+        {
+          "line": 6,
+          "text": "'test'"
+        },
+        {
+          "line": 7,
+          "text": "'10'"
+        },
+        {
+          "line": 8,
+          "text": "'a'"
+        },
+        {
+          "line": 8,
+          "text": "'1.0.19'"
+        },
+        {
+          "line": 8,
+          "text": "'desktop-end.png'"
+        },
+        {
+          "line": 10,
+          "text": "'all three console/Terminal classes fail globally, without Murage ancestry'"
+        },
+        {
+          "line": 11,
+          "text": "'CASCADIA_HOSTING_WINDOW_CLASS'"
+        },
+        {
+          "line": 11,
+          "text": "'ConsoleWindowClass'"
+        },
+        {
+          "line": 11,
+          "text": "'PseudoConsoleWindow'"
+        },
+        {
+          "line": 12,
+          "text": "'cmd.exe /c echo hello'"
+        },
+        {
+          "line": 13,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 13,
+          "text": "'cmd.exe /c echo hello'"
+        },
+        {
+          "line": 13,
+          "text": "'C:\\\\test\\\\p40.exe'"
+        },
+        {
+          "line": 16,
+          "text": "'baseline allows only already visible windows, not initially hidden windows'"
+        },
+        {
+          "line": 20,
+          "text": "'hidden console windows are recorded but never offending'"
+        },
+        {
+          "line": 20,
+          "text": "'ConsoleWindowClass'"
+        },
+        {
+          "line": 20,
+          "text": "'PASS'"
+        },
+        {
+          "line": 21,
+          "text": "'visible descendants include arbitrary classes at any tree depth; main app and unrelated GUI allowed'"
+        },
+        {
+          "line": 22,
+          "text": "'Chrome_WidgetWin_1'"
+        },
+        {
+          "line": 22,
+          "text": "'PopupClass'"
+        },
+        {
+          "line": 22,
+          "text": "'OtherClass'"
+        },
+        {
+          "line": 22,
+          "text": "'NotConsole'"
+        },
+        {
+          "line": 23,
+          "text": "'murage-child-window'"
+        },
+        {
+          "line": 23,
+          "text": "'murage-child-window'"
+        },
+        {
+          "line": 25,
+          "text": "'ancestry is resolved independent of snapshot order and executable path case/slashes'"
+        },
+        {
+          "line": 26,
+          "text": "'popup'"
+        },
+        {
+          "line": 26,
+          "text": "'\\\\'"
+        },
+        {
+          "line": 26,
+          "text": "'/'"
+        },
+        {
+          "line": 27,
+          "text": "'murage-child-window'"
+        },
+        {
+          "line": 29,
+          "text": "'ancestry survives exited parents and PID reuse never invents new ancestry'"
+        },
+        {
+          "line": 30,
+          "text": "'popup'"
+        },
+        {
+          "line": 31,
+          "text": "'murage-child-window'"
+        },
+        {
+          "line": 32,
+          "text": "'popup'"
+        },
+        {
+          "line": 33,
+          "text": "'10'"
+        },
+        {
+          "line": 33,
+          "text": "'200'"
+        },
+        {
+          "line": 33,
+          "text": "'30'"
+        },
+        {
+          "line": 36,
+          "text": "'reused HWND/PID with new process birth is not baseline-exempt'"
+        },
+        {
+          "line": 37,
+          "text": "'ConsoleWindowClass'"
+        },
+        {
+          "line": 37,
+          "text": "'400'"
+        },
+        {
+          "line": 40,
+          "text": "'short one-sample flash remains evidence; repeated observations deduplicate'"
+        },
+        {
+          "line": 43,
+          "text": "'positive run requires complete workflow, cleanup, screenshot, prerequisites, and sample coverage'"
+        },
+        {
+          "line": 44,
+          "text": "'PASS'"
+        },
+        {
+          "line": 45,
+          "text": "'EnumWindows failed'"
+        },
+        {
+          "line": 46,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 47,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 48,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 50,
+          "text": "'unresolvable offending owner metadata fails with actionable null fields'"
+        },
+        {
+          "line": 51,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 51,
+          "text": "' '"
+        },
+        {
+          "line": 52,
+          "text": "'cmd.exe'"
+        },
+        {
+          "line": 52,
+          "text": "'cmd.exe /c start'"
+        },
+        {
+          "line": 52,
+          "text": "' '"
+        },
+        {
+          "line": 54,
+          "text": "'self-test must FAIL and separately prove detector health; blind sampler cannot pass self-test'"
+        },
+        {
+          "line": 55,
+          "text": "'CASCADIA_HOSTING_WINDOW_CLASS'"
+        },
+        {
+          "line": 55,
+          "text": "'WindowsTerminal.exe'"
+        },
+        {
+          "line": 56,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 58,
+          "text": "'missed tick'"
+        },
+        {
+          "line": 61,
+          "text": "'invalid sample ordering/identity cannot produce PASS'"
+        },
+        {
+          "line": 62,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 63,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 66,
+          "text": "'BLOCK 1: visible owner absent from the process snapshot fails coverage'"
+        },
+        {
+          "line": 68,
+          "text": "'0'"
+        },
+        {
+          "line": 68,
+          "text": "'50'"
+        },
+        {
+          "line": 69,
+          "text": "'ChildPopup'"
+        },
+        {
+          "line": 69,
+          "text": "''"
+        },
+        {
+          "line": 71,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 71,
+          "text": "'an observed window with unknown ancestry must not pass'"
+        },
+        {
+          "line": 72,
+          "text": "' '"
+        },
+        {
+          "line": 74,
+          "text": "'0'"
+        },
+        {
+          "line": 75,
+          "text": "'ChildPopup'"
+        },
+        {
+          "line": 75,
+          "text": "'0'"
+        },
+        {
+          "line": 76,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 76,
+          "text": "'birth zero cannot prove owner identity'"
+        },
+        {
+          "line": 79,
+          "text": "'BLOCK 2: later invalid samples retain earlier offenders and subsequent detections'"
+        },
+        {
+          "line": 81,
+          "text": "'ChildPopup'"
+        },
+        {
+          "line": 82,
+          "text": "`p${pid}.exe`"
+        },
+        {
+          "line": 84,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 88,
+          "text": "'p40.exe'"
+        },
+        {
+          "line": 91,
+          "text": "'completed'"
+        },
+        {
+          "line": 91,
+          "text": "'run-owned'"
+        },
+        {
+          "line": 95,
+          "text": "'POST'"
+        },
+        {
+          "line": 95,
+          "text": "'/api/routines'"
+        },
+        {
+          "line": 95,
+          "text": "'routine-owned'"
+        },
+        {
+          "line": 96,
+          "text": "'/api/routines/routine-owned/run'"
+        },
+        {
+          "line": 97,
+          "text": "'GET'"
+        },
+        {
+          "line": 97,
+          "text": "'/api/routines'"
+        },
+        {
+          "line": 97,
+          "text": "'other'"
+        },
+        {
+          "line": 97,
+          "text": "'completed'"
+        },
+        {
+          "line": 97,
+          "text": "'run-owned'"
+        },
+        {
+          "line": 97,
+          "text": "'running'"
+        },
+        {
+          "line": 99,
+          "text": "`bot-${instance}`"
+        },
+        {
+          "line": 99,
+          "text": "'turn'"
+        },
+        {
+          "line": 99,
+          "text": "'real test transport'"
+        },
+        {
+          "line": 99,
+          "text": "'browser'"
+        },
+        {
+          "line": 99,
+          "text": "'loopback'"
+        },
+        {
+          "line": 99,
+          "text": "'sentinel'"
+        },
+        {
+          "line": 101,
+          "text": "'driver executes five real transports in order and waits for its exact routine completion'"
+        },
+        {
+          "line": 103,
+          "text": "'GET'"
+        },
+        {
+          "line": 104,
+          "text": "'/api/routines'"
+        },
+        {
+          "line": 104,
+          "text": "'POST'"
+        },
+        {
+          "line": 104,
+          "text": "'bot-chat'"
+        },
+        {
+          "line": 105,
+          "text": "'DELETE'"
+        },
+        {
+          "line": 105,
+          "text": "'/api/routines/routine-owned'"
+        },
+        {
+          "line": 108,
+          "text": "'failed or hung routine prevents browser/Sentinel phases and cannot be recorded successful'"
+        },
+        {
+          "line": 109,
+          "text": "'failed'"
+        },
+        {
+          "line": 109,
+          "text": "'running'"
+        },
+        {
+          "line": 110,
+          "text": "'failed'"
+        },
+        {
+          "line": 111,
+          "text": "'chat'"
+        },
+        {
+          "line": 111,
+          "text": "'shell-tool'"
+        },
+        {
+          "line": 111,
+          "text": "'browser'"
+        },
+        {
+          "line": 114,
+          "text": "'missing routine run identity is fatal'"
+        },
+        {
+          "line": 115,
+          "text": "'wait timeout is bounded and callback errors are not swallowed'"
+        },
+        {
+          "line": 116,
+          "text": "'never'"
+        },
+        {
+          "line": 117,
+          "text": "'connection lost'"
+        },
+        {
+          "line": 117,
+          "text": "'read'"
+        },
+        {
+          "line": 120,
+          "text": "'CLI emits JSON verdict and separate offending-owner list with failure exit status'"
+        },
+        {
+          "line": 121,
+          "text": "'node:fs'"
+        },
+        {
+          "line": 122,
+          "text": "'node:os'"
+        },
+        {
+          "line": 122,
+          "text": "'node:path'"
+        },
+        {
+          "line": 123,
+          "text": "'node:child_process'"
+        },
+        {
+          "line": 124,
+          "text": "'winbox-cli-'"
+        },
+        {
+          "line": 126,
+          "text": "'ConsoleWindowClass'"
+        },
+        {
+          "line": 126,
+          "text": "'cmd.exe /c start deliberate'"
+        },
+        {
+          "line": 127,
+          "text": "'windows.jsonl'"
+        },
+        {
+          "line": 127,
+          "text": "'\\n'"
+        },
+        {
+          "line": 127,
+          "text": "'\\n'"
+        },
+        {
+          "line": 128,
+          "text": "'verdict-input.json'"
+        },
+        {
+          "line": 128,
+          "text": "'\\uFEFF'"
+        },
+        {
+          "line": 129,
+          "text": "'scripts/windows/winbox-driver.mjs'"
+        },
+        {
+          "line": 129,
+          "text": "'--verdict'"
+        },
+        {
+          "line": 129,
+          "text": "'utf8'"
+        },
+        {
+          "line": 131,
+          "text": "'verdict.json'"
+        },
+        {
+          "line": 131,
+          "text": "'utf8'"
+        },
+        {
+          "line": 131,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 132,
+          "text": "'offending-windows.json'"
+        },
+        {
+          "line": 132,
+          "text": "'utf8'"
+        },
+        {
+          "line": 132,
+          "text": "'cmd.exe /c start deliberate'"
+        },
+        {
+          "line": 137,
+          "text": "'BLOCK 2 CLI: invalid later sample retains the offending-window artifact'"
+        },
+        {
+          "line": 138,
+          "text": "'node:fs'"
+        },
+        {
+          "line": 139,
+          "text": "'node:os'"
+        },
+        {
+          "line": 139,
+          "text": "'node:path'"
+        },
+        {
+          "line": 140,
+          "text": "'node:child_process'"
+        },
+        {
+          "line": 141,
+          "text": "'winbox-invalid-'"
+        },
+        {
+          "line": 144,
+          "text": "'cmd.exe /c start deliberate'"
+        },
+        {
+          "line": 145,
+          "text": "'windows.jsonl'"
+        },
+        {
+          "line": 145,
+          "text": "'\\n'"
+        },
+        {
+          "line": 146,
+          "text": "'verdict-input.json'"
+        },
+        {
+          "line": 147,
+          "text": "'scripts/windows/winbox-driver.mjs'"
+        },
+        {
+          "line": 147,
+          "text": "'--verdict'"
+        },
+        {
+          "line": 147,
+          "text": "'utf8'"
+        },
+        {
+          "line": 149,
+          "text": "'verdict.json'"
+        },
+        {
+          "line": 149,
+          "text": "'utf8'"
+        },
+        {
+          "line": 150,
+          "text": "'offending-windows.json'"
+        },
+        {
+          "line": 150,
+          "text": "'utf8'"
+        },
+        {
+          "line": 151,
+          "text": "' '"
+        },
+        {
+          "line": 153,
+          "text": "'cmd.exe /c start deliberate'"
+        },
+        {
+          "line": 158,
+          "text": "'ROUND 3: malformed sample rows fail with counts and retain earlier and later detections'"
+        },
+        {
+          "line": 159,
+          "text": "'bad'"
+        },
+        {
+          "line": 161,
+          "text": "'ChildPopup'"
+        },
+        {
+          "line": 162,
+          "text": "`p${pid}.exe`"
+        },
+        {
+          "line": 164,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 165,
+          "text": "'p40.exe'"
+        },
+        {
+          "line": 165,
+          "text": "'p30.exe'"
+        },
+        {
+          "line": 170,
+          "text": "'ROUND 3 CLI: later null JSONL row retains console metadata in both FAIL artifacts'"
+        },
+        {
+          "line": 171,
+          "text": "'node:fs'"
+        },
+        {
+          "line": 172,
+          "text": "'node:os'"
+        },
+        {
+          "line": 172,
+          "text": "'node:path'"
+        },
+        {
+          "line": 173,
+          "text": "'node:child_process'"
+        },
+        {
+          "line": 174,
+          "text": "'winbox-null-'"
+        },
+        {
+          "line": 177,
+          "text": "'cmd.exe /c start deliberate'"
+        },
+        {
+          "line": 178,
+          "text": "'windows.jsonl'"
+        },
+        {
+          "line": 178,
+          "text": "'\\n'"
+        },
+        {
+          "line": 179,
+          "text": "'verdict-input.json'"
+        },
+        {
+          "line": 180,
+          "text": "'scripts/windows/winbox-driver.mjs'"
+        },
+        {
+          "line": 180,
+          "text": "'--verdict'"
+        },
+        {
+          "line": 180,
+          "text": "'utf8'"
+        },
+        {
+          "line": 182,
+          "text": "'verdict.json'"
+        },
+        {
+          "line": 182,
+          "text": "'offending-windows.json'"
+        },
+        {
+          "line": 182,
+          "text": "`${file} must survive a later null sample: ${result.stderr}`"
+        },
+        {
+          "line": 183,
+          "text": "'verdict.json'"
+        },
+        {
+          "line": 183,
+          "text": "'utf8'"
+        },
+        {
+          "line": 184,
+          "text": "'offending-windows.json'"
+        },
+        {
+          "line": 184,
+          "text": "'utf8'"
+        },
+        {
+          "line": 185,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 186,
+          "text": "' '"
+        },
+        {
+          "line": 188,
+          "text": "'C:\\\\test\\\\p40.exe'"
+        },
+        {
+          "line": 189,
+          "text": "'cmd.exe /c start deliberate'"
+        }
+      ]
+    },
+    {
+      "file": "winbox-gate.ps1",
+      "strings": [
+        {
+          "line": 6,
+          "text": "'^[a-fA-F0-9]{64}$'"
+        },
+        {
+          "line": 7,
+          "text": "'^[a-f0-9]{40}$'"
+        },
+        {
+          "line": 9,
+          "text": "'C:\\murage-ci\\node\\node.exe'"
+        },
+        {
+          "line": 15,
+          "text": "'Stop'"
+        },
+        {
+          "line": 17,
+          "text": "'Windows_NT'"
+        },
+        {
+          "line": 17,
+          "text": "'Windows runner only; do not run on Linux or a customer PC'"
+        },
+        {
+          "line": 18,
+          "text": "'Desktop'"
+        },
+        {
+          "line": 18,
+          "text": "'Use Windows PowerShell 5.1 (System.Management and desktop capture)'"
+        },
+        {
+          "line": 19,
+          "text": "'gate-paths.ps1'"
+        },
+        {
+          "line": 20,
+          "text": "'owned-process.ps1'"
+        },
+        {
+          "line": 21,
+          "text": "'run-ledger.ps1'"
+        },
+        {
+          "line": 22,
+          "text": "'ownership.ps1'"
+        },
+        {
+          "line": 23,
+          "text": "'native-broker.ps1'"
+        },
+        {
+          "line": 27,
+          "text": "'HKCU:\\Console\\%%Startup'"
+        },
+        {
+          "line": 28,
+          "text": "'{2EACA947-7F5F-4CFA-BA87-8F7FBEEFBE69}'"
+        },
+        {
+          "line": 28,
+          "text": "'{E12CFF52-A866-4C77-9A90-F570A7AA2C6B}'"
+        },
+        {
+          "line": 29,
+          "text": "'Set Windows Terminal (stable) as Default terminal application in this disposable runner before the run'"
+        },
+        {
+          "line": 36,
+          "text": "'gate-admission.ps1'"
+        },
+        {
+          "line": 46,
+          "text": "'/d /c start \"G-WINBOX deliberate visible console\" /wait \"'"
+        },
+        {
+          "line": 46,
+          "text": "'\" /d /c \"ping -n 8 127.0.0.1 >nul\"'"
+        },
+        {
+          "line": 48,
+          "text": "'Deliberate console launch failed'"
+        },
+        {
+          "line": 51,
+          "text": "'RC installer SHA256 mismatch'"
+        },
+        {
+          "line": 53,
+          "text": "'Install target must not exist'"
+        },
+        {
+          "line": 56,
+          "text": "'/S /currentuser --no-desktop-shortcut --no-start-menu-shortcut /D='"
+        },
+        {
+          "line": 58,
+          "text": "\"RC installer exited $($result.ExitCode): $($result.Stderr)\""
+        },
+        {
+          "line": 60,
+          "text": "'1.0.19'"
+        },
+        {
+          "line": 60,
+          "text": "'Installed RC must be 1.0.19'"
+        },
+        {
+          "line": 61,
+          "text": "'windows-hide-gate-checks.ps1'"
+        },
+        {
+          "line": 62,
+          "text": "'package-manifest.json'"
+        },
+        {
+          "line": 63,
+          "text": "'resources\\build-provenance.json'"
+        },
+        {
+          "line": 64,
+          "text": "'Installed build provenance differs from requested commit'"
+        },
+        {
+          "line": 65,
+          "text": "'1.0.19'"
+        },
+        {
+          "line": 66,
+          "text": "'installed.json'"
+        },
+        {
+          "line": 67,
+          "text": "'--experimental-strip-types'"
+        },
+        {
+          "line": 67,
+          "text": "'winbox-driver.mjs'"
+        },
+        {
+          "line": 67,
+          "text": "'--run'"
+        },
+        {
+          "line": 68,
+          "text": "' '"
+        },
+        {
+          "line": 71,
+          "text": "'Packaged Node workflow failed; see phases.json and driver output'"
+        },
+        {
+          "line": 72,
+          "text": "'phases.json'"
+        },
+        {
+          "line": 73,
+          "text": "'package-manifest-after.json'"
+        },
+        {
+          "line": 78,
+          "text": "'phases.json'"
+        },
+        {
+          "line": 85,
+          "text": "'worker-status.json'"
+        },
+        {
+          "line": 90,
+          "text": "'Supply -DisposableRunner only on a fresh disposable runner/account; installation writes that account registrations'"
+        },
+        {
+          "line": 91,
+          "text": "'-OutputDirectory is required'"
+        },
+        {
+          "line": 93,
+          "text": "'\\'"
+        },
+        {
+          "line": 94,
+          "text": "'C:\\murage-ci\\results\\',[StringComparison]::OrdinalIgnoreCase)){throw '"
+        },
+        {
+          "line": 95,
+          "text": "'OutputDirectory must be new; stale evidence refused'"
+        },
+        {
+          "line": 97,
+          "text": "'Installer, InstallerSha256 and Commit are required'"
+        },
+        {
+          "line": 100,
+          "text": "'Programs\\Murage'"
+        },
+        {
+          "line": 100,
+          "text": "'Murage'"
+        },
+        {
+          "line": 100,
+          "text": "'.murage'"
+        },
+        {
+          "line": 101,
+          "text": "\"Fresh runner required: existing Murage profile/install at $existing\""
+        },
+        {
+          "line": 103,
+          "text": "'Existing Murage process; refuse a live app'"
+        },
+        {
+          "line": 106,
+          "text": "'fixture'"
+        },
+        {
+          "line": 107,
+          "text": "'app\\Murage.exe'"
+        },
+        {
+          "line": 108,
+          "text": "'request.json'"
+        },
+        {
+          "line": 109,
+          "text": "'MurageCI-'"
+        },
+        {
+          "line": 109,
+          "text": "'N'"
+        },
+        {
+          "line": 109,
+          "text": "'-'"
+        },
+        {
+          "line": 112,
+          "text": "'MURAGE_GATE_RUN_PREFIX'"
+        },
+        {
+          "line": 112,
+          "text": "'MURAGE_GATE_JOB_NAME'"
+        },
+        {
+          "line": 112,
+          "text": "'MURAGE_GATE_CREATE_JOB'"
+        },
+        {
+          "line": 112,
+          "text": "'MURAGE_GATE_TASK_HELPER'"
+        },
+        {
+          "line": 112,
+          "text": "'MURAGE_GATE_NATIVE_BROKER'"
+        },
+        {
+          "line": 113,
+          "text": "'Process'"
+        },
+        {
+          "line": 116,
+          "text": "'desktop-end.png'"
+        },
+        {
+          "line": 118,
+          "text": "'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'"
+        },
+        {
+          "line": 119,
+          "text": "'Windows 11 runner required'"
+        },
+        {
+          "line": 122,
+          "text": "'winbox-sampler.cs'"
+        },
+        {
+          "line": 125,
+          "text": "'Local\\'"
+        },
+        {
+          "line": 127,
+          "text": "'native-broker'"
+        },
+        {
+          "line": 128,
+          "text": "'tasks-before.json'"
+        },
+        {
+          "line": 129,
+          "text": "'windows.jsonl'"
+        },
+        {
+          "line": 131,
+          "text": "'-NoProfile'"
+        },
+        {
+          "line": 131,
+          "text": "'-NonInteractive'"
+        },
+        {
+          "line": 131,
+          "text": "'-ExecutionPolicy'"
+        },
+        {
+          "line": 131,
+          "text": "'Bypass'"
+        },
+        {
+          "line": 131,
+          "text": "'-WindowStyle'"
+        },
+        {
+          "line": 131,
+          "text": "'Hidden'"
+        },
+        {
+          "line": 131,
+          "text": "'-File'"
+        },
+        {
+          "line": 131,
+          "text": "'-WorkerRequest'"
+        },
+        {
+          "line": 132,
+          "text": "' '"
+        },
+        {
+          "line": 133,
+          "text": "'System32\\WindowsPowerShell\\v1.0\\powershell.exe'"
+        },
+        {
+          "line": 139,
+          "text": "'worker-status.json'"
+        },
+        {
+          "line": 140,
+          "text": "\"Worker failed: $($scenario.error)\""
+        },
+        {
+          "line": 148,
+          "text": "'Owned task cleanup failed'"
+        },
+        {
+          "line": 150,
+          "text": "'Worker job empty proof missing'"
+        },
+        {
+          "line": 151,
+          "text": "'job-proofs.json'"
+        },
+        {
+          "line": 153,
+          "text": "'; '"
+        },
+        {
+          "line": 156,
+          "text": "'scenario.json'"
+        },
+        {
+          "line": 164,
+          "text": "'Desktop screenshot/prerequisite failure: '"
+        },
+        {
+          "line": 167,
+          "text": "'observer.json'"
+        },
+        {
+          "line": 169,
+          "text": "'process-metadata.json'"
+        },
+        {
+          "line": 171,
+          "text": "'verdict-input.json'"
+        },
+        {
+          "line": 172,
+          "text": "'windows.jsonl'"
+        },
+        {
+          "line": 174,
+          "text": "'winbox-driver.mjs'"
+        },
+        {
+          "line": 174,
+          "text": "'--verdict'"
+        },
+        {
+          "line": 175,
+          "text": "' '"
+        },
+        {
+          "line": 178,
+          "text": "'Verdict driver failed: '"
+        },
+        {
+          "line": 180,
+          "text": "'verdict.json'"
+        },
+        {
+          "line": 181,
+          "text": "'offending-windows.json'"
+        },
+        {
+          "line": 186,
+          "text": "'verdict.json'"
+        },
+        {
+          "line": 186,
+          "text": "'G-WINBOX'"
+        },
+        {
+          "line": 186,
+          "text": "'FAIL'"
+        },
+        {
+          "line": 189,
+          "text": "'Process'"
+        },
+        {
+          "line": 191,
+          "text": "'verdict.json'"
+        }
+      ]
+    },
+    {
+      "file": "winbox-sampler.cs",
+      "strings": [
+        {
+          "line": 14,
+          "text": "\"user32.dll\""
+        },
+        {
+          "line": 15,
+          "text": "\"user32.dll\""
+        },
+        {
+          "line": 16,
+          "text": "\"user32.dll\""
+        },
+        {
+          "line": 17,
+          "text": "\"user32.dll\""
+        },
+        {
+          "line": 18,
+          "text": "\"user32.dll\""
+        },
+        {
+          "line": 19,
+          "text": "\"kernel32.dll\""
+        },
+        {
+          "line": 24,
+          "text": "\"kernel32.dll\""
+        },
+        {
+          "line": 25,
+          "text": "\"kernel32.dll\""
+        },
+        {
+          "line": 26,
+          "text": "\"kernel32.dll\""
+        },
+        {
+          "line": 27,
+          "text": "\"kernel32.dll\""
+        },
+        {
+          "line": 28,
+          "text": "\"kernel32.dll\""
+        },
+        {
+          "line": 29,
+          "text": "\"kernel32.dll\""
+        },
+        {
+          "line": 30,
+          "text": "\"kernel32.dll\""
+        },
+        {
+          "line": 31,
+          "text": "\"kernel32.dll\""
+        },
+        {
+          "line": 32,
+          "text": "\"user32.dll\""
+        },
+        {
+          "line": 33,
+          "text": "\"user32.dll\""
+        },
+        {
+          "line": 34,
+          "text": "\"user32.dll\""
+        },
+        {
+          "line": 35,
+          "text": "\"user32.dll\""
+        },
+        {
+          "line": 36,
+          "text": "\"user32.dll\""
+        },
+        {
+          "line": 39,
+          "text": "\"Cannot identify input desktop\""
+        },
+        {
+          "line": 46,
+          "text": "\"Default\""
+        },
+        {
+          "line": 46,
+          "text": "\"Default\""
+        },
+        {
+          "line": 46,
+          "text": "\"WinSta0\""
+        },
+        {
+          "line": 46,
+          "text": "\"Interactive WinSta0 Default desktop required (unlocked)\""
+        },
+        {
+          "line": 51,
+          "text": "\":\""
+        },
+        {
+          "line": 76,
+          "text": "\"Process snapshot failed: \""
+        },
+        {
+          "line": 79,
+          "text": "\"Process32First failed\""
+        },
+        {
+          "line": 81,
+          "text": "\"0\""
+        },
+        {
+          "line": 91,
+          "text": "\"Process32Next incomplete\""
+        },
+        {
+          "line": 104,
+          "text": "\"0\""
+        },
+        {
+          "line": 104,
+          "text": "\"\""
+        },
+        {
+          "line": 111,
+          "text": "\"EnumWindows failed: \""
+        },
+        {
+          "line": 127,
+          "text": "\"root\\\\CIMV2\""
+        },
+        {
+          "line": 127,
+          "text": "\"SELECT ExecutablePath,CommandLine,CreationDate FROM Win32_Process WHERE ProcessId=\""
+        },
+        {
+          "line": 129,
+          "text": "\"CreationDate\""
+        },
+        {
+          "line": 131,
+          "text": "\"0\""
+        },
+        {
+          "line": 131,
+          "text": "\"PID reused before metadata lookup\""
+        },
+        {
+          "line": 132,
+          "text": "\"CommandLine\""
+        },
+        {
+          "line": 132,
+          "text": "\"ExecutablePath\""
+        },
+        {
+          "line": 134,
+          "text": "\"Owner exited or command line inaccessible\""
+        },
+        {
+          "line": 144,
+          "text": "\"Metadata worker did not finish within 10 seconds\""
+        }
+      ]
+    },
+    {
+      "file": "winbox-shell-mcp.mjs",
+      "strings": [
+        {
+          "line": 3,
+          "text": "'node:child_process'"
+        },
+        {
+          "line": 4,
+          "text": "'node:fs'"
+        },
+        {
+          "line": 5,
+          "text": "'./native-launcher.mjs'"
+        },
+        {
+          "line": 6,
+          "text": "'win32'"
+        },
+        {
+          "line": 6,
+          "text": "'Windows fixture only'"
+        },
+        {
+          "line": 7,
+          "text": "'/d'"
+        },
+        {
+          "line": 7,
+          "text": "'/c'"
+        },
+        {
+          "line": 7,
+          "text": "'echo winbox-shell-proof & ver'"
+        },
+        {
+          "line": 7,
+          "text": "'utf8'"
+        },
+        {
+          "line": 9,
+          "text": "'Shell proof failed'"
+        },
+        {
+          "line": 10,
+          "text": "'./echo-mcp.mjs'"
+        }
+      ]
+    },
+    {
+      "file": "winbox-proof-audit.node-test.mjs",
+      "strings": [
+        {
+          "line": 1,
+          "text": "'node:test'"
+        },
+        {
+          "line": 2,
+          "text": "'node:assert/strict'"
+        },
+        {
+          "line": 3,
+          "text": "'node:fs'"
+        },
+        {
+          "line": 4,
+          "text": "'utf8'"
+        },
+        {
+          "line": 8,
+          "text": "'winbox-driver.mjs'"
+        },
+        {
+          "line": 8,
+          "text": "'winbox-driver.node-test.mjs'"
+        },
+        {
+          "line": 8,
+          "text": "'winbox-gate.ps1'"
+        },
+        {
+          "line": 8,
+          "text": "'winbox-sampler.cs'"
+        },
+        {
+          "line": 8,
+          "text": "'winbox-shell-mcp.mjs'"
+        },
+        {
+          "line": 8,
+          "text": "'winbox-proof-audit.node-test.mjs'"
+        },
+        {
+          "line": 10,
+          "text": "'\\n'"
+        },
+        {
+          "line": 16,
+          "text": "'BLOCK 3: verification cites behavioral RED and killed implementation mutants'"
+        },
+        {
+          "line": 17,
+          "text": "'evidence/winbox-gate-verification.md'"
+        },
+        {
+          "line": 18,
+          "text": "'afix-reviewed-red.log'"
+        },
+        {
+          "line": 18,
+          "text": "'afix-base-replay-red.log'"
+        },
+        {
+          "line": 18,
+          "text": "'afix-mutant-unknown-owner.log'"
+        },
+        {
+          "line": 18,
+          "text": "'afix-mutant-discard-offenders.log'"
+        },
+        {
+          "line": 18,
+          "text": "'afix-mutant-terminal.log'"
+        },
+        {
+          "line": 18,
+          "text": "'afix-mutant-child.log'"
+        },
+        {
+          "line": 18,
+          "text": "'afix-mutant-self-test.log'"
+        },
+        {
+          "line": 18,
+          "text": "'afix-mutant-workflow.log'"
+        },
+        {
+          "line": 18,
+          "text": "'afix-audit-red.log'"
+        },
+        {
+          "line": 19,
+          "text": "`verification must cite ${log}`"
+        },
+        {
+          "line": 20,
+          "text": "`evidence/${log}`"
+        },
+        {
+          "line": 21,
+          "text": "`${log} must fail a behavioral assertion`"
+        },
+        {
+          "line": 22,
+          "text": "`${log} cannot be a missing-module RED`"
+        },
+        {
+          "line": 27,
+          "text": "'BLOCK 4: every quoted harness string is inventoried'"
+        },
+        {
+          "line": 28,
+          "text": "'winbox-strings.json'"
+        },
+        {
+          "line": 28,
+          "text": "'winbox-strings.json'"
+        },
+        {
+          "line": 29,
+          "text": "'missing string inventory sources'"
+        },
+        {
+          "line": 33,
+          "text": "'ROUND 3: fallback retains an existing offender artifact and driver writes it first'"
+        },
+        {
+          "line": 34,
+          "text": "'winbox-gate.ps1'"
+        },
+        {
+          "line": 35,
+          "text": "\"if(-not (Test-Path -LiteralPath (Join-Path $output 'verdict.json')))\""
+        },
+        {
+          "line": 38,
+          "text": "'offending-windows.json'"
+        },
+        {
+          "line": 39,
+          "text": "'winbox-driver.mjs'"
+        },
+        {
+          "line": 40,
+          "text": "\"writeFileSync(join(dirname(file),'offending-windows.json')\""
+        },
+        {
+          "line": 40,
+          "text": "\"writeFileSync(join(dirname(file),'verdict.json')\""
+        }
+      ]
+    }
+  ]
+}

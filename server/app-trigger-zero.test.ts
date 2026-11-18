@@ -52,6 +52,19 @@ function setup() {
 }
 
 describe("the refusal", () => {
+  it("recovered No limits app lineage passes every child seam and suppresses an owed refusal card", () => {
+    const h = setup();
+    h.store.recordChildRefusal(h.run.runId, "ask", T0);
+    wireAppChildGuard({ lineage: h.store, noLimits: run => run.botId === "bot-a" });
+    for (const kind of ["create", "ask", "delegate"] as const) {
+      expect(refuseAppChild({ threadId: "app-thread" }, kind)).toBeNull();
+      expect(() => assertNotAppChild("app-thread", kind)).not.toThrow();
+    }
+    expect(isAppChildContext("app-thread")).toBe(false);
+    expect(writeOwedCard(h.run.runId)).toBeNull();
+    expect(rebuildOwedCards()).toBe(0);
+  });
+
   it("create, ask and delegate from an app run all refuse with app_child_not_allowed", () => {
     const h = setup();
     for (const kind of ["create", "ask", "delegate"] as const) {

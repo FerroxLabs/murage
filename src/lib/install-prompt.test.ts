@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { installInvite, isAppleMobile, type InstallFacts } from "./install-prompt";
+import { installInvite, isAppleMobile, isCloudDesktopBrowser, type InstallFacts } from "./install-prompt";
 
 const facts = (over: Partial<InstallFacts> = {}): InstallFacts => ({
   standalone: false,
@@ -104,5 +104,28 @@ describe("where the invitation is allowed to appear", () => {
   it("asks native-shell.ts, synchronously, so the first frame is already right", () => {
     const hook = readFileSync(fileURLToPath(new URL("./use-install-prompt.ts", import.meta.url)), "utf8");
     expect(hook).toContain("nativeShell: inNativeShell(),");
+  });
+});
+
+describe("Cloud home on a desktop browser", () => {
+  it("hides the invitation on a Cloud home in a desktop-width or non-touch browser", () => {
+    expect(installInvite(facts({ captured: true, cloudDesktop: true }))).toBe("hidden");
+    expect(installInvite(facts({ ios: true, cloudDesktop: true }))).toBe("hidden");
+  });
+
+  it("classifies the browser: phones keep the invitation, desktops lose it, only on Cloud", () => {
+    expect(isCloudDesktopBrowser(true, 0, 400)).toBe(true);
+    expect(isCloudDesktopBrowser(true, 0, 1440)).toBe(true);
+    expect(isCloudDesktopBrowser(true, 5, 1440)).toBe(true);
+    expect(isCloudDesktopBrowser(true, 5, 390)).toBe(false);
+    expect(installInvite(facts({ captured: true, cloudDesktop: isCloudDesktopBrowser(true, 5, 390) }))).toBe("prompt");
+    expect(installInvite(facts({ ios: true, cloudDesktop: isCloudDesktopBrowser(true, 5, 390) }))).toBe("manual");
+  });
+
+  it("isCloud=false takes the old path unchanged", () => {
+    expect(isCloudDesktopBrowser(false, 0, 1440)).toBe(false);
+    expect(installInvite(facts({ captured: true, cloudDesktop: isCloudDesktopBrowser(false, 0, 1440) }))).toBe("prompt");
+    expect(installInvite(facts({ captured: true }))).toBe("prompt");
+    expect(installInvite(facts({ ios: true }))).toBe("manual");
   });
 });

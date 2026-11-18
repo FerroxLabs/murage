@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-sonnet int1019 lane A r2",
+  "date": "2026-11-11",
+  "base": "9955459fc",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "en:ux.cloud.terms.siteIntro": {
+      "text": "You need to agree to the terms once. Agree on murage.ai, then come back here.",
+      "en": "You need to agree to the terms once. Agree on murage.ai, then come back here.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.signin.notHere": {
+      "text": "You can't sign in to {engine} from a browser yet. Use the Murage desktop app for it.",
+      "en": "You can't sign in to {engine} from a browser yet. Use the Murage desktop app for it.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.brief.sub": {
+      "text": "Each morning, I give you one short page of what needs your attention first. I use your calendar and email once you connect them.",
+      "en": "Each morning, I give you one short page of what needs your attention first. I use your calendar and email once you connect them.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.day.sub": {
+      "text": "Type in today's tasks, one per line. I tell you which task will run late and what to do first.",
+      "en": "Type in today's tasks, one per line. I tell you which task will run late and what to do first.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.notes.sub": {
+      "text": "Paste in your notes. I pick out the next steps and put those with a date or someone waiting for them first.",
+      "en": "Paste in your notes. I pick out the next steps and put those with a date or someone waiting for them first.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.business.sub": {
+      "text": "I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like.",
+      "en": "I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "Bookmark this page so you can come back. You can always return at {site}/home/cloud.",
+      "en": "Bookmark this page so you can come back. You can always return at {site}/home/cloud.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.brief.sub": {
+      "text": "Jeden Morgen eine kurze Seite mit dem, was zuerst deine Aufmerksamkeit braucht. Ich nutze deinen Kalender und deine E-Mails, sobald du sie verbindest.",
+      "en": "Each morning, I give you one short page of what needs your attention first. I use your calendar and email once you connect them.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.day.sub": {
+      "text": "Tippe ein, was heute ansteht, jeweils eine Zeile pro Aufgabe. Ich sage dir, welche Aufgabe sich verspätet und was du zuerst tun solltest.",
+      "en": "Type in today's tasks, one per line. I tell you which task will run late and what to do first.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.business.sub": {
+      "text": "Ich richte zwei Helfer ein, einen, der deine wichtigste Aufgabe auswählt, und einen, der einen Entwurf dafür erstellt, dazu eine wöchentliche Rückschau, die du einschaltest, wenn du magst.",
+      "en": "I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "Setze dir ein Lesezeichen für diese Seite, damit du zurückkommen kannst. Du kommst jederzeit über {site}/home/cloud zurück.",
+      "en": "Bookmark this page so you can come back. You can always return at {site}/home/cloud.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.terms.siteIntro": {
+      "text": "Tienes que aceptar las condiciones una vez. Acéptalas en murage.ai y vuelve aquí.",
+      "en": "You need to agree to the terms once. Agree on murage.ai, then come back here.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.brief.sub": {
+      "text": "Cada mañana, una página corta con lo que necesita tu atención primero. Uso tu calendario y tu correo en cuanto los conectes.",
+      "en": "Each morning, I give you one short page of what needs your attention first. I use your calendar and email once you connect them.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.business.sub": {
+      "text": "Preparo dos ayudantes, uno que elige tu tarea prioritaria y otro que prepara un borrador para ella, más una revisión semanal que activas cuando quieras.",
+      "en": "I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.terms.siteIntro": {
+      "text": "Tu dois accepter les conditions une seule fois. Accepte-les sur murage.ai, puis reviens ici.",
+      "en": "You need to agree to the terms once. Agree on murage.ai, then come back here.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.signin.leadCode": {
+      "text": "Connecte-toi à {engine}. Clique sur le lien ci-dessous, approuve dans le nouvel onglet, puis colle le code affiché dans le champ sur cette page.",
+      "en": "Sign in to {engine}. Click the link below, approve in the new tab, then paste the code it shows into the box here.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.business.sub": {
+      "text": "Je mets en place deux assistants, un pour choisir ta tâche prioritaire et un pour préparer un brouillon pour cette tâche, plus un bilan hebdomadaire que tu actives quand tu veux.",
+      "en": "I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.terms.siteIntro": {
+      "text": "आपको शर्तों से एक बार सहमत होना है। murage.ai पर सहमति दें, फिर यहाँ लौट आएँ।",
+      "en": "You need to agree to the terms once. Agree on murage.ai, then come back here.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.wrong": {
+      "text": "वह कोड काम नहीं आया। फिर से कोशिश करें।",
+      "en": "That code didn't work. Try again.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.expired": {
+      "text": "उस कोड का समय खत्म हो गया है। हम नया कोड भेज सकते हैं।",
+      "en": "That code has expired. We can send a new one.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.restore_release": {
+      "text": "बैकअप से वापस लाने",
+      "en": "restore from a backup",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.bot_widen": {
+      "text": "इस सेटिंग में पहले जितनी अनुमति थी, उससे ज़्यादा अनुमति देने",
+      "en": "allow more than this setting allowed before",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.brief.title": {
+      "text": "हर सुबह मुझे ज़रूरी बातें बताएँ",
+      "en": "Brief me every morning",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.day.sub": {
+      "text": "आज के काम लिखें, हर काम अलग पंक्ति में। यहाँ बताया जाएगा कि किस काम में देर होगी और पहले क्या करना है।",
+      "en": "Type in today's tasks, one per line. I tell you which task will run late and what to do first.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.business.sub": {
+      "text": "दो सहायक तैयार किए जाएँगे, एक आपका सबसे ज़रूरी काम चुनने के लिए और दूसरा उसके लिए मसौदा बनाने के लिए। साथ में एक साप्ताहिक समीक्षा होगी जिसे आप जब चाहें चालू कर सकते हैं।",
+      "en": "I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.computer_viewer": {
+      "text": "ボットの画面を表示する",
+      "en": "open a view of the bot's screen",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.business.sub": {
+      "text": "2人のヘルパーを用意します。1人は優先する作業を選び、もう1人はその作業に使う下書きを作ります。さらに、好きなときにオンにできる週次レビューも付きます。",
+      "en": "I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.terms.siteIntro": {
+      "text": "Você precisa concordar com os termos uma vez. Concorde em murage.ai e depois volte aqui.",
+      "en": "You need to agree to the terms once. Agree on murage.ai, then come back here.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.business.sub": {
+      "text": "Eu configuro dois ajudantes, um para escolher sua tarefa prioritária e outro para preparar um rascunho para ela, além de uma revisão semanal que você liga quando quiser.",
+      "en": "I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.computer_viewer": {
+      "text": "打开机器人的屏幕画面",
+      "en": "open a view of the bot's screen",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.bot_widen": {
+      "text": "扩大此设置原先允许的范围",
+      "en": "allow more than this setting allowed before",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.business.sub": {
+      "text": "我会设置两个帮手，一个负责挑出你最优先的任务，一个负责为这项任务起草内容，再加上你随时可以开启的每周回顾。",
+      "en": "I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

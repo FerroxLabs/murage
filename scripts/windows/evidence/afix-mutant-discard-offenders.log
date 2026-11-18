@@ -1,0 +1,73 @@
+✔ all three console/Terminal classes fail globally, without Murage ancestry (1.811905ms)
+✔ baseline allows only already visible windows, not initially hidden windows (0.58947ms)
+✔ hidden console windows are recorded but never offending (0.201233ms)
+✔ visible descendants include arbitrary classes at any tree depth; main app and unrelated GUI allowed (0.279041ms)
+✔ ancestry is resolved independent of snapshot order and executable path case/slashes (0.234715ms)
+✔ ancestry survives exited parents and PID reuse never invents new ancestry (0.917194ms)
+✔ reused HWND/PID with new process birth is not baseline-exempt (0.185319ms)
+✔ short one-sample flash remains evidence; repeated observations deduplicate (0.148114ms)
+✔ positive run requires complete workflow, cleanup, screenshot, prerequisites, and sample coverage (1.387073ms)
+✔ unresolvable offending owner metadata fails with actionable null fields (0.387675ms)
+✔ self-test must FAIL and separately prove detector health; blind sampler cannot pass self-test (0.319092ms)
+✔ invalid sample ordering/identity cannot produce PASS (0.300404ms)
+✔ BLOCK 1: visible owner absent from the process snapshot fails coverage (0.432032ms)
+✖ BLOCK 2: later invalid samples retain earlier offenders and subsequent detections (0.828901ms)
+✔ driver executes five real transports in order and waits for its exact routine completion (0.704994ms)
+✔ failed or hung routine prevents browser/Sentinel phases and cannot be recorded successful (0.750002ms)
+✔ missing routine run identity is fatal (0.260423ms)
+✔ wait timeout is bounded and callback errors are not swallowed (0.19262ms)
+✔ CLI emits JSON verdict and separate offending-owner list with failure exit status (41.296463ms)
+✖ BLOCK 2 CLI: invalid later sample retains the offending-window artifact (39.870602ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 18
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 148.597981
+
+✖ failing tests:
+
+test at scripts/windows/winbox-driver.node-test.mjs:79:1
+✖ BLOCK 2: later invalid samples retain earlier offenders and subsequent detections (0.828901ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+  + []
+  - [
+  -   40,
+  -   30
+  - ]
+
+      at TestContext.<anonymous> (file:///work/.test-tmp/afix-winbox-gate/mutant-discard-offenders/scripts/windows/winbox-driver.node-test.mjs:85:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ 40, 30 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at scripts/windows/winbox-driver.node-test.mjs:137:1
+✖ BLOCK 2 CLI: invalid later sample retains the offending-window artifact (39.870602ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  0 !== 1
+
+      at TestContext.<anonymous> (file:///work/.test-tmp/afix-winbox-gate/mutant-discard-offenders/scripts/windows/winbox-driver.node-test.mjs:152:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

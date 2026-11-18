@@ -5,7 +5,7 @@ import { freePortBlock } from "../../server/testing/ports";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import type { ConnectorStatus } from "../components/PluginsPanel";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 

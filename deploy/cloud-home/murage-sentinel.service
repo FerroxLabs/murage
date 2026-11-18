@@ -2,7 +2,8 @@
 # Murage Sentinel for a Cloud home (1.0.9, GAP-SENTINEL-109 sections 3.1, 10.1 and 10.3, docs/sentinel.md).
 # A separate, read-only observer of the home's health metadata, never a child of the home or its turn worker, and
 # never started as root. It sees exactly one input: /data/home/health, projected read-only into its own runtime
-# folder (the rest of /data is an empty read-only tmpfs). Its only write root is its own persistent StateDirectory.
+# folder (the rest of /data is an empty read-only tmpfs). Writes are restricted
+# to its persistent StateDirectory and the authenticated receipt directory.
 # No network of any kind, no container socket, no credentials, no Flux.
 #
 # Identity: the scanner accepts only inputs owned by the account that runs it (server/sentinel/paths.ts), so it runs
@@ -22,6 +23,7 @@ Group=murage
 UMask=0077
 # The home server sets the same value (server/cloud-home/boot.ts), so both resolve one output root.
 Environment=MURAGE_SENTINEL_STATE_DIR=/var/lib/murage-sentinel
+Environment=MURAGE_RESOURCES_PATH=/opt/murage/resources
 Nice=19
 IOSchedulingClass=idle
 ExecStartPre=/usr/local/bin/node /usr/local/libexec/murage-sentinel-descriptor.mjs
@@ -33,6 +35,9 @@ RuntimeDirectory=murage-sentinel murage-sentinel/home
 RuntimeDirectoryMode=0700
 TemporaryFileSystem=/data:ro
 BindReadOnlyPaths=-/data/home/health:/run/murage-sentinel/home/health
+# Receipt producer/consumer owner: scperf-p2. Exact writable exception; health
+# remains read-only and the remaining data directory remains inaccessible.
+BindPaths=-/data/home/sentinel-io:/run/murage-sentinel/home/sentinel-io
 InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock -/run/podman -/run/containerd
 NoNewPrivileges=yes
 ProtectSystem=strict

@@ -2,7 +2,8 @@
 // model existed (embedding_status 'unavailable') are owed an embedding. This
 // re-queues them in bounded batches, yielding between batches, exactly once at
 // a time, and records completion durably so a restart does not repeat it.
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "../config.ts";
 import { database } from "../database.ts";

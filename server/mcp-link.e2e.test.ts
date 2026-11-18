@@ -16,8 +16,9 @@
 //   2. sign in through main (DCR, PKCE, loopback) with the fake browser
 //   3. Test ok
 //   4. Turn on
-//   5. one turn per engine class (Claude, Codex, ACP, pi) calls the first tool
-//      through the proxy (the fakes' "call first custom tool" mode)
+//   5. Claude, Codex and ACP call the first tool through the proxy; Pi refuses
+//      consuming mounts and completes a separate native turn.
+//      MAIN RULING 1115-C4D2-FOUR retains Pi isolation and all four launch witnesses.
 //   6. the access token expires mid-turn: refresh, and the call succeeds
 //   +  a tool that needs more access: card, step-up sign-in asks for it, resume
 //   +  a restart while a card waits: the token main hands over again resumes nothing
@@ -25,16 +26,25 @@
 //   8. remove: revoke hit, secrets gone
 // plus an API key run and a legacy SSE run, and the grep: no token of the fake
 // anywhere under the run's temp directory, in the engines' launch env or argv.
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { removeTempDir } from "./testing/cleanup.ts";
-import { startDesktopShell, type DesktopShell } from "./testing/desktop-shell.ts";
+import { startDesktopShell, PARENT_PORT_PRELUDE, type DesktopShell } from "./testing/desktop-shell.ts";
 import { startFakeRemoteMcp, type FakeRemoteMcp } from "./testing/fake-remote-mcp.ts";
 import { mcpSignInToolText } from "./mcp-signin-card.ts";
+import { PiDriver } from "./drivers/pi.ts";
+import * as procs from "./procs.ts";
+import { bindFixtureAdapter } from "./testing/mcp-admission-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
+import { recordEvents } from "./testing/events.ts";
+import { customIntegrations } from "./custom-mcp-mounts.ts";
+import { SPAWNED_PROXIES } from "./proxy-paths.ts";
+import { ensureDirs } from "./config.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKES = {
@@ -54,6 +64,7 @@ const posixOnly = describe.skipIf(process.platform === "win32");
 interface ToolLine {
   engine: string; server: string; tools: string[]; tool?: string; text: string; isError: boolean; prompt: string;
   launch: { argv: string[]; env: Record<string, string>; turnSecrets?: Record<string, string> }; engineArgv: string[];
+  ownerLaunch?: { argv: string[]; env: Record<string, string> };
 }
 
 let home = "";
@@ -65,6 +76,8 @@ let legacy: FakeRemoteMcp;
 const API_KEY = "fake-key-e2e-5c1f0a9b7d3e";
 const LEGACY_KEY = "fake-key-legacy-0e9d8c7b";
 const bots = new Map<string, { id: string; threadId: string }>();
+// MAIN RULING 1115-C4D2-FOUR: native Pi is an independent, real launch witness.
+const nativeLaunches: Array<Pick<ToolLine, "engine" | "launch" | "engineArgv">> = [];
 
 const toolLines = (): ToolLine[] => existsSync(toolLog) ? readFileSync(toolLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as ToolLine) : [];
 const messages = async (threadId: string) => (await shell.desktop("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as Array<Record<string, any>>;
@@ -112,6 +125,14 @@ function everyFile(dir: string): Array<{ path: string; text: string }> {
 }
 
 posixOnly("MCP-LINK T15: a link server end to end", () => {
+  afterEach(() => {
+    // A failed scenario must not change the next scenario's fake server.
+    if (oauth) {
+      oauth.options.refreshMode = "rotate";
+      oauth.options.expireOnToolsList = false;
+      oauth.options.requireScopeForTool = undefined;
+    }
+  });
   beforeAll(async () => {
     for (const cli of Object.values(FAKES)) chmodSync(cli, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-mcp-link-e2e-"));
@@ -126,7 +147,7 @@ posixOnly("MCP-LINK T15: a link server end to end", () => {
       instances: {
         claude: { driver: "claudeAgent", environment, config: { cli: FAKES.claude } },
         codex: { driver: "codex", environment, config: { cli: FAKES.codex, fullAuto: true } },
-        acp: { driver: "grokAgent", environment, config: { cli: FAKES.acp, fullAuto: false } },
+        acp: { driver: "grokAgent", environment: { ...environment, FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" }, config: { cli: FAKES.acp, fullAuto: false } },
         pi: { driver: "piAgent", environment, config: { cli: FAKES.pi, fullAuto: false } },
       },
     }));
@@ -173,13 +194,68 @@ posixOnly("MCP-LINK T15: a link server end to end", () => {
   for (const { engine, instanceId, model } of ENGINES) {
     it(`5. a ${engine} turn calls the first tool through the proxy`, async () => {
       const bot = await botFor(engine, instanceId, model);
+      // MAIN RULING 1115-C4D2-FOUR: Pi must refuse mounted consumption before calling any tool.
+      if (engine === "pi") {
+        const before = toolLines().length;
+        const callsBefore = oauth.toolCalls.length;
+        // Hold the consuming premise at the driver boundary: dispatch recovery may
+        // otherwise drop every integration and run a native last-resort turn.
+        const custom = customIntegrations(JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8")), {
+          execPath: process.execPath, proxyPath: SPAWNED_PROXIES.remoteMcp, wipeProxyPath: SPAWNED_PROXIES.wipeMcp,
+          harnessUrl: shell.base, token: () => "unlaunched",
+        });
+        expect(custom).toHaveProperty("comfy");
+        ensureDirs();
+        const driver = await PiDriver.create({ instanceId: "pi-native", displayName: "Pi native", enabled: true,
+          environment: { HOME: home }, config: { cli: FAKES.pi, fullAuto: false } });
+        bindFixtureAdapter(driver.adapter);
+        const recorder = recordEvents(driver.adapter);
+        const spawn = procs.spawnCli;
+        const launchesBefore = nativeLaunches.length;
+        const observed = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, options, ...rest) => {
+          const child = spawn(cli, args, options, ...rest);
+          if (cli === FAKES.pi && args.includes("--mode") && args.includes("rpc")) {
+            nativeLaunches.push({ engine: "pi", launch: { argv: [cli, ...args], env: { ...options.env } as Record<string, string> }, engineArgv: [...args] });
+          }
+          return child;
+        });
+        try {
+          const refused = await driver.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: bot.threadId, text: "use my comfy tools", model,
+            integrations: { custom } }).then(() => undefined, (error: Error) => error);
+          expect(refused).toBeInstanceOf(Error);
+          expect(refused!.message).toBe("Murage keeps this bot's memory out of Pi's tools.");
+          expect(recorder.events).toEqual([]);
+          expect(nativeLaunches).toHaveLength(launchesBefore);
+          expect(toolLines()).toHaveLength(before);
+          expect(oauth.toolCalls).toHaveLength(callsBefore);
+
+          // MAIN RULING 1115-C4D2-FOUR: a separate native Pi turn still launches and completes.
+          await driver.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "pi-native", text: "hello", model });
+          expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true, stopReason: "end_turn" });
+          expect(recorder.events).toContainEqual(expect.objectContaining({ type: "item.completed", itemType: "assistant_text", text: "Hello from pi" }));
+          expect(nativeLaunches).toHaveLength(launchesBefore + 1);
+          expect(nativeLaunches.at(-1)!.launch.env.MURAGE_MCP_CONFIG).toBeUndefined();
+          expect(toolLines()).toHaveLength(before);
+          expect(oauth.toolCalls).toHaveLength(callsBefore);
+        } finally { recorder.stop(); await driver.dispose(); observed.mockRestore(); }
+        return;
+      }
       const [line] = await turn(bot, "use my comfy tools");
       expect(line).toMatchObject({ engine, server: "comfy", tools: ["echo", "sum"], tool: "echo", text: `hello from ${engine}`, isError: false });
       // the engine was handed the proxy, by name in argv, and a turn token: no link, no credential
-      expect(line!.launch.argv[1]).toMatch(/remote-mcp-proxy\.(ts|js)$/);
-      expect(line!.launch.argv.slice(2)).toEqual(["--server", "comfy"]);
+      // MAIN RULING 2026-11-14 INT-CONFLICT-DEFAULT 8d27ebcf26 c542c40722: retain the real owned-I/O launcher and assert its exact underlying native shim, without an arbitrary argv-prefix exemption.
+      const metered = /io-proxy-launcher\.(ts|js)$/.test(line!.launch.argv[1] ?? "");
+      const shimArgv = metered ? [line!.launch.argv[0], ...line!.launch.argv.slice(2)] : line!.launch.argv;
+      if (metered) expect(line!.launch.env).toMatchObject({ MURAGE_IO_PROXY_PORT: expect.stringMatching(/^\d+$/), MURAGE_IO_PROXY_KEY: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+      // MAIN RULING 2026-11-14 INT-CONFLICT-DEFAULT 8d27ebcf26 eb01447e7d: the native wire holds the shim; retain the exact proxy/token checks against the independently observed admitted server.
+      expect(shimArgv[1]).toMatch(/cli-mount-shim\.(ts|js)$/);
+      expect(line!.ownerLaunch!.argv[1]).toMatch(/remote-mcp-proxy\.(ts|js)$/);
+      // MAIN RULING 2026-11-14 INT-CONFLICT-DEFAULT 8d27ebcf26 c542c40722: the same exact server arguments follow the metered shim.
+      expect(shimArgv.slice(2)).toEqual(["--server", "comfy"]);
       // claude and codex carry it in the per-process credential file, the others in env
-      expect(line!.launch.env.MURAGE_MCP_TOKEN ?? line!.launch.turnSecrets?.MURAGE_MCP_TOKEN).toMatch(/^[a-f0-9]{48}$/);
+      // MAIN RULING 2026-11-14 INT-CONFLICT-DEFAULT 8d27ebcf26 eb01447e7d: the native wire no longer inlines this token; retain its original exact shape in admitted-server evidence.
+      expect(line!.ownerLaunch!.env.MURAGE_MCP_TOKEN).toMatch(/^[a-f0-9]{48}$/);
+      expect(line!.launch.env.MURAGE_MCP_TOKEN).toBeUndefined();
       expect(JSON.stringify(line!.launch)).not.toContain(oauth.mcpUrl);
       expect(oauth.toolCalls.at(-1)).toEqual({ name: "echo", arguments: { text: `hello from ${engine}` } });
       expect(lastBearer(oauth)).toBe((shell.credentials().mcpServerSecrets as Record<string, any>).comfy.oauth.accessToken);
@@ -225,7 +301,8 @@ posixOnly("MCP-LINK T15: a link server end to end", () => {
   }, 120_000);
 
   it("restart while a card waits: the token main hands over again at start-up resumes nothing; a new sign-in does", async () => {
-    const bot = bots.get("pi")!;
+    // MAIN RULING 1115-C4D2-FOUR: use admitted ACP in its own conversation, keeping later card scenarios independent.
+    const bot = await botFor("restart-acp", "acp", "fake-model");
     // the authorization server is down, so main keeps the token it has; the relay gives up after its wait
     oauth.options.refreshMode = "unavailable";
     oauth.options.expireOnToolsList = true;
@@ -249,7 +326,8 @@ posixOnly("MCP-LINK T15: a link server end to end", () => {
     expect(await shell.service.signIn("comfy")).toEqual({ ok: true });
     await expect.poll(async () => (await cards(bot.threadId))[0]?.mcpSignIn.status, { timeout: 20_000 }).toBe("signed-in");
     await expect.poll(() => toolLines().length - linesBefore, { timeout: 60_000 }).toBeGreaterThanOrEqual(1);
-    expect(toolLines()[linesBefore]).toMatchObject({ engine: "pi", text: "hello from pi", isError: false });
+    // MAIN RULING 1115-C4D2-FOUR: ACP owns this consuming call; native Pi was proved separately.
+    expect(toolLines()[linesBefore]).toMatchObject({ engine: "acp", text: "hello from acp", isError: false });
     await expect.poll(() => busy(bot.id), { timeout: 60_000 }).toBe(false);
   }, 180_000);
 
@@ -347,7 +425,9 @@ posixOnly("MCP-LINK T15: a link server end to end", () => {
     expect(files.some((file) => file.path.endsWith("config.json"))).toBe(true);
     const leaks = files.flatMap((file) => secrets.filter((secret) => file.text.includes(secret)).map((secret) => `${file.path}: ${secret.slice(0, 6)}…`));
     expect(leaks).toEqual([]);
-    const lines = toolLines();
+    // MAIN RULING 1115-C4D2-FOUR: retain all four real engines and every credential-negative check.
+    const lines = [...toolLines(), ...nativeLaunches];
+    expect(nativeLaunches).toHaveLength(1);
     expect(new Set(lines.map((line) => line.engine))).toEqual(new Set(["claude", "codex", "acp", "pi"]));
     for (const line of lines) {
       const launch = JSON.stringify([line.launch, line.engineArgv]);
@@ -356,4 +436,23 @@ posixOnly("MCP-LINK T15: a link server end to end", () => {
     for (const secret of secrets) expect(shell.stderr().includes(secret)).toBe(false);
     for (const line of shell.log) for (const secret of secrets) expect(line.includes(secret)).toBe(false);
   });
+});
+
+
+it("the desktop fixture parent port keeps independent listeners and removes only the requested one", () => {
+  const script = `
+    import assert from 'node:assert/strict';
+    const port=process.parentPort,seen=[];
+    const a=event=>seen.push('a:'+event.data),b=event=>seen.push('b:'+event.data);
+    port.on('message',a);port.on('message',b);
+    process.emit('message',1);
+    assert.deepEqual(seen,['a:1','b:1']);
+    port.removeListener('message',b);process.emit('message',2);
+    assert.deepEqual(seen,['a:1','b:1','a:2']);
+    const sent=[];process.send=message=>sent.push(message);port.postMessage({type:'fixture'});
+    assert.deepEqual(sent,[{type:'fixture'}]);
+  `;
+  const result=spawnSync(process.execPath,["--import",PARENT_PORT_PRELUDE,"--input-type=module","-e",script],{encoding:"utf8",timeout:10_000});
+  expect(result.error).toBeUndefined();
+  expect(result.status,result.stderr).toBe(0);
 });

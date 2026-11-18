@@ -14,24 +14,3 @@ export function sha256Hex(value: string): string;
 export function fluxKeyFingerprint(fluxKey: string): string;
 export function brokerTokenFingerprint(token: string): string;
 export function clearFluxComposioBrokerToken<T extends FluxComposioTokenFields>(credentials: T): T;
-export function revokeFluxComposioBrokerToken(options: {
-  fluxBrokerUrl: string;
-  token: string | undefined;
-  fetchImpl?: typeof fetch;
-  timeoutSignal?: (milliseconds: number) => AbortSignal;
-}): Promise<boolean>;
-export function ensureFluxComposioBrokerToken<T extends FluxComposioTokenFields>(options: {
-  fluxBrokerUrl: string;
-  credentials: T;
-  fluxKey: string;
-  fetchImpl?: typeof fetch;
-  log?: (line: string) => void;
-  timeoutSignal?: (milliseconds: number) => AbortSignal;
-  now?: number;
-  force?: boolean;
-  rejectedTokenFingerprint?: string;
-  onRateLimited?: () => void;
-  onTransientFailure?: () => void;
-  revokeSink?: Array<{ fluxBrokerUrl: string; previous: string; minted: string }>;
-  label?: string;
-}): Promise<T>;
