@@ -14,7 +14,7 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
@@ -68,9 +68,9 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 
 async function start(page: import("@playwright/test").Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
-  // the release notes dialog and the No limits terms are other surfaces'; keep them out of the way
+  // the release notes dialog, the No limits terms and its one-time upgrade notice (NoLimitsFollowers, d5246592e1) are other surfaces'; keep them out of the way
   await page.route("**/api/whats-new?*", (route) => route.fulfill({ json: { show: false } }));
-  await page.addInitScript(() => { localStorage.setItem("murage.noLimitsTerms.notNow.3", "1"); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); });
+  await page.addInitScript(() => { localStorage.setItem("murage.noLimitsTerms.notNow.3", "1"); localStorage.setItem("murage.noLimitsUpgrade.1019", "1"); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("help.seen.chat.level-chip", "1"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); });
   await page.goto(origin);
 }
 

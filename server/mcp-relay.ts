@@ -1,3 +1,4 @@
+import { inertBot } from "./store.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -13,7 +14,8 @@
 // mcpRemoteAudienceRefusal, mcpRemoteBotRefusal, validateRelayBody,
 // rewriteInitializeCapabilities, relayTimeoutFor, safeSessionId,
 // safeProtocolVersion, relayFailure.
-import type { Readable } from "node:stream";
+import { Readable } from "node:stream";
+import { accountedChunks, reserveUpstreamRequest } from "./memory/upstream-reader.ts";
 import { GuardedHttpError, guardedRequest } from "../shared/guarded-http.mjs";
 import { LIMITS } from "../shared/remote-mcp-url.mjs";
 import type { StoredRemoteMcpServer } from "./mcp-registry.ts";
@@ -54,16 +56,17 @@ export function mcpRemoteAudienceRefusal(threadId: string, isOwner: (threadId: s
 
 /** A bot the owner restricted to approved connected-app tools, or hid, does not
  * get the owner's own tool servers either. */
-export function mcpRemoteBotRefusal(bot: { hidden?: boolean; draftOnly?: true }, accessMode: "restricted" | "unrestricted"): string | null {
+export function mcpRemoteBotRefusal(bot: { hidden?: boolean; draftOnly?: true }, accessMode: "restricted" | "unrestricted", noLimits = false): string | null {
+  if (noLimits && bot.hidden !== true && !inertBot(bot)) return null;
   if (bot.draftOnly === true) return MCP_REMOTE_DRAFT_ONLY_BOT;
-  return bot.hidden === true || accessMode === "restricted" ? MCP_REMOTE_RESTRICTED_BOT : null;
+  return bot.hidden === true || inertBot(bot) || accessMode === "restricted" ? MCP_REMOTE_RESTRICTED_BOT : null;
 }
 
 /** The owner's own command and link servers are mounted for a bot only when the
  * owner has not restricted or hidden it (MCP-LINK H1). Both mount sites in
  * index.ts gate on this. */
-export function ownServersAllowedFor(bot: AccessRole): boolean {
-  return mcpRemoteBotRefusal(bot, botAccessPolicy(bot).mode) === null;
+export function ownServersAllowedFor(bot: AccessRole, noLimits = false): boolean {
+  return mcpRemoteBotRefusal(bot, botAccessPolicy(bot).mode, noLimits) === null;
 }
 
 /** The relay's audience test on the turn's own record: the audience
@@ -227,10 +230,13 @@ async function readAll(response: StreamedResponse, deadline: number): Promise<Bu
   const timer = setTimeout(() => { expired = true; response.close(); }, Math.max(0, deadline - Date.now()));
   try {
     const chunks: Buffer[] = [];
-    for await (const chunk of response.stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    for await (const chunk of accountedChunks(response.stream, "collection")) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     // a body cut at the deadline is no answer, never a partial one
     if (expired) throw new GuardedHttpError("timeout");
     return Buffer.concat(chunks);
+  } catch (error) {
+    response.close();
+    throw error;
   } finally {
     clearTimeout(timer);
   }
@@ -240,6 +246,7 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
   let response: StreamedResponse;
   const deadline = Date.now() + timeoutMs;
   try {
+    reserveUpstreamRequest(Buffer.byteLength(JSON.stringify(message)));
     response = await guardedRequest({
       url, method: "POST", kind: "mcp", mode: "request", confirmed: ctx.server.local ?? null, responseMode: "stream",
       signal: ctx.signal, resolver: ctx.resolver, totalMs: timeoutMs, body: JSON.stringify(message),
@@ -251,6 +258,7 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
       },
     }) as unknown as StreamedResponse;
   } catch (error) {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
     return failed(reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable"), host);
   }
   const { status } = response;
@@ -268,11 +276,18 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
     // An SSE answer has no deadline here: the engine's proxy owns the call's
     // bound (paused while the owner answers the server's question), and the
     // route ends this stream when the proxy's connection closes.
-    if (contentType === "text/event-stream") return { ok: true, status: 200, contentType, body: response.stream, ...sessionOf(response) };
+    if (contentType === "text/event-stream") {
+      const chunks = accountedChunks(response.stream, "sse");
+      const body = Readable.from((async function* () {
+        try { yield* chunks; } finally { response.close(); }
+      })());
+      return { ok: true, status: 200, contentType, body, ...sessionOf(response) };
+    }
     let body: Buffer;
     try {
       body = await readAll(response, deadline);
     } catch (error) {
+      if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
       return failed(reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable"), host);
     }
     return { ok: true, status: 200, contentType, body, ...sessionOf(response) };

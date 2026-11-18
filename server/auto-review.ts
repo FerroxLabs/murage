@@ -23,7 +23,8 @@ export interface ReviewContext {
   source: AutoVerdictSource | undefined;
   mode: AutoReviewMode;
   unattended: boolean;
-  approvalScope: "local-computer" | undefined;
+  /** null and undefined both mean no scope (the decision snapshot stores null) */
+  approvalScope: "local-computer" | null | undefined;
   /** the tool the request names; a question tool is never reviewed */
   tool?: string;
   /** the driver's trusted signal that this ask is a question */
@@ -48,7 +49,7 @@ export function shouldReview(context: ReviewContext): boolean {
     context.mode !== "off" &&
     context.source === "no-grant" &&
     !context.unattended &&
-    context.approvalScope === undefined
+    context.approvalScope == null
   );
 }
 

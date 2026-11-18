@@ -9,6 +9,7 @@
 //  - how does text get scrubbed of contact details and secrets before it is
 //    kept as evidence?
 
+import { maskVendorLast, tracked, runStages, replaceTracked } from "../../shared/basic-auth-mask.ts";
 export interface TextSegment { text: string; party: "owner" | "third-party" }
 
 const QUOTE_LINE = /^\s*>/;
@@ -72,10 +73,10 @@ const REDACTIONS: Array<[RegExp, string]> = [
 
 /** Removes contact details, links and secret-looking values. Applied to every
  * piece of text kept as learning evidence. */
-export function redactLearningText(text: string): string {
-  let out = text;
-  for (const [pattern, label] of REDACTIONS) out = out.replace(pattern, label);
-  return out;
+export const LEARNING_SECRET_STAGES=REDACTIONS.map(([pattern,label])=>tracked((text,edits)=>replaceTracked(text,pattern,()=>label,edits)));
+export const baseLearningText=(text:string)=>runStages(text,LEARNING_SECRET_STAGES);
+export function redactLearningText(text:string):string {
+  return maskVendorLast(text,LEARNING_SECRET_STAGES,()=>"[secret]");
 }
 
 const words = (text: string) => text.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);

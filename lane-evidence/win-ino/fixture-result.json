@@ -1,0 +1,201 @@
+{
+  "fixture": {
+    "url": "http://127.0.0.1:20112",
+    "pid": 17,
+    "dataDir": "/tmp/murage-verify-data-udhw5x",
+    "logPath": "/tmp/murage-verification-evidence/server-1794517282980-7.log"
+  },
+  "commands": [
+    {
+      "command": "doctor --url <fixture>",
+      "result": {
+        "ok": true,
+        "health": {
+          "status": "connected",
+          "endpoint": "http://127.0.0.1:20112",
+          "app": "murage",
+          "packaged": false
+        },
+        "availableEngines": [
+          "verification"
+        ],
+        "instances": [
+          {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "displayName": "Verification fixture",
+            "snapshot": {
+              "state": "available"
+            },
+            "models": {
+              "default": "claude-sonnet-5-5",
+              "options": [
+                {
+                  "id": "claude-fable-5-1",
+                  "label": "Claude Fable 5.1"
+                },
+                {
+                  "id": "claude-fable-5",
+                  "label": "Claude Fable 5"
+                },
+                {
+                  "id": "claude-opus-5-5",
+                  "label": "Claude Opus 5.5",
+                  "contextWindow": 1000000
+                },
+                {
+                  "id": "claude-opus-5",
+                  "label": "Claude Opus 5"
+                },
+                {
+                  "id": "claude-sonnet-5-5",
+                  "label": "Claude Sonnet 5.5",
+                  "contextWindow": 1000000
+                },
+                {
+                  "id": "claude-sonnet-5",
+                  "label": "Claude Sonnet 5"
+                },
+                {
+                  "id": "claude-haiku-5-5",
+                  "label": "Claude Haiku 5.5",
+                  "contextWindow": 1000000
+                },
+                {
+                  "id": "claude-haiku-4-5",
+                  "label": "Claude Haiku 4.5"
+                }
+              ]
+            },
+            "capabilities": {
+              "computerMcp": true,
+              "agentsMcp": true,
+              "composioMcp": true,
+              "phoneMcp": true,
+              "browserMcp": true,
+              "images": true,
+              "effortLevels": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "queueing": true,
+              "localComputerMcp": true,
+              "approvalReview": true,
+              "memoryDelivery": "prefixed-reference",
+              "memoryMcp": true
+            },
+            "access": "subscription"
+          }
+        ]
+      }
+    },
+    {
+      "command": "parkSignalForDowngrade(disposable fixture)",
+      "root": {
+        "identity": "09ee6fbb0d8fda9b4caa050eaac3bfce4452f18a985929d98a55bd97dce7de8e",
+        "dev": "49",
+        "ino": "4610931"
+      },
+      "state": "parked"
+    },
+    {
+      "command": "recoverSignalPark(disposable fixture)",
+      "result": {
+        "state": "ready",
+        "durabilityLimited": false
+      },
+      "syntheticBytesPreserved": true
+    },
+    {
+      "command": "restart fixture; doctor --url <fixture>",
+      "result": {
+        "ok": true,
+        "health": {
+          "status": "connected",
+          "endpoint": "http://127.0.0.1:20112",
+          "app": "murage",
+          "packaged": false
+        },
+        "availableEngines": [
+          "verification"
+        ],
+        "instances": [
+          {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "displayName": "Verification fixture",
+            "snapshot": {
+              "state": "available"
+            },
+            "models": {
+              "default": "claude-sonnet-5-5",
+              "options": [
+                {
+                  "id": "claude-fable-5-1",
+                  "label": "Claude Fable 5.1"
+                },
+                {
+                  "id": "claude-fable-5",
+                  "label": "Claude Fable 5"
+                },
+                {
+                  "id": "claude-opus-5-5",
+                  "label": "Claude Opus 5.5",
+                  "contextWindow": 1000000
+                },
+                {
+                  "id": "claude-opus-5",
+                  "label": "Claude Opus 5"
+                },
+                {
+                  "id": "claude-sonnet-5-5",
+                  "label": "Claude Sonnet 5.5",
+                  "contextWindow": 1000000
+                },
+                {
+                  "id": "claude-sonnet-5",
+                  "label": "Claude Sonnet 5"
+                },
+                {
+                  "id": "claude-haiku-5-5",
+                  "label": "Claude Haiku 5.5",
+                  "contextWindow": 1000000
+                },
+                {
+                  "id": "claude-haiku-4-5",
+                  "label": "Claude Haiku 4.5"
+                }
+              ]
+            },
+            "capabilities": {
+              "computerMcp": true,
+              "agentsMcp": true,
+              "composioMcp": true,
+              "phoneMcp": true,
+              "browserMcp": true,
+              "images": true,
+              "effortLevels": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "queueing": true,
+              "localComputerMcp": true,
+              "approvalReview": true,
+              "memoryDelivery": "prefixed-reference",
+              "memoryMcp": true
+            },
+            "access": "subscription"
+          }
+        ]
+      },
+      "logPath": "/tmp/murage-verification-evidence/server-1794517287636-7.log"
+    }
+  ],
+  "cleaned": true
+}

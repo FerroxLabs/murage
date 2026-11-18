@@ -151,6 +151,7 @@
   "ux.l2b.health.doc.engineLimit.step": "It carries on when the limit resets. Pick another engine for urgent work.",
   "ux.l2b.health.doc.fluxStops.matters": "Every bot on Fuigo stops answering until this is fixed.",
   "ux.l2b.health.doc.fluxKey.title": "Flux Router: the key is not working",
+  "ux.l2b.health.doc.fluxNotReady.step": "Press Check again below.",
   "ux.l2b.health.doc.fluxKey.step": "Enter a working key in Settings, Models on your computer.",
   "ux.l2b.health.doc.fluxUsedUp.title": "Flux Router: allowance used up",
   "ux.l2b.health.doc.fluxUsedUp.step": "Add credit in your Flux Router account, then press Check again.",
@@ -173,5 +174,10 @@
   "ux.l2b.health.do.checkFailed": "Could not check again. Try again in a moment.",
   "ux.l2b.health.do.backupStarted": "Backup started.",
   "ux.l2b.health.do.backupHere": "Back up from Settings, Backups on your computer.",
-  "ux.l2b.health.doc.fuigoMissing.title": "{engine} is not ready on this computer"
+  "ux.l2b.health.doc.fuigoMissing.title": "{engine} is not ready on this computer",
+  "ux.l2b.disk.section": "Disk space",
+  "ux.l2b.disk.readOnly": "Your disk is almost full. Chats are read-only. Free some space, then restart Murage.",
+  "ux.l2b.disk.refusing": "Your disk is almost full. Free some space to make changes again.",
+  "ux.l2b.disk.restart": "Restart Murage",
+  "ux.l2b.disk.restartFallback": "Quit Murage and open it again."
 }

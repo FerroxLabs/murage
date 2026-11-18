@@ -1,0 +1,466 @@
+{
+  "schema": 1,
+  "owners": {
+    "producer": "win-sac-sign",
+    "collectorAndExecution": "MAIN",
+    "signingIdentity": "secure administration",
+    "s4Policy": "GrokBuild"
+  },
+  "cases": [
+    {
+      "id": "preflight",
+      "action": "Measure the existing tagged Windows 11 box, installed authority and actual caller token; do not enroll or repair anything. Refuse witness mode in any CI workflow environment. Signing and fresh-image extraction execute only in their separately admitted boundaries, never on the witness host.",
+      "expect": {
+        "windows11": true,
+        "sacEnforcing": true,
+        "standardUser": true,
+        "administratorMember": false,
+        "elevated": false,
+        "integrityLevel": "Medium",
+        "elevationType": "Default",
+        "authorityEnrolled": true,
+        "collectorSealed": true,
+        "existingTaggedBox": true
+      },
+      "captures": [
+        "policy",
+        "token",
+        "enrollment"
+      ]
+    },
+    {
+      "id": "presecret-both-workflows",
+      "action": "Use credential-free sentinels for PATH/GITHUB_PATH fake node and pwsh, all applicable PowerShell profiles and NODE_OPTIONS preload, in BOTH workflows and the signing child; tamper each sealed binary/tree before secret injection.",
+      "expect": {
+        "packageWorkflowExercised": true,
+        "releaseWorkflowExercised": true,
+        "providerChildExercised": true,
+        "profileVariantsComplete": true,
+        "sentinelExecutions": 0,
+        "secretExposures": 0,
+        "tamperedTreesRejectedBeforeSecrets": true,
+        "effectiveEnvironmentMeasured": true,
+        "executableHashesAndArgvMatch": true
+      },
+      "captures": [
+        "processes",
+        "sentinels",
+        "environment",
+        "sealed-trees"
+      ]
+    },
+    {
+      "id": "acquisition",
+      "action": "Run the actual locked builder and pinned provider with stock signer/Azure-manager/download/install sentinels, cold ambient caches, missing and corrupt staged dependencies; exercise publisher lazy queries, copy, resources, app/addons/helpers/GEPA, NSIS and ZIP.",
+      "expect": {
+        "lockedBuilderExercised": true,
+        "providerImportGraphAudited": true,
+        "unknownDispatchEdges": 0,
+        "azureManagerInitializations": 0,
+        "stockSignerCalls": 0,
+        "credentialBearingAcquisitions": 0,
+        "missingDependencyRejectedBeforeImport": true,
+        "corruptCacheRejectedBeforeImport": true,
+        "allBuilderBoundariesExercised": true
+      },
+      "captures": [
+        "dispatch-graph",
+        "processes",
+        "egress",
+        "sentinels"
+      ]
+    },
+    {
+      "id": "service-admission",
+      "action": "Exercise the real SYSTEM pipe service with wrong SID, filtered administrator, elevated and foreign-session callers, forged/replayed/expired run authorization and a second seal/release; use only disposable run leases.",
+      "expect": {
+        "realService": true,
+        "wrongSidRejected": true,
+        "filteredAdminRejected": true,
+        "elevatedRejected": true,
+        "foreignSessionRejected": true,
+        "forgedAuthorizationRejected": true,
+        "replayRejected": true,
+        "expiryRejected": true,
+        "secondSealRejected": true,
+        "secondReleaseRejected": true,
+        "unauthorizedProviderCalls": 0
+      },
+      "captures": [
+        "service",
+        "token",
+        "leases"
+      ]
+    },
+    {
+      "id": "sealed-tree-races",
+      "action": "Attempt changed/extra/missing files, junction/symlink ancestor and leaf swaps, hardlinks, alternate streams and post-measurement replacement against disposable copies at the actual service launch seam.",
+      "expect": {
+        "allVariantsExercised": true,
+        "allRejectedBeforeSecrets": true,
+        "untrustedChildStarts": 0,
+        "sealedOriginalUnchanged": true
+      },
+      "captures": [
+        "race-matrix",
+        "processes",
+        "sealed-trees"
+      ]
+    },
+    {
+      "id": "native-launch-network",
+      "action": "Observe real suspended CreateProcessAsUser, assign-before-resume, token SID/default medium non-admin token, explicit environment, DLL search, WFP filters and kill-on-close; attempt TCP/UDP/DNS/package-feed/loopback relay escape and allow only reviewed signing/trust destinations.",
+      "expect": {
+        "realWindowsApis": true,
+        "suspendedUntilAssigned": true,
+        "standardToken": true,
+        "environmentAllowlisted": true,
+        "unapprovedDllLoads": 0,
+        "credentialLeaks": 0,
+        "wfpEnforced": true,
+        "unapprovedConnections": 0,
+        "approvedSigningAndTrustWorks": true,
+        "jobKillsDescendants": true
+      },
+      "captures": [
+        "processes",
+        "token",
+        "environment",
+        "dll-loads",
+        "egress",
+        "wfp"
+      ]
+    },
+    {
+      "id": "locked-build",
+      "action": "Witness-rebuild the frozen inputs with enrolled tool pins in a pre-registered separate output directory and operation nonce. Never rewrite enrolled candidate/evidence files or digests. The authenticated candidate-producing build precedes enrollment freeze under its own run/attempt. Exercise complete GEPA before ASAR, age before transport compilation, final resources before app sign, NSIS helper/uninstaller before embedding, exact ZIP and complete graph receipt. Timestamped digest differences are observations, never evidence of equality.",
+      "expect": {
+        "actualCandidateBuild": true,
+        "allProducerReceiptsAuthenticated": true,
+        "allPredecessorsFrozen": true,
+        "completeGraph": true,
+        "unlistedCallbacks": 0,
+        "postFreezeMutations": 0,
+        "vendorProviderCalls": 0,
+        "generatedImagesHaveReceipts": true,
+        "enrolledInputsUnchanged": true
+      },
+      "captures": [
+        "driver-receipt",
+        "records",
+        "builder-order",
+        "inventory",
+        "zip-asar"
+      ]
+    },
+    {
+      "id": "crash-receipt-write",
+      "action": "Deny the disposable producer receipt write after successful command completion. First record exclusivity of this run's enrolled disposable resource; bind the fault to run nonce and exact PID plus creation time. An independent reaper survives all participants, and prior service state must be restored.",
+      "expect": {
+        "faultReached": true,
+        "successReceipts": 0,
+        "promotionSideEffects": 0,
+        "uncontainedChildren": 0,
+        "leaseRevoked": true,
+        "capabilityRevoked": true,
+        "cleanupConfirmedIndependently": true,
+        "existingServiceRestored": true
+      },
+      "captures": [
+        "fault",
+        "processes",
+        "leases",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "crash-assignment",
+      "action": "Force native job assignment failure while the real child is still suspended. First record exclusivity of this run's enrolled disposable resource; bind the fault to run nonce and exact PID plus creation time. An independent reaper survives all participants, and prior service state must be restored.",
+      "expect": {
+        "faultReached": true,
+        "successReceipts": 0,
+        "promotionSideEffects": 0,
+        "uncontainedChildren": 0,
+        "leaseRevoked": true,
+        "capabilityRevoked": true,
+        "cleanupConfirmedIndependently": true,
+        "existingServiceRestored": true
+      },
+      "captures": [
+        "fault",
+        "processes",
+        "leases",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "crash-pipe-disconnect",
+      "action": "Disconnect the actual lease pipe while a disposable signing child is live. First record exclusivity of this run's enrolled disposable resource; bind the fault to run nonce and exact PID plus creation time. An independent reaper survives all participants, and prior service state must be restored.",
+      "expect": {
+        "faultReached": true,
+        "successReceipts": 0,
+        "promotionSideEffects": 0,
+        "uncontainedChildren": 0,
+        "leaseRevoked": true,
+        "capabilityRevoked": true,
+        "cleanupConfirmedIndependently": true,
+        "existingServiceRestored": true
+      },
+      "captures": [
+        "fault",
+        "processes",
+        "leases",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "crash-bootstrap-death",
+      "action": "Terminate only the recorded disposable bootstrap PID while its lease is active. First record exclusivity of this run's enrolled disposable resource; bind the fault to run nonce and exact PID plus creation time. An independent reaper survives all participants, and prior service state must be restored.",
+      "expect": {
+        "faultReached": true,
+        "successReceipts": 0,
+        "promotionSideEffects": 0,
+        "uncontainedChildren": 0,
+        "leaseRevoked": true,
+        "capabilityRevoked": true,
+        "cleanupConfirmedIndependently": true,
+        "existingServiceRestored": true
+      },
+      "captures": [
+        "fault",
+        "processes",
+        "leases",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "crash-driver-death",
+      "action": "Terminate only the recorded disposable driver PID and observe descendant cleanup. First record exclusivity of this run's enrolled disposable resource; bind the fault to run nonce and exact PID plus creation time. An independent reaper survives all participants, and prior service state must be restored.",
+      "expect": {
+        "faultReached": true,
+        "successReceipts": 0,
+        "promotionSideEffects": 0,
+        "uncontainedChildren": 0,
+        "leaseRevoked": true,
+        "capabilityRevoked": true,
+        "cleanupConfirmedIndependently": true,
+        "existingServiceRestored": true
+      },
+      "captures": [
+        "fault",
+        "processes",
+        "leases",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "crash-service-death",
+      "action": "Have MAIN stop/restart the enrolled service during a disposable active lease; retain independent job/process evidence. First record exclusivity of this run's enrolled disposable resource; bind the fault to run nonce and exact PID plus creation time. An independent reaper survives all participants, and prior service state must be restored.",
+      "expect": {
+        "faultReached": true,
+        "successReceipts": 0,
+        "promotionSideEffects": 0,
+        "uncontainedChildren": 0,
+        "leaseRevoked": true,
+        "capabilityRevoked": true,
+        "cleanupConfirmedIndependently": true,
+        "existingServiceRestored": true
+      },
+      "captures": [
+        "fault",
+        "processes",
+        "leases",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "crash-controller-death",
+      "action": "Interrupt MAIN's disposable controller operation during extraction and verify external expiry cleanup. First record exclusivity of this run's enrolled disposable resource; bind the fault to run nonce and exact PID plus creation time. An independent reaper survives all participants, and prior service state must be restored.",
+      "expect": {
+        "faultReached": true,
+        "successReceipts": 0,
+        "promotionSideEffects": 0,
+        "uncontainedChildren": 0,
+        "leaseRevoked": true,
+        "capabilityRevoked": true,
+        "cleanupConfirmedIndependently": true,
+        "existingServiceRestored": true
+      },
+      "captures": [
+        "fault",
+        "processes",
+        "leases",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "authenticode",
+      "action": "Check every final signed/preserved PE with independent pinned WinVerifyTrust and signtool verify /pa /all /v /tw; bind file/leaf hashes, full chain, publisher, profile EKU and timestamps to source/final records; prove vendor and signed payload preservation.",
+      "expect": {
+        "allPePathsChecked": true,
+        "nativeTrustValid": true,
+        "embeddedOnly": true,
+        "secondVerifierPassed": true,
+        "publisherPolicyMatches": true,
+        "timestampsPresent": true,
+        "leafHashesMatch": true,
+        "vendorBytesUnchanged": true,
+        "signedPayloadBytesPreserved": true
+      },
+      "captures": [
+        "signatures",
+        "payload-preservation",
+        "inventory",
+        "checker-attestation"
+      ]
+    },
+    {
+      "id": "installed-coverage",
+      "action": "Install exact installer per-user with launch disabled; compare installed and retained uninstaller bytes, every installed MZ image (all extensions), helper/GEPA loads, backup round trip, frozen runtime/compiled pins, NSIS transient images, ZIP and ASAR.",
+      "expect": {
+        "exactInstaller": true,
+        "standardUserInstall": true,
+        "installedUninstallerMatchesRetained": true,
+        "transientSetExact": true,
+        "installedPeSetExact": true,
+        "zipAsarMatch": true,
+        "helpersAndGepaLoaded": true,
+        "backupRoundTrip": true,
+        "runtimeAndCompiledPinsMatch": true
+      },
+      "captures": [
+        "inventory",
+        "uninstaller",
+        "transients",
+        "helper-loads",
+        "backup",
+        "zip-asar"
+      ]
+    },
+    {
+      "id": "extraction-contract",
+      "action": "Exercise deployed two-key/OIDC controller and one-shot client, changed installer/archive, nonce/build/publication identity, key confusion, replay/parallel consumption, expired authorization and guest egress/control restrictions.",
+      "expect": {
+        "realController": true,
+        "distinctKeys": true,
+        "distinctOidcAudiencesAndSubjects": true,
+        "oneShot": true,
+        "replayRejected": true,
+        "parallelReplayRejected": true,
+        "wrongBindingsRejected": true,
+        "archiveTamperingRejected": true,
+        "keyConfusionRejected": true,
+        "expiredRejected": true,
+        "noGuestCredentials": true,
+        "noGuestGeneralNetwork": true,
+        "noGuestControlPlane": true
+      },
+      "captures": [
+        "controller",
+        "oidc-redacted",
+        "replay-matrix",
+        "archive"
+      ]
+    },
+    {
+      "id": "vm-cleanup",
+      "action": "Through MAIN only, exercise successful, failed install, collection error, timeout, cancellation and controller-death extractions; independently verify fresh pinned OS disk, standard account, disabled launch/network and destruction including disks/NICs on EVERY exit.",
+      "expect": {
+        "allExitPathsExercised": true,
+        "freshPinnedOsDisk": true,
+        "standardPerUserInstall": true,
+        "launchDisabled": true,
+        "guestGeneralNetworkDisabled": true,
+        "collectionControllerOnly": true,
+        "independentDestructionConfirmed": true,
+        "remainingResources": 0
+      },
+      "captures": [
+        "vm-lifecycle",
+        "cleanup",
+        "cloud-audit"
+      ]
+    },
+    {
+      "id": "sac-real-turn-s4",
+      "action": "On the existing tagged witness box under the unchanged true standard account with SAC ENFORCING continuously from before install through S4 teardown, install and launch the exact signed candidate with isolated app data, complete one real engine turn and load the installed addon. On a separate fresh success process observe nativeCall: success with both shutdown LUIDs absent. On a different fresh failure process demonstrate the signed installed candidate itself failing OpenProcessToken(TOKEN_ADJUST_PRIVILEGES), then production EPOWER before any engine or job. A side token, shared witness/success token, test addon, generic preload, patch, policy/account change or power action is unauthorized. This case stays blocked until the mechanism and the OS-build-specific continuous SAC adapter are accepted.",
+      "expect": {
+        "exactInstaller": true,
+        "sacBefore": "ENFORCING",
+        "sacAfter": "ENFORCING",
+        "sacThroughout": true,
+        "allFourProcessTokensStandard": true,
+        "installExitCode": 0,
+        "launchExitCode": 0,
+        "realEngineTurnStarted": true,
+        "realEngineTurnCompleted": true,
+        "engineExitCode": 0,
+        "installedAddonLoaded": true,
+        "nativeCall": "success",
+        "shutdownPrivilegesRemoved": true,
+        "s4RefusalCode": "EPOWER",
+        "s4EngineSpawned": false,
+        "relatedCodeIntegrityBlocks": 0,
+        "codeIntegrityIntervalCovered": true,
+        "bypass": false,
+        "developerAllowRule": false,
+        "s4OwnProcessTokenOpenFailed": true,
+        "s4DistinctFreshProcesses": true,
+        "s4JobStarted": false
+      },
+      "captures": [
+        "policy",
+        "token",
+        "install-launch",
+        "turn",
+        "addon",
+        "s4",
+        "code-integrity",
+        "helper-loads"
+      ]
+    },
+    {
+      "id": "promotion-both-entries",
+      "action": "Use disposable release targets only; run stage and publish-prepared with actual extraction, plus direct/retry/resume paths. Reject absent/malformed/stale/untrusted evidence, Evaluation/OFF/unknown SAC, admin/filtered/elevated tokens, changed installer/PE/non-EXE assets, missing/extra/transient/uninstaller paths and lookup/extraction races. Authenticate original-build versus publication identity.",
+      "expect": {
+        "stageExercised": true,
+        "publishPreparedExercised": true,
+        "directRetryResumeExercised": true,
+        "allNegativeVariantsRejected": true,
+        "negativePromotionSideEffects": 0,
+        "freshExtractionAtBothEntries": true,
+        "fullAssetSetEnforced": true,
+        "validExactBytesAcceptedInDisposableTarget": true,
+        "productionVisibilityChanges": 0
+      },
+      "captures": [
+        "promotion-matrix",
+        "asset-digests",
+        "identity",
+        "side-effects"
+      ]
+    },
+    {
+      "id": "cleanup",
+      "action": "Revoke all pack leases/capabilities; stop exact owned processes, remove only disposable app data/installations/tasks/files, confirm controller VM/disk/NIC cleanup, restore existing service state and compare authority/identity/policy with preflight.",
+      "expect": {
+        "ownedProcessesRemaining": 0,
+        "ownedLeasesRemaining": 0,
+        "ownedCapabilitiesRemaining": 0,
+        "ownedCloudResourcesRemaining": 0,
+        "ownedTasksRemaining": 0,
+        "existingServiceRestored": true,
+        "authorityUnchanged": true,
+        "signingIdentityUnchanged": true,
+        "sacPolicyUnchanged": true
+      },
+      "captures": [
+        "cleanup",
+        "processes",
+        "cloud-audit",
+        "sealed-trees",
+        "policy"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+diff --git a/server/ledger-refusal.ts b/server/ledger-refusal.ts
+index b372a9fb46..0f9f20b60b 100644
+--- a/server/ledger-refusal.ts
++++ b/server/ledger-refusal.ts
+@@ -118,7 +118,7 @@ export function createLedgerLease(identity: ConsumingIdentity, ports: Omit<Ledge
+   // Sync M3 interrupt (replaces the :101-103 body): the lease closes only when it wins the CAS; a driver winner closes through its own R.close.
+   const interrupt = (): Promise<boolean> => {
+     const r = R!;
+-    return Promise.all([r.closeOwner.then(o => o === "lease" ? r.close(fallback) : undefined), r.teardown]).then(([, result]) => result.confirmed);
++    return Promise.all([r.closeOwner.then(o => r.close(fallback)), r.teardown]).then(([, result]) => result.confirmed);
+   };
+   const lifecycle = createLedgerRefusal(identity, { ...ports, interrupt,
+     present(line) { ports.present(admissionNotice ? SEND_NOTICE_ENGLISH[admissionNotice] : line, admissionNotice); },

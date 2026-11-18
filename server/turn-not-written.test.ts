@@ -7,7 +7,7 @@ import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // the submission fence passed must not leave a row stamped `dispatchedIn`, through the real adapters:
 //  - openai-chat: the fence passes, the id is handed back, then `fetch` fails before anything is sent;
 //  - Claude: the fence passes, the MCP-readiness await runs, a Stop lands in it, and the turn's id is handed back without a write.
-import { chmodSync, mkdtempSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,7 @@ import { removeTempDir } from "./testing/cleanup.ts";
 import { recordEvents } from "./testing/events.ts";
 import { createTurnAttribution } from "./turn-attribution.ts";
 import { TurnSubmissionBoundary } from "./turn-dispatch-guard.ts";
+import { bindFixtureAdapter } from "./testing/mcp-admission-fixture.ts";
 
 /** The server's own wiring (index.ts): the attribution's stamp lands on a row, and `unstamp` clears it only while it names the turn. */
 function rows() {
@@ -126,28 +127,42 @@ describe("I14: dispatchedIn means released to the engine's write", () => {
     const fake = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-claude-cli.ts");
     chmodSync(fake, 0o755);
     scratch = mkdtempSync(join(tmpdir(), "murage-i14-"));
-    process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: 20_000 });
+    const controlLog = join(scratch, "control.jsonl");
+    process.env.FAKE_CLAUDE_CONTROL_LOG = controlLog;
+    // Hold readiness until Stop; host speed cannot let the fixture become ready.
+    process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: -1 });
     try {
       const instance = await ClaudeDriver.create({ instanceId: "claude-i14", displayName: "Claude", environment: {}, enabled: true, config: { cli: fake, permissionMode: "bypassPermissions" } });
       instances.push(instance);
+      bindFixtureAdapter(instance.adapter);
       const { row, attribution, boundary } = rows();
       let fenced!: () => void;
       const firstFence = new Promise<void>((resolve) => { fenced = resolve; });
       const sending = instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-claude-stop", text: "Founders sweep",
-        integrations: { composio: { command: process.execPath, args: ["/fake/connector-proxy.js"], env: { MURAGE_BOT_ID: "dax" } } },
-        beforeSubmit: () => { boundary.beforeSubmit(() => {}); fenced(); },
+        integrations: { composio: { command: process.execPath, args: [fileURLToPath(new URL("./testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: "dax" } } },
+        beforeSubmit: () => { const attempt = boundary.beforeSubmit(() => {}); fenced(); return attempt; },
         notWritten: () => boundary.notWritten(),
+        attemptWritten: id => boundary.attemptWritten(id),
+        attemptUncertain: id => boundary.attemptUncertain(id),
+        attemptNotWritten: id => boundary.attemptNotWritten(id),
       });
       await firstFence;
-      // the fence passed; the process now waits for its connected apps before the prompt is written
-      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      // Stop only after the real CLI has received the readiness query.
+      await expect.poll(() => {
+        if (!existsSync(controlLog)) return false;
+        return readFileSync(controlLog, "utf8").split("\n").some(line => {
+          try { return JSON.parse(line).request?.subtype === "mcp_status"; } catch { return false; }
+        });
+      }, { timeout: 30_000 }).toBe(true);
       await instance.adapter.interruptTurn("t-claude-stop").catch(() => undefined);
       const { turnId } = await sending;
       attribution.accepted("g1", turnId);
+      expect(boundary.hasReleasedSubmission).toBe(false);
       expect(row.dispatchedIn).toBeUndefined();
     } finally {
       delete process.env.FAKE_CLAUDE_MCP_READY_MS;
+      delete process.env.FAKE_CLAUDE_CONTROL_LOG;
     }
   }, 90_000);
 
@@ -165,13 +180,13 @@ describe("I14: dispatchedIn means released to the engine's write", () => {
     expect(row.dispatchedIn).toBe("T2");
   });
 
-  it("a later check refusing the second fence takes the first release back", () => {
+  it("a later check refusing the second fence keeps the first release: that write was released and may have happened (turn-dispatch-guard contract)", () => {
     const { row, attribution, boundary } = rows();
     boundary.beforeSubmit(() => {});
     attribution.accepted("g1", "T1");
     expect(row.dispatchedIn).toBe("T1");
     expect(() => boundary.beforeSubmit(() => { throw new Error("retired during the MCP wait"); })).toThrow("retired during");
-    expect(row.dispatchedIn).toBeUndefined();
+    expect(row.dispatchedIn).toBe("T1");
   });
 });
 

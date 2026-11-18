@@ -15,7 +15,7 @@ import { Check, Clock, CornerDownLeft, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { imeComposing } from "@/lib/composer-enter";
 import { t } from "@/lib/i18n";
-import { formatTime, useStore, type Message, type OptionCardData } from "@/state/store";
+import { formatTime, useStore, type Message, type OptionCardData, type DisplayAction } from "@/state/store";
 import {
   answerComplete,
   answersInOneTap,
@@ -25,6 +25,31 @@ import {
   type QuestionSpec,
 } from "../../shared/questions";
 import { ChoiceIndicator, OTHER_MAX_LENGTH, OtherRow } from "./ChoiceWithOther";
+
+type CardQuestion = Omit<QuestionSpec, "options"> & { handle?: string; preserveOther?: true; options: Array<QuestionSpec["options"][number] & { handle?: string }> };
+const questionKey = (question: CardQuestion) => question.handle ?? question.id;
+const optionKey = (option: CardQuestion["options"][number]) => option.handle ?? option.label;
+
+/** Adapt display-only questions for the existing presentation helpers. */
+export function cardQuestions(card: OptionCardData): CardQuestion[] {
+  const displayed = card.displayQuestions ?? card.questions;
+  if (displayed?.length) return displayed.map((question) => ({
+    ...question, preserveOther: true, id: "handle" in question ? String(question.handle) : (question as QuestionSpec).id,
+    options: question.options.map((option) => ({ ...option })),
+  }));
+  return questionsForCard({ ...card, requestId: card.requestHandle ?? card.requestId }).map((question) => ({ ...question, preserveOther: true }));
+}
+
+export function questionDisplayAction(card: OptionCardData, messageId: string, answers: QuestionAnswer[], sentAsMessage = false): DisplayAction {
+  const questions = cardQuestions(card);
+  return { requestHandle: card.requestHandle ?? `q.${messageId}`, action: "answer", answers: questions.map((question, i) => {
+    const answer = answers.find((candidate) => candidate.id === questionKey(question));
+    return { questionHandle: question.handle ?? `q.${i}`,
+      optionHandles: question.options.flatMap((option, j) => answer?.selected.includes(optionKey(option)) ? [option.handle ?? `o.${i}.${j}`] : []),
+      ...(question.allowOther && answer?.other !== undefined ? { other: answer.other } : {}),
+    };
+  }), ...(sentAsMessage ? { sentAsMessage: true } : {}) };
+}
 
 export type QuestionCardState = "open" | "answered" | "skipped" | "expired" | "sent" | "closed";
 
@@ -48,43 +73,43 @@ export type Drafts = Record<string, Draft>;
 const emptyDraft: Draft = { selected: [], other: "" };
 
 /** Seed the inputs: an answered card shows what was chosen. */
-export function initialDrafts(questions: readonly QuestionSpec[], answers: readonly QuestionAnswer[] | undefined): Drafts {
+export function initialDrafts(questions: readonly CardQuestion[], answers: readonly QuestionAnswer[] | undefined): Drafts {
   const drafts: Drafts = {};
   for (const question of questions) {
-    const answer = answers?.find((candidate) => candidate.id === question.id);
-    drafts[question.id] = { selected: [...(answer?.selected ?? [])], other: answer?.other ?? "" };
+    const answer = answers?.find((candidate) => candidate.id === questionKey(question));
+    drafts[questionKey(question)] = { selected: [...(answer?.selected ?? [])], other: answer?.other ?? "" };
   }
   return drafts;
 }
 
 /** Pick (or unpick) one option. Single-select replaces the pick and clears
  * the free text; multi-select toggles. */
-export function toggleOption(drafts: Drafts, question: QuestionSpec, label: string): Drafts {
-  const draft = drafts[question.id] ?? emptyDraft;
-  if (!question.multiSelect) return { ...drafts, [question.id]: { selected: [label], other: "" } };
+export function toggleOption(drafts: Drafts, question: CardQuestion, label: string): Drafts {
+  const draft = drafts[questionKey(question)] ?? emptyDraft;
+  if (!question.multiSelect) return { ...drafts, [questionKey(question)]: { selected: [label], other: "" } };
   const selected = draft.selected.includes(label)
     ? draft.selected.filter((candidate) => candidate !== label)
     : [...draft.selected, label];
-  return { ...drafts, [question.id]: { ...draft, selected } };
+  return { ...drafts, [questionKey(question)]: { ...draft, selected } };
 }
 
 /** Typing in "Other" selects it; for a single-select question that replaces
  * any option that was picked. */
-export function setOther(drafts: Drafts, question: QuestionSpec, text: string): Drafts {
-  const draft = drafts[question.id] ?? emptyDraft;
+export function setOther(drafts: Drafts, question: CardQuestion, text: string): Drafts {
+  const draft = drafts[questionKey(question)] ?? emptyDraft;
   const selected = !question.multiSelect && text.trim() ? [] : draft.selected;
-  return { ...drafts, [question.id]: { ...draft, selected, other: text } };
+  return { ...drafts, [questionKey(question)]: { ...draft, selected, other: text } };
 }
 
-export function draftAnswers(questions: readonly QuestionSpec[], drafts: Drafts): QuestionAnswer[] {
+export function draftAnswers(questions: readonly CardQuestion[], drafts: Drafts): QuestionAnswer[] {
   return questions.map((question) => {
-    const draft = drafts[question.id] ?? emptyDraft;
-    const other = question.allowOther ? draft.other.trim() : "";
-    return { id: question.id, selected: [...draft.selected], ...(other ? { other } : {}) };
+    const draft = drafts[questionKey(question)] ?? emptyDraft;
+    const other = question.allowOther ? (question.handle || question.preserveOther ? draft.other : draft.other.trim()) : "";
+    return { id: questionKey(question), selected: [...draft.selected], ...(other ? { other } : {}) };
   });
 }
 
-export function draftsComplete(questions: readonly QuestionSpec[], drafts: Drafts): boolean {
+export function draftsComplete(questions: readonly CardQuestion[], drafts: Drafts): boolean {
   const answers = draftAnswers(questions, drafts);
   return questions.every((question, index) => answerComplete(question, answers[index]));
 }
@@ -142,7 +167,7 @@ export function QuestionCardView({
   onSkip,
   onSendAsMessage,
 }: QuestionCardViewProps) {
-  const questions = questionsForCard(card);
+  const questions = cardQuestions(card);
   const state = questionCardState(card);
   const [drafts, setDrafts] = useState<Drafts>(() => initialDrafts(questions, card.answers));
   const [confirmingSkip, setConfirmingSkip] = useState(false);
@@ -159,7 +184,7 @@ export function QuestionCardView({
 
   const oneTap = editable && answersInOneTap(questions, { state, folderTrust: trust });
   // Tapping an option on a one-question, one-pick card answers at once.
-  const pick = (question: QuestionSpec, label: string) => {
+  const pick = (question: CardQuestion, label: string) => {
     const next = toggleOption(drafts, question, label);
     setDrafts(next);
     if (oneTap && draftsComplete(questions, next)) onSubmit(draftAnswers(questions, next));
@@ -169,11 +194,16 @@ export function QuestionCardView({
     if (!editable || !complete) return;
     const answers = draftAnswers(questions, drafts);
     if (state === "expired") {
-      if (!secret && !trust) onSendAsMessage(answers, answersAsMessage(questions, answers));
+      if (!secret && !trust) {
+        // This is a safe local preview only. Execution uses DisplayAction.
+        const shownAnswers = answers.map((answer, i) => ({ ...answer, selected: answer.selected.map((selected) =>
+          questions[i]!.options.find((option) => optionKey(option) === selected)?.label ?? selected) }));
+        onSendAsMessage(answers, answersAsMessage(questions, shownAnswers));
+      }
     } else onSubmit(answers);
   };
 
-  const onQuestionKey = (event: KeyboardEvent<HTMLElement>, question: QuestionSpec) => {
+  const onQuestionKey = (event: KeyboardEvent<HTMLElement>, question: CardQuestion) => {
     const inTextField = event.target instanceof HTMLInputElement;
     const action = questionKeyAction(event.key, question.options.length, inTextField, imeComposing({ isComposing: event.nativeEvent.isComposing, keyCode: event.keyCode }));
     if (!action) return;
@@ -190,7 +220,7 @@ export function QuestionCardView({
     }
     if (!editable) return;
     event.preventDefault();
-    pick(question, question.options[action.index]!.label);
+    pick(question, optionKey(question.options[action.index]!));
   };
 
   return (
@@ -235,7 +265,7 @@ export function QuestionCardView({
       )}
       <div className="flex flex-col gap-3">
         {questions.map((question, questionIndex) => {
-          const draft = drafts[question.id] ?? emptyDraft;
+          const draft = drafts[questionKey(question)] ?? emptyDraft;
           const labelId = `${baseId}-q${questionIndex}`;
           const otherOn = Boolean(draft.otherSelected) || draft.other.trim() !== "";
           return (
@@ -243,7 +273,7 @@ export function QuestionCardView({
             // accent, 2px offset) lands outside this sub-card's border, so a
             // keyboard user's ring never touches the words inside it.
             <div
-              key={question.id}
+              key={questionKey(question)}
               role={question.multiSelect ? "group" : "radiogroup"}
               aria-labelledby={labelId}
               tabIndex={editable ? 0 : -1}
@@ -265,16 +295,16 @@ export function QuestionCardView({
               </p>
               <div className="mt-3 flex flex-col gap-2">
                 {question.options.map((option, optionIndex) => {
-                  const checked = draft.selected.includes(option.label);
+                  const checked = draft.selected.includes(optionKey(option));
                   return (
                     <button
-                      key={option.label}
+                      key={optionKey(option)}
                       type="button"
                       role={question.multiSelect ? "checkbox" : "radio"}
                       aria-checked={checked}
                       tabIndex={-1}
                       disabled={!editable}
-                      onClick={() => pick(question, option.label)}
+                      onClick={() => pick(question, optionKey(option))}
                       className={cn(
                         "flex w-full items-start gap-3 rounded-[10px] border px-3 py-3 text-left transition-colors",
                         checked
@@ -312,8 +342,8 @@ export function QuestionCardView({
                     secret={question.secret}
                     maxLength={OTHER_MAX_LENGTH}
                     onChoose={() => setDrafts((current) => {
-                      const own = current[question.id] ?? emptyDraft;
-                      return { ...current, [question.id]: { ...own, selected: question.multiSelect ? own.selected : [], otherSelected: true } };
+                      const own = current[questionKey(question)] ?? emptyDraft;
+                      return { ...current, [questionKey(question)]: { ...own, selected: question.multiSelect ? own.selected : [], otherSelected: true } };
                     })}
                     onText={(text) => setDrafts((current) => setOther(current, question, text))}
                   />
@@ -438,8 +468,8 @@ export function QuestionCard({
     if (waiting.current) setSettledAt(Date.now());
     setBusy(false);
   }, [settledKey]);
-  if (!card?.requestId) return null;
-  const requestId = card.requestId;
+  if (!card || (!card.requestId && !card.requestHandle)) return null;
+  const requestId = card.requestHandle ?? `q.${message.id}`;
   const failed = (text: string) => {
     setBusy(false);
     setError(text);
@@ -454,17 +484,17 @@ export function QuestionCard({
       onSubmit={(answers) => {
         setBusy(true);
         setError(null);
-        dispatch({ type: "answerQuestion", threadId, requestId, behavior: "answer", answers, onError: failed });
+        dispatch({ type: "answerQuestion", threadId, requestId, behavior: "answer", displayAction: questionDisplayAction(card, message.id, answers), answers, onError: failed });
       }}
       onSkip={() => {
         setBusy(true);
         setError(null);
-        dispatch({ type: "answerQuestion", threadId, requestId, behavior: "skip", onError: failed });
+        dispatch({ type: "answerQuestion", threadId, requestId, behavior: "skip", displayAction: { requestHandle: requestId, action: "skip" }, onError: failed });
       }}
       onSendAsMessage={(answers, text) => {
         setBusy(true);
         setError(null);
-        dispatch({ type: "sendQuestionAsMessage", botId, groupId, threadId, requestId, text, answers, ...(card.answerAsSend ? { answerAsSend: true } : {}), onError: failed });
+        dispatch({ type: "sendQuestionAsMessage", botId, groupId, threadId, requestId, displayAction: questionDisplayAction(card, message.id, answers, true), text, answers, ...(card.answerAsSend ? { answerAsSend: true } : {}), onError: failed });
       }}
     />
   );

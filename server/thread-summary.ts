@@ -45,6 +45,10 @@ export function readChatsGen(db: DatabaseSync): ChatsGen {
   if (!row) throw new Error("Missing chat generation");
   return { epoch: String(row.epoch), rev: Number(row.rev) };
 }
+/** A read-only start's generation row, on the table schemaStep made in RAM or as a temp table: a fresh epoch, so a client refetches. */
+export function seedReadOnlyChatsGen(db: DatabaseSync): void {
+  db.prepare("INSERT OR IGNORE INTO chats_gen(id,epoch,rev) VALUES(1,?,0)").run(randomBytes(16).toString("hex"));
+}
 export function remintChatsGen(db: DatabaseSync): void {
   withChatsPreviewTransaction(db, handle => {
     initializeChatsPreviewStorage(handle);

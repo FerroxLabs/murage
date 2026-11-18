@@ -1,0 +1,71 @@
+✔ both receipts of the same candidate pass (15.451966ms)
+✔ one desktop receipt cannot pass the gate (1.682135ms)
+✔ one handoff receipt cannot pass the gate (0.3351ms)
+✔ duplicate desktop is not a pair (1.326824ms)
+✔ pair rejects mismatched commit (0.618182ms)
+✔ pair rejects mismatched sha256 (0.56445ms)
+✔ pair rejects mismatched updateSha256 (0.638612ms)
+✔ pair rejects mismatched updateVersion (0.413742ms)
+✔ rejects invalid receipt: r=>r.groups.pop() (0.500341ms)
+✔ rejects invalid receipt: r=>r.groups[0].skipped++ (0.542871ms)
+✔ rejects invalid receipt: r=>r.groups[0].failed++ (0.399361ms)
+✔ rejects invalid receipt: r=>r.groups[0].passed=0 (5.265826ms)
+✔ rejects invalid receipt: r=>r.groups[0].artifacts=['../escape'] (0.360961ms)
+✔ rejects invalid receipt: r=>r.observer.visible.push('console') (0.415631ms)
+✔ rejects invalid receipt: r=>r.observer.samples=0 (0.600643ms)
+✔ rejects invalid receipt: r=>r.observer.maxGapMs=1001 (0.477352ms)
+✔ rejects invalid receipt: r=>r.observer.enumerationErrors.push(5) (0.395401ms)
+✔ rejects invalid receipt: r=>r.isolated=false (0.270661ms)
+✔ rejects invalid receipt: r=>r.fakeProvidersOnly=false (0.27437ms)
+✔ rejects invalid receipt: r=>r.updateVersion='1.0.19-gate.1' (0.370681ms)
+✔ handoff receipt must come from gate-win-nogit (0.339342ms)
+✖ same exe cannot hide a different packageSha256 (0.925914ms)
+✖ same exe cannot hide a different appManifest (0.543972ms)
+✔ legacy receipt without packageSha256 fails closed (0.291901ms)
+✔ legacy receipt without appManifest fails closed (0.235172ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 23
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 162.657471
+
+✖ failing tests:
+
+test at scripts/windows/receipt-pair.node-test.mjs:28:54
+✖ same exe cannot hide a different packageSha256 (0.925914ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///work/scripts/windows/receipt-pair.node-test.mjs:31:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at scripts/windows/receipt-pair.node-test.mjs:28:54
+✖ same exe cannot hide a different appManifest (0.543972ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///work/scripts/windows/receipt-pair.node-test.mjs:31:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }

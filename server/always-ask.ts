@@ -48,8 +48,19 @@ import {
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from "node:fs";
 import { posix as posixPath, win32 as winPath } from "node:path";
 import { parse, type Redirect } from "./shell/parse.ts";
+import { boundedLegacyArchiveWrites } from "./no-limits-archives.ts";
+import { effectiveDestinations } from "./no-limits-placement.ts";
+import { resolveNoLimitsPath } from "./no-limits-fs.ts";
 
-export type AlwaysAskRule = "delete-root" | "delete-home" | "delete-system-folder" | "disk-erase" | "fork-bomb" | "unreadable" | "unknown-target" | "protected-path";
+export type AlwaysAskRule = "wipe-check-fault" | "delete-root" | "delete-home" | "delete-system-folder" | "disk-erase" | "fork-bomb" | "unreadable" | "unknown-target" | "protected-path";
+
+/** NOLIM 1.0.19 (R6): what No limits does with each rule. `wipe` is the kept set (N2.1): it still asks. Every other rule
+ * is run under No limits for work the owner started (N1). Exhaustive: a rule added to AlwaysAskRule fails to compile
+ * until it is classified here. */
+export const ALWAYS_ASK_NO_LIMITS: Readonly<Record<AlwaysAskRule, "wipe" | "run">> = {
+  "wipe-check-fault": "wipe", "delete-root": "wipe", "delete-home": "wipe", "delete-system-folder": "wipe", "disk-erase": "wipe", "fork-bomb": "wipe",
+  "unreadable": "run", "unknown-target": "run", "protected-path": "run",
+};
 
 /** What a protected path is (`protectedClass`). */
 export type ProtectedClass = "root" | "home" | "system" | "volume";
@@ -85,9 +96,13 @@ export interface AlwaysAskHit {
    * lane waives such a hit on a clean turn when the plain wipe check (outside-scan.ts) also finds nothing. Never set by
    * `unreadableHit()` itself, so a new `unreadable` hit stays unmarked until someone marks it. */
   couldNotRead?: true;
+  /** NOLIM 1.0.19 (R4, Fable A3): the reader found a named catastrophe (a wipe it could name but not place) in a text it
+   * could not follow whole. Set in EVERY reader mode, owner or not, so the No limits finalizer keeps its card (N2.1). */
+  namedCatastrophe?: true;
 }
 
 const WHAT: Record<AlwaysAskRule, string> = {
+  "wipe-check-fault": "Murage couldn't finish checking this command for a whole-drive wipe. Run it anyway?",
   "delete-root": "This would delete everything on this computer's main drive.",
   "delete-home": "This would delete your whole home folder.",
   "delete-system-folder": "This would delete a folder your computer needs to run.",
@@ -160,6 +175,7 @@ const FOUND_FAILURES = [DELETE_OPTION_VALUE, "runs a catastrophe", "names a cata
 /** 2.1.1: what the reader found also in these (walk.ts "names a disk", "deletes and looks up the home folder", "runs
  * downloaded text"): no `couldNotRead`. Kept apart from FOUND_FAILURES so the 1.0.13 `readerFailed` mark is unchanged. */
 const FOUND_NOT_WAIVED = [...FOUND_FAILURES, "names a disk", "deletes and looks up the home folder", "runs downloaded text"];
+const NAMED_NOT_WAIVED = ["names a disk", "deletes and looks up the home folder"];
 
 export const COULD_NOT_READ_FINDINGS: ReadonlySet<string> = new Set(["ambiguous-interpreter", "startup-file-unplaced-write", "unresolved-value-target"]);
 /** Preserve security-bearing exceptions even when they share the unreadable rule. */
@@ -174,9 +190,10 @@ function readerFailure(error: Unreadable): AlwaysAskHit {
   if (error instanceof Doubt) return { ...unreadableHit(), doubt: error.doubt };
   if (error.message.endsWith(REMOTE_ELEVATED)) return { ...hit("unreadable"), what: REMOTE_ELEVATED_WHAT };
   // A finding remains a finding. An incomplete closed-list read is never waived.
-  if (FOUND_FAILURES.some((detail) => error.message.endsWith(detail))) return { ...hit("unreadable"), ...(ownerDeny() ? { classification: "deny" as const, reason: "named-catastrophe" } : {}) };
+  if (FOUND_FAILURES.some((detail) => error.message.endsWith(detail))) return { ...hit("unreadable"), namedCatastrophe: true, ...(ownerDeny() ? { classification: "deny" as const, reason: "named-catastrophe" } : {}) };
   if (error.reason === "depth" || error.reason === "nesting") return { ...unreadableHit(), doubt: "tokenizer" };
-  if (FOUND_NOT_WAIVED.some((detail) => error.message.endsWith(detail))) return unreadableHit();
+  // a disk named, or the home folder looked up by a text that deletes: found, not merely unfollowed (NOLIM R4)
+  if (FOUND_NOT_WAIVED.some((detail) => error.message.endsWith(detail))) return NAMED_NOT_WAIVED.some((detail) => error.message.endsWith(detail)) ? { ...unreadableHit(), namedCatastrophe: true } : unreadableHit();
   // MurageMain ruling (S10 relay 4, 11-06): the waiver covers what the reader could not follow in a text it read, never a text
   // past the reader's length limit. That one keeps its card at every level, No limits included.
   if (error.reason === "length") return unreadableHit();
@@ -224,6 +241,7 @@ function classifyPath(raw: string): AlwaysAskRule | null {
 }
 
 const RANK: Record<AlwaysAskRule, number> = {
+  "wipe-check-fault": 3,
   "delete-root": 3, "delete-home": 2, "delete-system-folder": 2, "disk-erase": 2, "fork-bomb": 2, "unreadable": 2, "unknown-target": 1, "protected-path": 2,
 };
 
@@ -1756,6 +1774,11 @@ function catastropheFirst(error: Unreadable, text: string, again: (part: string)
   return held;
 }
 
+/** The reader stopped because the text names a catastrophe it could not place (not a mere doubt). */
+function namesCatastrophe(error: Unreadable): boolean {
+  return !(error instanceof HardFinding) && [...FOUND_FAILURES, ...NAMED_NOT_WAIVED].some((detail) => error.message.endsWith(detail));
+}
+
 /** Text the cmd reader must see too: cmd given text to run (`/c`, `/k`,
  * `/r`), or a line that goes on past `cmd` the way only cmd reads it (`&`,
  * a pipe, `%x%`, `!x!`). */
@@ -1772,15 +1795,18 @@ function read(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash
       // a named catastrophe in the text keeps its own name over the protected-path card (M-FIX4-first-name)
       const kept = deferred;
       const named = catastropheFirst(error, text, part => read(part, cwd, shell, windowsBash));
+      // NOLIM B5 (Astra HIGH): a named catastrophe found later in the text is never replaced by the earlier deferred protected-path
+      // finding. The winning verdict stays as it was (Full access unchanged); it carries the flag the No limits finalizer reads (M-defer-flag).
+      const flagged = (found: AlwaysAskHit): AlwaysAskHit => namesCatastrophe(error) || named?.namedCatastrophe === true ? { ...found, namedCatastrophe: true } : found;
       if (!ownerDeny()) {
         if (named && named.rule !== "protected-path") return named;
         // FULL-DENY-1018: a strict read keeps its closed-list doubt; the doubt-free read returns the protected-path card
         if (error instanceof Doubt) throw error;
-        return kept;
+        return flagged(kept);
       }
       if (named?.classification === "deny" && named.rule !== "protected-path") return named;
       // A later reader failure cannot replace a recorded denial.
-      return kept;
+      return flagged(kept);
     }
     throw error;
   } finally {
@@ -1837,6 +1863,44 @@ function plainPlacedScript(word: string, cwd: string | undefined, options: Unsee
 }
 
 function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash?: string[], home?: string, options: UnseenOptions = {}): AlwaysAskHit | null {
+  // The legacy reader is shared by Ask, Auto and Full access. Add projected
+  // writes to that same walk, preserving its cwd, bindings and later wipe
+  // precedence. The callback is synchronous and restored with this read.
+  const commandVisitor = visitor.command;
+  let projectionUnknown = false;
+  visitor.command = (cmd, ctx) => {
+    const found = commandVisitor(cmd, ctx);
+    if (found || ownerDeny() || deferred) return found;
+    let archive: string[] | undefined;
+    try { archive = boundedLegacyArchiveWrites(cmd.name, cmd.args.map(renderWord), cmd.operands, ctx.cwd); }
+    catch (error) {
+      if (!(error instanceof Unreadable)) throw error;
+      projectionUnknown = true;
+      return null;
+    }
+    // Carry values the walk proved, including a function's positional args.
+    // Glob/value candidates retain their original words and uncertainty; a
+    // real tilde keeps its expansion syntax rather than becoming quoted text.
+    const placement = cmd.name === "ln" ? effectiveDestinations({ ...cmd, args: cmd.args.map<Word>((word, i) => {
+      const values = cmd.operands[i], value = values?.[0];
+      return values?.length === 1 && value?.kind === "literal" && !value.path.startsWith("~")
+        ? { parts: [{ kind: "lit", text: value.path, quote: "single" }] } : word;
+    }) }, { cwd: ctx.cwd }, ctx) : undefined;
+    if (placement?.unknown) projectionUnknown = true;
+    const writes = archive?.map(path => ({ path, followFinal: true }))
+      ?? placement?.destinations.map(destination => destination.effect) ?? [];
+    for (const write of writes) {
+      // Resolve links before consuming '..'; lexical normalization alone can
+      // erase a protected parent. Never follow the final name of a replacement.
+      const resolved = resolveNoLimitsPath(write.path, { cwd: ctx.cwd, followFinal: write.followFinal });
+      if (resolved.kind === "exhausted") throw new Unreadable("expansion", "a write target exceeds the link resolution limit");
+      for (const path of [resolved.lexical, ...(resolved.kind === "known" ? [resolved.physical] : resolved.kind === "unknown" ? [resolved.fixedPrefix] : [])]) {
+        const protectedKind = path ? protectedClassLegacy(path, true) : null;
+        if (protectedKind) { deferred = protectedDeferred(protectedKind, cmd.name); return null; }
+      }
+    }
+    return null;
+  };
   try {
     activeSessionFiles = options;
     // D4: owner mode (ownerDeny is the flag ownerMarks sets), and WIN-PWSH-1018: the Full access turn auto-approve.ts admits, for
@@ -1847,7 +1911,11 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
     const dialect = bashShape !== undefined ? undefined : shell;
     const found = read(text, cwd, dialect, bashShape !== undefined ? undefined : windowsBash);
     if (found) return found;
-    // the 1.0.5 `bash -c` payload relief: the same resolution decides it
+    // Finish the walk so a later named wipe keeps its own card. Uncertainty
+    // cannot become the unseen-script relief below, even at Full access.
+    if (projectionUnknown) return unreadableHit();
+    // WIN-PWSH-1018 H1: the literal -c payload relief needs the same Git Bash
+    // identity proof as a script launch, including at Full access.
     if (shell === "pwsh" && bashShape === undefined && windowsBash?.length && !pwshBashIsGitBash("bash", options)) return unreadableHit();
     // D4: the shape admits only through the unseen-script path below (a script the session already knows, or one the walk did not
     // record, never skips the placement and link checks or the owner waiver)
@@ -1864,6 +1932,7 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
     if (admits === null) return unreadableHit();
     return { ...unreadableHit(), unseenWhy: admits };
   } finally {
+    visitor.command = commandVisitor;
     unseen = null;
     activeSessionFiles = undefined;
   }

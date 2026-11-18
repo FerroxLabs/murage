@@ -1,0 +1,554 @@
+[
+  {
+    "fixture": {
+      "url": "http://127.0.0.1:22121",
+      "pid": 662,
+      "dataDir": "/tmp/murage-verify-data-K1iWxR",
+      "logPath": "/tmp/murage-verification-evidence/server-1794370439913-654.log"
+    }
+  },
+  {
+    "passiveIncident": {
+      "slug": "buffer",
+      "label": "Buffer",
+      "accounts": [
+        {
+          "id": "buffer-a",
+          "alias": "work"
+        }
+      ],
+      "incidentId": "d211915e-78a7-4729-bc19-d2cf016aee2b"
+    },
+    "probes": 1
+  },
+  {
+    "scheduledFailure": {
+      "id": "551f0aa1-8025-49c5-8c82-e05086726a8b",
+      "routineId": "7cde09a2-23b5-4577-9d28-940a98ad5df8",
+      "routineName": "Check Buffer queue",
+      "prompt": "Check the Buffer queue without publishing anything.",
+      "instructionRevision": "bde59b9267b5e95fefe199cac259d99845609b96814f74f04db4525ba67576f5",
+      "durationMinutes": 30,
+      "attachments": [],
+      "target": "bot",
+      "botId": "dfb01607-8b38-4e34-8470-2083fd7683d1",
+      "runOn": "ember",
+      "scheduledFor": 1794370457029,
+      "dueAt": 1794370457029,
+      "status": "failed",
+      "manual": false,
+      "triggerSource": "schedule",
+      "createdAt": 1794370462987,
+      "delivery": {
+        "state": "sent",
+        "threadId": "ad5e58ab-a469-4064-9946-7af48d026ea4"
+      },
+      "event": {
+        "version": 1,
+        "id": "551f0aa1-8025-49c5-8c82-e05086726a8b",
+        "definitionId": "7cde09a2-23b5-4577-9d28-940a98ad5df8",
+        "receivedAt": 1794370462987,
+        "budgetId": "551f0aa1-8025-49c5-8c82-e05086726a8b",
+        "source": "schedule",
+        "origin": {
+          "kind": "local-schedule"
+        }
+      },
+      "eventBudget": {
+        "version": 2,
+        "limits": {
+          "create": 4,
+          "handoff": 4
+        },
+        "admissions": [],
+        "closed": false
+      },
+      "threadId": "18f10006-9d31-46e6-9344-31ea44dcb582",
+      "startedAt": 1794370502995,
+      "slotAt": 1794370499388,
+      "procedureBundleId": "f225cc6a3c32d95861e0f32b684bbb37169a6e63ae59eb696adbb982da3146af",
+      "error": "Buffer needs you to sign in again. Reconnect Buffer.",
+      "finishedAt": 1794370503574
+    },
+    "messages": {
+      "messages": [
+        {
+          "id": "0470d66b-02bc-4d23-8fa8-ef6ae75256c1",
+          "at": 1794370502997,
+          "parentId": null,
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Scheduled run: Check Buffer queue",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 1
+        },
+        {
+          "id": "69cdeb25-781d-4635-abe2-4b3c4f821c86",
+          "at": 1794370503015,
+          "parentId": "0470d66b-02bc-4d23-8fa8-ef6ae75256c1",
+          "role": "user",
+          "kind": "text",
+          "text": "Check the Buffer queue without publishing anything.",
+          "attachments": [],
+          "routineRunPrompt": {
+            "trigger": "schedule",
+            "routineName": "Check Buffer queue"
+          },
+          "automation": {
+            "kind": "schedule",
+            "routineId": "7cde09a2-23b5-4577-9d28-940a98ad5df8"
+          },
+          "dispatchedIn": "05171722-f2c4-4d5f-94ec-a346a1065e13",
+          "seq": 2
+        },
+        {
+          "id": "98ed070d-7901-47ab-8c42-cbbaff7631d8",
+          "at": 1794370503570,
+          "parentId": "69cdeb25-781d-4635-abe2-4b3c4f821c86",
+          "role": "bot",
+          "kind": "text",
+          "text": "Buffer needs you to sign in again. Reconnect Buffer.",
+          "murageLine": true,
+          "seq": 3
+        },
+        {
+          "id": "ev-36de147fa3af9fb967610e30834629f4",
+          "at": 1794370503590,
+          "parentId": "98ed070d-7901-47ab-8c42-cbbaff7631d8",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Connected app: Buffer list posts",
+            "action": {
+              "name": "mcp__murage_connectors__BUFFER_LIST_POSTS",
+              "classes": [],
+              "outcome": "failed"
+            },
+            "ok": false,
+            "spoken": "using a tool"
+          },
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "05171722-f2c4-4d5f-94ec-a346a1065e13",
+          "provenance": "provider",
+          "speechGenerationId": "06fa8da7-7405-4718-893a-759e24b50eff",
+          "seq": 4
+        },
+        {
+          "id": "ev-31ff6d92234b2e0df3e6fe5cc85caede",
+          "at": 1794370503604,
+          "parentId": "ev-36de147fa3af9fb967610e30834629f4",
+          "role": "bot",
+          "kind": "text",
+          "text": "custom tool failed: Buffer needs you to sign in again. Reconnect Buffer. Buffer needs reconnecting: its sign-in has stopped working, so calls to it fail until the owner reconnects it in Connected apps, where there is a Reconnect button. If the user asks for work in that app, say plainly that Buffer needs reconnecting and ask the owner to do it; do not say the service is briefly unreachable, and do not retry the call until it is reconnected. Other connected apps are unaffected.",
+          "turnId": "05171722-f2c4-4d5f-94ec-a346a1065e13",
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "provenance": "provider",
+          "speechGenerationId": "06fa8da7-7405-4718-893a-759e24b50eff",
+          "turnTerminal": true,
+          "seq": 5
+        }
+      ],
+      "hasMore": false,
+      "newestSeq": 5
+    },
+    "failedCalls": 0,
+    "completedCalls": 0
+  },
+  {
+    "signIn": {
+      "url": "https://backend.composio.dev/auth/fixture"
+    },
+    "finalRuns": [
+      {
+        "id": "def71945-a623-434e-ae3b-88e0cc0c64de",
+        "routineId": "7cde09a2-23b5-4577-9d28-940a98ad5df8",
+        "routineName": "Check Buffer queue",
+        "prompt": "Check the Buffer queue without publishing anything.",
+        "instructionRevision": "bde59b9267b5e95fefe199cac259d99845609b96814f74f04db4525ba67576f5",
+        "durationMinutes": 30,
+        "attachments": [],
+        "target": "bot",
+        "botId": "dfb01607-8b38-4e34-8470-2083fd7683d1",
+        "runOn": "ember",
+        "scheduledFor": 1794370502652,
+        "dueAt": 1794370502652,
+        "status": "completed",
+        "manual": false,
+        "triggerSource": "schedule",
+        "createdAt": 1794370512988,
+        "delivery": {
+          "state": "sent",
+          "threadId": "ad5e58ab-a469-4064-9946-7af48d026ea4"
+        },
+        "event": {
+          "version": 1,
+          "id": "def71945-a623-434e-ae3b-88e0cc0c64de",
+          "definitionId": "7cde09a2-23b5-4577-9d28-940a98ad5df8",
+          "receivedAt": 1794370512988,
+          "budgetId": "def71945-a623-434e-ae3b-88e0cc0c64de",
+          "source": "schedule",
+          "origin": {
+            "kind": "local-schedule"
+          }
+        },
+        "eventBudget": {
+          "version": 2,
+          "limits": {
+            "create": 4,
+            "handoff": 4
+          },
+          "admissions": [],
+          "closed": false
+        },
+        "threadId": "18f10006-9d31-46e6-9344-31ea44dcb582",
+        "startedAt": 1794370552990,
+        "slotAt": 1794370545011,
+        "procedureBundleId": "f225cc6a3c32d95861e0f32b684bbb37169a6e63ae59eb696adbb982da3146af",
+        "output": "custom tool said: Buffer queue checked safely. No posts were published.",
+        "cost": 0,
+        "finishedAt": 1794370553392
+      },
+      {
+        "id": "551f0aa1-8025-49c5-8c82-e05086726a8b",
+        "routineId": "7cde09a2-23b5-4577-9d28-940a98ad5df8",
+        "routineName": "Check Buffer queue",
+        "prompt": "Check the Buffer queue without publishing anything.",
+        "instructionRevision": "bde59b9267b5e95fefe199cac259d99845609b96814f74f04db4525ba67576f5",
+        "durationMinutes": 30,
+        "attachments": [],
+        "target": "bot",
+        "botId": "dfb01607-8b38-4e34-8470-2083fd7683d1",
+        "runOn": "ember",
+        "scheduledFor": 1794370457029,
+        "dueAt": 1794370457029,
+        "status": "failed",
+        "manual": false,
+        "triggerSource": "schedule",
+        "createdAt": 1794370462987,
+        "delivery": {
+          "state": "sent",
+          "threadId": "ad5e58ab-a469-4064-9946-7af48d026ea4"
+        },
+        "event": {
+          "version": 1,
+          "id": "551f0aa1-8025-49c5-8c82-e05086726a8b",
+          "definitionId": "7cde09a2-23b5-4577-9d28-940a98ad5df8",
+          "receivedAt": 1794370462987,
+          "budgetId": "551f0aa1-8025-49c5-8c82-e05086726a8b",
+          "source": "schedule",
+          "origin": {
+            "kind": "local-schedule"
+          }
+        },
+        "eventBudget": {
+          "version": 2,
+          "limits": {
+            "create": 4,
+            "handoff": 4
+          },
+          "admissions": [],
+          "closed": false
+        },
+        "threadId": "18f10006-9d31-46e6-9344-31ea44dcb582",
+        "startedAt": 1794370502995,
+        "slotAt": 1794370499388,
+        "procedureBundleId": "f225cc6a3c32d95861e0f32b684bbb37169a6e63ae59eb696adbb982da3146af",
+        "error": "Buffer needs you to sign in again. Reconnect Buffer.",
+        "finishedAt": 1794370503574
+      }
+    ],
+    "safeContinuation": {
+      "messages": [
+        {
+          "id": "0470d66b-02bc-4d23-8fa8-ef6ae75256c1",
+          "at": 1794370502997,
+          "parentId": null,
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Scheduled run: Check Buffer queue",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 1
+        },
+        {
+          "id": "69cdeb25-781d-4635-abe2-4b3c4f821c86",
+          "at": 1794370503015,
+          "parentId": "0470d66b-02bc-4d23-8fa8-ef6ae75256c1",
+          "role": "user",
+          "kind": "text",
+          "text": "Check the Buffer queue without publishing anything.",
+          "attachments": [],
+          "routineRunPrompt": {
+            "trigger": "schedule",
+            "routineName": "Check Buffer queue"
+          },
+          "automation": {
+            "kind": "schedule",
+            "routineId": "7cde09a2-23b5-4577-9d28-940a98ad5df8"
+          },
+          "dispatchedIn": "05171722-f2c4-4d5f-94ec-a346a1065e13",
+          "seq": 2
+        },
+        {
+          "id": "98ed070d-7901-47ab-8c42-cbbaff7631d8",
+          "at": 1794370503570,
+          "parentId": "69cdeb25-781d-4635-abe2-4b3c4f821c86",
+          "role": "bot",
+          "kind": "text",
+          "text": "Buffer needs you to sign in again. Reconnect Buffer.",
+          "murageLine": true,
+          "seq": 3
+        },
+        {
+          "id": "ev-36de147fa3af9fb967610e30834629f4",
+          "at": 1794370503590,
+          "parentId": "98ed070d-7901-47ab-8c42-cbbaff7631d8",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Connected app: Buffer list posts",
+            "action": {
+              "name": "mcp__murage_connectors__BUFFER_LIST_POSTS",
+              "classes": [],
+              "outcome": "failed"
+            },
+            "ok": false,
+            "spoken": "using a tool"
+          },
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "05171722-f2c4-4d5f-94ec-a346a1065e13",
+          "provenance": "provider",
+          "speechGenerationId": "06fa8da7-7405-4718-893a-759e24b50eff",
+          "seq": 4
+        },
+        {
+          "id": "ev-31ff6d92234b2e0df3e6fe5cc85caede",
+          "at": 1794370503604,
+          "parentId": "ev-36de147fa3af9fb967610e30834629f4",
+          "role": "bot",
+          "kind": "text",
+          "text": "custom tool failed: Buffer needs you to sign in again. Reconnect Buffer. Buffer needs reconnecting: its sign-in has stopped working, so calls to it fail until the owner reconnects it in Connected apps, where there is a Reconnect button. If the user asks for work in that app, say plainly that Buffer needs reconnecting and ask the owner to do it; do not say the service is briefly unreachable, and do not retry the call until it is reconnected. Other connected apps are unaffected.",
+          "turnId": "05171722-f2c4-4d5f-94ec-a346a1065e13",
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "provenance": "provider",
+          "speechGenerationId": "06fa8da7-7405-4718-893a-759e24b50eff",
+          "turnTerminal": true,
+          "seq": 5
+        },
+        {
+          "id": "b510d85a-0ce3-414b-a6e5-bbbff71be5f9",
+          "at": 1794370552994,
+          "parentId": "ev-31ff6d92234b2e0df3e6fe5cc85caede",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Scheduled run: Check Buffer queue",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 6
+        },
+        {
+          "id": "2d7efad0-46d4-4717-bd2f-fc62d51c78f5",
+          "at": 1794370553001,
+          "parentId": "b510d85a-0ce3-414b-a6e5-bbbff71be5f9",
+          "role": "user",
+          "kind": "text",
+          "text": "Check the Buffer queue without publishing anything.",
+          "attachments": [],
+          "routineRunPrompt": {
+            "trigger": "schedule",
+            "routineName": "Check Buffer queue"
+          },
+          "automation": {
+            "kind": "schedule",
+            "routineId": "7cde09a2-23b5-4577-9d28-940a98ad5df8"
+          },
+          "dispatchedIn": "fd283a75-4a8d-4ffd-a168-50df13e3255f",
+          "seq": 7
+        },
+        {
+          "id": "ev-9f536879ecca20b34e1cf6791ad44741",
+          "at": 1794370553114,
+          "parentId": "2d7efad0-46d4-4717-bd2f-fc62d51c78f5",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Waking up: starting a fresh engine after a quiet spell",
+            "action": {
+              "name": "Waking up: starting a fresh engine after a quiet spell",
+              "classes": [],
+              "outcome": "pending"
+            },
+            "ok": true,
+            "spoken": "using a tool"
+          },
+          "murageLine": true,
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "fd283a75-4a8d-4ffd-a168-50df13e3255f",
+          "seq": 8
+        },
+        {
+          "id": "ev-9ce2c8d19b94385eb1a0dad7cd3eef7b",
+          "at": 1794370553371,
+          "parentId": "ev-9f536879ecca20b34e1cf6791ad44741",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Connected app: Buffer list posts",
+            "action": {
+              "name": "mcp__murage_connectors__BUFFER_LIST_POSTS",
+              "classes": [],
+              "outcome": "pending"
+            },
+            "ok": true,
+            "spoken": "using a tool"
+          },
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "fd283a75-4a8d-4ffd-a168-50df13e3255f",
+          "provenance": "provider",
+          "speechGenerationId": "95003fcc-171c-4c8b-8efc-0f15ea7baa09",
+          "seq": 9
+        },
+        {
+          "id": "ev-5292d2c6edca601c2e7eb38a2759ad33",
+          "at": 1794370553385,
+          "parentId": "ev-9ce2c8d19b94385eb1a0dad7cd3eef7b",
+          "role": "bot",
+          "kind": "text",
+          "text": "custom tool said: Buffer queue checked safely. No posts were published.",
+          "turnId": "fd283a75-4a8d-4ffd-a168-50df13e3255f",
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "provenance": "provider",
+          "speechGenerationId": "95003fcc-171c-4c8b-8efc-0f15ea7baa09",
+          "turnTerminal": true,
+          "actionCheck": {
+            "state": "unchecked",
+            "claims": []
+          },
+          "seq": 10
+        },
+        {
+          "id": "c6b0df3b-76c4-45c0-bc4d-5cc301f6b563",
+          "at": 1794370553393,
+          "parentId": "ev-5292d2c6edca601c2e7eb38a2759ad33",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Recovered: Check Buffer queue finished OK.",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 11
+        }
+      ],
+      "hasMore": false,
+      "newestSeq": 11
+    },
+    "failedCalls": 0,
+    "completedCalls": 1,
+    "wait": {
+      "status": "settled",
+      "targetType": "bot",
+      "targetId": "dfb01607-8b38-4e34-8470-2083fd7683d1",
+      "taskId": "ad5e58ab-a469-4064-9946-7af48d026ea4",
+      "target": {
+        "id": "dfb01607-8b38-4e34-8470-2083fd7683d1",
+        "name": "Buffer schedule fixture",
+        "title": "",
+        "description": "",
+        "section": null,
+        "chiefOfStaff": false,
+        "modelSelection": {
+          "instanceId": "verification",
+          "model": "claude-sonnet-5-5"
+        },
+        "busy": false,
+        "activity": "idle",
+        "unread": true,
+        "activeTaskId": "ad5e58ab-a469-4064-9946-7af48d026ea4",
+        "task": {
+          "taskId": "ad5e58ab-a469-4064-9946-7af48d026ea4",
+          "title": "New task",
+          "createdAt": 1794370443159,
+          "active": true
+        }
+      },
+      "messages": [
+        {
+          "id": "f7947258-bba2-4d8c-b53d-61272db98724",
+          "at": 1794370443163,
+          "role": "bot",
+          "kind": "text",
+          "text": "I'm Buffer schedule fixture. Untrained, unhurried, ready when you are."
+        },
+        {
+          "id": "1f5391d3-d54f-48fa-b8e4-689060f5380b",
+          "at": 1794370443169,
+          "role": "bot",
+          "kind": "options",
+          "card": {
+            "title": "What do you actually want me for?",
+            "subtitle": "Plain words are fine. One line will do.",
+            "options": []
+          }
+        },
+        {
+          "id": "rrun-551f0aa1-8025-49c5-8c82-e05086726a8b",
+          "at": 1794370503577,
+          "role": "bot",
+          "kind": "routine.run",
+          "text": "Routine “Check Buffer queue” failed"
+        },
+        {
+          "id": "rrun-def71945-a623-434e-ae3b-88e0cc0c64de",
+          "at": 1794370553413,
+          "role": "bot",
+          "kind": "routine.run",
+          "text": "Routine “Check Buffer queue” completed"
+        }
+      ],
+      "hasMore": false
+    }
+  }
+]

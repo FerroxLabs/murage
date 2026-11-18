@@ -18,10 +18,25 @@ export function emailAnswerBody(requestId: string, revision: number, action: Ema
   return { requestId, behavior, emailAction: action, emailRevision: revision, ...(action === "edit" && draft ? { emailDraft: draft } : {}) };
 }
 
+/** New approval actions omit the body; presentation retains the exact editable text.
+ * End-relative boundaries also handle blank lines, Unicode and attachment-like body text. */
+export function emailDraftText(card: NonNullable<Message["card"]>): string {
+  const draft = card.emailSend!.draft;
+  if (draft.text || !draft.presentation) return draft.text;
+  const { textLength, trailingLength } = draft.presentation;
+  const subtitle = card.subtitle ?? "";
+  if (!Number.isSafeInteger(textLength) || !Number.isSafeInteger(trailingLength) || textLength < 0 || trailingLength < 0 || textLength + trailingLength > subtitle.length) {
+    throw new Error("The email draft is unavailable. Refresh this card before editing.");
+  }
+  const end = subtitle.length - trailingLength;
+  return subtitle.slice(end - textLength, end);
+}
+
 const LABEL: Record<EmailCardAction, string> = { send: "Send", edit: "Edit", dont_send: "Don't send", retry: "Retry" };
 
 export function EmailSendCard({ threadId, message, onManage }: { threadId: string; message: Message; onManage?: () => void }) {
-  const card = message.card;
+  const permission = message.card;
+  const card = permission ? { ...permission, ...message.emailDisplay } : undefined;
   const email = card?.emailSend;
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
@@ -30,17 +45,17 @@ export function EmailSendCard({ threadId, message, onManage }: { threadId: strin
   const answer = async (action: EmailCardAction) => {
     setBusy(true); setError(null);
     try {
-      const body = emailAnswerBody(card.requestId!, email.revision, action, action === "edit" && editing !== null ? { text: editing } : undefined);
+      const body = emailAnswerBody(permission!.requestId!, email.revision, action, action === "edit" && editing !== null ? { text: editing } : undefined);
       const post = (extra?: Record<string, unknown>) => api(`/api/threads/${threadId}/respond`, { method: "POST", body: JSON.stringify({ ...body, ...extra }) });
       // 4.3: a phone Send or Retry carries a fresh device proof over this exact card (its payload hash, held ids and revision)
-      if (body.behavior === "allow") await respondWithFreshAuth(post, { threadId, requestId: card.requestId!, decision: "allow", card, reason: card.title ?? "Send this email" });
+      if (body.behavior === "allow") await respondWithFreshAuth(post, { threadId, requestId: permission!.requestId!, decision: "allow", card: permission!, reason: card.title ?? "Send this email" });
       else await post();
       setEditing(null);
     } catch (caught) {
       setError(caught instanceof Error && caught.message ? caught.message : "That answer did not go through. Try again.");
     } finally { setBusy(false); }
   };
-  const open = email.phase === "open";
+  const open = email.phase === "open" && !permission!.answered && !permission!.dismissed;
   return (
     <div className={`w-full max-w-[840px] rounded-2xl border bg-card p-4 ${open ? "border-accent/40" : "border-hairline/30 opacity-80"}`} data-testid="email-send-card">
       <div className="flex items-baseline gap-2 text-[15px] font-semibold text-ink"><Mail size={15} aria-hidden /> {card.title}</div>
@@ -60,7 +75,11 @@ export function EmailSendCard({ threadId, message, onManage }: { threadId: strin
             </>
           ) : email.actions.map(action => (
             <button key={action} type="button" disabled={busy}
-              onClick={() => action === "edit" ? setEditing(email.draft.text) : void answer(action)}
+              onClick={() => {
+                if (action !== "edit") { void answer(action); return; }
+                try { setEditing(emailDraftText(card)); setError(null); }
+                catch (caught) { setError(caught instanceof Error ? caught.message : "The email draft is unavailable."); }
+              }}
               className={`min-h-9 rounded-lg px-3 text-[13px] font-medium disabled:opacity-60 ${action === "send" || action === "retry" ? "bg-accent text-white" : "bg-control text-ink"}`}>{LABEL[action]}</button>
           ))}
         </div>
@@ -80,7 +99,8 @@ export function emailTrustAnswerBody(requestId: string, add: boolean): { request
 }
 
 export function EmailTrustOfferCard({ threadId, message }: { threadId: string; message: Message }) {
-  const card = message.card;
+  const permission = message.card;
+  const card = permission ? { ...permission, ...message.emailDisplay } : undefined;
   const offer = card?.emailTrustOffer;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,9 +108,9 @@ export function EmailTrustOfferCard({ threadId, message }: { threadId: string; m
   const answer = async (add: boolean) => {
     setBusy(true); setError(null);
     try {
-      const body = emailTrustAnswerBody(card.requestId!, add);
+      const body = emailTrustAnswerBody(permission!.requestId!, add);
       const post = (extra?: Record<string, unknown>) => api(`/api/threads/${threadId}/respond`, { method: "POST", body: JSON.stringify({ ...body, ...extra }) });
-      if (add) await respondWithFreshAuth(post, { threadId, requestId: card.requestId!, decision: "allow", card, reason: EMAIL_TRUST_COPY.add(offer.address) });
+      if (add) await respondWithFreshAuth(post, { threadId, requestId: permission!.requestId!, decision: "allow", card: permission!, reason: EMAIL_TRUST_COPY.add(offer.address) });
       else await post();
     } catch (caught) {
       setError(caught instanceof Error && caught.message ? caught.message : EMAIL_TRUST_COPY.failed);

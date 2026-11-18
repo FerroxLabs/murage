@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, writeSync, type BigIntStats } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendLine, ACTIVITY_MAX_AGE_MS, ACTIVITY_MAX_LINE_BYTES, ACTIVITY_MAX_LINES, BrowserActivityStore,
   configureBrowserActivity, recordBrowserActivity, sameFile,
@@ -22,7 +22,7 @@ const entry = (over: Record<string, unknown> = {}) => ({
   target: "Save draft", level: 2 as const, decision: "allowed for this task" as const, decidedBy: "grant" as const, outcome: "done" as const, ...over,
 });
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "activity-")); clock = 1_800_000_000_000; });
-afterEach(() => { configureBrowserActivity(undefined); removeTempDirSync(dir); });
+afterEach(() => { vi.restoreAllMocks(); configureBrowserActivity(undefined); removeTempDirSync(dir); });
 
 describe("browser activity store", () => {
   it("records the allowed fields and nothing else", () => {
@@ -411,17 +411,20 @@ describe("browser activity store", () => {
       writer.record(entry({ target: "old" }));
       const path = join(dir, "bind1.ndjson");
       let logReads = 0, cleaned = false;
-      // The file id is forced to match and no aside is left when the listing is checked, so only the birth time can tell the two logs apart.
+      // Simulate a reused file id with distinct birth times. NTFS can tunnel a deleted name's birth time to its replacement,
+      // so waiting for the clock does not establish this scenario; supply the two birth times explicitly below.
       const reader = new BrowserActivityStore(dir, now, {
         write: writeSync, close: closeSync,
         same: () => { if (!cleaned) { cleaned = true; new BrowserActivityStore(dir, now).prune(); expect(asides()).toEqual([]); } return true; },
         beforeRead: read => {
           if (read !== path || logReads++) return;
           renameSync(path, `${path}.${randomUUID()}.aside`);
-          const until = Date.now() + 20; while (Date.now() < until) { /* a later birth time */ }
           writer.record(entry({ target: "new" }));
         },
       });
+      vi.spyOn(reader as unknown as { logStat(path: string): BigIntStats }, "logStat").mockImplementation(file => Object.assign(
+        statSync(file, { bigint: true }), { birthtimeNs: logReads === 0 ? 1n : 2n },
+      ));
       expect(targets(reader).sort()).toEqual(["new", "old"]);
       expect(logReads).toBe(2);
     });
@@ -648,7 +651,7 @@ if (role.startsWith("compact")) {
   let tries = 0;
   while (!store.record({ id, botId: "bot1", bindingId: "bind1", taskId: "task1", site: "example.com", action: "click", target: role + i, level: 2, decision: "free" })) if (++tries > 50) process.exit(3);
 }`;
-        const child = spawn(process.execPath, ["--no-warnings", "--input-type=module", "-e", script], { stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, HOME: dir, USERPROFILE: dir } });
+        const child = spawn(process.execPath, ["--no-warnings", "--input-type=module", "-e", script], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, HOME: dir, USERPROFILE: dir } });
         let out = "";
         child.stdout.on("data", chunk => { out += String(chunk); });
         child.on("error", reject); child.on("close", code => resolve({ code, moves: Number(out) || 0 }));

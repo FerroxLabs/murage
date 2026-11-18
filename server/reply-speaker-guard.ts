@@ -92,7 +92,7 @@ export function createReplySpeakerTurns({ maxTurns = 256 }: { maxTurns?: number 
   // every turn with state, least recently used first
   const held = new Set<string>();
   const key = (threadId: string, turnId?: string) => `${threadId}\n${turnId ?? ""}`;
-  const forget = (k: string) => { streams.delete(k); cuts.delete(k); corrections.delete(k); held.delete(k); };
+  const forget = (k: string) => { for (const item of streams.keys()) if (item.startsWith(`${k}\n`)) streams.delete(item); cuts.delete(k); corrections.delete(k); held.delete(k); };
   const touch = (k: string) => {
     held.delete(k);
     held.add(k);
@@ -101,19 +101,19 @@ export function createReplySpeakerTurns({ maxTurns = 256 }: { maxTurns?: number 
   };
   const completed = (threadId: string, turnId: string | undefined): void => {
     if (turnId !== undefined) { forget(key(threadId, turnId)); return; }
-    for (const k of new Set([...streams.keys(), ...cuts.keys(), ...corrections, ...held])) if (k.startsWith(`${threadId}\n`)) forget(k);
+    for (const k of new Set([...cuts.keys(), ...corrections, ...held])) if (k.startsWith(`${threadId}\n`)) forget(k);
   };
   return {
-    delta(threadId: string, turnId: string | undefined, delta: string, speakers: Parameters<typeof stripFabricatedSpeakers>[1]): string {
-      const k = key(threadId, turnId);
+    delta(threadId: string, turnId: string | undefined, delta: string, speakers: Parameters<typeof stripFabricatedSpeakers>[1], itemId = ""): string {
+      const k = key(threadId, turnId), item = `${k}\n${itemId}`;
       touch(k);
-      let stream = streams.get(k);
-      if (!stream) { stream = createReplySpeakerStream(speakers); streams.set(k, stream); }
+      let stream = streams.get(item);
+      if (!stream) { stream = createReplySpeakerStream(speakers); streams.set(item, stream); }
       return stream(delta);
     },
-    item(threadId: string, turnId: string | undefined, text: string, speakers: Parameters<typeof stripFabricatedSpeakers>[1]): { text: string; removedSpeaker?: string; removedText?: string; firstCut?: boolean; rowId?: string } {
+    item(threadId: string, turnId: string | undefined, text: string, speakers: Parameters<typeof stripFabricatedSpeakers>[1], itemId = ""): { text: string; removedSpeaker?: string; removedText?: string; firstCut?: boolean; rowId?: string } {
       const k = key(threadId, turnId);
-      streams.delete(k);
+      streams.delete(`${k}\n${itemId}`);
       const result = stripFabricatedSpeakers(text, speakers);
       if (result.removedSpeaker || cuts.has(k) || corrections.has(k)) touch(k);
       if (!result.removedSpeaker) return { text };
@@ -123,7 +123,7 @@ export function createReplySpeakerTurns({ maxTurns = 256 }: { maxTurns?: number 
     },
     /** The engine retried: the item being streamed is void, so its tail
      * starts clean. Cuts and corrections already earned stay. */
-    reset(threadId: string, turnId: string | undefined): void { streams.delete(key(threadId, turnId)); },
+    reset(threadId: string, turnId: string | undefined, itemId = ""): void { streams.delete(`${key(threadId, turnId)}\n${itemId}`); },
     /** The turn's removal row, for its later cuts to merge into. */
     removalRow(threadId: string, turnId: string | undefined, rowId: string): void {
       const k = key(threadId, turnId);

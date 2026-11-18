@@ -1,3 +1,4 @@
+// secret-scan: fixture
 // Auto mode's decision rules. These are the only place a tool runs
 // WITHOUT a human looking, so they get pinned down hard: what auto mode
 // waves through, what it refuses to wave through, and the fact that a
@@ -755,13 +756,15 @@ describe("always-ask reads the whole command, and asks on a cut copy", () => {
   });
 
   it("an uncut ACP summary is read whole", () => {
+    // MAIN RULING 2026-11-13 wipe-only: give the ordinary no-card case the same stored owner authority as production.
     expect(autoVerdict(NO_LIMITS, "shell", "rm -rf ~")).toMatchObject({ source: "always-ask", rule: "delete-home" });
-    expect(autoVerdict(NO_LIMITS, "shell", "git status").approve).not.toBeNull();
+    expect(autoVerdict(NO_LIMITS, "shell", "git status", { fullAccessOrigin: "owner" }).approve).not.toBeNull();
   });
 
   it("a non-command tool's summary is read as text: an apostrophe never asks", () => {
-    expect(autoVerdict(NO_LIMITS, "Edit", "Edit /Users/alex/it's notes.md").approve).not.toBeNull();
-    expect(autoVerdict(NO_LIMITS, "Edit", `Edit ${"x".repeat(5_000)}`).approve).not.toBeNull();
+    // MAIN RULING 2026-11-13 wipe-only: these no-card cases are authenticated owner turns.
+    expect(autoVerdict(NO_LIMITS, "Edit", "Edit /Users/alex/it's notes.md", { fullAccessOrigin: "owner" }).approve).not.toBeNull();
+    expect(autoVerdict(NO_LIMITS, "Edit", `Edit ${"x".repeat(5_000)}`, { fullAccessOrigin: "owner" }).approve).not.toBeNull();
   });
 
   it("a command tool's unparseable summary asks", () => {
@@ -871,5 +874,88 @@ describe("the key guard reads a command as bash hands it on: quotes removed, bra
       "echo $'\\?' '*'", "cat <<EOF\nhello $(date)\nEOF", "echo ${HOME:-/tmp}/x"]) {
       expect(auto(command).source, command).toBe("auto-mode");
     }
+  });
+});
+
+// Option B uses the command's one known cwd, with the engine's HOME.
+describe("X3 B known cwd", () => {
+  const judge = (command: string, cwd: string, exact = false) => autoVerdict(
+    { autoApprove: true, fullAccess: true, noLimits: false }, "Bash", command,
+    { commandText: command, ...(exact ? { exactCommand: { command, cwd, engine: "claude" } } : { commandCwd: cwd }),
+      promptFacts: { cwd, home: "/fixture/engine-home" }, stopLine: null,
+      unseen: { platform: "posix", fs: { realpath: p => p, stat: () => ({ isFile: () => true, isDirectory: () => true }) } } },
+  );
+  it.each(["cat my*.pem", "cat *.pem"])("X3 B placed in ssh folder cards %s", command => {
+    for (const exact of [false, true]) expect(judge(command, "/fixture/engine-home/.ssh", exact)).toMatchObject({ approve: null, source: "sensitive-guard" });
+  });
+  it.each(["cat .ss?/id_*", "cat .*/id_r*", "cat **/id_r*", "cat .grok/auth.json*"])("X3 B placed at home cards %s", command => {
+    expect(judge(command, "/fixture/engine-home")).toMatchObject({ approve: null, source: "sensitive-guard" });
+  });
+  it.each(["cat README*", "nat*"])("X3 B cards (accepted) %s at home", command => {
+    expect(judge(command, "/fixture/engine-home").approve).toBeNull();
+  });
+  it.each(["cat [x]", "cat [!x]", "cat [y]", "cd /tmp && ls *.json", "cd src && cat *.ts",
+    'prettier "**/*.json"', "cat */*.json", "ls /tmp/*", "python3 -c 'print(L[i-1])'", "ls 'a[b' c[i-1]d"])(
+    "X3 B ordinary glob stays quiet in a project %s", command => {
+      expect(judge(command, "/proj").approve).toBeTruthy();
+    });
+  it.each(["cat README*", "nat*"])("X3 B cards (accepted) %s in a project", command => {
+    expect(judge(command, "/proj").approve).toBeNull();
+  });
+  it.each(["cd ~/.ssh", "cd ~/.ss?", "cd ~/.ssh && cat *.pem"])("X3 B server cd cards %s", command => {
+    expect(judge(command, "/proj")).toMatchObject({ approve: null, source: "sensitive-guard" });
+  });
+});
+
+// X3 follow-up: the shell can retain a cwd that turnCwd does not report.
+describe("X3 B persistent shell", () => {
+  const fixture = () => {
+    const shellCwdByThread = new Map<string, { targets: Map<string, string>; unknown?: string }>();
+    return (command: string, threadId = "one") => autoVerdict(
+      { autoApprove: true, fullAccess: true, noLimits: false }, "Bash", command,
+      { commandText: command, commandCwd: "/proj", ...{ shellCwdByThread, threadId },
+        promptFacts: { cwd: "/proj", home: "/fixture/engine-home" }, stopLine: null,
+        unseen: { platform: "posix", fs: { realpath: p => p, stat: () => ({ isFile: () => true, isDirectory: () => true }) } } },
+    );
+  };
+  it.each(["cd ~/.ssh", "pushd ~/.ssh", "Set-Location ~/.ssh"])("earlier %s cards a later key glob", first => {
+    const judge = fixture();
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    if (first.startsWith("Set-Location")) Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      judge(first);
+      const verdict = judge(first.startsWith("Set-Location") ? "type *.pem" : "cat *.pem");
+      expect(verdict).toMatchObject({ approve: null, source: "sensitive-guard" });
+      expect(verdict.rule).toContain("earlier cd/pushd/Set-Location/sl/chdir ~/.ssh");
+    } finally { Object.defineProperty(process, "platform", platform); }
+  });
+  it.each(["Push-Location ~/.ssh", "cd -P ~/.ssh"])(
+    "X3 R3 earlier %s cards a later cat *.pem", first => {
+      const judge = fixture(); judge(first); judge("cd /tmp");
+      expect(judge("cat *.pem")).toMatchObject({ approve: null, source: "sensitive-guard" });
+      expect(judge("cat *.pem", "two").approve).toBeTruthy();
+    });
+  it("X3 C M6 child directories do not overflow parent state", () => {
+    const judge = fixture();
+    for (let n = 0; n < 33; n++) judge(`env -C /tmp/place-${n} sh`);
+    expect(judge("cat *.pem").approve).not.toBeNull();
+  });
+  it("ordinary earlier cd stays quiet", () => {
+    const judge = fixture(); judge("cd /tmp");
+    expect(judge("ls *.json").approve).toBeTruthy();
+  });
+  it("different-thread quiet control", () => {
+    const judge = fixture(); judge("cd ~/.ssh");
+    expect(judge("ls *.json", "two").approve).toBeTruthy();
+  });
+  it("overflow cards a key-row file segment", () => {
+    const judge = fixture();
+    for (let n = 0; n < 33; n++) judge(`cd /tmp/place-${n}`);
+    expect(judge("cat *.pem")).toMatchObject({ approve: null, source: "sensitive-guard" });
+  });
+  it("overflow preserves B README behavior", () => {
+    const judge = fixture(); const before = judge("cat README*");
+    for (let n = 0; n < 33; n++) judge(`cd /tmp/place-${n}`);
+    expect(judge("cat README*")).toEqual(before);
   });
 });

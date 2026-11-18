@@ -77,6 +77,13 @@ describe("textOnlyErrorResultLine", () => {
 
   it("is applied to every answer the MCP bridge sends back from the far side", () => {
     const bridge = readFileSync(new URL("./mcp-bridge.ts", import.meta.url), "utf8");
-    expect(bridge).toMatch(/pipeMcpLines\(child\.stdout, \(line\) => answer\(textOnlyErrorResultLine\(toolLists\.rewriteResponse\(line\)\)\)/);
+    const start = bridge.indexOf("pipeMcpLines(child.stdout,");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const callback = bridge.slice(start, bridge.indexOf("let watchdog:", start));
+    const answers = [...callback.matchAll(/\banswer\(([^\n]*)/g)];
+    expect(answers.length).toBeGreaterThan(0);
+    for (const [, argument] of answers) {
+      expect(argument).toMatch(/^textOnlyErrorResultLine\(toolLists\.rewriteResponse\(line\)\)\)/);
+    }
   });
 });

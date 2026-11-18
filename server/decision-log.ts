@@ -22,7 +22,8 @@
 import { readFileSync } from "node:fs";
 
 import { writeFileAtomic } from "./atomic.ts";
-import { appendFile, rename, stat } from "node:fs/promises";
+import { appendFile } from "./counted-fs-promises.ts";
+import { rename, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { AutoVerdictSource } from "./auto-approve.ts";

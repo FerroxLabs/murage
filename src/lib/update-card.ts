@@ -5,7 +5,9 @@
 // the bottom-left pop-up (both in UpdateBanner) all read the updater bridge's state through useUpdaterState; the only things
 // they share beyond it are whether the card is open and how the pop-up stands, which live here. Module latches rather than
 // store actions: neither side owns app state.
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { subscribeUpdateNotice } from "./update-notify-bridge";
+import { subscribeLocale, t } from "@/lib/i18n";
 import type { UpdaterState } from "@/types/muragebox";
 
 let open = false;
@@ -128,7 +130,10 @@ function commitPopupLatch(next: UpdatePopupLatch): void {
   if (next === popupLatch) return;
   const closedChanged = next.closed !== popupLatch.closed || next.version !== popupLatch.version;
   popupLatch = next;
-  if (closedChanged) writeClosed(next);
+  if (closedChanged) {
+    writeClosed(next);
+    if (next.closed === "ready" && next.version) reportDismissal(next.version, true);
+  }
   for (const listener of [...popupListeners]) listener();
 }
 
@@ -136,6 +141,50 @@ function commitPopupLatch(next: UpdatePopupLatch): void {
 export const closeUpdatePopup = (status: Status | undefined): void => commitPopupLatch(closePopupLatch(popupLatch, status));
 /** The round button during a download: bring the progress back. */
 export const showUpdatePopup = (): void => commitPopupLatch({ ...popupLatch, following: true, closed: "no" });
+
+type NoticeBridge = Parameters<typeof subscribeUpdateNotice>[0];
+type NoticeValue = Parameters<NoticeBridge["report"]>[0];
+type NoticeUpdater = { reportNotice?: NoticeBridge["report"]; onNotice?: NoticeBridge["onNotice"] } | undefined;
+
+/** The actual IPC report adapter, shared by readiness and dismissal reports. */
+export function reportUpdateNotice(updater: NoticeUpdater, value: NoticeValue): Promise<unknown> | undefined {
+  return updater?.reportNotice?.(value);
+}
+
+function reportDismissal(version: string, dismissed: boolean): void {
+  void reportUpdateNotice(window.muragebox?.updater, { version, dismissed,
+    title: t("updates.systemReady", { version }),
+  })?.catch(() => {});
+}
+
+/** A synchronous effect: commit once, with no resources to release. */
+export function startPopupLatch(input: { latch: UpdatePopupLatch; commit: (latch: UpdatePopupLatch) => void }): () => void {
+  input.commit(input.latch);
+  return () => {};
+}
+
+/** Own the locale/activation subscriptions and all callbacks installed by the effect. */
+export function startUpdateNotice(input: {
+  version?: string;
+  status?: Status;
+  readLatch: () => UpdatePopupLatch;
+  translate: typeof t;
+  updater: NoticeUpdater;
+  subscribeLocale: NoticeBridge["subscribeLocale"];
+  show: () => void;
+}): () => void {
+  return subscribeUpdateNotice({
+    version: input.version, status: input.status,
+    dismissed: () => input.readLatch().closed === "ready",
+    title: version => input.translate("updates.systemReady", { version }),
+    report: value => reportUpdateNotice(input.updater, value),
+    subscribeLocale: input.subscribeLocale,
+    onNotice: callback => input.updater?.onNotice?.(callback),
+    show: input.show,
+  });
+}
+
+const readPopupLatch = (): UpdatePopupLatch => popupLatch;
 
 /** Whether the pop-up is up. The latch is worked out during render so the first frame of a download already has it. */
 export function useUpdatePopup(state: UpdaterState | null): boolean {
@@ -148,7 +197,14 @@ export function useUpdatePopup(state: UpdaterState | null): boolean {
     () => popupLatch,
   );
   const latch = nextPopupLatch(stored, state);
-  useEffect(() => commitPopupLatch(latch), [latch]);
+  const latchDeps = useMemo(() => ({ latch, commit: commitPopupLatch }), [latch]);
+  const noticeDeps = useMemo(() => ({
+    version: state?.version, status: state?.status, readLatch: readPopupLatch,
+    translate: t, updater: window.muragebox?.updater, subscribeLocale, show: showUpdatePopup,
+    // A dismissal change must send a fresh report even if status/version stay the same.
+  }), [state?.status, state?.version, latch.closed]);
+  useEffect(() => startPopupLatch(latchDeps), [latchDeps]);
+  useEffect(() => startUpdateNotice(noticeDeps), [noticeDeps]);
   return popupVisible(latch, state?.status);
 }
 

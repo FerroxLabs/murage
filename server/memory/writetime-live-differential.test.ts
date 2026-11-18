@@ -18,6 +18,7 @@
 //   - the model denies it, the new side shows it: unsafe (always zero);
 //   - the model denies it, the drain is done, the new side does not say withheld: unproven (always zero);
 //   - the model shows it, the new side does not (after the drain; in the window only "checking: pending"): unlisted (always zero).
+import { deliveredToolText } from "./testing/delivered-tool-text.ts";
 import { mkdirSync } from "node:fs";
 import { expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -28,7 +29,7 @@ import { denyLookup, memoryLookup } from "./deny-read.ts";
 import { addTurnParents, closeTurnLineage, currentLsn, openTurnLineage } from "./lineage-write.ts";
 import { memoryRefKey, type LineageRef, type LineageReader, type LineageVerdict, type MemoryRef } from "./lineage-types.ts";
 import { drainRevokeMarker } from "./memory-revocation.ts";
-import { buildPrompt, promptPart, recordTurnObject, sendFence, turnToolText } from "./prompt-parts.ts";
+import { buildPrompt, promptPart, recordTurnObject, sendFence } from "./prompt-parts.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { prng } from "./testing/legacy-history-fixture.ts";
 import type { BuiltPrompt } from "./lineage-types.ts";
@@ -150,7 +151,7 @@ function runSeed(seed: number, tally: { pairs: number; denied: number; clean: nu
       const parentLines = sharedLines ? sharedLines.filter(node => node.thread !== thread) : own.filter(() => random() < 0.25).slice(0, 3);
       const parentObjects = sharedObjects ?? available.objects.filter(() => random() < 0.3).slice(0, 2);
       addTurnParents(turns[at]!, parentLines.map((node): LineageRef => ({ kind: "line", threadId: node.thread, messageId: node.id })));
-      for (const object of parentObjects) turnToolText(thread, `read ${object.key}`, [{ kind: "memory", ref: object.ref }]);
+      for (const object of parentObjects) deliveredToolText(turns[at]!, `read ${object.key}`, [{ kind: "memory", ref: object.ref }]);
       return { parentLines, parentObjects };
     });
     // the prompts these turns would send: the replay of the thread's own recent clean lines, the other threads' lines, the objects they read

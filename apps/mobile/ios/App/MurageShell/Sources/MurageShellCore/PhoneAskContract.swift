@@ -140,24 +140,72 @@ public enum PhoneAskContract {
         }
     }
 
+    /// D8: how an ask asks for, or carries, the owner proof. "want" requests a
+    /// challenge; the signed shape answers one. Strict, like the server schema.
+    public enum AskProofField: Codable, Equatable {
+        case want
+        case signed(nonce: String, signature: String)
+
+        private enum CodingKeys: String, CodingKey { case nonce, signature }
+        public init(from decoder: Decoder) throws {
+            let single = try decoder.singleValueContainer()
+            if let word = try? single.decode(String.self) {
+                guard word == "want" else { throw ContractError.invalid }
+                self = .want
+                return
+            }
+            try checkKeys(decoder, ["nonce", "signature"])
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let nonce = try c.decode(String.self, forKey: .nonce)
+            let signature = try c.decode(String.self, forKey: .signature)
+            try Self.validate(nonce: nonce, signature: signature)
+            self = .signed(nonce: nonce, signature: signature)
+        }
+        public func encode(to encoder: Encoder) throws {
+            switch self {
+            case .want:
+                var c = encoder.singleValueContainer()
+                try c.encode("want")
+            case .signed(let nonce, let signature):
+                try Self.validate(nonce: nonce, signature: signature)
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(nonce, forKey: .nonce)
+                try c.encode(signature, forKey: .signature)
+            }
+        }
+        fileprivate static func validate(nonce: String, signature: String) throws {
+            guard matches(nonce, "[A-Za-z0-9_-]{43}"), matches(signature, "[A-Za-z0-9_-]{8,128}") else { throw ContractError.invalid }
+        }
+        fileprivate func validate() throws {
+            if case .signed(let nonce, let signature) = self { try Self.validate(nonce: nonce, signature: signature) }
+        }
+    }
+
     public struct AskRequest: Codable, Equatable {
         public let askId: String
         public let botId: String
         public let text: String
+        public let proof: AskProofField?
 
-        public init(askId: String, botId: String, text: String) throws {
+        public init(askId: String, botId: String, text: String, proof: AskProofField? = nil) throws {
             self.askId = askId
             self.botId = botId
             self.text = text
+            self.proof = proof
             try validate()
         }
-        private enum CodingKeys: String, CodingKey { case askId, botId, text }
+        private enum CodingKeys: String, CodingKey { case askId, botId, text, proof }
         public init(from decoder: Decoder) throws {
-            try checkKeys(decoder, ["askId", "botId", "text"])
+            try checkKeys(decoder, ["askId", "botId", "text", "proof"])
             let c = try decoder.container(keyedBy: CodingKeys.self)
             askId = try c.decode(String.self, forKey: .askId)
             botId = try c.decode(String.self, forKey: .botId)
             text = try c.decode(String.self, forKey: .text)
+            if c.contains(.proof) {
+                // An explicit null is not "absent": the server schema refuses it.
+                if try c.decodeNil(forKey: .proof) { throw ContractError.invalid }
+                proof = try c.decode(AskProofField.self, forKey: .proof)
+            } else { proof = nil }
             try validate()
         }
         public func encode(to encoder: Encoder) throws {
@@ -166,11 +214,13 @@ public enum PhoneAskContract {
             try c.encode(askId, forKey: .askId)
             try c.encode(botId, forKey: .botId)
             try c.encode(text, forKey: .text)
+            try c.encodeIfPresent(proof, forKey: .proof)
         }
         fileprivate func validate() throws {
             guard matches(askId, "[A-Za-z0-9_-]{16,80}") else { throw ContractError.invalid }
             guard PhoneAskContract.text(botId, 1, 128) else { throw ContractError.invalid }
             guard PhoneAskContract.text(text, 1, 1048576) else { throw ContractError.invalid }
+            try proof?.validate()
         }
     }
 
@@ -373,24 +423,27 @@ public enum PhoneAskContract {
         public let threadId: String
         public let id: String
         public let notify: Bool
+        public let proven: Bool
 
-        public init(state: String, askId: String, threadId: String, id: String, notify: Bool) throws {
+        public init(state: String, askId: String, threadId: String, id: String, notify: Bool, proven: Bool) throws {
             self.state = state
             self.askId = askId
             self.threadId = threadId
             self.id = id
             self.notify = notify
+            self.proven = proven
             try validate()
         }
-        private enum CodingKeys: String, CodingKey { case state, askId, threadId, id, notify }
+        private enum CodingKeys: String, CodingKey { case state, askId, threadId, id, notify, proven }
         public init(from decoder: Decoder) throws {
-            try checkKeys(decoder, ["state", "askId", "threadId", "id", "notify"])
+            try checkKeys(decoder, ["state", "askId", "threadId", "id", "notify", "proven"])
             let c = try decoder.container(keyedBy: CodingKeys.self)
             state = try c.decode(String.self, forKey: .state)
             askId = try c.decode(String.self, forKey: .askId)
             threadId = try c.decode(String.self, forKey: .threadId)
             id = try c.decode(String.self, forKey: .id)
             notify = try c.decode(Bool.self, forKey: .notify)
+            proven = try c.decode(Bool.self, forKey: .proven)
             try validate()
         }
         public func encode(to encoder: Encoder) throws {
@@ -401,9 +454,86 @@ public enum PhoneAskContract {
             try c.encode(threadId, forKey: .threadId)
             try c.encode(id, forKey: .id)
             try c.encode(notify, forKey: .notify)
+            try c.encode(proven, forKey: .proven)
         }
         fileprivate func validate() throws {
             guard ["sent"].contains(state) else { throw ContractError.invalid }
+        }
+    }
+
+    /// The gate's challenge, exactly as the harness issued it. Never signed
+    /// before AskProof.prepare has recomputed `digest` from what was shown.
+    public struct AskChallenge: Codable, Equatable {
+        public let v: Int
+        public let nonce: String
+        public let digest: String
+        public let decision: String
+        public let expiresAt: Int64
+
+        public init(v: Int, nonce: String, digest: String, decision: String, expiresAt: Int64) throws {
+            self.v = v; self.nonce = nonce; self.digest = digest; self.decision = decision; self.expiresAt = expiresAt
+            try validate()
+        }
+        private enum CodingKeys: String, CodingKey { case v, nonce, digest, decision, expiresAt }
+        public init(from decoder: Decoder) throws {
+            try checkKeys(decoder, ["v", "nonce", "digest", "decision", "expiresAt"])
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            v = try c.decode(Int.self, forKey: .v)
+            nonce = try c.decode(String.self, forKey: .nonce)
+            digest = try c.decode(String.self, forKey: .digest)
+            decision = try c.decode(String.self, forKey: .decision)
+            expiresAt = try c.decode(Int64.self, forKey: .expiresAt)
+            try validate()
+        }
+        public func encode(to encoder: Encoder) throws {
+            try validate()
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(v, forKey: .v)
+            try c.encode(nonce, forKey: .nonce)
+            try c.encode(digest, forKey: .digest)
+            try c.encode(decision, forKey: .decision)
+            try c.encode(expiresAt, forKey: .expiresAt)
+        }
+        fileprivate func validate() throws {
+            guard v == 1, decision == "allow" else { throw ContractError.invalid }
+            guard matches(nonce, "[A-Za-z0-9_-]{43}"), matches(digest, "[0-9a-f]{64}") else { throw ContractError.invalid }
+            guard (1...9007199254740991).contains(expiresAt) else { throw ContractError.invalid }
+        }
+    }
+
+    /// `confirm`: carries the door-stamped device id and the thread so the
+    /// phone can recompute the digest before it signs anything.
+    public struct AskConfirm: Codable, Equatable {
+        public let state: String
+        public let deviceId: String
+        public let threadId: String
+        public let challenge: AskChallenge
+
+        public init(state: String = "confirm", deviceId: String, threadId: String, challenge: AskChallenge) throws {
+            self.state = state; self.deviceId = deviceId; self.threadId = threadId; self.challenge = challenge
+            try validate()
+        }
+        private enum CodingKeys: String, CodingKey { case state, deviceId, threadId, challenge }
+        public init(from decoder: Decoder) throws {
+            try checkKeys(decoder, ["state", "deviceId", "threadId", "challenge"])
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            state = try c.decode(String.self, forKey: .state)
+            deviceId = try c.decode(String.self, forKey: .deviceId)
+            threadId = try c.decode(String.self, forKey: .threadId)
+            challenge = try c.decode(AskChallenge.self, forKey: .challenge)
+            try validate()
+        }
+        public func encode(to encoder: Encoder) throws {
+            try validate()
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(state, forKey: .state)
+            try c.encode(deviceId, forKey: .deviceId)
+            try c.encode(threadId, forKey: .threadId)
+            try c.encode(challenge, forKey: .challenge)
+        }
+        fileprivate func validate() throws {
+            guard state == "confirm" else { throw ContractError.invalid }
+            guard matches(deviceId, "[A-Za-z0-9_-]{1,128}"), matches(threadId, "[A-Za-z0-9_-]{1,128}") else { throw ContractError.invalid }
         }
     }
 
@@ -481,16 +611,38 @@ public enum PhoneAskContract {
 
     public enum AskAnswer: Codable, Equatable {
         case sent(AskSent)
+        case confirm(AskConfirm)
+        case plain
+        case proofFailed
         case failure(AskFailure)
         public init(from decoder: Decoder) throws {
             let keys = try decoder.container(keyedBy: Key.self).allKeys.map(\.stringValue)
-            if keys.contains("error") { self = .failure(try AskFailure(from: decoder)) }
-            else { self = .sent(try AskSent(from: decoder)) }
+            if keys.contains("error") { self = .failure(try AskFailure(from: decoder)); return }
+            guard let stateKey = Key(stringValue: "state"),
+                  let state = try decoder.container(keyedBy: Key.self).decodeIfPresent(String.self, forKey: stateKey) else {
+                throw ContractError.invalid
+            }
+            switch state {
+            case "sent": self = .sent(try AskSent(from: decoder))
+            case "confirm": self = .confirm(try AskConfirm(from: decoder))
+            case "plain":
+                try checkKeys(decoder, ["state"])
+                self = .plain
+            case "proof_failed":
+                try checkKeys(decoder, ["state"])
+                self = .proofFailed
+            default: throw ContractError.invalid
+            }
         }
         public func encode(to encoder: Encoder) throws {
             switch self {
             case .sent(let body): try body.encode(to: encoder)
+            case .confirm(let body): try body.encode(to: encoder)
             case .failure(let body): try body.encode(to: encoder)
+            case .plain, .proofFailed:
+                var c = encoder.container(keyedBy: Key.self)
+                guard let key = Key(stringValue: "state") else { throw ContractError.invalid }
+                try c.encode(self == .plain ? "plain" : "proof_failed", forKey: key)
             }
         }
     }

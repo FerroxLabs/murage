@@ -151,6 +151,7 @@ describe("the turn is rejected before any spawn", () => {
   function supportWith(applyMountEnv: AcpSupport["applyMountEnv"]): AcpSupport {
     return {
       driverKind: "scopeFailClosedTest",
+      fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
       displayName: "Scope Test",
       models: { default: "m", options: [{ id: "m", label: "M" }] },
       defaultCli: FAKE_ACP,

@@ -1,3 +1,5 @@
+import { sentinelWindowsHideFiles } from "./sentinel-windows-hide-stage.mjs";
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -50,7 +52,9 @@ const refuse = (code = "SENTINEL_SCHEDULE_REFUSED") => { throw Object.assign(new
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const pathFor = platform => (platform === "win32" ? path.win32 : path.posix);
 
-/** The per-installation OS names. Nothing else is ever created, read or removed. */
+/** The per-installation OS names. Nothing else is ever created, read or removed. Shipped code reads no gate context
+ *  (no environment variable, no helper path): the Windows gate wraps its own copies of this task instead
+ *  (scripts/windows/sentinel-scenario.ps1). */
 export function sentinelNames(installationId) {
   if (typeof installationId !== "string" || !ID.test(installationId)) refuse("SENTINEL_INSTALLATION_ID_INVALID");
   return Object.freeze({
@@ -148,6 +152,9 @@ export function parseLaunchdPlist(text) {
   return { executable: words[0], args: words.slice(1), installationId: found[1], revision: Number(found[2]) };
 }
 
+// Starts the GUI-subsystem Murage.exe directly, never cmd/PowerShell. after-pack
+// verifies that PE invariant; the trampoline hides its Node scanner child.
+// <Hidden> below controls Task Scheduler visibility, not console creation.
 function taskXml(id, revision, invocation, userSid) {
   if (typeof userSid !== "string" || !/^S-1-(?:\d+-){1,14}\d+$/.test(userSid)) refuse("SENTINEL_OWNER_UNKNOWN");
   const args = invocation.args.map(windowsArgument).join(" ");
@@ -357,7 +364,7 @@ export function defaultScheduleRun({ executable, args, timeoutMs = 15_000, env }
   return new Promise(resolve => {
     const baseEnv = { PATH: process.platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin", LANG: "C", LC_ALL: "C" };
     for (const key of ["HOME", "USERPROFILE", "SystemRoot", "SYSTEMROOT", "WINDIR", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "LOCALAPPDATA", "TEMP", "TMP"]) if (typeof process.env[key] === "string") baseEnv[key] = process.env[key];
-    execFile(executable, args, { env: { ...baseEnv, ...(env ?? {}) }, encoding: "buffer", timeout: timeoutMs, maxBuffer: LIMIT * 2, windowsHide: true, shell: false }, (error, stdout) => {
+    execFile(executable, [...args], withHideInherit({ env: { ...baseEnv, ...(env ?? {}) }, encoding: "buffer", timeout: timeoutMs, maxBuffer: LIMIT * 2, windowsHide: true, shell: false }), (error, stdout) => {
       if (error && (error.killed || typeof error.code !== "number")) { resolve({ code: null, stdout: "" }); return; }
       resolve({ code: error?.code ?? 0, stdout: decodeOutput(stdout) });
     });
@@ -618,11 +625,19 @@ export function entryDigest(bytes) { return createHash("sha256").update(bytes).d
  *  changes the file a registered job runs. */
 export function stageEntry({ outputRoot, source, platform = process.platform, uid = process.getuid?.() ?? -1 }) {
   const p = pathFor(platform);
-  const bytes = readFileSync(source);
+  const staged = sentinelWindowsHideFiles(source, readFileSync(source));
+  const bytes = staged.entry;
   if (bytes.length === 0 || bytes.length > 16 * 1024 * 1024) refuse("SENTINEL_ENTRY_INVALID");
   const sha256 = entryDigest(bytes);
   const dir = p.join(outputRoot, SENTINEL_RUNTIME_DIR);
   ensurePrivateDirs(outputRoot, dir, uid, platform);
+  for (const file of staged.files) {
+    const target = p.join(dir, file.name);
+    let prior;
+    try { prior = readFileSync(target); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    if (!prior || !prior.equals(file.bytes)) writeOwnedAtomic(target, file.bytes, platform);
+    if (!readFileSync(target).equals(file.bytes)) refuse('SENTINEL_ENTRY_INVALID');
+  }
   const entry = p.join(dir, `cli-${sha256.slice(0, 16)}.js`);
   let existing = null;
   try { existing = readFileSync(entry); } catch (error) { if (error?.code !== "ENOENT") throw error; }
@@ -699,6 +714,14 @@ export async function reconcileSentinelRegistration(deps) {
     return { state: "registration-needed", mechanism: extra.mechanism ?? prior?.mechanism ?? null, revision: prior?.revision ?? null, reason };
   };
 
+  // Establish the native barrier before this installation's descriptor root
+  // exists. An existing unmarked root remains legacy/UNKNOWN.
+  // The receipt boundary binds its absence proof to the root THIS process resolves
+  // (file-receipts.ts coverageOutputRoot). Under any other root the proof can
+  // never match the descriptor, so the barrier is not opened: coverage stays
+  // UNKNOWN (as for a legacy root) instead of refusing every registration.
+  const defaultReceipts = boundary.defaultOutputRoot?.(installationId) === outputRoot
+    && boundary.prepareDefaultFileReceipts?.(installationRoot) === true;
   const root = boundary.ensureOutputRoot(outputRoot, { platform });
   if (!root.ok) return { state: "registration-needed", mechanism: null, revision: null, reason: `output-root-${root.reason}` };
 
@@ -708,12 +731,18 @@ export async function reconcileSentinelRegistration(deps) {
   const loaded = boundary.loadDescriptor(descriptorPath, { platform });
   const current = loaded.ok && loaded.value.installationId === installationId && loaded.value.installationRoot === installationRoot ? loaded.value : null;
   const desired = { path: executable, entry: staged.entry, sha256: staged.sha256 };
+  // Both receipt boundary owners: scperf-p2. Registration itself is never
+  // legacy-writer exclusion evidence. The caller must establish the drain.
+  const enrollReceipts = descriptor => deps.legacyWritersDrained === true
+    ? boundary.provisionFileReceipts?.(installationRoot, { legacyExcluded: true, descriptor }) === true
+    : !defaultReceipts || boundary.prepareDefaultFileReceipts?.(installationRoot, descriptor) === true;
 
   // 2. Unchanged identity and a matching OS registration: nothing to replace.
   if (current && sameIdentity(identityOf(current), desired)) {
     let reg = null;
     try { reg = await provider.read(current, descriptorPath); } catch { reg = null; }
     if (reg && boundary.registrationMatches(reg, current, descriptorPath)) {
+      if (!enrollReceipts(current)) return needed("receipt-enrollment");
       const state = prior?.state === "proven" && prior.revision === current.scheduleRevision ? "proven" : "registered";
       save({ state, mechanism: reg.mechanism, revision: current.scheduleRevision, registeredAt: prior?.registeredAt ?? now(), provenAt: state === "proven" ? prior.provenAt : null, current: identityOf(current), previous: prior?.previous ?? null, reason: null });
       return { state, mechanism: reg.mechanism, revision: current.scheduleRevision, reason: null };
@@ -730,6 +759,7 @@ export async function reconcileSentinelRegistration(deps) {
   save({ state: "staged", mechanism: prior?.mechanism ?? null, revision: prior?.revision ?? null, registeredAt: prior?.registeredAt ?? null, provenAt: prior?.provenAt ?? null, current: prior?.current ?? identityOf(current), previous: prior?.previous ?? null, reason: null });
   const restore = () => { if (current) boundary.writeDescriptor(current, { platform }); };
   if (!boundary.writeDescriptor(next, { platform }).ok) return needed("descriptor-write");
+  if (!enrollReceipts(next)) return needed("receipt-enrollment");
   let probed = null;
   try { probed = await probe(descriptorPath, staged.entry); } catch { probed = null; }
   if (probed !== boundary.EXIT.ok && probed !== boundary.EXIT.notProven) { restore(); return needed("entry-probe"); }

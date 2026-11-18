@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -26,12 +27,16 @@
 // Scopes of bots that are gone are retired (retireScopes): unused for a long
 // time, or beyond a count limit, never one used in the last day, and a login
 // file created only inside a retiring scope is moved into the real folder first.
+import { noteHookRepairFailure } from "../hook-repair-notice.ts";
+import { engineHookRepairFailureLine } from "../../shared/provider-error.ts";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { copyFileSync, writeFileSync } from "../counted-fs.ts";
+import { constants as fsConstants, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync, utimesSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { DATA_DIR } from "../config.ts";
 import { dataRoots } from "../data-roots.ts";
+import { rebaseStoredPath } from "../stored-paths.ts";
 import { prefixRebaseLinks } from "../link-removal.ts";
 import { memoDeps, pathExists, trackPath } from "./isolation-cache.ts";
 import { LoginLinkUnavailableError, linkSharedEntry, nodeLinkIo, sharesFile, type LinkIo, type LinkMode } from "./shared-login-link.ts";
@@ -47,6 +52,8 @@ export interface ScopedCliHomeSpec {
   botId?: string;
   /** Login entries linked through to the real folder, even when absent. Nothing else of the owner's is linked. */
   share: readonly string[];
+  /** Adopt existing private state into newly shared directories once, while holding the scope lease. */
+  mergeSharedDirectories?: readonly string[];
   /** Link the shared entries only once the owner's folder exists. A link into a missing folder cannot be written through, so the
    *  engine writes in the scope meanwhile and retirement hands a login to the owner's folder (Gemini with no ~/.gemini yet). */
   linkOnlyWithFolder?: boolean;
@@ -103,6 +110,9 @@ const TOUCH_EVERY_MS = 3_600_000;
 
 interface ScopeMarker {
   contract?: number;
+  mergedSharedDirectories?: string[];
+  /** Failed upgrades retry at most three times per source state, across restarts. */
+  sharedDirectoryMergeAttempts?: Record<string, { state: string; attempts: number }>;
   realHome?: unknown;
   botId?: unknown;
   subdir?: unknown;
@@ -152,6 +162,7 @@ export function setScopeRetentionHooks(hooks: ScopeRetentionHooks): void {
 /** Owner homes and login names each kind has been scoped for in this process: where a legacy scope's logins are adopted to. */
 const knownSpecs = new Map<string, Map<string, { share: readonly string[]; subdir: string }>>();
 const legacyHandled = new Set<string>();
+const warnedHistoryMerge = new Set<string>();
 /** The spec each scope root was last built from in this process: lets a launch that only names the scope's path refresh its generated copies like a normal build. */
 const scopeSpecs = new Map<string, ScopedCliHomeSpec>();
 
@@ -214,7 +225,7 @@ function readMarkerState(root: string): MarkerState {
     return (error as NodeJS.ErrnoException).code === "ENOENT" || (error as NodeJS.ErrnoException).code === "ENOTDIR" ? { kind: "missing" } : { kind: "unreadable" };
   }
   try {
-    const parsed: unknown = JSON.parse(text);
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(text));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? { kind: "ok", marker: parsed as ScopeMarker } : { kind: "unreadable" };
   } catch { return { kind: "unreadable" }; }
 }
@@ -267,7 +278,7 @@ function acquireLease(root: string): boolean {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
       try {
-        const held = JSON.parse(readFileSync(file, "utf8")) as Partial<ProcessRecord>;
+        const held = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(file, "utf8"))) as Partial<ProcessRecord>;
         if (typeof held.pid === "number" && processRunning({ pid: held.pid, id: typeof held.id === "string" ? held.id : null })) return false;
         unlinkSync(file); // its holder is provably gone
       } catch { return false; } // unreadable or racing: in doubt, skip
@@ -281,7 +292,7 @@ function releaseLease(root: string): void {
 /** True while another live process holds the prune lease on this scope. */
 function leaseHeldByOther(root: string): boolean {
   try {
-    const held = JSON.parse(readFileSync(scopeLockPath(root), "utf8")) as Partial<ProcessRecord>;
+    const held = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(scopeLockPath(root), "utf8"))) as Partial<ProcessRecord>;
     return typeof held.pid === "number" && held.pid !== process.pid && processRunning({ pid: held.pid, id: typeof held.id === "string" ? held.id : null });
   } catch { return false; }
 }
@@ -357,7 +368,7 @@ const UNAVAILABLE_MESSAGE = "This bot's engine could not be set up in its own fo
  *   config-invalid    the owner's settings file a generated copy is made from cannot be read (the copy is removed, the turn rejected)
  *   login-link-lost   a hardlinked login is no longer the same file as the owner's (nothing is repaired)
  */
-export type ScopeFailureCode = "busy" | "unavailable" | "update-required" | "symlink-required" | "login-link-lost" | "config-invalid";
+export type ScopeFailureCode = "busy" | "unavailable" | "update-required" | "symlink-required" | "login-link-lost" | "config-invalid" | "hook-repair-failed";
 /** A bot turn's own engine folder could not be set up; the turn is rejected before any spawn. */
 export class ScopeUnavailableError extends Error {
   readonly code: ScopeFailureCode;
@@ -373,14 +384,23 @@ export class ScopeUnavailableError extends Error {
     if (options?.engine) this.engine = options.engine;
   }
 }
+/** A canonical safety file could not be restored. Never downgraded to a tool-less launch. */
+export class HookRepairFailed extends ScopeUnavailableError {
+  constructor(engine: string, cause?: unknown) {
+    super(engineHookRepairFailureLine(engine), false, { code: "hook-repair-failed", engine, cause });
+    noteHookRepairFailure(engine);
+  }
+}
+
 /** The structured tag the chat words in the owner's language (shared/provider-error.ts LOCAL_SETUP_FAILURES). */
-export function scopeLocalFailureOf(error: ScopeUnavailableError): "engine-folder-busy" | "engine-folder-unavailable" | "engine-update-required" | "engine-symlink-required" | "engine-login-link-lost" | "engine-config-invalid" {
+export function scopeLocalFailureOf(error: ScopeUnavailableError): "engine-folder-busy" | "engine-folder-unavailable" | "engine-update-required" | "engine-symlink-required" | "engine-login-link-lost" | "engine-config-invalid" | "engine-hook-repair-failed" {
   switch (error.code) {
     case "busy": return "engine-folder-busy";
     case "update-required": return "engine-update-required";
     case "symlink-required": return "engine-symlink-required";
     case "login-link-lost": return "engine-login-link-lost";
     case "config-invalid": return "engine-config-invalid";
+    case "hook-repair-failed": return "engine-hook-repair-failed";
     default: return "engine-folder-unavailable";
   }
 }
@@ -553,6 +573,67 @@ function carryGeneration(root: string, destRoot: string, n: number, subdir: stri
   }
 }
 
+/** Upgrade only: copy private history before login verification can rotate it
+ * out of the current home. Earlier generations stay intact, including for a
+ * process still using one. Exclusive copies never replace owner history. */
+function mergeSharedDirectory(source: string, dest: string): boolean {
+  const info = lstatSync(source);
+  if (info.isDirectory()) {
+    mkdirSync(dest, { recursive: true, mode: 0o700 });
+    let conflict = false;
+    for (const name of readdirSync(source)) conflict = mergeSharedDirectory(join(source, name), join(dest, name)) || conflict;
+    return conflict;
+  }
+  if (!info.isFile()) throw new Error("history contains an entry that cannot be merged safely");
+  try { copyFileSync(source, dest, fsConstants.COPYFILE_EXCL); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (readFileSync(source).equals(readFileSync(dest))) return false;
+    const bytes = readFileSync(source);
+    // Reuse earlier timestamped copies as well as content-addressed ones. A
+    // later unsafe entry can leave this merge partial across many launches.
+    const prefix = `${basename(dest)}.murage-conflict-`;
+    const siblings = readdirSync(dirname(dest));
+    if (siblings.length > WALK_ENTRY_LIMIT) throw new Error("history conflict search limit");
+    for (const name of siblings) {
+      if (!name.startsWith(prefix)) continue;
+      const path = join(dirname(dest), name), stat = lstatSync(path);
+      if (stat.isFile() && stat.size === bytes.length && readFileSync(path).equals(bytes)) return true;
+    }
+    // Stable across timestamps, bots and processes; exclusive writes prevent a
+    // competing merge from overwriting the owner or creating duplicate state.
+    const state = BigInt(`0x${createHash("sha256").update(bytes).digest("hex")}`).toString();
+    const conflict = `${dest}.murage-conflict-${state}-0`;
+    try { writeFileSync(conflict, bytes, {flag:"wx", mode:0o600}); return true; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const stat = lstatSync(conflict);
+      if (stat.isFile() && readFileSync(conflict).equals(bytes)) return true;
+      // An occupied or in-progress state copy is never given a new suffix.
+      // Leave the source intact and consume only the bounded merge budget.
+      throw new Error("history conflict state path already occupied");
+    }
+  }
+  return false;
+}
+
+/** Fingerprint files and unsafe entries without following a link. A changed
+ * source gets a fresh bounded retry budget; identical failures survive restarts. */
+function historySourceState(sources: string[]): string {
+  const hash = createHash("sha256"); let entries = 0;
+  const walk = (path: string): void => {
+    if (++entries > WALK_ENTRY_LIMIT) throw new Error("history source search limit");
+    const stat = lstatSync(path);
+    hash.update(JSON.stringify([path, stat.mode, stat.size]));
+    if (stat.isSymbolicLink()) hash.update(readlinkSync(path));
+    else if (stat.isDirectory()) for (const name of readdirSync(path).sort()) walk(join(path,name));
+    else if (stat.isFile()) hash.update(readFileSync(path));
+    else hash.update(String(stat.mtimeMs));
+  };
+  for (const source of sources) walk(source);
+  return hash.digest("hex");
+}
+
 /** The scoped home for `spec`, built or refreshed when the owner's folder changed: the path an engine is launched with (the
  *  scope's CURRENT login generation). Throws when it cannot be built. */
 export function scopedCliHome(spec: ScopedCliHomeSpec, now: number = Date.now()): string {
@@ -611,10 +692,24 @@ function reconstructSpec(kind: string, root: string, marker: ScopeMarker): Scope
     for (const [key, value] of Object.entries(marker.rebuildInputs as Record<string, unknown>)) if (typeof value === "string") inputs[key] = value;
   }
   if (!build || marker.generates !== true || typeof marker.realHome !== "string") throw new ScopeUnavailableError(BUSY_MESSAGE, true);
-  const spec = build({ realHome: marker.realHome, ...(typeof marker.botId === "string" ? { botId: marker.botId } : {}), inputs });
-  // The rebuilt spec must be the very scope that was named.
-  if (spec.kind !== kind || join(scopedCliHomeRoot(kind), scopeId(spec.realHome, spec.botId)) !== root) throw new ScopeUnavailableError(BUSY_MESSAGE, true);
+  const botId = typeof marker.botId === "string" ? marker.botId : undefined;
+  // Validate the frozen old identity before changing its constructor. A move builds a fresh hash; the copied scope stays untouched.
+  if (join(scopedCliHomeRoot(kind), scopeId(marker.realHome, botId)) !== root) throw new ScopeUnavailableError(BUSY_MESSAGE, true);
+  const realHome = reconstructedRealHome(marker.realHome);
+  const spec = build({ realHome, ...(botId ? { botId } : {}), inputs });
+  if (spec.kind !== kind || spec.realHome !== realHome || spec.botId !== botId) throw new ScopeUnavailableError(BUSY_MESSAGE, true);
   return spec;
+}
+
+/** Site 9: only Murage's exact provider-home constructor may change. No read, stat or link follows the old home. */
+function reconstructedRealHome(stored: string): string {
+  const leaf = basename(stored);
+  const next = rebaseStoredPath(stored, root => /^[A-Za-z0-9][\w.-]{0,159}$/.test(leaf) ? [join(root, "providers", leaf)] : []);
+  if ("refused" in next) throw new ScopeUnavailableError(UNAVAILABLE_MESSAGE, false);
+  if (!("path" in next)) return stored;
+  try { dataRoots().ownedPath(next.path, { create: false }); }
+  catch (error) { throw new ScopeUnavailableError(UNAVAILABLE_MESSAGE, false, { cause: error }); }
+  return next.path;
 }
 
 /** An engine home an environment already names (a probe's shared scope, a nested launch): the same scope's CURRENT generation,
@@ -645,6 +740,11 @@ function replaceGenerated(path: string, text: string): void {
 function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: boolean): { root: string; home: string } {
   const id = scopeId(spec.realHome, spec.botId);
   const root = join(scopedCliHomeRoot(spec.kind), id);
+  // A moved profile must validate its destination before taking a lease or writing scope files.
+  if (dataRoots().previousRoots().length) {
+    try { dataRoots().ownedPath(spec.subdir ? join(root, spec.subdir) : root, { create: true }); }
+    catch (error) { throw new ScopeUnavailableError(UNAVAILABLE_MESSAGE, false, { cause: error }); }
+  }
   let specs = knownSpecs.get(spec.kind);
   if (!specs) knownSpecs.set(spec.kind, (specs = new Map()));
   specs.set(spec.realHome, { share: spec.share, subdir: spec.subdir ?? "" });
@@ -664,6 +764,38 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
     if (state.kind === "unreadable") throw MARKER_UNREADABLE(); // another process is rewriting it, or it is damaged: never rebuilt over, the turn retries
     const earlier = state.kind === "ok" ? state.marker : null;
     const generation = generationOf(earlier);
+    const merged = new Set(earlier?.mergedSharedDirectories ?? []);
+    const mergeAttempts = {...earlier?.sharedDirectoryMergeAttempts};
+    for (const name of spec.mergeSharedDirectories ?? []) {
+      if (merged.has(name) || !spec.share.includes(name) || !validLoginName(name)) continue;
+      try {
+        // Only committed generations, oldest first. A carried directory link
+        // points to an earlier source already visited; it needs no second walk.
+        const sources = [0, ...generationsOnDisk(root).filter(n => n <= generation).sort((a,b) => a-b)]
+          .map(n => join(generationRoot(root,n), spec.subdir ?? "", name))
+          .filter(source => present(source) && !lstatSync(source).isSymbolicLink());
+        const state = historySourceState(sources), prior = mergeAttempts[name];
+        const attempts = prior?.state === state && Number.isSafeInteger(prior.attempts) && prior.attempts >= 0 ? prior.attempts : 0;
+        if (attempts >= 3) continue;
+        mergeAttempts[name] = {state, attempts:attempts+1};
+        // Persist the attempt BEFORE writing real-home history, so a partial
+        // failure or process exit cannot reset its retry budget.
+        writeMarkerFile(root, {...earlier, sharedDirectoryMergeAttempts:mergeAttempts});
+        for (const source of sources) {
+          if (mergeSharedDirectory(source, join(spec.realHome, name)) && !warnedHistoryMerge.has(root + name)) {
+            warnedHistoryMerge.add(root + name);
+            console.warn(`[scoped-home] ${spec.kind}: conflicting ${name} preserved under stable conflict names; real-home history kept`);
+          }
+        }
+        merged.add(name);
+        delete mergeAttempts[name];
+      } catch {
+        if (!warnedHistoryMerge.has(root + name)) {
+          warnedHistoryMerge.add(root + name);
+          console.warn(`[scoped-home] ${spec.kind}: existing ${name} could not be merged; original history retained; bounded retry on a later build or source change`);
+        }
+      }
+    }
     // The generated copies live in the CURRENT generation's own home (a later generation is not a link into generation 0's).
     const genRoot = generationRoot(root, generation);
     const genBase = spec.subdir ? join(genRoot, spec.subdir) : genRoot;
@@ -697,7 +829,7 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
       // Once the scope has moved to a later generation, generation 0's login is the preserved older copy: never linked or touched here.
       if (generation > 0) { shareMode[name] = prior === "hardlink" || prior === "symlink" || prior === "absent" ? prior : "symlink"; continue; }
       // Already there: our link, or a login the engine wrote in the scope (handed to the owner's folder when the scope retires, never overwriting theirs).
-      if (present(scoped) || established) {
+      if (present(scoped) || (established && Array.isArray(earlier?.share) && earlier.share.includes(name))) {
         // An established generation with a missing login is not repaired here: the launch check (verifyScopeLogins) starts a new generation.
         shareMode[name] = prior === "hardlink" || prior === "symlink" || prior === "absent" ? prior : "symlink";
         continue;
@@ -711,7 +843,7 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
       }
     }
     try {
-      const marker: ScopeMarker = { contract: SESSION_CONTRACT, realHome: spec.realHome, botId: spec.botId ?? null, subdir: spec.subdir ?? "", share: spec.share, cache: spec.cache ?? [], locks: spec.locks ?? [], loginWrites: spec.loginWrites ?? "replace", shareMode, generated: Object.keys(generated), deletedGenerated: deleted, generates: Boolean(spec.generated), rebuildInputs: spec.rebuildInputs ?? {}, owner: ownProcessRecord(), ...(generation > 0 ? { generation } : {}), launched: true, ...(earlier?.launchedAt && typeof earlier.launchedAt === "object" ? { launchedAt: earlier.launchedAt } : {}) };
+      const marker: ScopeMarker = { contract: SESSION_CONTRACT, mergedSharedDirectories: [...merged], sharedDirectoryMergeAttempts:mergeAttempts, realHome: spec.realHome, botId: spec.botId ?? null, subdir: spec.subdir ?? "", share: spec.share, cache: spec.cache ?? [], locks: spec.locks ?? [], loginWrites: spec.loginWrites ?? "replace", shareMode, generated: Object.keys(generated), deletedGenerated: deleted, generates: Boolean(spec.generated), rebuildInputs: spec.rebuildInputs ?? {}, owner: ownProcessRecord(), ...(generation > 0 ? { generation } : {}), launched: true, ...(earlier?.launchedAt && typeof earlier.launchedAt === "object" ? { launchedAt: earlier.launchedAt } : {}) };
       writeMarkerFile(root, marker);
     } catch (error) {
       // Never launch on a scope whose launched flag, generation pointer or logins mode was not persisted: the next build would see it as unlaunched and relink in place.
@@ -890,7 +1022,7 @@ function startGeneration(root: string, marker: ScopeMarker, kind: string, curren
 /** The owner folder a scope was built from (its marker's realHome), or null for a folder that is not a Murage scope. Takes the scope root or one of its generations. */
 export function scopeSourceOf(root: string): string | null {
   const marker = readMarker(scopeRootOfPath(root));
-  return marker && typeof marker.realHome === "string" ? marker.realHome : null;
+  return marker && typeof marker.realHome === "string" ? reconstructedRealHome(marker.realHome) : null;
 }
 
 /** A scope was used this turn: its last-use time moves (at most hourly), earlier Gemini scopes' logins are adopted once, and unused ones are retired. For a caller that memoizes around scopedCliHome. */

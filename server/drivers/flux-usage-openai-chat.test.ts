@@ -1,3 +1,4 @@
+// control: legacy cases retain their original assertions unless individually labelled red-at-4df086541 below.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -13,7 +14,7 @@ import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts
 import { setFluxMemorySettings } from "../flux-memory-headers.ts";
 import { fluxThreadIdValue } from "../flux-usage-tags.ts";
 import { recordEvents } from "../testing/events.ts";
-import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createOpenAIChatRuntime } from "../testing/bound-openai-fixture.ts";
 
 type Sent = { url: string; headers: Headers };
 const reply = (headers: Record<string, string> = {}) =>

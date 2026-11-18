@@ -18,6 +18,7 @@
 // Waiting teams are never re-checked by a pass, so the work of a pass follows the ready teams it serves (at most SHARED_DRAIN_TEAMS), never the backlog.
 import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import type { DatabaseSync } from "node:sqlite";
+import { schemaStep } from "./read-only-start.ts";
 
 export const SHARED_READY_TABLE = "shared_ready_teams";
 export const SHARED_SWEEP_TABLE = "shared_drain_sweep";
@@ -115,7 +116,9 @@ END;`;
  * behind the teams already there, oldest head first. The set is derived from the durable queue, never trusted to have been filled once: a start that was cut short
  * after the table was created and before it was filled (or any other lost entry) is made whole by the next start. A team already in the set keeps its place and
  * its state. The schema and the fill commit together (one savepoint, so it also nests in a caller's transaction). */
-export function initializeSharedReady(db: DatabaseSync): void {
+export function initializeSharedReady(db: DatabaseSync): void { schemaStep(db, "shared_ready_teams", initializeSharedReadyNow); }
+/** A read-only start runs none of this (read-only-start.ts schemaStep): the triggers it drops and remakes and the fill are writes; the set in the file is read as it is. */
+function initializeSharedReadyNow(db: DatabaseSync): void {
   beginWrite(db, "shared_ready_init");
   try {
     db.exec(DDL);

@@ -90,6 +90,12 @@ writeFileSync(
   [
     'import { existsSync } from "node:fs";',
     'import { SPAWNED_PROXIES } from "./proxy-paths.js";',
+    'import { wipeGuardEnvironment } from "./env-path.js";',
+    'import { delimiter, relative, isAbsolute, sep, join } from "node:path";',
+    'import { fileURLToPath } from "node:url";',
+    'const guardPath = wipeGuardEnvironment({ PATH: "" }, "fixture-guard").PATH.split(delimiter)[0];',
+    'const rel = relative(fileURLToPath(new URL(".", import.meta.url)), guardPath);',
+    'if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel) || !existsSync(join(guardPath, "guard.sh"))) throw Error("packaged wipe guard PATH leaves server resources");',
     "const missing = Object.entries(SPAWNED_PROXIES).filter(([, p]) => !existsSync(p));",
     "console.log(JSON.stringify({ resolved: SPAWNED_PROXIES, missing }));",
   ].join("\n"),

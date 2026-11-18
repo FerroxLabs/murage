@@ -1,0 +1,422 @@
+{
+  "schema": 1,
+  "owner": "win-sac-sign; policy: GrokBuild; release proof: MAIN",
+  "files": [
+    {
+      "path": "resources/backup-tools/x64/age.exe",
+      "sha256": "2821a4ed191da07372acd302e5f6feae7a7985e285e1417765ebe74025af45f0",
+      "reason": "Upstream age 1.3.2 raw pin; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "2821a4ed191da07372acd302e5f6feae7a7985e285e1417765ebe74025af45f0",
+      "component": "age",
+      "version": "1.3.2",
+      "sourceReceiptSha256": "f48d8f8f9ebe903ab5027ed067652f2cc1db94bc206976430133b905dcd8e8c7"
+    },
+    {
+      "path": "resources/backup-tools/x64/age-keygen.exe",
+      "sha256": "1549c7049be32695594bedd09bbd352a94b6013a9d5c43364f3c6cd7a09ab61c",
+      "reason": "Upstream age 1.3.2 raw pin; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "1549c7049be32695594bedd09bbd352a94b6013a9d5c43364f3c6cd7a09ab61c",
+      "component": "age",
+      "version": "1.3.2",
+      "sourceReceiptSha256": "f48d8f8f9ebe903ab5027ed067652f2cc1db94bc206976430133b905dcd8e8c7"
+    },
+    {
+      "path": "resources/backup-tools/x64/restic.exe",
+      "sha256": "b0dd1fd21eea5d8fe1325f55f7118213c21f36de8a261e04c0624a5ab9fd7830",
+      "reason": "Upstream restic 0.19.1 raw pin; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "b0dd1fd21eea5d8fe1325f55f7118213c21f36de8a261e04c0624a5ab9fd7830",
+      "component": "restic",
+      "version": "0.19.1",
+      "sourceReceiptSha256": "da948ad707ed690426473aaba2046cd61f8f90f6f0e7dab6be0d5796531de67d"
+    },
+    {
+      "path": "resources/cloudflared/cloudflared.exe",
+      "sha256": "76b2805253d0d6ffacb092a7acfbee99e7af6917835c0c5410e23f3ef5052da2",
+      "reason": "Upstream cloudflared 2026.10.3 raw pin; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Cloudflare, Inc."
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "76b2805253d0d6ffacb092a7acfbee99e7af6917835c0c5410e23f3ef5052da2",
+      "component": "cloudflared",
+      "version": "2026.10.3",
+      "sourceReceiptSha256": "76b2805253d0d6ffacb092a7acfbee99e7af6917835c0c5410e23f3ef5052da2"
+    },
+    {
+      "path": "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/DirectML.dll",
+      "sha256": "0faa19e9cfa7cbbf2bb679ba5313d81ebbcd4c96d1c78200efd7752c7d01503e",
+      "reason": "Upstream onnxruntime-node 1.24.3, lockfile-integrity installed package; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "0faa19e9cfa7cbbf2bb679ba5313d81ebbcd4c96d1c78200efd7752c7d01503e",
+      "component": "onnxruntime-node",
+      "version": "1.24.3",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/dxcompiler.dll",
+      "sha256": "8a45654cd1314c5f98c3657f567088ee77dc9cc89e402147843885028fde3748",
+      "reason": "Upstream onnxruntime-node 1.24.3, lockfile-integrity installed package; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "8a45654cd1314c5f98c3657f567088ee77dc9cc89e402147843885028fde3748",
+      "component": "onnxruntime-node",
+      "version": "1.24.3",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/dxil.dll",
+      "sha256": "cc8a8b8b87e3bbdeaa3a04148e83447df5f4750749261c4566fab34a63333f40",
+      "reason": "Upstream onnxruntime-node 1.24.3, lockfile-integrity installed package; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "cc8a8b8b87e3bbdeaa3a04148e83447df5f4750749261c4566fab34a63333f40",
+      "component": "onnxruntime-node",
+      "version": "1.24.3",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/onnxruntime.dll",
+      "sha256": "65dd5f706f8dd42ce96f6358ef3180c3c30f390022de00b75ada6f498ba4cce1",
+      "reason": "Upstream onnxruntime-node 1.24.3, lockfile-integrity installed package; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "65dd5f706f8dd42ce96f6358ef3180c3c30f390022de00b75ada6f498ba4cce1",
+      "component": "onnxruntime-node",
+      "version": "1.24.3",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/onnxruntime_binding.node",
+      "sha256": "be69cf9fd7ffe90da4543bd2078ef2f2d4ba7f62273948095fbf5b98ba4b240b",
+      "reason": "Upstream onnxruntime-node 1.24.3, lockfile-integrity installed package; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "be69cf9fd7ffe90da4543bd2078ef2f2d4ba7f62273948095fbf5b98ba4b240b",
+      "component": "onnxruntime-node",
+      "version": "1.24.3",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/x64/DirectML.dll",
+      "sha256": "aba1999d6f7af246fc032105a6498722eb4af8a70f04c7441b7608e17deec72f",
+      "reason": "Upstream onnxruntime-node 1.24.3, lockfile-integrity installed package; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "aba1999d6f7af246fc032105a6498722eb4af8a70f04c7441b7608e17deec72f",
+      "component": "onnxruntime-node",
+      "version": "1.24.3",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/x64/dxcompiler.dll",
+      "sha256": "2ba00fb846bf7be9df3fbe38cfadbf2d9556a7f505ec68daad522056b97fcae0",
+      "reason": "Upstream onnxruntime-node 1.24.3, lockfile-integrity installed package; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "2ba00fb846bf7be9df3fbe38cfadbf2d9556a7f505ec68daad522056b97fcae0",
+      "component": "onnxruntime-node",
+      "version": "1.24.3",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/x64/dxil.dll",
+      "sha256": "75fdc30995155ba5ea8383fee0d7d3d39577f27da61f53bf4eb9aa4e3e212640",
+      "reason": "Upstream onnxruntime-node 1.24.3, lockfile-integrity installed package; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "75fdc30995155ba5ea8383fee0d7d3d39577f27da61f53bf4eb9aa4e3e212640",
+      "component": "onnxruntime-node",
+      "version": "1.24.3",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/x64/onnxruntime.dll",
+      "sha256": "4bc168111012971ae1ffef36c1f29c06b026d17e9063bd17f6390359fbe32a84",
+      "reason": "Upstream onnxruntime-node 1.24.3, lockfile-integrity installed package; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "4bc168111012971ae1ffef36c1f29c06b026d17e9063bd17f6390359fbe32a84",
+      "component": "onnxruntime-node",
+      "version": "1.24.3",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/onnxruntime-node/bin/napi-v6/win32/x64/onnxruntime_binding.node",
+      "sha256": "32a61411861578b3e0988e669e9d9a474cc1436369269df0a4e23765cbe9e75a",
+      "reason": "Upstream onnxruntime-node 1.24.3, lockfile-integrity installed package; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "32a61411861578b3e0988e669e9d9a474cc1436369269df0a4e23765cbe9e75a",
+      "component": "onnxruntime-node",
+      "version": "1.24.3",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/@img/sharp-win32-x64/lib/libvips-42.dll",
+      "sha256": "06dab07cc386748513337a31672b1d5269fbc770a14ff403080575665bf0813f",
+      "reason": "Upstream @img/sharp-win32-x64 0.35.5 npm artifact; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "06dab07cc386748513337a31672b1d5269fbc770a14ff403080575665bf0813f",
+      "component": "sharp",
+      "version": "0.35.5",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/@img/sharp-win32-x64/lib/libvips-cpp-8.18.7.dll",
+      "sha256": "25001dbd05305a0a29119ab49933622c70b4a20ea12ef1d5d20ca40181db53bf",
+      "reason": "Upstream @img/sharp-win32-x64 0.35.5 npm artifact; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "25001dbd05305a0a29119ab49933622c70b4a20ea12ef1d5d20ca40181db53bf",
+      "component": "sharp",
+      "version": "0.35.5",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "resources/server/node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.5.node",
+      "sha256": "971048779f9c8598df14641dfc03c625885c93f473a788e65ca2deb50d0b083e",
+      "reason": "Upstream @img/sharp-win32-x64 0.35.5 npm artifact; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "971048779f9c8598df14641dfc03c625885c93f473a788e65ca2deb50d0b083e",
+      "component": "sharp",
+      "version": "0.35.5",
+      "sourceReceiptSha256": "db211695500b1bb69d0115850734bee2c4c8899dd0445f6bf5e34aab79f8079b"
+    },
+    {
+      "path": "d3dcompiler_47.dll",
+      "sha256": "a05f99734f7c4822fefc12b367af21fd0976ed6608752fb1e1e80b6ece7ecbbb",
+      "reason": "Electron 43.8.1 upstream archive SHA-256 ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "a05f99734f7c4822fefc12b367af21fd0976ed6608752fb1e1e80b6ece7ecbbb",
+      "component": "electron",
+      "version": "43.8.1",
+      "sourceReceiptSha256": "ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c"
+    },
+    {
+      "path": "libGLESv2.dll",
+      "sha256": "7a79ba1d4efdd3886b785a7dcc85c6da44732a08e7ff1682d7b7bdea450528eb",
+      "reason": "Electron 43.8.1 upstream archive SHA-256 ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "OpenJS Foundation",
+        "GitHub, Inc."
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "7a79ba1d4efdd3886b785a7dcc85c6da44732a08e7ff1682d7b7bdea450528eb",
+      "component": "electron",
+      "version": "43.8.1",
+      "sourceReceiptSha256": "ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c"
+    },
+    {
+      "path": "dxcompiler.dll",
+      "sha256": "b245bcc7887f14f540f7114d90e8b11ee71daf4b3d4e77f228f4b2a18a751b48",
+      "reason": "Electron 43.8.1 upstream archive SHA-256 ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "b245bcc7887f14f540f7114d90e8b11ee71daf4b3d4e77f228f4b2a18a751b48",
+      "component": "electron",
+      "version": "43.8.1",
+      "sourceReceiptSha256": "ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c"
+    },
+    {
+      "path": "vulkan-1.dll",
+      "sha256": "407240da36c7df3e48f23a6f9096207408f0bb2f251f807e203a7b6f21cfff39",
+      "reason": "Electron 43.8.1 upstream archive SHA-256 ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "OpenJS Foundation",
+        "GitHub, Inc."
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "407240da36c7df3e48f23a6f9096207408f0bb2f251f807e203a7b6f21cfff39",
+      "component": "electron",
+      "version": "43.8.1",
+      "sourceReceiptSha256": "ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c"
+    },
+    {
+      "path": "vk_swiftshader.dll",
+      "sha256": "5a7aed599604a3a52e74ba9c641fb8a74afba19621fc4eee216b9d32c6c88fe1",
+      "reason": "Electron 43.8.1 upstream archive SHA-256 ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "OpenJS Foundation",
+        "GitHub, Inc."
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "5a7aed599604a3a52e74ba9c641fb8a74afba19621fc4eee216b9d32c6c88fe1",
+      "component": "electron",
+      "version": "43.8.1",
+      "sourceReceiptSha256": "ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c"
+    },
+    {
+      "path": "libEGL.dll",
+      "sha256": "6f1231cdf2516923f159bcbec13643553d36096e60437bd15c5f5c123e693aba",
+      "reason": "Electron 43.8.1 upstream archive SHA-256 ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "OpenJS Foundation",
+        "GitHub, Inc."
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "6f1231cdf2516923f159bcbec13643553d36096e60437bd15c5f5c123e693aba",
+      "component": "electron",
+      "version": "43.8.1",
+      "sourceReceiptSha256": "ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c"
+    },
+    {
+      "path": "dxil.dll",
+      "sha256": "77e039c905030a641e53658a008b74e90635a5ea9b6b79eabd0f2003bdfca59a",
+      "reason": "Electron 43.8.1 upstream archive SHA-256 ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Microsoft Corporation",
+        "Microsoft Windows"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "77e039c905030a641e53658a008b74e90635a5ea9b6b79eabd0f2003bdfca59a",
+      "component": "electron",
+      "version": "43.8.1",
+      "sourceReceiptSha256": "ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c"
+    },
+    {
+      "path": "ffmpeg.dll",
+      "sha256": "1c26ae8a3e72cc2df7e1601e9981b5eebc0157255b6876f9360642db9e6c5703",
+      "reason": "Electron 43.8.1 upstream archive SHA-256 ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "OpenJS Foundation",
+        "GitHub, Inc."
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "1c26ae8a3e72cc2df7e1601e9981b5eebc0157255b6876f9360642db9e6c5703",
+      "component": "electron",
+      "version": "43.8.1",
+      "sourceReceiptSha256": "ce7eedcef94de0d12b9ba54d5244f5a323c00e17b5cdea2ef0e4f440e1a74c4c"
+    },
+    {
+      "path": "resources/browser-engine/chrome/chrome-headless-shell-win64/libEGL.dll",
+      "sha256": "14b74bf48b708810330de4a0d3e4db895204e20396452bdf93c8f806c5fe9ed4",
+      "reason": "Chromium headless shell 152.0.7977.82, pinned archive 86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Google LLC",
+        "Google Inc"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "14b74bf48b708810330de4a0d3e4db895204e20396452bdf93c8f806c5fe9ed4",
+      "component": "chrome-headless-shell",
+      "version": "152.0.7977.82",
+      "sourceReceiptSha256": "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845"
+    },
+    {
+      "path": "resources/browser-engine/chrome/chrome-headless-shell-win64/libGLESv2.dll",
+      "sha256": "11243662b21117a566dc1dafd2982a8c5285ca9935ef4bc396916a38690efb71",
+      "reason": "Chromium headless shell 152.0.7977.82, pinned archive 86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Google LLC",
+        "Google Inc"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "11243662b21117a566dc1dafd2982a8c5285ca9935ef4bc396916a38690efb71",
+      "component": "chrome-headless-shell",
+      "version": "152.0.7977.82",
+      "sourceReceiptSha256": "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845"
+    },
+    {
+      "path": "resources/browser-engine/chrome/chrome-headless-shell-win64/vk_swiftshader.dll",
+      "sha256": "e9501c5e869f1c9be6b6ddc4d53d1bb714b45e5893af6c7d20839c9622aa7f4f",
+      "reason": "Chromium headless shell 152.0.7977.82, pinned archive 86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Google LLC",
+        "Google Inc"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "e9501c5e869f1c9be6b6ddc4d53d1bb714b45e5893af6c7d20839c9622aa7f4f",
+      "component": "chrome-headless-shell",
+      "version": "152.0.7977.82",
+      "sourceReceiptSha256": "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845"
+    },
+    {
+      "path": "resources/browser-engine/chrome/chrome-headless-shell-win64/vulkan-1.dll",
+      "sha256": "444865a230470ab1be052176d4fa0321647f69c7b82afb772eb1d10fa877c423",
+      "reason": "Chromium headless shell 152.0.7977.82, pinned archive 86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "publishers": [
+        "Google LLC",
+        "Google Inc"
+      ],
+      "target": "win32-x64",
+      "kind": "upstream",
+      "sourceSha256": "444865a230470ab1be052176d4fa0321647f69c7b82afb772eb1d10fa877c423",
+      "component": "chrome-headless-shell",
+      "version": "152.0.7977.82",
+      "sourceReceiptSha256": "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845"
+    }
+  ]
+}

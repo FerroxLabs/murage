@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 const CLOSED_LINE = "Couldn't deliver that answer. The request is no longer open, so the action was not run.";
 
 const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
@@ -25,12 +26,12 @@ const imageRequests = () => { const file = join(fixture.info.dataDir, "network.l
 
 beforeAll(async () => {
   chmodSync(FAKE_ACP, 0o755);
-  fixture = await launchVerificationServer(process.env, undefined, { env: { MURAGE_MODEL_PROVIDER_CONNECTIONS: bank } as Record<string, string>, instrumentationSource: `
+  fixture = await launchVerificationServer(process.env, undefined, { env: { MURAGE_MODEL_PROVIDER_CONNECTIONS: bank } as Record<string, string>, instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
     const fs=await import('node:fs');const path=await import('node:path');
     const originalFetch=globalThis.fetch;
     globalThis.fetch=(input,init)=>{ const url=String(input instanceof Request?input.url:input); if(url.startsWith('https://')){ fs.appendFileSync(path.join(process.env.MURAGE_DATA_DIR,'network.log'),url+'\\n'); return Promise.reject(new Error('External network blocked in this test')); } return originalFetch(input,init); };
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
-    cfg.instances.imager={driver:'grokAgent',displayName:'Image fixture',environment:{FAKE_ACP_MODE:'project-image',FAKE_ACP_MCP_TIMEOUT_MS:'4000'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
+    cfg.instances.imager={driver:'grokAgent',displayName:'Image fixture',environment:{FAKE_ACP_MODE:'project-image',FAKE_ACP_MCP_TIMEOUT_MS:'4000',FAKE_ACP_MCP_READY:'1'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
     fs.writeFileSync(file,JSON.stringify(cfg));
   ` });
   const proof = await (await fetch(fixture.info.url + "/api/desktop-secret")).json() as { secret: string };
@@ -55,19 +56,25 @@ it("a late Allow on a project-held image card whose call ended closes the card a
   const approval = async () => (await api("GET", `/api/threads/${desk}/messages`)).body.messages.find((message: any) => message.card?.tool === "generate_image");
   await expect.poll(async () => (await approval())?.card?.requestId, { timeout: 30000 }).toMatch(/^image-/);
   const requestId = (await approval()).card.requestId;
+  // MAIN ruling 2026-11-17T02:02Z Q2: a visible approval card, service (image) or engine, parks its board card on the owner
+  await expect.poll(async () => { const current = await board(); return { state: current?.state, waiting: current?.waitingOn?.kind }; }, { timeout: 10000 }).toEqual({ state: "waiting", waiting: "owner_approval" });
   // the call ends (the owner interrupts the card, or its turn ends first)
   const now = await board();
   if (now.requestId) {
     const interrupted = await api("PATCH", `/api/groups/${group.id}/board/cards/${card.id}`, { expectedRevision: now.revision, action: "interrupt" });
     expect([200, 409], JSON.stringify(interrupted.body)).toContain(interrupted.status);
   }
-  await expect.poll(async () => (await board())?.requestId ?? null, { timeout: 30000 }).toBeNull();
+  // a run that ended leaves the card's last run id on it (a failed or done
+  // card keeps it); the card is no longer doing, and an interrupt names itself
+  await expect.poll(async () => (await board())?.state, { timeout: 30000 }).toMatch(/^(failed|done)$/);
+  if (now.requestId) expect((await board()).reason).toBe("Interrupted by you");
   // on this fake engine the call can end at once (its turn capability is
   // gone within a second of the card, so the card may close before the
   // answer); either way a late Allow never reads as allowed and makes nothing
   const answered = await api("POST", `/api/bots/${bot.id}/respond`, { threadId: desk, requestId, behavior: "allow" });
-  expect(answered.status).toBe(200);
-  expect(answered.body.outcome).toBe("unavailable");
+  // the answer route's own contract for an answer that could not be delivered: 503, ok false, nothing confirmed
+  expect(answered.status, JSON.stringify(answered.body)).toBe(503);
+  expect(answered.body).toEqual({ ok: false, error: "The tool permission could not be delivered. Nothing was confirmed.", outcome: "unavailable" });
   const closed = await approval();
   expect(closed.card.answered).not.toBe("allow");
   const messages = (await api("GET", `/api/threads/${desk}/messages`)).body.messages;

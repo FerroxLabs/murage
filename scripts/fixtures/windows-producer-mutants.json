@@ -1,0 +1,13 @@
+{
+  "owner": "win-sac-sign (mutant producer); MAIN (qualification consumer)",
+  "cases": [
+    {
+      "name": "receipt-write-failure",
+      "file": "scripts/windows-build-producers.mjs",
+      "tests": "scripts/windows-build-producers.test.mjs",
+      "pattern": "never admits receipt write failure",
+      "before": "      const handle = await open(file, \"wx\", 0o600);\n      try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }",
+      "after": "      try {\n        const handle = await open(file, \"wx\", 0o600);\n        try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }\n      } catch {}"
+    }
+  ]
+}

@@ -104,9 +104,31 @@ export function memoryUpgradeLocale(language) {
   return Object.hasOwn(TEXT, code) ? code : "en";
 }
 
+const ONE_TIME_STEP = {
+  en: "Murage is finishing a one-time step for your memory. Open Murage again to continue. This step starts over from its beginning, and your conversations and memory stay as they are. The details are in {log}.",
+  de: "Murage schließt gerade einen einmaligen Schritt für dein Gedächtnis ab. Öffne Murage erneut, um fortzufahren. Dieser Schritt beginnt von vorn, und deine Unterhaltungen und dein Gedächtnis bleiben, wie sie sind. Die Details stehen in {log}.",
+  es: "Murage está terminando un paso que solo se hace una vez para tu memoria. Vuelve a abrir Murage para continuar. Este paso empieza de nuevo, y tus conversaciones y tu memoria se quedan como están. Los detalles están en {log}.",
+  fr: "Murage termine une étape unique pour ta mémoire. Rouvre Murage pour continuer. Cette étape reprend depuis le début, et tes conversations et ta mémoire restent telles quelles. Les détails se trouvent dans {log}.",
+  hi: "Murage आपकी मेमोरी के लिए एक बार होने वाला चरण पूरा कर रहा है। जारी रखने के लिए Murage को दोबारा खोलें। यह चरण शुरू से होगा, और आपकी बातचीत और मेमोरी जैसी हैं वैसी ही रहेंगी। विवरण {log} में है।",
+  ja: "Murage はメモリのための一度だけの処理を仕上げています。続けるには Murage をもう一度開いてください。この処理は最初からやり直しますが、会話とメモリはそのまま残ります。詳細は {log} にあります。",
+  pt: "O Murage está concluindo uma etapa feita uma única vez para sua memória. Abra o Murage de novo para continuar. Esta etapa recomeça do início, e suas conversas e sua memória continuam como estão. Os detalhes estão em {log}.",
+  zh: "Murage 正在为你的记忆完成一次性步骤。请重新打开 Murage 以继续。此步骤会从头开始,你的对话和记忆保持原样。详细信息记录在 {log}。",
+};
+/** The shell's own code for the one-time index whose heartbeat really stopped: the build is one statement, so no finished step exists to carry on from. */
+export const MEMORY_INDEX_STOPPED = "MEMORY_INDEX_STOPPED";
+/** True when the note is the one-time owner-pin index's on a launch with no migration (database.ts). Only that beat names this contract phase. */
+export function isOneTimeIndexNote(status) {
+  return status?.state === "upgrading" && status.upgrade?.ok === true && status.upgrade.state?.phase === "indexing";
+}
+/** Which code a start-up limit reached with the note still upgrading ends as. */
+export function upgradeTimeoutCode(status) {
+  return isOneTimeIndexNote(status) ? MEMORY_INDEX_STOPPED : "MEMORY_MIGRATION_TIMEOUT";
+}
+
 /** The sentence the recovery page shows when the upgrade could not run. */
 export function memoryUpgradeBlockedSentence(status, language, { logPath = "server.log" } = {}) {
   const text = TEXT[memoryUpgradeLocale(language)];
+  if (status?.code === MEMORY_INDEX_STOPPED) return ONE_TIME_STEP[memoryUpgradeLocale(language)].replace("{log}", logPath);
   if (status?.code === "MEMORY_MIGRATION_TIMEOUT") return text.timeout.replace("{log}", logPath);
   if (status?.code === "MEMORY_MIGRATION_DISK_SPACE") return text.space.replace("{amount}", describeBytes(status.shortBytes ?? status.needBytes ?? 0));
   if (status?.code === "MEMORY_SCHEMA_NEWER") return text.newer;

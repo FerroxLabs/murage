@@ -7,8 +7,8 @@ final class PushStoresTests: XCTestCase {
     func testMissingIsEmptyAndWritesThrough() {
         let url = temp()
         let access = FileLedgerAccess(url: url)
-        XCTAssertEqual(access.update { l -> Int in l.bind("B1", origin: "https://mac.tailnet123.ts.net"); return l.total }, 0)
-        XCTAssertEqual(FileLedgerAccess(url: url).read()?.origin("B1"), "https://mac.tailnet123.ts.net")
+        XCTAssertEqual(access.update { l -> Int in l.bind("B1", origin: "https://mac.tail000000.ts.net"); return l.total }, 0)
+        XCTAssertEqual(FileLedgerAccess(url: url).read()?.origin("B1"), "https://mac.tail000000.ts.net")
     }
 
     func testUnreadableIsNilNotEmpty() throws {
@@ -61,8 +61,8 @@ private final class MemoryLedger: LedgerAccess {
 }
 
 final class PushBindingsTests: XCTestCase {
-    private let a = "https://mac.tailnet123.ts.net"
-    private let b = "https://old.tailnet123.ts.net"
+    private let a = "https://mac.tail000000.ts.net"
+    private let b = "https://old.tail000000.ts.net"
     private let b1 = "5b0c6f0e-1d2a-4c3b-8a9d-0e1f2a3b4c5d"
     private let b2 = "6c1d7a1f-2e3b-4d4c-9b0e-1f2a3b4c5d6e"
     private let b3 = "7d2e8b2a-3f4c-4e5d-a0f1-2a3b4c5d6e7f"
@@ -274,7 +274,7 @@ final class FileLedgerAccessTwoWriterTests: XCTestCase {
         let each = 60
         DispatchQueue.concurrentPerform(iterations: 2) { w in
             for i in 0..<each {
-                _ = writers[w].update { l in l.bind("W\(w)-\(i)", origin: "https://w\(w)-\(i).tailnet123.ts.net") }
+                _ = writers[w].update { l in l.bind("W\(w)-\(i)", origin: "https://w\(w)-\(i).tail000000.ts.net") }
             }
         }
         let ledger = FileLedgerAccess(url: url).read()
@@ -285,10 +285,10 @@ final class FileLedgerAccessTwoWriterTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("ledger-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url); try? FileManager.default.removeItem(atPath: url.path + ".lock") }
         let app = FileLedgerAccess(url: url), extensionSide = FileLedgerAccess(url: url)
-        _ = app.update { l in l.bind("A", origin: "https://a.tailnet123.ts.net") }
+        _ = app.update { l in l.bind("A", origin: "https://a.tail000000.ts.net") }
         DispatchQueue.concurrentPerform(iterations: 2) { w in
             if w == 0 {
-                for i in 0..<40 { _ = app.update { l in l.bind("B\(i)", origin: "https://b\(i).tailnet123.ts.net") } }
+                for i in 0..<40 { _ = app.update { l in l.bind("B\(i)", origin: "https://b\(i).tail000000.ts.net") } }
             } else {
                 for i in 0..<40 { _ = extensionSide.update { l in l.setBadge("A", count: i) } }
             }

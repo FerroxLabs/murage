@@ -3,7 +3,9 @@
 # Not PartOf/BindsTo murage-home: it restarts and stops that unit itself, and must outlive it.
 [Unit]
 Description=Murage self-service command runner
-After=murage-volume.service data.mount network-online.target murage-control.service
+# Not After= murage-control.service: murage-home.service is After= this unit (LANE-G r3 sec. 2) and murage-control is After= the home,
+# so that order would be a cycle; the runner waits for murage-control's binding file itself (main(), up to 300 s).
+After=murage-volume.service data.mount network-online.target
 Requires=data.mount
 Wants=network-online.target
 
@@ -27,7 +29,11 @@ ProtectKernelModules=yes
 RestrictSUIDSGID=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ProtectSystem=full
-ReadWritePaths=/opt /data /var/lib/murage-home /var/cache/restic /run
+# /opt: the release slots and the `current` link; /var/lib/murage-update: the update journal and the installed slots' signed manifests,
+# written only by this runner. /run/murage-update (0700): the drive lock and the start gate socket murage-home-launch asks.
+ReadWritePaths=/opt /data /var/lib/murage-home /var/lib/murage-update /var/cache/restic /run
+RuntimeDirectory=murage-update
+RuntimeDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target

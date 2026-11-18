@@ -1,3 +1,4 @@
+import { isReadOnly } from "../read-only-start.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -80,9 +81,9 @@ export function forgetAllTurnMarks(): void { marked.clear(); persisted = null; f
 
 export type OutsideSource = "web page" | "web search" | "email" | "another person" | "another bot" | "browser page" | "outside tool"
   | "downloaded file" | "network command" | "package install" | "git" | "archive" | "interpreter" | "helper" | "earlier turn"
-  | "earlier session" | "memory" | "cloned folder";
+  | "earlier session" | "memory" | "cloned folder" | "folder not checked";
 
-export interface OutsideMarkRow { threadId: string; source: OutsideSource; at: number; turnId?: string; provenance?: { callKey?: string; late?: boolean } }
+export interface OutsideMarkRow { threadId: string; source: OutsideSource; at: number; turnId?: string; site?: string; why?: string; provenance?: { callKey?: string; late?: boolean } }
 export interface SessionBinding { sessionKey: string; gen: number; birthRunId: string }
 export interface OutsideSessionRow { sessionKey?: string; gen?: number; birthRunId?: string; threadId: string; instanceId: string; tainted: boolean; wrote: boolean; edits: string[]; /** when the engine session began (rows from before this field have none) */ startedAt?: number }
 /** `begunAt` (v1 V9): the start of the marked turn as beginOutsideTurn recorded it (rows written before v1 have none: their
@@ -113,7 +114,7 @@ const outsideMarks = new Map<string, OutsideMarkRow>();
  *  whether a mark by anything else came after it. Cleared with the mark at the next turn start. */
 const callExemptions = new Map<string, { by: string; consumed: boolean; contested: boolean }>();
 /** the running turn of each thread, as beginOutsideTurn opened it (build note 3: the turn id `markedTurns` names) */
-const runningTurns = new Map<string, { turnId?: string; instanceId: string; begunAt?: number }>();
+const runningTurns = new Map<string, { turnId?: string; instanceId: string; begunAt?: number; edits?: Set<string> }>();
 const sessions = new Map<string, SessionState>();
 const markedTurnsByThread = new Map<string, MarkedTurnRow[]>();
 /** v1 test T: the earliest `begunAt` (else `at`) of each thread's marked turns */
@@ -221,7 +222,7 @@ export function outsideRefusalMessage(): string {
 /** Only shutdown, after all engines close, may seal this process's opens. */
 export function sealOutsideStore(): void {
   // A close during a logoff flush still writes this terminal seal: the flush checks sealed and shuttingDown after its closure, so it cannot also seal.
-  if (storeFailed || sealed) return;
+  if (storeFailed || sealed || isReadOnly()) return;
   try {
     if (!outsideStore) throw new Error("outside store is not wired");
     outsideStore.seal(runId);
@@ -328,7 +329,7 @@ export function wireOutsideStore(store: OutsideStore | null, now: () => number =
     console.info(`[own-write] legacy wildcard keys at boot: ${(loaded.ownWrites ?? []).filter((key) => key === "bot:*" || key === "project:*").length}`);
     registry = new DownloadRegistry(store, () => !refuseProducer());
     outsideSinceAt = loaded.outsideSince;
-    if (outsideSinceAt === undefined) { outsideSinceAt = clock(); store.setOutsideSince(outsideSinceAt); }
+    if (outsideSinceAt === undefined && !isReadOnly()) { outsideSinceAt = clock(); store.setOutsideSince(outsideSinceAt); }
     ready = !storeFailed;
   } catch (error) {
     ready = false;
@@ -400,8 +401,15 @@ export function safeMarkSite(site: string | undefined): string {
   if (site === undefined) return "unlabelled";
   return /^[A-Za-z0-9_:/.<>=+ -]{1,160}$/.test(site) ? site : "other";
 }
-export function markTurnOutside(threadId: string, source: OutsideSource, by?: string, provenance?: OutsideMarkRow["provenance"], site?: string): void {
+type OutsideMarkObserver = (threadId: string, source: OutsideSource, lifecycle: boolean) => void;
+const outsideMarkObservers = new Set<OutsideMarkObserver>();
+export function observeOutsideMarks(observer: OutsideMarkObserver): () => void {
+  outsideMarkObservers.add(observer); return () => { outsideMarkObservers.delete(observer); };
+}
+export function markTurnOutside(threadId: string, source: OutsideSource, by?: string, provenance?: OutsideMarkRow["provenance"], site?: string, helperLifecycle = false, why?: string): void {
   if (refuseProducer()) return;
+  // Every source reaches the settle ledger, including marks hidden by the first-source live view.
+  for (const observer of outsideMarkObservers) observer(threadId, source, source === "helper" && helperLifecycle);
   noteOutsideStoreWrite();
   if (outsideMarks.has(threadId)) {
     // 1.0.19 A3: a later mark never overwrites `by`; one from another call (or none) voids the first call's exemption
@@ -410,9 +418,9 @@ export function markTurnOutside(threadId: string, source: OutsideSource, by?: st
     return;
   }
   const running = runningTurns.get(threadId);
-  const row: OutsideMarkRow = { threadId, source, at: clock(), ...(provenance ? { provenance } : {}), ...(running?.turnId ? { turnId: running.turnId } : {}) };
+  const row: OutsideMarkRow = { threadId, source, at: clock(), site: safeMarkSite(site), ...(why ? { why } : {}), ...(provenance ? { provenance } : {}), ...(running?.turnId ? { turnId: running.turnId } : {}) };
   outsideMarks.set(threadId, row);
-  console.info(`outside: first-mark thread=${threadId} source=${source} site=${safeMarkSite(site)}`);
+  console.info(`outside: first-mark thread=${threadId} source=${source} site=${safeMarkSite(site)}${why ? ` why=${why}` : ""}`);
   if (by !== undefined && by !== "") callExemptions.set(threadId, { by, consumed: false, contested: false });
   durableWrite((store) => store.setMark(row));
   // v1 V9: always a markedTurns row (a synthetic turn id when the turn has none), with the turn's start
@@ -461,7 +469,7 @@ export function beginOutsideTurn(threadId: string, instanceId: string, turnId: s
   begun ??= clock();
   if (outsideMarks.delete(threadId)) durableWrite((store) => store.clearMark(threadId));
   callExemptions.delete(threadId);
-  runningTurns.set(threadId, { instanceId, begunAt: begun, ...(turnId ? { turnId } : {}) });
+  runningTurns.set(threadId, { instanceId, begunAt: begun, edits:new Set(), ...(turnId ? { turnId } : {}) });
   const key = sessionKey(threadId, instanceId);
   if (!resumed) {
     const fresh: SessionState = { ...(pendingBindings.get(key) ?? freshBinding()), tainted: false, wrote: false, edits: new Set(), startedAt: begun };
@@ -485,6 +493,12 @@ export function beginOutsideTurn(threadId: string, instanceId: string, turnId: s
     if (state.tainted) markTurnOutside(threadId, "earlier turn");
   }
   pendingBindings.delete(key);
+}
+/** Bind the accepted provider identity without resetting this turn's writes. */
+export function bindOutsideTurn(threadId:string,instanceId:string,turnId:string):void {
+ const running=runningTurns.get(threadId);
+ if(!running||running.instanceId!==instanceId||running.turnId||!turnId)return;
+ running.turnId=turnId;
 }
 /** The turn settled: the running turn is no longer named by new marks (its own mark stays until the next turn begins). The
  *  engine session stays known, so a mark that arrives late still taints it (fail closed, M5b). */
@@ -536,11 +550,25 @@ export function noteSessionEdit(threadId: string, instanceId: string, absolutePa
  *  ones. It never writes the whole set again (writeSession stays on state changes), so a session's journal is linear in its edits. */
 export function noteSessionEdits(threadId: string, instanceId: string, spellings: string[]): void {
   if (refuseProducer()) return;
+  const running=runningTurns.get(threadId);
+  if(running?.instanceId===instanceId)for(const path of spellings)running.edits?.add(path);
   const state = sessionState(threadId, instanceId);
   const fresh = [...new Set(spellings)].filter((entry) => !state.edits.has(entry));
   if (!fresh.length) return;
   for (const entry of fresh) state.edits.add(entry);
   durableWrite((store) => store.addSessionEdits(threadId, instanceId, fresh));
+}
+/** Ephemeral allowed write attempts. This does not extend or persist the
+ * legacy session journal, and only the matching live turn can add paths. */
+export function recordCurrentTurnEdits(threadId:string,instanceId:string,turnId:string,paths:readonly string[]):void {
+ const running=runningTurns.get(threadId);
+ if(running?.instanceId!==instanceId||outsideTurnKey(threadId)!==turnId)return;
+ const edits=running.edits??=new Set<string>();for(const path of paths)edits.add(path);
+}
+/** Only writes observed during this exact live turn; never copies session history. */
+export function currentTurnEdits(threadId:string,instanceId:string,turnId:string):ReadonlySet<string> {
+ const running=runningTurns.get(threadId);
+ return running?.instanceId===instanceId&&outsideTurnKey(threadId)===turnId?(running.edits??new Set()):new Set();
 }
 /** The session's edited paths (TE-RUN and 6.2 read them through the scan hooks). */
 export function sessionEdits(threadId: string, instanceId: string): ReadonlySet<string> {
@@ -646,7 +674,7 @@ export function anyOwnWrite(): boolean { return !ready || [...ownWrites].some((k
  *  Murage tool Murage itself runs, each its own ask and item (MurageMain ruling 11-06 (a)). Not `boxAgent`: its agent runs on
  *  the cloud computer with its own shell and browser, so Murage does not see its tools. */
 const COVERED_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "codex", "fuigoAgent", "grokAgent", "grok", "geminiAgent", "cursorAgent",
-  "openai-compat", "minimax"]);
+  "openai-compat", "minimax", "customAcp", "kimiAgent", "droidAgent"]);
 export function engineSeenInFull(driverKind: string | undefined): boolean { return driverKind !== undefined && COVERED_DRIVERS.has(driverKind); }
 
 /** Tests and a closed database: drop every outside state (not ready until wired again). */

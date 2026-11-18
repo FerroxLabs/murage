@@ -35,6 +35,10 @@ function winHand(extra: Record<string, string> = {}): Record<string, string> {
   return env;
 }
 
+/** X3 r4.5 B1/B2: a fixed spawn nonce and the KEEP head it gives. */
+const N = "ab".repeat(16);
+const H = `mcp:${N}:`;
+
 describe("section 1: two modes, each enforcing its tools", () => {
   it("Windows with no Git Bash is powershell-inherit, never refused", () => {
     expect(claude.claudeShellRefusal("win32", null)).toBeNull();
@@ -73,7 +77,7 @@ describe("section 1: two modes, each enforcing its tools", () => {
     expect(setup.logs.join("\n")).toContain("powershell-tool=off reason=bash-wrapped");
     expect(setup.dispatch).toBe(`shell=murage-exec:${WIN_BASH} powershell-tool=off`);
     const servers = { s: { command: "node", args: [], env: { A: "1" } } };
-    expect(mod.claudeShellServers({ kind: "murage-exec", shell: WIN_BASH }, servers, "win32", hand)).toEqual({ s: { command: "node", args: [], env: { A: "1", MURAGE_EXEC_KEEP: "A", PATH: `C:\\Program Files\\Git\\bin;${hand.Path ?? hand.PATH}` } } });
+    expect(mod.claudeShellServers({ kind: "murage-exec", shell: WIN_BASH }, servers, "win32", hand, N)).toEqual({ s: { command: "node", args: [], env: { A: "1", MURAGE_EXEC_KEEP: `${H}A`, PATH: `C:\\Program Files\\Git\\bin;${hand.Path ?? hand.PATH}` } } });
   });
 
   // 1.0.3.1 Critical: the CLI starts every stdio server as `<murage-exec> "<command>"` through cross-spawn, which reads the
@@ -88,18 +92,19 @@ describe("section 1: two modes, each enforcing its tools", () => {
       owner: { command: "tool.exe", args: [], env: { Path: "D:\\tools", K: "v" } },
       remote: { type: "http", url: "https://example.test/mcp" },
     };
-    const out = mod.claudeShellServers(mode, servers, "win32", hand);
+    const out = mod.claudeShellServers(mode, servers, "win32", hand, N);
     // the upper-case name is the one the CLI's lookup reads; the found bash comes first, so no other bash (WSL's) wins
-    expect(out.muragebox.env).toEqual({ ELECTRON_RUN_AS_NODE: "1", MURAGE_EXEC_KEEP: "ELECTRON_RUN_AS_NODE", PATH: "C:\\Program Files\\Git\\bin;C:\\Windows\\system32;C:\\Program Files\\Git\\cmd" });
-    expect(out.bare.env).toEqual({ PATH: "C:\\Program Files\\Git\\bin;C:\\Windows\\system32;C:\\Program Files\\Git\\cmd" });
+    expect(out.muragebox.env).toEqual({ ELECTRON_RUN_AS_NODE: "1", MURAGE_EXEC_KEEP: `${H}ELECTRON_RUN_AS_NODE`, PATH: "C:\\Program Files\\Git\\bin;C:\\Windows\\system32;C:\\Program Files\\Git\\cmd" });
+    // X3 r4.5 B2: the marker is on every stdio stanza, env or none
+    expect(out.bare.env).toEqual({ MURAGE_EXEC_KEEP: H, PATH: "C:\\Program Files\\Git\\bin;C:\\Windows\\system32;C:\\Program Files\\Git\\cmd" });
     // an owner's own PATH is kept (and still carried by the wrapper), with the folder in front
-    expect(out.owner.env).toEqual({ K: "v", MURAGE_EXEC_KEEP: "PATH,K", PATH: "C:\\Program Files\\Git\\bin;D:\\tools" });
+    expect(out.owner.env).toEqual({ K: "v", MURAGE_EXEC_KEEP: `${H}PATH,K`, PATH: "C:\\Program Files\\Git\\bin;D:\\tools" });
     expect(out.remote).toEqual(servers.remote);
     // a bash found under usr\\bin puts that folder first, once
-    const usr = mod.claudeShellServers({ kind: "murage-exec", shell: "C:\\Git\\usr\\bin\\bash.exe" }, { s: { command: "node", args: [] } }, "win32", { PATH: "C:\\Git\\usr\\bin;C:\\x" });
+    const usr = mod.claudeShellServers({ kind: "murage-exec", shell: "C:\\Git\\usr\\bin\\bash.exe" }, { s: { command: "node", args: [] } }, "win32", { PATH: "C:\\Git\\usr\\bin;C:\\x" }, N);
     expect(usr.s.env.PATH).toBe("C:\\Git\\usr\\bin;C:\\x");
     // POSIX is untouched: no PATH is added
-    expect(mod.claudeShellServers({ kind: "murage-exec", shell: "/bin/bash" }, { s: { command: "node", args: [], env: { A: "1" } } }, "linux", { PATH: "/usr/bin" })).toEqual({ s: { command: "node", args: [], env: { A: "1", MURAGE_EXEC_KEEP: "A" } } });
+    expect(mod.claudeShellServers({ kind: "murage-exec", shell: "/bin/bash" }, { s: { command: "node", args: [], env: { A: "1" } } }, "linux", { PATH: "/usr/bin" }, N)).toEqual({ s: { command: "node", args: [], env: { A: "1", MURAGE_EXEC_KEEP: `${H}A` } } });
   });
 
   it("bash on POSIX: byte-identical to today (three names, argv untouched)", () => {

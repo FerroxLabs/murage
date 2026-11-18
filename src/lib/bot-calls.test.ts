@@ -111,7 +111,9 @@ describe("wiring (source contracts)", () => {
     const settings = read("../components/CallsSettings.tsx");
     expect(settings).toContain("setOffUntil(active.offUntil ?? null)");
     expect(settings).toContain('"/api/calls/off-today"');
-    expect(read("../components/SettingsModal.tsx")).toContain("<CallsSettings />");
+    expect(read("../components/settings/page-registry.tsx")).toContain('calls: () => import("./pages/CallsPage")');
+    // G9 gap check H3: the Calls card renders on a paired phone too (off for today and the history are companion routes).
+    expect(read("../components/settings/pages/CallsPage.tsx")).toContain('render: () => (desktop === undefined ? deviceGate(desktop, "calls-settings-title", () => null) : <CallsSettings />)');
   });
 });
 

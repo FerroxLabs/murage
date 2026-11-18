@@ -50,6 +50,8 @@ function exportedBySource() {
     if (branch !== "posix") win.add(added[1]!);
     if (branch !== "win") posix.add(added[1]!);
   }
+  // The Windows anchored-open helper registers its own exports (native/engine-exclusion/anchored-win.c); the test-hooks ones are not shipped.
+  for (const match of readFileSync(join(root, "native", "engine-exclusion", "anchored-win.c"), "utf8").matchAll(/^\s*add\(env, exports, "(anchor(?!Test)\w+)"/gm)) win.add(match[1]!);
   return { win, posix };
 }
 
@@ -85,14 +87,14 @@ describe("a package whose addon lacks a called export is refused (fixture addon,
     const dir = mkdtempSync(join(tmpdir(), "murage-addon-fixture-"));
     const file = join(dir, "engine-exclusion.cjs");
     const members = names.map(name => `${JSON.stringify(name)}: () => {}`).join(", ");
-    writeFileSync(file, `module.exports = { version: () => 10, lock: () => {}, renameNoReplace: () => 0, processes: () => [{ pid: process.pid }], ${members} };\n`);
+    writeFileSync(file, `module.exports = { version: () => 11, lock: () => {}, renameNoReplace: () => 0, processes: () => [{ pid: process.pid }], ${members} };\n`);
     return { dir, file };
   };
   const check = (names: string[], platform: "win32" | "darwin" | "linux") => {
     const { dir, file } = fixture(names);
     try {
-      return loadEngineExclusionResource(file, platform, process.arch, 10, (command, args, env) => {
-        const run = spawnSync(command, args, { env: { ...process.env, ...env }, encoding: "utf8" });
+      return loadEngineExclusionResource(file, platform, process.arch, 11, (command, args, env) => {
+        const run = spawnSync(command, args, { windowsHide: true, env: { ...process.env, ...env }, encoding: "utf8" });
         if (run.status !== 0) throw Object.assign(new Error("run failed"), { status: run.status, stderr: run.stderr });
         return run.stdout;
       }, process.execPath, { platform, arch: process.arch });

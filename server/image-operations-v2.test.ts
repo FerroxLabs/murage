@@ -12,6 +12,7 @@ import { Store } from "./store.ts";
 import { ImageOperations } from "./image-operations.ts";
 import { ImageGenerationService, type ImageProvider } from "./image-generation.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { serviceDecisionFixture } from "./testing/service-decision-fixture.ts";
 
 const faults = vi.hoisted(() => ({ saveImage: 0 }));
 vi.mock("./attachments.ts", async importOriginal => {
@@ -36,8 +37,11 @@ const json = (value: unknown, init?: ResponseInit) => new Response(JSON.stringif
 function fixture(provider: ImageProvider, fetcher: ReturnType<typeof vi.fn<typeof fetch>>, options: { fluxCatalogue?: boolean } = {}) {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" })); const bot = store.createBot();
   const controller = new AbortController();
-  const actor = { botId: bot.id, threadId: bot.threadId, generation: randomUUID(), signal: controller.signal, assertActive: () => {} };
+  const identity = { botId: bot.id, threadId: bot.threadId, generation: randomUUID() };
+  const actor = { ...identity, authority: serviceDecisionFixture(store, identity), signal: controller.signal, assertActive: () => {} };
   const waiting = vi.fn(), operations = new ImageOperations({ store, waiting });
+  // MAIN INT-CONFLICT-DEFAULT: salv-tri-b serviceDecisionFixture already registers the real image queue and exact execution claim.
+  // c4-misc-c queue consumer intent remains, with the existing stricter proof-identity fixture.
   let now = 0;
   const service = new ImageGenerationService({ resolveConnection: () => ({ id: provider, provider, apiKey: "FAKE_OPS_V2", revision: "1" }), connectionIds: () => [provider], fetch: fetcher,
     fluxCatalogue: options.fluxCatalogue, sleep: async ms => { now += ms; }, now: () => now });

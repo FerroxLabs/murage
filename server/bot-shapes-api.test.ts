@@ -9,7 +9,7 @@
 // Synthetic fixture text only; loopback server, no network or credentials.
 import { existsSync, readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { launchVerificationServer, runControlMurage, type VerificationServer } from "../scripts/control-murage.ts";
 
 const SECTION = "Ops";
 const BRIEF = "SHAPES_BRIEF_CANARY the Ops team ships on Thursdays.";
@@ -75,7 +75,18 @@ posixOnly("what shapes a bot", () => {
     await api("PUT", `/api/section-context?section=${SECTION}`, { text: BRIEF });
     room = (await api("POST", "/api/groups", { name: "Shapes room", memberIds: [moss.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: moss.id } } })).group;
   }, 60000);
-  afterAll(async () => { await fixture?.close(); });
+  afterAll(async () => {
+    if (!fixture) return;
+    try {
+      const control = [];
+      for (const args of [['doctor'], ...(moss ? [['wait', '--bot', moss.id, '--timeout', '1'], ['messages', '--bot', moss.id, '--limit', '20']] : [])]) {
+        control.push({ args: [...args, '--url', fixture.info.url], result: await runControlMurage([...args, '--url', fixture.info.url], {
+          env: { ...process.env, MURAGE_DATA_DIR: fixture.info.dataDir },
+        }) });
+      }
+      console.info('Shapes workflow verification', JSON.stringify({ control, serverLog: readFileSync(fixture.info.logPath, 'utf8') }));
+    } finally { await fixture.close(); }
+  });
 
   it("is desktop only", async () => {
     expect((await call("GET", `/api/bots/${moss.id}/shapes`, undefined, {})).status).toBe(404);

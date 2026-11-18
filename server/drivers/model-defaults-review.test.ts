@@ -1,3 +1,4 @@
+import { admittedFixtureInstance } from "../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -42,8 +43,8 @@ it.each(["sonnet", "claude-future-model", "unfamiliar-model"])("dispatches the s
   const cli = fileURLToPath(new URL("../testing/fake-claude-cli.ts", import.meta.url));
   chmodSync(cli, 0o755);
   const dump = join(dir, "dump.json");
-  const instance = await ClaudeDriver.create({ instanceId: "saved-claude", displayName: "Claude", enabled: true,
-    environment: { HOME: dir, CLAUDE_CONFIG_DIR: join(dir, ".claude"), FAKE_CLAUDE_DUMP: dump }, config: { ...ClaudeDriver.defaultConfig(), cli } });
+  const instance = await admittedFixtureInstance(ClaudeDriver.create({ instanceId: "saved-claude", displayName: "Claude", enabled: true,
+    environment: { HOME: dir, CLAUDE_CONFIG_DIR: join(dir, ".claude"), FAKE_CLAUDE_DUMP: dump }, config: { ...ClaudeDriver.defaultConfig(), cli } }));
   const recorder = recordEvents(instance.adapter);
   try {
     await instance.adapter.sendTurn({ threadId: "saved-claude", text: "hi", cwd: dir });

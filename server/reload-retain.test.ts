@@ -79,7 +79,7 @@ describe("reloadProviders keeps a retained thread's leases until its child close
     // only the first fleet has unconfirmed children: a later reload disposes a replacement fleet that confirms everything
     let disposals = 0;
     const given: Record<string, unknown> = {
-      providerFleetReady: true, browserSetup: undefined, browserExtension: undefined, cfg: {},
+      providerFleetReady: true, browserSetup: undefined, browserExtension: undefined, cfg: {}, shellSessions: { retire: () => undefined },
       store: {
         bots: [{ id: "bot-1", threadId: "kept", busy: true }, { id: "bot-2", threadId: "clean", busy: false }],
         taskByThread: () => ({}), appendMessage: (_thread: string, line: { tool?: { name?: string } }) => { log.push(`note:${line.tool?.name}`); },

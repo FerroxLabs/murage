@@ -28,6 +28,7 @@
 // (the task's level, the routine's level, the turn's origin and audience) and
 // server/image-operations.ts acts on the answer. The tool is a Murage tool, so
 // the same decision serves every engine.
+import { cleanRead, cutRead, type ReaderVerdict } from "../shared/no-limits-decision.ts";
 import { hasFullAccess, hasNoLimits, type AutoApprover, type FullAccessOrigin } from "./auto-approve.ts";
 
 import { IMAGE_ASK_AFTER_MAX, imageApprovalOf, imageAskAfterOf, type ImageApprovalSetting, type StoredImageApproval } from "../shared/image-approval-setting.ts";
@@ -54,8 +55,8 @@ export interface ImageApprovalFacts {
 }
 
 export type ImageApprovalDecision =
-  | { ask: false; basis: "Full access" | "No limits" | "the Images setting" }
-  | { ask: true; reason: "setting" | "audience" | "unattended" | "origin" | "level" | "loop-guard" };
+  | { reads: readonly ReaderVerdict[]; basis: "Full access" | "No limits" | "the Images setting" }
+  | { reads: readonly ReaderVerdict[]; ask: true; reason: "setting" | "audience" | "unattended" | "origin" | "level" | "loop-guard" };
 
 /** Does the bot's own channel option let the owner's channel message through?
  * 1.0.10 (NOLIMITS-CARDS r2, A7): on unless the owner turned it off. The
@@ -70,24 +71,24 @@ function originAllowed(origin: FullAccessOrigin, level: ImageApprovalFacts["leve
 
 export function decideImageApproval(facts: ImageApprovalFacts): ImageApprovalDecision {
   const setting = facts.setting ?? "follow";
-  if (setting === "ask") return { ask: true, reason: "setting" };
-  if (!facts.ownerAudience) return { ask: true, reason: "audience" };
+  if (setting === "ask") return { reads: [cutRead("image-approval")], ask: true, reason: "setting" };
+  if (!facts.ownerAudience) return { reads: [cutRead("image-approval")], ask: true, reason: "audience" };
   // the owner's own proven channel DM (fullAccessTurnOrigin gives "owner-channel" only for the owner's DM, never a
   // group or a sender not bound to the owner) at a level that covers it
   const ownerChannel = facts.origin === "owner-channel" && hasFullAccess(facts.level) && originAllowed(facts.origin, facts.level);
-  if (facts.unattended === true && !ownerChannel) return { ask: true, reason: "unattended" };
-  if (!originAllowed(facts.origin, facts.level)) return { ask: true, reason: "origin" };
-  let basis: Extract<ImageApprovalDecision, { ask: false }>["basis"];
+  if (facts.unattended === true && !ownerChannel) return { reads: [cutRead("image-approval")], ask: true, reason: "unattended" };
+  if (!originAllowed(facts.origin, facts.level)) return { reads: [cutRead("image-approval")], ask: true, reason: "origin" };
+  let basis: Extract<ImageApprovalDecision, { basis: string }>["basis"];
   if (setting === "allow") basis = "the Images setting";
   else if (hasNoLimits(facts.level)) basis = "No limits";
   else if (hasFullAccess(facts.level)) basis = "Full access";
-  else return { ask: true, reason: "level" };
+  else return { reads: [cutRead("image-approval")], ask: true, reason: "level" };
   // "Ask again after N images in one turn". Blank is not "no limit": it is an
   // internal ceiling of IMAGE_ASK_AFTER_MAX, so a model that loops cannot spend
   // without bound, and a normal batch never meets it.
   const limit = facts.askAfter ?? IMAGE_ASK_AFTER_MAX;
-  if (facts.madeThisTurn + facts.count > limit) return { ask: true, reason: "loop-guard" };
-  return { ask: false, basis };
+  if (facts.madeThisTurn + facts.count > limit) return { reads: [cutRead("image-approval")], ask: true, reason: "loop-guard" };
+  return { reads: [cleanRead("image-approval")], basis };
 }
 
 export const IMAGE_SETTING_DESKTOP_ONLY = "not found";

@@ -1,5 +1,8 @@
+import { openMemoryRequest, finishMemoryRequest, presentMemoryRequest, memoryApprovalQueue } from "./authority.ts";
+import type { ServiceAuthority } from "./service-approval.ts";
 import { learningDeletionEpoch } from "./deny.ts";
 import { isProjectCloseLesson, isCloseTurnRequest } from "../project-close.ts";
+import { RecallViewLost } from "./recall-recovery.ts";
 import { roomRequest } from "../room-requests.ts";
 import { z } from "zod";
 import { MEMORY_CURSOR_MAX_CHARS } from "./cursor-limits.ts";
@@ -17,13 +20,14 @@ import { learningWriteDecision,learningEvidenceScopes,learningSourceBot } from "
 import { recordLearningEvent } from "./learning-ledger.ts";
 import { activateGroundedMemory, candidateReviewReason, holdMemoryCandidate, learningReviewReason, ownerLearningRefusal, pendingSaveNote } from "./automatic-learning.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
-import { saveProjectCloseLesson, saveMemoryCandidate, saveGroundedMemory, assertMemoryCaptureComplete, assertGenericMemoryTarget, savedMemoryEvidence } from "./authority.ts";
+import { saveProjectCloseLesson, saveMemoryCandidate, saveGroundedMemory, assertMemoryCaptureComplete, assertGenericMemoryTarget, savedMemoryEvidence, memoryCandidateId } from "./authority.ts";
 import { MEMORY_HANDLE_PATTERN } from "../../shared/memory.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
 import { resolveQuotedEvidence } from "./quote-evidence.ts";
 import { inheritEdge } from "./revoke-commit.ts";
 import { fenceEmailDerivedRecords } from "./email-derived.ts";
+import { memoryReadResponse } from "./read-response.ts";
 import { markRecallRecords } from "./outside-derived.ts";
 
 /** Resolves the turn-local handles of the dispatch this capability belongs to
@@ -58,11 +62,17 @@ function bounded<T>(result:T):T {
 }
 
 /** Called only after the harness binds a live memory capability to this context. */
-export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAccess,bridge:MemorySearchBridge,handles?:MemoryHandleResolver,extractor:TextOnlyExtractor|null=null,options:{budgetGate?:(scopeId:string)=>boolean;executingRequestId?:string;
+export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAccess,bridge:MemorySearchBridge,handles?:MemoryHandleResolver,extractor:TextOnlyExtractor|null=null,options:{authority?:ServiceAuthority;budgetGate?:(scopeId:string)=>boolean;executingRequestId?:string;
   /** The captured sources whose text a read hands the turn (every record's evidence): they join the calling turn's sources (server/steer-lineage.ts). */
   onRead?:(sourceIds:string[])=>void}={}) {
   const executingRequestId=options.executingRequestId;
-  assertMemoryAccess(access);
+  try { assertMemoryAccess(access); }
+  catch(error) {
+    const executing = error instanceof RecallViewLost && path==="/api/internal/memory/save" && executingRequestId ? roomRequest(database(),executingRequestId) : null;
+    if(executing && executing.toBotId===access.botId && (executing.targetThreadId??executing.rootThreadId)===access.threadId
+      && isCloseTurnRequest(database(),executing) && !isProjectCloseLesson(database(),executing))throw new Error("MEMORY_CLOSE_LESSON_REQUIRED");
+    throw error;
+  }
   if(memoryState().mode!=="active")throw Object.assign(new Error("MEMORY_NOT_ACTIVE"),{status:409});
   /** A handle names a line of this turn's frame; anything else is unknown, not
    * a guessable record. The record it names is the one the turn was shown. */
@@ -81,7 +91,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       markRecallRecords(database(),access.threadId,result.hits.map(hit=>({id:hit.id,version:hit.version})));
       handles?.noteLookup?.(result.hits.map(hit=>({id:hit.id,version:hit.version,evidence:hit.evidence.map(handle=>({sourceId:String(handle.sourceId),revision:Number(handle.revision)}))})),access);
       options.onRead?.(result.hits.flatMap(hit=>hit.evidence.map(handle=>String(handle.sourceId))));
-      return result;
+      return memoryReadResponse(result,result.hits);
     }
     if(path==="/api/internal/memory/get"){
       const input=get.parse(body);
@@ -102,7 +112,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       markRecallRecords(database(),access.threadId,records.map(record=>({id:record.id,version:record.version})));
       handles?.noteLookup?.(records.map(record=>({id:record.id,version:record.version,evidence:record.evidence.map(handle=>({sourceId:handle.sourceId,revision:handle.revision}))})),access);
       options.onRead?.(records.flatMap(record=>record.evidence.map(handle=>String(handle.sourceId))));
-      return result;
+      return memoryReadResponse(result,records);
     }
     if(path==="/api/internal/memory/save"){
       const parsed=save.parse(body),db=database();
@@ -115,7 +125,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       // (a Reopen while the body was read); it never falls back to an ordinary grounded save.
       const candidateId=executing && (isProjectCloseLesson(database(),executing) || isCloseTurnRequest(database(),executing))
         ? saveProjectCloseLesson(input.text,input.evidence,input.idempotencyKey,access,executing.id)
-        : await saveGroundedMemory(input.text,input.evidence,input.idempotencyKey,access,input.claimType,extractor,input.ownerInvitation,{budgetGate:options.budgetGate});
+        : await saveGroundedMemory(input.text,input.evidence,input.idempotencyKey,access,input.claimType,extractor,input.ownerInvitation,{budgetGate:options.budgetGate,authority:options.authority});
       const state=String(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(candidateId)!.state);
       // A held save says so, and why, so the bot does not search for it and conclude it was lost.
       if(state!=="candidate")return {candidateId,state,pendingReview:false};
@@ -124,6 +134,14 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
     if(path==="/api/internal/memory/propose-correction"){
       const parsed=correction.parse(body),input={...parsed,evidence:resolveQuotedEvidence(database(),parsed.evidence,access)};
       const target="handle" in input?resolve(input.handle):{id:input.id,version:input.version};
+      // A proposal key already bound to a target version cannot be replayed
+      // against another one. Judge that durable binding before spending a
+      // hydration allowance on the replacement target.
+      const priorId=memoryCandidateId(access.threadId,input.idempotencyKey), prior=database().prepare("SELECT scope_id FROM memory_records WHERE id=? AND version=1").get(priorId);
+      if(prior){
+        assertMemoryAccess(access,String(prior.scope_id));
+        if(database().prepare("SELECT 1 FROM memory_derivations WHERE child_id=? AND child_version=1 AND (parent_id<>? OR parent_version<>?) LIMIT 1").get(priorId,target.id,target.version))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
+      }
       // the reader's own rule, as memory_get applies it: a record resting on a line this reader may not see is not a target
       const withheld=readerWithheldMessage(access);
       hydrateMemoryRecord(target.id,target.version,access,{allowance:LineageAllowance.tool(),...withheld?{withheldMessage:withheld}:{}});
@@ -140,14 +158,25 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       const proposalId=transaction(db=>{
         const candidateId=saveMemoryCandidate(input.replacement,input.evidence,input.idempotencyKey,access);
         const previous=db.prepare("SELECT state,supersedes_id FROM memory_records WHERE id=? AND version=1").get(candidateId);
-        if(previous?.state!=="candidate"||(previous.supersedes_id&&previous.supersedes_id!==target.id))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
+        if(!previous||!["candidate",...(options.authority?["active"]:[])].includes(String(previous.state))||(previous.supersedes_id&&previous.supersedes_id!==target.id))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
         const recorded=db.prepare("SELECT parent_id,parent_version FROM memory_derivations WHERE child_id=? AND child_version=1").all(candidateId);
         if(recorded.some(row=>row.parent_id!==target.id||Number(row.parent_version)!==target.version))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
+        if(previous.state==='active'){
+          if(previous.supersedes_id!==target.id||recorded.length!==1)throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
+          return candidateId;
+        }
         db.prepare("UPDATE memory_records SET supersedes_id=? WHERE id=? AND version=1").run(target.id,candidateId);
         db.prepare("INSERT OR IGNORE INTO memory_derivations VALUES(?,?,?,1)").run(target.id,target.version,candidateId);
         inheritEdge(db,{kind:"record",id:candidateId,version:1},{kind:"record",id:target.id,version:target.version});
         return candidateId;
       });
+      const request=options.authority?openMemoryRequest(options.authority,access,proposalId,1,'correction'):undefined;
+      if(request && !(request.baseBranch && request.outcome.kind==='card')) {
+        finishMemoryRequest(request,access,proposalId,1);
+        const state=String(db.prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(proposalId)!.state);
+        return {candidateId:proposalId,state,pendingReview:state==='candidate',record:{id:target.id,version:target.version}};
+      }
+      if(db.prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(proposalId)?.state === "active") return {candidateId:proposalId,state:"active",pendingReview:false,record:{id:target.id,version:target.version}};
       let refusal=ownerLearningRefusal(db,input.evidence);
       let support={supported:false,reason:"correction-grounding-unavailable"};
       if(!refusal&&input.evidence.length===1&&targetBefore.state==="active"&&targetBefore.owner_pinned===0){
@@ -160,7 +189,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
         }
       }
       if(refusal)transaction(()=>holdMemoryCandidate(db,proposalId,refusal!));
-      return transaction(db=>{
+      const result=transaction(db=>{
         assertMemoryAccess(access);assertGenericMemoryTarget(db,target.id,target.version);
         const policyAfter=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
         if(learningDeletionEpoch(db)!==deletionFence||policyAfter.policy_revision!==policyBefore.policy_revision||policyAfter.deletion_epoch!==policyBefore.deletion_epoch||readMemoryLearning(db).revision!==learningBefore)throw new Error("MEMORY_CONSOLIDATION_REVOKED");
@@ -187,6 +216,8 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
         const savedState=String(db.prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(candidateId)!.state);
         return {candidateId,state:savedState,pendingReview:savedState==="candidate",record:{id:target.id,version:target.version},...("handle" in input?{handle:input.handle}:{})};
       });
+      if(request && request.outcome.kind==='card' && result.state==='candidate')presentMemoryRequest(request,request.outcome.ref,access,proposalId,1);
+      return result;
     }
     throw Object.assign(new Error("MEMORY_ROUTE_UNAVAILABLE"),{status:404});
   }catch(error){
@@ -194,3 +225,5 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
     throw error;
   }
 }
+
+export function pendingMemoryApprovals(){return memoryApprovalQueue().pendingApprovals();}

@@ -1,8 +1,9 @@
+// control migration: real bound proxy ingress; existing assertions retained.
 // DRV contract: the mounted stdio proxy must defer extension floor decisions to
 // the executor, preserve refusals, and retain built-in preflight by default.
 // Isolated loopback route + real executor; declared CDP/engine fixture, no Chrome.
 // C2 owns the production mount: MURAGE_BROWSER_TRANSPORT: "extension".
-import { spawn } from "node:child_process";
+import { boundProxyState, spawnBoundProxy } from "../testing/bound-proxy-fixture.ts";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -43,19 +44,30 @@ async function mount(dispatch: (name: string, args: Record<string, unknown>) => 
   return {
     names,
     async exchange(calls: Array<{ name: string; arguments: Record<string, unknown> }>, transport?: string) {
-      const child = spawn(process.execPath, [proxyPath], {
+      const child = await spawnBoundProxy("unifiedBrowser", process.execPath, [proxyPath], {
         env: { PATH: process.env.PATH, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "fixture-token", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread", ...(transport ? { MURAGE_BROWSER_TRANSPORT: transport } : {}) },
         stdio: ["pipe", "pipe", "pipe"],
       });
       let stdout = "", stderr = "";
-      child.stdout.on("data", chunk => { stdout += chunk; });
+      let accepted!: () => void;
+      const delivered = new Promise<void>(resolve => { accepted = resolve; });
+      child.stdout.on("data", chunk => {
+        stdout += chunk;
+        if (stdout.trim().split("\n").filter(Boolean).length === calls.length) accepted();
+      });
       child.stderr.on("data", chunk => { stderr += chunk; });
       const closed = new Promise<number | null>((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
       cleanup.push(async () => { if (child.exitCode === null && child.signalCode === null) child.kill(); await closed; });
-      child.stdin.end(calls.map((params, id) => JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params }) + "\n").join(""));
-      expect(await closed, stderr).toBe(0);
+      // control: keep the engine transport alive through final acceptance.
+      // Design line 399 makes EOF terminal, including pending async replies.
+      child.stdin.write(calls.map((params, id) => JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params }) + "\n").join(""));
+      await Promise.race([delivered, closed.then(() => { throw new Error(`proxy closed before delivery: ${stderr}`); })]);
+      expect(boundProxyState(child)).toEqual({ sealed: false, refusals: 0 });
       const replies = stdout.trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
       expect(replies).toHaveLength(calls.length);
+      child.kill();
+      expect(await closed, stderr).toBeNull();
+      expect(child.signalCode).toBe("SIGTERM");
       return replies;
     },
   };

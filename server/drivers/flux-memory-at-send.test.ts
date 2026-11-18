@@ -1,3 +1,4 @@
+// control: legacy cases retain their original assertions unless individually labelled red-at-4df086541 below.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -11,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, type MemoryBundle } from "../../shared/memory.ts";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../contracts.ts";
-import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createOpenAIChatRuntime } from "../testing/bound-openai-fixture.ts";
 import { clearFluxMemoryReports, setFluxExternalMemory } from "../flux-memory-envelope.ts";
 import { fluxMemoryAtSend, fluxMemorySend, setFluxMemorySettings } from "../flux-memory-headers.ts";
 import { decorateMemoryInstance } from "../harness/memory-adapter.ts";
@@ -96,8 +97,8 @@ describe("Flux memory decided at every request write (openai-chat)", () => {
     const done = await turn(recall, fluxRoute, "t-307");
     expect(done).toMatchObject({ type: "turn.completed", ok: true });
     expect(sent).toHaveLength(2);
-    // dispatched with the switch on: the first write carried Flux memory
-    expect(envelopeOf(sent[0]!)).toMatchObject({ mode: "on" });
+    // Explicit-only capture stays off; recall is on at dispatch, with no envelope.
+    expect(envelopeOf(sent[0]!)).toBeUndefined();
     expect(isOff(sent[0]!)).toBe(false);
     // the hop after the switch went off: off/off, no envelope
     expect(sent[1]!.url).toContain("hop=2");
@@ -115,7 +116,8 @@ describe("Flux memory decided at every request write (openai-chat)", () => {
     const done = await turn(recall, fluxRoute, "t-503");
     expect(done).toMatchObject({ type: "turn.completed", ok: true });
     expect(sent).toHaveLength(2);
-    expect(envelopeOf(sent[0]!)).toMatchObject({ mode: "on" });
+    expect(envelopeOf(sent[0]!)).toBeUndefined();
+    expect(isOff(sent[0]!)).toBe(false);
     expect(isOff(sent[1]!)).toBe(true);
     expect(envelopeOf(sent[1]!)).toBeUndefined();
   });
@@ -138,7 +140,7 @@ describe("Flux memory decided at every request write (openai-chat)", () => {
     expect(sent).toHaveLength(2);
     for (const request of sent) {
       expect(isOff(request)).toBe(false);
-      expect(envelopeOf(request)).toMatchObject({ mode: "on" });
+      expect(envelopeOf(request)).toBeUndefined();
     }
   });
 

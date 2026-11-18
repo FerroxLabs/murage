@@ -14,9 +14,12 @@
 //  - names another system can't hold stored under a safe spelling, restored under the real name;
 //  - rebuildable folders (node_modules, virtual environments, caches) left out and listed;
 //  - items past the file limit, or unreadable, left out and listed; the backup completes.
+import { denyFixtureRead } from "./testing/platform-fixtures.ts";
+import { randomUUID, createHash } from "node:crypto";
+import { createServer } from "node:net";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, toNamespacedPath } from "node:path";
 import { expect, it } from "vitest";
 import { withOfflineInstallation } from "./installation-database-snapshot.ts";
 import { stageInstallationStateWhileOwned } from "./installation-state-snapshot.ts";
@@ -24,11 +27,11 @@ import { inventoryFidelity } from "./installation-fidelity-snapshot.ts";
 import { writeEncryptedInstallationBackup, restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { reviewInstallation } from "./installation-activation.ts";
 import { validateInstallationArchiveManifest } from "./installation-archive.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys, optionalBackupAgeUnavailable } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
-const has = (tool: string, args: string[] = ["--version"]) => spawnSync(tool, args, { stdio: "ignore" }).status === 0;
+const has = (tool: string, args: string[] = ["--version"]) => spawnSync(tool, args, { windowsHide: true, stdio: "ignore" }).status === 0;
 const deskOf = (data: string) => join(data, "workspaces", "bot", "threads", "thread");
 
 async function stageAndInventory(data: string, parent: string, options: { maxFiles?: number } = {}) {
@@ -44,7 +47,7 @@ async function stageAndInventory(data: string, parent: string, options: { maxFil
   });
 }
 
-const artefacts: Record<string, (desk: string) => void> = {
+const artefacts: Record<string, (desk: string) => void | Promise<() => Promise<void>>> = {
   "npm install (node_modules/.bin link)": desk => {
     mkdirSync(join(desk, "site", "node_modules", "typescript", "bin"), { recursive: true });
     writeFileSync(join(desk, "site", "node_modules", "typescript", "bin", "tsc"), "#!/usr/bin/env node\n");
@@ -61,25 +64,65 @@ const artefacts: Record<string, (desk: string) => void> = {
   },
   "report with a time in its name (colon)": desk => { writeFileSync(join(desk, "report 2026-09-26 10:30.md"), "# Report\n"); },
   "shortcut to a file outside the data folder": desk => { symlinkSync("/etc/hosts", join(desk, "hosts-link")); },
-  "Windows device name and trailing dot": desk => { writeFileSync(join(desk, "aux.txt"), "a"); writeFileSync(join(desk, "notes."), "n"); },
+  "Windows device name and trailing dot": desk => { writeFileSync(toNamespacedPath(join(desk, "aux.txt")), "a"); writeFileSync(toNamespacedPath(join(desk, "notes.")), "n"); },
   "an empty folder with a colon in its name": desk => { mkdirSync(join(desk, "run 10:30")); mkdirSync(join(desk, "run 11:00", "empty"), { recursive: true }); },
-  "a socket or pipe left by a tool": desk => { execFileSync("mkfifo", [join(desk, "tool.pipe")]); },
+  "a socket or pipe left by a tool": async desk => {
+    if (process.platform !== "win32") {
+      execFileSync("mkfifo", [join(desk, "tool.pipe")], { windowsHide: true });
+      return async () => {};
+    }
+    // Windows pipes live in the pipe namespace, not as directory entries. Keep one open while backing up real work.
+    writeFileSync(join(desk, "tool-output.txt"), "kept\n");
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(`\\\\.\\pipe\\murage-backup-${randomUUID()}`, () => { server.removeListener("error", reject); resolve(); });
+    });
+    return () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  },
 };
 
 // A colon cannot be in a Windows file name: mkdir refuses it, and a file
 // write makes an alternate data stream on "report 2026-09-26 10" instead.
-const colonNames = new Set(["report with a time in its name (colon)", "an empty folder with a colon in its name"]);
+// POSIX filesystem FIFOs have no Windows directory entry equivalent; Windows
+// named pipes live in the pipe namespace. These exact POSIX filename/kernel
+// rows stay on POSIX. Reserved names and trailing dots use native namespaced
+// paths above and run on Windows too.
+const posixEntries = new Set(["report with a time in its name (colon)", "an empty folder with a colon in its name"]);
 
 for (const [name, make] of Object.entries(artefacts)) {
-  it.skipIf(process.platform === "win32" && colonNames.has(name))(`backs up a bot folder after: ${name}`, async () => {
+  it.skipIf(process.platform === "win32" && posixEntries.has(name))(`backs up a bot folder after: ${name}`, async () => {
     const f = backupFixture();
     const desk = deskOf(f.data);
     mkdirSync(desk, { recursive: true });
-    make(desk);
-    try { await stageAndInventory(f.data, f.parent); }
-    finally { f.db.close(); removeTempDirSync(f.parent); }
+    let cleanup: void | (() => Promise<void>) = undefined;
+    try {
+      cleanup = await make(desk);
+      const manifest = await stageAndInventory(f.data, f.parent);
+      if (name === "a socket or pipe left by a tool") {
+        if (process.platform === "win32") expect(manifest.files.map(file => file.path)).toContain("workspaces/bot/threads/thread/tool-output.txt");
+        else expect(manifest.skipped).toContainEqual({ path: "workspaces/bot/threads/thread/tool.pipe", reason: "special" });
+      }
+    } finally {
+      try { if (cleanup) await cleanup(); } finally { f.db.close(); removeTempDirSync(f.parent); }
+    }
   });
 }
+
+it.runIf(process.platform === "win32")("backs up native Windows names and empty folders without losing file bytes", async () => {
+  const f = backupFixture(), desk = deskOf(f.data);
+  mkdirSync(join(desk, "run 10-30", "empty"), { recursive: true });
+  writeFileSync(join(desk, "report 2026-09-26 10-30.md"), "# Report\n");
+  writeFileSync(join(desk, "aux-report.txt"), "native Windows fixture");
+  try {
+    const manifest = await stageAndInventory(f.data, f.parent);
+    expect(manifest.files.map(file => file.path)).toEqual(expect.arrayContaining([
+      "workspaces/bot/threads/thread/report 2026-09-26 10-30.md", "workspaces/bot/threads/thread/aux-report.txt",
+    ]));
+    expect(manifest.files.find(file => file.path.endsWith("/report 2026-09-26 10-30.md"))?.sha256).toBe(createHash("sha256").update("# Report\n").digest("hex"));
+    expect(manifest.skipped ?? []).toEqual([]);
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
+});
 
 it("leaves rebuildable folders out and lists them; keeps real work", async () => {
   const f = backupFixture();
@@ -113,17 +156,18 @@ it("past the file limit, items in owner folders are left out and listed; the bac
   } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 
-it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("an unreadable file in a bot's folder is left out and listed, not a failure", async () => {
+it.skipIf(process.getuid?.() === 0)("an unreadable file in a bot's folder is left out and listed, not a failure", async () => {
   const f = backupFixture();
   const desk = deskOf(f.data);
   mkdirSync(desk, { recursive: true });
-  writeFileSync(join(desk, "locked.txt"), "secret"); chmodSync(join(desk, "locked.txt"), 0o000);
+  writeFileSync(join(desk, "locked.txt"), "secret"); const restoreRead = denyFixtureRead(join(desk, "locked.txt"));
   try {
     const manifest = await stageAndInventory(f.data, f.parent);
     expect(manifest.skipped).toContainEqual({ path: "workspaces/bot/threads/thread/locked.txt", reason: "unreadable" });
-  } finally { chmodSync(join(desk, "locked.txt"), 0o600); f.db.close(); removeTempDirSync(f.parent); }
+  } finally { restoreRead(); f.db.close(); removeTempDirSync(f.parent); }
 });
 
+// NTFS forbids control characters in filenames; the ordinary-name ACL row above covers Windows unreadability.
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("an unreadable file whose name holds a line break is listed printably", async () => {
   const f = backupFixture();
   const desk = deskOf(f.data);
@@ -146,7 +190,7 @@ it("a refusal about Murage's own records names the file", async () => {
 
 // The real thing: tools a bot runs, then Back up now, restore into a new
 // folder, the restored copy passes review, and it backs up again.
-it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("round trip: a used bot folder backs up, restores with links, copies and real names, and backs up again", async () => {
+it.skipIf(optionalBackupAgeUnavailable())("round trip: a used bot folder backs up, restores with links, copies and real names, and backs up again", async () => {
   const f = backupFixture(), keys = testAgeKeys();
   const desk = deskOf(f.data);
   mkdirSync(join(desk, "site", "lib"), { recursive: true });
@@ -170,13 +214,13 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("round trip: a used bot folde
   mkdirSync(join(desk, "site", "node_modules", "dep"), { recursive: true });
   writeFileSync(join(desk, "site", "node_modules", "dep", "index.js"), "x");
   // Real tools where this computer has them.
-  if (has("python3")) execFileSync("python3", ["-m", "venv", "--without-pip", join(desk, "pyenv")], { stdio: "ignore" });
+  if (has("python3")) execFileSync("python3", ["-m", "venv", "--without-pip", join(desk, "pyenv")], { windowsHide: true, stdio: "ignore" });
   if (has("git")) {
-    execFileSync("git", ["init", "-q", join(desk, "origin")], { stdio: "ignore" });
+    execFileSync("git", ["init", "-q", join(desk, "origin")], { windowsHide: true, stdio: "ignore" });
     writeFileSync(join(desk, "origin", "README.md"), "hello\n");
-    execFileSync("git", ["-C", join(desk, "origin"), "add", "."], { stdio: "ignore" });
-    execFileSync("git", ["-C", join(desk, "origin"), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "one"], { stdio: "ignore" });
-    execFileSync("git", ["clone", "-q", "--local", join(desk, "origin"), join(desk, "clone")], { stdio: "ignore" });
+    execFileSync("git", ["-C", join(desk, "origin"), "add", "."], { windowsHide: true, stdio: "ignore" });
+    execFileSync("git", ["-C", join(desk, "origin"), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "one"], { windowsHide: true, stdio: "ignore" });
+    execFileSync("git", ["clone", "-q", "--local", join(desk, "origin"), join(desk, "clone")], { windowsHide: true, stdio: "ignore" });
   }
   try {
     const first = join(f.parent, "first.age");
@@ -199,7 +243,7 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("round trip: a used bot folde
     expect(readFileSync(join(back, "aux.txt"), "utf8")).toBe("device name\n");
     expect(existsSync(join(back, "site", "node_modules"))).toBe(false);
     if (has("git")) {
-      expect(execFileSync("git", ["-C", join(back, "clone"), "log", "--format=%s"], { encoding: "utf8" }).trim()).toBe("one");
+      expect(execFileSync("git", ["-C", join(back, "clone"), "log", "--format=%s"], { windowsHide: true, encoding: "utf8" }).trim()).toBe("one");
       expect(statSync(join(back, "clone", "README.md")).isFile()).toBe(true);
     }
     // The restored copy passes review, and backs up again.

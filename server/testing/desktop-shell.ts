@@ -26,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { waitForExit } from "./cleanup.ts";
 import { fakeBrowserApprove } from "./fake-remote-mcp.ts";
 import { freePortBlock } from "./ports.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./power-block-test.ts";
 
 const SERVER_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ROOT = join(SERVER_DIR, "..");
@@ -49,14 +50,13 @@ interface CredentialState { read(): Record<string, unknown>; update(derive: (cur
 /** Main's own modules, loaded as main loads them (plain .mjs, no declarations). */
 const electron = (path: string): Promise<any> => import(pathToFileURL(join(ROOT, "electron", path)).href);
 
-/** Electron's private utility-process port, one listener, fed from the IPC channel. */
-const PARENT_PORT_PRELUDE = `data:text/javascript,${encodeURIComponent(`
-  let listener;
-  process.on("message", (data) => listener?.({ data }));
-  Object.defineProperty(process, "parentPort", { value: {
-    on(event, callback) { if (event === "message") listener = callback; },
-    postMessage(message) { process.send?.(message); },
-  } });
+/** Electron's private utility-process port, fed from the IPC channel. */
+export const PARENT_PORT_PRELUDE = `data:text/javascript,${encodeURIComponent(`
+  import { EventEmitter } from "node:events";
+  const port = new EventEmitter();
+  port.postMessage = message => process.send?.(message);
+  process.on("message", data => port.emit("message", { data }));
+  Object.defineProperty(process, "parentPort", { value: port });
 `)}`;
 
 export const SHELL_MCP_COMMIT_TOKEN = "a1b2c3d4e5f60718".repeat(4);
@@ -144,6 +144,9 @@ export async function startDesktopShell(options: DesktopShellOptions): Promise<D
       return;
     }
     privateMessages.push(structuredClone(frame));
+    if (frame.type === "murage:highlevel-bootstrap-request") {
+      child?.send({ type: "murage:highlevel-bootstrap", requestId: frame.requestId, error: "storage" });
+    }
     if (frame.type === "murage:mcp-token-rejected") void service.handleTokenRejected(frame.name);
     if (frame.type === "murage:mcp-secrets-stale") void service.handleSecretsStale(frame);
     if (frame.type === "murage:mcp-secrets-renamed") void service.handleSecretsRenamed(frame);
@@ -153,9 +156,11 @@ export async function startDesktopShell(options: DesktopShellOptions): Promise<D
     stderr = "";
     secret = "";
     const boot = workspaceCredentialEnv(state.read()) as Record<string, string>;
-    child = spawn(process.execPath, ["--import", PARENT_PORT_PRELUDE, join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", new URL("./fake-engine-env-preload.mjs", import.meta.url).href, "--import", pathToFileURL(join(SERVER_DIR, "testing", "mount-evidence-preload.mjs")).href, "--import", PARENT_PORT_PRELUDE, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
+        ...powerBlockTestEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: options.home,

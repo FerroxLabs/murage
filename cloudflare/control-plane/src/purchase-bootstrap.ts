@@ -43,6 +43,10 @@ const ISSUED_SESSION_TTL_MS = 60 * 60_000;
 export const BOOTSTRAP_MAX_GENERATION = 2;
 export const PURCHASE_ROUTES: ReadonlySet<string> = new Set(["/v1/billing/reserve", "/v1/billing/checkout", "/v1/billing/checkout/resume"]);
 export const isPurchaseRoute = (method: string, path: string) => method === "POST" && PURCHASE_ROUTES.has(path);
+/** CH1 N2 (Astra r1): plan preview and plan change spend money too (CLOUD_PLAN_CHANGE=1), so in invite mode they take the same invite admission. */
+export const PLAN_CHANGE_ROUTES: ReadonlySet<string> = new Set(["/v1/account/plan/preview", "/v1/account/plan"]);
+export const isPlanChangeRoute = (method: string, path: string) => method === "POST" && PLAN_CHANGE_ROUTES.has(path);
+export const isInviteGatedRoute = (method: string, path: string) => isPurchaseRoute(method, path) || isPlanChangeRoute(method, path);
 
 export interface BootstrapRow {
   user_id: string; generation: number; session_id: string; home_id: string; consent_id: string | null; stripe_customer_id: string | null;
