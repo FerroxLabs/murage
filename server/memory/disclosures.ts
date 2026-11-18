@@ -1,20 +1,22 @@
+import { noteSessionFrame } from './session-proof-schema.ts';
+import { proveRetainedSession } from './session-proof.ts';
 import { sourceDenied } from "./deny.ts";
 import { verdictStore } from "./verdict-store.ts";
 import { database, onDatabaseClose, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
-import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, lineageReaderScopes, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, lineageReaderAudience, revalidateMemoryAccess, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
-import { authorityParts, authorityStamp, softChangedSince } from "./authority-epoch.ts";
-import { integrityUntrusted, isLineageLimit, LineageAllowance, contentRevoked, messageCopy, messageSourceForgotten, outputRootsBad, recordSessionRoots, preLineageSessionRevoked, replayExclusions, sessionLineageBad, sessionOutputRoots, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
+import { authorityStamp } from "./authority-epoch.ts";
+import { integrityUntrusted, isLineageLimit, LineageAllowance, contentRevoked, messageCopy, forgottenMessageSources, recordSessionRoots, replayExclusions, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
-import { denyGeneration, denyLookup, denyReadMeter, doorEpochVerdict, lineageLive, sessionLookup } from "./deny-read.ts";
+import { denyGeneration, denyLookup, denyReadMeter, lineageLive } from "./deny-read.ts";
 import { totalChanges } from "./revoke-marker.ts";
-import { STALE_MEM_LSN, type LineageReader, type LineageRef } from "./lineage-types.ts";
-import { withSecondLook } from "./lineage-allowance.ts";
-import { addTurnParents, currentLsn, extendLineage, runningTurnFor } from "./lineage-write.ts";
+import { STALE_MEM_LSN, type LineageReader, type LineageRef, type TurnLineage } from "./lineage-types.ts";
+import { addTurnParents, checkedOpenTurns, currentLsn, extendLineage, runningTurnFor } from "./lineage-write.ts";
 import { noteReceiptOutput, noteReceiptSession, wakeFlipMarker } from "./receipt-outputs.ts";
 import { threadNo } from "./thread-no.ts";
 import { sessionKeyOf } from "./session-incarnation.ts";
+import { captureSendReplayProof, replayCopyRoots } from "./replay-lineage.ts";
 
 /** Persist before dispatch; records contain references, never duplicated memory text. */
 export function prepareMemoryDisclosure(bundle: MemoryBundle, access: MemoryAccess, driverInstance: string) {
@@ -27,6 +29,8 @@ export function prepareMemoryDisclosure(bundle: MemoryBundle, access: MemoryAcce
 /** session.started can precede sendTurn completion; binding does not claim delivery. */
 export function bindMemoryDisclosureSession(bundleId: string, nativeSession: string) {
   if (!nativeSession) throw new Error("INVALID_MEMORY_SESSION");
+  const frame=database().prepare('SELECT thread_id,driver_instance FROM memory_disclosures WHERE bundle_id=?').get(bundleId);
+  if(frame)noteSessionFrame(database(),sessionKeyOf(String(frame.thread_id),String(frame.driver_instance),nativeSession),true);
   const result = database().prepare("UPDATE memory_disclosures SET native_session=? WHERE bundle_id=? AND (native_session IS NULL OR native_session=?)").run(nativeSession,bundleId,nativeSession);
   if (!result.changes) throw new Error("MEMORY_DISCLOSURE_SESSION_CONFLICT");
   // its companion receipt (lookups, quoted working context) joins the session too
@@ -57,33 +61,28 @@ export function deliverMemoryDisclosure(bundleId: string, access: MemoryAccess, 
 /** The receipt still holds under the dispatch's authority: what delivery
  * checks, and what every later adapter write checks again (dispatch.ts). */
 export function assertMemoryDisclosureCurrent(bundleId: string, access: MemoryAccess) {
-  assertMemoryAccess(access);
-  const row = database().prepare("SELECT * FROM memory_disclosures WHERE bundle_id=? AND thread_id=?").get(bundleId,access.threadId);
-  // one receipt, read in full: its own allowance (a receipt that cannot be proven within it is refused, as a revoked one is)
-  if (!row || revoked(LineageAllowance.tool(), row, access)) throw new Error("MEMORY_CONTEXT_REVOKED");
+  return inMemoryAccessPass(() => {
+    assertMemoryAccess(access);
+    const row = database().prepare("SELECT * FROM memory_disclosures WHERE bundle_id=? AND thread_id=?").get(bundleId,access.threadId);
+    // one receipt, read in full: its own allowance (a receipt that cannot be proven within it is refused, as a revoked one is)
+    if (!row || revoked(LineageAllowance.tool(), row, access)) throw new Error("MEMORY_CONTEXT_REVOKED");
+  });
 }
 
 function revoked(allowance: LineageAllowance, row: Disclosure, access: MemoryAccess, seen?: Seen): boolean {
   return revokedReason(allowance, row, access, seen) !== null;
 }
 
-type Seen = { records: Set<string>; sources: Set<string>; added?: string[]; addedSources?: string[]; rootThreads?: Set<string>; threadDependenciesIncomplete?: boolean };
+export type Seen = { records: Set<string>; sources: Set<string>; added?: string[]; addedSources?: string[]; rootThreads?: Set<string>; threadDependenciesIncomplete?: boolean };
 
 /** Why a receipt no longer holds, as ids and states only (no content), or
  * null when it still holds. Each branch is the same test revoked() made. */
-function revokedReason(allowance: LineageAllowance, row: Disclosure, access: MemoryAccess, seen?: Seen): string | null {
+export function revokedReason(allowance: LineageAllowance, row: Disclosure, access: MemoryAccess, seen?: Seen): string | null {
   if (row.state === "revoked") return "receipt-already-revoked";
   if (row.policy_revision !== access.policyRevision) return "policy-revision";
   if (row.deletion_epoch !== access.deletionEpoch) return "deletion-epoch";
   let step = "parse";
   try {
-    const records: Array<{id:string;version:number}> = JSON.parse(String(row.record_versions));
-    // One session's receipts cite the same records again and again: each is looked at once per check.
-    for (const record of records) {
-      const key = `${record.id}@${record.version}`;
-      if (seen?.records.has(key)) continue;
-      step = `record ${key}`; allowance.spendNodes(String(row.thread_id), 1); hydrateDisclosedMemoryRecord(record.id,record.version,access,{allowance}); seen?.records.add(key); seen?.added?.push(key);
-    }
     const sources: Array<{id:string;revision:number}> = JSON.parse(String(row.source_versions));
     for (const source of sources) {
       step = `source ${source.id}@${source.revision}`;
@@ -98,6 +97,13 @@ function revokedReason(allowance: LineageAllowance, row: Disclosure, access: Mem
       assertMemoryAccess(access,String(current.scope_id));
       seen?.sources.add(step); seen?.addedSources?.push(step);
     }
+    const records: Array<{id:string;version:number}> = JSON.parse(String(row.record_versions));
+    // One session's receipts cite the same records again and again: each is looked at once per check.
+    for (const record of records) {
+      const key = `${record.id}@${record.version}`;
+      if (seen?.records.has(key)) continue;
+      step = `record ${key}`; allowance.spendNodes(String(row.thread_id), 1); hydrateDisclosedMemoryRecord(record.id,record.version,access,{allowance}); seen?.records.add(key); seen?.added?.push(key);
+    }
     return null;
   } catch (error) {
     // the allowance running out says nothing about the receipt: it passes up, so the check ends unproven
@@ -106,183 +112,14 @@ function revokedReason(allowance: LineageAllowance, row: Disclosure, access: Mem
   }
 }
 
-/** Sessions whose whole disclosure set passed the full check, and what the check rested on. Keyed by session and by who is asking, since what
- * a reader may hydrate depends on the reader. A hold answers the next turn two ways (authority-epoch.ts):
- * - the stamp has not moved: nothing that could take a receipt away was written, so no check is repeated;
- * - only SOFT writes moved it (a source taking a new revision, joining the active branch, a lookup receipt replaced by its grown successor)
- *   and none of them touched a source the session cites or rests on: the receipts already judged still hold, so only the receipts written
- *   since are judged (the work follows the new receipts, not the length of the session). Anything else is a full check, as before.
- * A miss (restart, eviction, no triggers, inside a transaction) is a full check too. Process-local and bounded. */
-type Hold = {
-  stamp: string; hard: string; seq: number;
-  /** newest receipt rowid the session's receipts were judged up to */
-  upTo: number;
-  seen: Seen;
-  /** ids of the sources the session cites, of the sources its cited records rest on, and (as record:<id>) of the records it cites */
-  sourceIds: Set<string>;
-  /** the scopes the reader held when the hold was made: a reader holding every one of them (and more: a task or a room added since,
-   * SCOPED-REVOKES R4) is answered by it, since everything that hydrated under fewer scopes hydrates under more; a narrower reader is not */
-  scopeIds: readonly string[];
-};
-// the holds live in the VerdictStore (TURNSTART r14 S1'): read recorded, every removal counted, admitted records' holds pinned
-let SESSION_HOLDS_MAX = 512;
-/** Tests (T12 hold ops): a smaller hold capacity; null is the real one. */
-export function setSessionHoldsMaxForTest(max: number | null): void { SESSION_HOLDS_MAX = max ?? 512; }
-const HOLD_KEYS_MAX = 20000;
-const sessionHoldKey = (threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess) =>
-  JSON.stringify([threadId, driverInstance, nativeSession, access.botId, access.humanPrincipal, memoryAccessNotOwnerAudience(access), access.policyRevision, access.deletionEpoch]);
-
-/** Unknown historical sessions also require a fresh replay: legacy disclosure is unproven. */
-function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why?: { reason?: string }): boolean {
-  assertMemoryAccess(access);
-  if (threadId !== access.threadId) throw new Error("MEMORY_SCOPE_DENIED");
-  // the write-time session predicate first, before any hold (S6): deny_session, the session's forgotten set, its pending window. A revoke bumps
-  // deny_generation, not the authority stamp a hold rests on, so a hold never answers for it. O(1) seeks.
-  // S6 rule 29: the door epoch before the lineageLive bypass, so a file with no line rows still resets every retained session once
-  const door = doorEpochVerdict(database(), { threadId, driverInstance, nativeSession });
-  if (door.state !== "shown") { if (why && !why.reason) why.reason = "writetime-door-epoch"; return true; }
-  if (lineageLive(database())) {
-    // the owner's own direct chat is judged by content (an audience-only revoke never resets it, 1.0.2 Keep all P0); any other reader keeps
-    // every mark, audience-only ones included
-    const verdict = sessionLookup(database(), { threadId, driverInstance, nativeSession }, ownerDirectChat(threadId, access) ? { audience: null } : { audience: { owner: memoryAccessIsOwnerAudience(access), scopeIds: lineageReaderScopes(access) } });
-    if (verdict.state !== "shown") { if (why && !why.reason) why.reason = verdict.state === "checking" ? "checking" : `writetime-${verdict.reason}`; return true; }
-  }
-  const parts = authorityParts(), key = sessionHoldKey(threadId, driverInstance, nativeSession, access);
-  let hold = verdictStore.getHold(key) as Hold | undefined;
-  if (hold && !hold.scopeIds.every(scope => access.scopeIds.includes(scope))) { verdictStore.loseHold(key, "scope"); hold = undefined; }
-  if (parts && hold && hold.stamp === parts.stamp) { verdictStore.touchHold(key); return false; }
-  let resume: Hold | undefined;
-  if (parts && hold && hold.hard === parts.hard) {
-    const touched = softChangedSince(hold.seq);
-    if (touched && ![...touched].some(id => hold.sourceIds.has(id) || hold.seen.threadDependenciesIncomplete && id.startsWith("thread:"))) resume = hold;
-  }
-  verdictStore.loseHold(key, "consumed");
-  // One pass: the reader's audience is worked out once, not once per cited record.
-  const progress: { upTo: number; seen: Seen; resumed: boolean } = { upTo: resume?.upTo ?? 0, seen: resume?.seen ?? { records: new Set<string>(), sources: new Set<string>() }, resumed: resume !== undefined };
-  progress.seen.added = []; progress.seen.addedSources = [];
-  let revoked: boolean;
-  try { revoked = inMemoryAccessPass(() => fullContinuationCheck(allowance, threadId, driverInstance, nativeSession, access, why, progress)); }
-  catch (error) {
-    // the session holds more receipts than the turn's allowance can read: unproven, so it resets until the thread is warm
-    if (!isLineageLimit(error)) throw error;
-    if (why) why.reason = "lineage-warming";
-    revoked = true;
-  }
-  if (!revoked && parts) {
-    const now = authorityParts();
-    if (now && now.stamp === parts.stamp && progress.seen.records.size + progress.seen.sources.size <= HOLD_KEYS_MAX) {
-      const sourceIds = resume ? resume.sourceIds : new Set<string>();
-      const newSources = new Set((progress.seen.addedSources ?? []).map(step => step.slice("source ".length, step.lastIndexOf("@"))));
-      const added = progress.seen.added ?? [];
-      if (added.length) {
-        const pairs = added.map(record => { const at = record.lastIndexOf("@"); return [record.slice(0, at), Number(record.slice(at + 1))]; });
-        for (const [id] of pairs) sourceIds.add(`record:${id}`);
-        // A derived record can depend on an ancestor's scope without direct evidence here.
-        // Do not reuse a soft thread-change proof unless that ancestry is known.
-        if (database().prepare("SELECT 1 FROM memory_derivations WHERE (child_id,child_version) IN (SELECT value->>0,value->>1 FROM json_each(?)) LIMIT 1").get(JSON.stringify(pairs))) progress.seen.threadDependenciesIncomplete = true;
-        // Drive from the bounded citations. Starting at conversation scopes lets the planner walk all history.
-        for (const row of database().prepare("SELECT DISTINCT s.owner_key FROM json_each(?) p CROSS JOIN memory_records r ON r.id=p.value->>0 AND r.version=p.value->>1 CROSS JOIN memory_scopes s ON s.id=r.scope_id WHERE s.kind='conversation'").all(JSON.stringify(pairs))) sourceIds.add(`thread:${String(row.owner_key)}`);
-        for (const row of database().prepare("SELECT DISTINCT source_id FROM memory_evidence WHERE (record_id,record_version) IN (SELECT value->>0,value->>1 FROM json_each(?))").all(JSON.stringify(pairs))) newSources.add(String(row.source_id));
-      }
-      for (const id of newSources) sourceIds.add(id);
-      sourceIds.add(`thread:${threadId}`);
-      // Every source actually judged for these receipts, plus the session's replay roots.
-      for (const row of database().prepare("SELECT thread_id,kind FROM memory_sources WHERE id IN (SELECT value FROM json_each(?))").all(JSON.stringify([...newSources]))) {
-        sourceIds.add(`thread:${String(row.thread_id)}`);
-        if (row.kind === "bring-in") progress.seen.threadDependenciesIncomplete = true;
-      }
-      for (const thread of progress.seen.rootThreads ?? []) sourceIds.add(`thread:${thread}`);
-      progress.seen.added = []; progress.seen.addedSources = [];
-      if (!closeHooked) { closeHooked = true; onDatabaseClose(resetSessionHolds); }
-      // past SESSION_HOLDS_MAX the oldest unpinned hold goes, a counted loss of its thread (TURNSTART r14 S1', H1)
-      // a type argument, not an angle-bracket assertion: the crash children run this file under node --experimental-strip-types
-      verdictStore.setHold<Hold>(key, { stamp: parts.stamp, hard: parts.hard, seq: parts.seq, upTo: progress.upTo, seen: progress.seen, sourceIds, scopeIds: access.scopeIds }, SESSION_HOLDS_MAX);
-    }
-  }
-  return revoked;
-}
-/** Test hook: forget which sessions passed. */
-export function resetSessionHolds(): void { verdictStore.resetSessionHolds(); }
-// A hold rests on what one connection saw: closing or replacing the connection forgets every hold (stamps also carry the connection id).
-let closeHooked = false;
-
-/** The most receipts one continuation check judges before it resets the session instead (fail closed, bounded). */
-export const COLD_CHECK_ROWS = 1024;
-/** `progress` carries what an earlier check of this session already judged (a resumed check judges only the receipts written since, and
- * `seen` starts with what they cited) and takes back the newest receipt it judged. */
-function fullContinuationCheck(allowance: LineageAllowance, threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why: { reason?: string } | undefined, progress: { upTo: number; seen: Seen; resumed: boolean }): boolean {
-  // Every column the receipt checks read, never the output list (it grows with every reply of the session).
-  const persist = !memoryAccessNotOwnerAudience(access);
-  // A forget, a policy change or a revoke moves what every receipt is judged against, so a session whose oldest or newest receipt
-  // was made under another deletion epoch or policy revision, or is revoked, resets at once: two index seeks, never a pass over
-  // the session's receipts, and nothing revoked here beyond the one receipt that decided it (a session never outlives such a
-  // change, so its receipts all carry one epoch; the deletion's own job brings the receipts' state into line).
-  const ends = database().prepare("SELECT bundle_id,state,policy_revision,deletion_epoch FROM memory_disclosures WHERE thread_id=?1 AND driver_instance=?2 AND native_session=?3 AND rowid=(SELECT min(rowid) FROM memory_disclosures WHERE thread_id=?1 AND driver_instance=?2 AND native_session=?3) UNION ALL SELECT bundle_id,state,policy_revision,deletion_epoch FROM memory_disclosures WHERE thread_id=?1 AND driver_instance=?2 AND native_session=?3 AND rowid=(SELECT max(rowid) FROM memory_disclosures WHERE thread_id=?1 AND driver_instance=?2 AND native_session=?3)").all(threadId,driverInstance,nativeSession);
-  for (const end of ends) {
-    const stale = end.state === "revoked" ? "receipt-already-revoked" : end.policy_revision !== access.policyRevision ? "policy-revision" : end.deletion_epoch !== access.deletionEpoch ? "deletion-epoch" : null;
-    if (stale === null) continue;
-    if (why && !why.reason) why.reason = `memory-changed (${stale})`;
-    if (persist && end.state !== "revoked") database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(end.bundle_id); flipWake();
-    return true;
-  }
-  // The receipts are read within the turn's allowance, no more than it can pay for: a session with more is unproven, which resets it until
-  // the thread is warm (1.0.2 lineage-cold; it used to read every receipt of the session, however many, outside any allowance).
-  // At most COLD_CHECK_ROWS receipts not judged before are read: a longer unjudged run resets the session instead of reading all of it
-  // (1.0.2 revoke-bounded r3: a cold check after a restart costs the same at 2,000 receipts as at 200,000; the hold keeps what was
-  // judged, so a warm check reads only what the last turns added).
-  const cap = allowance.rowRoom(threadId, Number.MAX_SAFE_INTEGER);
-  const rows = database().prepare("SELECT rowid AS rid,bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,state,created_at FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? AND rowid>? LIMIT ?").all(threadId,driverInstance,nativeSession,progress.upTo,Math.min(cap, COLD_CHECK_ROWS)+1);
-  if (cap !== Number.MAX_SAFE_INTEGER) { if (rows.length > cap) allowance.readTooBig(threadId); allowance.spendRows(threadId, rows.length); }
-  if (rows.length > COLD_CHECK_ROWS) { if (why && !why.reason) why.reason = "memory-changed (long-session)"; return true; }
-  if (!rows.length && !progress.resumed) { if (why) why.reason = "no-receipts"; return true; }
-  for (const row of rows) progress.upTo = Math.max(progress.upTo, Number(row.rid));
-  let invalid = false;
-  const seen = progress.seen;
-  for (const row of rows) {
-    // each row is paid for before its record and source lookups are made (the rows read were paid for above)
-    const reason = revokedReason(allowance, row,access,seen);
-    if (reason === null) continue;
-    if (why && !why.reason) why.reason = `memory-changed (${reason})`;
-    // the first receipt that no longer holds decides: the session resets, so the rest are not judged (or written) one by one
-    if (persist) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(row.bundle_id); flipWake();
-    invalid = true;
-    break;
-  }
-  if (invalid) { if (why && !why.reason) why.reason = "memory-changed"; return true; }
-  // Lineage too: a receipt whose cited reply is withheld no longer holds. The
-  // replay window reaches only the newest lines, so an old session's receipts
-  // are judged here, every one of them; a check that cannot finish resets the
-  // session (0.1.61.1 memreplay review M1).
-  const bad = new Set<string>();
-  // The owner's own direct chat judges what the session's receipts cite by
-  // the content rule, as its replay does (filterDirectReplay, 1.0.1): a reply
-  // the session's memory rests on stays vouched for unless content it used was
-  // forgotten, deleted or changed. Judged by receipt state instead, one
-  // install-wide revoke (a roster or settings change) left every earlier reply
-  // unvouched forever, so each fresh session's first frame, which cites them
-  // through the thread checkpoint and recall, failed here on the next turn and
-  // the thread reset its engine on every turn (1.0.1.1). This session's own
-  // receipts were judged on state, policy and epoch just above.
-  // (the records and sources the loop above just passed are not hydrated a second time for the lineage's own-receipt verdicts)
-  invalid = sessionLineageBad(allowance, threadId, driverInstance, nativeSession, ownerDirectChat(threadId, access) ? null : readerAudience(allowance, access, seen), bad);
-  // Only a check that finished revokes for good. One that ran out of its allowance or its time proved nothing: what it could not judge is
-  // unproven, not withdrawn, and writing it down as revoked turned one cold turn into a reset on every later turn (the 48 GB rig: 495 of
-  // 502 resets read "lineage (then memory-changed (receipt-already-revoked))"). The session still resets this turn (fail closed), and the
-  // new session is shown only what this turn could prove, so the next turn has nothing unproven to stop on.
-  if (persist && !allowance.hit) for (const id of bad) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(id); flipWake();
-  // a check that ran out of its allowance proved nothing either way: the session is reset until the warmer has finished the thread
-  if (invalid && why) why.reason = allowance.hit ? "lineage-warming" : "lineage";
-  if (invalid) return true;
-  // The replies built on memory that the session's context carried (v6), and
-  // a session shown memory before that lineage began, after a later revoke.
-  const held = sessionOutputRoots(allowance, threadId, driverInstance, nativeSession);
-  if (held.over) { if (why) why.reason = held.unproven ? "lineage-warming" : "root-ceiling"; return true; }
-  for (const root of held.roots) (progress.seen.rootThreads ??= new Set()).add(root.slice(0, root.indexOf("\u0000")));
-  const rootsWhy: { reason?: string } = {};
-  if (outputRootsBad(allowance, held, rootsWhy)) { if (why) why.reason = rootsWhy.reason === "checking" ? "checking" : allowance.hit ? "lineage-warming" : "session-roots"; return true; }
-  if (preLineageSessionRevoked(rows.length || !progress.resumed ? rows : [{}], threadId, driverInstance, nativeSession)) { if (why) why.reason = "pre-lineage"; return true; }
-  return false;
-}
+/** L1 bookkeeping is disposable. A hold never substitutes for the durable proof,
+ * whose write-time verdict also covers deny generations outside authorityStamp. */
+let SESSION_HOLDS_MAX=512;
+export function setSessionHoldsMaxForTest(max:number|null):void{SESSION_HOLDS_MAX=max??512;}
+export function resetSessionHolds():void{verdictStore.resetSessionHolds();}
+const sessionHoldKey=(threadId:string,driverInstance:string,nativeSession:string,access:MemoryAccess)=>JSON.stringify([threadId,driverInstance,nativeSession,access.botId,access.humanPrincipal,memoryAccessNotOwnerAudience(access),access.policyRevision,access.deletionEpoch]);
+let closeHooked=false;
+export const COLD_CHECK_ROWS=1024;
 
 /** A turn's memory lookups (memory_search, memory_get) as a companion receipt
  * of its dispatch: same thread, engine and session, the records and sources
@@ -374,7 +211,7 @@ export function linkMemoryDisclosureOutput(bundleId: string, messageId: string) 
  * scopes are the ones the footprint rule compares (a non-owner reader must hold every scope a line's memory ancestry read from). */
 export function lineageReaderOf(access: MemoryAccess): LineageReader {
   // (SL-E r3.2 R1: a linked person's turn reads its scopes together with S(P), memory/policy.ts lineageReaderScopes)
-  return { audience: { owner: memoryAccessIsOwnerAudience(access) && !memoryAccessNotOwnerAudience(access), scopeIds: lineageReaderScopes(access) } };
+  return { audience: lineageReaderAudience(access) };
 }
 /** The write-time layer of a replay check (S4): the lines of `messages` denyLookup does not show this reader. A line that reads "checking" is
  * also added to `checking`. Until write-time lineage is written on this file (lineageLive) the read-time judge alone decides; from then on a
@@ -415,7 +252,7 @@ export function filterMemoryReplay<T extends ReplayMessage>(allowance: LineageAl
   return messages.filter(message=>!excluded.has(message.id));
 }
 
-function readerAudience(allowance: LineageAllowance, access: MemoryAccess, seen?: Seen): ReplayAudience {
+export function readerAudience(allowance: LineageAllowance, access: MemoryAccess, seen?: Seen): ReplayAudience {
   // One check, one answer per distinct receipt content: the receipts of a
   // resumed session cite the same frame (0.1.61.1 memreplay).
   const verdicts = new Map<string, boolean>();
@@ -424,7 +261,7 @@ function readerAudience(allowance: LineageAllowance, access: MemoryAccess, seen?
     // generation: that renews every turn and defeated the cache (1.0.2 r2 P2). The live capability is checked by assertMemoryAccess
     // before and after every replay (filterMemoryReplay), so a stale generation cannot ride a kept verdict.
     // kept verdicts are shared only by a reader judged on its own: one carrying `seen` has its answers shaped by what the pass saw before
-    ...(seen ? {} : { cacheKey: JSON.stringify([access.botId, access.policyRevision, access.deletionEpoch, access.scopeIds, access.humanPrincipal, memoryAccessIsOwnerAudience(access), memoryAccessNotOwnerAudience(access)]) }),
+    ...(seen ? {} : { cacheKey: JSON.stringify([access.botId, access.policyRevision, access.deletionEpoch, access.view, access.scopeDigest, access.threadId, access.humanPrincipal, memoryAccessIsOwnerAudience(access), memoryAccessNotOwnerAudience(access)]) }),
     revoked: row => {
     const key = JSON.stringify([row.state, row.policy_revision, row.deletion_epoch, row.record_versions, row.source_versions]);
     let verdict = verdicts.get(key);
@@ -453,14 +290,14 @@ export function replayBudgetBytes(contextWindow: number | undefined | null): num
   return Math.min(Math.floor(contextWindow * REPLAY_BYTES_PER_TOKEN * 0.4), REPLAY_BUDGET_CAP_BYTES);
 }
 
-export interface ReplayWindowOptions { minLines?: number; maxBytes?: number }
+export interface ReplayWindowOptions { minLines?: number; maxBytes?: number; maxLines?: number }
 
 /** The newest lines that fit: at least `minLines` (default 40), more while
  * they fit `maxBytes`, oldest dropped first and never a line from the middle.
  * With no byte budget this is the plain newest-40 window. */
 export function replayWindow<T extends {text?: string}>(lines: readonly T[], options: ReplayWindowOptions = {}): T[] {
   const minLines = options.minLines ?? DIRECT_REPLAY_LINES;
-  const candidates = options.maxBytes === undefined ? lines.slice(-minLines) : lines;
+  const candidates = lines.slice(-Math.min(options.maxLines ?? lines.length, options.maxBytes === undefined ? minLines : lines.length));
   let bytes = 0, count = 0;
   for (let index = candidates.length - 1; index >= 0; index--) {
     bytes += Buffer.byteLength(candidates[index]!.text ?? "");
@@ -508,13 +345,16 @@ export function filterDirectReplay<T extends ReplayMessage & {kind?: string; tex
   // The lines among `fresh` this reader may be shown (as a withheld line, for
   // the owner's own chat when the caller gives one).
   const judge = (fresh: T[]): T[] => {
+    const attempts = captureSendReplayProof(threadId, fresh.map(m => m.id), replayCopyRoots(fresh));
+    fresh = fresh.filter(m => !attempts.excludedIds.has(m.id));
     if (!ownerChat) return filterMemoryReplay(allowance, threadId, fresh, access, { failClosed: true });
     const pendingIds = new Set<string>();
     const held = roomReplayWithheld(allowance, threadId, fresh, pendingIds);
-    for (const message of fresh) if (held.has(message.id)) {
-      withheld.add(message.id);
-      if (messageSourceForgotten(threadId, message.id)) forgotten.add(message.id);
-      else if (pendingIds.has(message.id)) checking.add(message.id);
+    const heldIds = fresh.filter(message => held.has(message.id)).map(message => message.id), gone = forgottenMessageSources(threadId, heldIds);
+    for (const id of heldIds) {
+      withheld.add(id);
+      if (gone.has(id)) forgotten.add(id);
+      else if (pendingIds.has(id)) checking.add(id);
     }
     return options.withheldLine ? fresh : fresh.filter(message => !held.has(message.id));
   };
@@ -551,7 +391,7 @@ export function filterDirectReplay<T extends ReplayMessage & {kind?: string; tex
 
 /** The workspace owner's own direct chat with a bot: an owner-audience turn
  * whose thread is not a room and belongs to the owner. */
-function ownerDirectChat(threadId: string, access: MemoryAccess): boolean {
+export function ownerDirectChat(threadId: string, access: MemoryAccess): boolean {
   return threadId === access.threadId && memoryAccessIsOwnerAudience(access) && !accessIncludesRoom(access)
     && isWorkspaceOwner(threadHumanPrincipal(threadId));
 }
@@ -578,10 +418,7 @@ export function roomReplayWithheld(allowance: LineageAllowance, threadId: string
   const withheld = replayExclusions(allowance, threadId, messages, null, { failClosed: true, ...(checking ? { checking } : {}) });
   // A line the owner forgot from memory is withheld itself, receipt or not. The
   // owner's own forgotten words are excluded by replayExclusions (1.0.2 revoke-bounded r3).
-  for (const message of messages) {
-    if (message.role === "user" || withheld.has(message.id)) continue;
-    if (messageSourceForgotten(threadId, message.id)) { withheld.add(message.id); checking?.delete(message.id); }
-  }
+  for (const id of forgottenMessageSources(threadId, messages.filter(m => m.role !== "user" && !withheld.has(m.id)).map(m => m.id))) { withheld.add(id); checking?.delete(id); }
   // the write-time layer: a room message is a room record, judged on content (no audience: marks and direct facts, no watermark or footprint)
   for (const id of writetimeReplayWithheld(threadId, messages, { audience: null }, checking)) withheld.add(id);
   return withheld;
@@ -610,16 +447,16 @@ function readerRuleStamp(): string | undefined {
  * lookup, as the reader's own transcript would be (XTHREAD-JUDGE R2): marks including audience-only ones, pending windows, the watermark
  * and the footprint. What that rule leaves out is not handed back by recall or memory search either (0.1.61). Undefined for an
  * owner audience, whose rule is the content rule alone (replay-lineage.ts). */
-export function readerWithheldMessage(access: MemoryAccess): ((threadId: string, messageId: string, allowance: LineageAllowance) => boolean) | undefined {
+export function readerWithheldMessage(access: MemoryAccess): ((threadId: string, messageId: string, allowance: LineageAllowance, verdict?: { checking?: boolean }) => boolean) | undefined {
   if (memoryAccessIsOwnerAudience(access)) return undefined;
   // A verdict holds only while nothing changed: a receipt revoked or a mark committed while recall waits, or a line rewritten on this
   // connection, is seen by the next check and at dispatch.
   const verdicts = new Map<string, boolean>();
   let stamp: string | undefined;
   let reader: LineageReader | undefined;
-  return (threadId, messageId, allowance) => {
+  return (threadId, messageId, allowance, verdict) => {
     const now = readerRuleStamp();
-    if (now === undefined || now !== stamp) { verdicts.clear(); stamp = now; reader = undefined; }
+    if (now === undefined || now !== stamp) { access = revalidateMemoryAccess(access); verdicts.clear(); stamp = now; reader = undefined; }
     const key = `${threadId}\u0000${messageId}`;
     if (threadId === access.threadId) {
       let known = verdicts.get(key);
@@ -628,7 +465,8 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
         const checking = new Set<string>();
         known = filterMemoryReplay(allowance, threadId, [{ id: messageId, ...(copy ? { copyOf: copy } : {}) }], access, { persist: false, failClosed: true, checking }).length === 0;
         // a reply left out only because the allowance ran out is not remembered as withheld: the next check, with room, may prove it
-        if (!checking.has(messageId) && now !== undefined) verdicts.set(key, known);
+        if (checking.has(messageId)) { if (verdict) verdict.checking = true; }
+        else if (now !== undefined) verdicts.set(key, known);
       }
       return known;
     }
@@ -639,13 +477,13 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
       allowance.reserveRows("", 2);
       const untrusted = integrityUntrusted(db);
       allowance.spendRows("", 2);
-      if (untrusted) return true;
+      if (untrusted) { if (verdict) verdict.checking = true; return true; }
       if (verdicts.get(key) === false) return false;
       allowance.reserveRows("", 1);
       const live = lineageLive(db);
       allowance.spendRows("", 1);
       // no line row on this file yet: no write-time marks, and the read-time judge is bound to the reader's own thread (fail closed)
-      if (!live) return true;
+      if (!live) { if (verdict) verdict.checking = true; return true; }
       allowance.reserveRows("", 1);
       const copy = messageCopy(threadId, messageId);
       allowance.spendRows("", 1);
@@ -655,14 +493,16 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
       for (const [thread, id] of pages) {
         allowance.reserveRows("", XTHREAD_PAGE_ROWS);
         const before = denyReadMeter().rows;
-        const held = writetimeReplayWithheld(thread, [{ id, role: "bot" }], reader, new Set<string>());
+        const checking = new Set<string>();
+        const held = writetimeReplayWithheld(thread, [{ id, role: "bot" }], reader, checking);
+        if (checking.size && verdict) verdict.checking = true;
         allowance.spendRows("", Math.max(1, denyReadMeter().rows - before + 1));
         if (held.size) return true;
       }
       if (now !== undefined) verdicts.set(key, false);
       return false;
     } catch (error) {
-      if (isLineageLimit(error)) return true;
+      if (isLineageLimit(error)) { if (verdict) verdict.checking = true; return true; }
       throw error;
     }
   };
@@ -670,7 +510,7 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
 
 // ---- the entry points of the lineage reads, each timed (see LineageAllowance.timed) ----
 /** continuationMemoryRevoked, timed against the allowance's wall-clock budget (1.0.2 lineage-cold r3: nodes bound the count, this bounds the time), with one second look when the clock stopped it. */
-export function continuationMemoryRevoked(allowance: LineageAllowance, threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why: { reason?: string } = {}): boolean { return withSecondLook(allowance, why, turn => continuationMemoryRevokedWork(turn, threadId, driverInstance, nativeSession, access, why)); }
+export function continuationMemoryRevoked(allowance: LineageAllowance, threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why: { reason?: string } = {}): boolean { assertMemoryAccess(access); const proof=proveRetainedSession(allowance,sessionKeyOf(threadId,driverInstance,nativeSession),{access,disclosed:true}); const key=sessionHoldKey(threadId,driverInstance,nativeSession,access);if(proof.kind==='fresh'){verdictStore.loseHold(key,'consumed');why.reason=proof.cause==='checking'?(proof.reason==='checking'&&proof.detail?`checking:${proof.detail}`:'lineage-warming'):proof.reason;return true;}if(!closeHooked){closeHooked=true;onDatabaseClose(resetSessionHolds);}if(verdictStore.getHold(key))verdictStore.touchHold(key);else verdictStore.setHold(key,{stamp:authorityStamp()},SESSION_HOLDS_MAX);return false; }
 
 /** A receipt as a write-time ref (DESIGN-WRITETIME 2.2, "receipts"): its lsn for the watermark, and the scopes of the records and sources it
  * holds for the footprint. A receipt already stale against the current policy revision or deletion epoch takes STALE_MEM_LSN, below every
@@ -681,19 +521,35 @@ export function receiptLineageRef(db: ReturnType<typeof database>, bundleId: str
   const row = db.prepare("SELECT d.record_versions AS rv,d.source_versions AS sv,d.policy_revision AS p,d.deletion_epoch AS e,m.policy_revision AS mp,m.deletion_epoch AS me FROM memory_disclosures d, memory_meta m WHERE m.id=1 AND d.bundle_id=?").get(bundleId);
   if (!row) return null;
   const scopes = new Set<string>();
-  for (const scope of db.prepare("SELECT DISTINCT r.scope_id AS s FROM json_each(?) j JOIN memory_records r ON r.id=j.value->>'id' AND r.version=j.value->>'version'").all(String(row.rv))) scopes.add(String(scope.s));
+  const cited = (JSON.parse(String(row.rv)) as Array<{ id: string; version: number }>).map(ref => [ref.id, ref.version] as const);
+  for (const scope of citedScopes(db, cited)) scopes.add(scope.id);
   for (const scope of db.prepare("SELECT DISTINCT s.scope_id AS s FROM json_each(?) j JOIN memory_sources s ON s.id=j.value->>'id'").all(String(row.sv))) scopes.add(String(scope.s));
   const stale = Number(row.p) !== Number(row.mp) || Number(row.e) !== Number(row.me);
   return { kind: "receipt", bundleId, lsn: stale ? STALE_MEM_LSN : currentLsn(db), scopeIds: [...scopes].sort() };
 }
 
+/** The notebooks that exact record versions rest in: (id, kind, owner_key) for tuple refs [[record id, version], ...]. Driven from the cited
+ * tuples (one primary-key seek on the record, one on its scope), so the work follows the citations, never the history of the file. A ref
+ * naming no record contributes nothing; the scope of an orphaned record is returned only if the scope row exists. */
+export function citedScopes(db: ReturnType<typeof database>, refs: ReadonlyArray<readonly [string, number]>): Array<{ id: string; kind: string; owner_key: string }> {
+  if (!refs.length) return [];
+  return db.prepare("SELECT DISTINCT s.id,s.kind,s.owner_key FROM json_each(?) p CROSS JOIN memory_records r ON r.id=p.value->>0 AND r.version=p.value->>1 CROSS JOIN memory_scopes s ON s.id=r.scope_id")
+    .all(JSON.stringify(refs)).map(row => ({ id: String(row.id), kind: String(row.kind), owner_key: String(row.owner_key) }));
+}
+
 /** A receipt the running turn of (thread, bot) was handed (a frame, a lookup): it joins that turn's parents, so every note, record or session
  * the turn writes carries it. Outside a turn nothing is recorded. */
-export function receiptJoinsTurn(threadId: string, botId: string, bundleId: string): void {
-  const turn = runningTurnFor(threadId, botId);
+export function receiptJoinsTurn(threadId: string, botId: string, bundleId: string, exactTurn?: TurnLineage): void {
+  // Legacy admission callers explicitly address all live turns of this member;
+  // response preparation additionally checks them against its immutable binding
+  // in captureTurnParentAdditions. No newest-thread fallback is permitted.
+  const turn = exactTurn ?? runningTurnFor(threadId, botId);
   if (!turn) return;
+  if (turn.threadId !== threadId) throw new Error("MEMORY_CONTEXT_REVOKED");
+  checkedOpenTurns(turn);
   const ref = receiptLineageRef(database(), bundleId);
-  if (ref) addTurnParents(turn, [ref]);
+  if (!ref) throw new Error("MEMORY_CONTEXT_REVOKED");
+  addTurnParents(turn, [ref]);
 }
 
 /** A receipt turned 'revoked' here is queued by the v10 flip trigger (receipt-outputs.ts): wake the marker so it is committed soon (until

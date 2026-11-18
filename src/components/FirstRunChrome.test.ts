@@ -19,7 +19,7 @@ vi.mock("@/state/store", () => ({
   useStore: () => ({ state: {}, dispatch: () => {} }),
 }));
 
-const { SETUP_POLL_IDLE_LIMIT, SETUP_READ_RETRY_LIMIT, forgetSetupView, readSetupView, setupPollWanted } =
+const { BOT_CHANGE_REREAD_MS, createBotChangeRefresher, SETUP_POLL_IDLE_LIMIT, SETUP_READ_RETRY_LIMIT, forgetSetupView, readSetupView, setupPollWanted } =
   await import("./FirstRunChrome");
 
 /** A setup view as the route answers one, with the flow still going. */
@@ -183,5 +183,30 @@ describe("a surface that is never shown the first run", () => {
     expect(calls).toBeGreaterThan(1);
     reply = () => ({ ...view(), next: null });
     forgetSetupView();
+  });
+});
+
+describe("a bot change re-reads the setup view", () => {
+  const bot = (id: string, instanceId: string, hidden = false) => ({ id, hidden, modelSelection: { instanceId } });
+
+  it("re-reads exactly once for a burst of changes, and not for the baseline or an identical roster", async () => {
+    const feed = createBotChangeRefresher();
+    feed([bot("a", "codex")]);
+    feed([bot("a", "codex")]);
+    await vi.advanceTimersByTimeAsync(BOT_CHANGE_REREAD_MS * 2);
+    expect(calls).toBe(0);
+    // A bot switched onto another engine, then a second bot added, in one burst.
+    feed([bot("a", "claude")]);
+    feed([bot("a", "claude"), bot("b", "codex")]);
+    await vi.advanceTimersByTimeAsync(BOT_CHANGE_REREAD_MS * 2);
+    expect(calls).toBe(1);
+  });
+
+  it("re-reads when the only bot on an engine is archived (hidden)", async () => {
+    const feed = createBotChangeRefresher();
+    feed([bot("a", "codex")]);
+    feed([bot("a", "codex", true)]);
+    await vi.advanceTimersByTimeAsync(BOT_CHANGE_REREAD_MS * 2);
+    expect(calls).toBe(1);
   });
 });

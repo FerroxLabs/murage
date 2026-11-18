@@ -23,6 +23,7 @@ import { createHash } from "node:crypto";
 import { closeSync, lstatSync, readSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { ensureScannerMeter } from "./io-meter.ts";
 import {
   DB_STATS_SCHEMA_VERSION, DB_STATS_TABLES, HEALTH_LIMITS, parseBackupStatus, parseDbStatsManifest, parseDbStatsRow, parseWindowLine,
   type BackupStatus, type CoverageValue, type DbStatsManifest, type DbStatsRow, type OperationalWindow,
@@ -333,6 +334,7 @@ const ALLOWED_TABLES = new Set(Object.keys(DB_STATS_TABLES));
 export function querySealedStats(path: string, expect: { installationId: string; generation: number }, budget: ScanBudget, platform: NodeJS.Platform = process.platform): { ok: true; rows: DbStatsRow[]; coverage: CoverageValue } | { ok: false; reason: string } {
   let db: DatabaseSync;
   try {
+    ensureScannerMeter();
     db = new DatabaseSync(sealedUri(path, platform), { open: true, readOnly: true, timeout: 0, allowExtension: false, enableForeignKeyConstraints: false });
   } catch { return { ok: false, reason: "open" }; }
   const query = <T>(run: () => T): T => { if (!budget.takeQuery()) throw new Error("budget"); return run(); };

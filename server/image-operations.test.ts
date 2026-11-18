@@ -1,12 +1,23 @@
+import {producerFixture} from './testing/producer-fixture.ts';
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import * as svcDecision from './decision/index.ts';
+import { bindServiceTurn } from './service-no-limits.ts';
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
-import { stopWalMaintenance } from "./wal-maintenance.ts";
+import { stopWalMaintenance, walMaintenanceReady } from "./wal-maintenance.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
+import { stopRecallViewMaintenance, waitForRecallConstructionIdleForTest } from "./memory/recall-view.ts";
 import { Store } from "./store.ts";
+import { addTurnParents, bindProviderTurn, closeThreadTurns, openTurnLineage } from "./memory/lineage-write.ts";
+import { denyLookup } from "./memory/deny-read.ts";
+import { commitRevoke } from "./memory/revoke-commit.ts";
+import { drainRevokeMarker } from "./memory/memory-revocation.ts";
+import { lineOf } from "./memory/revoke-marker.ts";
+import { CONTENT, WritetimeFixture } from "./memory/testing/writetime-fixture.ts";
 import { saveImage } from "./attachments.ts";
 import { describeArtifact } from "./artifacts.ts";
 import { ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
@@ -45,12 +56,13 @@ vi.mock("./attachments.ts", async importOriginal => {
 beforeEach(() => { faults.saveImage = 0; faults.register = 0; });
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
 const detail = { connectionId: "openai", provider: "openai" as const, model: "gpt-image-2", operation: "generate" as const, count: 1 as const, referenceCount: 0 };
-beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
+beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); expect(await stopSearchIndex()).toBe(true); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
 afterEach(() => closeDatabase());
 function fixture() {
   const store = new Store(() => ({instanceId:"fixture",model:"fixture"})); const bot = store.createBot();
   const controller = new AbortController(); let active = true;
   const actor = { botId:bot.id,threadId:bot.threadId,generation:randomUUID(),signal:controller.signal,assertActive:()=>{if(!active)throw Error("revoked");} };
+  Object.assign(actor,{authority:producerFixture(store,actor.botId,actor.threadId,actor.generation)});
   const waiting = vi.fn(), operations = new ImageOperations({store,waiting});
   const card = async () => { await vi.waitFor(()=>expect(store.messagesFor(bot.threadId).some(m=>m.card?.tool==="generate_image" && !m.card.answered)).toBe(true)); return store.messagesFor(bot.threadId).find(m=>m.card?.tool==="generate_image"&&!m.card.answered)!; };
   return {store,bot,actor,controller,operations,waiting,card,revoke:()=>{active=false;}};
@@ -61,6 +73,20 @@ function generationFixture() {
  const service=new ImageGenerationService({resolveConnection:()=>({id:"flux",provider:"flux",apiKey:"FAKE_B15",revision:"1"}),connectionIds:()=>["flux"],fetch:fetcher});
  const run=(id:string,request:Record<string,unknown>,refs:ImageReference[]=[])=>f.operations.execute(f.actor,id,request,(reserve,publish)=>service.generate(request,{reserve,publish,assertActive:f.actor.assertActive,signal:f.actor.signal},refs));
  return {...f,fetcher,run,request:{connectionId:"flux",prompt:"fixture"}};
+}
+async function approvalClock() {
+ // Start database polling on the real clock before constructing the service
+ // or request. All service timers still belong to the fake owner's clock.
+ database();
+ await vi.waitFor(() => expect(walMaintenanceReady()).toBe(true));
+ expect(await stopSearchIndex()).toBe(true);
+ vi.useFakeTimers();
+}
+async function pauseFixtureRecallMaintenance() {
+ // Finish the roster's queued startup before stopping only its 50 ms upkeep.
+ // The already-open approval and every service expiry timer remain live.
+ await vi.advanceTimersByTimeAsync(1);
+ stopRecallViewMaintenance();
 }
 it("B15 permits corrected same-turn local size/reference validation with exactly one approval and POST",async()=>{
  for(const invalid of [{size:"1536x1024"},{operation:"edit"}]){
@@ -170,7 +196,8 @@ it("requires an exact owner count approval before work and persists a real artif
  expect(f.waiting.mock.calls.map(c=>c[1])).toEqual([true,false]);
 });
 // The approval card holds the model's prompt and the image row is the model's output: both name the producing turn the actor carries (read
-// from the turn's capability), so revoking the turn's inputs withholds them; with no turn named the card stays a Murage line resting on none.
+// from the turn's capability), so revoking the turn's inputs withholds them. An actor that names none still rests both on the turn running
+// its generation (decision/producer-bindings.ts producerTurnId, lane tri-s1 d18e406d98): the card and the image row name the same turn.
 it("the approval card and the published image name the producing turn from the actor, never from the request",async()=>{
  const f=fixture(),actor={...f.actor,turnId:"prov-1"};
  const job=f.operations.execute(actor,"turn-named",{prompt:"draw fixture",turnId:"spoofed"},async reserve=>{const ticket=await reserve(detail);const artifact=publishImage(f.store,actor,{bytes:png,mime:"image/png"},detail);ticket.finish("published");return artifact;});
@@ -181,9 +208,26 @@ it("the approval card and the published image name the producing turn from the a
  expect(image.attachments?.[0].kind).toBe("image");expect(image.turnId).toBe("prov-1");expect(image.murageLine).toBeUndefined();
  const other=fixture();
  const second=other.operations.execute(other.actor,"no-turn",{prompt:"draw fixture"},async reserve=>{const ticket=await reserve(detail);const artifact=publishImage(other.store,other.actor,{bytes:png,mime:"image/png"},detail);ticket.finish("published");return artifact;});
- const bare=await other.card();expect(bare.turnId).toBeUndefined();expect(bare.murageLine).toBe(true);
+ const bare=await other.card();expect(bare.turnId).toBe("fixture-turn");expect(bare.murageLine).toBe(true);
  other.operations.resolve(other.actor.threadId,bare.card!.requestId!,"allow");await second;
- const row=other.store.messagesFor(other.actor.threadId).at(-1)!;expect(row.turnId).toBeUndefined();expect(row.murageLine).toBe(true);
+ const row=other.store.messagesFor(other.actor.threadId).at(-1)!;expect(row.attachments?.[0].kind).toBe("image");expect(row.turnId).toBe("fixture-turn");expect(row.murageLine).toBeUndefined();
+});
+it("an automatic image record and its image keep the same producing turn",async()=>{
+ const f=fixture(),provider=vi.fn();
+ const operations=new ImageOperations({store:f.store,waiting:f.waiting,autoApproval:()=>({basis:"Full access"})});
+ await operations.execute(f.actor,"automatic-lineage",{prompt:"fixture",turnId:"spoofed"},operationWork(provider));
+ const rows=f.store.messagesFor(f.actor.threadId);
+ const record=rows.find(message=>message.tool?.imageRecord)!;
+ expect(record).toMatchObject({murageLine:true,turnId:"fixture-turn"});
+ expect(rows.find(message=>message.attachments?.length)?.turnId).toBe("fixture-turn");
+ expect(rows.filter(message=>message.card?.tool==="generate_image")).toHaveLength(0);
+ expect(provider).toHaveBeenCalledOnce();
+});
+it("an image published without a producing authority remains a Murage line",async()=>{
+ const f=fixture();
+ await publishImage(f.store,{...f.actor,authority:undefined},{bytes:png,mime:"image/png"},detail);
+ const image=f.store.messagesFor(f.actor.threadId).at(-1)!;
+ expect(image.attachments?.[0].kind).toBe("image");expect(image.turnId).toBeUndefined();expect(image.murageLine).toBe(true);
 });
 it("still asks before it spends when the bot is on Full access",async()=>{
  const f=generationFixture();
@@ -196,6 +240,26 @@ it("still asks before it spends when the bot is on Full access",async()=>{
  f.operations.resolve(f.actor.threadId,card.card!.requestId!,"allow");await job;
  expect(f.fetcher).toHaveBeenCalledOnce();
 });
+it.each(["allow", "deny", "cancel"] as const)("image approval state stays closed on repeated reads after %s", async answer => {
+  const f = fixture();
+  const job = f.operations.execute(f.actor, "approval-state", { prompt: "fixture" }, async reserve => {
+    const ticket = await reserve(detail);
+    ticket.finish("not-dispatched");
+    return { ok: true };
+  });
+  const settled = job.then(() => "allowed", () => "refused");
+  const card = await f.card();
+  const id = card.card!.requestId!;
+  expect(f.operations.answeredApproval(id)).toBe(false);
+  expect(f.operations.answeredApproval(id)).toBe(false);
+  if (answer === "cancel") f.controller.abort();
+  else expect(f.operations.resolve(f.actor.threadId, id, answer)).toBe(answer === "allow" ? "allowed-once" : "rejected");
+  expect(await settled).toBe(answer === "allow" ? "allowed" : "refused");
+  expect(f.operations.pendingApprovals().some(item => item.ref === id)).toBe(false);
+  expect(f.operations.answeredApproval(id)).toBe(true);
+  expect(f.operations.answeredApproval(id)).toBe(true);
+});
+
 it("denial or cancellation cannot start a provider request",async()=>{
  const f=fixture(),provider=vi.fn();const job=f.operations.execute(f.actor,"denied",{prompt:"fixture"},async reserve=>{await reserve(detail);provider();});
  const rejected=expect(job).rejects.toThrow("not approved");const card=await f.card();f.operations.resolve(f.actor.threadId,card.card!.requestId!,"deny");await rejected;expect(provider).not.toHaveBeenCalled();
@@ -297,12 +361,16 @@ it("backs up production startup schema and WAL data with image receipts into an 
   await approveNext(f); await refusal;
   const db = database();
   db.exec("PRAGMA wal_autocheckpoint=0");
-  // The server's WAL checkpointer (its own connection) folds the log into messages.db whenever it ticks; the test compares the file's bytes before and
-  // after the backup, so the checkpointer is ended first and nothing but this test touches the files afterwards.
+  // Join the checkpointer, search worker and recall construction/upkeep before
+  // capturing the unchanged-byte oracle; only this test may
+  // write messages.db or its WAL during the archive/restore comparison.
   await stopWalMaintenance();
+  expect(await stopSearchIndex()).toBe(true);
   const message = f.store.appendMessage(f.bot.threadId, { role: "user", kind: "text", text: "WAL backup canary" });
   db.exec("INSERT INTO memory_scopes VALUES('backup-scope','bot','backup-owner','[]',0)");
   db.exec("INSERT INTO memory_records VALUES('backup-memory',1,'backup-scope','fact','Retain this memory','owner-statement','active',0,1,NULL,NULL,1)");
+  await waitForRecallConstructionIdleForTest(f.store);
+  stopRecallViewMaintenance();
   const operations = db.prepare("SELECT * FROM image_operations ORDER BY id").all();
   const receipts = db.prepare("SELECT * FROM output_publications ORDER BY id").all();
   const memory = db.prepare("SELECT * FROM memory_records WHERE id='backup-memory'").get();
@@ -349,6 +417,7 @@ it("retains received image bytes when attachment storage fails and resumes publi
   expect(provider).toHaveBeenCalledOnce();
   expect(resumed.artifact).toMatchObject({ id: receipt!.id, artifactId: expect.any(String) });
   expect(imageMessages(f)).toHaveLength(1);
+  expect(imageMessages(f)[0]!.turnId).toBe("fixture-turn");
   expect((await imageReferences(f.store, f.actor.threadId, [resumed.artifact.referenceId], () => {}))[0]!.bytes).toEqual(png);
   expect(describeArtifact(database(), join(DATA_DIR, "artifact-files"), resumed.artifact.artifactId, imageAccess(f))).toMatchObject({ kind: "image", producer: "image-operation", sha256: sha(png), threadId: f.bot.threadId });
   expect(imageReceipts()).toEqual([expect.objectContaining({ id: receipt!.id, stage: "registered", artifact_id: resumed.artifact.artifactId, message_id: imageMessages(f)[0]!.id })]);
@@ -360,9 +429,9 @@ it("retains received image bytes when attachment storage fails and resumes publi
 it("resumes after a transcript append failure without duplicating the image message", async () => {
   const f = fixture(), provider = vi.fn(), work = operationWork(provider), append = f.store.appendMessage.bind(f.store);
   let failures = 1;
-  vi.spyOn(f.store, "appendMessage").mockImplementation((threadId, message) => {
+  vi.spyOn(f.store, "appendMessage").mockImplementation((threadId, message, ...rest) => {
     if (message.attachments?.length && failures-- > 0) throw new Error("database is locked");
-    return append(threadId, message);
+    return append(threadId, message, ...rest);
   });
   const job = f.operations.execute(f.actor, "transcript", { prompt: "fixture" }, work);
   const refusal = expect(job).rejects.toThrow("(transcript)");
@@ -382,15 +451,71 @@ it("completes a retained image after a restart without provider work and keeps t
   const refusal = expect(job).rejects.toThrow("kept locally");
   await approveNext(f); await refusal;
   closeDatabase();
+  svcDecision.installProvenanceReader({turnGenerationFor:()=>undefined,provenance:()=>undefined,live:()=>undefined});
   const restarted = new ImageOperations({ store: f.store, waiting: () => {} });
   expect(await restarted.resumePendingPublications()).toBe(1);
   expect(await restarted.resumePendingPublications()).toBe(0);
+  expect(imageMessages(f)[0]!.turnId).toBe("fixture-turn");
   expect(provider).toHaveBeenCalledOnce();
   expect(imageMessages(f)).toHaveLength(1);
   const again = await restarted.execute(f.actor, "restart", { prompt: "fixture" }, work);
   expect(again.artifact).toMatchObject({ id: imageReceipts()[0]!.id, artifactId: expect.any(String) });
   expect(provider).toHaveBeenCalledOnce();
   expect(imageMessages(f)).toHaveLength(1);
+});
+
+it("a recovered image retains its source parents after the producing turn map is gone", async () => {
+ const f=fixture(),source=f.store.createBot();
+ const parent=f.store.appendMessage(source.threadId,{role:"user",kind:"text",text:"Private image source"});
+ f.store.appendMessage(f.actor.threadId,{role:"user",kind:"text",text:"Make an image"});
+ new WritetimeFixture(database()).cert(true);
+ database().exec("UPDATE memory_scopes SET audience='[]' WHERE json_type(audience)<>'array'");
+ const turn=openTurnLineage(database(),{threadId:f.actor.threadId,turnId:"image-source-turn"});
+ bindProviderTurn(turn,"fixture-turn");
+ // Add the image input after the card settles, so its carry cannot mask a missing image carry.
+ const provider=vi.fn(()=>addTurnParents(turn,[{kind:"line",threadId:source.threadId,messageId:parent.id}])),work=operationWork(provider);
+ try {
+  faults.saveImage=1;
+  const job=f.operations.execute(f.actor,"source-recovery",{prompt:"fixture"},work),refusal=expect(job).rejects.toThrow("kept locally");
+  await approveNext(f);await refusal;
+  closeDatabase();closeThreadTurns(f.actor.threadId);
+  svcDecision.installProvenanceReader({turnGenerationFor:()=>undefined,provenance:()=>undefined,live:()=>undefined});
+  const restarted=new ImageOperations({store:f.store,waiting:()=>{}});
+  expect(await restarted.resumePendingPublications()).toBe(1);
+  const image=imageMessages(f)[0]!;
+  expect(image.turnId).toBe("fixture-turn");
+  expect(denyLookup(database(),{threadId:f.actor.threadId,lines:[{messageId:image.id,author:"generated"}]},CONTENT).get(image.id)?.state).toBe("shown");
+  database().exec("BEGIN IMMEDIATE");
+  try {commitRevoke(database(),{kind:"line",threadId:source.threadId,messageIds:[parent.id],cause:"forget"},{inline:false});database().exec("COMMIT");}
+  catch(error){database().exec("ROLLBACK");throw error;}
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  expect(denyLookup(database(),{threadId:f.actor.threadId,lines:[{messageId:image.id,author:"generated"}]},CONTENT).get(image.id)?.state).toBe("withheld");
+  expect(provider).toHaveBeenCalledOnce();
+ } finally {closeThreadTurns(f.actor.threadId);}
+});
+
+it("a recovered image keeps the position where its source turn began",async()=>{
+ const f=fixture(),provider=vi.fn(),work=operationWork(provider);
+ const parent=f.store.appendMessage(f.actor.threadId,{role:"user",kind:"text",text:"Image source"});
+ new WritetimeFixture(database()).cert(true);
+ database().exec("UPDATE memory_scopes SET audience='[]' WHERE json_type(audience)<>'array'");
+ const turn=openTurnLineage(database(),{threadId:f.actor.threadId,turnId:"image-position-turn"});bindProviderTurn(turn,"fixture-turn");
+ try {
+  faults.saveImage=1;
+  const job=f.operations.execute(f.actor,"position-recovery",{prompt:"fixture"},work),refusal=expect(job).rejects.toThrow("kept locally");
+  await approveNext(f);await refusal;
+  closeDatabase();closeThreadTurns(f.actor.threadId);
+  svcDecision.installProvenanceReader({turnGenerationFor:()=>undefined,provenance:()=>undefined,live:()=>undefined});
+  const later=f.store.appendMessage(f.actor.threadId,{role:"user",kind:"text",text:"Later input"});
+  const root=lineOf(database(),f.actor.threadId,parent.id)!.lsn,cap=lineOf(database(),f.actor.threadId,later.id)!.lsn;
+  database().prepare("INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(51,'line',?,?,?,'mark','','active')").run(JSON.stringify({kind:"line",cause:"forget"}),root,cap);
+  database().prepare("INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,?,51)").run(f.actor.threadId,root);
+  const restarted=new ImageOperations({store:f.store,waiting:()=>{}});
+  expect(await restarted.resumePendingPublications()).toBe(1);
+  const image=imageMessages(f)[0]!;
+  expect(denyLookup(database(),{threadId:f.actor.threadId,lines:[{messageId:image.id,author:"generated"}]},CONTENT).get(image.id)?.state).toBe("checking");
+  expect(provider).toHaveBeenCalledOnce();
+ } finally {closeThreadTurns(f.actor.threadId);}
 });
 
 it("does not resume a retained image for a revoked actor", async () => {
@@ -618,12 +743,13 @@ it("B16 resolves six exactly 10 MiB conversation PNG attachments as 60 MiB of re
 // itself after 60 s, so an owner who was not staring at the screen found a
 // "Denied" card and never got the chance to answer.
 it("image approval waits like any other approval and settles as not answered on abort", async () => {
-  vi.useFakeTimers();
+  await approvalClock();
   try {
     const f = generationFixture();
     const job = f.run("patient", f.request), refused = expect(job).rejects.toThrow("not approved");
     const card = await f.card(), requestId = card.card!.requestId!;
-    expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, true, requestId, card.id, f.bot.id);
+    await pauseFixtureRecallMaintenance();
+    expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, true, requestId, card.id, f.bot.id, f.actor.generation);
     await vi.advanceTimersByTimeAsync(60_000);
     await vi.advanceTimersByTimeAsync(2 * 60 * 60_000); // well past the old 15-minute bound
     const stillOpen = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
@@ -631,26 +757,28 @@ it("image approval waits like any other approval and settles as not answered on 
     expect(f.waiting.mock.calls.filter(call => call[1] === false)).toHaveLength(0);
     f.controller.abort(); await refused;
     const settled = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
-    expect(settled.answered).toBe("unavailable"); expect(settled.dismissed).toBe(true);
-    expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, false, requestId, undefined, f.bot.id);
+    expect(settled.answered).toBe("Cancelled"); expect(settled.dismissed).toBe(true);
+    // An aborted call is not an owner answer, so the close does not resume a parked project board.
+    expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, false, requestId, undefined, f.bot.id, f.actor.generation, false);
     expect(f.fetcher).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
 });
 // GROK-STOPPED F1 (1.0.10): an owner-facing card never expires. A restored
 // 15-minute (or any) card timer closes this card inside the day and fails here.
 it("image approval card never expires: a day later the owner's answer still lands", async () => {
-  vi.useFakeTimers();
+  await approvalClock();
   try {
     const f = generationFixture();
     const job = f.run("late", f.request), refused = expect(job).rejects.toThrow("Image generation was not approved by the owner, so nothing was sent.");
     const card = await f.card();
+    await pauseFixtureRecallMaintenance();
     await vi.advanceTimersByTimeAsync(15 * 60_000 + 1);
     await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
     const open = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
     expect(open.answered).toBeUndefined(); expect(open.dismissed).toBeFalsy();
     expect(f.operations.resolve(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected");
     await refused;
-    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBe("deny");
+    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBe("Denied");
     expect(f.fetcher).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
 });
@@ -660,12 +788,13 @@ it("the owner's own deny stays a denial and their allow dispatches exactly once"
   const card = await f.card();
   expect(f.operations.resolve(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected"); await refused;
   const settled = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
-  expect(settled.answered).toBe("deny"); expect(settled.dismissed).toBe(false);
+  expect(settled.answered).toBe("Denied"); expect(settled.dismissed).toBe(true);
 });
 it("names the asking bot to the waiting hook and stamps a channel card with its sender",async()=>{
  const store=new Store(()=>({instanceId:"fixture",model:"fixture"}));const bot=store.createBot();
  const controller=new AbortController();
  const actor={botId:bot.id,threadId:"channel-thread",generation:randomUUID(),signal:controller.signal,assertActive:()=>{}};
+ Object.assign(actor,{authority:producerFixture(store,actor.botId,actor.threadId,actor.generation)});
  const waiting=vi.fn(),from={botId:bot.id,name:"Sable",color:"#fff"};
  const speaker=vi.fn(()=>from);
  const operations=new ImageOperations({store,waiting,speaker});
@@ -677,9 +806,9 @@ it("names the asking bot to the waiting hook and stamps a channel card with its 
  const card=store.messagesFor("channel-thread").find(m=>m.card?.tool==="generate_image")!;
  expect(speaker).toHaveBeenCalledWith("channel-thread",bot.id);
  expect(card.from).toEqual(from);
- expect(waiting).toHaveBeenCalledWith("channel-thread",true,card.card!.requestId,card.id,bot.id);
+ expect(waiting).toHaveBeenCalledWith("channel-thread",true,card.card!.requestId,card.id,bot.id,actor.generation);
  operations.resolve("channel-thread",card.card!.requestId!,"deny");await job;
- expect(waiting).toHaveBeenLastCalledWith("channel-thread",false,card.card!.requestId,undefined,bot.id);
+ expect(waiting).toHaveBeenLastCalledWith("channel-thread",false,card.card!.requestId,undefined,bot.id,actor.generation,true);
 });
 // 0.1.60: in a scheduled or manual routine run the paid-image card is held
 // open like a permission card. It never closes for waiting; if the tool call
@@ -687,7 +816,7 @@ it("names the asking bot to the waiting hook and stamps a channel card with its 
 // the owner, and an allow then covers the next image in that conversation
 // once, when the run carries on.
 it("a routine run holds its image card open past the bound and past its turn", async () => {
-  vi.useFakeTimers();
+  await approvalClock();
   try {
     const events: string[] = [];
     let resumed = false;
@@ -700,6 +829,7 @@ it("a routine run holds its image card open past the bound and past its turn", a
     const run = (id: string, actor = f.actor) => held.execute(actor, id, f.request, (reserve, publish) => service.generate(f.request, { reserve, publish, assertActive: actor.assertActive, signal: actor.signal }, []));
     const job = run("held"), refused = expect(job).rejects.toThrow("not approved");
     const card = await f.card();
+    await pauseFixtureRecallMaintenance();
     await vi.advanceTimersByTimeAsync(75 * 60_000);
     expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBeUndefined();
     // the tool call gives up (its turn ended): the card stays answerable
@@ -707,7 +837,7 @@ it("a routine run holds its image card open past the bound and past its turn", a
     expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBeUndefined();
     resumed = true;
     expect(held.resolve(f.bot.threadId, card.card!.requestId!, "allow")).toBe("allowed-once");
-    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBe("allow");
+    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBe("Allowed");
     expect(events).toEqual(["opened:Approve image generation", "closed:allow"]);
     // the run carries on in a new turn: that image is already approved
     const next = { ...f.actor, generation: randomUUID(), signal: new AbortController().signal, assertActive: () => {} };
@@ -718,16 +848,16 @@ it("a routine run holds its image card open past the bound and past its turn", a
 });
 
 it("project image decisions stay open without a routine continuation",async()=>{
-  vi.useFakeTimers();try{
+  await approvalClock();try{
     const f=generationFixture();const held=new ImageOperations({store:f.store,waiting:f.waiting,holdProjectApproval:()=>true});
     const service=new ImageGenerationService({resolveConnection:()=>({id:"flux",provider:"flux",apiKey:"FAKE_B15",revision:"1"}),connectionIds:()=>["flux"],fetch:f.fetcher});
     const job=held.execute(f.actor,"project-held",f.request,(reserve,publish)=>service.generate(f.request,{reserve,publish,assertActive:f.actor.assertActive,signal:f.actor.signal},[]));const refused=expect(job).rejects.toThrow("not approved");
-    const card=await f.card();await vi.advanceTimersByTimeAsync(60*60000);
+    const card=await f.card();await pauseFixtureRecallMaintenance();await vi.advanceTimersByTimeAsync(60*60000);
     expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===card.id)!.card!.answered).toBeUndefined();
     f.controller.abort(); f.revoke(); await refused;
     expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===card.id)!.card!.answered).toBeUndefined();
     expect(held.resolve(f.bot.threadId,card.card!.requestId!,"deny")).toBe("rejected");
-    expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===card.id)!.card!.answered).toBe("deny");
+    expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===card.id)!.card!.answered).toBe("Denied");
   }finally{vi.useRealTimers();}
 });
 // Coordinator (imgflux report): a late Allow on a project-held card whose
@@ -743,7 +873,7 @@ it("a late Allow on a project-held card whose call ended closes it as expired, n
     const card = await f.card();
     f.controller.abort(); f.revoke(); await refused;
     expect(held.resolve(f.bot.threadId, card.card!.requestId!, "allow")).toBe("unavailable");
-    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBe("unavailable");
+    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toContain("could not be delivered");
     expect(f.fetcher).not.toHaveBeenCalled();
     // a second answer changes nothing
     expect(held.resolve(f.bot.threadId, card.card!.requestId!, "allow")).toBe("unavailable");
@@ -790,4 +920,20 @@ it("a later turn joining a running image operation holds its own silence watch",
   expect(releases.every(release => release.mock.calls.length === 0)).toBe(true);
   finish({ ok: true }); await running; await joined;
   expect(releases.map(release => release.mock.calls.length)).toEqual([1, 1]);
+});
+
+it("S6 No limits permits a second and fifty-first image in one turn without a card", async () => {
+ const f=generationFixture();
+ svcDecision.installDecisionHost({store:f.store,view:()=>({title:'Fixture',subtitle:'Fixture'})});
+ svcDecision.installProvenanceReader({turnGenerationFor:()=>f.actor.generation,
+  provenance:()=>({generation:f.actor.generation,threadId:f.actor.threadId,botId:f.actor.botId,principal:'owner',roomOwnerOnly:true,at:1,initiator:{k:'owner-typed'}}),
+  live:()=>({botId:f.actor.botId,turnId:'fixture-turn',providerInstanceId:'fixture',principal:'owner',owner:true,level:'unlimited'})});
+ svcDecision.installDenySources({revision:()=>[],resolve:()=>[]});
+ const claim=svcDecision.installClaimVerifier(proof=>proof==='fixture-proof'?{threadId:f.actor.threadId,botId:f.actor.botId,generation:f.actor.generation}:undefined)('fixture-proof')!;
+ Object.assign(f.actor,{authority:{claim,proof:'fixture-proof',identity:{threadId:f.actor.threadId,generation:f.actor.generation}}});
+ bindServiceTurn(f.actor.generation,f.actor.threadId,f.actor.botId,()=>!f.actor.signal.aborted,()=>({ownerAudience:true,origin:'webhook',noLimits:true}));
+ database().prepare("INSERT INTO image_operations VALUES(?,?,?,'published',NULL,?)").run('fixture-first',f.actor.generation,'fixture-first-request',Date.now());
+ for(let i=1;i<51;i++) await f.run(`nl-${i}`,{...f.request,prompt:`image ${i}`});
+ expect(f.fetcher).toHaveBeenCalledTimes(50);
+ expect(f.store.messagesFor(f.actor.threadId).filter(m=>m.card?.tool==='generate_image')).toHaveLength(0);
 });

@@ -1,3 +1,5 @@
+import { en } from "@/locales";
+import { t } from "@/lib/i18n";
 import { useFocusTrap } from "@/lib/focus-trap";
 import { LayerSurface } from "@/components/LayerSurface";
 import { useRef } from "react";
@@ -14,8 +16,7 @@ export const LOCAL_COMPUTER_AUTO_WARNING =
 export const LOCAL_COMPUTER_FULL_ACCESS_WARNING =
   "Full access will let this bot click, type, and run tools on this computer without asking first. It still asks before deleting outside its folder, paying, messaging someone new, and reading your keys. Continue only if you are watching.";
 
-export const LOCAL_COMPUTER_NO_LIMITS_WARNING =
-  "In conversations you start, No limits will let this bot click, type and run commands on this computer without asking first, including reading and sending your keys. It still asks before a wipe it can read and before a command it cannot read in full, and browser, email and publishing keep their own approvals. A script file can still run unread. Continue only if you are watching.";
+export const LOCAL_COMPUTER_NO_LIMITS_WARNING = en["ux.lcopyb.level.unlimitedHere"];
 
 function LocalComputerAutoWarningOpen({
   open,
@@ -57,7 +58,7 @@ function LocalComputerAutoWarningOpen({
         </BoxHead>
         <BoxBody className="pl-[50px] pr-5">
             <p id="local-auto-warning-body" className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">
-              {mode === "unlimited" ? LOCAL_COMPUTER_NO_LIMITS_WARNING : mode === "full" ? LOCAL_COMPUTER_FULL_ACCESS_WARNING : LOCAL_COMPUTER_AUTO_WARNING}
+              {mode === "unlimited" ? t("ux.lcopyb.level.unlimitedHere") : mode === "full" ? LOCAL_COMPUTER_FULL_ACCESS_WARNING : LOCAL_COMPUTER_AUTO_WARNING}
             </p>
         </BoxBody>
         <BoxFoot className="px-5 pb-5 pt-4">

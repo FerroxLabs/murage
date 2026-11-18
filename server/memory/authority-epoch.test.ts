@@ -4,7 +4,7 @@
 // PROPOSAL-v2 10.1 / AUDIT B1: the dispatch checks were guarded by `databaseStamp()`, which every write moves
 // (the recall counter, the job claims, the receipts), so they never skipped. The authority epoch moves only
 // for writes that can take something away from a bundle or a resumed session.
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { database, transaction } from "../database.ts";
@@ -12,13 +12,37 @@ import { authorityMoved, authorityStamp, pinStamp } from "./authority-epoch.ts";
 import { archiveMemoryRecord } from "./retention.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { assertMemoryBundle, buildMemoryBundle } from "./bundle.ts";
+import * as bundleReader from "./bundle.ts";
 import { bindMemoryDisclosureSession, continuationMemoryRevoked, resetSessionHolds } from "./disclosures.ts";
 import { MemoryDispatchReceipt } from "./dispatch.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
 import { flushMemoryCounters, recordMemoryRetrieval, resetMemoryCounters } from "./health.ts";
 import { THREAD, accessFor, captureAndPublish, emptyBridge, freshDataDir } from "./testing/recall-fixture.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { stampFreshSession } from "./testing/writetime-fixture.ts";
+import { FreshReplaySessionConfirmation } from "./fresh-replay-session.ts";
+import { captureSendReplayProof } from "./replay-lineage.ts";
+import { openTurnLineage, closeTurnLineage, writeLineage } from "./lineage-write.ts";
+import { startFreshSession } from "./session-incarnation.ts";
+import { noteSessionFrame } from "./session-proof-schema.ts";
+import { initializeFreshSessionProof } from "./session-proof.ts";
+import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
+
+// MAIN RULING 1115-RECALL-R1 (GrokBuild)
+// Producer owner: recall-fix-c. Consumer owner: recall-fix-c (epoch witnesses).
+function startLiveSession(access: MemoryAccess) {
+  for (const row of sql().prepare("SELECT id FROM messages WHERE thread_id=?").all(THREAD)) {
+    writeLineage(sql(), { threadId: THREAD, messageId: String(row.id), author: "owner" }, {});
+  }
+  const turn = openTurnLineage(sql(), { threadId: THREAD, turnId: "fixture-live-turn" });
+  const { key } = transaction(db => startFreshSession(db, THREAD, "engine", "session-1", turn));
+  closeTurnLineage(turn);
+  const confirmation = new FreshReplaySessionConfirmation(captureSendReplayProof(THREAD, []), "engine", () => assertMemoryAccess(access), { generation: access.generation });
+  confirmation.sessionStarted("fixture-live-turn", key, true);
+  confirmation.engineWritten(); confirmation.accepted("fixture-live-turn");
+  noteSessionFrame(sql(), key, false);
+  initializeFreshSessionProof(key, access, undefined, { fresh: true, confirmation });
+  return confirmation;
+}
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -97,6 +121,30 @@ function countStatements(match: (text: string) => boolean) {
   return { get n() { return n; }, restore: () => { (db as unknown as { prepare: unknown }).prepare = real; } };
 }
 
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+// Count executions and returned work; preparing an empty incremental tail is not a prefix scan.
+function sessionScans() {
+  const db = database(), prepare = db.prepare;
+  const work = { prefixes: 0, tailRows: 0, tails: [] as Array<{ bound: number; rows: number }>, changes: [] as string[][] };
+  db.prepare = function (text) {
+    const statement = prepare.call(this, text);
+    const disclosure = text.startsWith("SELECT rowid AS rid,bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,state,created_at FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=?");
+    const retired = text.startsWith("SELECT bundle_id,state,policy_revision,deletion_epoch FROM memory_disclosures WHERE thread_id=?1");
+    if (retired) throw new Error('Retired unbounded session opener');
+    if (disclosure || text.startsWith('SELECT id FROM memory_session_change_log WHERE seq>?')) statement.all = new Proxy(statement.all, { apply(target, _receiver, args) {
+      const rows = Reflect.apply(target, statement, args) as ReturnType<typeof statement.all>;
+      if (disclosure) {
+        const bound = Number(args[3]);
+        if (!text.includes('AND rowid>?') || bound === 0) work.prefixes++;
+        else { work.tailRows += rows.length; work.tails.push({ bound, rows: rows.length }); }
+      } else work.changes.push(rows.map(row => String(row.id)));
+      return rows;
+    } });
+    return statement;
+  };
+  return { work, restore: () => { db.prepare = prepare; } };
+}
+
 it("assertMemoryBundle rehydrates the bundle once per epoch, not once per call, and still catches a revocation", async () => {
   const { access } = accessFor();
   captureAndPublish("The launch review is on Friday.");
@@ -125,34 +173,42 @@ it("a resumed session is checked in full at most once per epoch across the dispa
   const { access } = accessFor();
   captureAndPublish("The launch review is on Friday.");
   const first = new MemoryDispatchReceipt(await buildMemoryBundle("launch", access, emptyBridge, {allowance: LineageAllowance.tool()}), access, "engine");
-  first.sessionStarted("session-1"); first.accepted();
-  stampFreshSession(sql(), THREAD, "engine", "session-1"); // a 1.0.3 fresh start leaves its lineage row stamped (S6 rule 26)
+  const confirmation = startLiveSession(access);
+  first.sessionStarted("session-1", true, confirmation); first.accepted();
   const second = new MemoryDispatchReceipt(await buildMemoryBundle("launch", access, emptyBridge, {allowance: LineageAllowance.tool()}), access, "engine");
   expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, "engine", "session-1", access)).toBe(false);
-  // a full check opens with the session's two end receipts (revoke-bounded: a stale end decides at once), then reads the rest
-  const fullChecks = countStatements(text => text.startsWith("SELECT bundle_id,state,policy_revision,deletion_epoch FROM memory_disclosures WHERE thread_id=?1") || text.startsWith("SELECT rowid AS rid,bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,state,created_at FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=?"));
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  const fullChecks = sessionScans();
   try {
     second.resumes("session-1", authorityStamp());
     second.assertCurrent(); second.assertCurrent(); second.assertCurrent();
-    expect(fullChecks.n).toBe(0);
+    expect(fullChecks.work.prefixes).toBe(0);
     // a write that cannot take anything away does not bring the check back
     captureAndPublish("Another new fact.");
     second.assertCurrent();
-    expect(fullChecks.n).toBe(0);
+    expect(fullChecks.work.prefixes).toBe(0);
     // one that can does, and it ends the session
     sql().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(first.bundle.bundleId);
     expect(() => second.assertCurrent()).toThrow("MEMORY_CONTEXT_REVOKED");
-    expect(fullChecks.n).toBe(1);
+    expect(fullChecks.work.prefixes).toBe(0);
+    expect(fullChecks.work.changes).toEqual([[`receipt:${first.bundle.bundleId}`]]);
+    expect(fullChecks.work.tailRows).toBe(0);
+    expect(fullChecks.work.tails.length).toBeGreaterThan(0);
+    expect(fullChecks.work.tails.every(page => page.bound > 0 && page.rows === 0)).toBe(true);
   } finally { fullChecks.restore(); }
 });
 
-it("a thread's checkpoint rolling to a new version is not a revocation: the epoch holds and the old version is archived", () => {
+it("a thread's checkpoint rolling to a new publication retains its exact old citation and authority stamp", () => {
   const first = captureAndPublish("Verified initial result.");
   refreshMemoryCheckpoint(first.jobId);
+  // MAIN RULING 1115-RECALL-R3 (GrokBuild)
+  const selected = sql().prepare("SELECT r.* FROM memory_checkpoint_heads h JOIN memory_records r ON r.id=h.record_id AND r.version=h.record_version").get()!;
   const stamp = authorityStamp();
   const second = captureAndPublish("Verified later result.");
   refreshMemoryCheckpoint(second.jobId);
-  expect(sql().prepare("SELECT count(*) n FROM memory_records WHERE kind='checkpoint' AND state='archived'").get()!.n).toBe(1);
+  expect(sql().prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(selected.id, selected.version)).toEqual(selected);
+  expect(sql().prepare("SELECT count(*) n FROM memory_checkpoint_members").get()!.n).toBe(2);
+  expect(sql().prepare("SELECT record_id FROM memory_checkpoint_heads").get()!.record_id).not.toBe(selected.id);
   expect(authorityStamp()).toBe(stamp);
 });
 
@@ -160,26 +216,31 @@ it("the early continuation check is not repeated while nothing that could take a
   const { access } = accessFor();
   captureAndPublish("The launch review is on Friday.");
   const first = new MemoryDispatchReceipt(await buildMemoryBundle("launch", access, emptyBridge, {allowance: LineageAllowance.tool()}), access, "engine");
-  first.sessionStarted("session-1"); first.accepted();
-  stampFreshSession(sql(), THREAD, "engine", "session-1"); // a 1.0.3 fresh start leaves its lineage row stamped (S6 rule 26)
-  const fullChecks = countStatements(text => text.startsWith("SELECT rowid AS rid,bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,state,created_at FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=?"));
+  const confirmation = startLiveSession(access);
+  first.sessionStarted("session-1", true, confirmation); first.accepted();
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild): force the first cold prefix, retaining the live reader checkpoint.
+  sql().prepare("UPDATE memory_session_checks SET up_to=0 WHERE thread_id=? AND driver_instance='engine' AND native_session='session-1'").run(THREAD);
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  const fullChecks = sessionScans();
   try {
     expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, "engine", "session-1", access)).toBe(false);
-    expect(fullChecks.n).toBe(1);
+    expect(fullChecks.work.prefixes).toBe(1);
     // the turns that follow: more captures, a delivered receipt, the checkpoint rolling, counters
     for (let n = 0; n < 3; n++) {
       const next = captureAndPublish(`Another fact ${n}.`); refreshMemoryCheckpoint(next.jobId);
       expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, "engine", "session-1", access)).toBe(false);
     }
-    expect(fullChecks.n).toBe(1);
+    expect(fullChecks.work.prefixes).toBe(1);
     // the same reader under a new capability (every turn mints one) asks the same question: still answered
     expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, "engine", "session-1", accessFor().access)).toBe(false);
-    expect(fullChecks.n).toBe(1);
+    expect(fullChecks.work.prefixes).toBe(1);
     // a record the session was shown is archived: the check runs again and ends the session
     const cited = first.bundle.recordVersions[0];
     sql().prepare("UPDATE memory_records SET state='archived' WHERE id=? AND version=?").run(cited.id, cited.version);
     expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, "engine", "session-1", accessFor().access)).toBe(true);
-    expect(fullChecks.n).toBe(2);
+    expect(fullChecks.work.prefixes).toBe(1);
+    expect(fullChecks.work.changes).toEqual([[`record:${cited.id}`]]);
+    expect(fullChecks.work.tailRows).toBe(0);
   } finally { fullChecks.restore(); }
 });
 
@@ -191,11 +252,14 @@ it("a full session check looks at each record a session was shown once, however 
   };
   const hydrations = () => {
     resetSessionHolds();
-    const hydrated = countStatements(text => text.startsWith("SELECT * FROM memory_records WHERE id=? AND version=? AND state='active'"));
-    try { expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, "engine", "session-1", access)).toBe(false); return hydrated.n; } finally { hydrated.restore(); }
+    // MAIN RULING 1115-RECALL-R1 (GrokBuild)
+    // Re-read the certified prefix for this full-check census, rather than just its incremental tail.
+    sql().prepare("UPDATE memory_session_checks SET up_to=0 WHERE thread_id=? AND driver_instance='engine' AND native_session='session-1'").run(THREAD);
+    const hydrated = vi.spyOn(bundleReader, "hydrateDisclosedMemoryRecord");
+    try { expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, "engine", "session-1", access)).toBe(false); return hydrated.mock.calls.length; } finally { hydrated.mockRestore(); }
   };
+  startLiveSession(access);
   await receiptsInSession(1);
-  stampFreshSession(sql(), THREAD, "engine", "session-1"); // a 1.0.3 fresh start leaves its lineage row stamped (S6 rule 26)
   const one = hydrations();
   await receiptsInSession(5);
   expect(sql().prepare("SELECT count(*) n FROM memory_disclosures WHERE native_session='session-1'").get()!.n).toBe(6);
@@ -223,7 +287,8 @@ it("the pin stamp moves only when a pinned record is added, changed, pinned, unp
 it("a bundle reads the owner's pins once while nothing about a pin changed, and sees a new pin at once", async () => {
   const { access } = accessFor();
   captureAndPublish("Report colour is charcoal.");
-  const pinReads = countStatements(text => /^SELECT id,version FROM memory_records r( INDEXED BY memory_records_pinned)? WHERE state='active' AND owner_pinned=1/.test(text));
+  // MAIN RULING 1115-RECALL-R2 (GrokBuild)
+  const pinReads = countStatements(text => text.startsWith("SELECT id,version,scope_id FROM memory_records INDEXED BY memory_records_pinned WHERE owner_pinned=1 AND state='active'"));
   try {
     const first = await buildMemoryBundle("report", access, emptyBridge, {allowance: LineageAllowance.tool()});
     expect(first.pinned).toHaveLength(0);
@@ -298,4 +363,28 @@ it("B still refuses a prepared frame that actually cites deleted A, including st
   const after = await buildMemoryBundle("launch date", accessFor(roster, "bot", "other-thread").access, bridge, { allowance: LineageAllowance.tool() });
   expect(after.text).not.toContain("ZEBRA-PRIVATE");
   expect(after.recordVersions.map(r => r.id)).not.toContain(String(row.id));
+});
+
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+it('R7 accounts for a nonempty incremental tail and its real hydration', async () => {
+  const { access } = accessFor();
+  startLiveSession(access);
+  const scans = sessionScans(), hydrated = vi.spyOn(bundleReader, 'hydrateDisclosedMemoryRecord');
+  try {
+    const first = new MemoryDispatchReceipt(await buildMemoryBundle('', access, emptyBridge, { allowance: LineageAllowance.tool() }), access, 'engine');
+    first.sessionStarted('session-1'); first.accepted();
+    expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, 'engine', 'session-1', access)).toBe(false);
+    captureAndPublish('A later distinct fact.');
+    for (const row of sql().prepare('SELECT id FROM messages WHERE thread_id=?').all(THREAD)) writeLineage(sql(), { threadId: THREAD, messageId: String(row.id), author: 'owner' }, {});
+    const record = sql().prepare("SELECT id,version FROM memory_records WHERE kind='source'").get()!;
+    const next = new MemoryDispatchReceipt(await buildMemoryBundle('later distinct', access, { search: async () => ({ hits: [{ id: String(record.id), version: Number(record.version), score: 1 }], vectorRows: 0 }) }, { allowance: LineageAllowance.tool() }), access, 'engine');
+    expect(next.bundle.recordVersions).toContainEqual({ id: record.id, version: record.version });
+    next.sessionStarted('session-1'); next.accepted();
+    hydrated.mockClear();
+    const before = scans.work.tailRows;
+    expect(continuationMemoryRevoked(LineageAllowance.tool(), THREAD, 'engine', 'session-1', access)).toBe(false);
+    expect(scans.work.prefixes).toBe(1);
+    expect(scans.work.tailRows - before).toBe(1);
+    expect(hydrated.mock.calls.length).toBeGreaterThan(0);
+  } finally { scans.restore(); hydrated.mockRestore(); }
 });

@@ -3,15 +3,16 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir, uptime } from "node:os";
 import { dirname, join, parse, relative } from "node:path";
 import { inspect } from "node:util";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import test from "node:test";
-import { acquireDataDirLease, acquireDataDirLeaseForProcess, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
+import { acquireDataDirLease, acquireDataDirLeaseForProcess, dataDirLeasePaths, dataDirIdentity, currentDataDirLeaseEpoch, inspectDataDirLease } from "./data-dir-lease.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
+import { WINDOWS_NATIVE_VERSION } from "./windows-native.mjs";
 
 const MODULE = new URL("./data-dir-lease.mjs", import.meta.url).href;
 const PRIVATE_ENV = "MURAGE_INTERNAL_DATA_DIR_LEASE";
@@ -72,6 +73,35 @@ const WORKER = `
     };
   }
   if (process.env.LEASE_TEST_PLATFORM) Object.defineProperty(process, 'platform', { value: process.env.LEASE_TEST_PLATFORM });
+  if (process.env.LEASE_TEST_HOSTNAME) os.hostname = () => process.env.LEASE_TEST_HOSTNAME;
+  // macOS seams (simulated darwin only): ioreg's hardware UUID, ps's lstart by queried PID ("self" = this worker) and
+  // mount's table. An absent answer fails as the real tool would; every ioreg and ps call is recorded.
+  const darwinProbes = [];
+  const darwinSeam = process.env.LEASE_TEST_DARWIN === undefined ? {} : { darwinProbes };
+  if (process.env.LEASE_TEST_DARWIN !== undefined) {
+    const table = JSON.parse(process.env.LEASE_TEST_DARWIN);
+    const NL = String.fromCharCode(10);
+    const exec = cp.execFileSync;
+    cp.execFileSync = (path, args, ...rest) => {
+      if (path === '/usr/sbin/ioreg') {
+        darwinProbes.push('ioreg');
+        if (typeof table.ioreg !== 'string') throw new Error('ioreg unavailable');
+        return '+-o Root  <class IORegistryEntry>' + NL + '  {' + NL + '    "IOPlatformUUID" = "' + table.ioreg + '"' + NL + '  }' + NL;
+      }
+      if (path === '/bin/ps') {
+        const pid = Number(args[args.length - 1]);
+        darwinProbes.push('ps:' + (pid === process.pid ? 'self' : pid));
+        const entry = pid === process.pid ? table.ps?.self : table.ps?.[String(pid)];
+        if (typeof entry !== 'string') throw Object.assign(new Error('no such process'), { status: 1 });
+        return entry + NL;
+      }
+      if (path === '/sbin/mount') {
+        if (typeof table.mount !== 'string') throw new Error('mount unavailable');
+        return table.mount.split('|').join(NL);
+      }
+      return exec(path, args, ...rest);
+    };
+  }
   if (process.env.LEASE_TEST_UPTIME !== undefined) os.uptime = () => {
     if (process.env.LEASE_TEST_UPTIME === 'throw') throw new Error('uptime unavailable');
     return Number(process.env.LEASE_TEST_UPTIME);
@@ -88,7 +118,7 @@ const WORKER = `
   if (process.env.LEASE_TEST_PS !== undefined) {
     const table = JSON.parse(process.env.LEASE_TEST_PS);
     const native = {
-      version: () => 10,
+      version: () => ${WINDOWS_NATIVE_VERSION},
       processStart(pid) {
         probes.push({ mode: 'sync', pid });
         const entry = pid === process.pid && table.self !== undefined ? table.self.replace('SELF_PID', String(process.pid)) : table[String(pid)];
@@ -178,19 +208,23 @@ const WORKER = `
       if (message.command === 'pause') { pause = message.pause; paused = false; process.send({event:'paused-configured'}); return; }
       if (message.command === 'acquire') {
         lease = mod.acquireDataDirLeaseForProcess(process.env.LEASE_TEST_DATA_DIR);
-        process.send({event:'acquired', pid:process.pid, delegated:lease.delegated, consumed:process.env[${JSON.stringify(PRIVATE_ENV)}] === undefined, ...seam});
+        process.send({event:'acquired', pid:process.pid, delegated:lease.delegated, consumed:process.env[${JSON.stringify(PRIVATE_ENV)}] === undefined, ...darwinSeam, ...seam});
       } else if (message.command === 'capability') {
         process.send({event:'capability', environment:lease.utilityServerLeaseEnvironment()});
       } else if (message.command === 'release') {
         process.send({event:'released', released:lease.release(), ...seam});
       } else if (message.command === 'inspect') {
         process.send({event:'inspect', result:{...mod.inspectDataDirLease(process.env.LEASE_TEST_DATA_DIR)}, procReads, ...seam});
+      } else if (message.command === 'set-aside') {
+        process.send({event:'set-aside', moved:mod.setAsideForeignDataDirLease(process.env.LEASE_TEST_DATA_DIR), ...darwinSeam});
+      } else if (message.command === 'set-aside-available') {
+        process.send({event:'set-aside-available', available:mod.foreignDataDirLeaseSetAsideAvailable(process.env.LEASE_TEST_DATA_DIR)});
       } else if (message.command === 'generic-child') {
         const result = spawnSync(process.execPath, ['--eval', 'process.stdout.write(process.env.${PRIVATE_ENV} === undefined ? "absent" : "present")'], {env:process.env,encoding:'utf8'});
         process.send({event:'generic-child', inherited:result.stdout !== 'absent'});
       } else if (message.command === 'exit') process.exit(0);
     } catch (error) {
-      process.send({event:'error', code:error.code, message:error.message, hasCause:error.cause !== undefined, attempts, procReads, ...seam});
+      process.send({event:'error', code:error.code, message:error.message, hasCause:error.cause !== undefined, attempts, procReads, ...darwinSeam, ...seam});
     }
   });
   process.send({event:'ready', pid:process.pid});
@@ -198,6 +232,7 @@ const WORKER = `
 
 function worker(f, environment = {}) {
   const child = spawn(process.execPath, ["--input-type=module", "--eval", WORKER], {
+    windowsHide: true,
     env: { PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), HOME: f.root, USERPROFILE: f.root, LEASE_TEST_DATA_DIR: f.dataDir, ...environment },
     stdio: ["ignore", "ignore", "pipe", "ipc"],
   });
@@ -242,7 +277,7 @@ async function stop(item) {
 }
 
 async function deadPid() {
-  const child = spawn(process.execPath, ["--eval", "process.exit(0)"], { stdio: "ignore" });
+  const child = spawn(process.execPath, ["--eval", "process.exit(0)"], { windowsHide: true, stdio: "ignore" });
   const pid = child.pid;
   await new Promise((resolve) => child.once("close", resolve));
   return pid;
@@ -622,7 +657,7 @@ test("invalid, unreadable, symlink and special lease records remain untouched", 
 
 test("a FIFO lease refuses without opening or waiting for a writer", { skip: process.platform === "win32" }, () => {
   const f = fixture();
-  execFileSync("mkfifo", [f.leasePath]);
+  execFileSync("mkfifo", [f.leasePath], { windowsHide: true });
   assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_INVALID"));
   assert.equal(lstatSync(f.leasePath).isFIFO(), true);
 });
@@ -973,7 +1008,7 @@ const syncProbes = (outcome) => outcome.probes.filter((probe) => probe.mode === 
 
 // Only this test-owned child is ever signalled, by the shared afterEach.
 async function sleeper() {
-  const child = spawn(process.execPath, ["--eval", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const child = spawn(process.execPath, ["--eval", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" });
   const exited = new Promise((resolve) => child.once("close", resolve));
   sleepers.add({ child, exited });
   await until(() => Boolean(child.pid), "sleeper pid");
@@ -1415,7 +1450,7 @@ const procState = (pid) => { try { const raw = readFileSync(`/proc/${pid}/stat`,
 const procStart = (pid) => { const raw = readFileSync(`/proc/${pid}/stat`, "latin1"); return raw.slice(raw.lastIndexOf(")") + 1).trim().split(/\s+/)[19]; };
 // A zombie of our own: the shell backgrounds a short child, then execs into a sleep that never waits for it.
 async function zombie() {
-  const holder = spawn("/bin/sh", ["-c", "sleep 0.05 & echo $!; exec sleep 60"], { stdio: ["ignore", "pipe", "ignore"] });
+  const holder = spawn("/bin/sh", ["-c", "sleep 0.05 & echo $!; exec sleep 60"], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
   const exited = new Promise((resolve) => holder.once("close", resolve));
   sleepers.add({ child: holder, exited });
   let out = "";
@@ -1571,4 +1606,192 @@ test("macOS and Windows liveness never read /proc and are unchanged", async () =
     await stop(contender);
   }
   rmSync(f.leasePath);
+});
+
+test("Signal coverage sees only the currently held lease generation",()=>{
+ const f=fixture();assert.equal(currentDataDirLeaseEpoch(f.dataDir),null);
+ const first=acquireDataDirLease(f.dataDir);const epoch=currentDataDirLeaseEpoch(f.dataDir);assert.match(epoch,/^[0-9a-f-]{36}$/);
+ first.release();assert.equal(currentDataDirLeaseEpoch(f.dataDir),null);
+ const second=acquireDataDirLease(f.dataDir);assert.notEqual(currentDataDirLeaseEpoch(f.dataDir),epoch);second.release();
+});
+test("Signal root binding and lease paths share the canonical digest including Darwin NFC/case folding",()=>{
+ const f=fixture(),paths=dataDirLeasePaths(f.dataDir);assert.ok(paths.leasePath.endsWith(dataDirIdentity(paths.canonicalDataDir)+".lease"));
+ assert.equal(dataDirIdentity("/tmp/Café","darwin"),dataDirIdentity("/TMP/CAFE\u0301","darwin"));
+ assert.notEqual(dataDirIdentity("/tmp/Café","linux"),dataDirIdentity("/tmp/café","linux"));
+});
+
+// ---- 1.0.19 stuck users (RECOVERY-STUCK-FABLE T2), simulated macOS on any host ----
+// A disposable worker reports darwin and answers only ioreg, ps and mount through the seams above. Every PID it is
+// told about belongs to a process this test started. Fixture names are neutral (.invalid / .local).
+const MAC_UUID = "0F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9";
+const OTHER_MAC_UUID = "9E8D7C6B-5A49-4837-A625-14F3E2D1C0B0";
+// The machine note recovery-stuck-n1 added (fix/1020-recovery-stuck): <record>.machine-<token>, a hash of IOPlatformUUID.
+const machineHash = (uuid) => createHash("sha256").update(`murage-data-dir-lease-machine-v1\0${uuid.toLowerCase()}`).digest("hex");
+const machineOf = (recordPath, owner) => `${recordPath}.machine-${owner.token}`;
+const macWorker = (f, answers, extra = {}) => worker(f, { LEASE_TEST_PLATFORM: "darwin", LEASE_TEST_DARWIN: JSON.stringify(answers), ...extra });
+const writeMacIdentity = (recordPath, owner, start) => {
+  const value = { version: 4, pid: owner.pid, token: owner.token, start };
+  writeFileSync(identityOf(recordPath, owner), `${JSON.stringify(value)}\n`, { mode: 0o600 });
+  return value;
+};
+const START_A = "Wed Nov 18 10:00:00 2026";
+const START_B = "Wed Nov 18 12:34:56 2026";
+const leaseFamily = (f) => readdirSync(dirname(f.leasePath)).filter((name) => name.startsWith(parse(f.leasePath).base)).sort();
+
+async function macLeaseLeftUnclean(f) {
+  const first = macWorker(f, { ioreg: MAC_UUID, ps: { self: START_A } }, { LEASE_TEST_BOOT: "boot-before-restart", LEASE_TEST_HOSTNAME: "old-network-name.local" });
+  const acquired = await first.command("acquire");
+  assert.equal(acquired.event, "acquired", JSON.stringify(acquired));
+  const owner = JSON.parse(readFileSync(f.leasePath, "utf8"));
+  await stop(first); // SIGKILL: an unclean end (ShipIt swap, app trashed while running)
+  return owner;
+}
+
+test("macOS: a lease this Mac left before a restart under its old network name is recovered", async () => {
+  const f = windowsFixture();
+  const owner = await macLeaseLeftUnclean(f);
+  // The record keeps exactly the keys older versions accept; the machine note and the start identity are token-scoped side files.
+  assert.deepEqual(Object.keys(owner).sort(), ["boot", "createdAt", "host", "pid", "token", "uptime", "version"]);
+  const read = (path) => existsSync(path) ? readFileSync(path, "utf8") : null;
+  const identityText = read(identityOf(f.leasePath, owner)), noteText = read(machineOf(f.leasePath, owner));
+  const second = macWorker(f, { ioreg: MAC_UUID, ps: { self: START_B } }, { LEASE_TEST_BOOT: "boot-after-restart", LEASE_TEST_HOSTNAME: "new-network-name.local" });
+  const outcome = await second.command("acquire");
+  assert.equal(outcome.event, "acquired", JSON.stringify(outcome));
+  assert.deepEqual(JSON.parse(identityText), { version: 4, pid: owner.pid, token: owner.token, start: START_A });
+  assert.deepEqual(JSON.parse(noteText), { version: 1, token: owner.token, machine: machineHash(MAC_UUID) });
+  assert.equal(`${identityText}${noteText}`.toUpperCase().includes(MAC_UUID), false, "the raw hardware UUID is never written");
+  const now = JSON.parse(readFileSync(f.leasePath, "utf8"));
+  assert.equal(now.host, "new-network-name.local");
+  assert.equal(now.pid, outcome.pid);
+});
+
+test("macOS: another Mac's lease, or an unreadable machine id, under another name stays foreign", async () => {
+  for (const ioreg of [OTHER_MAC_UUID, undefined]) {
+    const f = windowsFixture(`other-${ioreg ? "mac" : "unknown"}`);
+    const owner = await macLeaseLeftUnclean(f);
+    const before = leaseFamily(f).map((name) => [name, readFileSync(join(dirname(f.leasePath), name), "utf8")]);
+    const second = macWorker(f, { ioreg, ps: { self: START_B } }, { LEASE_TEST_BOOT: "boot-after-restart", LEASE_TEST_HOSTNAME: "new-network-name.local" });
+    const outcome = await second.command("acquire");
+    assert.equal(outcome.code, "LEASE_FOREIGN_HOST", JSON.stringify(outcome));
+    assert.deepEqual(leaseFamily(f).map((name) => [name, readFileSync(join(dirname(f.leasePath), name), "utf8")]), before);
+    assert.equal(JSON.parse(readFileSync(f.leasePath, "utf8")).token, owner.token);
+  }
+});
+
+test("macOS: a live PID reused by another process after the owner died is not a live owner", async () => {
+  const f = windowsFixture();
+  const reused = await sleeper();
+  const owner = record(reused.pid, { boot: "same-boot" });
+  writeRecord(f.leasePath, owner);
+  writeMacIdentity(f.leasePath, owner, START_A);
+  const contender = macWorker(f, { ps: { [reused.pid]: START_B, self: START_B } }, { LEASE_TEST_BOOT: "same-boot" });
+  const outcome = await contender.command("acquire");
+  assert.equal(outcome.event, "acquired", JSON.stringify(outcome));
+  assert.equal(outcome.darwinProbes.includes(`ps:${reused.pid}`), true);
+  assert.equal(JSON.parse(readFileSync(f.leasePath, "utf8")).pid, outcome.pid);
+  assert.equal(stillRunning(reused), true, "the unrelated process is never signalled");
+});
+
+test("macOS: a live owner with its own start, or an unknown start, stays exclusive", async () => {
+  for (const [name, answer, identityStart] of [["same start", START_A, START_A], ["ps fails", undefined, START_A], ["malformed start recorded", START_B, "yesterday"]]) {
+    const f = windowsFixture(name.replace(/ /g, "-"));
+    const holder = await sleeper();
+    const owner = record(holder.pid, { boot: "same-boot" });
+    writeRecord(f.leasePath, owner);
+    writeMacIdentity(f.leasePath, owner, identityStart);
+    const contender = macWorker(f, { ioreg: MAC_UUID, ps: { ...(answer ? { [holder.pid]: answer } : {}), self: START_B } }, { LEASE_TEST_BOOT: "same-boot" });
+    const outcome = await contender.command("acquire");
+    assert.equal(outcome.code, "LEASE_BUSY", `${name}: ${JSON.stringify(outcome)}`);
+    assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), owner);
+    assert.equal(stillRunning(holder), true);
+    rmSync(identityOf(f.leasePath, owner));
+    rmSync(f.leasePath); // the fixture cleanup refuses a folder whose lease names another live process
+  }
+});
+
+// "This is my computer, continue": the recovery window's way out for records written before the machine id.
+function foreignStale(f) {
+  const primary = record(0x7ffffffe, { host: "other-name.invalid", boot: randomUUID() });
+  const child = record(0x7ffffffd, { host: "other-name.invalid", boot: primary.boot });
+  writeRecord(f.leasePath, primary);
+  writeRecord(f.childLeasePath, child);
+  writeFileSync(`${f.leasePath}.restore.json`, "{\"marker\":true}\n", { mode: 0o600 });
+  writeFileSync(join(f.dataDir, "kept.txt"), "user data\n");
+  // The other computer's own machine note: a token-scoped side file that goes aside with its record.
+  writeFileSync(machineOf(f.leasePath, primary), `${JSON.stringify({ version: 1, token: primary.token, machine: machineHash(OTHER_MAC_UUID) })}\n`, { mode: 0o600 });
+  return { primary, child };
+}
+
+test("set-aside renames foreign lock records (never deletes) and the next start owns the folder", async () => {
+  const f = fixture("set-aside");
+  const { primary, child } = foreignStale(f);
+  assert.equal(inspectDataDirLease(f.dataDir).code, "LEASE_FOREIGN_HOST");
+  const before = new Map(leaseFamily(f).map((name) => [name, readFileSync(join(dirname(f.leasePath), name), "utf8")]));
+  const helper = worker(f);
+  assert.equal((await helper.command("set-aside-available")).available, true);
+  const outcome = await helper.command("set-aside");
+  assert.equal(outcome.event, "set-aside", JSON.stringify(outcome));
+  assert.equal(outcome.moved, 3);
+  const after = leaseFamily(f);
+  assert.equal(existsSync(machineOf(f.leasePath, primary)), false);
+  assert.equal(after.filter((name) => name.startsWith(`${parse(machineOf(f.leasePath, primary)).base}.foreign-`)).length, 1);
+  assert.equal(after.length, before.size, "every file is still there under some name");
+  assert.equal(existsSync(f.leasePath), false);
+  assert.equal(existsSync(f.childLeasePath), false);
+  for (const [path, value] of [[f.leasePath, primary], [f.childLeasePath, child]]) {
+    const moved = after.filter((name) => name.startsWith(`${parse(path).base}.foreign-`));
+    assert.equal(moved.length, 1, `${path}: ${after}`);
+    assert.deepEqual(JSON.parse(readFileSync(join(dirname(path), moved[0]), "utf8")), value);
+  }
+  assert.equal(readFileSync(`${f.leasePath}.restore.json`, "utf8"), before.get(`${parse(f.leasePath).base}.restore.json`));
+  assert.equal(readFileSync(join(f.dataDir, "kept.txt"), "utf8"), "user data\n");
+  const lease = acquireDataDirLease(f.dataDir);
+  assert.equal(lease.release(), true);
+});
+
+test("set-aside refuses, renaming nothing, while any record may name a live owner", async () => {
+  const cases = [
+    ["foreign PID alive here, boot unknown", "LEASE_TAKEOVER_REFUSED", (f) => writeRecord(f.leasePath, record(LIVE_OTHER_PID, { host: "other-name.invalid" }))],
+    ["live same-machine recovery claim", "LEASE_BUSY", (f) => {
+      const primary = record(0x7ffffffe, { host: "other-name.invalid", boot: randomUUID() });
+      writeRecord(f.leasePath, primary);
+      writeRecord(`${f.leasePath}.reap-${primary.token}`, record(LIVE_OTHER_PID, { targetToken: primary.token }));
+    }],
+    ["malformed recovery claim", "LEASE_INVALID", (f) => {
+      const primary = record(0x7ffffffe, { host: "other-name.invalid", boot: randomUUID() });
+      writeRecord(f.leasePath, primary);
+      writeFileSync(`${f.leasePath}.reap-${primary.token}`, "{not json\n", { mode: 0o600 });
+    }],
+    ["not a foreign claim", "LEASE_TAKEOVER_REFUSED", (f) => writeRecord(f.leasePath, record(LIVE_OTHER_PID))],
+  ];
+  for (const [name, code, arrange] of cases) {
+    const f = fixture(name.replace(/[^a-z]+/g, "-"));
+    arrange(f);
+    const before = leaseFamily(f).map((entry) => [entry, readFileSync(join(dirname(f.leasePath), entry), "utf8")]);
+    const outcome = await worker(f).command("set-aside");
+    assert.equal(outcome.code, code, `${name}: ${JSON.stringify(outcome)}`);
+    assert.deepEqual(leaseFamily(f).map((entry) => [entry, readFileSync(join(dirname(f.leasePath), entry), "utf8")]), before, name);
+    for (const entry of leaseFamily(f)) rmSync(join(dirname(f.leasePath), entry)); // live-PID records block fixture cleanup
+  }
+});
+
+test("set-aside is offered only on a local volume (macOS mount table)", async () => {
+  for (const [name, mount, offered] of [
+    ["local", "/dev/disk3s1 on / (apfs, local, journaled)", true],
+    ["network", "/dev/disk3s1 on / (apfs, local, journaled)|//fixture@nas.invalid/share on ROOT (smbfs, nodev, nosuid, mounted by fixture)", false],
+    ["unreadable", undefined, false],
+  ]) {
+    const f = windowsFixture(name);
+    foreignStale(f);
+    const before = leaseFamily(f);
+    const answers = { ioreg: MAC_UUID, ...(mount ? { mount: mount.replace("ROOT", realpathSync(f.root)) } : {}) };
+    const helper = macWorker(f, answers);
+    assert.equal((await helper.command("set-aside-available")).available, offered, name);
+    const outcome = await helper.command("set-aside");
+    if (offered) assert.equal(outcome.moved, 3, JSON.stringify(outcome));
+    else {
+      assert.equal(outcome.code, "LEASE_TAKEOVER_REFUSED", `${name}: ${JSON.stringify(outcome)}`);
+      assert.deepEqual(leaseFamily(f), before);
+    }
+  }
 });

@@ -97,7 +97,7 @@ describe("augmentedPath", () => {
         "murage-fake-cli",
         [],
         // bare GUI-style PATH + our augmentation — the augmentation must win
-        { env: { PATH: augmentedPath() } },
+        { windowsHide: true, env: { PATH: augmentedPath() } },
         (err, out) => (err ? reject(err) : resolve(out)),
       );
     });
@@ -506,7 +506,7 @@ winOnly("resolveCli (Windows)", () => {
     expect(r.args).toEqual([join(dir, "node_modules", "pkg", "bin", "ombfake.js"), "-p", "hi"]);
     expect(r.command.toLowerCase()).toMatch(/node\.exe$/);
     const stdout = await new Promise<string>((resolve, reject) =>
-      execFile(r.command, r.args, (err, out) => (err ? reject(err) : resolve(out))),
+      execFile(r.command, r.args, { windowsHide: true }, (err, out) => (err ? reject(err) : resolve(out))),
     );
     expect(stdout.trim()).toBe("js target -p,hi");
   });
@@ -526,7 +526,7 @@ winOnly("resolveCli (Windows)", () => {
     expect(r.args).toEqual([join(bin, `${name}-cli.js`), ...args]);
     expect(r.command.toLowerCase()).toMatch(/node\.exe$/);
     const stdout = await new Promise<string>((resolve, reject) =>
-      execFile(r.command, r.args, (err, out) => (err ? reject(err) : resolve(out))),
+      execFile(r.command, r.args, { windowsHide: true }, (err, out) => (err ? reject(err) : resolve(out))),
     );
     expect(JSON.parse(stdout)).toEqual(args);
   });
@@ -555,7 +555,7 @@ winOnly("resolveCli (Windows)", () => {
     expect(r.args).toEqual([script, "a", "b"]);
 
     const stdout = await new Promise<string>((resolve, reject) =>
-      execFile(r.command, r.args, (err, out) => (err ? reject(err) : resolve(out))),
+      execFile(r.command, r.args, { windowsHide: true }, (err, out) => (err ? reject(err) : resolve(out))),
     );
     expect(stdout.trim()).toBe("shebang a,b");
   });
@@ -879,7 +879,7 @@ describe("login capture runs detached and its group dies on timeout (F1)", () =>
     const dir = mkdtempSync(join(tmpdir(), "murage-capture-two-"));
     dirs.push(dir);
     // a sentinel in THIS process's group: a group kill aimed at Murage would take it too
-    const sentinel = spawn("sleep", ["60"], { stdio: "ignore" });
+    const sentinel = spawn("sleep", ["60"], { windowsHide: true, stdio: "ignore" });
     spawned.push(sentinel.pid!);
     const a = hangingShell(dir, "hang-a");
     const b = hangingShell(dir, "hang-b");

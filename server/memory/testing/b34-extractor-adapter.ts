@@ -30,6 +30,9 @@ const OWNER_FIRST_WAIT_MS = OWNER_FIRST_MAX_DEFER_MS + 30_000;
 const EXTRACTOR_MODULE_URL = new URL("./b34-scripted-extractor.ts", import.meta.url).href;
 /** Preload source: dump every fake Claude turn, then install the scripted extractor. */
 export const B34_EXTRACTOR_INSTRUMENTATION = [
+  // MAIN RULING: this scripted learning journey uses an idle host; shared-runner load must not defer its extractor.
+  // Owner-turn, typing and engine-start admission remain active; owner-first.test.ts verifies the real sampler.
+  `const {systemLoad}=await import(${JSON.stringify(new URL("../../system-load.ts", import.meta.url).href)});systemLoad.start=()=>{};`,
   "process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';",
   `const b34Extractor=await import(${JSON.stringify(EXTRACTOR_MODULE_URL)});`,
   "await b34Extractor.installB34ScriptedExtractor();",
@@ -231,7 +234,9 @@ async function stalled<T>(ctx: B34AdapterContext, label: string, read: () => T |
   }
 }
 /** Evidence wait: capture job complete and the source's consolidation intent complete (activation commits in the same transaction, consolidate.ts:166-206). */
-async function consolidated(ctx: B34AdapterContext, label: string, source: SourceRow, botId: string, timeout = 45_000): Promise<Intent> {
+// MAIN RULING: completion can follow an extractor-busy retry through the owner-first gate.
+// Cover its production deferral bound and idle sweep, as the initial capture wait does.
+async function consolidated(ctx: B34AdapterContext, label: string, source: SourceRow, botId: string, timeout = OWNER_FIRST_WAIT_MS): Promise<Intent> {
   return stalled(ctx, label, () => {
     if (!captureComplete(ctx, source)) return undefined;
     const intent = intentFor(ctx, source.id);

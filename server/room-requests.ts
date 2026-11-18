@@ -394,7 +394,8 @@ function fromRow(row: Record<string, unknown>): RoomRequest {
     admissionKey: String(row.admission_key),
     priority: row.priority as RoomRequestPriority,
     state: row.state as RoomRequestState,
-    refusal: str(row.refusal),
+    // A spend park is stored as the unresolved marker plus `parked_refusal` (it leaves the runnable index); every reader still sees the spend hold.
+    refusal: row.refusal === RETAINED_UNRESOLVED && row.parked_refusal ? str(row.parked_refusal) : str(row.refusal),
     createdAt: Number(row.created_at),
     dispatchedAt: num(row.dispatched_at),
     deadlineAt: num(row.deadline_at),
@@ -557,28 +558,30 @@ export function queuedRoomRequests(db: DatabaseSync, filter: QueuedRoomRequestFi
 /** Q2, the parked requests whose wait is over: through `room_request_retry_due` with a LIMIT, so the cost follows the work that is due and never
  * the parked backlog. Each carries `retryAttempts`. */
 export function dueRetainedRoomRequests(db: DatabaseSync, now: number, limit = RETAINED_SWEEP_BATCH): RoomRequest[] {
-  const due = db.prepare("SELECT request_id, attempts FROM room_request_retry WHERE retry_at<=? ORDER BY retry_at, request_id LIMIT ?")
+  const due = db.prepare("SELECT request_id, attempts FROM room_request_retry JOIN room_requests ON room_requests.id=request_id WHERE retry_at<=? AND room_requests.state='queued' ORDER BY retry_at, request_id LIMIT ?")
     .all(now, Math.max(1, Math.trunc(limit))) as Array<{ request_id: string; attempts: number }>;
   return requestsByIds(db, due.map(row => row.request_id), new Map(due.map(row => [row.request_id, Number(row.attempts)])));
 }
 
 /** Park a queued request that cannot be decided yet, and look at it again later: 30 s, doubling, at most 1 hour (persisted `retry_at`). The row
  * leaves the runnable set through the marker in the same transaction. Returns the next time. */
-export function deferRetainedRoomRequest(db: DatabaseSync, id: string, now: number): number {
+export function deferRetainedRoomRequest(db: DatabaseSync, id: string, now: number, refusal: typeof RETAINED_UNRESOLVED | "spend_limit" = RETAINED_UNRESOLVED): number {
   return withTx(db, () => {
     const row = db.prepare("SELECT attempts FROM room_request_retry WHERE request_id=?").get(id) as { attempts: number } | undefined;
     const attempts = Number(row?.attempts ?? 0);
     const retryAt = now + retainedBackoffMs(attempts);
     db.prepare(`INSERT INTO room_request_retry(request_id, retry_at, attempts) SELECT id, ?, ? FROM room_requests WHERE id=? AND state='queued'
       ON CONFLICT(request_id) DO UPDATE SET retry_at=excluded.retry_at, attempts=excluded.attempts`).run(retryAt, attempts + 1, id);
-    db.prepare("UPDATE room_requests SET refusal=? WHERE id=? AND state='queued'").run(RETAINED_UNRESOLVED, id);
+    // A spend park keeps its reason in `parked_refusal` and wears the unresolved marker, so every runnable index leaves it out.
+    db.prepare("UPDATE room_requests SET refusal=?, parked_refusal=? WHERE id=? AND state='queued'")
+      .run(RETAINED_UNRESOLVED, refusal === "spend_limit" ? "spend_limit" : null, id);
     return retryAt;
   });
 }
 /** The request is decidable now (known, or being handled): it is runnable again. True when it was parked. */
 export function clearRetainedRoomRequest(db: DatabaseSync, id: string): boolean {
   return withTx(db, () => {
-    db.prepare("UPDATE room_requests SET refusal=NULL WHERE id=? AND state='queued' AND refusal=?").run(id, RETAINED_UNRESOLVED);
+    db.prepare("UPDATE room_requests SET refusal=parked_refusal, parked_refusal=NULL WHERE id=? AND state='queued' AND refusal=?").run(id, RETAINED_UNRESOLVED);
     return Number(db.prepare("DELETE FROM room_request_retry WHERE request_id=?").run(id).changes) > 0;
   });
 }
@@ -600,10 +603,14 @@ export function markRequestDispatched(
     // A request that has a hand-off row is the hand-off's: only the hand-off dispatch (it holds the token) may mark it running. Anything else, a plain starter
     // included, finds it not dispatchable, whatever its key is spelled like.
     const partnered = isDispatchToken(token) || !tableExists(db, "pending_delegations") ? "" : " AND NOT EXISTS (SELECT 1 FROM pending_delegations WHERE pending_delegations.id=room_requests.id)";
-    const result = db.prepare(`UPDATE room_requests SET state='running', dispatched_at=?, refusal=NULL,
+    // The queued-state trigger removes retry rows; a spend retry keeps its history until the turn actually finishes.
+    const retry = db.prepare("SELECT retry_at, attempts FROM room_request_retry JOIN room_requests ON room_requests.id=request_id WHERE request_id=? AND (refusal='spend_limit' OR parked_refusal='spend_limit')")
+      .get(id) as { retry_at: number; attempts: number } | undefined;
+    const result = db.prepare(`UPDATE room_requests SET state='running', dispatched_at=?, refusal=NULL, parked_refusal=NULL,
       target_thread_id=COALESCE(?, target_thread_id) WHERE id=? AND state='queued'${partnered}`)
       .run(input.now, input.targetThreadId ?? null, id);
     if (Number(result.changes) !== 1) return false;
+    if (retry) db.prepare("INSERT INTO room_request_retry(request_id,retry_at,attempts) VALUES(?,?,?)").run(id, retry.retry_at, retry.attempts);
     // The hand-off row of the same id (if any) is stamped by the hand-off dispatch (handoff-dispatch.ts), in the transaction that writes the turn's prompt, never here:
     // a request that is dispatched and then waits on the owner has not started its hand-off.
     return true;
@@ -619,8 +626,17 @@ function tableExists(db: DatabaseSync, name: string): boolean {
 
 /** The arbiter's last refusal for a queued request (7.2 codes). */
 export function recordRoomRequestRefusal(db: DatabaseSync, id: string, refusal: string | null): void {
-  // A parked request keeps its marker: only `clearRetainedRoomRequest` and a dispatch take it off.
-  db.prepare(`UPDATE room_requests SET refusal=? WHERE id=? AND state='queued' AND refusal IS NOT '${RETAINED_UNRESOLVED}'`).run(refusal, id);
+  withTx(db, () => {
+    const parked = db.prepare("SELECT parked_refusal FROM room_requests WHERE id=? AND state='queued' AND refusal=?").get(id, RETAINED_UNRESOLVED) as { parked_refusal: string | null } | undefined;
+    if (parked?.parked_refusal && parked.parked_refusal !== refusal) {
+      // A spend park that meets another refusal: the spend hold is no longer what blocks it, so it is an ordinary queued row with the new reason again.
+      db.prepare("DELETE FROM room_request_retry WHERE request_id=?").run(id);
+      db.prepare("UPDATE room_requests SET refusal=?, parked_refusal=NULL WHERE id=? AND state='queued'").run(refusal, id);
+      return;
+    }
+    // Any other parked request keeps its marker: only `clearRetainedRoomRequest` and a dispatch take it off.
+    db.prepare(`UPDATE room_requests SET refusal=? WHERE id=? AND state='queued' AND refusal IS NOT '${RETAINED_UNRESOLVED}'`).run(refusal, id);
+  });
 }
 
 /** running -> waiting_owner (an approval or question is open). */
@@ -878,9 +894,10 @@ function terminalWrite(
     // lane review: a review run that finished without any verdict says so
     const noVerdict = current.verb === "review" && !reviewVerdict && !fenced && outcome.state === "done" && !outcome.outcomeNote && !current.outcomeNote;
     const note = reviewVerdict ? current.outcomeNote : fenced ? "superseded" : noVerdict ? "No verdict given" : (outcome.outcomeNote ?? current.outcomeNote);
+    // C-I1: an ended spend park shows its kept reason again (as before the park column existed); any other unresolved row ends with none.
     db.prepare(`UPDATE room_requests SET state=?, finished_at=?, result_message_id=COALESCE(?, result_message_id),
         outcome_note=?, waiting_since=NULL, owner_wait_ms=owner_wait_ms+?,
-        refusal=CASE WHEN refusal='retained_unresolved' THEN NULL ELSE refusal END WHERE id=?`)
+        refusal=CASE WHEN refusal='retained_unresolved' THEN parked_refusal ELSE refusal END, parked_refusal=NULL WHERE id=?`)
       .run(outcome.state, outcome.now, outcome.resultMessageId ?? null, note === null ? null : note.slice(0, 200), ownerWait, id);
     writeRequestStatus(db, id, outcome.ending, outcome.diagnostic);
     const done = roomRequest(db, id)!;
@@ -1466,6 +1483,19 @@ export function pruneTerminalRoomRequests(db: DatabaseSync, now: number): number
 export function requeueRoomRequest(db: DatabaseSync, id: string, refusal: string | null): boolean {
   const result = db.prepare("UPDATE room_requests SET state='queued', dispatched_at=NULL, refusal=? WHERE id=? AND state='running'").run(refusal, id);
   return Number(result.changes) === 1;
+}
+
+/** A room start the spend gate refused (before the engine got the prompt): back to `queued` with the refusal `spend_limit`. When admission's own view
+ * showed no hold (`admissionSeesHold` false: the gate refused on its account read, or admission is switched off), the request is also parked for
+ * 30 s through the retry set, doubling to 1 h across dispatches, so disagreement cannot cycle on every pump; the spend refusal stays visible. */
+export function requeueSpendHeldRoomRequest(db: DatabaseSync, id: string, now: number, admissionSeesHold: boolean): boolean {
+  return withTx(db, () => {
+    if (!requeueRoomRequest(db, id, "spend_limit")) return false;
+    if (!admissionSeesHold) deferRetainedRoomRequest(db, id, now, "spend_limit");
+    // With history (a retry row from an earlier park) and admission seeing the hold, the request is parked in place: retry_at and attempts stay.
+    else db.prepare("UPDATE room_requests SET refusal=?, parked_refusal='spend_limit' WHERE id=? AND state='queued' AND EXISTS (SELECT 1 FROM room_request_retry WHERE request_id=?)").run(RETAINED_UNRESOLVED, id, id);
+    return true;
+  });
 }
 
 /** A hand-off's request whose turn did not start (a wait, a restart that cut the start short): back to `queued` from `running` or `waiting_owner`, the

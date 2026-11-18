@@ -6,7 +6,8 @@
 // own ask ("Review card 2: ..."), never the result to judge or how to answer,
 // so every reviewer redid the work and no verdict ever came back.
 import { describe, expect, it } from "vitest";
-import { projectReviewPrompt } from "./project-prompt.ts";
+import { released } from "./testing/released.ts";
+import { continuationResultsPrompt, projectReviewPrompt } from "./project-prompt.ts";
 import { readReviewVerdict, reviewBlockOpen, REVIEW_BLOCK_CLOSE, reviewReplyShown } from "./project-review.ts";
 import { murageTool, renderMurageTools, FUIGO_TOOL_SURFACE, NO_TOOL_SURFACE, CLAUDE_TOOL_SURFACE } from "./murage-tool-surface.ts";
 
@@ -43,6 +44,8 @@ describe("the review run's prompt", () => {
     const text = projectReviewPrompt(true, input);
     expect(text).toContain("Review card 2");
     expect(text).toContain("Starter $19, Team $49.");
+    expect(text).toContain("<result-to-review>");
+    expect(text).toContain("</result-to-review>");
     expect(text).toContain(`"card-7"`);
     expect(text).toContain(reviewBlockOpen(nonce));
     expect(text).toContain(REVIEW_BLOCK_CLOSE);
@@ -78,4 +81,11 @@ describe("the review run's prompt", () => {
   it("says nothing on a turn that is not the owner's audience", () => {
     expect(projectReviewPrompt(false, input)).toBe("");
   });
+});
+
+it("a no-verdict lead wake carries the card's decision instruction only to the owner audience", () => {
+  const results = [{ botName: "Reed", state: "done" as const, answer: released("I read the result."),
+    next: { step: "decide" as const, card: { id: "card-7", number: 2, title: "Pricing" }, reviewer: "Reed", criteria: [] } }];
+  expect(continuationResultsPrompt(true, results)).toContain('ended without a verdict, so you decide now (card_id "card-7")');
+  expect(continuationResultsPrompt(false, results)).toBe("");
 });

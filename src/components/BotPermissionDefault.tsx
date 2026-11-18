@@ -12,7 +12,7 @@ import { fromWire, type ChangedThread, type LevelPreview } from "@/lib/level-cha
 import { ApproveAllReminderReset } from "./ApproveAll";
 
 export const FULL_ACCESS_CHANNEL_OPTION = "Also skip approvals for my messages from Telegram, Slack and Discord. Reading keys still asks.";
-export const NO_LIMITS_TERMS_NOTE = "No limits changed. This bot keeps asking as it did until you accept.";
+export const NO_LIMITS_TERMS_NOTE = "No limits terms changed. Review the current terms.";
 export const FULL_ACCESS_SETUP_OPTION = "Also approve setup requests: installing skills, proposing routines and trusting folders";
 
 type FullAccessOption = "fullAccessChannelMessages" | "fullAccessSetupRequests";
@@ -28,9 +28,7 @@ function modeDetail(mode: PermissionMode, onThisComputer: boolean): string {
   // UX-TRUST-MOMENTS-1012 section 8 rows 16, 17 and 10: what each level
   // still asks about, and routines keep their own level (T10)
   if (mode === "unlimited") {
-    return onThisComputer
-      ? t("ux.lcopyb.level.unlimitedHere")
-      : t("ux.lcopyb.level.unlimited");
+    return t("ux.l1.level.unlimitedSummary");
   }
   if (mode === "full") {
     return onThisComputer
@@ -84,8 +82,8 @@ export function BotPermissionDefault({
   const remote = desktop === false;
   const card = change?.card;
   const options: ReadonlyArray<{ key: FullAccessOption; label: string; hint: string }> = [
-    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: t("ux.lcopyb.level.channelHint") },
-    { key: "fullAccessSetupRequests", label: FULL_ACCESS_SETUP_OPTION, hint: "Connecting an app still asks, because you sign in to it yourself." },
+    { key: "fullAccessChannelMessages", label: current === "unlimited" ? t("ux.l1.level.channelNoLimits") : FULL_ACCESS_CHANNEL_OPTION, hint: t("ux.lcopyb.level.channelHint") },
+    { key: "fullAccessSetupRequests", label: current === "unlimited" ? t("ux.l1.level.setupNoLimits") : FULL_ACCESS_SETUP_OPTION, hint: current === "unlimited" ? t("ux.l1.level.setupIncluded") : "Connecting an app still asks, because you sign in to it yourself." },
   ];
   return (
     <div className="rounded-xl bg-card p-4">
@@ -142,7 +140,7 @@ export function BotPermissionDefault({
       {remote && <div className="mt-1 text-[12.5px] text-ink-secondary">{FULL_ACCESS_DESKTOP_ONLY}</div>}
       {desktop === true && termsPending && current === "unlimited" && (
         <div className="mt-2 flex items-center justify-between gap-3 text-[12.5px] text-ink-secondary">
-          <span>{NO_LIMITS_TERMS_NOTE}</span>
+          <span>{t("ux.l1.level.termsNote")}</span>
           <button type="button" onClick={onReviewTerms} className="shrink-0 rounded-md px-2 py-1 font-medium text-ink hover:bg-raised">Review</button>
         </div>
       )}
@@ -155,8 +153,8 @@ export function BotPermissionDefault({
               <div className="mt-0.5 text-[11.5px] text-ink-secondary">{hint}</div>
             </div>
             <Switch
-              checked={key === "fullAccessChannelMessages" ? bot[key] !== false : bot[key] === true}
-              disabled={!full || remote}
+              checked={key === "fullAccessChannelMessages" ? bot[key] !== false : current === "unlimited" || bot[key] === true}
+              disabled={!full || remote || current === "unlimited" && key === "fullAccessSetupRequests"}
               aria-label={label}
               onClick={() => onOption(key, key === "fullAccessChannelMessages" ? bot[key] === false : bot[key] !== true)}
             />

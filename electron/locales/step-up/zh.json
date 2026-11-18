@@ -1,5 +1,5 @@
 {
-  "@source": "57c41d0f4509791921344f3d826b6015ceced077",
+  "@source": "968d807cca562a743b79127e48954176f04baabf",
   "label.cloudPairing": "向你的 Cloud 主页添加新设备",
   "label.cloudDevicesAccount": "更改你的 Cloud 主页上的设备或账户",
   "label.modelSigninStart": "在你的 Cloud 主页上开始模型登录",
@@ -8,6 +8,7 @@
   "label.modelSigninRemove": "从你的 Cloud 主页移除模型连接",
   "label.ownServer": "更改你的机器人用作电脑的服务器",
   "label.engineLogin": "在你的 Cloud 主页上登录引擎或退出登录",
+  "label.engineSigninCode": "为你 Cloud 主页上的机器人完成 Antigravity 登录",
   "label.botCreate": "创建机器人",
   "label.botDelete": "删除机器人及其对话",
   "label.botSettings": "更改机器人的设置",
@@ -50,6 +51,7 @@
   "label.teamsImportExport": "导入或导出团队",
   "label.teamLibraryGithub": "从 GitHub 下载团队",
   "label.teamLibraryGrok": "引入 Grok Bot",
+  "label.moveInGrok": "从下载文件夹导入 Grok Bots",
   "label.packagesImportExport": "导入或导出软件包",
   "label.starterProfiles": "安装入门配置",
   "label.moveLend": "在团队之间移动或借出机器人的工作",
@@ -59,6 +61,7 @@
   "label.localModels": "更改本地模型",
   "label.claudeAccounts": "更改 Claude 账户",
   "label.chatChannels": "更改 Telegram、Slack 或 Discord 的连接",
+  "label.signal": "更改 Signal 连接",
   "label.whatsapp": "更改 WhatsApp 连接",
   "label.memory": "更改记忆",
   "label.skillsCollection": "更改技能集合",
@@ -131,5 +134,7 @@
   "dialog.close": "关闭",
   "prepare.voiceFinishing": "Murage 正在完成一条语音回复。",
   "prepare.voiceFinishingDetail": "请在约 {minutes} 分钟后再试。你的聊天和记忆都保持原样。",
-  "prepare.quit": "退出"
+  "prepare.quit": "退出",
+  "label.claudeCodeImport": "从 Claude Code 导入技能和工具服务器",
+  "label.restoreBackup": "从现有备份恢复"
 }

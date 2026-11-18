@@ -71,6 +71,7 @@ export interface Routine {
   /** The approval level its runs are judged at; absent means the bot's own
    * level when a run starts (server/routine-permissions.ts). */
   permissionMode?: import("./permission-mode").PermissionMode;
+  permissionExplicit?: boolean;
   /** "Always allow for this routine": exact-command and stop-line keys. */
   alwaysAllow?: string[];
   /** The routine's own conversation, where every run works. */

@@ -1,3 +1,4 @@
+import { NotModelRequest, type EngineTransport } from "../shared/engine-transport.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -700,7 +701,8 @@ export interface CodexAccountChannelOptions {
   clock?: PlanUsageClock;
 }
 
-export class CodexAccountChannel {
+export class CodexAccountChannel implements EngineTransport {
+  readonly engineTransport = true as const;
   readonly generation: number;
   /** The subject's account epoch at spawn (design section 15.1); 0 when this process reports nothing. */
   private readonly spawnAccount: number;
@@ -711,10 +713,10 @@ export class CodexAccountChannel {
   /** This process heard its account change: its spawn stamp is no longer its account, so it never registers. */
   private accountMoved = false;
 
-  private readonly opts: CodexAccountChannelOptions;
+  private readonly opts: CodexAccountChannelOptions & EngineTransport;
 
   constructor(opts: CodexAccountChannelOptions) {
-    this.opts = opts;
+    this.opts = opts as CodexAccountChannelOptions & EngineTransport;
     // identity is stamped here, at spawn, before the handshake: never at registration
     const service = opts.service ?? planUsageService;
     const stamp = opts.binding ? service.spawnStamp(opts.binding.subjectKey) : { generation: service.nextGeneration(), account: 0 };
@@ -785,10 +787,10 @@ export class CodexAccountChannel {
       const timer = this.clock.setTimeout(() => this.settle(id, undefined, new PlanReadError("timeout")), PLAN_USAGE_BOUNDS.deadlineMs);
       this.pending.set(id, { resolve, reject, timer });
       try {
-        this.opts.write(JSON.stringify({
+        NotModelRequest("Codex account/rateLimits/read reports plan usage; it does not submit a model turn", this.opts.write(JSON.stringify({
           jsonrpc: "2.0", id, method: "account/rateLimits/read",
           ...(this.opts.leanRead ? { params: { excludeResetCreditDetails: true } } : {}),
-        }) + "\n");
+        }) + "\n"));
       } catch {
         this.settle(id, undefined, new PlanReadError("offline"));
       }

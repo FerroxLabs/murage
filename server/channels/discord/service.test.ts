@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { DiscordService } from "./service.ts";
 import type { DiscordTransport } from "./transport.ts";
 import { ChannelSendError } from "../durable-delivery.ts";
+import { fault, ledgerFilesIn, rawText } from "../delivery-ledger-test-support.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
 const roots:string[]=[],services:DiscordService[]=[];
 afterEach(async()=>{for(const s of services.splice(0))await s.stop();for(const root of roots.splice(0))removeTempDirSync(root);vi.useRealTimers();});
@@ -32,8 +33,7 @@ it("binds only chosen owner challenge and persists receipt before model enqueue"
   expect(f.sendText).toHaveBeenCalledWith(expect.objectContaining({text:"Discord is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again."}));
   f.sendText.mockClear();
   f.callbacks.at(-1)!(f.raw("hello","777"));
-  const receipt=readdirSync(join(f.dir,"channels/discord")).find(file=>file!=="connection.json")!;
-  expect(readFileSync(join(f.dir,"channels/discord",receipt),"utf8")).toContain("discord:11:14:777");expect(f.enqueue).not.toHaveBeenCalled();
+  expect(rawText(ledgerFilesIn(join(f.dir,"channels/discord"))[0]!)).toContain("discord:11:14:777");expect(f.enqueue).not.toHaveBeenCalled();
   await flush();expect(f.enqueue).toHaveBeenCalledTimes(1);expect(f.sendText.mock.calls[0][0]).toMatchObject({dmId:"14",text:"answer"});
 });
 it("expired challenge cannot pair and simultaneous pair cannot create another receiver",async()=>{
@@ -69,7 +69,19 @@ it("send timeout after dispatch remains uncertain and never reruns",async()=>{
   const f=fixture();await f.pair();f.sendText.mockRejectedValue(new ChannelSendError("unavailable",true));await f.emit(f.raw("hello"));expect(f.service.status().uncertain).toBe(1);await f.service.tick();expect(f.enqueue).toHaveBeenCalledTimes(1);expect(f.sendText).toHaveBeenCalledTimes(1);
 });
 it("receipt failure stops intake; revoke still cancels runs if saving fails",async()=>{
-  const f=fixture();await f.pair();const folder=join(f.dir,"channels/discord"),receipt=readdirSync(folder).find(file=>file!=="connection.json")!;renameSync(join(folder,receipt),join(folder,receipt+".original"));mkdirSync(join(folder,receipt));
+  const f=fixture();await f.pair();const folder=join(f.dir,"channels/discord");fault(ledgerFilesIn(folder)[0]!);
   await f.emit(f.raw("must not enqueue"));expect(f.service.status()).toMatchObject({state:"blocked",enabled:false,error:"intake-failed"});expect(f.enqueue).not.toHaveBeenCalled();
   const connection=join(folder,"connection.json");renameSync(connection,connection+".original");mkdirSync(connection);await expect(f.service.revoke()).rejects.toThrow("needs recovery");expect(f.revokeRuns).toHaveBeenCalledTimes(1);
+});
+
+it("Cloud refuses raw sign-in codes before Discord persistence or enqueue", async () => {
+  vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+  try {
+    const f = fixture(); await f.pair();
+    const code = "4/fixtureCodeSecret0123456789";
+    await f.emit(f.raw(code));
+    expect(f.enqueue).not.toHaveBeenCalled();
+    for (const file of readdirSync(join(f.dir, "channels/discord"))) expect(readFileSync(join(f.dir, "channels/discord", file), "utf8")).not.toContain(code);
+    expect(f.sendText).toHaveBeenCalledWith(expect.objectContaining({ text: "That looks like a sign-in code. Paste it in the sign-in dialog, not here." }));
+  } finally { vi.unstubAllEnvs(); }
 });

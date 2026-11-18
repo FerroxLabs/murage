@@ -8,6 +8,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { withTurnSecrets } from "../testing/fixture-dump.ts";
 import { turnSecret } from "../turn-credential.ts";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 
@@ -57,11 +58,15 @@ async function withHeldTurn(threadId: string, text: string, work: (search: (body
       for (const child of Object.values(value)) { const found = find(child); if (found) return found; }
       return undefined;
     };
-    const env = find(dump.mcpConfig);
+    const env = find(withTurnSecrets(dump).mcpConfig);
     expect(env, "memory capability mounted for the held turn").toBeTruthy();
     await work(async body => {
-      const response = await fetch(new URL("/api/internal/memory/search", env!.MURAGE_HARNESS_URL), { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${turnSecret("MURAGE_MEMORY_TOKEN", env!)}` }, body: JSON.stringify(body) });
-      return { status: response.status, body: await response.json() as any };
+      const response = await fetch(new URL("/api/internal/memory/search", turnSecret("MURAGE_HARNESS_URL", env!)), { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${turnSecret("MURAGE_MEMORY_TOKEN", env!)}` }, body: JSON.stringify(body) });
+      const raw = await response.text();
+      let parsed: any;
+      try { parsed = JSON.parse(raw); }
+      catch { throw new Error(`Memory capability response ${response.status}: ${raw}`); }
+      return { status: response.status, body: parsed };
     });
   } finally {
     writeFileSync(join(fixture.fixtureFinishGateDir, String(dump.pid)), "");

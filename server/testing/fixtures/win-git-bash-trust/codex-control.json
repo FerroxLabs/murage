@@ -1,0 +1,14 @@
+{
+  "id": "codex-control",
+  "provenance": "synthetic-definition",
+  "engine": "codex",
+  "dialect": "pwsh",
+  "command": "bash ./build.sh",
+  "inputDigest": "346362305d3beee48834cad173842a77e38a1f3b685bb0973482ec808a73d47a",
+  "effectiveCwdNative": "C:\\Users\\fixture\\work",
+  "runtimeEvidence": null,
+  "expectedPrivateTrust": false,
+  "files": {
+    "build.sh": "echo ok\n"
+  }
+}

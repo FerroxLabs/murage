@@ -1,3 +1,5 @@
+import { BrowserPreflight } from './BrowserPreflight';
+import { fromAnswer } from '@/state/answer-tag';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useBrowserApprovalMode, type ApprovalMode } from "./BrowserApprovalMode";
@@ -6,7 +8,6 @@ import { BrowserActivityLog } from "./BrowserActivityLog";
 import { t } from "@/lib/i18n";
 import { isPhoneClient } from "@/lib/phone-client";
 import { api, useStore, type Bot } from "@/state/store";
-import { fromAnswer } from "@/state/answer-tag";
 export type ExtensionSiteAccess = "allow" | "ask" | "never";
 export type BrowserExtensionPanelStatus = {
   profiles: { profileId: string; browser: string; extensionVersion?: string }[];
@@ -73,24 +74,24 @@ export type SetupStep = 1 | 2 | 3 | "done";
  * mode the server stores for this bot is known (every bot has one, so a connected bot goes straight
  * to the summary), unless Change reopened it. The order is fixed: a later step never opens before an
  * earlier one ticks. */
-export function setupProgress(status: BrowserExtensionPanelStatus | null, profileId: string | undefined, wizard: SetupWizard, modeKnown: boolean): { step: SetupStep; done: [boolean, boolean, boolean] } {
+export function setupProgress(status: BrowserExtensionPanelStatus | null, profileId: string | undefined, wizard: SetupWizard, modeKnown: boolean, chosenBrowser?: Browser): { step: SetupStep; done: [boolean, boolean, boolean] } {
   // Step 2 needs this bot's own profile: while the owner still has to pick one, setup is not finished.
   const two = !!profileId && !!status?.profiles.some(profile => profile.profileId === profileId);
-  const one = two || (status?.profiles.length ?? 0) > 0 || wizard.added;
+  const one = two || !!status?.profiles.some(profile=>!chosenBrowser||profile.browser.toLowerCase()===chosenBrowser) || wizard.added;
   const three = two && modeKnown && !wizard.changing;
   return { step: !one ? 1 : !two ? 2 : !three ? 3 : "done", done: [one, two, three] };
 }
 const SUMMARY: Record<ApprovalMode, "browserExt.setup.summary.step" | "browserExt.setup.summary.task" | "browserExt.setup.summary.full"> = { step: "browserExt.setup.summary.step", task: "browserExt.setup.summary.task", full: "browserExt.setup.summary.full" };
 const MODE_NAME: Record<ApprovalMode, "browserExt.mode.step.name" | "browserExt.mode.task.name" | "browserExt.mode.full.name"> = { step: "browserExt.mode.step.name", task: "browserExt.mode.task.name", full: "browserExt.mode.full.name" };
-type ViewProps = { botName: string; profileId?: string; status: BrowserExtensionPanelStatus | null; pending: boolean; error: string; connectBrowser: Browser; onConnectBrowser: (browser: Browser) => void; onCheck: (browser: Browser) => void; onProfile: (profileId: string) => void; onAction: (action: "stop" | "pause", bindingId: string) => void; /** Start a new task after Stop; shown only when the status carries the route. */ onStartNew?: (bindingId: string) => void; onSite: (bindingId: string, origin: string, access: ExtensionSiteAccess) => void; onOwnBrowser: () => void;
+type ViewProps = { botId?: string; botName: string; profileId?: string; status: BrowserExtensionPanelStatus | null; pending: boolean; error: string; connectBrowser: Browser; onConnectBrowser: (browser: Browser) => void; onCheck: (browser: Browser) => void; onProfile: (profileId: string) => void; onAction: (action: "stop" | "pause", bindingId: string) => void; /** Start a new task after Stop; shown only when the status carries the route. */ onStartNew?: (bindingId: string) => void; onSite: (bindingId: string, origin: string, access: ExtensionSiteAccess) => void; onOwnBrowser: () => void;
   /** Mode, approved sites and activity (T34); the container fills it. */ settings?: ReactNode; /** Moved here from remote debugging by itself: say so once. */ upgraded?: boolean; onDismissUpgraded?: () => void; removing?: boolean; removedNote?: string; onRepair?: (browser: Browser) => void; onRemoveAsk?: () => void; onRemoveConfirm?: (browser: Browser) => void; onRemoveCancel?: () => void;
   /** Setup step 3: the three cards (compact) for the first choice, the full settings after Change. */ modeCards?: ReactNode; modeSettings?: ReactNode; approvalMode?: ApprovalMode; /** The server's stored mode has been read. */ modeKnown?: boolean; /** The read itself: step 3 shows no choice until it is in, and offers Try again when it failed. */ modeRead?: "loading" | "failed" | "known"; onModeRetry?: () => void;
   /** Full access was on during this visit: its settings stay reachable on step 1 or 2 after it is turned off. */ keepSettings?: boolean; wizard?: SetupWizard; onWizard?: (patch: Partial<SetupWizard>) => void };
-export function BrowserExtensionPanelView({ botName, profileId, status, pending, error, connectBrowser, onConnectBrowser, onCheck, onProfile, onAction, onStartNew, onSite, onOwnBrowser, settings, upgraded, onDismissUpgraded, removing, removedNote, onRepair, onRemoveAsk, onRemoveConfirm, onRemoveCancel, modeCards, modeSettings, approvalMode = "task", modeKnown = false, modeRead = modeKnown ? "known" : "loading", onModeRetry, keepSettings = false, wizard = NO_WIZARD, onWizard }: ViewProps) {
-  const connected = !!status?.profiles.some(profile => !profileId || profile.profileId === profileId);
+export function BrowserExtensionPanelView({ botId, botName, profileId, status, pending, error, connectBrowser, onConnectBrowser, onCheck, onProfile, onAction, onStartNew, onSite, onOwnBrowser, settings, upgraded, onDismissUpgraded, removing, removedNote, onRepair, onRemoveAsk, onRemoveConfirm, onRemoveCancel, modeCards, modeSettings, approvalMode = "task", modeKnown = false, modeRead = modeKnown ? "known" : "loading", onModeRetry, keepSettings = false, wizard = NO_WIZARD, onWizard }: ViewProps) {
+  const connected = !!status?.profiles.some(profile => profileId ? profile.profileId === profileId : profile.browser.toLowerCase() === connectBrowser);
   // The stored profile is gone (a reinstalled extension makes a new id) while others are live: offer the picker, and for a single new profile an owner-confirmed rebind.
   const replaced = !!profileId && !!status && status.profiles.length > 0 && !connected;
-  const progress = setupProgress(status, profileId, wizard, modeKnown);
+  const progress = setupProgress(status, profileId, wizard, modeKnown, connectBrowser);
   const finished = progress.step === "done";
   const showPicker = wizard.picker || connectBrowser !== "chrome";
   const stepItem = (n: 1 | 2 | 3, title: string, doneLine: string, body: ReactNode) => {
@@ -103,6 +104,7 @@ export function BrowserExtensionPanelView({ botName, profileId, status, pending,
   };
   return <section aria-label={`${botName}'s browser connection`} className="flex min-h-0 flex-col gap-3 overflow-y-auto p-1 text-sm text-ink">
     <h3 className="font-medium">Use my Chrome</h3>
+    {botId&&!finished&&<BrowserPreflight botId={botId} route="chrome-extension" browser={connectBrowser}/>}
     {upgraded && <div role="status" className="flex items-start justify-between gap-2 rounded-lg bg-card p-3"><p>{botName} now works through Murage for Chrome. No more Allow prompts, and your tabs stay yours.</p>{onDismissUpgraded && <button className="rounded px-2 text-ink-secondary focus-visible:ring-2 focus-visible:ring-accent" aria-label="Dismiss" onClick={onDismissUpgraded}>×</button>}</div>}
     <p role="status" aria-live="polite" className="text-ink-secondary">{!status ? (error ? "Browser connection unavailable" : "Checking browser connection…") : finished ? t(SUMMARY[approvalMode], { bot: botName }) : connected ? "Connected through Murage for Chrome" : profileId && status.profiles.length ? "Your selected browser profile is not connected" : "Set up Murage for Chrome"}</p>
     {finished && onWizard && <button className={control} data-action="change-setup" onClick={() => onWizard({ changing: true })}>{t("browserExt.setup.change")}</button>}
@@ -160,8 +162,8 @@ export function BrowserExtensionPanelView({ botName, profileId, status, pending,
     </div>}
   </section>;
 }
-export function BrowserExtensionPanel({ bot }: { bot: Bot }) {
-  const { dispatch } = useStore();
+export function BrowserExtensionPanel({ bot, onChoose }: { bot: Bot; onChoose: (choice: {mode:'builtin'|'chrome-extension';profile?:string;browser?:'chrome'|'edge'|'brave'}) => void }) {
+  const {dispatch}=useStore();
   const [status, setStatus] = useState<BrowserExtensionPanelStatus | null>(null);
   const [error, setError] = useState("");
   const [connectionError, setConnectionError] = useState("");
@@ -180,7 +182,6 @@ export function BrowserExtensionPanel({ bot }: { bot: Bot }) {
   useEffect(() => { setKeepSettings(false); }, [bot.id]);
   useEffect(() => { if (approval.known && approval.mode === "full") setKeepSettings(true); }, [approval.known, approval.mode]);
   const epoch = useRef(0);
-  const picked = useRef(false);
   const base = `/api/bots/${encodeURIComponent(bot.id)}/browser-extension`;
   useEffect(() => {
     let alive = true; const generation = ++epoch.current; let timer: ReturnType<typeof setTimeout>;
@@ -188,6 +189,17 @@ export function BrowserExtensionPanel({ bot }: { bot: Bot }) {
     const refresh = async () => { try { const next = await api(base) as BrowserExtensionPanelStatus; if (alive && epoch.current === generation) { setStatus(next); setConnectionError(""); } } catch (cause) { if (alive) { setStatus(null); setConnectionError(cause instanceof Error ? cause.message : "Connection check failed. Try again."); } } finally { if (alive) timer = setTimeout(refresh, 2500); } };
     void refresh(); return () => { alive = false; epoch.current++; clearTimeout(timer); };
   }, [base]);
+  // Polls replace status objects. Only a changed setup target cancels its request.
+  const setupProfiles = status?.profiles.filter(profile => profile.browser.toLowerCase() === (bot.browserExtensionBrowser ?? 'chrome')) ?? [];
+  const setupProfileId = setupProfiles.length === 1 ? setupProfiles[0].profileId : undefined;
+  useEffect(()=>{
+    const revision=bot.browserSetupRevision;
+    if(bot.browserMode!=='chrome-extension'||bot.browserExtensionProfileId||revision===undefined||revision!==bot.selectionRevision)return;
+    if(setupProfileId===undefined)return;
+    let alive = true; const generation = epoch.current;
+    void api(`/api/bots/${encodeURIComponent(bot.id)}/browser-choice/setup`,{method:'POST',body:JSON.stringify({baseRevision:revision,profile:setupProfileId,browser:bot.browserExtensionBrowser??'chrome'})}).then(result=>{if(alive&&epoch.current===generation&&result.bot)dispatch({type:'botPatched',...fromAnswer(result.bot),bot:result.bot});}).catch(cause=>{if(alive&&epoch.current===generation)setError(cause instanceof Error?cause.message:String(cause));});
+    return () => { alive = false; };
+  },[bot.id,bot.browserMode,bot.browserSetupRevision,bot.selectionRevision,bot.browserExtensionProfileId,bot.browserExtensionBrowser,setupProfileId,dispatch]);
   const perform = async (operation: () => Promise<void>) => { const generation = epoch.current; setPending(true); setError(""); try { await operation(); } catch(cause) { if (epoch.current === generation) setError(cause instanceof Error ? cause.message : "Browser update failed. Try again."); } finally { if (epoch.current === generation) setPending(false); } };
   const action = (body: Record<string, unknown>) => perform(async () => { const generation = epoch.current; await api(base, { method: "POST", body: JSON.stringify(body) }); const next = await api(base) as BrowserExtensionPanelStatus; if (generation === epoch.current) setStatus(next); });
   // Repair: remove only the owned registration this build cannot reuse, then connect again.
@@ -199,16 +211,10 @@ export function BrowserExtensionPanel({ bot }: { bot: Bot }) {
     setRemoving(false); setStatus(result);
     setRemovedNote(result.removed?.status === "removed" ? `Removed the helper registration for ${browserList(browser, result.removed.sharedBrowsers)}.` : `No Murage helper registration was found for ${BROWSER_NAMES[browser]}.`);
   });
-  // Exactly one connected profile and none chosen yet: use it, no picker to find.
-  useEffect(() => {
-    const paired = pairedExtensionProfile(status?.profiles ?? []);
-    // A busy bot cannot change its browser connection (the server answers 409): wait for it to finish.
-    if (bot.browserExtensionProfileId || !paired.profileId || picked.current || pending || bot.busy) return;
-    picked.current = true;
-    void patch({ useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: paired.profileId });
-  }, [status, bot.browserExtensionProfileId, bot.busy]);
-  const patch = (body: Record<string, unknown>) => perform(async () => { const generation = epoch.current; const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); if (generation === epoch.current) dispatch({ type: "botPatched", ...fromAnswer(result.bot), bot: result.bot }); });
-  return <BrowserExtensionPanelView botName={bot.name} profileId={bot.browserExtensionProfileId} status={status} pending={pending} error={error || connectionError} connectBrowser={connectBrowser} onConnectBrowser={setConnectBrowser} onCheck={browser => void action({ action: "connect", browser })} onProfile={profileId => void patch({ useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: profileId })} onAction={(name, bindingId) => void action({ action: name, bindingId })} onStartNew={bindingId => { const route = startNewTaskRoute(status); if (route) void perform(async () => { const generation = epoch.current; await api(route, { method: "POST", body: JSON.stringify({ bindingId }) }); const next = await api(base) as BrowserExtensionPanelStatus; if (generation === epoch.current) setStatus(next); }); }} onSite={(bindingId, origin, access) => void action({ action: "site", bindingId, origin, access })} onOwnBrowser={() => void patch({ useMyChrome: false, browserTransport: null, browserExtensionProfileId: null })}
+  // Pairing changes readiness only. An owner profile choice uses the same
+  // preview and revision check as the always-visible picker.
+  const patch = (body: Record<string, unknown>) => onChoose({ mode: body.useMyChrome === false ? 'builtin' : 'chrome-extension', profile: typeof body.browserExtensionProfileId === 'string' ? body.browserExtensionProfileId : undefined, browser: connectBrowser });
+  return <BrowserExtensionPanelView botId={bot.id} botName={bot.name} profileId={bot.browserExtensionProfileId} status={status} pending={pending} error={error || connectionError} connectBrowser={connectBrowser} onConnectBrowser={setConnectBrowser} onCheck={browser => void action({ action: "connect", browser })} onProfile={profileId => void patch({ useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: profileId })} onAction={(name, bindingId) => void action({ action: name, bindingId })} onStartNew={bindingId => { const route = startNewTaskRoute(status); if (route) void perform(async () => { const generation = epoch.current; await api(route, { method: "POST", body: JSON.stringify({ bindingId }) }); const next = await api(base) as BrowserExtensionPanelStatus; if (generation === epoch.current) setStatus(next); }); }} onSite={(bindingId, origin, access) => void action({ action: "site", bindingId, origin, access })} onOwnBrowser={() => void patch({ useMyChrome: false, browserTransport: null, browserExtensionProfileId: null })}
     modeCards={approval.view(true)} modeSettings={approval.view()} approvalMode={approval.mode} modeKnown={approval.known} modeRead={approval.read} onModeRetry={approval.retry} keepSettings={keepSettings} wizard={wizard} onWizard={onWizard}
     settings={<><BrowserApprovedSites bot={bot} profileId={bot.browserExtensionProfileId} endedBindingIds={endedBindingIds(status)} sitesLowered={sitesLoweredIn(status)} /><BrowserActivityLog bot={bot} /></>} upgraded={upgraded} onDismissUpgraded={() => { upgradedToExtension.delete(bot.id); setUpgraded(false); }} removing={removing} removedNote={removedNote} onRepair={browser => void repair(browser)} onRemoveAsk={() => { setRemovedNote(""); setRemoving(true); }} onRemoveConfirm={browser => void remove(browser)} onRemoveCancel={() => setRemoving(false)} />;
 }

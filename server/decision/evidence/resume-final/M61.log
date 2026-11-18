@@ -1,0 +1,78 @@
+COMMAND node_modules/.bin/vitest run server/decision/exec-mode.test.ts -t R14
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/exec-mode.test.ts (29 tests | 10 failed | 19 skipped) 33ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' 'mkfs.ext4 /dev/sda' 12ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign echo "rm -rf ~" 3ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign # rm -rf / 2ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign cat <<EOF
+rm -rf ~
+EOF 2ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign python3 -c "print('shutil.rmtree(\"/\")')" 4ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign node -e "const s='rm -rf ~'" 3ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign git commit -m "remove mkfs notes" 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' '$(rm -rf ~)' 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign echo \$(rm -rf ~) 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign cat <<'EOF'
+$(rm -rf ~)
+EOF 1ms
+   ↓ R15 A8a real twin mkfs.ext4 /dev/sda
+   ↓ R15 A8a real twin sh -c 'rm -rf ~'
+   ↓ R15 A8a real twin rm -rf /
+   ↓ R15 A8a real twin bash <<EOF
+rm -rf ~
+EOF
+   ↓ R15 A8a real twin python3 -c "import shutil;shutil.rmtree('/')"
+   ↓ R15 A8a real twin node -e "require('child_process').execSync('rm -rf ~')"
+   ↓ R15 A8a real twin dd if=/dev/zero of=/dev/sda
+   ↓ R15 A8a real twin echo "$(rm -rf ~)"
+   ↓ R15 A8a real twin echo `rm -rf ~`
+   ↓ R15 A8a real twin cat <<EOF
+$(rm -rf ~)
+EOF
+   ↓ R1 aliases retain nested Python wipe evidence
+   ↓ R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/')
+   ↓ R1 Python evidence reaches real decision and sink: from shutil import rmtree as r; r('/')
+   ↓ R1 Python evidence reaches real decision and sink: __import__('shutil').rmtree('/')
+   ↓ R1 Python evidence reaches real decision and sink: import subprocess; subprocess.run(['rm','-rf','/'])
+   ↓ fork bomb executes but its printed documentation is inert
+   ↓ PowerShell root deletion and nested command are executable evidence
+   ↓ engine execute kinds and argv preserve executable arguments
+   ↓ connected-app multi-execute binds each catalog operation and exact account
+
+ Test Files  1 failed (1)
+      Tests  10 failed | 19 skipped (29)
+   Start at  08:19:12
+   Duration  4.33s (transform 3.30s, setup 3.91s, import 259ms, tests 33ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' 'mkfs.ext4 /dev/sda'
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign echo "rm -rf ~"
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign # rm -rf /
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign cat <<EOF
+rm -rf ~
+EOF
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign python3 -c "print('shutil.rmtree(\"/\")')"
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign node -e "const s='rm -rf ~'"
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign git commit -m "remove mkfs notes"
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' '$(rm -rf ~)'
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign echo \$(rm -rf ~)
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign cat <<'EOF'
+$(rm -rf ~)
+EOF
+AssertionError: expected [ { path: 'disk', …(1) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/decision/exec-mode.test.ts:5:154
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+

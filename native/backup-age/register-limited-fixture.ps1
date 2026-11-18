@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
-$scratch = 'C:\Users\seand\AppData\Local\Temp\murage-b20-native-20260913-103710'
+$scratch = 'C:\Users\fixture-user\AppData\Local\Temp\murage-b20-native-20260913-103710'
 $taskName = 'Murage-B20-Limited-20260913-113648'
-$account = 'SeanDesktop\seand'
+$account = 'FIXTURE-PC\fixture-user'
 if ((Get-CimInstance Win32_ComputerSystem).UserName -ne $account) { throw 'Expected interactive account is unavailable' }
 if (Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue) { throw 'Task already exists; do not adopt/replay' }
 if (Test-Path "$scratch\limited-task-invoked.txt") { throw 'Invocation already recorded; no replay' }

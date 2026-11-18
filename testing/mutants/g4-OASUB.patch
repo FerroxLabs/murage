@@ -1,0 +1,13 @@
+diff --git a/server/drivers/openai-chat.ts b/server/drivers/openai-chat.ts
+index 3048c60c77..63f54652ef 100644
+--- a/server/drivers/openai-chat.ts
++++ b/server/drivers/openai-chat.ts
+@@ -1455,7 +1455,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
+               }
+               if (value instanceof SubmissionRefused) {
+                 // claim FIRST (kind submission, never a lease R), then the one close; an unclassifiable refusal keeps today's terminal
+-                const refused = claimRefusal(state, value.refusal, value.site ?? (seenCalls.size ? "openai.prompt.aftertools" : "openai.prompt"), "submission");
++                const refused = undefined;
+                 if (refused) { await finishRefusal(state, refused); return; }
+                 if (!seenCalls.size) settle(completedEvent(false, "submission_refused", total, denials));
+                 else fail(FENCE_AFTER_TOOLS);

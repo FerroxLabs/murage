@@ -15,6 +15,8 @@ const ALLOWED = [
   "/v1/audio/speech", "/v1/audio/transcriptions", "/v1/audio/voices", "/v1/voice/lookup",
   "/v1/images/generations", "/v1/images/edits", "/v1/search", "/v1/decide",
   "/anthropic/v1/messages", "/composio/health", "/composio/v1/me", "/key/info",
+  // FluxMain 2026-10-24: the Memory API, called from Murage's own process for capture after a memory-on turn
+  "/v1/memory",
 ];
 
 function stripComments(source: string): string {

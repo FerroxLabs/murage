@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, {beforeEach} from "node:test";
 import {createHash,randomUUID} from "node:crypto";
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,copyFileSync,realpathSync} from "node:fs";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
-import {BackupCoordinator} from "../dist-server/backup-coordinator.js";
-import {BackupRestic} from "../dist-server/backup-restic.js";
-import {createBackupRemoteHost} from "../dist-server/backup-remote-host.js";
 import {createBackupScheduleHost} from "./backup-schedule-host.mjs";
 import {createRemotePasswordStore} from "./backup-remote-password.mjs";
 import {remoteWorkDirectory} from "./backup-remote-runtime.mjs";
+// Load packaged dependencies after test registration, so a broken or missing
+// bundle fails each named test instead of hiding the suite behind one file ID.
+let BackupCoordinator,BackupRestic,createBackupRemoteHost;
+beforeEach(async()=>{
+ ({BackupCoordinator}=await import("../dist-server/backup-coordinator.js"));
+ ({BackupRestic}=await import("../dist-server/backup-restic.js"));
+ ({createBackupRemoteHost}=await import("../dist-server/backup-remote-host.js"));
+});
 // Remote backup storage fails closed without a POSIX owner uid (Windows has no
 // process.getuid), so these joins are POSIX-only; they run on macOS and Ubuntu.
 const POSIX_ONLY=process.platform==="win32"&&"remote backup owner and mode checks are POSIX-only";

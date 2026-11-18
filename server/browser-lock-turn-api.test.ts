@@ -1,3 +1,4 @@
+import { fixtureNativeShim } from "./testing/native-launch-fixture.ts";
 // A bot whose built-in browser is protected keeps its browser tools and is
 // told why they refuse. Drives the real server over HTTP with the isolated
 // fake Claude CLI, the real unified-browser proxy (spawned from the mounted
@@ -10,11 +11,15 @@
 // said the bot had a browser. Bots then reached for other browsers.
 //
 // HEADLESS ONLY; the fixture's port is pinned clear of the owner's live app.
+import { createInterface } from "node:readline";
+import { spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { waitForExit } from "./testing/cleanup.ts";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
+import type { EngineClient } from "./drivers/headless-browser-proxy.ts";
 import { UNIFIED_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
 import { CLAUDE_TOOL_SURFACE, renderMurageTools } from "./murage-tool-surface.ts";
 
@@ -45,7 +50,10 @@ registerHooks({ load(url, context, nextLoad) {
     }; }
   \` };
   if (url.endsWith('/browser-engine.ts')) {
-    const source = fs.readFileSync(new URL(url), 'utf8');
+    // 0b8e3d7232 refuses real browser engines in containers. This suite uses
+    // only the fake executable and native relay, so supply their launch spec.
+    const source = fs.readFileSync(new URL(url), 'utf8').replace('export function agentBrowserIntegration(', 'function unusedRealAgentBrowserIntegration(')
+      + String.fromCharCode(10) + 'export function agentBrowserIntegration(input) { return { command: input.binaryPath, args: [], env: { HOME: input.dataDir, AGENT_BROWSER_SESSION: input.session, AGENT_BROWSER_SOCKET_DIR: input.dataDir } }; }';
     const start = source.indexOf('export async function verifyAgentBrowserBinary(');
     const end = source.indexOf('export async function ensureChrome(', start);
     if (start < 0 || end < 0) throw new Error('Browser version fixture anchor changed');
@@ -66,7 +74,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   });
   return { status: response.status, body: (await response.json()) as any };
 };
-const dump = () => { try { return JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")); } catch { return null; } };
+const dump = () => { try { return withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))); } catch { return null; } };
 const sensitiveFlag = () => join(fixture.info.dataDir, "page-is-sensitive");
 /** Start a turn that holds its browser authority until it is interrupted. */
 const holdTurn = async (bot: any, label: string) => {
@@ -82,7 +90,37 @@ const stopTurn = async (bot: any) => {
 const openBrowser = async (captured: any): Promise<EngineClient> => {
   const mounted = captured?.mcpConfig?.mcpServers?.browser;
   expect(mounted, "the built-in browser should be mounted").toBeTruthy();
-  const client = startHeadlessEngine({ ...mounted, env: { ...process.env, ...mounted.env } });
+  // The wire contains a shim; exercise its admitted browser endpoint with a
+  // separate fixture-owned supervisor, retaining the live turn's HTTP token.
+// MAIN RULING INT-CONFLICT-DEFAULT c542c40722 / eb01447e7d: exact metered prefix, native shim and browser args; no arbitrary wrapper exemption.
+  expect(fixtureNativeShim(captured.wireMcpConfig.mcpServers.browser, 'browser')).toContain('cli-mount-shim');
+  const child = await spawnBoundProxy('unifiedBrowser', mounted.command, mounted.args ?? [], {
+    env: { ...process.env, ...mounted.env }, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let transportStderr = ''; child.stderr.on('data', data => { transportStderr += data; });
+  let serial = 0;
+  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  const fail = () => {
+    for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error('Fixture browser transport closed: ' + transportStderr.slice(-4000))); }
+    pending.clear();
+  };
+  const lines = createInterface({ input: child.stdout });
+  lines.on('line', line => {
+    const frame = JSON.parse(line), item = pending.get(frame.id);
+    if (!item) return;
+    pending.delete(frame.id); clearTimeout(item.timer);
+    if (frame.error) item.reject(new Error(frame.error.message)); else item.resolve(frame.result);
+  });
+  child.on('error', fail); child.once('exit', fail);
+  const client: EngineClient = {
+    request: (method, params = {}) => new Promise((resolve, reject) => {
+      const id = ++serial;
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error('Fixture browser request timed out')); }, 15000);
+      pending.set(id, { resolve, reject, timer });
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+    }),
+    close: async () => { fail(); lines.close(); child.stdin.end(); child.kill(); await waitForExit(child); },
+  };
   await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "browser-lock-test", version: "1" } });
   return client;
 };
@@ -125,22 +163,30 @@ it("keeps the browser's tools listed once its page is protected, and every refus
     await client.close(); client = undefined;
     await stopTurn(bot);
 
-    // The next turn starts on a locked profile, and is told so up front.
+    // d9d9f8e08f refuses admission to an already protected document. The
+    // active turn above retains tools; a later turn gets a typed quiet note.
     const second = await holdTurn(bot, "after-the-lock");
-    expect(second.systemPrompt).toContain("Your browser is locked:");
-    expect(second.systemPrompt).toMatch(/never use another browser, a browser plugin, or run the browser program yourself/i);
-    expect(second.systemPrompt).toMatch(/In this conversation you can [^\n]*use Murage's built-in browser once its lock is cleared/);
-    client = await openBrowser(second);
-    expect(((await client.request("tools/list", {})) as any).tools?.length ?? 0).toBe(2);
-
-    // Leaving the sensitive page for an ordinary one gives the bot its browser back.
-    rmSync(sensitiveFlag(), { force: true });
-    const left = await client.request("tools/call", { name: "agent_browser_open", arguments: { url: "https://example.com/" } }) as any;
-    expect(left.isError).not.toBe(true);
-    expect(((await client.request("tools/call", { name: "agent_browser_snapshot", arguments: {} })) as any).content[0].text).toBe("fixture page");
-    await client.close(); client = undefined;
+    expect(second.mcpConfig?.mcpServers?.browser).toBeUndefined();
+    expect(second.systemPrompt).toContain("browser-cause:builtin_page_locked:0|");
+    const messages = (await api("GET", `/api/threads/${bot.threadId}/messages?limit=200`)).body.messages;
+    expect(messages.filter((message: any) => message.tool?.name?.startsWith("browser unavailable: browser-cause:builtin_page_locked:0|"))).toHaveLength(1);
+    expect(messages.filter((message: any) => message.tool?.name?.startsWith("error:"))).toHaveLength(0);
     await stopTurn(bot);
+
+    // The authenticated owner explicitly reopens a blank page, then returns
+    // control. Clearing a fixture detector alone must not erase the lock.
+    rmSync(sensitiveFlag(), { force: true });
+    const current = (await api("GET", `/api/bots/${bot.id}/browser`)).body;
+    const taken = await api("POST", `/api/bots/${bot.id}/browser`, { action: "take", expectedRevision: current.selectionRevision, expectedKey: current.sessionKey });
+    expect(taken.status).toBe(200);
+    const reopened = await api("POST", `/api/bots/${bot.id}/browser`, { action: "reopen", generation: taken.body.generation, expectedRevision: taken.body.selectionRevision, expectedKey: taken.body.sessionKey });
+    expect(reopened.status).toBe(200);
+    expect(reopened.body.protectedDocument).toBe(false);
+    expect((await api("POST", `/api/bots/${bot.id}/browser`, { action: "release", generation: reopened.body.generation, expectedRevision: reopened.body.selectionRevision, expectedKey: reopened.body.sessionKey })).status).toBe(200);
     const third = await holdTurn(bot, "after-leaving");
+    client = await openBrowser(third);
+    expect(((await client.request("tools/list", {})) as any).tools).toHaveLength(2);
+    expect(((await client.request("tools/call", { name: "agent_browser_snapshot", arguments: {} })) as any).content[0].text).toBe("fixture page");
     expect(third.systemPrompt).not.toContain("Your browser is locked:");
   } finally {
     await client?.close();

@@ -1,0 +1,11 @@
+--- a/server/drivers/acp/core.ts	2026-11-17 02:44:59.865477601 +0000
++++ b/server/drivers/acp/core.ts	2026-11-17 02:45:53.178906013 +0000
+@@ -3391,7 +3391,7 @@
+           if (state.settled) return;
+           emit({ ...base(threadId, turnId), type: "runtime.error", message: HOOK_CHECK_DENIED });
+           const cancelProcess = proc;
+-          if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } }, error => { if (error) acpFenced(error, "acp.cancel.hookrepair", cancelProcess, { method: "session/cancel" }); });
++          if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+           settle(false, "hook-repair-failed");
+         };
+         let teardown: ReturnType<TurnTeardowns["track"]> | null = null;

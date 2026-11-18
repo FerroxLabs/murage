@@ -150,7 +150,7 @@ describe("the shipped index", () => {
 
   it("places the graduated browser and recorder in regular Settings with their defaults", () => {
     for (const [id, where] of [
-      ["built-in-browser", "Settings → Devices → Built-in browser"],
+      ["built-in-browser", "Settings → Computer & browser → Built-in browser"],
       ["teach-a-skill", "Settings → Skills → Teach a skill"],
     ]) {
       const entry = HELP_INDEX.find((item) => item.id === `features/settings-guide#${id}`);

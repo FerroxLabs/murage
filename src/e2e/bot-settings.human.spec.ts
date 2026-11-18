@@ -2,7 +2,7 @@ import { test, expect } from "./page-error-guard";
 import { headerMoreButton, openBotProfile, phoneLayout } from "./chat-controls";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -53,7 +53,8 @@ test("Computer gear opens the same bot settings exclusively and allows reopening
       await computer.getByTitle('Bot settings', { exact: true }).click();
       await expect(computer).toHaveCount(0);
       await expect(settings).toBeVisible();
-      await expect(settings.locator('header').getByText('Settings proof bot', { exact: true })).toBeVisible();
+      // The breadcrumb names the bot twice: a button, and a span that takes its place while the phone keyboard is up.
+      await expect(settings.locator('header').getByRole('button', { name: 'Settings proof bot', exact: true })).toBeVisible();
       if (close === 'button') {
         await page.screenshot({ path: testInfo.outputPath(`computer-settings-${width}.png`), fullPage: true });
         await settings.getByRole('button', { name: 'Close bot settings', exact: true }).click();
@@ -67,31 +68,27 @@ test("Computer gear opens the same bot settings exclusively and allows reopening
   }
 });
 
-for (const width of [390, 1440]) test(`the Bots group stays closed at ${width}px: the open bot's row and a count, archived bots left out`, async ({ page }) => {
+// 1.0.19 settings shell (584db7c3a4, settings-shell-bots.ts, SETTINGS-LOCKED-1019 2.1): "Each bot" lists up to five rows, the
+// Chief first, then by name, the open bot always among them; there is no toggle any more, and a Browse bots row only past five.
+for (const width of [390, 1440]) test(`Each bot lists every bot up to five at ${width}px: the open bot marked, archived bots left out`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 });
   await page.goto(`${origin}/__bot-settings`);
   await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Bot settings: Settings proof bot", exact: true });
   await expect(dialog).toBeVisible();
   const nav = dialog.getByRole("navigation", { name: "Settings sections", exact: true }), rows = nav.locator("[data-settings-bot]");
-  const toggle = nav.getByRole("button", { name: "4 bots", exact: true });
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect(rows).toHaveText(["Settings proof bot"]);
-  await expect(rows.first()).toHaveAttribute("aria-current", "page");
-  // By keyboard: it opens and closes in place and keeps focus, and the arrow keys reach the rows.
-  await toggle.focus();
-  await page.keyboard.press("Enter");
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(toggle).toBeFocused();
-  await expect(rows).toHaveText(["Settings proof bot", "Level proof bot", "Spare proof bot", "Second spare proof bot"]);
+  await expect(rows).toHaveText(["Level proof bot", "Second spare proof bot", "Settings proof bot", "Spare proof bot"]);
+  await expect(rows.filter({ hasText: "Settings proof bot" })).toHaveAttribute("aria-current", "page");
+  await expect(nav.locator("[aria-current=page][data-settings-bot]")).toHaveCount(1);
+  // Four bots fit: no Browse bots row, and no toggle to open first.
+  await expect(nav.locator("[data-settings-section=browseBots], [data-settings-bots-toggle]")).toHaveCount(0);
+  if (width < 768) return; // the phone strip leaves the group out (max-md:hidden); its rows are not reachable there
+  // By keyboard: the arrow keys move between the rows in place.
+  await nav.locator(`[data-settings-bot=${botId}]`).focus();
   await page.keyboard.press("ArrowDown");
-  await expect(rows.first()).toBeFocused();
+  await expect(nav.locator("[data-settings-bot=spare-proof-bot]")).toBeFocused();
   await page.keyboard.press("ArrowUp");
-  await expect(toggle).toBeFocused();
-  await page.keyboard.press("Space");
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect(toggle).toBeFocused();
-  await expect(rows).toHaveCount(1);
+  await expect(nav.locator(`[data-settings-bot=${botId}]`)).toBeFocused();
 });
 
 for (const width of [390, 1440]) test(`an archived bot opened directly keeps its row at ${width}px`, async ({ page }, testInfo) => {
@@ -113,11 +110,10 @@ for (const width of [390, 1440]) test(`an archived bot opened directly keeps its
   const dialog = page.getByRole("dialog", { name: "Bot settings: Archived proof bot", exact: true });
   await expect(dialog).toBeVisible();
   const nav = dialog.getByRole("navigation", { name: "Settings sections", exact: true }), rows = nav.locator("[data-settings-bot]");
-  await expect(rows).toHaveText(["Archived proof bot"]);
-  await expect(rows.first()).toHaveAttribute("aria-current", "page");
-  await nav.getByRole("button", { name: "5 bots", exact: true }).click();
-  await expect(rows).toHaveCount(5);
+  // The archived bot is listed only because this window shows it, among the five, in name order.
+  await expect(rows).toHaveText(["Archived proof bot", "Level proof bot", "Second spare proof bot", "Settings proof bot", "Spare proof bot"]);
   await expect(rows.filter({ hasText: "Archived proof bot" })).toHaveAttribute("aria-current", "page");
+  await expect(nav.locator("[data-settings-section=browseBots], [data-settings-bots-toggle]")).toHaveCount(0);
 });
 
 test("Appearance is open at the top of Identity & instructions, and an image avatar opens larger", async ({ page }, testInfo) => {
@@ -169,7 +165,7 @@ test("Appearance is open at the top of Identity & instructions, and an image ava
 
 for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sectioned settings preserve drafts and authority at ${width}px ${skin}`, async ({ page }, testInfo) => {
   await page.setViewportSize({ width, height: 900 });
-  await page.addInitScript(skin => { localStorage.setItem("murage-skin", skin); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); }, skin);
+  await page.addInitScript(skin => { localStorage.setItem("murage-skin", skin); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); }, skin);
   await page.goto(origin); await page.evaluate(skin => document.documentElement.dataset.skin = skin, skin);
   // The full app reads /api/setup on load, and that read seats a Chief of
   // Staff in a workspace that has none (seatChiefOfStaff). So "authority is
@@ -302,14 +298,82 @@ for (const width of [390, 1440]) test(`another bot's row asks first when there a
   const folder = dialog.getByRole("textbox", { name: "Working folder path", exact: true });
   await folder.fill("/tmp/unsaved-proof");
   const nav = dialog.getByRole("navigation", { name: "Settings sections", exact: true }), rows = nav.locator("[data-settings-bot]");
-  await nav.locator("[data-settings-bots-toggle]").click();
+  // 1.0.19: Each bot lists up to five bots, the open one always among them (no toggle to open first). Below md the
+  // rows are left out and the one "Settings page" selector offers the same bots (SettingsModal data-settings-page-select).
+  const phone = width < 768;
+  const select = nav.getByRole("combobox", { name: "Settings page", exact: true });
+  const goToLevel = () => phone ? select.selectOption(`bot:${levelBotId}`) : rows.filter({ hasText: "Level proof bot" }).click();
+  if (phone) await expect(select.locator(`option[value="bot:${levelBotId}"]`)).toHaveCount(1);
+  else await expect(rows.filter({ hasText: "Level proof bot" })).toBeVisible();
   page.once("dialog", confirm => confirm.dismiss());
-  await rows.filter({ hasText: "Level proof bot" }).click();
+  await goToLevel();
   await expect(dialog).toBeVisible();
   await expect(folder).toHaveValue("/tmp/unsaved-proof");
   page.once("dialog", confirm => confirm.accept());
-  await rows.filter({ hasText: "Level proof bot" }).click();
+  await goToLevel();
   const other = page.getByRole("dialog", { name: "Bot settings: Level proof bot", exact: true });
   await expect(other).toBeVisible();
   await expect(other.locator('[data-settings-bot][aria-current="page"]')).toHaveText("Level proof bot");
 });
+
+// GH18 renderer acceptance uses the real settings/store/layers and the isolated
+// server above. Only these owner-action responses are controlled; no live app,
+// engine, deletion policy or desktop IPC is involved in the presentation proof.
+for (const width of [390, 1440]) for (const skin of ['light', 'dark'] as const) {
+  test(`GH18: preview, cancellation and durable pending status at ${width}px in ${skin}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: skin });
+    await page.addInitScript(skin => { localStorage.setItem('murage.settings.mode', 'advanced'); localStorage.setItem('murage-skin', skin); }, skin);
+    const requests: Array<{ method: string; path: string; body: unknown }> = [];
+    const endpoint = `/api/memory/bots/${botId}/fresh-start`;
+    const outcome = { operationId: 'gh18-browser-proof', policyVersion: 'gh18-fresh-start-v2', botId, state: 'applying', reason: 'cursor-save-pending', clearedBlocks: 2, freshSessions: 3, retainedBlocks: 7, retainedCapped: false, visibilityChanged: false };
+    await page.route(`**${endpoint}/**`, route => {
+      const req = route.request(), path = new URL(req.url()).pathname;
+      requests.push({ method: req.method(), path, body: req.postDataJSON() });
+      if (path.endsWith('/preview')) return route.fulfill({ json: {
+        policyVersion: 'gh18-fresh-start-v2', botId, botName: 'Settings proof bot', state: 'ready', reason: null,
+        staleBlocks: 2, freshSessions: 3, retainedBlocks: 7, retainedCapped: false,
+        previewToken: 'gh18-browser-preview', expiresAt: Date.now() + 120_000,
+      } });
+      return route.fulfill({ status: path.endsWith('/confirm') ? 202 : 200, json: path.endsWith('/confirm') ? outcome : { ...outcome, state: 'done', reason: null } });
+    });
+    await page.goto(`${origin}/__bot-settings`);
+    await page.evaluate(skin => { document.documentElement.dataset.skin = skin; }, skin);
+    await expect(page.locator('html')).toHaveAttribute('data-skin', skin);
+    await page.getByRole('button', { name: 'Open bot settings', exact: true }).click();
+    const settings = page.getByRole('dialog', { name: 'Bot settings: Settings proof bot', exact: true });
+    const search = settings.getByRole('searchbox', { name: 'Search settings' });
+    await search.fill('memory');
+    const opener = settings.getByRole('button', { name: 'Start fresh for this bot', exact: true });
+    await expect(opener).toBeVisible();
+    expect(requests).toHaveLength(0);
+    await opener.click();
+    const confirm = page.getByRole('dialog', { name: 'Start fresh for Settings proof bot?', exact: true });
+    await expect(confirm).toBeVisible();
+    await expect(confirm.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    await expect(confirm.getByRole('status')).toHaveText('Start fresh in 3 chats and clear 2 old blocks.');
+    await expect(confirm.locator('[data-primary="true"]')).toHaveCount(1);
+    await expect(confirm).toContainText('Deleted and withdrawn information stays hidden.');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`gh18-ready-${width}-${skin}.png`), fullPage: true });
+    await page.keyboard.press('Escape');
+    await expect(confirm).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    expect(requests.filter(r => r.path.endsWith('/confirm'))).toHaveLength(0);
+    await opener.click();
+    await confirm.getByRole('button', { name: 'Start fresh', exact: true }).click();
+    await expect(confirm.getByRole('status')).toHaveText('Settings proof bot will start fresh once the changes are saved.');
+    await expect(confirm).not.toContainText('Cleared 2 old blocks.');
+    expect(requests.filter(r => r.path.endsWith('/confirm'))).toEqual([{ method: 'POST', path: `${endpoint}/confirm`, body: { previewToken: 'gh18-browser-preview', confirm: true, idempotencyKey: expect.any(String) } }]);
+    await page.screenshot({ path: testInfo.outputPath(`gh18-pending-${width}-${skin}.png`), fullPage: true });
+    await confirm.getByRole('button', { name: 'Close', exact: true }).click();
+    await search.fill('permissions');
+    await search.fill('memory');
+    await expect(settings.getByRole('status').filter({ hasText: 'Cleared 2 old blocks.' })).toBeVisible();
+    expect(requests.filter(r => r.path.includes('/operations/'))).toEqual([{ method: 'GET', path: `${endpoint}/operations/gh18-browser-proof`, body: null }]);
+    expect(requests.filter(r => r.path.endsWith('/confirm'))).toHaveLength(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`gh18-complete-${width}-${skin}.png`), fullPage: true });
+    await testInfo.attach('gh18-owner-requests', { body: JSON.stringify(requests, null, 2), contentType: 'application/json' });
+  });
+}

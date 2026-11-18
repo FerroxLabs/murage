@@ -1,6 +1,19 @@
-# Model defaults qualified for 1.0.18
+# Model defaults qualified for 1.0.19; Fable 5.2 not yet qualified on Cloud home
 
-Checked 2026-11-06, before changing the defaults.
+Checked 2026-11-06, before changing the defaults, and re-checked 2026-11-17
+against the 1.0.19 tip (see [1.0.19 re-check](#1019-re-check)). Fable 5.2
+evidence: [Claude Fable 5.2](#claude-fable-52-checked-2026-11-17-against-the-1019-tip).
+
+## 1.0.19 re-check
+
+The defaults and pins this qualification rests on are unchanged on the 1.0.19
+tip: `server/drivers/claude.ts` defaults to `claude-sonnet-5-5`,
+`server/drivers/codex-catalog.ts` defaults to `gpt-6.1-sol`, and
+`deploy/cloud-home/build-image.sh` still pins Claude Code 2.1.292 and Codex
+0.162.1 with the same x64 hashes recorded below. The binary evidence below
+therefore applies to 1.0.19 as is. Claude Fable 5.2 is listed but **not yet
+qualified on Cloud home**; its section at the end records what was and was not
+checked.
 
 ## Distribution and support evidence
 
@@ -96,3 +109,31 @@ snapshot digest and vision table regenerated. Other model rows retain their
 previous captured values: a full upstream refresh introduced unrelated,
 conflicting vision declarations for existing models. The partial snapshot omits
 the upstream whole-response ETag; fetchedAt records this refresh date.
+
+## Claude Fable 5.2 (checked 2026-11-17 against the 1.0.19 tip)
+
+Murage's static Claude list carries `claude-fable-5-2` ("Claude Fable 5.2",
+1,000,000 context) first among the Fable rows, and the default stays
+`claude-sonnet-5-5` (`server/drivers/claude.ts`, `STATIC_CLAUDE_MODELS`; added
+by `b324d0ba5e`, "Update Claude Fable catalog from published models", citing
+the Anthropic models overview of 2026-11-14). Tests that pin the row:
+`server/drivers/claude-catalog.test.ts` (list contents, and that the newest
+Fable id is first) and `shared/model-order.test.ts` (ordering and version
+parse of `claude-fable-5-2`). The row lives in Murage's list; nothing in the
+driver gates it on a Claude Code version.
+
+**Cloud home pinned Claude Code 2.1.292: UNVERIFIED for `claude-fable-5-2`.**
+The x64 binary from
+`https://downloads.claude.ai/claude-code-releases/2.1.292/linux-x64/claude`
+hashes to the recipe's pin (`a967e7b1...c93b3`, same as above). A byte search
+of that file (read only, never executed) finds `claude-fable-5-1` and
+`claude-fable-5`, `claude-sonnet-5-5` and `claude-opus-5-5`, but **no**
+`claude-fable-5-2`, no `fable-5-2` or "Fable 5.2" display text, and no
+`claude-haiku-5-5` (which Murage also lists). So the 2.1.292 embedded model map
+does not name Fable 5.2. That is not proof it is refused: whether the CLI
+passes an unlisted id through to the API, and whether the account is entitled,
+were not tested (no login, no inference). Until a Cloud home image is built
+with a newer pinned Claude Code, or a live turn with `claude-fable-5-2` is run
+on one, treat Fable 5.2 on Cloud home as UNVERIFIED. Desktop uses the person's
+own Claude Code install, which must be 2.1.292 or newer but is otherwise
+outside this check.

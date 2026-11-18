@@ -1,3 +1,4 @@
+// MAIN RULING RULINGS-1019-RECALL-1116 R7-8.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Memory schema v6 (1.0, round 3 item 3): output lineage tables, added
 // additively. The upgrade runs on a COPY of a used data dir: a realistic v5
@@ -16,7 +17,8 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { finishBackgroundUpgradeWorkNow, closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { captureSource } from "./capture.ts";
 import { ownerMemoryTicket, saveMemoryCandidate } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
@@ -66,11 +68,19 @@ async function usedV5DataDir(): Promise<string> {
   message(thread, "ask-2", 20, "user", "Say it again?");
   message(thread, "y", 21, "bot", "Again: the code is 7731.");
   message("moss-direct", "moss-1", 30, "bot", "Unrelated chat.");
-  expect(downgradeMemorySchema(database(), 5)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 5 });
-  database().exec("PRAGMA wal_checkpoint(TRUNCATE)");
-  closeDatabase();
+  // 2fe571bb91's runtime-only authority triggers refer to v10 deny tables.
+  // The installation downgrade uses an offline connection. Snapshot the live
+  // fixture coherently, then make the historical shape on that offline copy;
+  // its schema work cannot race the runtime's retiring checkpointer.
   const copy = join(copyDir, "messages.db");
-  copyFileSync(join(DATA_DIR, "messages.db"), copy);
+  database().prepare("VACUUM INTO ?").run(copy);
+  closeDatabase();
+  const offline = new DatabaseSync(copy);
+  try {
+    offline.exec("PRAGMA foreign_keys=ON");
+    expect(downgradeMemorySchema(offline, 5)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 5 });
+    offline.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } finally { offline.close(); }
   return copy;
 }
 /** Every table's rows as text, in key order: what "unchanged" means here. */
@@ -156,6 +166,9 @@ it("the v10 upgrade writes no root sets even past 256 outputs (the old deduplica
   const copy = await usedV5DataDir();
   const db = new DatabaseSync(copy);
   try {
+    migrateMemorySchema(db);
+    expect(downgradeMemorySchema(db, 6)).toMatchObject({status:"downgraded",from:MEMORY_SCHEMA_VERSION,to:6});
+    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
     // 300 more receipt outputs in the thread, each followed by an OFF reply
     const insert = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,'text',?,?)");
     const bundle = db.prepare("SELECT bundle_id FROM memory_disclosure_outputs WHERE thread_id=? LIMIT 1").get(thread)?.bundle_id;
@@ -174,13 +187,12 @@ it("the v10 upgrade writes no root sets even past 256 outputs (the old deduplica
     expect(db.prepare("SELECT count(*) AS n FROM memory_output_roots").get()?.n).toBe(0);
     expect(db.prepare("SELECT count(*) AS n FROM memory_root_sets").get()?.n).toBe(0);
     expect(db.prepare("SELECT count(*) AS n FROM memory_root_set_members").get()?.n).toBe(0);
-    // the session table is part of the v6 shape that archive, restore and merge validate
-    // v10: the root-set tables may be handed back (root-set-reclaim.ts), so a file without memory_session_roots still validates; one missing a table that
-    // is not handed back does not
-    db.exec("DROP TABLE memory_session_roots");
     expect(() => validateMemorySchema(db)).not.toThrow();
+    db.exec("SAVEPOINT missing_roots; DROP TABLE memory_session_roots");
+    expect(() => validateMemorySchema(db)).toThrow("MEMORY_SCHEMA_UNSUPPORTED");
+    db.exec("ROLLBACK TO missing_roots; RELEASE missing_roots");
     db.exec("DROP TABLE memory_lineage_meta");
-    expect(() => validateMemorySchema(db)).toThrow();
+    expect(() => validateMemorySchema(db)).toThrow("MEMORY_SCHEMA_UNSUPPORTED");
   } finally { db.close(); }
 });
 

@@ -55,7 +55,7 @@ function setup(o: { card?: (intent: CallIntent) => void; world?: Partial<OutboxW
     card: o.card ?? ((intent) => { cards.push(intent); }),
     world: { quietHours: () => false, voiceReady: () => true, ringingDevice: () => true, factValid: () => true, calendar: async () => "free" },
     hint: (h) => { hints.push(h); },
-    threadRunning: () => false, senderOf: () => null,
+    threadRunning: () => false, senderOf: () => null, turnEndedAt: () => null,
     startOutbox: () => { order.push("outbox"); },
     now: () => now,
   });

@@ -72,6 +72,11 @@ export async function pollServerIdentity({
   // True while the child's note keeps changing: the 30-minute cap is then not the end of a
   // resumable upgrade that is visibly working. Still bounded by BOOT_EXTEND_ABSOLUTE_MS.
   progressFresh = () => false,
+  // True while a one-time step's heartbeat is moving (the owner-pin index): that wait has no absolute limit. The owner can still quit from the window.
+  liveWithoutLimit = () => false,
+  // True while the child's own start-up note (server/boot-progress.ts, every step before listen) is its pid's and moving
+  // (electron/boot-progress-watch.mjs): the 5-minute budget then moves on in steps, up to BOOT_EXTEND_ABSOLUTE_MS. 1.0.20 startup-all.
+  bootProgressFresh = () => false,
   // Called with the 503 body each time our own child answers that it is upgrading (see below).
   onUpgrading = () => {},
   // True while the machine is asleep (the shell's suspend/resume events): the boot budget does not run down meanwhile.
@@ -103,10 +108,24 @@ export async function pollServerIdentity({
   // whatever is left of the last 5 s step.
   let extended = false;
   let rebudgeted = false;
+  let sawLiveIndex = false;
   const expired = () => {
+    // Remember indexing while its note exists, including before the absolute
+    // migration limit: completion can remove it just before the boundary poll.
+    const liveIndex = liveWithoutLimit();
+    if (liveIndex) sawLiveIndex = true;
     if (now() < deadline) return false;
+    // A start whose own note keeps moving is working, whatever its step: wait on in steps, never past the absolute limit. Not `extended`:
+    // the note ends only at listen, so a note that stops moving is a child that stopped, with no fresh budget after it. A memory-upgrade
+    // note keeps its own rules below (its 30-minute cap and stall), so this never lengthens an upgrade's wait.
+    if (now() < startedAt + BOOT_EXTEND_ABSOLUTE_MS && !extendWhile() && !upgradingRecently() && bootProgressFresh()) { deadline = now() + BOOT_EXTEND_STEP_MS; return false; }
     if (now() >= startedAt + BOOT_EXTEND_LIMIT_MS) {
-      if (now() >= startedAt + BOOT_EXTEND_ABSOLUTE_MS) return true;
+      if (now() >= startedAt + BOOT_EXTEND_ABSOLUTE_MS) {
+        if (liveIndex) { extended = true; deadline = now() + BOOT_EXTEND_STEP_MS; return false; }
+        // the one-time step finished past 6 hours (its note is gone): the rest of the boot gets its one fresh budget, as below
+        if (sawLiveIndex && !rebudgeted && !extendWhile()) { rebudgeted = true; deadline = now() + bootTimeoutMs; return false; }
+        return true;
+      }
       if (progressFresh() || upgradingRecently()) { extended = true; deadline = now() + BOOT_EXTEND_STEP_MS; return false; }
       // The upgrade ENDED past the cap (its note is gone): the child still has the rest of its boot ahead of it, so it gets the
       // same one fresh budget as any other finished upgrade. A note that is still there but has stopped moving is a stall: the end.

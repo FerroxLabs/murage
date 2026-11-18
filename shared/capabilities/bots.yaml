@@ -30,7 +30,7 @@ entries:
       A bot's reply in a channel stops after a set number of minutes with no activity. A reply that
       keeps working runs as long as it needs, and time spent waiting on you does not count. The No
       activity limit is 20 minutes unless you change it, from 20 to 1,440 minutes.
-    settings_path: Settings → Bots → Advanced → Time limit for bot activity in channels
+    settings_path: Settings → How every bot behaves → Advanced → Time limit for bot activity in channels
     platforms: [mac, windows, linux]
     engines: [all]
     anchors:

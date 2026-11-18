@@ -23,21 +23,58 @@ function sources(dir: string): string[] {
   });
 }
 
+/**
+ * Drops // and block comments but keeps string and template contents, so a URL literal such as "https://api.fluxrouter.ai"
+ * is never mistaken for a comment and stays visible to the bans below.
+ */
+function stripComments(text: string): string {
+  let out = "";
+  for (let i = 0; i < text.length;) {
+    const c = text[i]!;
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) j += text[j] === "\\" ? 2 : 1;
+      out += text.slice(i, j + 1); i = j + 1;
+    } else if (c === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+    } else if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end < 0 ? text.length : end + 2;
+    } else { out += c; i++; }
+  }
+  return out;
+}
+
 /** Names a Flux endpoint or the key, or mentions Flux in a file that makes HTTP or socket calls. */
 const REACHES_FLUX = (text: string): boolean =>
   /api\.fluxrouter\.ai|FLUX_OPENAI_BASE|FLUX_RESPONSES_BASE|FLUX_ANTHROPIC_BASE|\bfluxKey\(/.test(text)
-  || (/flux/i.test(text) && /fetch\(|fetchImpl|fetcher|\.fetch\b|new WebSocket|WebSocket\(/.test(text));
+  || (/flux/i.test(text) && /fetch\(|accountedFetch\(|fetchImpl|fetcher|\.fetch\b|new WebSocket|WebSocket\(/.test(text));
 const DECIDES = /flux-memory-(headers|wire)/;
+
+/** Generic busy-loop markers also mention Flux in transports that cannot send
+ * a Flux model turn. Keep these reasons shared by both header checks. */
+const BUSYLOOP_NON_FLUX_TURNS: Record<string, string> = {
+  "drivers/headless-target-guard.ts": "browser CDP socket; the marker registers decoded browser messages",
+  "drivers/local-inject.ts": "local-only catalog probes guarded by checkLocalServerUrl; no remote model turn",
+  "drivers/pi.ts": "passes fetchImpl to local-inject catalog discovery; model turns delegate to the headless driver",
+  "drivers/stop-gate.rules.config.ts": "source-expression fingerprints for tests; makes no request",
+  "local-tool-probe.ts": "local-only model probes guarded by checkLocalServerUrl before each request",
+};
 
 /** Files that mention Flux but make no Flux model request of their own, and why. */
 const NO_REQUEST_OF_THEIR_OWN: Record<string, string> = {
+  "cloud-home/supervisor-session.ts": "wires device-code sign-in and sub-key delivery; no model request",
+  "cloud-home/supervisor.ts": "wires the supervisor session's device-code client; no model request",
+  ...BUSYLOOP_NON_FLUX_TURNS,
+  "flux-contract-endpoints.ts": "read-only endpoint and caller inventory; it makes no request",
   "flux-config.ts": "reads the key",
   "flux-usage-tags.ts": "the usage tag values and the Flux host rule; makes no request",
+  "spend-gate.ts": "UX-L2C-PAUSE: GET /v1/key/limits account reads for the pause; no model request, so no memory headers",
   "flux-limits.ts": "UX-L2C: one GET of the key's monthly limits (/v1/key/limits); an account read, no model request, so no memory headers",
+  "cloud-home/flux-device-code-client.ts": "device-code sign-in and key revoke only; no model request",
   "opencode-config.ts": "connector plan for opencode.json; the headers ride the per-turn OPENCODE_CONFIG_CONTENT (drivers/acp/opencode-go.ts)",
   "announcements.ts": "a comment; announcements are fetched from Ferrox, not Flux",
   "model-gateway.ts": "a comment; the local gateway never falls back to Flux",
-  "drivers/agents-proxy.ts": "a tool description",
   "drivers/codex-catalog.ts": "spawns the codex app-server for its catalog; no Flux request",
   "tts/elevenlabs.ts": "ElevenLabs; mentions Flux in a comment",
   "provider-connections.ts": "catalog GET /v1/models for named connections: no model turn, nothing to capture or recall",
@@ -53,7 +90,10 @@ const NO_REQUEST_OF_THEIR_OWN: Record<string, string> = {
   "email/flux-email-client.ts": "bot email /v1/email/* (BOT-EMAIL-MURAGE-109): inbox, send and read routes, no model turn, nothing to capture or recall",
   "email/runtime.ts": "bot email wiring: hands the Flux base to email/flux-email-client.ts, makes no request itself",
   "browser-extension-integration.ts": "FLUX-FREE-MODEL r3: reads fluxKey() only to put a sha256 of it in the browser action checker fence (keyMark, in memory, never stored, logged or sent: designs/FFM-FENCE-NOTE.md:7); the check request is made by browser-action-checker-connection.ts",
-  "app-trigger-delivery.ts": "connected-app events /v1/app-events/*: claim, ack and the run ledger, no model turn, nothing to capture or recall",
+  "cloud-home/flux-home-gate.ts": "a Cloud home's GET /v1/cloud-home/status with its own sub-key (B4): a key check, no model turn, nothing to capture or recall",
+  "drivers/openai-compat.ts": "the model list GET /models for a named endpoint (tagged, a199f87a8): no model turn, nothing to capture or recall; the turn is the shared runtime's",
+  "app-trigger-delivery.ts": "connected-app events /v1/app-events/*: claim, ack and the run ledger, no model turn, nothing to capture or recall",  "flux-composio-dev-token.ts": "dev harness broker token custody: hands its fetchImpl to composio-lifecycle.ts localComposioAuthority, whose transport sends every Flux request with fluxFetch('composio-broker'); it calls no fetch itself (pinned below)",
+  "email/migration-fixture.gen.ts": "synthetic migration fixture generator: its FluxEmailClient runs on the in-memory FakeFlux fetch, so no request leaves the process (pinned below)",
 };
 /** Call-site ids whose code is owned by another lane. They may be unused until that lane lands. */
 const PENDING_OTHER_LANE: readonly FluxCallSiteId[] = [];
@@ -79,6 +119,45 @@ describe("every Flux-routed call site decides its memory headers", () => {
       .filter((id) => !PENDING_OTHER_LANE.includes(id))
       .filter((id) => !files.some((file) => file.rel !== "flux-memory-headers.ts" && new RegExp(`["'\`]${id}["'\`]`).test(file.text)));
     expect(unused).toEqual([]);
+  });
+});
+
+describe("the connected-apps broker transport decides its Flux headers (composio-broker)", () => {
+  const text = (rel: string) => stripComments(files.find((file) => file.rel === rel)!.text);
+
+  it("both lifecycle transports send Flux-host requests through fluxFetch('composio-broker')", () => {
+    for (const rel of ["composio-lifecycle.ts", "cloud-home/supervisor-port.ts"]) {
+      expect(text(rel), rel).toMatch(/fluxFetch\(\s*"composio-broker"/);
+      expect(text(rel), rel).toMatch(/isFluxHost\(/);
+    }
+  });
+
+  it("the transports no longer tag by hand: setFluxUsageHeaders alone would send the usage tag without the memory decision", () => {
+    expect(text("composio-lifecycle.ts")).not.toMatch(/setFluxUsageHeaders/);
+  });
+
+  it("flux-composio-dev-token.ts only hands its fetchImpl to the authority and calls no fetch itself", () => {
+    const code = text("flux-composio-dev-token.ts");
+    expect(code).not.toMatch(/\bfetch\(|\bfetchImpl\(|globalThis\.fetch|api\.fluxrouter\.ai/);
+    expect(code).toMatch(/localComposioAuthority\(\{ fetchImpl: options\.fetchImpl/);
+  });
+
+  it("email/migration-fixture.gen.ts stays on the in-memory FakeFlux and never names a real endpoint or a global fetch", () => {
+    const code = text("email/migration-fixture.gen.ts");
+    expect(code).toMatch(/fetch: fake\.fetch/);
+    expect(code).not.toMatch(/globalThis\.fetch|\bfetch\(|api\.fluxrouter\.ai|FLUX_OPENAI_BASE|fluxKey\(/);
+  });
+});
+
+describe("stripComments keeps string contents", () => {
+  it("keeps a URL literal and drops real comments", () => {
+    expect(stripComments('const u = "https://api.fluxrouter.ai/x"; // https://api.fluxrouter.ai trailing')).toBe('const u = "https://api.fluxrouter.ai/x"; ');
+    expect(stripComments("const u = 'https://h'; /* a \"b\" */ const t = `//x`;")).toBe("const u = 'https://h';  const t = `//x`;");
+    expect(stripComments('const q = "a\\"//b"; // gone')).toBe('const q = "a\\"//b"; ');
+  });
+  it("the endpoint ban still catches a Flux URL literal in the guarded files", () => {
+    const hidden = stripComments('await fetch("https://api.fluxrouter.ai/composio/v1/me");');
+    expect(hidden).toMatch(/api\.fluxrouter\.ai/);
   });
 });
 
@@ -110,9 +189,17 @@ describe("stays out of the browser bundle", () => {
   it("flux-routing.ts (read by the model picker in src/lib/model-metadata.ts) reaches no node: module through the memory headers", () => {
     const routing = files.find((file) => file.rel === "flux-routing.ts")!.text;
     const imports = [...routing.matchAll(/^import[^;]*from\s+"([^"]+)"/gm)].map((match) => match[1]);
-    expect(imports.sort()).toEqual(["./contracts.ts", "./flux-memory-wire.ts"]);
+    // The Cloud home's pause and sign-in guards were moved out of the gate module so this file stays free of undici and
+    // node:crypto (ea81de2a3); each may import only the copy table.
+    expect(imports.sort()).toEqual(["./cloud-home/engine-flux-guard.ts", "./cloud-home/flux-pause.ts", "./contracts.ts", "./flux-memory-wire.ts"]);
+    for (const rel of ["cloud-home/engine-flux-guard.ts", "cloud-home/flux-pause.ts", "cloud-home/copy.ts"]) {
+      const guard = stripComments(files.find((file) => file.rel === rel)!.text);
+      expect(guard, rel).not.toMatch(/node:|require\(/);
+      const guardImports = [...guard.matchAll(/^import[^;]*from\s+"([^"]+)"/gm)].map((match) => match[1]);
+      expect(guardImports.filter((spec) => spec !== "./copy.ts"), rel).toEqual([]);
+    }
     const wire = files.find((file) => file.rel === "flux-memory-wire.ts")!.text;
-    const code = wire.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const code = stripComments(wire);
     expect(code).not.toMatch(/^\s*import\s|require\(|node:/m);
   });
 });
@@ -122,12 +209,16 @@ describe("stays out of the browser bundle", () => {
 // with the reason it makes no request of its own, or the reason its requests cannot be tagged.
 const TAGS_USAGE = /flux-usage-tags|fluxCallHeaders|fluxFetch\(|withFluxCallHeaders|fluxTurnDecision|fluxMemorySend|fluxMemoryAtSend/;
 const USAGE_NOT_TAGGED_HERE: Record<string, string> = {
+  "cloud-home/supervisor-session.ts": "wires device-code sign-in and sub-key delivery; no model request",
+  "cloud-home/supervisor.ts": "wires the supervisor session's device-code client; no model request",
+  "flux-engine-reach.ts": "read-only model-host and config classifier; never sends a request",
+  ...BUSYLOOP_NON_FLUX_TURNS,
   "flux-routing.ts": "routing tables and the codex provider argv; makes no request",
+  "cloud-home/flux-device-code-client.ts": "device-code sign-in and key revoke only; no model request",
   "flux-config.ts": "reads the key",
   "opencode-config.ts": "connector plan; the tags ride OPENCODE_CONFIG_CONTENT from acp/core.ts fluxTurnDecision",
   "announcements.ts": "a comment; announcements are fetched from Ferrox, not Flux",
   "model-gateway.ts": "a comment; the local gateway never falls back to Flux",
-  "drivers/agents-proxy.ts": "a tool description",
   "drivers/codex-catalog.ts": "spawns the codex app-server for its catalog; no Flux request",
   "drivers/acp/fuigo.ts": "renders decision.headers, which acp/core.ts builds with fluxTurnDecision (tagged)",
   "drivers/acp/qwen.ts": "renders decision.headers, which acp/core.ts builds with fluxTurnDecision (tagged)",
@@ -140,7 +231,8 @@ const USAGE_NOT_TAGGED_HERE: Record<string, string> = {
   "email/runtime.ts": "wiring; email/flux-email-client.ts makes the tagged requests",
   "email/email-secrets.ts": "bot email key storage; makes no request",
   "engine-health-routes.ts": "the Health line; flux-key-health.ts checks the key, no model turn",
-  "browser-extension-integration.ts": "reads fluxKey() only for the checker fence keyMark (sha256, in memory, never sent: designs/FFM-FENCE-NOTE.md:7); the check request is made and tagged by browser-action-checker-connection.ts",
+  "browser-extension-integration.ts": "reads fluxKey() only for the checker fence keyMark (sha256, in memory, never sent: designs/FFM-FENCE-NOTE.md:7); the check request is made and tagged by browser-action-checker-connection.ts",  "flux-composio-dev-token.ts": "dev harness broker token custody: its fetchImpl goes to composio-lifecycle.ts localComposioAuthority, which tags every Flux request (fluxFetch('composio-broker')); it calls no fetch itself",
+  "email/migration-fixture.gen.ts": "synthetic migration fixture generator on the in-memory FakeFlux fetch; no request leaves the process",
 };
 
 describe("every Flux request carries the usage tags", () => {

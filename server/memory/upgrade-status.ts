@@ -8,13 +8,14 @@
 // is, so the shell can read progress from the growing `.partial` file), or
 // why the upgrade stopped. Read side: electron/memory-upgrade-status.mjs.
 // Holds numbers and a code from a closed set; no path, no secret.
-import { renameSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { isDiskFullError, MemoryMigrationError, type MemoryMigrationPhase } from "./schema.ts";
 import type { StartupStorageEvent } from "./root-set-compaction.ts";
 import type { RevocationIndexEvent } from "./revocation-index.ts";
 import { startBlockingHeartbeat, type BlockingHeartbeat, type BlockingStep } from "./blocking-heartbeat.ts";
-import { blockedUpgradeState, startingUnknownState, type UpgradeProgress, type UpgradeProgressTracker } from "./upgrade-progress.ts";
+import { blockedUpgradeState, nextUpgradeSeq, startingUnknownState, type UpgradeProgress, type UpgradeProgressTracker } from "./upgrade-progress.ts";
 import type { UpgradeState } from "../../shared/upgrade-contract.mjs";
 import type { ProgressBoard } from "./upgrade-health.ts";
 
@@ -30,7 +31,7 @@ export type MemoryUpgradeStatus = {
   /** The reading in the one shape every screen reads (shared/upgrade-contract.mjs); always present, with "unknown" for what is not known. */
   upgrade: UpgradeState;
   /** Set when blocked. */
-  code?: "MEMORY_MIGRATION_DISK_SPACE" | "MEMORY_SCHEMA_NEWER" | "MEMORY_MIGRATION_FAILED";
+  code?: "MEMORY_MIGRATION_DISK_SPACE" | "MEMORY_SCHEMA_NEWER" | "MEMORY_SCHEMA_UNSUPPORTED" | "MEMORY_MIGRATION_FAILED";
   phase?: MemoryMigrationPhase["phase"] | StartupStorageEvent["phase"] | RevocationIndexEvent["phase"] | "indexing" | "repairing";
   /** Root sets converted (phase "converting"), or receipts indexed (phase "indexing"), so far, of total. */
   done?: number;
@@ -107,9 +108,9 @@ export function memoryUpgradeReporter(dataDir: string, partialNameOf: (path: str
     },
     /** A stretch of the upgrade whose statements cannot report (they block the server thread): the note is kept moving by a heartbeat
      * thread until `end()`. */
-    blocking(first: BlockingStep, from?: number, intervalMs?: number, phase = "migrating"): BlockingHeartbeat {
+    blocking(first: BlockingStep, from?: number, intervalMs?: number, phase = "migrating", contractPhase?: "indexing"): BlockingHeartbeat {
       const base = { v: 1, state: "upgrading", phase, ...(from !== undefined ? { from } : {}), pid: process.pid, startedAt };
-      const beat = startBlockingHeartbeat(join(dataDir, MEMORY_UPGRADE_STATUS_FILE), base, first, intervalMs, 0, board?.shared, board?.counts);
+      const beat = startBlockingHeartbeat(join(dataDir, MEMORY_UPGRADE_STATUS_FILE), base, first, intervalMs, 0, board?.shared, board?.counts, contractPhase, contractPhase ? nextUpgradeSeq() : undefined);
       const order = ["tables", "indexes", "backfill", "validating", "committing"];
       const move = (step: BlockingStep) => { tracker?.update("migrating", Math.max(0, order.indexOf(step)), order.length); publish(); };
       move(first);
@@ -141,7 +142,9 @@ export function memoryUpgradeReporter(dataDir: string, partialNameOf: (path: str
     blocked(error: unknown) {
       try {
         const known = error instanceof MemoryMigrationError ? error : null;
-        const code = known?.code ?? "MEMORY_MIGRATION_FAILED";
+        // A memory object this build does not know (validateMemorySchema): what a newer Murage left, so the shell says to install it.
+        const unknownSchema = !known && error instanceof Error && /^MEMORY_SCHEMA_UNSUPPORTED\b/.test(error.message);
+        const code = known?.code ?? (unknownSchema ? "MEMORY_SCHEMA_UNSUPPORTED" : "MEMORY_MIGRATION_FAILED");
         writeNote(dataDir, {
           v: 1, state: "blocked", code, pid: process.pid, startedAt, updatedAt: Date.now(), upgrade: blockedUpgradeState(code),
           ...(known?.needBytes !== undefined ? { needBytes: known.needBytes } : {}),

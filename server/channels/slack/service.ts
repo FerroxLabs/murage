@@ -203,7 +203,7 @@ export class SlackService {
     const generation = this.generation;
     this.timer = setTimeout(() => { if (generation === this.generation) void this.resume(); }, this.nextRetryAt - this.now()); this.timer.unref?.();
   }
-  async stop() { this.live = false; this.authorised = false; this.generation++; clearTimeout(this.timer); this.approvals?.clear(); this.ledger?.stop(); this.state = "idle"; await this.transport?.stop(); }
+  async stop() { this.live = false; this.authorised = false; this.generation++; clearTimeout(this.timer); this.approvals?.clear(); await this.ledger?.stop(); this.state = "idle"; await this.transport?.stop(); }
   async pause() {
     await this.disable(false);
   }

@@ -22,7 +22,7 @@ import { composerReferenceTarget, type ComposerReferenceTarget } from "@/lib/ima
 import {
   cancelScheduledCall, costText, dashboardLink, defaultPhoneSettings, editLanguage, findNumbers, keyErrorKey, lengthText, minutesToSeconds,
   phoneCallsAvailable, phoneErrorKey, phoneKeyBridge, readPhoneStatus, recentCalls, savePhoneSettings, shareTranscript, timeText,
-  usePhoneCopy, withLineWords, type PhoneCallCard, type PhoneCopy, type PhoneCopyKey, type PhoneNumberInfo, type PhoneSettings, type PhoneStatus,
+  usePhoneCopy, watchRecentCalls, withLineWords, type PhoneCallCard, type PhoneCopy, type PhoneCopyKey, type PhoneNumberInfo, type PhoneSettings, type PhoneStatus,
 } from "@/lib/phone-calls";
 
 const VAPI_HOME = "https://vapi.ai";
@@ -141,7 +141,7 @@ function KeyBox({ copy, keyPresent, onChanged }: { copy: PhoneCopy; keyPresent: 
 }
 
 /** Steps 5 and 6: the owner's numbers, then the caller settings. Saving makes a new settings revision (3c). */
-function SettingsSteps({ copy, status, ownerName, onChanged }: { copy: PhoneCopy; status: PhoneStatus; ownerName: string; onChanged: () => Promise<void> }) {
+export function SettingsSteps({ copy, status, ownerName, onChanged }: { copy: PhoneCopy; status: PhoneStatus; ownerName: string; onChanged: () => Promise<void> }) {
   const [numbers, setNumbers] = useState<PhoneNumberInfo[] | null>(null);
   const [finding, setFinding] = useState(false);
   const [error, setError] = useState<PhoneCopyKey | null>(null);
@@ -216,7 +216,6 @@ function SettingsSteps({ copy, status, ownerName, onChanged }: { copy: PhoneCopy
           </div>
           <button type="button" className={primary} disabled={saving || !form.phoneNumberId} onClick={() => void save()}>{copy("phoneCalls.form.save")}</button>
           {saved !== null && <p role="status" className="text-[13px] text-ink">{copy("phoneCalls.form.saved")}</p>}
-          {status.active && <p className={note}>{copy("phoneCalls.form.inUse", { revision: status.active.revision })}</p>}
           {error && <p role="alert" className="text-[12px] text-danger">{copy(error)}</p>}
         </div>
       </li>
@@ -262,11 +261,7 @@ function OlderScheduled({ copy, status, onChanged }: { copy: PhoneCopy; status: 
 
 function RecentCalls({ copy }: { copy: PhoneCopy }) {
   const [calls, setCalls] = useState<PhoneCallCard[] | null>(null);
-  useEffect(() => {
-    let live = true;
-    recentCalls(api).then((list) => { if (live) setCalls(list); }, () => { if (live) setCalls([]); });
-    return () => { live = false; };
-  }, []);
+  useEffect(() => watchRecentCalls(api, setCalls), []);
   if (!calls) return null;
   return (
     <div className="space-y-2">

@@ -1,0 +1,77 @@
+{
+ "nothingAutomaticUnparks#29": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "line 1665: bindings[null] is undefined (no bot is keyed the string null), so the optional chain already yields false when p.botId is null"
+ },
+ "restorePrepParksEverything#9": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "line 1748: guarded holds InboxId strings from KeepGuard.inboxId, so guarded.has(null) is false for every state"
+ },
+ "restorePrepParksEverything#30": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "line 1767: foreignInboxes is only queried with the non-null ids that locallyReferencedInboxes yields (it adds truthy ids only), so a null member never matches"
+ },
+ "nothingAutomaticUnparks#4": {
+  "verdict": "KILLED",
+  "witness": "cm-nothingAutomaticUnparks-4-swap-keeps-admitted-keep"
+ },
+ "nothingAutomaticUnparks#5": {
+  "verdict": "KILLED",
+  "witness": "cm-nothingAutomaticUnparks-5-swap-keeps-keep-pending"
+ },
+ "nothingAutomaticUnparks#6": {
+  "verdict": "KILLED",
+  "witness": "cm-nothingAutomaticUnparks-6-swap-finishes-keep-key-release"
+ },
+ "nothingAutomaticUnparks#23": {
+  "verdict": "KILLED",
+  "witness": "cm-nothingAutomaticUnparks-25-auto-deletes-parked-park"
+ },
+ "nothingAutomaticUnparks#31": {
+  "verdict": "KILLED",
+  "witness": "cm-nothingAutomaticUnparks-33-auto-removes-parked-bots-binding"
+ },
+ "nothingAutomaticUnparks#35": {
+  "verdict": "KILLED",
+  "witness": "cm-nothingAutomaticUnparks-37-preexisting-lease-on-parked-target"
+ },
+ "nothingAutomaticUnparks#36": {
+  "verdict": "KILLED",
+  "witness": "cm-nothingAutomaticUnparks-38-new-lease-other-target-while-parked"
+ },
+ "restorePrepParksEverything#37": {
+  "verdict": "KILLED",
+  "witness": "cm-restorePrepParksEverything-41-outstanding-delete-guard-only"
+ },
+ "restorePrepParksEverything#38": {
+  "verdict": "KILLED",
+  "witness": "cm-restorePrepParksEverything-42-outstanding-delete-park-only"
+ },
+ "restorePrepParksEverything#6": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-restorePrepParksEverything-7-carry-of-other-job",
+  "by": "restoreJobMatchesReality",
+  "byLine": 2217,
+  "argument": "line 1737 (carryOfJob): a carry with !carryOfJob(prev) is a state restoreJobMatchesReality rejects at every step of every trace: no job -> line 2216 (carry with no restore job), job id differs -> line 2222 (carry belongs to another job). With prev.carry null, c is null either way (line 1738). So removing the test can only differ on a state the combined gate always rejects; no must-accept witness exists. Opus step-4 check should confirm."
+ },
+ "removalSendNeedsSendingLease#19": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "argument": "line 1331: a copy whose copyOf is non-null names an existing request by the new environmentWellFormed rule (page S28: a copy names an existing request), so the x.copyOf === null operand never separates an accepted history.",
+  "separating": "sep-removalSendNeedsSendingLease-19-orphan-copy-counts",
+  "by": "environmentWellFormed",
+  "byLine": 2508
+ },
+ "removalSendNeedsSendingLease#20": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "argument": "line 1331: x.kind === r.kind separates only when an inbox id equals a key id; the new environmentWellFormed rule (page S28: inbox and key ids are disjoint) rejects every such history.",
+  "separating": "sep-removalSendNeedsSendingLease-20-delete-on-key-id-counts",
+  "by": "environmentWellFormed",
+  "byLine": 2510
+ }
+}

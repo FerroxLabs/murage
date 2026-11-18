@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { workerQueryAuthority, WorkerQueryEligibility } from "./testing/worker-query-fixture.ts";
 
 // Delay actual worker drain awaits, not a parallel reimplementation of its
 // selection rule. Storage/model doubles keep this scheduling regression offline.
@@ -11,8 +12,12 @@ vi.mock("./embeddings.ts",()=>({MemoryEmbeddings:class {
   }
 }}));
 vi.mock("./index.ts",()=>({MemoryIndex:class {
+  static async create() { return new this(); }
+  resetDone() { return null; }
+  stopInfo() { return null; }
   rebuilt=false;
   prepareModel(){}
+  async applyBatch(records: Array<{text:string}>) { this.upsert(records); return { status: "done" as const }; }
   upsert(records:Array<{text:string}>){state.indexed.push(...records.map(record=>record.text));}
   vector(){}
   search(){return {hits:[],vectorRows:0};}
@@ -20,11 +25,7 @@ vi.mock("./index.ts",()=>({MemoryIndex:class {
   maintenanceOwed(){return false;}
   close(){}
 }}));
-vi.mock("./eligibility.ts",()=>({MemoryEligibility:class {
-  read(){return {allowed:[],capacity:false};}
-  warm(){}
-  close(){}
-}}));
+vi.mock("./eligibility.ts",()=>({MemoryEligibility:WorkerQueryEligibility}));
 
 it("makes index progress under continued queries, then returns query priority and respects cancellation",async()=>{
   vi.resetModules();state.started.length=0;state.release.length=0;state.indexed.length=0;
@@ -35,17 +36,17 @@ it("makes index progress under continued queries, then returns query priority an
   Object.defineProperties(workerProcess,{
     on:{value:(event:string,listener:(message:unknown)=>void)=>{
       if(event==="message"||event==="disconnect"){listeners.set(event,listener);return workerProcess;}
-      return realProcess.on(event,listener);
+      return workerProcess;
     }},
-    send:{value:(message:{type:string;requestId?:string})=>{sent.push(message);return true;}},
+    send:{value:(message:{type:string;requestId?:string}, cb?: (e: Error | null) => void) => { if (typeof cb === "function") cb(null);sent.push(message);return true;}},
     resourceUsage:{value:()=>realProcess.resourceUsage()},
   });
   vi.stubGlobal("process",workerProcess);
   try{
     await import("./worker.ts");
     const emit=listeners.get("message")!;expect(emit).toBeTypeOf("function");
-    emit({type:"init",indexPath:"/unused/index",authorityPath:"/unused/authority",modelDirectory:"/unused/model",manifest:{model:"fixture",revision:"1",dimensions:1,files:[]}});
-    const query=(id:string)=>emit({type:"query",requestId:id,input:{query:id,scopeIds:["scope"],policyRevision:0,deletionEpoch:0,historical:false,cursor:"",limit:10,semantic:true}});
+    await emit({type:"init",indexPath:"/unused/index",authorityPath:"/unused/authority",modelDirectory:"/unused/model",manifest:{model:"fixture",revision:"1",dimensions:1,files:[]}});
+    const query=(id:string)=>emit({type:"query",requestId:id,input:{...workerQueryAuthority,query:id,scopeIds:[],policyRevision:0,deletionEpoch:0,historical:false,cursor:"",limit:10,semantic:true}});
     const index=(id:string)=>emit({type:"index",requestId:id,records:[{id,version:1,scopeId:"scope",text:id,deleted:false}]});
     query("query-one");query("query-two");index("index-one");index("index-two");
     expect(state.started).toEqual([["query-one"]]);

@@ -6,10 +6,11 @@
 // the privileged scheme (this must happen before app ready) and returns a
 // controller; the window itself opens only when something calls open(homeId).
 //
-// The cloud window has NO preload and no bridge in WP1 (WP3 classifies the
-// channels). Its top frame may load murage-home asar paths only.
+// The Cloud preload has its own classified bridge. Its top frame may load
+// murage-home asar paths only; browser pop-outs share this session but not its IPC authority.
 
-import { readFileSync } from "node:fs";
+import { createCloudBrowserPopouts } from "./browser-popout.mjs";
+import { readFileSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -110,7 +111,7 @@ export function cloudRequestAllowed(url) {
  * @param {(homeId: string) => void} [deps.onWindowClosed] a Cloud window closed (main re-applies the unread badge)
  * @param {(m: string) => void} [deps.warn]
  */
-export function installCloudHome({ liveGate = null, packaged = true, protocol, session, BrowserWindow, shell, net, env, userDataDir, distDir, provider = null, createClient = null, cloudPreload, onWindowClosed = () => {}, warn = () => {}, timers = DEFAULT_TIMERS }) {
+export function installCloudHome({ liveGate = null, packaged = true, protocol, session, BrowserWindow, shell: osShell, net, env, userDataDir, distDir, provider = null, createClient = null, cloudPreload, onWindowClosed = () => {}, onWindowOpened = () => {}, warn = () => {}, timers = DEFAULT_TIMERS, popoutState = {} }) {
   // MURAGE_DESKTOP_CLOUD=0 is a hard off: nothing registered, null. Otherwise the scheme is ALWAYS registered (it must be
   // before app ready) but inert: active() is false, so every scheme request is refused, open() throws and the IPC stubs refuse,
   // until the developer override (unpackaged builds only) is on or the live gate (verified live:true from the pinned prod origin,
@@ -132,7 +133,7 @@ export function installCloudHome({ liveGate = null, packaged = true, protocol, s
   liveGate?.onChange((live) => {
     for (const listener of [...activeListeners]) { try { listener(live && active()); } catch {} }
   });
-  return {
+  const controller = {
     client,
     /** True while Cloud is on (developer override or verified live). Checked on every scheme request and IPC call. */
     active,
@@ -153,6 +154,7 @@ export function installCloudHome({ liveGate = null, packaged = true, protocol, s
     },
     /** Close the Cloud window for a home, if one is open (a disconnected computer has nothing to show). */
     close(homeId) {
+      controller.browserPopouts.closeAll(homeId);
       const existing = windows.get(homeId);
       if (existing && !existing.isDestroyed()) existing.close();
     },
@@ -182,6 +184,7 @@ export function installCloudHome({ liveGate = null, packaged = true, protocol, s
         webPreferences: { partition, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, ...(cloudPreload ? { preload: cloudPreload, additionalArguments: [`--murage-cloud-home=${homeId}`] } : {}) },
       });
       windows.set(homeId, win);
+      try { onWindowOpened(homeId); } catch {} // NOTIFY-EVERYWHERE-1019 S4a: a replaced Cloud window kills outstanding attention tokens
       // F43 load watchdog: a page that fails or hasn't loaded in CLOUD_OPEN_MS is the offline screen, which looks again by
       // itself every CLOUD_RETRY_MS and on Try again. `generation` makes a superseded load's late answer a no-op.
       const entry = cloudHomeEntryUrl(homeId);
@@ -214,7 +217,7 @@ export function installCloudHome({ liveGate = null, packaged = true, protocol, s
       const guard = createMainNavigationGuard({
         origin: () => cloudHomeEntryUrl(homeId),
         action: (url) => cloudHomeNavigationAction(url, { homeId }),
-        openExternal: (url) => shell.openExternal(url),
+        openExternal: (url) => osShell.openExternal(url),
         warn: (m) => warn(`[cloud-navigation] ${m}`),
       });
       win.webContents.on("will-navigate", (event, ...rest) => {
@@ -225,11 +228,21 @@ export function installCloudHome({ liveGate = null, packaged = true, protocol, s
       });
       win.webContents.on("will-redirect", guard.willRedirect);
       win.webContents.setWindowOpenHandler(({ url }) => {
-        if (cloudHomeNavigationAction(url, { homeId }) === "external") void Promise.resolve(shell.openExternal(url)).catch(() => {});
+        if (cloudHomeNavigationAction(url, { homeId }) === "external") void Promise.resolve(osShell.openExternal(url)).catch(() => {});
         return { action: "deny" };
       });
       load();
       return win;
     },
   };
+  const statePath = key => path.join(typeof userDataDir === "function" ? userDataDir() : userDataDir, `browser-popout-${encodeURIComponent(key)}.json`);
+  controller.browserPopouts = createCloudBrowserPopouts({ cloud: controller, preload: cloudPreload,
+    createWindow: options => new BrowserWindow(options),
+    navigationGuard: homeId => createMainNavigationGuard({ origin: () => cloudHomeEntryUrl(homeId),
+      action: url => cloudHomeNavigationAction(url, { homeId }), openExternal: url => osShell.openExternal(url), warn }),
+    readState: key => JSON.parse(readFileSync(statePath(key), "utf8")),
+    writeState: (key, state) => writeFileSync(statePath(key), JSON.stringify(state), { mode: 0o600 }),
+    ...popoutState,
+  });
+  return controller;
 }

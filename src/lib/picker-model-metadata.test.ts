@@ -6,13 +6,12 @@ import {
   type PickerEngine,
   type PickerModel,
   PRICE_UNKNOWN,
-  isFluxRouterRow,
   isPriceUnknown,
   modelPriceLabel,
-  orderedPickerModels,
   pickerKey,
   pickerModels,
 } from "./provider-model-picker.ts";
+import { isFluxRouterRow, orderedPickerModels } from "./provider-model-picker-dialog.ts";
 
 // The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
 beforeAll(() => preloadModelMetadata());
@@ -70,7 +69,7 @@ describe("pickerModels fills what the engine never sent", () => {
 
   it("leaves a local model unpriced, because it costs nothing per token", () => {
     const [row] = pickerModels(
-      engine([{ id: "llamacpp::claude-opus-5", label: "claude-opus-5", localServer: "llama.cpp on seanbeast" }]),
+      engine([{ id: "llamacpp::claude-opus-5", label: "claude-opus-5", localServer: "llama.cpp on fixture-server" }]),
       [],
     );
     // The id happens to resolve; pricing a model running on the user's own
@@ -200,7 +199,7 @@ describe("orderedPickerModels puts Flux Router first", () => {
 });
 
 describe("how much of this repo's engine catalogs the snapshot can actually price", () => {
-  // The production engine catalogs, id by id, as of 201bf422. Measured rather
+  // Catalog pricing witnesses from 201bf422, extended for the published 1114 additions. Measured rather
   // than asserted at 100%: this records what the matching rule really achieves
   // so a regression in it shows up as a number moving, not as a vague feeling.
   const CATALOG: Array<[string, string | undefined]> = [
@@ -210,12 +209,13 @@ describe("how much of this repo's engine catalogs the snapshot can actually pric
     ["gemini-3.7-flash-high", "google"], ["gemini-3.7-flash-low", "google"], ["gemini-3.7-flash-medium", "google"],
     ["gemini-3.8-flash-high", "google"], ["gemini-3.8-flash-low", "google"], ["gemini-3.8-flash-medium", "google"],
     ["gpt-oss-120b-medium", undefined],
-    ["claude-fable-5-1", "anthropic"], ["claude-fable-5", "anthropic"], ["gpt-5.4", "openai"], ["sonnet", undefined],
+    ["claude-fable-5-2", "anthropic"], ["claude-fable-5-1", "anthropic"], ["claude-fable-5", "anthropic"], ["gpt-5.4", "openai"], ["sonnet", undefined],
     ["claude-haiku-4-5", "anthropic"], ["claude-opus-5", "anthropic"], ["claude-sonnet-5", "anthropic"],
     ["gpt-5.3-codex-spark", "openai"], ["gpt-5.4-mini", "openai"], ["gpt-5.5", "openai"],
     ["gpt-5.6-luna", "openai"], ["gpt-5.6-sol", "openai"], ["gpt-5.6-terra", "openai"], ["gpt-6-astra", "openai"],
+    ["gpt-6.1-terra", "openai"], ["grok-build-0.1", "xai"],
     ["grok-3-mini", "xai"], ["grok-4-fast", "xai"], ["grok-4", "xai"],
-    ["MiniMax-M2.7-highspeed", "minimax"], ["MiniMax-M2.7", "minimax"], ["MiniMax-M3", "minimax"],
+    ["MiniMax-M2.7-highspeed", "minimax"], ["MiniMax-M2.7", "minimax"], ["MiniMax-M3", "minimax"], ["MiniMax-M3.1-Flash", "minimax"],
     ["llama-3.3-70b-versatile", "groq"], ["meta-llama/llama-3.3-70b-instruct", "openrouter"],
     ["flux-auto", undefined], ["flux-fast", undefined], ["flux-reasoning", undefined], ["flux-standard", undefined],
   ];
@@ -223,13 +223,10 @@ describe("how much of this repo's engine catalogs the snapshot can actually pric
   it("resolves the engine models it can and refuses the rest out loud", () => {
     const resolved = CATALOG.filter(([id, hint]) => lookupModelMetadata(id, hint) !== null);
     const unresolved = CATALOG.filter(([id, hint]) => lookupModelMetadata(id, hint) === null).map(([id]) => id);
-    // 31 of 40. The nine misses are all honest: four are Flux ROUTES with no
-    // single price, two are Gemini 3.1 Pro variants models.dev has no entry
-    // for, one is `gpt-oss-120b-medium` whose base id three providers price
-    // differently with no vendor among them, one is `grok-4-fast` (xAI renamed
-    // it grok-4-fast-reasoning / -non-reasoning, so the old id is genuinely
-    // gone) and one is the bare alias `sonnet`.
-    expect(resolved.length).toBe(31);
+    // MAIN RULING 1114-MODELS-FRESH: the authorized snapshot refresh now prices
+    // Fable 5.2, Terra and MiniMax M3.1 Flash. Keep all catalog witnesses.
+    expect(resolved.length).toBe(35);
+    // MAIN RULING 1114-MODELS-FRESH: all nine original misses remain explicit.
     expect(unresolved).toEqual([
       "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gpt-oss-120b-medium", "sonnet", "grok-4-fast",
       "flux-auto", "flux-fast", "flux-reasoning", "flux-standard",

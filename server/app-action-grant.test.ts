@@ -325,10 +325,11 @@ describe("the stop line judges the tool the engine stamped, never the title", ()
       for (const bot of levels(key).slice(0, 3)) {
         expect(verdict(bot, ask, { stopLine: hit }), JSON.stringify(bot)).toMatchObject({ approve: null, source: "stop-line" });
       }
-      // No limits lifts the stop line only for the owner's own turns; a
-      // routine or unattended run on No limits still stops
+      // MAIN RULING 2026-11-13 wipe-only: a No limits routine runs ordinary stops.
+      // An unattended call without an authenticated owner level stays Ask.
       const unlimited = { alwaysAllow: [key], autoApprove: true, fullAccess: true, noLimits: true };
-      expect(verdict(unlimited, ask, { stopLine: hit, automated: true, routineLevel: true }).approve).toBeNull();
+      // MAIN RULING 2026-11-13 wipe-only: this is not a catastrophe.
+      expect(verdict(unlimited, ask, { stopLine: hit, automated: true, routineLevel: true, fullAccessOrigin: "routine" })).toMatchObject({ approve: expect.any(String), source: "no-limits" });
       expect(verdict(unlimited, ask, { stopLine: hit, unattended: true }).approve).toBeNull();
     }
   });
@@ -345,7 +346,8 @@ describe("wrappers are opened to a fixed point under a cap, and both readers see
       const hit = classifyAsk(ask, place);
       expect(hit, `depth ${depth}`).toMatchObject({ kind: "message" });
       const unlimited = { alwaysAllow: ["app-action:GMAIL_SEND_EMAIL"], autoApprove: true, fullAccess: true, noLimits: true };
-      expect(verdict(unlimited, ask, { stopLine: hit, automated: true, routineLevel: true }).approve).toBeNull();
+      // MAIN RULING 2026-11-13 wipe-only: this is not a catastrophe.
+      expect(verdict(unlimited, ask, { stopLine: hit, automated: true, routineLevel: true, fullAccessOrigin: "routine" })).toMatchObject({ approve: expect.any(String), source: "no-limits" });
       expect(verdict({ alwaysAllow: ["app-action:GMAIL_SEND_EMAIL"] }, ask, { stopLine: hit })).toMatchObject({ approve: null, source: "stop-line" });
     }
   });
@@ -427,7 +429,9 @@ describe("round 3: a missing, null, cut or unknown value never grants, approves 
     for (const bot of [...levels("app-action:GMAIL_SEND_EMAIL"), ...levels(acpToolKey("custom:custom", "run")), ...levels("Bash:cat")]) {
       expect(verdict(bot, ask, extra).approve, JSON.stringify([ask.tool, bot])).toBeNull();
     }
-    expect(verdict(unlimited, ask, { ...extra, automated: true, routineLevel: true }).approve, "routine").toBeNull();
+    // The positive routine fixture carries its stored owner-started origin; a level alone is not provenance.
+    // MAIN RULING 2026-11-13 wipe-only: the routine's effective No limits runs non-wipes.
+    expect(verdict(unlimited, ask, { ...extra, automated: true, routineLevel: true, fullAccessOrigin: "routine" }), "routine").toMatchObject({ approve: expect.any(String), source: "no-limits" });
     expect(verdict(unlimited, ask, { ...extra, unattended: true }).approve, "unattended").toBeNull();
   };
 
@@ -533,7 +537,8 @@ describe("round 3: a missing, null, cut or unknown value never grants, approves 
       for (const bot of levels("app-action:GMAIL_SEND_EMAIL").slice(0, 3)) {
         expect(verdict(bot, ask, { stopLine: hit }), JSON.stringify(bot)).toMatchObject({ approve: null, source: "stop-line" });
       }
-      expect(verdict(unlimited, ask, { stopLine: hit, automated: true, routineLevel: true }).approve).toBeNull();
+      // MAIN RULING 2026-11-13 wipe-only: this is not a catastrophe.
+      expect(verdict(unlimited, ask, { stopLine: hit, automated: true, routineLevel: true, fullAccessOrigin: "routine" })).toMatchObject({ approve: expect.any(String), source: "no-limits" });
       expect(verdict(unlimited, ask, { stopLine: hit, unattended: true }).approve).toBeNull();
     }
     // a plain thread reply names no address: it goes to the thread's own participants, so it passes

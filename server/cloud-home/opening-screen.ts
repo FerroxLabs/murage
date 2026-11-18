@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The light "Opening your Murage home" screen a Cloud home paints before its app has loaded. The home's policy
+// The light "Opening Murage" screen a Cloud home paints before its app has loaded. The home's policy
 // (b1b-policy.ts secureHomeHtml) allows scripts only from the home's own files, so index.html's inline palette script never
 // runs there and the first frame used to be the dark default. This screen is markup plus a style block, no script: the
 // first frame is already light and branded, and it stays until the app marks itself mounted (Door.tsx sets
@@ -10,7 +10,7 @@
 // Colours are the app's light tokens (src/styles.css [data-skin="light"]): app ground, ink, inset and accent.
 
 /** Same words as the door's own first state (src/lib/cloud-door.ts doorCopy.opening). */
-export const OPENING_COPY = "Opening your Murage home";
+export const OPENING_COPY = "Opening Murage";
 
 export const OPENING_LIGHT = { app: "#f7f7f7", ink: "#0d0d0d", inset: "#eaeaea", accent: "#b8481f" } as const;
 

@@ -1,7 +1,7 @@
 import {test,expect,type Page,type TestInfo} from "./page-error-guard";
 import {createServer,type ViteDevServer} from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import {mkdtempSync,readFileSync,writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
@@ -14,7 +14,7 @@ const axe=readFileSync(axeScriptPath,"utf8");
 test.beforeAll(async()=>{
  cache=mkdtempSync(join(tmpdir(),"murage-schedule-ui-"));
  vite=await createServer({configFile:false,envFile:false,root,cacheDir:cache,resolve:{alias:{"@":join(root,"src")}},server:{host:"127.0.0.1",watch:null,hmr:false},plugins:[react(),tailwindcss(),{
-  name:"schedule-ui-fixture",resolveId(id){if(id==="/__schedule.js")return "\0schedule-ui";},load(id){if(id!=="\0schedule-ui")return;return `import React from'react';import{createRoot}from'react-dom/client';import{BackupSettings}from'/src/components/BackupSettings.tsx';import'/src/styles.css';window.unmountFixture=()=>app.unmount();const app=createRoot(document.getElementById('root'));app.render(React.createElement(BackupSettings));`;},
+  name:"schedule-ui-fixture",resolveId(id){if(id==="/__schedule.js")return "\0schedule-ui";},load(id){if(id!=="\0schedule-ui")return;return `import React from'react';import{createRoot}from'react-dom/client';import{BackupSettings}from'/src/components/BackupSettings.tsx';import{StoreProvider}from'/src/state/store.tsx';import'/src/styles.css';window.unmountFixture=()=>app.unmount();const app=createRoot(document.getElementById('root'));app.render(React.createElement(StoreProvider,null,React.createElement(BackupSettings)));`;},
   configureServer(server){server.middlewares.use((req,res,next)=>{
    if(new URL(req.url??"/","http://fixture").pathname!=="/__schedule")return next();res.setHeader("content-type","text/html");res.end('<!doctype html><html lang="en" data-schedule-fixture><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Scheduled backup fixture</title><style>html[data-schedule-fixture],html[data-schedule-fixture] body{height:auto;min-height:100%;position:static;overflow:auto}html[data-schedule-fixture] #root{height:auto;overflow:visible}</style></head><body><main style="max-width:720px;margin:auto;padding:16px"><h1 class="text-ink text-lg">Settings</h1><h2 class="text-ink text-base">Backups</h2><div id="root"></div></main><script type="module" src="/__schedule.js"></script></body></html>');
   });},
@@ -401,7 +401,7 @@ test("remote backup explicit save connect upload and uncertainty",async({page},i
  // Was: "Check existing remote copy" / "Existing remote copy verified. Nothing was uploaded again."
  const reconcile=panel.getByRole("button",{name:"Check existing off-site copy",exact:true});await expect(reconcile).toBeEnabled();await reconcile.focus();await page.keyboard.press("Enter");await expect(panel.getByText("Existing off-site copy verified. Nothing was uploaded again.")).toBeVisible();await expect(panel.getByText("Recorded off-site result for the latest backup:",{exact:false})).toContainText("copy verified by readback");expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="remote-upload").length)).toBe(0);
  // Was: "A supported desktop build with its verified Restic tool is required."
- await page.evaluate(()=>{(window as any).remoteState.supported=false;});await refresh();await expect(password).toHaveCount(0);await expect(panel.getByText("Off-site copies need a supported desktop build with its verified backup tool.",{exact:false})).toBeVisible();expect(errors).toEqual([]);
+ await page.evaluate(()=>{(window as any).remoteState.supported=false;});await refresh();await expect(password).toHaveCount(0);await expect(panel.getByText("Off-site copies work in the Murage desktop app.",{exact:false})).toBeVisible();expect(errors).toEqual([]);
 });
 // The S3 / SFTP choice is one radio group (0a09731e): Tab reaches its checked
 // option and the arrow keys move within it, so an unchecked radio is not a Tab stop.

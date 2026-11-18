@@ -1,0 +1,128 @@
+name: iOS simulator tests
+run-name: ${{ inputs.invocation_id && format('ios-try {0}', inputs.invocation_id) || 'iOS simulator tests' }}
+# Runs the MurageShell package tests on an iOS 17 and an iOS 26 simulator.
+# Manual or called from another workflow. No push or pull_request trigger, no
+# secrets, no write access.
+on:
+  workflow_dispatch:
+    inputs:
+      invocation_id:
+        description: "CITRY invocation id"
+        required: false
+        type: string
+  workflow_call:
+permissions:
+  contents: read
+# One run per invocation id (hygiene only: correctness does not depend on it, because ci-try follows the run id returned by the dispatch).
+concurrency:
+  group: ios-try-${{ inputs.invocation_id || github.run_id }}
+  cancel-in-progress: false
+jobs:
+  # The reservation is verified in its OWN job so a client reading the run's jobs can tell a failed verification (E_IOS_RUN_ID)
+  # from a failed candidate test (E_IOS_RUN_FAILED). The job name below is read by ci-try.sh and must stay exactly verify-reservation.
+  # TRUST BOUNDARY: this job is self-contained. It has inline shell steps only: no action reference (local or mutable), no checkout, no candidate script,
+  # no reusable workflow. The reviewed blob of this file is pinned in ci-try's private policy, so a candidate cannot change what this job does.
+  verify-reservation:
+    name: verify-reservation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify CITRY invocation
+        if: inputs.invocation_id != ''
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          EXPECTED_SHA: ${{ github.sha }}
+          RESV_PREFIX: refs/tags/citry-inv/
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::E_IOS_RUN_ID $1"; exit 1; }
+          [[ "$INVOCATION_ID" =~ ^[0-9a-f]{32}$ ]] || fail "invocation id is not 32 lowercase hex characters"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "github.sha is not a full commit id"
+          [[ "$RESV_PREFIX" =~ ^refs/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*/$ ]] || fail "reservation prefix is malformed"
+          ref="${RESV_PREFIX}${INVOCATION_ID}"
+          out="$(git ls-remote https://github.com/FerroxLabs/murage "$ref")" || fail "reservation lookup failed"
+          total="$(printf '%s\n' "$out" | awk 'NF{n++} END{print n+0}')"
+          exact="$(printf '%s\n' "$out" | awk -v r="$ref" 'NF==2 && $2==r{print $1}')"
+          n="$(printf '%s\n' "$exact" | awk 'NF{n++} END{print n+0}')"
+          [ "$total" = 1 ] && [ "$n" = 1 ] || fail "reservation is absent or the lookup is ambiguous"
+          [[ "$exact" =~ ^[0-9a-f]{40}$ ]] || fail "reservation value is not a full commit id"
+          [ "$exact" = "$EXPECTED_SHA" ] || fail "reservation does not point at the run's commit (github.sha)"
+  ios-tests:
+    name: iOS ${{ matrix.ios }} simulator
+    needs: verify-reservation
+    runs-on: macos-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ios: ["17", "26"]
+    env:
+      IOS_MAJOR: ${{ matrix.ios }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the iOS simulator runtime and device
+        run: |
+          set -euo pipefail
+          xcrun simctl list runtimes
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+
+          major = os.environ["IOS_MAJOR"]
+
+          def simctl(*args):
+              return json.loads(subprocess.check_output(["xcrun", "simctl", *args, "-j"]))
+
+          def version(runtime):
+              return tuple(int(part) for part in runtime["version"].split(".") if part.isdigit())
+
+          runtimes = [
+              r for r in simctl("list", "runtimes", "available")["runtimes"]
+              if r.get("name", "").startswith("iOS ")
+              and r.get("isAvailable", True)
+              and r["version"].split(".")[0] == major
+          ]
+          if not runtimes:
+              print(f"::error::iOS {major} simulator runtime not installed on this runner")
+              sys.exit(1)
+          runtime = max(runtimes, key=version)
+
+          devices = simctl("list", "devices", "available")["devices"].get(runtime["identifier"], [])
+          phones = [d for d in devices if d.get("name", "").startswith("iPhone") and d.get("isAvailable", True)]
+          if phones:
+              udid = phones[0]["udid"]
+          else:
+              types = [t for t in runtime.get("supportedDeviceTypes", []) if t.get("name", "").startswith("iPhone")]
+              if not types:
+                  print(f"::error::No iPhone device type for the iOS {major} runtime on this runner")
+                  sys.exit(1)
+              udid = subprocess.check_output(
+                  ["xcrun", "simctl", "create", f"murage-ios{major}", types[-1]["identifier"], runtime["identifier"]],
+                  text=True,
+              ).strip()
+          print(f"Using {runtime['name']} ({runtime['identifier']}), device {udid}")
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"SIM_UDID={udid}\n")
+          PY
+      - name: Test MurageShell on the simulator
+        working-directory: apps/mobile/ios/App/MurageShell
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -scheme MurageShell-Package \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
+            -only-testing:MurageShellTests \
+            -only-testing:MurageShellCoreTests \
+            -resultBundlePath "${RUNNER_TEMP}/MurageShell-ios${IOS_MAJOR}.xcresult" \
+            2>&1 | tee "${RUNNER_TEMP}/xcodebuild-ios${IOS_MAJOR}.log"
+      - name: Upload the test results
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-${{ matrix.ios }}-test-results
+          path: |
+            ${{ runner.temp }}/MurageShell-ios${{ matrix.ios }}.xcresult
+            ${{ runner.temp }}/xcodebuild-ios${{ matrix.ios }}.log
+          if-no-files-found: ignore
+          retention-days: 7

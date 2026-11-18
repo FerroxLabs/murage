@@ -1,4 +1,5 @@
 export function trustedBackupResticExecutable(file:string):boolean;
+export function verifySignedWindowsRestic(file:string,bytes:Buffer,options?:{currentExecutable?:string;arch?:string;originalSha256?:string;verifySignature?:(file:string,resources:string)=>Promise<void>}):Promise<boolean>;
 export function signedResticOwnedByCurrentApp(file:string,bytes:Buffer,options?:{
  currentExecutable?:string;
  run?:(args:string[])=>{status:number|null;error?:unknown;stderr?:string|Buffer};

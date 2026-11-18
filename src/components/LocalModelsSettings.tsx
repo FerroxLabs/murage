@@ -1,3 +1,4 @@
+import { orderModels } from "../../shared/model-order";
 // Settings → Models → Local models (0.1.52 LM2, spec V1–V3 and A1–A3).
 //
 // The section is ALWAYS rendered. Before this, the local-model feature was
@@ -9,7 +10,7 @@
 // Every state here has exactly one primary action and a plain-language outcome;
 // the seven probe checks live behind a disclosure. See src/lib/local-models-view.ts
 // for the copy and the state → action mapping, which is where the tests hold it.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { AlertTriangle, CheckCircle2, Plus, RefreshCw } from "lucide-react";
 
 import { api } from "@/state/store";
@@ -90,7 +91,7 @@ function AddServerForm({ onAdded, onCancel }: { onAdded: (server: LocalServerVie
     <p className="text-[11px] leading-relaxed text-ink-secondary">This computer, your home network or your tailnet can use a plain address. Anything else has to be https.</p>
     <label className="block text-[13px]">Name <span className="text-ink-secondary">(optional)</span>
       <input aria-label="Server name (optional)" value={name} onChange={event => setName(event.target.value)} maxLength={60} disabled={busy}
-        placeholder="For example: seanbeast" className={`${input} mt-1.5`} />
+        placeholder="For example: fixture-server" className={`${input} mt-1.5`} />
     </label>
     <label className="block text-[13px]">Server type
       <select aria-label="Server type" value={kind} onChange={event => setKind(event.target.value as LocalServerKind | "auto")} disabled={busy} className={`${input} mt-1.5`}>
@@ -157,9 +158,10 @@ function EditServerForm({ server, onSaved, onCancel }: { server: LocalServerView
   </form>;
 }
 
-function ModelCard({ server, model, onTested, onRefresh }: {
+function ModelCard({ server, model, label = model.model, onTested, onRefresh }: {
   server: LocalServerView;
   model: LocalModelView;
+  label?: string;
   onTested: (serverId: string, model: string, result: LocalToolTestResponse) => void;
   onRefresh: () => void;
 }) {
@@ -205,9 +207,9 @@ function ModelCard({ server, model, onTested, onRefresh }: {
       setError(failureMessage(cause, "run this action"));
     } finally { setBusy(false); }
   };
-  return <div className="border-t border-hairline/30 py-3">
+  return <div data-local-model-id={model.id} className="border-t border-hairline/30 py-3">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
-      <p className="min-w-0 break-all text-[13px] text-ink">{model.model}</p>
+      <p className="min-w-0 break-all text-[13px] text-ink">{label}</p>
       {model.loaded && <span className="text-[11px] text-ink-secondary">In memory now</span>}
     </div>
     <p className="mt-1 text-[11px] text-ink-secondary">{contextLine(model)}</p>
@@ -233,7 +235,7 @@ function ModelCard({ server, model, onTested, onRefresh }: {
   </div>;
 }
 
-function ServerCard({ server, now, onChanged, onTested }: {
+export function ServerCard({ server, now, onChanged, onTested }: {
   server: LocalServerView;
   now: number;
   onChanged: () => void;
@@ -244,6 +246,7 @@ function ServerCard({ server, now, onChanged, onTested }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [cleanup, setCleanup] = useState<string>("");
+  const orderedModels = useMemo(() => orderModels(server.models.map(model => ({ ...model, label: model.model }))), [server.models]);
   const remove = async () => {
     if (busy) return;
     setBusy(true); setError("");
@@ -268,7 +271,7 @@ function ServerCard({ server, now, onChanged, onTested }: {
     <p className="mt-1 text-[12px] text-ink-secondary">{serverStatusLine(server, now)}{server.source === "added" ? " · added by you" : " · found automatically"}{server.hasKey ? " · key saved" : ""}</p>
     {server.status !== "running" && <p className="mt-2 text-[12px] text-ink-secondary">Nothing answered at this address. Start the server, then check again.</p>}
     {server.status === "running" && server.models.length === 0 && <p className="mt-2 text-[12px] text-ink-secondary">This server answered but listed no model Murage can address. Load a model on it, then check again.</p>}
-    {server.models.map(model => <ModelCard key={model.id} server={server} model={model} onTested={onTested} onRefresh={onChanged} />)}
+    {orderedModels.map(model => <ModelCard key={model.id} server={server} model={model} label={model.label} onTested={onTested} onRefresh={onChanged} />)}
     <div className="mt-3 flex flex-wrap gap-2">
       <button type="button" disabled={busy} onClick={onChanged} className={button}>Check again</button>
       {server.editable && <>
@@ -345,9 +348,9 @@ export function LocalModelsSettings() {
   };
 
   const servers = snapshot?.servers ?? [];
-  return <section ref={root} id="local-models" aria-labelledby="local-models-heading" className="min-w-0 rounded-xl border border-hairline/40 p-4">
+  return <section ref={root} id="local-models" aria-labelledby="local-models-title" className="min-w-0 rounded-xl border border-hairline/40 p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h3 id="local-models-heading" className="text-[15px] font-medium text-ink">{LOCAL_MODELS_TITLE}</h3>
+      <h3 id="local-models-title" className="text-[15px] font-medium text-ink">{LOCAL_MODELS_TITLE}</h3>
       <button type="button" disabled={loading} onClick={() => void reload()} aria-label={`Check for ${LOCAL_MODELS_TITLE.toLowerCase()} again`} className={button}>
         <RefreshCw size={13} className={loading ? "animate-spin" : ""} aria-hidden />
       </button>

@@ -8,7 +8,7 @@
 //  - every caller that draws an overlay over the app passes onDismiss, every other bare LazyFallback is inline or pane;
 //  - with no onDismiss there is no marker, no Close, and Esc falls through to the next layer.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -36,7 +36,7 @@ function sourceFiles(dir: string): string[] {
 
 /** Every `<LazyBoundary` and `<LazyFallback` use in the app, as file:line with the text of that line. */
 const uses = sourceFiles(SRC).flatMap((file) =>
-  readFileSync(file, "utf8").split("\n").flatMap((text, index) => (/<LazyBoundary|<LazyFallback/.test(text) && !/^\s*(\/\/|\*)/.test(text) ? [{ where: `${file.slice(SRC.length)}:${index + 1}`, text }] : [])),
+  readFileSync(file, "utf8").split("\n").flatMap((text, index) => (/<LazyBoundary|<LazyFallback/.test(text) && !/^\s*(\/\/|\*)/.test(text) ? [{ where: `${relative(SRC, file).split(sep).join("/")}:${index + 1}`, text }] : [])),
 );
 // the boundary of a panel drawn over the app (not inline in a pane) is what takes the key
 const overlayBoundaries = uses.filter((use) => /<LazyBoundary\b/.test(use.text) && !/<LazyBoundary\b[^>]*\binline\b/.test(use.text) && !use.where.startsWith("components/LazyBoundary.tsx"));

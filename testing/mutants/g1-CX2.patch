@@ -1,0 +1,13 @@
+diff --git a/server/drivers/codex.ts b/server/drivers/codex.ts
+index e48eaafac2..f0da9f8586 100644
+--- a/server/drivers/codex.ts
++++ b/server/drivers/codex.ts
+@@ -2613,7 +2613,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
+         } else if (msg.id !== undefined && msg.method) {
+           // Rule 68c: an approval request on a gated process waits for the hook's proof; unproven, it is never answered (the refusal
+           // closes the process with the turn)
+-          if (hookGate && !refusal.hookLive) void proveLiveness().then(() => { if (!abandoned) return handleServerRequest(msg, "codex.dispatch.gated"); });
++          if (hookGate && !refusal.hookLive) void proveLiveness().then(() => { if (!abandoned) return handleServerRequest(msg, "codex.dispatch.gatedX"); });
+           else void handleServerRequest(msg);
+         } else if (msg.method) {
+           handleNotification(msg);

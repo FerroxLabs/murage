@@ -1,0 +1,14 @@
+{
+  "repo": "fixture/runtime",
+  "releases": [
+    { "id": 1, "tag_name": "browser-v1", "draft": false, "published_at": "2026-01-01T00:00:00Z" },
+    { "id": 2, "tag_name": "signal-v1", "draft": false, "published_at": "2026-01-01T00:00:00Z" }
+  ],
+  "assets": {
+    "1": [{ "id": 10, "name": "browser", "state": "uploaded", "size": 4,
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "browser_download_url": "https://github.com/fixture/runtime/releases/download/browser-v1/browser" }],
+    "2": [{ "id": 20, "name": "signal.tar.gz", "state": "uploaded", "size": 4,
+      "browser_download_url": "https://github.com/fixture/runtime/releases/download/signal-v1/signal.tar.gz" }]
+  }
+}

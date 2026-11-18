@@ -1,0 +1,22 @@
+{
+  "linux-x64": {
+    "url": "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_linux_hotspot_25.0.5_8.tar.gz",
+    "sha256": "6fac98f0c8202efc3135a9e9e42aa61963ec42d1c5cbb40caf231e7b14a24ef6",
+    "build": "25.0.5+8-LTS"
+  },
+  "darwin-arm64": {
+    "url": "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_aarch64_mac_hotspot_25.0.5_8.tar.gz",
+    "sha256": "72ebd76b502c849e88dea39afae51baf5f82f2b5b1b6389c28ea707b20451bce",
+    "build": "25.0.5+8-LTS"
+  },
+  "win32-x64": {
+    "url": "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_windows_hotspot_25.0.5_8.zip",
+    "sha256": "da78d54a2fcdbba1e92d5e3f07dd30236f96297891c4a21a781c3f38f5c0beae",
+    "build": "25.0.5+8-LTS"
+  },
+  "build-jdk": {
+    "url": "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz",
+    "sha256": "68982529869257d0ee6b824ec5aa270ff8b118bb438670da0b97ebdab178d7fb",
+    "build": "25.0.5+8-LTS"
+  }
+}

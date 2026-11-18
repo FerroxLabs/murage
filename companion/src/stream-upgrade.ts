@@ -53,7 +53,13 @@ export function redactStreamQuery(url: string | undefined): string {
 
 /** The same request with a redacted url, for code (originGate's diagnostics) that may log it. */
 export function redactedRequest(req: IncomingMessage): IncomingMessage {
-  return Object.assign(Object.create(req) as IncomingMessage, { url: redactStreamQuery(req.url) });
+  // Keep Origin intact for the security decision; only the diagnostic logger may
+  // discard a malformed Origin. Referer is diagnostic-only and carries no path.
+  const headers = { ...req.headers };
+  if (headers.referer) {
+    try { headers.referer = new URL(headers.referer).origin; } catch { delete headers.referer; }
+  }
+  return Object.assign(Object.create(req) as IncomingMessage, { url: (req.url ?? "/").split(/[?#]/)[0], headers });
 }
 
 export function forwardStreamUpgrade(
