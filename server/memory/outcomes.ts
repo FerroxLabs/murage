@@ -85,7 +85,7 @@ function inTransaction<T>(db: DatabaseSync, run: () => T): T {
 const cleanText = (value: unknown, max: number, field: string): string | null => {
   if (value === undefined || value === null) return null;
   if (typeof value !== "string") return fail(400, "OUTCOME_INVALID", `${field} must be text`);
-  const text = redactSecretsInText(value.trim());
+  const text = redactSecretsInText(value).trim();
   if (!text) return null;
   if (text.length > max) return fail(400, "OUTCOME_INVALID", `${field} can be at most ${max} characters`);
   return text;

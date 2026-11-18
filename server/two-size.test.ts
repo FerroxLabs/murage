@@ -10,6 +10,7 @@
 // an index search, and neither is ever loaded whole. The thread is prepared first,
 // as a turn does; the sync-prepare counter stays where it was.
 import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -27,11 +28,13 @@ import { Store } from "./store.ts";
 import { expectSameReads, measureReads } from "./testing/bounded-reads.ts";
 import * as messages from "./message-db.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { appendFixtureMessage } from "./testing/approval-card.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const messagesDb = () => join(DATA_DIR, "messages.db");
 const IMAGE = "44444444-4444-4444-8444-444444444444.png";
 const TAGGED = "55555555-5555-4555-8555-555555555555.png";
+const SKILL_PREVIEW = "# Fixture skill\n";
 let store: Store, side: DatabaseSync;
 let small: string, large: string;
 
@@ -67,10 +70,13 @@ function build(threadId: string, count: number) {
   parent.set(threadId, `c-${count}`);
   // the rows above were stored behind the writers' back, as a database from before the indexes holds them: not prepared
   side.prepare("DELETE FROM thread_key WHERE thread_id=?").run(threadId);
-  // rows through the writers: the option cards, filed in open_card and keyed_card as they are written
+  // Rows through the writers: permission cards carry their hash-bound approval,
+  // and all cards are filed in open_card and keyed_card as they are written.
   store = new Store(selection); // the bot was created before the rows above were stored: a fresh cache reads the thread's own head
-  const card = (extra: Record<string, unknown>, text = "card") => note(threadId, store.appendMessage(threadId, { role: "bot", kind: "options", text, card: { title: "Card", options: ["Yes"], ...extra } } as never).id);
-  card({ requestId: "req-open" }); card({ setup: { key: "step-1" } }); card({ intake: true }); card({ browserSetup: {} }); card({ skillRequest: { stagedId: "staged-1", gist: "g", warnings: [] } });
+  const card = (extra: Record<string, unknown>, text = "card") => note(threadId, appendFixtureMessage(store, threadId, { role: "bot", kind: "options", text, card: { title: "Card", options: ["Yes"], ...extra } } as never).id);
+  card({ requestId: "req-open" }); card({ setup: { key: "step-1" } }); card({ intake: true }); card({ browserSetup: {} });
+  // Match a staged skill's complete preview binding before the Store's scrub.
+  card({ skillRequest: { stagedId: "staged-1", gist: "g", warnings: [], source: "fixture", preview: SKILL_PREVIEW, sha256: createHash("sha256").update(SKILL_PREVIEW).digest("hex") } });
   card({ publish: { action: "connect", connect: { state: "needed" } } }); card({}, "suggestion");
   note(threadId, store.appendMessage(threadId, { role: "bot", kind: "text", text: "setup said this", setupEcho: "echo-1" } as never).id);
   const head = side.prepare("SELECT active_leaf_id AS id FROM thread_state WHERE thread_id=?").get(threadId) as { id: string };

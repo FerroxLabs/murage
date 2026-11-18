@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "codex-x1-update-notify",
+  "date": "2026-11-06",
+  "base": "a10aa1083",
+  "scope": "X1 system notification when an update is ready, shown by the operating system",
+  "strings": {
+    "en:updates.systemReady": {
+      "text": "Murage {version} is ready to install",
+      "en": "Murage {version} is ready to install",
+      "verdict": "pass"
+    },
+    "de:updates.systemReady": {
+      "text": "Murage {version} ist bereit zur Installation",
+      "en": "Murage {version} is ready to install",
+      "verdict": "pass"
+    },
+    "es:updates.systemReady": {
+      "text": "Murage {version} está listo para instalar",
+      "en": "Murage {version} is ready to install",
+      "verdict": "pass"
+    },
+    "fr:updates.systemReady": {
+      "text": "Murage {version} est prêt à être installé",
+      "en": "Murage {version} is ready to install",
+      "verdict": "pass"
+    },
+    "hi:updates.systemReady": {
+      "text": "Murage {version} इंस्टॉल करने के लिए तैयार है",
+      "en": "Murage {version} is ready to install",
+      "verdict": "pass"
+    },
+    "ja:updates.systemReady": {
+      "text": "Murage {version} をインストールできます",
+      "en": "Murage {version} is ready to install",
+      "verdict": "pass"
+    },
+    "pt-br:updates.systemReady": {
+      "text": "Murage {version} está pronto para instalar",
+      "en": "Murage {version} is ready to install",
+      "verdict": "pass"
+    },
+    "zh:updates.systemReady": {
+      "text": "Murage {version} 已可安装",
+      "en": "Murage {version} is ready to install",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

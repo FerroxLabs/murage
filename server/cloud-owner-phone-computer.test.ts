@@ -1,7 +1,9 @@
+import { createChatsReaderAuthority } from "../shared/chats-reader-proof.ts";
 // Release finding 10-B1/B2: a Cloud home's `owner-phone` session maps to the `desktop` surface, so four decisions only the
 // computer running Murage may make (putting a site online, the browser's Full mode, approved sites, wider message reach)
 // were reachable from a phone. `requestFromComputer` is the question those handlers now ask.
 import { readFileSync } from "node:fs";
+import { generateKeyPairSync } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,6 +12,7 @@ import { setCloudIdentity } from "./cloud-request-identity.ts";
 import type { CloudDevice } from "./cloud-sessions.ts";
 import { publishAnswerAllowed } from "./publish/publish-ops.ts";
 import { isDesktopApp } from "./cloud-owner-surface.ts";
+import { chatsReader, companionAuthorized, ownerActs } from "./companion-authority.ts";
 import { requestFromComputer, requestSurface } from "./sse-visibility.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,6 +45,29 @@ describe("which Cloud sessions are the computer", () => {
   });
 });
 
+// Fable M1 (MurageMain ruling, intended): on a Cloud home these sessions all read as the "desktop" surface, so the restore card and the restore routes treat
+// them as owner surfaces that may start and dismiss. A local install's companion phone reads "remote" and stays read-only. This pins the mapping the card relies on
+// (sse-visibility.ts requestSurface, Cloud branch).
+describe("restore owner surfaces: the Cloud mapping the restore card relies on", () => {
+  const P256 = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).publicKey.export({ type: "spki", format: "pem" }).toString();
+  const as = (scope: string, extra: Record<string, unknown> = {}): Record<string, string> => { const headers = {}; setCloudIdentity(headers, { scope, ...extra } as unknown as CloudDevice); return headers; };
+  it("on a Cloud home the owner desktop, owner phone, acting owner browser and settings-read browser are the desktop surface; a bare browser is not", () => {
+    process.env.MURAGE_CLOUD_ROLE = "home";
+    expect(requestSurface(as("owner-desktop"))).toBe("desktop");
+    expect(requestSurface(as("owner-phone"))).toBe("desktop");
+    expect(requestSurface(as("browser", { factor: "passkey", publicKey: P256, assertionKey: P256 }))).toBe("desktop");
+    expect(requestSurface(as("browser", { settingsRead: true }))).toBe("desktop");
+    expect(requestSurface(as("browser"))).toBe("remote");
+    expect(requestSurface(as("companion"))).toBe("remote");
+    expect(requestSurface({})).toBe("remote");
+  });
+  it("off a Cloud home an unmarked caller (the paired local phone) is remote, so the restore routes see it as read-only", () => {
+    delete process.env.MURAGE_CLOUD_ROLE;
+    expect(requestSurface({})).toBe("remote");
+    expect(requestSurface(as("owner-phone"))).toBe("remote");
+  });
+});
+
 describe("one desktop-app predicate (int/104-rc1 collapse)", () => {
   it("requestFromComputer and isDesktopApp agree for every Cloud scope, on and off a Cloud home", () => {
     for (const role of ["home", undefined]) {
@@ -65,7 +91,8 @@ describe("the handlers ask the computer, not the surface", () => {
     expect(source).toContain('if (mode !== "full" && !isDesktopApp(req.headers, url.searchParams) && rank[mode]');
     expect(source).toContain("const ownerDesktop = isDesktopApp(req.headers, url.searchParams);");
     expect(source).toContain("const desktopSurface = isDesktopApp(req.headers, url.searchParams);");
-    expect(source).toContain('if (!isDesktopApp(req.headers, url.searchParams)) return json(res, 403, { error: PUBLISH_NEEDS_COMPUTER });');
+    // taking a site down: the computer, or the owner's browser behind a fresh code for exactly that request (browser-owner-gates.ts)
+    expect(source).toContain('const refused = onOwnerBrowser(req.headers) ? await ownerCodeGate(req, routeActDigest(method, path + url.search, await readBody(req)), "take_down_site") : { status: 403, body: { error: PUBLISH_NEEDS_COMPUTER } };');
     expect(source).not.toMatch(/const onComputer = requestSurface\(/);
     expect(source).not.toContain("requestFromComputer(");
   });
@@ -76,7 +103,7 @@ describe("the handlers ask the computer, not the surface", () => {
     const fnEnd = source.indexOf("\n}\n", fnStart);
     const fn = source.slice(fnStart, fnEnd);
     const check = fn.indexOf("const onComputer = isDesktopApp(req.headers, url.searchParams);");
-    const gate = fn.indexOf('if (!publishAnswerAllowed(requestId, behavior, onComputer ? "desktop" : "elsewhere")) return json(res, 403, { error: PUBLISH_NEEDS_COMPUTER });');
+    const gate = fn.indexOf('if (!publishAnswerAllowed(requestId, behavior, onComputer ? "desktop" : provenHere ? "proven" : "elsewhere")) return json(res, 403, { error: PUBLISH_NEEDS_COMPUTER });');
     const answer = fn.indexOf("await answerRequest(threadId, asked.instanceId, requestId, behavior,");
     expect(check).toBeGreaterThan(-1);
     expect(gate).toBeGreaterThan(check);
@@ -106,7 +133,7 @@ describe("All chats answers a Cloud home's paired phone as the phone (chats slic
   const source = readFileSync(join(here, "index.ts"), "utf8");
   it("splits desktop from phone with isDesktopApp and admits only the desktop app or the owner acting", () => {
     expect(source).toContain("const chatsDesktop = chatsView && isDesktopApp(req.headers, url.searchParams);");
-    // ownerActs, not companionAuthorized: a Cloud browser with a remembered owner login gets no previews or owner-audience hits
+    // chatsReader, not companionAuthorized: the owner browser (Sean 10-30, full owner) is admitted; a chat-only browser is not
     expect(source).toContain('if (chatsView && !chatsReader(req.headers, url.searchParams)) return json(res, 404, { error: "no such route" });');
     expect(source).toContain("const visible = chatsDesktop ? null : new Set(store.visibleThreadIds());");
     expect(source).toContain("orderedScope = chatSearchRows(chatSource(chatsDesktop), filters).filter(row => !visible || visible.has(row.threadId));");
@@ -115,9 +142,55 @@ describe("All chats answers a Cloud home's paired phone as the phone (chats slic
   });
 });
 
-it("chatsReader admits only the desktop app or ownerActs", () => {
+// MAIN RULING 1115-SOURCE-PINS-GROK A3: a separately minted, expiring chats-only proof adds read access outside a Cloud home.
+it("chatsReader admits only the desktop app, ownerActs, a Cloud home owner browser, or outside a home the scoped reader proof", () => {
   const authority = readFileSync(join(here, "companion-authority.ts"), "utf8");
   const predicate = authority.slice(authority.indexOf("export const chatsReader ="));
-  expect(predicate).toContain("isDesktopApp(headers, query) || ownerActs(headers)");
+  expect(predicate).toContain('isDesktopApp(headers, query) || ownerActs(headers)');
+  expect(predicate).toContain('(process.env.MURAGE_CLOUD_ROLE === "home" ? isOwnerBrowser(cloudIdentity(headers)) : chatsReaderProof(headers))');
   expect(predicate).not.toContain("companionAuthorized");
+  expect(authority).toContain('const readerAuthority = createChatsReaderAuthority(launchToken);');
+  expect(authority).not.toContain('createCompanionAuthority(launchToken, "x-murage-chats-reader")');
+});
+
+describe("chatsReader behavior (A3)", () => {
+  const LAUNCH = "c".repeat(64); // the suite's launch secret (server/testing/setup.ts)
+  const PROOF = createChatsReaderAuthority(LAUNCH).mint()!;
+  const READER = "x-murage-chats-reader";
+  it("a valid reader proof is admitted outside a Cloud home, and confers nothing else", () => {
+    delete process.env.MURAGE_CLOUD_ROLE;
+    expect(chatsReader({ [READER]: PROOF })).toBe(true);
+    expect(chatsReader({ [READER]: LAUNCH })).toBe(false);
+    expect(chatsReader({ [READER]: createChatsReaderAuthority(LAUNCH, () => Date.now() - 60_001).mint()! })).toBe(false);
+    expect(chatsReader({ [READER]: createChatsReaderAuthority(LAUNCH).mint("owner-act")! })).toBe(false);
+    expect(createChatsReaderAuthority(LAUNCH).mint()).not.toBe(PROOF);
+    expect(ownerActs({ [READER]: PROOF })).toBe(false);
+    expect(companionAuthorized({ [READER]: PROOF })).toBe(false);
+    expect(ownerActs({ "x-murage-companion-token": PROOF })).toBe(false);
+  });
+  it("an absent, forged, expired or wrong-scope proof is refused", () => {
+    delete process.env.MURAGE_CLOUD_ROLE;
+    expect(chatsReader({})).toBe(false);
+    expect(chatsReader({ [READER]: "" })).toBe(false);
+    expect(chatsReader({ [READER]: "d".repeat(64) })).toBe(false); // forged: right shape, wrong secret
+    expect(chatsReader({ [READER]: "c".repeat(63) })).toBe(false); // wrong length
+    expect(chatsReader({ [READER]: PROOF.toUpperCase().replace(/C/g, "G") })).toBe(false); // not hex
+    expect(chatsReader({ [READER]: ["x", PROOF] as unknown as string })).toBe(false); // repeated header
+    // A proof signed for a different launch cannot be reused here.
+    expect(chatsReader({ [READER]: createChatsReaderAuthority("d".repeat(64)).mint()! })).toBe(false);
+    expect(chatsReader({ [READER]: "0123456789abcdef".repeat(4) })).toBe(false);
+    // wrong scope: the same secret in the owner-acting or door headers is not the reader proof, and the reader header is not those
+    expect(chatsReader({ "x-murage-companion-token": LAUNCH })).toBe(true); // the desktop's own proof acts as the owner (ownerActs), as before
+    expect(chatsReader({ "x-murage-door-token": LAUNCH })).toBe(false);
+    expect(chatsReader({ "x-murage-companion": "1" })).toBe(false);
+  });
+  it("a Cloud home is unchanged: the reader proof gains nothing, only the owner scopes and an owner browser are admitted", () => {
+    process.env.MURAGE_CLOUD_ROLE = "home";
+    expect(chatsReader({ [READER]: PROOF })).toBe(false);
+    expect(chatsReader(withScope("browser"))).toBe(false);
+    const withProof = { ...withScope("browser"), [READER]: PROOF };
+    expect(chatsReader(withProof)).toBe(false);
+    expect(chatsReader(withScope("owner-desktop"))).toBe(true);
+    expect(chatsReader(withScope("owner-phone"))).toBe(true);
+  });
 });

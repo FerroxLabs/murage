@@ -57,6 +57,7 @@ const PTY_PARENT = [
 describe.skipIf(!posix || INNER)("engine processes have no controlling terminal (outer: a parent holding a PTY)", () => {
   it("runs the checks in a process whose controlling terminal is a PTY", () => {
     const run = spawnSync("python3", ["-c", PTY_PARENT, process.execPath, join(root, "node_modules/vitest/vitest.mjs"), "run", here], {
+      windowsHide: true,
       cwd: root,
       env: { ...process.env, LAUNCH_NO_TTY_INNER: "1", NO_COLOR: "1", FORCE_COLOR: "0" },
       encoding: "utf8",
@@ -89,12 +90,12 @@ describe.skipIf(!posix || !INNER)("engine processes have no controlling terminal
     desc: readFileSync(join(dir, `${out}.desc`), "utf8").trim(),
   });
   // getsid(2) through python3: BSD ps (macOS) has no `sid` keyword, and node does not expose getsid
-  const parentSid = () => execFileSync("python3", ["-c", "import os,sys; print(os.getsid(int(sys.argv[1])))", String(process.pid)], { encoding: "utf8" }).trim();
+  const parentSid = () => execFileSync("python3", ["-c", "import os,sys; print(os.getsid(int(sys.argv[1])))", String(process.pid)], { windowsHide: true, encoding: "utf8" }).trim();
   const closed = (child: { once: (event: "close", fn: () => void) => unknown }) => new Promise<void>((resolve) => { child.once("close", () => resolve()); });
 
   it("the fixture can see a terminal: the parent and a raw spawn without detached open /dev/tty", async () => {
     closeSync(openSync("/dev/tty", "r+"));
-    const child = spawn(engine, [], { env: env("control"), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(engine, [], { windowsHide: true, env: env("control"), stdio: ["pipe", "pipe", "pipe"] });
     child.stdin.end();
     await closed(child);
     const seen = result("control");

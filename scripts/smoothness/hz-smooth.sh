@@ -14,6 +14,11 @@
 # between attempts), never prune. Preserve the previous run before the upload and remote driver script.
 # SSH_JUMP=<host> routes both through a jump host (e.g. build-host) when the direct path is flaky.
 set -euo pipefail
+# CI runs locally inside its isolated build host job container. No SSH, data copy or login.
+if [[ "${1:-}" == --nightly-real-engine ]]; then
+  shift
+  exec node scripts/smoothness/real-engine.mjs "$@"
+fi
 (( $# >= 2 )) || exit 4
 RIG_HOST=${RIG_HOST:-root@178.104.176.107}
 label=${1:?label}; commit=${2:?commit}; mode=${3:-idle}; (( $# >= 3 )) && shift 3 || shift 2

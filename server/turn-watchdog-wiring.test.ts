@@ -12,16 +12,14 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { fixtureFunctionSource } from "./testing/runtime-source-fixture.ts";
 
 // A Windows checkout has CRLF line endings; the patterns below are written with LF.
 const SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8").replace(/\r\n/g, "\n");
 
 /** The text of one top-level `function name(` or `async function name(`. */
 function fn(name: string): string {
-  const start = SOURCE.search(new RegExp(`\\n(?:async )?function ${name}\\s*[<(]`));
-  expect(start, `${name} exists`).toBeGreaterThan(-1);
-  const next = SOURCE.slice(start + 1).search(/\n(?:async )?function |\nconst |\nclass /);
-  return SOURCE.slice(start, next === -1 ? undefined : start + 1 + next);
+  return fixtureFunctionSource(SOURCE, name === "runGroupMemberTurn" ? "runGroupMemberTurnDispatch" : name);
 }
 
 describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
@@ -89,7 +87,9 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
   });
 
   it("exempts a person deciding: every request.opened, folder-trust cards included, holds the clock", () => {
-    expect(SOURCE).toContain('if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true, event.requestId);');
+    // MAIN RULING INT-CONFLICT-DEFAULT 1b4f75f181 / 1bdf426716c: pin the execution subscriber and its complete dispatcher; the wait wrapper retains the same generation/request watchdog call.
+    expect(SOURCE).toContain('if (event.type === "request.opened") setWaitingOnHuman(event.threadId, true, event.requestId);');
+    expect(fn("setWaitingOnHuman")).toContain("watchdog.setWaitingOnHuman(threadId, waiting, requestId);");
     expect(SOURCE).toContain('else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false, event.requestId);');
     // an image approval card is keyed by its own request id too
     expect(SOURCE).toContain("watchdog.setWaitingOnHuman(threadId, waiting, requestId);");
@@ -113,7 +113,7 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     const latch = body.indexOf("unregisterSetupStall = roomStallCompletions.register(threadId, () => { setupStalled = true; });");
     const watch = body.indexOf("watchdog.watch(threadId, bot.id, { generation: internalGeneration, setup: true });");
     const honoured = body.indexOf("if (setupStalled) {");
-    const outcome = body.indexOf("const outcome = await new Promise<GroupMemberTurnOutcome>");
+    const outcome = body.indexOf("let outcome = await new Promise<GroupMemberTurnOutcome>");
     const swap = body.indexOf("unregisterSetupStall();\n    unregisterStall = roomStallCompletions.register(");
     expect(claim).toBeGreaterThan(-1);
     expect(latch).toBeGreaterThan(claim);

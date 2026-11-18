@@ -376,11 +376,17 @@ describe("the keep-all repair, sliced (ALL.eld250)", () => {
       const events: string[] = [];
       let paused!: () => void;
       const atPause = new Promise<void>(resolve => { paused = resolve; });
-      // every commit is held, so the repair sits in its retry pause (a long one: only the stop latch ends it)
-      const exec = vi.spyOn(db, "exec").mockImplementation((sql: string) => { if (sql === "COMMIT") { events.push("commit-try"); throw Object.assign(new Error("database is locked"), { errcode: 5 }); } return realExec(sql); });
+      let repairing = false;
+      // Every repair commit is held. The independent search reset (5d5a791f19) must not be faulted or counted here.
+      // The repair sits in its retry pause (a long one: only the stop latch ends it)
+      const exec = vi.spyOn(db, "exec").mockImplementation((sql: string) => { if (sql === "COMMIT" && repairing) { repairing = false; events.push("commit-try"); throw Object.assign(new Error("database is locked"), { errcode: 5 }); } return realExec(sql); });
       const gate = createKeepAllRepairGate(false);
-      const r = run(s, new Set([bot.threadId, other.threadId]), { firstPauseMs: 60_000, writerGate: () => { if (events.includes("commit-try")) setTimeout(paused, 20); return Promise.resolve(); } }, gate);
+      const r = run(s, new Set([bot.threadId, other.threadId]), { begin: (db, op) => { dbBusy.beginBackground(db, op); repairing = true; }, firstPauseMs: 60_000, writerGate: () => { if (events.includes("commit-try")) setTimeout(paused, 20); return Promise.resolve(); } }, gate);
       await atPause;
+      // An unrelated serving transaction during the pause must neither receive the repair's fault nor inflate its attempts.
+      expect(repairing).toBe(false);
+      expect(() => { db.exec("BEGIN"); db.exec("COMMIT"); }).not.toThrow();
+      expect(events.filter(e => e === "commit-try")).toHaveLength(1);
       void gate.done.then(outcome => events.push(`done:${outcome}`));
       // the runner's wake is registered behind the repair (B7): no wake may follow stop() (Astra F1)
       const wake = vi.fn();

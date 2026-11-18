@@ -31,13 +31,15 @@ export function resultBoundToHandoff(message: (id: string) => Row | undefined, o
 }
 
 /** The gate's `ownUnsharedWork` question, answered from the live records, as a proof of who the reader is (SL-E r3 section 10): the owner, when
- * both sides are the owner's own unshared conversations and, when the result has an original, that original answers a hand-off this very
+ * the target is the owner's own unshared conversation and the source is unshared or proven owner No limits. When the result has an original, it answers a hand-off this very
  * conversation started. A person (SL-E E2), when the reader, the live principal of the destination conversation, is that of both sides and both
  * are its own unshared conversations (`isSamePersonUnsharedPair`, read live), with the same proof that the original answers this hand-off; the
  * proof carries that principal and nothing else, so it is the only source of the scopes the memory rules compare with. Anything else: false. */
 export function ownUnsharedWorkCheck<Bot>(env: {
   bot: (id: string) => Bot | undefined;
   isOwnUnsharedThread: (bot: Bot | undefined, threadId: string) => boolean;
+  /** Owner No limits may start a direct hand-off from another owned partition. */
+  isOwnerNoLimitsSource?: (bot: Bot | undefined, threadId: string) => boolean;
   isSamePersonUnsharedPair?: (reader: HumanPrincipal, from: Bot | undefined, fromThreadId: string, target: Bot | undefined, originThreadId?: string) => boolean;
   /** The live principal of a conversation (human-principals.ts threadHumanPrincipal). */
   principal?: (threadId: string) => HumanPrincipal;
@@ -45,7 +47,7 @@ export function ownUnsharedWorkCheck<Bot>(env: {
 }): (who: { fromBotId: string; toBotId: string; fromThreadId: string }, origin: { threadId: string; messageIds: readonly string[] } | undefined) => OwnUnsharedProof {
   return (who, origin) => {
     const from = env.bot(who.fromBotId), target = env.bot(who.toBotId);
-    if (target !== undefined && env.isOwnUnsharedThread(from, who.fromThreadId)
+    if (target !== undefined && (env.isOwnUnsharedThread(from, who.fromThreadId) || env.isOwnerNoLimitsSource?.(from, who.fromThreadId))
       && (origin === undefined || env.isOwnUnsharedThread(target, origin.threadId) && resultBoundToHandoff(id => env.message(origin.threadId, id), origin, who.fromThreadId))) return { reader: "owner" };
     if (target === undefined || !env.isSamePersonUnsharedPair || !env.principal) return false;
     let reader: HumanPrincipal;

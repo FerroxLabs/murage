@@ -71,7 +71,7 @@ async function measuredRoomTurn(room: Room, text: string) {
 }
 
 beforeAll(async () => {
-  fixture = await launchVerificationServer({}, undefined, { instrumentationSource: countingInstrumentation(STORE) });
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: countingInstrumentation(STORE) });
   await authHeaders();
   model = (await api("GET", "/api/instances")).body.instances.find((instance: any) => instance.instanceId === "verification").models.options[0].id;
 }, 60_000);

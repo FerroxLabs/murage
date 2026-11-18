@@ -54,9 +54,15 @@ describe("turn-refusal structure", () => {
       return codex.slice(at).split("\n").slice(1).filter((line) => !line.trim().startsWith("//")).slice(0, count).join("\n");
     };
     expect(firstLines("const onPreTool = async (delivery: HookDelivery): Promise<HookAnswer> => {", 1)).toMatch(/refusal\./);
-    expect(firstLines("const handleServerRequest = (msg: any) => {", 1)).toMatch(/refusal\./);
+    // MAIN RULING INT-CONFLICT-DEFAULT 628bc2fabe / 3c16dea6070 / eb01447e7d: async posture wait retains refusal before normal request handling; only fixed cancellation precedes it.
+    const handler = codex.slice(codex.indexOf("const handleServerRequest = async (msg: any) => {"));
+    const refused = handler.indexOf("if (refusal.refused || stopRequested) return cancelNativeRequest();");
+    expect(refused).toBeGreaterThan(0);
+    expect(refused).toBeLessThan(handler.indexOf("const method = msg.method as string;"));
+    expect(handler.slice(0, refused)).toContain("...idleRefusal(String(msg.method))");
     // CLOSE-STOP-1014 puts the stop-end line first; stopWins is false on a refused turn, so the refusal still settles before a clean end
-    expect(firstLines("const settle = async (ok: boolean, stopReason: string | null): Promise<void> => {", 4)).toMatch(/refusal\.refused/);
+    // MAIN RULING INT-CONFLICT-DEFAULT 628bc2fabe / 95013190afb: retain the optional terminal provenance argument while checking refusal in the first four statements.
+    expect(firstLines('const settle = async (ok: boolean, stopReason: string | null, terminalSite?: "turn_completed" | "held_done"): Promise<void> => {', 4)).toMatch(/refusal\.refused/);
     expect(firstLines('case "item/started": {', 2)).toMatch(/refusal\.noteStarted\(\)/);
     // every card's finish turns a late allow into a deny before anything else
     const finishes = [...codex.matchAll(/const finish: AskFinish = \([^)]*\) => \{\n(.*)\n/g)];
@@ -80,7 +86,8 @@ describe("turn-refusal structure", () => {
     expect(body.match(/clearTimeout\(/g)).toHaveLength(1);
     // the bound starts before the turn/start request is written, with nothing awaited between them
     const started = code.indexOf('if (hookGate && !refusal.hookLive && (method === "turn/start" || method === "review/start")) void proveLiveness();');
-    const sent = code.indexOf("await gate.step(entry, gate.launch(entry, () => request(method, commandParams", started);
+    // MAIN RULING INT-CONFLICT-DEFAULT 628bc2fabe / b2c9cd39c07: the synchronous connected writer owns the frame; keep the no-await liveness ordering at that actual write.
+    const sent = code.indexOf("return (issued.frame = request(method, registerBusyloopRequestSite", started);
     expect(started).toBeGreaterThan(0);
     expect(sent).toBeGreaterThan(started);
     expect(code.slice(started, sent).split("\n").slice(1).join("\n")).not.toMatch(/\bawait\b/);

@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Chromium's Windows AppContainer needs RX on the shipped browser binaries.
 // This grants no write access and never changes the sandbox or a user profile.
 // No PowerShell (murage-releases #1): the folder's ACLs are read with icacls /save /T (SDDL, by SID: shared/windows-sddl.mjs) and,
@@ -34,7 +35,7 @@ export function appContainerCanRead(saved: Uint8Array): boolean {
   }));
 }
 type Run = (file: string, args: string[]) => Promise<boolean>;
-const runTool: Run = (file, args) => new Promise(done => execFile(file, args, { windowsHide: true, timeout: 20_000, maxBuffer: 64 * 1024 }, error => done(!error)));
+const runTool: Run = (file, args) => new Promise(done => execFile(file, [...args], { windowsHide: true, timeout: 20_000, maxBuffer: 64 * 1024 }, error => done(!error)));
 /** Reads the folder's ACLs and grants the AppContainer RX only when one is missing. `run` and `read` are test seams. */
 export async function grantAppContainerRead(chromeDirectory: string, systemRoot: string | undefined, run: Run = runTool, read: (file: string) => Uint8Array = readFileSync): Promise<void> {
   const icacls = join(systemRoot && /^[A-Za-z]:\\[^"\x00-\x1f]*$/.test(systemRoot) ? systemRoot : "C:\\Windows", "System32", "icacls.exe");
@@ -127,9 +128,9 @@ const runChromeProbe: ChromeProbeRun = (chrome) => new Promise((done) => {
     done({ failed, stderr });
   };
   try {
-    execFile(chrome, ["--headless", `--user-data-dir=${profile}`, "--no-first-run", "--disable-gpu", "--dump-dom", "about:blank"], {
+    execFile(chrome, ["--headless", `--user-data-dir=${profile}`, "--no-first-run", "--disable-gpu", "--dump-dom", "about:blank"], withHideInherit({
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: profile }, timeout: 20_000, killSignal: "SIGKILL", maxBuffer: 1 << 20, windowsHide: true,
-    }, (error, _stdout, stderr) => finish(!!error, String(stderr)));
+    }), (error, _stdout, stderr) => finish(!!error, String(stderr)));
   } catch (error) { finish(true, String(error)); }
 });
 

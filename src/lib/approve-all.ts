@@ -30,7 +30,8 @@ export function previewBody(screen: PreviewScreen | undefined): string {
 /** The Inbox views that offer Approve all: Approvals, and Needs you (`decisions`, the default tab; Sean 11-06: three
  *  approval rows and no Approve all). Elsewhere null. APPROVALS-SIMPLE-1018 section 3 (Astra r1 H4): the count is the
  *  rows ON SCREEN the server stamped `bulk: "ok"` (the same verdict the preview and respond run), never the page's
- *  approval count, so the button never says a number it would not approve. Under 2 it stays away. */
+ *  approval count, so the button never says a number it would not approve. Whether the button is on screen is a different
+ *  question (NOLIM-1019 N3, shared/approve-all-counts.ts): two waiting approvals show it, eligible or not. */
 export function approveAllHint(view: string, shown: ReadonlyArray<{ kind?: string; bulk?: string }>): number | null {
   if (view !== "approvals" && view !== "decisions") return null;
   return shown.filter((item) => item.kind === "request" && item.bulk === "ok").length;
@@ -53,6 +54,30 @@ export function boundToScreen(preview: ApproveAllPreview, shownKeys: readonly st
   const shown = new Set(shownKeys);
   const cards = preview.eligible.filter((card) => shown.has(keyOf(card)));
   return cards.length ? { at: "cards", cards } : { at: "none" };
+}
+
+/** NOLIM-1019 Rev 3.3, the chat thread: the thread shows its own waiting cards, not the Inbox rows, so it does not know
+ *  which of them can go in bulk. A press asks the server for a thread preview of the cards the chat shows and answers the
+ *  ones it lists as eligible (`boundToThread`, shared/approve-all-thread.ts); a card it leaves out (a wipe, another
+ *  person's, a legacy card with no class) stays for its own Allow, and nothing it does not list is ever answered. */
+export { THREAD_WINDOW, applyRefusalMeansChanged, boundToThread, chatRequestKey, judgeThreadWindow, noEligibleOutcome, requestIdOfKey, threadPreviewBody, threadWindows, type ThreadBound } from "../../shared/approve-all-thread";
+
+/** `eligible` and `excluded` are full entries; `later` (past the cap, not batched) and `closed` (no longer waiting) name
+ *  the card and its stored message id only. */
+export interface ThreadRef { threadId: string; requestId: string; messageId?: string | null }
+export interface ThreadPreview { scope: "thread"; threadId: string; batchId: string | null; eligible: EligibleCard[]; later: ThreadRef[]; excluded: ExcludedCard[]; closed: ThreadRef[]; deviceId?: string }
+/** The preview as the phone sheet and the apply read it: the cards past the cap are its "more". Same card objects. */
+export function threadAsPreview(preview: ThreadPreview, windowsRemain: boolean): ApproveAllPreview {
+  return { batchId: preview.batchId, eligible: preview.eligible, excluded: preview.excluded, more: preview.later.length + (windowsRemain ? 1 : 0), ...(preview.deviceId ? { deviceId: preview.deviceId } : {}) };
+}
+
+/** What a chat press adds under its result line: the cards that wait for their own Allow, and a nudge when more of the
+ *  shown cards are still to come (past the cap, or in a later window). */
+export function threadResultNotes(excluded: number, more: boolean): string {
+  const parts: string[] = [];
+  if (excluded > 0) parts.push(t(`approveAll.result.ownAllow.${plural(excluded)}` as LocaleKey, { rest: excluded }));
+  if (more) parts.push(t("approveAll.result.more"));
+  return parts.join(" ");
 }
 
 /** Section 3b: a result line stays while the list only loses rows it was pressed over (the apply answering them);

@@ -1,7 +1,8 @@
+import "../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The event-log prune's forgotten-message lookup: large transcript columns and SQLite waits stay on this thread. The main database is
 // opened read-only; every page is two keyed statements of at most 200 rows (event-log.ts forgottenTextsReader).
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-open.ts";
 import { parentPort, workerData } from "node:worker_threads";
 import { forgottenTextsReader } from "./harness/event-log.ts";
 import type { TranscriptReadRequest } from "./transcript-read.ts";

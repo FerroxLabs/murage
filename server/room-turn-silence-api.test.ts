@@ -15,6 +15,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
+import { fixtureDisplayApi } from "./testing/display-fixture.ts";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 const SPEED = 120;
@@ -22,11 +24,12 @@ const SPEED = 120;
 const sim = (minutes: number) => minutes * 60_000 / SPEED;
 let fixture: VerificationServer;
 let headers: Record<string, string>;
-const api = async (method: string, path: string, body?: unknown) => {
+// MAIN RULING INT-CONFLICT-DEFAULT: use the observed opaque approval controls while retaining every answer-time and silence assertion.
+const api = fixtureDisplayApi(() => join(fixture.info.dataDir, "messages.db"), async (method: string, path: string, body?: unknown) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { ...headers, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await response.text();
   return { status: response.status, body: (text ? JSON.parse(text) : {}) as any };
-};
+});
 const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
 const stopLines = async (threadId: string) => (await messages(threadId))
   .map((message) => String(message.tool?.name ?? ""))
@@ -34,7 +37,7 @@ const stopLines = async (threadId: string) => (await messages(threadId))
 const roomBusy = async (groupId: string) => (await api("GET", "/api/bots?messages=0")).body.groups.find((group: any) => group.id === groupId)?.busyBotId ?? null;
 
 beforeAll(async () => {
-  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
     const fs=await import('node:fs');const path=await import('node:path');
     const SPEED=${SPEED};const t0=Date.now();
     const {TurnWatchdog}=await import(${JSON.stringify(pathToFileURL(join(serverDir, "turn-watchdog.ts")).href)});

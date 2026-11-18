@@ -11,6 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const FAKE_PI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-pi-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -27,7 +28,7 @@ const prompts = (): string[] => {
 
 posixOnly("a room turn from words nobody proved are the owner's", () => {
   beforeAll(async () => {
-    fixture = await launchVerificationServer(process.env, undefined, { portRange: { from: 47_000, span: 900 }, instrumentationSource: `
+    fixture = await launchVerificationServer(process.env, undefined, { portRange: { from: 47_000, span: 900 }, instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       cfg.instances.piDump={driver:'piAgent',displayName:'Recording pi fixture',config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true},

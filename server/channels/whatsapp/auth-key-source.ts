@@ -6,7 +6,8 @@
 // MURAGE_WHATSAPP_AUTH_KEY, else a 0600 file created exactly like the browser engine's key. Nothing here logs a key,
 // and an existing key is never regenerated. An auth dir with no key file is `key-missing`: no second key is minted
 // beside an existing session.
-import { constants, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../../counted-fs.ts";
+import { constants, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { AuthKeyUnavailable, parentPortKeyProvider, validAuthKey, type AuthKeyProvider, type KeyPort } from "./auth-key.ts";

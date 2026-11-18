@@ -5,7 +5,7 @@
 // string helpers the lint (src/locales/copy-final.test.ts), the generator (scripts/generate-locale.mjs) and the
 // review CLI (scripts/copy-review.mjs) use. Plain ESM; no renderer code imports it.
 //
-//   Main partition = keys of src/locales/en.json + every src/locales/en-ux/*.json (boot English is main only).
+//   Main partition = keys of src/locales/en.json + every src/locales/en-ux/*.json + every src/locales/en-settings/*.json (the lazy Settings pack; boot English is en.json and en-ux only).
 //     Packs: src/locales/<code>.json, accepted in src/locales/source-hashes.json.
 //   Help partition = keys of every src/locales/en-help/*.json. The partition is by FILE, not by key prefix.
 //     Packs: src/locales/help/<code>.json, accepted in src/locales/help/source-hashes.json.
@@ -20,6 +20,7 @@ export const LOCALES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "
 export const PACK_CODES = Object.freeze(["de", "es", "fr", "hi", "ja", "pt-br", "zh"]);
 export const MAIN_SOURCE_FILE = "en.json";
 export const MAIN_FRAGMENT_DIR = "en-ux";
+export const MAIN_LAZY_DIR = "en-settings";
 export const HELP_SOURCE_DIR = "en-help";
 export const HELP_PACK_DIR = "help";
 export const SOURCE_HASH_FILE = "source-hashes.json";
@@ -85,6 +86,15 @@ export function readPartitions(dir = LOCALES_DIR) {
   mainFiles.push(MAIN_SOURCE_FILE);
   const enMain = readCatalogueFile(join(dir, MAIN_SOURCE_FILE), MAIN_SOURCE_FILE, problems);
   const main = Object.assign({}, ...fragments, enMain);
+  // 1.0.19 slice P: the lazy Settings pack (src/locales/en-settings) is main-partition English that the first paint never loads.
+  for (const file of jsonFiles(join(dir, MAIN_LAZY_DIR))) {
+    const label = `${MAIN_LAZY_DIR}/${file}`;
+    mainFiles.push(label);
+    for (const [key, value] of Object.entries(readCatalogueFile(join(dir, MAIN_LAZY_DIR, file), label, problems))) {
+      if (Object.hasOwn(main, key)) problems.push(`${label}: ${key}: already in en.json or an en-ux fragment`);
+      else main[key] = value;
+    }
+  }
   const help = {};
   const helpFileOf = {};
   for (const file of jsonFiles(join(dir, HELP_SOURCE_DIR))) {

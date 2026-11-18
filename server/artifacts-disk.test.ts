@@ -2,17 +2,19 @@
 // 1.0.3 (ATTACHMENT-CAP-DESIGN.md): Files keeps copies until the disk is
 // nearly full, by the same rule as attachments, instead of a fixed 512 MiB
 // and 10,000 files. A crash-left `.candidate-*` copy is cleared at start-up.
-import { closeSync, existsSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, readdirSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 
-vi.mock("node:fs", async (importOriginal) => {
-  const fs = await importOriginal<typeof import("node:fs")>();
+vi.mock("./counted-fs.ts", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("./counted-fs.ts")>();
   return { ...fs, writeFileSync: vi.fn(fs.writeFileSync) };
 });
 const realWriteFileSync = (await vi.importActual<typeof import("node:fs")>("node:fs")).writeFileSync;
+const { writeFileSync } = await import("./counted-fs.ts");
+const countedWriteFileSync = (await vi.importActual<typeof import("./counted-fs.ts")>("./counted-fs.ts")).writeFileSync;
 // The test setup loads artifacts.ts (through the message store) before this
 // file's mock applies; a fresh registry gives this file the mocked copy.
 vi.resetModules();
@@ -26,7 +28,7 @@ const { DISK_FULL_MESSAGE, DISK_UNKNOWN_MESSAGE } = await import("../shared/atta
 const PLENTY = 200 * 1024 * 1024 * 1024;
 const roots: string[] = [], databases: DatabaseSync[] = [];
 afterEach(() => {
-  vi.mocked(writeFileSync).mockReset().mockImplementation(realWriteFileSync);
+  vi.mocked(writeFileSync).mockReset().mockImplementation(countedWriteFileSync);
   __setFreeDiskProbeForTests(undefined);
   __resetOutstandingBytesForTests();
   for (const db of databases.splice(0)) { try { db.close(); } catch {} }
@@ -81,9 +83,10 @@ it("refuses when the free space cannot be read", () => {
 it("answers a copy that runs out of disk (ENOSPC) with the disk-full refusal and leaves no candidate", () => {
   const f = fixture();
   __setFreeDiskProbeForTests(() => PLENTY);
-  vi.mocked(writeFileSync).mockImplementationOnce(() => { throw Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" }); });
+  const failedWrite = vi.mocked(writeFileSync).mockImplementationOnce(() => { throw Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" }); });
   let refusal: unknown;
   try { registerArtifact(f.db, f.storage, f.input, f.access); } catch (error) { refusal = error; }
+  expect(failedWrite).toHaveBeenCalledOnce();
   expect(refusal).toMatchObject({ status: 507, reason: "disk-full", message: DISK_FULL_MESSAGE });
   expect(candidates(f.storage)).toEqual([]);
 });

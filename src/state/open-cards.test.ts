@@ -31,6 +31,16 @@ const switched = (extra: object): AppState =>
   reducer({ ...initialState, bots: [bot()] }, { type: "taskSwitched", source: "local", bot: bot({ activeLeafId: "m6", hasMore: true, ...extra }) });
 const approvalsOf = (b: Bot) => pendingApprovals(olderOpenCards(b, visibleMessages(b))).map((p) => p.message.id);
 
+it.each([
+  {cardClass:{reason:'question',unattended:false,automated:false,keys:[]}},
+  {questions:[{id:'q1',question:'Which format?',options:[],multiSelect:false,allowOther:true}]},
+])('a native question with its tool origin stays out of the approval panel: %j', extra => {
+  const question=card('native-question',1,{tool:'request_user_input',...extra});
+  expect(openQuestions([question])).toEqual([question]);
+  expect(pendingApprovals([question])).toEqual([]);
+  expect(openQuestions([card('answered',2,{...question.card,answered:'answer'})])).toEqual([]);
+});
+
 describe("old open cards beside the page", () => {
   it("P1: the composer still counts a card separated from the page by unloaded rows", () => {
     const state = switched({ messages: [message("m5", 5), message("m6", 6)], openCards: [card("c1", 1)] });

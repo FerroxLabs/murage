@@ -12,8 +12,10 @@ import { appendMessage } from "../message-db.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
-import { catchUpRecentMemory } from "./recent.ts";
+import { reconcileMemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
+
+import { fixtureCatchUpRecentMemory as catchUpRecentMemory } from "../testing/recall-access-fixture.ts";
 import { recallHydrationLimitMs, searchMemory } from "./search.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 

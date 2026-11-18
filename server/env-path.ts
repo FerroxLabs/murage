@@ -1,3 +1,5 @@
+import "../shared/win-hide-child-process.mjs";
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // PATH augmentation for GUI launches — the fix for "CLI not found" when
 // the app is opened from Finder (issues #8, #12).
 //
@@ -11,10 +13,45 @@
 // real login shell reports.
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { accessSync, chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, readdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { accessSync, chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, readdirSync } from "node:fs";
 import { CAPTURE_BYTES, CAPTURE_MS } from "../shared/scan-limits.ts";
 import { homedir, userInfo } from "node:os";
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, posix, win32 } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** Runtime sibling, copied beside every bundle that contains this module. */
+export function wipeGuardShimDirectory(): string {
+  return join(wipeGuardRuntimeDirectory(), "shim");
+}
+
+export function wipeGuardRuntimeDirectory(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "wipe-guard");
+}
+
+/** Overlay only an explicitly issued turn guard. Never inherit another turn's
+ * guard from the server, a login capture, or an instance's saved environment. */
+export function wipeGuardEnvironment(
+  source: NodeJS.ProcessEnv, guardFile?: string, platform: NodeJS.Platform = process.platform,
+  shim = wipeGuardShimDirectory(),
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...source };
+  for (const name of Object.keys(env)) {
+    if ((platform === "win32" ? name.toUpperCase() : name) === "MURAGE_WIPE_GUARD") delete env[name];
+  }
+  if (!guardFile) return env;
+  const separator = platform === "win32" ? ";" : ":";
+  const pathName = Object.keys(env).sort().find(name => platform === "win32" ? name.toUpperCase() === "PATH" : name === "PATH");
+  const path = pathName ? env[pathName] ?? "" : "";
+  // Windows environment names are case insensitive; Node must receive one spelling.
+  if (platform === "win32") for (const name of Object.keys(env)) if (name.toUpperCase() === "PATH") delete env[name];
+  const same = (part: string) => platform === "win32"
+    ? part.replace(/\\/g, "/").toLowerCase() === shim.replace(/\\/g, "/").toLowerCase()
+    : part === shim;
+  env.PATH = [shim, ...path.split(separator).filter(part => !same(part))].join(separator);
+  env.MURAGE_WIPE_GUARD = platform === "win32" ? guardFile.replace(/\\/g, "/") : guardFile;
+  return env;
+}
 
 /** nvm keeps every node version's bin dir separately; newest first so a
  * CLI installed under the latest node wins. */
@@ -59,6 +96,19 @@ function knownDirs(): string[] {
     join(home, ".deno", "bin"),
     join(home, "bin"),
     ...nvmBinDirs(),
+    // X3 r4.5 A2: fallback folders the bot shell would otherwise lose with the snapshot (appended only when they exist and
+    // are missing, after every handed entry, so they fill gaps and never shadow anything)
+    join(home, ".cargo", "bin"),
+    join(home, ".pyenv", "shims"),
+    join(home, ".pyenv", "bin"),
+    join(home, ".rbenv", "shims"),
+    join(home, ".rbenv", "bin"),
+    join(home, "go", "bin"),
+    join(home, "miniconda3", "bin"),
+    join(home, "anaconda3", "bin"),
+    join(home, "miniforge3", "bin"),
+    "/home/linuxbrew/.linuxbrew/bin",
+    "/opt/homebrew/sbin",
   ];
 }
 
@@ -86,6 +136,14 @@ function windowsKnownDirs(): string[] {
     join(home, ".bun", "bin"),
     join(home, ".deno", "bin"),
     join(home, "go", "bin"),
+    // X3 r4.5 A2
+    join(home, ".cargo", "bin"),
+    join(home, ".pyenv", "pyenv-win", "shims"),
+    join(home, ".pyenv", "pyenv-win", "bin"),
+    join(home, ".rbenv", "shims"),
+    join(home, ".rbenv", "bin"),
+    ...["miniconda3", "anaconda3", "miniforge3"].flatMap((root) => [join(home, root), join(home, root, "Scripts"), join(home, root, "Library", "bin")]),
+    join(home, "scoop", "shims"),
   ];
 }
 
@@ -356,7 +414,7 @@ function runCapture(shell: string): Promise<{ env: Record<string, string> } | { 
   if (process.platform === "win32") {
     // reached only with a named shell (tests): Windows has no terminal job control, and detached would open a console
     return new Promise((resolve) => {
-      const child = execFile(shell, ["-l", "-i", "-c", script], { timeout: CAPTURE_MS, maxBuffer: CAPTURE_BYTES, encoding: "utf8", env }, (error, stdout) => {
+      const child = execFile(shell, ["-l", "-i", "-c", script], withHideInherit({ timeout: CAPTURE_MS, maxBuffer: CAPTURE_BYTES, encoding: "utf8", env }), (error, stdout) => {
         if (error) return resolve({ cause: error.killed ? "it took too long" : `the shell exited with ${String((error as { code?: unknown }).code ?? "an error")}` });
         const read = readCapture(stdout, mark);
         resolve(read ? { env: read } : { cause: "its output could not be read whole" });
@@ -387,7 +445,7 @@ function runCapture(shell: string): Promise<{ env: Record<string, string> } | { 
     };
     const timer = setTimeout(() => { killGroup(); settle({ cause: "it took too long" }); }, CAPTURE_MS);
     try {
-      child = spawn(shell, ["-l", "-i", "-c", script], { detached: true, stdio: ["ignore", "pipe", "pipe"], env });
+      child = spawn(shell, ["-l", "-i", "-c", script], withHideInherit({ detached: true, stdio: ["ignore", "pipe", "pipe"], env }));
     } catch (error) {
       settle({ cause: `the shell exited with ${String((error as { code?: unknown }).code ?? "an error")}` });
       return;
@@ -871,9 +929,9 @@ function fuigoVersion(binary: string): number[] | null {
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     // An engine probe (Rule 74c launch clause): posix, a session of its own, so neither the binary nor a descendant has
     // a controlling terminal; win32, a hidden console, never detached. stdin is a pipe closed at once.
-    const result = spawnSync(absolute, ["--version"], {
+    const result = spawnSync(absolute, ["--version"], withHideInherit({
       env, encoding: "utf8", timeout: 3000, windowsHide: true, maxBuffer: 16 * 1024, input: "", stdio: ["pipe", "pipe", "pipe"], ...(process.platform === "win32" ? {} : { detached: true }),
-    });
+    }));
     const match = !result.error && result.status === 0
       ? /\bfuigo\s+(\d+)\.(\d+)\.(\d+)\b/i.exec(`${result.stdout}\n${result.stderr}`)
       : null;

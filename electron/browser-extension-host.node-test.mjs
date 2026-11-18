@@ -76,7 +76,7 @@ test('config rejects public mode, symlink and unsupported Windows ownership', ()
 });
 
 test('standalone entrypoint stdout contains exactly one framed safe error', () => {
-  const child = spawnSync(process.execPath, [fileURLToPath(new URL('./browser-extension-host-entry.mjs', import.meta.url)), '/missing-fixture-only/config.json']);
+  const child = spawnSync(process.execPath, [fileURLToPath(new URL('./browser-extension-host-entry.mjs', import.meta.url)), '/missing-fixture-only/config.json'], { windowsHide: true });
   assert.equal(child.status, 0); assert.equal(child.stderr.length, 0);
   const messages = []; const decoder = new FrameDecoder(value => messages.push(value)); decoder.push(child.stdout); decoder.end();
   assert.equal(messages.length, 1); assert.equal(messages[0].error.code, 'host_unavailable');

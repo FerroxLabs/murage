@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
-import { InAdvanced } from "./SettingsPrimitives";
+import { HowThisWorks, InAdvanced, SetInAdvancedButton, SetupArea } from "./SettingsPrimitives";
+import type { SettingsMode } from "@/lib/settings-mode";
 import { copyTextOrThrow } from "@/lib/copy-text";
 
 export interface SlackStatus {
@@ -36,18 +37,18 @@ export function slackHealth(status: SlackStatus | null, expired = false) {
   if (expired) return "Pairing code expired";
   if (status.state === "pairing") return "Waiting for your Slack message";
   if (status.paired) return "Pairing saved · receiver offline";
-  return status.configured ? "Credentials saved · not paired" : "Save your Slack credentials";
+  return status.configured ? "Keys saved · not paired yet" : "Not set up";
 }
 export function slackHelp(code: string | null) {
   if (!code) return null;
   const messages: Record<string, string> = {
     "chief-changed": "Your Chief changed. Revoke this connection, then pair with the current Chief.",
-    "identity-mismatch": "The credentials do not match the saved app identity. Revoke the connection, then check your workspace and app before pairing again.",
+    "identity-mismatch": "The keys do not match the saved app identity. Revoke the connection, then check your workspace and app before pairing again.",
     "pair-required": "Pairing was not completed. Revoke the connection and create a new pairing code.",
     "revoke-recovery-required": "Slack is stopped, but revocation could not be saved. Restore access to the local connection data, then retry Revoke.",
     "connection-recovery-required": "The saved connection needs review. Check local data access before retrying or revoking it.",
     "retry-limit": "Automatic reconnect attempts stopped. Check your connection and Slack app access, then retry.",
-    "pairing-failed": "Pairing could not complete. Revoke the incomplete connection, then check both credentials and your Slack app settings.",
+    "pairing-failed": "Pairing could not complete. Revoke the incomplete connection, then check both keys and your Slack app settings.",
     "intake-failed": "A Slack message receipt could not be completed. Check the connection and local data access before sending it again.",
     "delivery-failed": "A reply needs review. Check Slack and the task in Murage before sending it again.",
     "transport-error": "Slack reported a connection problem. Check your app access and refresh status.",
@@ -59,7 +60,16 @@ export function slackHelp(code: string | null) {
 const inputClass = "mt-1 min-h-11 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:ring-2 focus-visible:ring-accent-border disabled:opacity-50";
 const buttonClass = "min-h-11 rounded-lg border border-hairline/40 px-3 py-2 text-[12px] text-ink hover:bg-control disabled:opacity-50";
 interface Pair { code: string; expiresAt: number }
-export function SlackSettings() {
+/** SIMPLE-COPY 1: the sentences Simple moves off the card, word for word (a to d). */
+export function SlackHowThisWorks() {
+  return <>
+    <p>Message your Chief from one approved Slack direct message. Keep Murage running to receive messages. Approvals stay in Murage.</p>
+    <p>Stored encrypted on this computer. Saved keys are never shown here; leave a saved key blank to keep it.</p>
+    <p>Use the IDs from your Slack app and your own member profile. Only this owner can pair and send messages to Chief.</p>
+    <p>Create a code, then send it to your Slack app in a direct message from the owner above. Saving keys does not start pairing.</p>
+  </>;
+}
+export function SlackSettings({ mode, arrivalAnchor }: { mode?: SettingsMode; arrivalAnchor?: string | null } = {}) {
   const [status, setStatus] = useState<SlackStatus | null>(null);
   const [appToken, setAppToken] = useState(""), [botToken, setBotToken] = useState("");
   const [identity, setIdentity] = useState({ teamId: "", appId: "", ownerUserId: "" });
@@ -82,9 +92,9 @@ export function SlackSettings() {
     catch {
       if (mounted.current && expected === version.current) {
         const errors: Record<string, string> = {
-          credentials: "Credentials could not all be saved. Refresh status to check which key was saved, then retry in Murage Desktop.",
+          credentials: "Keys could not all be saved. Refresh status to check which key was saved, then retry in the Murage desktop app.",
           identity: "Workspace details could not be saved. Check the three IDs and refresh status before retrying.",
-          pair: "Pairing could not start. Check that a Chief is selected and both credentials and workspace details are saved. Revoke any incomplete connection before trying again.",
+          pair: "Pairing could not start. Check that a Chief is selected and both keys and workspace details are saved. Revoke any incomplete connection before trying again.",
           copy: "The command could not be copied. Select the command below and copy it manually.",
           revoke: "Revocation could not complete. Refresh status and restore local data access before retrying Revoke.",
           resume: "Reconnect could not complete. Check your connection and Slack app access, then refresh status.",
@@ -123,42 +133,48 @@ export function SlackSettings() {
       if (appToken.trim()) await window.muragebox!.setCredential!("slackAppToken", appToken.trim());
       if (botToken.trim()) await window.muragebox!.setCredential!("slackBotToken", botToken.trim());
     } finally { setAppToken(""); setBotToken(""); }
-    await refresh(expected); if (mounted.current) setNotice("Credentials saved. Pairing has not started.");
+    await refresh(expected); if (mounted.current) setNotice("Keys saved. Pairing has not started.");
   });
   const saveIdentity = () => run("identity", async expected => {
     if (locked || !Object.values(identity).every(value => identityPattern.test(value))) throw new Error("Invalid identity");
     await api("/api/config", { method: "PATCH", body: JSON.stringify({ slack: identity }) }); dirty.current = false;
     await refresh(expected); if (mounted.current) setNotice("Workspace details saved. Pairing has not started.");
   });
-  return <section aria-labelledby="slack-settings-title" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="slack-settings-title" className="text-[15px] font-semibold text-ink">Slack</h3>
-    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief from one approved Slack direct message. Keep Murage running to receive messages. Approvals stay in Murage.</p>
+  // SIMPLE-COPY: no `mode` prop renders today's card (explanations inline, steps open). The Settings pages pass `mode`.
+  const piped = mode !== undefined;
+  const simple = mode === "simple";
+  const midSetup = Boolean(status && (status.configured || status.appConfigured || status.botConfigured) && !(status.paired && status.enabled)) || Boolean(pair) || expired;
+  const manageLabel = status && (status.configured || status.appConfigured || status.botConfigured) ? "Manage" : "Set up Slack";
+  return <section aria-labelledby="slack-settings-name" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="slack-settings-name"className="text-[15px] font-semibold text-ink">Slack</h3>
+    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{piped ? "Message your Chief from a Slack direct message." : "Message your Chief from one approved Slack direct message. Keep Murage running to receive messages. Approvals stay in Murage."}</p>
     <p role="status" className="mt-3 text-[12px] font-medium text-ink">{slackHealth(status, expired)}</p>
-    <InAdvanced><div id="slack-app-setup-heading" className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
+    <InAdvanced slot="slack-setup"><div className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
       <h4 className="text-[13px] font-medium text-ink">Private Slack app setup</h4>
       <p>Use a private app with Socket Mode enabled. The app-level token needs <code>connections:write</code>. The bot token needs <code>im:history</code> and <code>chat:write</code>, with the <code>message.im</code> event enabled. Add <code>files:write</code> too if you want voice notes sent here.</p>
       <a data-setting-control="slack-app-setup-heading" className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://api.slack.com/apps" target="_blank" rel="noreferrer">Open Slack app settings</a>
     </div></InAdvanced>
-    <h4 className="mt-4 text-[13px] font-medium text-ink">1. Save credentials securely</h4>
-    <p className="mt-1 text-[12px] text-ink-secondary">Stored encrypted on this computer. Saved keys are never shown here; leave a saved key blank to keep it.</p>
+    <SetupArea id="slack-setup-area" mode={mode ?? "advanced"} label={manageLabel} forceOpen={midSetup} controlAnchor="slack-settings-title" arrivalAnchor={arrivalAnchor}>
+    <h4 className="mt-4 text-[13px] font-medium text-ink">{simple ? "Save your app keys" : "1. Save your app keys"}</h4>
+    {!piped && <p className="mt-1 text-[12px] text-ink-secondary">Stored encrypted on this computer. Saved keys are never shown here; leave a saved key blank to keep it.</p>}
     <label className="mt-3 block text-[12px] text-ink-secondary">App-level token {status?.appConfigured && <span>(saved)</span>}
       <input name="slack-app-token" data-setting-control="slack-settings-title" type="password" autoComplete="off" spellCheck={false} maxLength={512} value={appToken} disabled={disabled || !secure} onChange={event => setAppToken(event.target.value)} className={inputClass} />
     </label>
     <label className="mt-3 block text-[12px] text-ink-secondary">Bot token {status?.botConfigured && <span>(saved)</span>}
       <input name="slack-bot-token" type="password" autoComplete="off" spellCheck={false} maxLength={512} value={botToken} disabled={disabled || !secure} onChange={event => setBotToken(event.target.value)} className={inputClass} />
     </label>
-    <button type="button" className={`${buttonClass} mt-3 bg-control`} disabled={disabled || !secure || (!appToken.trim() && !botToken.trim())} onClick={() => void saveCredentials()}>{busy === "credentials" ? "Saving credentials…" : "Save credentials"}</button>
-    {!secure && <p role="status" className="mt-2 text-[12px] text-warning">Secure storage is unavailable in this window. Open Channels in Murage Desktop to save credentials.</p>}
-    {locked && <p className="mt-2 text-[12px] text-ink-secondary">Revoke this connection before changing its credentials or owner.</p>}
-    <h4 className="mt-5 text-[13px] font-medium text-ink">2. Choose your workspace and owner</h4>
-    <p className="mt-1 text-[12px] text-ink-secondary">Use the IDs from your Slack app and your own member profile. Only this owner can pair and send messages to Chief.</p>
+    <button type="button" className={`${buttonClass} mt-3 bg-control`} disabled={disabled || !secure || (!appToken.trim() && !botToken.trim())} onClick={() => void saveCredentials()}>{busy === "credentials" ? "Saving keys…" : "Save keys"}</button>
+    {!secure && <p role="status" className="mt-2 text-[12px] text-warning">Saving keys needs the Murage desktop app.</p>}
+    {locked && <p className="mt-2 text-[12px] text-ink-secondary">Revoke this connection before changing its keys or owner.</p>}
+    <h4 className="mt-5 text-[13px] font-medium text-ink">{simple ? "Choose your workspace and owner" : "2. Choose your workspace and owner"}</h4>
+    {!piped && <p className="mt-1 text-[12px] text-ink-secondary">Use the IDs from your Slack app and your own member profile. Only this owner can pair and send messages to Chief.</p>}
     {([['teamId', 'Workspace ID'], ['appId', 'App ID'], ['ownerUserId', 'Owner member ID']] as const).map(([key, label]) => <label key={key} className="mt-3 block text-[12px] text-ink-secondary">{label}
       <input name={`slack-${key}`} autoComplete="off" spellCheck={false} maxLength={80} value={identity[key]} disabled={disabled || !status?.configured}
         onChange={event => { dirty.current = true; setIdentity(current => ({ ...current, [key]: event.target.value.trim() })); }} className={inputClass} />
     </label>)}
     <button type="button" className={`${buttonClass} mt-3`} disabled={disabled || !status?.configured || !Object.values(identity).every(value => identityPattern.test(value)) || !dirty.current} onClick={() => void saveIdentity()}>{busy === "identity" ? "Saving details…" : "Save workspace details"}</button>
-    <h4 className="mt-5 text-[13px] font-medium text-ink">3. Pair with Chief</h4>
-    <p className="mt-1 text-[12px] text-ink-secondary">Create a code, then send it to your Slack app in a direct message from the owner above. Saving credentials does not start pairing.</p>
+    <h4 className="mt-5 text-[13px] font-medium text-ink">{simple ? "Pair with Chief" : "3. Pair with Chief"}</h4>
+    {!piped && <p className="mt-1 text-[12px] text-ink-secondary">Create a code, then send it to your Slack app in a direct message from the owner above. Saving keys does not start pairing.</p>}
     <div className="mt-3 flex flex-wrap gap-2">
       <button type="button" className="min-h-11 rounded-lg bg-accent px-3 py-2 text-[12px] text-accent-ink hover:brightness-110 disabled:opacity-50" disabled={disabled || !status?.configured || !detailsSaved}
         onClick={() => void run("pair", async expected => {
@@ -169,7 +185,7 @@ export function SlackSettings() {
       {canRetry && <button type="button" className={buttonClass} disabled={Boolean(busy) || status?.busy} onClick={() => void run("resume", async expected => { await api("/api/slack/resume", { method: "POST", body: "{}" }); await refresh(expected); })}>{busy === "resume" ? "Reconnecting…" : "Retry connection"}</button>}
       <button type="button" className={buttonClass} disabled={Boolean(busy)} onClick={() => void run("refresh", refresh)}>Refresh status</button>
       <button type="button" className={`${buttonClass} text-danger`} disabled={Boolean(busy) || !status?.requiresRevoke} onClick={() => void run("revoke", async expected => {
-        await api("/api/slack/revoke", { method: "POST", body: "{}" }); setPair(null); await refresh(expected); setNotice("Slack connection revoked. Saved credentials are unchanged.");
+        await api("/api/slack/revoke", { method: "POST", body: "{}" }); setPair(null); await refresh(expected); setNotice("Slack connection revoked. Saved keys are unchanged.");
       })}>{busy === "revoke" ? "Revoking…" : "Revoke connection"}</button>
     </div>
     {pair && !expired && <div className="mt-3 rounded-lg bg-inset p-3 text-[12px] text-ink">
@@ -177,6 +193,7 @@ export function SlackSettings() {
       <button type="button" className={`${buttonClass} mt-2`} disabled={Boolean(busy)} onClick={() => void run("copy", async () => { await copyTextOrThrow(`pair ${pair.code}`); setNotice("Pairing message copied."); })}>Copy pairing message</button>
       <p className="mt-2 text-ink-secondary">Expires {new Date(pair.expiresAt).toLocaleTimeString()}. Status updates automatically.</p>
     </div>}
+    </SetupArea>
     {expired && <p role="status" className="mt-3 text-[12px] text-warning">The code expired. Revoke the incomplete connection, then create a new pairing code.</p>}
     {!pair && status?.state === "pairing" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">Use the code from the window that started pairing. If it is unavailable, revoke and create a new code here.</p>}
     {(status?.pending ?? 0) > 0 && <p role="status" className="mt-3 text-[12px] text-ink-secondary">Slack work is pending. Review the task in Murage.</p>}
@@ -187,5 +204,6 @@ export function SlackSettings() {
     {refreshError && <p role="alert" className="mt-2 text-[12px] text-warning">Status refresh failed. The last confirmed state is still shown. Check the connection, then use Refresh status.</p>}
     {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
     {notice && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{notice}</p>}
+    {piped && <HowThisWorks id="slack-how-this-works" mode={mode}><SlackHowThisWorks />{simple && <div className="flex flex-wrap items-center gap-x-2"><span>Needs your own Slack app. Set it up in Advanced.</span><SetInAdvancedButton anchor="slack-app-setup-heading" /></div>}</HowThisWorks>}
   </section>;
 }

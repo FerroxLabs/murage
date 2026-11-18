@@ -1,0 +1,13 @@
+diff --git a/server/drivers/codex.ts b/server/drivers/codex.ts
+index e48eaafac2..1750671312 100644
+--- a/server/drivers/codex.ts
++++ b/server/drivers/codex.ts
+@@ -2647,7 +2647,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
+         console.warn(`[codex] server request ${String(msg?.method)} failed: ${error instanceof Error ? error.message : String(error)}`);
+         return cancel();
+       };
+-      const handleServerRequest = async (msg: any, site = "codex.dispatch.direct"): Promise<unknown> => {
++      const handleServerRequest = async (msg: any, site = "codex.dispatch.directX"): Promise<unknown> => {
+         const cancel = nativeRequestCanceller(msg);
+         try { await handleServerRequestBody(msg, cancel); }
+         catch (error) { return onDispatchError(error, site, msg, cancel); }

@@ -31,7 +31,10 @@ export function createOwnerZoneReconciler(reschedule: () => ZoneReschedule | nul
     const run = reschedule();
     if (!run) return true;
     pendingSince ??= now();
-    try { run({ offWallClockOnly: pending === "boot", since: pendingSince }); }
+    try {
+      const result = run({ offWallClockOnly: pending === "boot", since: pendingSince });
+      if (result && typeof result === "object" && "done" in result && result.done === false) return false;
+    }
     catch (error) {
       if (now() - warnedAt >= 60_000) {
         warnedAt = now();

@@ -1,0 +1,26 @@
+{
+ "admissionPinned#8": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-admissionPinned-3-armed-restore-refused-no-line",
+  "by": "keptKeysProtected",
+  "byLine": 1425,
+  "argument": "line 2024 phase operand: removing it runs the finished-job branch (2014-2017) for an ARMED/captured/swapped job too. The branch adds purity (2015) and the home line (2016); for an open job the original window rule 2019-2023 accepts the same refusal without the line. keptKeysProtected 1420-1422 (windowLineShown for a window refusal) rejects every such history, so the clause changes no accepted history. A must-accept witness is impossible because keptKeysProtected rejects it."
+ },
+ "keptStaysKept#3": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-keptStaysKept-3-swap-parks-kept-no-restore-record",
+  "by": "restoreJobProtocol",
+  "byLine": 2316,
+  "argument": "line 1687 `auto.swap` exemption: a swap does create parks (onRestored runs under the swap step, restore-reducer 341-363), but every legal swap appends a restore record stamped with the swap's step (moves.ts 280; restoreJobProtocol 2279/2300 requires the job's new restore record), so 1684 `!restores.some(r => r.atStep > kept.succeededAtStep)` is false and the loop never fails on a swap step. A swap that parks a kept target with no restore record is rejected by restoreJobProtocol."
+ },
+ "admissionPinned#89": {
+  "verdict": "KILLED",
+  "witness": "cm-admissionPinned-90-try-again-bot-ok-lease-pending"
+ },
+ "admissionPinned#91": {
+  "verdict": "KILLED",
+  "witness": "cm-admissionPinned-90-try-again-bot-ok-lease-pending"
+ }
+}

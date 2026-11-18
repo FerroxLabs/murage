@@ -1,3 +1,4 @@
+import {settleFixtureIndexGrant} from "./testing/helper-permits.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // 1.0.2 round 2, P2-A: extractions waiting for the owner-first gate are not work in progress. A steady stream of
@@ -18,12 +19,18 @@ import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy
 import { setMemoryMode } from "./repository.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { searchCleanupPending, stopSearchIndex } from "../message-search-index.ts";
 
 type Internals = { child: unknown; ready: boolean; onWorkerMessage(child: unknown, message: unknown): void };
 let controller: MemoryWorkerController | undefined;
 let release: (() => void) | undefined;
-beforeEach(() => {
-  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+beforeEach(async () => {
+  closeDatabase(); await stopSearchIndex(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+  // The controller's fake clock cannot advance the independent search worker.
+  // Settle that profile's startup reset before observing deletion admission.
+  const db = database();
+  await vi.waitFor(() => expect(searchCleanupPending(db)).toBe(false), { timeout: 10_000, interval: 10 });
+  await stopSearchIndex();
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-10T00:00:00Z"));
   vi.spyOn(console, "log").mockImplementation(() => {});
 });
@@ -72,7 +79,7 @@ it("a forget completes, and its derived cleanup runs, while the owner is in a tu
   const internals = controller as unknown as Internals;
   const indexed: Array<{ id: string; deleted: boolean }> = [];
   internals.child = { kill() {}, on() {}, send: (message: any) => {
-    if (message.type === "index") { indexed.push(...message.records.map((r: any) => ({ id: r.id, deleted: r.deleted }))); internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
+    if (message.type === "index") { settleFixtureIndexGrant(message,event=>internals.onWorkerMessage(internals.child,event)); indexed.push(...message.records.map((r: any) => ({ id: r.id, deleted: r.deleted }))); internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
   } };
   internals.ready = true;
   controller.start();
@@ -90,3 +97,23 @@ it("a forget completes, and its derived cleanup runs, while the owner is in a tu
 });
 
 useOutsideStoreFixture();
+
+it("a source waiting on the inference slot resumes on release while the idle disk budget is held", async () => {
+  setMemoryMode("capture");
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const wake = vi.spyOn(await import("./extract.ts"), "waitForMemoryInferenceIdle").mockReturnValue(held);
+  let calls = 0;
+  const derive = vi.fn(async (_jobId: string, _signal: AbortSignal) => ++calls === 1
+    ? { status: "deferred", reason: "extractor-busy", waitingFor: "inference-slot" }
+    : { status: "complete" });
+  vi.spyOn((await import("../io-budget.ts")).ioBudget, "shouldDefer").mockReturnValue(true);
+  controller = new MemoryWorkerController({ onCompletedSource: derive, onIdleConsolidation: async () => false });
+  controller.start(); controller.completedSource("waiting");
+  await vi.advanceTimersByTimeAsync(1);
+  expect(derive).toHaveBeenCalledTimes(1);
+  expect(wake).toHaveBeenCalledTimes(1);
+  release(); await vi.advanceTimersByTimeAsync(1);
+  expect(derive).toHaveBeenCalledTimes(2);
+  expect(derive.mock.calls.map(args => args[0])).toEqual(["waiting", "waiting"]);
+});

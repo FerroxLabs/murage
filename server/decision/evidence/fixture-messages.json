@@ -1,0 +1,80 @@
+{
+  "bot": {
+    "id": "bd96fb03-a504-422a-ac5d-3ab9787dc2d8",
+    "name": "Verification Probe",
+    "title": "",
+    "description": "",
+    "section": null,
+    "chiefOfStaff": false,
+    "modelSelection": {
+      "instanceId": "verification",
+      "model": "claude-sonnet-5-5"
+    },
+    "busy": false,
+    "activity": "idle",
+    "unread": true,
+    "activeTaskId": "c0c2c120-cdbf-48b0-8b36-6ed99bdba531",
+    "tasks": [
+      {
+        "taskId": "c0c2c120-cdbf-48b0-8b36-6ed99bdba531",
+        "title": "hello from the isolated fixture",
+        "createdAt": 1794384858257,
+        "active": true,
+        "usage": {
+          "input": 12,
+          "output": 5,
+          "cachedInput": 2,
+          "costUsd": 0.01,
+          "turns": 1
+        }
+      }
+    ]
+  },
+  "taskId": "c0c2c120-cdbf-48b0-8b36-6ed99bdba531",
+  "messages": [
+    {
+      "id": "b9b98611-0d44-42a2-bf67-ea3c726fc045",
+      "at": 1794384858262,
+      "role": "bot",
+      "kind": "text",
+      "text": "Verification Probe speaking. Or typing."
+    },
+    {
+      "id": "b27a4b66-7cce-48fa-b57d-0c574380c09a",
+      "at": 1794384858268,
+      "role": "bot",
+      "kind": "options",
+      "card": {
+        "title": "What do you actually want me for?",
+        "subtitle": "Plain words are fine. One line will do.",
+        "options": []
+      }
+    },
+    {
+      "id": "c1599e48-7fda-4776-99eb-204b6d264c66",
+      "at": 1794384858341,
+      "role": "user",
+      "kind": "text",
+      "text": "hello from the isolated fixture"
+    },
+    {
+      "id": "ev-9e00460d233bc52d4409d3009b134d8c",
+      "at": 1794384859306,
+      "role": "bot",
+      "kind": "text",
+      "text": "Fixture reply."
+    },
+    {
+      "id": "ev-97e9236be1f8176a4774a41e3c425850",
+      "at": 1794384859316,
+      "role": "bot",
+      "kind": "activity",
+      "tool": {
+        "name": "Bash",
+        "ok": true,
+        "spoken": "running a command"
+      }
+    }
+  ],
+  "hasMore": false
+}

@@ -1,0 +1,47 @@
+SCANNER FIXTURE HIT RATE 27/27 (100%)
+✔ p11c 1: cleanup removes the fixed wrapper before any bounded snapshot diff (0.871694ms)
+✔ p11c 2: reviewer snapshot helper >300s has one job owner for every Node native (0.306708ms)
+✔ p11c 3: scanner flags every reviewer form recursively, including test/check/mutate (202.444793ms)
+✖ p11c 3: complete Windows tree passes exact-path ownership scanner (64.179639ms)
+✔ p11c 4: four additional real source mutants exist (0.286428ms)
+✔ p11c 3: owner basenames elsewhere are never allowlisted (1.606522ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 5
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 373.663647
+
+✖ failing tests:
+
+test at scripts/windows/p11c.node-test.mjs:39:1
+✖ p11c 3: complete Windows tree passes exact-path ownership scanner (64.179639ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [
+  +   {
+  +     file: 'nested-lowercase-test.cmd',
+  +     line: 1,
+  +     rule: 'process termination'
+  +   },
+  +   {
+  +     file: 'nested-lowercase-test.cmd',
+  +     line: 1,
+  +     rule: 'direct executable'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/p11c.node-test.mjs:42:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { file: 'nested-lowercase-test.cmd', line: 1, rule: 'process termination' }, { file: 'nested-lowercase-test.cmd', line: 1, rule: 'direct executable' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,7 @@
+# actionlint config. GitHub-hosted labels newer than the actionlint label table
+# (macos-15-intel, windows-11-arm) and the self-hosted real-engine label.
+self-hosted-runner:
+  labels:
+    - macos-15-intel
+    - windows-11-arm
+    - real-engine

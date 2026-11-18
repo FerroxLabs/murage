@@ -1,0 +1,28 @@
+✖ P1-1 an idle access token without refresh is expired on schedule and resume (2.142152ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 148.513892
+
+✖ failing tests:
+
+test at electron/mcp-signin.node-test.mjs:894:1
+✖ P1-1 an idle access token without refresh is expired on schedule and resume (2.142152ms)
+  AssertionError [ERR_ASSERTION]: known expiry must arm a timer even without a refresh token
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///work/electron/mcp-signin.node-test.mjs:902:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

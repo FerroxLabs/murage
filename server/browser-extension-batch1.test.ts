@@ -24,7 +24,9 @@ describe("a dialog answer is not queued behind the blocked command", () => {
           const { method } = command.params as any; seen.push(method);
           if (method === "Input.dispatchMouseEvent") await inputBlocked;
           let value: any = {};
+          if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1, url: tab.url }] };
           if (method === "Page.getFrameTree") value = { frameTree: { frame: { id: "frame", loaderId: "L" } } };
+          if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
           if (method === "Page.createIsolatedWorld") value = { executionContextId: 7 };
           if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
           if (method === "Runtime.evaluate") value = { result: { value: String((command.params as any).params.expression).includes("__murageGuard()") ? false : "page" } };

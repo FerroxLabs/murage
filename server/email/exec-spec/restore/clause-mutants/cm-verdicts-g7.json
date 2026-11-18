@@ -1,0 +1,151 @@
+{
+ "deletedBotAuthorityDead#12": {
+  "verdict": "EQUIVALENT",
+  "argument": "line 1591 dead(): when a.botId === null, del[a.botId] indexes the record with the key \"null\", which is undefined (no bot is named \"null\"; botDeletedAtStep is written only for real BotIds, line 1587), so the next operand del[a.botId] !== undefined is already false.",
+  "kind": "NULL"
+ },
+ "deletedBotAuthorityDead#13": {
+  "verdict": "EQUIVALENT",
+  "argument": "line 1591 dead(): without del[a.botId] !== undefined the last operand a.verifiedAtStep < del[a.botId] compares a number with undefined, which is false in JS, so the verdict is the same.",
+  "kind": "NULL"
+ },
+ "deletedBotAuthorityDead#17": {
+  "verdict": "EQUIVALENT",
+  "argument": "line 1597: `l.botId !== null` precedes `del[l.botId] !== undefined`; del is a plain Record keyed by BotId strings and the model records only real bot ids (line 1588 writes del[b] for b in action.botIds), never the key \"null\"/undefined, so for l.botId === null the next operand `del[null] !== undefined` is already false and dropping the null test never changes the verdict.",
+  "kind": "NULL"
+ },
+ "deletedBotAuthorityDead#28": {
+  "verdict": "EQUIVALENT",
+  "argument": "line 1611: `b === null` is followed by `del[b] === undefined` in the same || chain; for b === null, del[null] is undefined (del only holds real bot ids, see line 1588), so the second operand already continues and dropping the null test never changes the verdict.",
+  "kind": "NULL"
+ },
+ "quiescenceReachable#1": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-1-fault-restarts-suffix"
+ },
+ "quiescenceReachable#10": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-10-refusal-of-other-keep-op"
+ },
+ "quiescenceReachable#11": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-11-ok-answer-is-not-refusal"
+ },
+ "quiescenceReachable#14": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-14-bot-deleted-before-claim"
+ },
+ "quiescenceReachable#17": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-17-later-keep-other-target"
+ },
+ "quiescenceReachable#18": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-18-older-keep-not-later"
+ },
+ "quiescenceReachable#21": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-21-remove-dropped-inbox-active"
+ },
+ "quiescenceReachable#22": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-23-kept-entry-without-authority"
+ },
+ "quiescenceReachable#25": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-26-remove-key-in-use"
+ },
+ "quiescenceReachable#32": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-33-refused-keep-not-judged"
+ },
+ "quiescenceReachable#39": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-46-keep-record-vanished"
+ },
+ "quiescenceReachable#43": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-50-keep-kind-is-not-remove"
+ },
+ "quiescenceReachable#44": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-51-remove-authority-other-target"
+ },
+ "quiescenceReachable#45": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-52-remove-left-no-authority"
+ },
+ "quiescenceReachable#9": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-44-park-authorized-inbox-not-closing"
+ },
+ "quiescenceReachable#30": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-44-park-authorized-inbox-not-closing"
+ },
+ "quiescenceReachable#8": {
+  "verdict": "EQUIVALENT",
+  "argument": "line 2408 closing(i): `i !== null` precedes `end.flux.inboxes[i]?.state`; for i === null the lookup inboxes[null] reads the key \"null\" which is never an inbox id (flux inboxes are keyed by real InboxIds), so it is already false and dropping the null test never changes a verdict.",
+  "kind": "NULL"
+ },
+ "quiescenceReachable#12": {
+  "verdict": "EQUIVALENT",
+  "argument": "line 2411 deletedAfter: `b !== null` precedes `botDeletedAtStep[b] !== undefined`; for b === null the lookup reads the key \"null\", never written (botDeletedAtStep is keyed by real BotIds, line 1588), so it is already undefined and false; same argument as deletedBotAuthorityDead#16.",
+  "kind": "NULL"
+ },
+ "quiescenceReachable#13": {
+  "verdict": "EQUIVALENT",
+  "argument": "line 2411 deletedAfter: without `botDeletedAtStep[b] !== undefined` the last operand is `undefined > step`, which is false in JS, so the verdict is unchanged; same argument as deletedBotAuthorityDead#17.",
+  "kind": "NULL"
+ },
+ "quiescenceReachable#15": {
+  "verdict": "EQUIVALENT",
+  "argument": "line 2412 laterKeep: `t !== null` precedes `keeps.some(k => k.target === t ...)`; KeepRecord.target is a TargetRef string, never null, so for t === null no record matches and the clause is already false.",
+  "kind": "NULL"
+ },
+ "quiescenceReachable#19": {
+  "verdict": "EQUIVALENT",
+  "argument": "line 2416: `au.scope.inboxId !== null` precedes `end.flux.inboxes[au.scope.inboxId]?.state === \"active\"`; for a null inbox id the lookup reads the key \"null\", never an inbox id, so the second operand is already false.",
+  "kind": "NULL"
+ },
+ "quiescenceReachable#41": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-48-keep-refused-by-flux"
+ },
+ "deletedBotAuthorityDead#9": {
+  "verdict": "KILLED",
+  "witness": "cm-deletedBotAuthorityDead-13-second-delete-records-nothing"
+ },
+ "deletedBotAuthorityDead#30": {
+  "verdict": "KILLED",
+  "witness": "cm-deletedBotAuthorityDead-34-token-minted-after-delete"
+ },
+ "quiescenceReachable#26": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-27-newer-keep-other-target-keeps-key"
+ },
+ "quiescenceReachable#46": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-53-later-keep-ends-remove"
+ },
+ "quiescenceReachable#47": {
+  "verdict": "KILLED",
+  "witness": "cm-quiescenceReachable-54-bot-delete-ends-remove"
+ },
+ "deletedBotAuthorityDead#24": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-deletedBotAuthorityDead-28-old-lease-survives-delete",
+  "by": "keepAndRemoveSerialized",
+  "byLine": 1931,
+  "argument": "line 1603: a deleted bot lease that is not newly sending and keeps a dead authority can only exist beside the delete lease LD on the same inbox (the delete step kills the bot leases, predicate doc line 1570); keepAndRemoveSerialized line 1931 rejects two leases on one inbox. A lease on a different inbox passes all 39 but is an impossible state (the delete kills every lease of the bot)."
+ },
+ "quiescenceReachable#33": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "argument": "line 2429: the clause skips owner-principal checks for a non-owner ok owner.remove; every history that separates it is rejected by the new admissionPinned rule (line 2013: owner.* ok only for an owner principal).",
+  "separating": "sep-quiescenceReachable-34-non-owner-ok-remove",
+  "by": "admissionPinned",
+  "byLine": 2013
+ }
+}

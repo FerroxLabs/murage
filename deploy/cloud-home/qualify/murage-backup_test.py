@@ -153,6 +153,57 @@ class BackupTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 5)
         conn.close()
 
+    def test_restore_leaves_a_provenance_marker_in_the_restored_tree(self):
+        """A seed-only or channel-only snapshot has no marker of its own: the restore path writes one into the tree it swaps in."""
+        seen = {}
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        data = os.path.join(root, "data")
+        os.makedirs(data)
+        ctx = {"paths": {"data": data}, "binding": {}}
+
+        def fake_restic(ctx_, cfg, args):
+            target = args[args.index("--target") + 1]
+            os.makedirs(os.path.join(target, data.lstrip("/"), "home"))
+            return 0, ""
+
+        def fake_swap(ctx_, work, restored, reset_id, operation):
+            seen["marker"] = os.path.join(restored, mc.HOME_DIR, mc.RESTORE_PROVENANCE_FILE)
+            seen["exists"] = os.path.isfile(seen["marker"])
+            with open(seen["marker"]) as handle:
+                seen["body"] = json.load(handle)
+
+        saved = {k: getattr(mc, k) for k in ("restic", "work_dir", "carry_auth_state", "carry_preflight", "swap_in")}
+        try:
+            mc.restic = fake_restic
+            mc.work_dir = lambda c, r, o: os.path.join(root, "work")
+            mc.carry_auth_state = lambda *a, **k: None
+            mc.carry_preflight = lambda *a, **k: None
+            mc.swap_in = fake_swap
+            mc.restore_into_place(ctx, {}, "snap1", "reset1", "reset")
+        finally:
+            for k, v in saved.items():
+                setattr(mc, k, v)
+        self.assertEqual(mc.RESTORE_PROVENANCE_FILE, "restore-provenance.json")
+        self.assertTrue(seen["exists"])
+        self.assertEqual(seen["body"]["restoredFrom"], "snap1")
+        self.assertEqual(mc.HOME_DIR, "home")
+
+    def test_own_server_dir_is_excluded_and_required(self):
+        self.assertIn("/data/home/own-server", mb.REQUIRED_EXCLUDES)
+        with open(self.excludes) as handle:
+            self.assertIn("/data/home/own-server", [l.strip() for l in handle])
+        # the shipped list passes the guard; without the entry the backup refuses and runs nothing
+        code, _ = self.run_main(lambda *a, **k: (1, ""))
+        self.assertNotEqual(code, 3)
+        with open(self.excludes) as handle:
+            kept = [l for l in handle if l.strip() != "/data/home/own-server"]
+        with open(self.excludes, "w") as handle:
+            handle.writelines(kept)
+        code, calls = self.run_main(lambda *a, **k: (1, ""))
+        self.assertEqual(code, 3)
+        self.assertEqual(calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()

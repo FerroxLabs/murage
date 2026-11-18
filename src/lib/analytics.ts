@@ -5,11 +5,10 @@
 // sidebar/option cards render model output and message previews, so it would
 // leak fragments of private conversations to a third party.
 //
-// NO EMAIL, EVER (1.0.7, Sean: "no analytics, no device id"). The address a
-// person gives on the first run goes to the news list only. The old
-// identifyEmail(), which linked an address to a PostHog person record, had no
-// caller left and was removed (upstream 8d8d22f5b), so there is no path here
-// that sends a personal identifier to be rewired by mistake.
+// PostHog stores an anonymous identifier across launches; its service also
+// sees the connection IP address. Settings discloses both. No names or email
+// addresses are attached. The outgoing allowlist below removes SDK-added
+// URLs, referrers and device properties as well as arbitrary caller data.
 //
 // The token is injected at build time and has NO default. An unconfigured
 // build sends nothing at all: initAnalytics() returns before init(), so the
@@ -22,6 +21,8 @@
 // window allowed to start it, so an opted-out install or the phone app never
 // downloads it at all.
 import { inNativeShell } from "./native-shell";
+
+import type { CaptureResult } from "posthog-js";
 
 type PostHog = typeof import("posthog-js").default;
 
@@ -68,11 +69,17 @@ export function optAction(enabled: boolean, running: boolean): OptAction {
   return running ? "opt-in" : "init";
 }
 
-/** Flip the setting and act on it immediately, in both directions. */
-export function setAnalyticsEnabled(enabled: boolean) {
+/** Flip the setting and act on it immediately, in both directions. Returns
+ * whether the choice was saved, read back from storage: false means it holds
+ * only until a restart, and Settings must say so instead of showing the switch
+ * as if it stuck (a full disk would otherwise quietly turn an opt-out back on). */
+export function setAnalyticsEnabled(enabled: boolean): boolean {
   choice = enabled; // before persisting: the decision must not depend on it
+  const value = enabled ? "0" : "1";
+  let saved = false;
   try {
-    localStorage.setItem(OPT_OUT_KEY, enabled ? "0" : "1");
+    localStorage.setItem(OPT_OUT_KEY, value);
+    saved = localStorage.getItem(OPT_OUT_KEY) === value;
   } catch {
     /* it will not survive a restart, but it holds for this session */
   }
@@ -88,6 +95,22 @@ export function setAnalyticsEnabled(enabled: boolean) {
       break;
     case "none":
       break;
+  }
+  return saved;
+}
+
+/** What Settings says when setAnalyticsEnabled() returns false. */
+export const ANALYTICS_NOT_SAVED =
+  "This computer could not save this choice, so it lasts only until Murage restarts. Make some room on the disk, then try again.";
+
+/** True only when the owner turned analytics on: in this session, or saved
+ * as an explicit "0" by an earlier one. An absent key is not an opt-in. */
+function explicitlyOn(): boolean {
+  if (choice !== undefined) return choice;
+  try {
+    return localStorage.getItem(OPT_OUT_KEY) === "0";
+  } catch {
+    return false;
   }
 }
 
@@ -116,19 +139,83 @@ export function initAnalytics() {
   );
 }
 
+// Only finite counts, booleans and closed vocabulary values may cross the
+// boundary. Driver instance ids are user-configurable, so omit them. Apply
+// this AFTER SDK enrichment too: even capture(event, {}) adds page paths.
+const EVENT_FIELDS: Record<string, readonly string[]> = {
+  app_first_open: ["platform"], app_opened: ["platform"], app_active: ["platform"],
+  message_sent: ["queued", "engineCommand", "room", "mode"], bot_created: [],
+  room_created: ["members", "context", "project"],
+  room_members_changed: ["members", "added", "removed"],
+  team_exported: ["members", "scope"], team_imported: ["members", "source", "mode"],
+  team_scouted: ["signals"], call_started: [], group_call_started: ["memberCount"],
+};
+const COUNT_FIELDS = new Set(["members", "added", "removed", "signals", "memberCount"]);
+const BOOL_FIELDS = new Set(["queued", "engineCommand", "room", "context", "project"]);
+const ENUM_FIELDS: Record<string, readonly string[]> = {
+  platform: ["desktop", "browser"], scope: ["selected"],
+  source: ["file", "github", "grok", "library", "scout"], mode: ["add", "project", "chat", "goal"],
+};
+
+function eventProperties(event: string, input: Record<string, unknown>): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  for (const key of EVENT_FIELDS[event]) {
+    const value = input[key];
+    if (COUNT_FIELDS.has(key) ? Number.isSafeInteger(value) && Number(value) >= 0
+      : BOOL_FIELDS.has(key) ? typeof value === "boolean"
+      : ENUM_FIELDS[key]?.includes(value as string)) properties[key] = value;
+  }
+  return properties;
+}
+
+function minimalAnalyticsEvent(event: CaptureResult | null): CaptureResult | null {
+  if (!event || !Object.hasOwn(EVENT_FIELDS, event.event)) return null;
+  const properties = eventProperties(event.event, event.properties);
+  // These are the public project token and PostHog's anonymous id. No
+  // $device_id, URL, referrer, profile, session, or browser fingerprint.
+  for (const key of ["token", "distinct_id"]) {
+    const value = event.properties[key];
+    if (typeof value === "string" && /^[A-Za-z0-9_-]{1,200}$/.test(value)) properties[key] = value;
+  }
+  return { event: event.event, uuid: event.uuid, ...(event.timestamp ? { timestamp: event.timestamp } : {}), properties };
+}
+
 function start(posthog: PostHog) {
   posthog.init(TOKEN, {
     api_host: API_HOST,
+    // Only capture is used. The separate flags request bypasses before_send
+    // and includes persisted initial URL/referrer properties and a device id.
+    advanced_disable_flags: true,
+    save_campaign_params: false,
+    save_referrer: false,
+    disable_surveys: true,
+    disable_external_dependency_loading: true,
     autocapture: false, // never capture clicked-element text (conversation leak)
+    // A remotely enabled recorder must never snapshot the visible password form.
+    disable_session_recording: true,
+    capture_exceptions: false,
+    enable_recording_console_log: false,
     capture_pageview: false, // single-window desktop app — no page routes
     person_profiles: "identified_only",
     persistence: "localStorage",
+    before_send: minimalAnalyticsEvent,
   });
   // opt_out_capturing() persists in PostHog's own storage, so after
   // opt-out → restart → opt-in the client would boot opted out and drop
   // every capture below while the switch says on. Clear the stale flag
-  // before the first capture of the session.
-  if (posthog.has_opted_out_capturing()) posthog.opt_in_capturing();
+  // before the first capture of the session. Only for an explicit opt-in:
+  // when our own key is missing (its write failed on a full disk) the SDK's
+  // opt-out is the only record of the owner's choice left, so it wins, the
+  // switch reads Off, and nothing is captured.
+  if (posthog.has_opted_out_capturing()) {
+    if (!explicitlyOn()) {
+      choice = false;
+      client = posthog;
+      ready = true;
+      return;
+    }
+    posthog.opt_in_capturing();
+  }
   client = posthog;
   ready = true;
   const platform = navigator.userAgent.includes("Electron") ? "desktop" : "browser";
@@ -148,8 +235,9 @@ function start(posthog: PostHog) {
 }
 
 export function track(event: string, props?: Record<string, unknown>) {
-  if (!ready || !analyticsEnabled()) return;
-  client?.capture(event, props);
+  if (!ready || !analyticsEnabled() || !Object.hasOwn(EVENT_FIELDS, event)) return;
+  // Caller properties cannot override the SDK's anonymous id or public token.
+  client?.capture(event, eventProperties(event, props ?? {}));
 }
 
 // first-run email gate state

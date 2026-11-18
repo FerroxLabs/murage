@@ -10,6 +10,26 @@
       "kind": "agent",
       "name": "claude-copyrev",
       "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+    },
+    {
+      "kind": "agent",
+      "name": "muragemain-copyrev",
+      "account": "claude opus 5.5, MurageMain copy review"
+    },
+    {
+      "kind": "agent",
+      "name": "sol-sc-issues-r3",
+      "account": "sc-issues-r3 independent review of inherited sc-issues copy"
+    },
+    {
+      "kind": "agent",
+      "name": "sol-copyrev-m5-followup",
+      "account": "Independent Sol review session for the copyrev-m5 replacement titles"
+    },
+    {
+      "kind": "agent",
+      "name": "g9-ux-fable",
+      "account": "Fable copy seat g9-ux-fable, read-only G9 Settings copy review"
     }
   ]
 }

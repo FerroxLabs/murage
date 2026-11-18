@@ -1,10 +1,12 @@
+import { composioAdmissionStatus } from "./composio-lifecycle.ts";
+import { setBackoffRandomForTests } from "./upstream-backoff.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "./config.ts";
 import { resetAppCatalogState } from "./app-catalog.ts";
-import { listToolkits, setManagedBrokerAccess } from "./composio.ts";
+import { listToolkits, setManagedBrokerAccess, resetManagedBrokerState } from "./composio.ts";
 
-beforeEach(() => resetAppCatalogState({ disk: true }));
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); setManagedBrokerAccess(null); resetAppCatalogState({ disk: true }); });
+beforeEach(() => { setBackoffRandomForTests(() => 1); resetManagedBrokerState(); resetAppCatalogState({ disk: true }); });
+afterEach(() => { setBackoffRandomForTests(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); setManagedBrokerAccess(null); resetAppCatalogState({ disk: true }); });
 // Each case gets its own managed broker identity, so catalogs never mix.
 const project = (name: string): AppConfig => {
   setManagedBrokerAccess({ url: `https://broker.example.test/${name}`, token: "c".repeat(64) });
@@ -85,7 +87,18 @@ describe("marketplace catalog traversal", () => {
     const first = await listToolkits(cfg);
     expect(first).toMatchObject({ source: "curated", reason, detail: { loaded: 1 } });
     expect(JSON.stringify(first)).not.toContain("fake-private-upstream-detail");
-    expect(await listToolkits(cfg)).toMatchObject({ source: "curated", reason });
+    // MAIN RULING 1115-COMPOSIO-429-REVIEW: a server-fault retry waits for admission; the same complete re-walk remains required.
+    if (failure === "http" || failure === "network") {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const deadline = composioAdmissionStatus().retryAt!;
+      vi.setSystemTime(deadline - 1);
+      expect((await listToolkits(cfg)).source).toBe("curated"); // MAIN RULING 1115-COMPOSIO-A7
+      expect(fetcher).toHaveBeenCalledTimes(2); // MAIN RULING 1115-COMPOSIO-A7
+      vi.setSystemTime(deadline);
+    }
+    const again = await listToolkits(cfg);
+    expect(again).toMatchObject({ source: "curated", reason, detail: { loaded: 1 } }); // MAIN RULING 1115-COMPOSIO-A7
+    expect(JSON.stringify(again)).not.toContain("fake-private-upstream-detail"); // MAIN RULING 1115-COMPOSIO-A7
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
 

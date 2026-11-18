@@ -170,7 +170,7 @@ describe("local server address rule (spec A1)", () => {
   });
 
   it("validates names and keys before they reach any engine config", () => {
-    expect(isValidLocalServerName("SeanBeast")).toBe(true);
+    expect(isValidLocalServerName("fixture-server")).toBe(true);
     expect(isValidLocalServerName("GPU box — upstairs")).toBe(true);
     expect(isValidLocalServerName("   ")).toBe(false);
     expect(isValidLocalServerName("line\nbreak")).toBe(false);
@@ -181,7 +181,7 @@ describe("local server address rule (spec A1)", () => {
   });
 
   it("names a server the way the picker and card show it", () => {
-    expect(localServerDisplayLabel("llamacpp", "seanbeast")).toBe("llama.cpp on seanbeast");
+    expect(localServerDisplayLabel("llamacpp", "fixture-server")).toBe("llama.cpp on fixture-server");
     expect(localServerDisplayLabel("openai", "GPU box")).toBe("GPU box");
     expect(localServerDisplayLabel("ollama", "")).toBe("Ollama");
   });
@@ -242,7 +242,7 @@ describe("engine eligibility (spec E3/E4)", () => {
 });
 
 describe("llama-server's model name (0.1.52 LM2, live finding)", () => {
-  // Observed on SeanBeast, llama.cpp b1-192067b, 2026-09-11: /v1/models and
+  // Observed on fixture-server, llama.cpp b1-192067b, 2026-09-11: /v1/models and
   // /props both name the loaded model `D:\Qwen\models\Qwen3.8-27B-UD-Q4_K_M.gguf`.
   // Every id Murage listed was then dropped by the `host::model` grammar, so a
   // running server showed up as "detected, no models" and could not be picked

@@ -375,7 +375,7 @@ describe("5. the downgrade drops every 1.0.2 application object (frozen list) an
   it.skipIf(!haveV101)("without the inbox projection the stepped file is accepted by the real 1.0.1 inspector; any one 1.0.2 object left behind is rejected", async () => {
     await populated();
     closeDatabase(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
-    const result = run();
+    const result = await run();
     expect(result).toMatchObject({ status: "downgraded", to: 6, handoffs: 4, handoffsStarted: 1 });
     const { inspectInstallationDatabase } = await realV101();
     const file = join(DATA_DIR, "messages.db");
@@ -403,13 +403,27 @@ describe("5. the downgrade drops every 1.0.2 application object (frozen list) an
     }
   }, 120_000);
 
+  it("a direct application downgrade refuses an applying reviewed write before dropping any schema", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec("CREATE TABLE own_write_holds(state TEXT NOT NULL); INSERT INTO own_write_holds VALUES('applying')");
+      const before = db.prepare("SELECT type,name,sql FROM sqlite_schema ORDER BY name").all();
+      expect(() => downgradeApplicationSchemaTo101(db, DATA_DIR)).toThrowError(expect.objectContaining({ code: DOWNGRADE_WORK_PENDING }));
+      expect(db.prepare("SELECT type,name,sql FROM sqlite_schema ORDER BY name").all()).toEqual(before);
+      expect(db.prepare("SELECT state FROM own_write_holds").all()).toEqual([{ state: "applying" }]);
+    } finally { db.close(); }
+  });
   it("the frozen manifest equals the 1.0.1 referenceSchema(), and every 1.0.2 object is either a 1.0.1 object, a memory object or in the frozen list", async () => {
     const db = database();
     initializeImageOperations(db); initializeImageLibrary(db);
     const head = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as Array<{ type: string; name: string; tbl_name: string; sql: string | null }>;
     const known = new Set(SCHEMA_1_0_1.map((object) => object.name));
     const listed = new Set<string>([...APP_SCHEMA_102_ADDITIONS.triggers, ...APP_SCHEMA_102_ADDITIONS.indexes, ...APP_SCHEMA_102_ADDITIONS.tables]);
-    const unlisted = head.filter((row) => row.sql !== null && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_") && !known.has(row.name) && !listed.has(row.name) && !SEQ_103_OBJECTS.includes(row.name) && !MESSAGE_ID_103_OBJECTS.includes(row.name) && !(UPGRADE_104_TABLES as readonly string[]).includes(row.name) && !(UPGRADE_108_TABLES as readonly string[]).includes(row.tbl_name) && !PUSH_RETENTION_103_INDEXES.some(([name]) => name === row.name) && !BOT_CALLS_109_OBJECTS.includes(row.name) && !APP_TRIGGER_OBJECTS.includes(row.name) && !isInboxProjectionObject(row)).map((row) => row.name); // (the Inbox projection is derived data: a restore and the snapshot inspector treat it so)
+    // 5d5a791f19 adds AUTOINCREMENT search intents; SQLite owns this exact bookkeeping table.
+    // It is not an application object. Pin its whole shape before excluding it from the application census.
+    const sequence = head.find(row => row.name === "sqlite_sequence");
+    expect(sequence).toEqual({ type: "table", name: "sqlite_sequence", tbl_name: "sqlite_sequence", sql: "CREATE TABLE sqlite_sequence(name,seq)" });
+    const unlisted = head.filter((row) => row !== sequence && row.sql !== null && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_") && !known.has(row.name) && !listed.has(row.name) && !SEQ_103_OBJECTS.includes(row.name) && !MESSAGE_ID_103_OBJECTS.includes(row.name) && !(UPGRADE_104_TABLES as readonly string[]).includes(row.name) && !(UPGRADE_108_TABLES as readonly string[]).includes(row.tbl_name) && !PUSH_RETENTION_103_INDEXES.some(([name]) => name === row.name) && !BOT_CALLS_109_OBJECTS.includes(row.name) && !APP_TRIGGER_OBJECTS.includes(row.name) && !isInboxProjectionObject(row)).map((row) => row.name); // (the Inbox projection is derived data: a restore and the snapshot inspector treat it so)
     expect(unlisted, "a 1.0.2 object that downgradeApplicationSchemaTo101 would leave behind").toEqual([]);
     for (const name of listed) expect(known.has(name), `${name} is in both lists`).toBe(false);
     if (!haveV101) return;
@@ -450,7 +464,7 @@ describe("5. the downgrade drops every 1.0.2 application object (frozen list) an
     const { s, ids } = await populated();
     writeFileSync(legacyFile(), JSON.stringify({ [s.from.threadId]: [{ id: ids.fresh, toBotId: "stale", message: "stale copy", depth: 0 }, { id: ids.accepted, toBotId: s.target.id, message: "must not run", depth: 0 }, { id: "only-in-file", toBotId: s.target.id, message: "stays", depth: 0 }] }));
     closeDatabase(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
-    run();
+    await run();
     const entries = Object.values(JSON.parse(readFileSync(legacyFile(), "utf8")) as Record<string, Array<{ id: string; message: string }>>).flat();
     expect(entries.map((e) => e.id).sort()).toEqual([ids.busy, ids.fresh, ids.parked, ids.started, "only-in-file"].sort());
     expect(entries.find((e) => e.id === ids.fresh)!.message).toBe("hand-off fresh");
@@ -469,7 +483,7 @@ describe("5. the downgrade drops every 1.0.2 application object (frozen list) an
     db.prepare("INSERT INTO restore_holds(kind,row_id,generation) VALUES('room_request','r1','g1')").run();
     closeDatabase(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
     let thrown: unknown;
-    try { run(); } catch (error) { thrown = error; }
+    try { await run(); } catch (error) { thrown = error; }
     expect(thrown).toMatchObject({ code: DOWNGRADE_WORK_PENDING, message: "You have 2 messages still waiting to send or restore. Send or cancel them, then try again." });
     expect(existsSync(legacyFile())).toBe(false);
     expect(existsSync(receiptsFile())).toBe(false);

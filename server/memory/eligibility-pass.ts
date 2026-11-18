@@ -15,7 +15,7 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { withStatementReuse, writeStamp } from "../io-budget.ts";
 import { withBindingScope } from "../human-principals.ts";
 
-interface Pass { db: DatabaseSync; changes: number; roster: object | null; groups: object | null; shape: string; answers: Map<string, string[]>; lookups: Map<string, unknown>; lookupChanges: number }
+interface Pass { db: DatabaseSync; changes: number; roster: object | null; groups: object | null; shape: string; answers: Map<string, readonly string[]>; lookups: Map<string, unknown>; lookupChanges: number; liveChanges: number; liveVersion: number; liveLookups: Map<unknown, unknown> }
 let active: Pass | null = null;
 const counters = new WeakMap<object, StatementSync>();
 
@@ -34,24 +34,24 @@ export function eligibilityPassActive(): boolean { return active !== null; }
 /** Run `work` (synchronous) with eligibility answers remembered inside it. Nested passes share the outer one. */
 export function inEligibilityPass<T>(db: DatabaseSync, work: () => T): T {
   if (active) return work();
-  active = { db, changes: totalChanges(db), roster: null, groups: null, shape: "", answers: new Map(), lookups: new Map(), lookupChanges: -1 };
+  active = { db, changes: totalChanges(db), roster: null, groups: null, shape: "", answers: new Map(), lookups: new Map(), lookupChanges: -1, liveChanges: -1, liveVersion: -1, liveLookups: new Map() };
   // (thread bindings are remembered inside the pass too: human-principals.ts withBindingScope)
   try { return withBindingScope(() => withStatementReuse(work)); } finally { active = null; }
 }
 
 /** The remembered answer for `key` under this roster, or `compute()` (remembered when nothing changed meanwhile). */
-export function eligibilityAnswer(db: DatabaseSync, key: string, roster: { bots: readonly unknown[]; groups: readonly unknown[] }, compute: () => string[]): string[] {
+export function eligibilityAnswer(db: DatabaseSync, key: string, roster: { bots: readonly unknown[]; groups: readonly unknown[] }, compute: () => readonly string[]): readonly string[] {
   const pass = active;
-  if (!pass || pass.db !== db) return compute();
+  if (!pass || pass.db !== db) return Object.freeze(compute());
   const now = totalChanges(db), shape = shapeOf(roster);
   if (now !== pass.changes || pass.roster !== roster.bots || pass.groups !== roster.groups || pass.shape !== shape) {
     pass.answers.clear(); pass.changes = now; pass.roster = roster.bots; pass.groups = roster.groups; pass.shape = shape;
   }
   const known = pass.answers.get(key);
-  if (known) return [...known];
-  const fresh = compute();
+  if (known) return known;
+  const fresh = Object.freeze(compute());
   // computing may itself have written (a scope created on demand): then it is not remembered
-  if (totalChanges(db) === now) pass.answers.set(key, [...fresh]);
+  if (totalChanges(db) === now) pass.answers.set(key, fresh);
   return fresh;
 }
 
@@ -67,4 +67,20 @@ export function passLookup<T>(db: DatabaseSync, key: string, compute: () => T): 
   const fresh = compute();
   if (totalChanges(db) === now) pass.lookups.set(key, fresh);
   return fresh;
+}
+
+/** Database facts shared only until a local write/rollback or a foreign commit; never beyond this synchronous pass. */
+export function livePassLookup<T>(db: DatabaseSync, key: unknown, compute: () => T): T {
+  const pass = active;
+  if (!pass || pass.db !== db || writeStamp(db) === undefined) return compute();
+  const changes = totalChanges(db);
+  let version: number;
+  try { version = Number(db.prepare("PRAGMA data_version").get()?.data_version); } catch { return compute(); }
+  if (!Number.isSafeInteger(version)) return compute();
+  if (pass.liveChanges !== changes || pass.liveVersion !== version) {
+    pass.liveLookups.clear(); pass.lookups.clear(); pass.answers.clear();
+    pass.liveChanges = changes; pass.liveVersion = version;
+  }
+  if (!pass.liveLookups.has(key)) pass.liveLookups.set(key, compute());
+  return pass.liveLookups.get(key) as T;
 }

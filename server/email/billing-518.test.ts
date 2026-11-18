@@ -1,13 +1,16 @@
+import { createMemoryEmailSecrets } from "../testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Flux billing #518 alignment: 403 inbox_closing and grace (credit code + inbox_state "grace") reach the bot's line, the binding mirror,
 // the owner's panel line and chip; #28 lifecycle events move the binding; manage_url is never what decides a line.
+import { serviceQueueFixture } from '../testing/service-queue-fixture.ts';
+import { Store } from '../store.ts';
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { FluxEmailClient } from "./flux-email-client.ts";
-import { EmailSecretStore, emailCredentialProvider } from "./email-secrets.ts";
+import { emailCredentialProvider } from "./email-secrets.ts";
 import { EmailStore, type BindingState } from "./email-store.ts";
 import { EmailBindingService } from "./binding-service.ts";
 import { EmailSendService } from "./send-service.ts";
@@ -16,6 +19,7 @@ import { EMAIL_MOUNT_STATES } from "./admission.ts";
 import { EMAIL_OWNER_COPY, headerChip } from "../../shared/email-copy.ts";
 import { FakeFlux, fluxError, inGrace, inboxClosing } from "../testing/fake-flux-email.ts";
 
+import { provenInsert } from "../testing/email-proven.ts";
 const INBOX = "ibx_1";
 let clock = 0;
 let fake: FakeFlux;
@@ -28,15 +32,17 @@ beforeEach(() => {
   clock = 1_800_000_000_000;
   fake = new FakeFlux();
   store = new EmailStore(new DatabaseSync(":memory:"));
-  const secrets = new EmailSecretStore();
+  const secrets = createMemoryEmailSecrets();
   secrets.setOwner({ token: "owner-token", keyId: "key_owner" });
   secrets.setBotKey("b1", { token: "bot-token", keyId: "key_b1" });
   const client = new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: emailCredentialProvider(secrets, () => null), timeoutMs: 100 });
   changes = [];
   bindings = new EmailBindingService({ store, client, secrets, installId: "inst", now: () => clock, onStateChange: row => changes.push(row.state) });
   let n = 0;
-  send = new EmailSendService({ store, client, installId: "inst", now: () => clock, newId: () => `send-${++n}`, onRefusal: (code, botId, fields) => { if (botId) bindings.noteRefusal(botId, code, fields); } });
-  store.insertBinding({ botId: "b1", inboxId: INBOX, address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy: "auto", failure: null, updatedAt: clock });
+  const producer = serviceQueueFixture(new Store(() => ({instanceId:"fixture",model:"fixture"})),{cancelAtEnd:true});
+  send = new EmailSendService({ authorityFor:producer.authorityFor, store, client, installId: "inst", now: () => clock, newId: () => `send-${++n}`, onRefusal: (code, botId, fields) => { if (botId) bindings.noteRefusal(botId, code, fields); } });
+  producer.queue(send.approvalQueue());
+  provenInsert(store, { botId: "b1", inboxId: INBOX, address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy: "auto", failure: null, updatedAt: clock });
   store.addTrusted("b1", "jane@acme.test", "allow", "owner", clock);
 });
 

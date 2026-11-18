@@ -243,7 +243,7 @@ describe("what a broker request carries", () => {
       LEGACY_DAILY_LIMIT,
     };
     for (const [name, text] of Object.entries(readable)) {
-      // The catalogue is "500+ apps", named by example. Never the vendor.
+      // The catalog is named by example. Never the vendor.
       expect.soft(text, `${name} names the broker`).not.toMatch(/composio/i);
       // The flow never hands somebody a settings pane on the way through.
       expect.soft(text, `${name} sends them to Settings`).not.toMatch(/settings/i);
@@ -270,6 +270,8 @@ describe("what a broker request carries", () => {
       await expect(connectedServices(cfg())).rejects.toMatchObject({ status });
     }
     // A server fault is the one that becomes 502.
+    resetManagedBrokerState(); // MAIN RULING 1115-COMPOSIO-429-REVIEW: the 500 case is a new fixture, including its broker admission gate.
+    await readyFlux({ claim: { state: "claimed" } });
     dataAnswer = { status: 500, body: { error: "boom" } };
     await expect(connectedServices(cfg())).rejects.toMatchObject({ status: 502 });
   });
@@ -340,7 +342,8 @@ describe("the FluxRouter readiness probe", () => {
     expect(configured(cfg())).toBe(false);
 
     health = { status: 200, body: { ready: true, claims: true } };
-    vi.setSystemTime(Date.now() + 25_000);
+    // MAIN RULING 1115-COMPOSIO-429-REVIEW: a turn recovers after the first 503 backoff; original success assertions remain.
+    vi.setSystemTime(Date.now() + 31_000);
     // (Reading configured() here would itself start a background re-check,
     // since 0.1.62: see composio-recovery.test.ts. This test is the turn's.)
     expect(await turnConnectedAppsReady(cfg())).toBe(true);
@@ -374,7 +377,7 @@ describe("the FluxRouter readiness probe", () => {
     expect(healthProbes).toBe(2);
   });
 
-  it("re-probes an unhealthy answer after twenty seconds, not five minutes", async () => {
+  it("re-probes an unhealthy HTTP answer after its backoff, not five minutes", async () => {
     // A blip must not take connected apps away from every bot for five
     // minutes; the asymmetry is the whole point of the two TTLs.
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -388,6 +391,8 @@ describe("the FluxRouter readiness probe", () => {
 
     vi.setSystemTime(Date.now() + 15_000);
     health = { status: 200, body: { ready: true, claims: true } };
+    // MAIN RULING 1115-COMPOSIO-429-REVIEW: the first 503 honors the 30 s backoff; all recovery assertions remain.
+    vi.setSystemTime(Date.now() + 6_000);
     await primeBrokerReadiness();
     expect(healthProbes).toBe(2);
     expect(connectionBroker(cfg())).toBe("flux");

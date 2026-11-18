@@ -1,0 +1,5 @@
+# Tests that only a native Windows run can pass. One per line: test file <TAB> OSes <TAB> test name prefix <TAB> mutants that must turn it RED.
+# Another OS reports these as skipped, never as passed. scripts/run-windows-required.mjs consumes this file on Windows: a row that is skipped,
+# missing or failed fails the run. (Other win32-only tests are gated with it.skipIf(process.platform !== "win32"), for example
+# server/channels/signal/process-host.test.ts T-MODES "requires Windows runner"; this manifest is what makes the requirement checkable.)
+server/wal-maintenance.test.ts	win32	D6-R6w	MR6w-release-on-crash,MR6w-reservation-kept,MR6w-entry-kept

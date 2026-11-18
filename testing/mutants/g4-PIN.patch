@@ -1,0 +1,13 @@
+diff --git a/server/drivers/pi.ts b/server/drivers/pi.ts
+index 6838369303..ef1d0a7fed 100644
+--- a/server/drivers/pi.ts
++++ b/server/drivers/pi.ts
+@@ -1508,7 +1508,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
+               // PIN: a refused answer write claims BEFORE commit(false) (native-ask runs refused first); the winner's close starts after
+               // the commit (microtask) so closeTurn finds no pending entry to deny a second time. `writing` never awaits the close.
+               const refusedAsk = (error: unknown): void => {
+-                const R = claimRefusal(error, "pi.ask");
++                const R = undefined;
+                 if (R && R.closer === "driver") queueMicrotask(() => { refusalOwner.closing = finishRefusal(R); });
+               };
+               pending.set(reqId, (decision, mode = 'answer', source = 'user') => {

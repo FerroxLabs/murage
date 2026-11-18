@@ -34,7 +34,7 @@ function fakeEngine(script: Script, id = "codex-fixture", name = "Codex", option
   const emitFor = (threadId: string) => (event: Record<string, unknown>) =>
     listeners.forEach(listener => listener({ eventId: "e", provider: "codex", threadId, createdAt: "now", ...event } as RuntimeEvent));
   const adapter = {
-    provider: "codex", capabilities: { sessionModelSwitch: "unsupported" },
+    provider: "codex", capabilities: { sessionModelSwitch: "unsupported", fencedLearningWrite: true },
     onEvent: (listener: (event: RuntimeEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
     sendTurn: async (input: SendTurnInput) => {
       sent.push(input);
@@ -71,6 +71,14 @@ const fenced = () => ({ fence: openLearningGate() }) as never;
 const grounding = (over: Record<string, unknown> = {}) => ({ text: "The owner reads reports daily.", quote: "reads reports daily", claimType: "owner-statement", speaker: "owner", outcome: "sent", ...over });
 
 describe("CLI and ACP learning (H12)", () => {
+  it("H1-CAPABILITY refuses learning before dispatch when the adapter has no fenced writer", async () => {
+    const engine = fakeEngine(answer("[]"));
+    delete engine.instance.adapter.capabilities.fencedLearningWrite;
+    // This adapter deliberately has no fencedLearningWrite capability.
+    await expect(learning(engine.instance).extractor!("private source", 2000, signal(), fenced())).rejects.toThrow();
+    expect(engine.sent).toHaveLength(0);
+  });
+
   it("implements both extractMemory and groundMemory, and the wrapper installs .ground", async () => {
     const { instance } = fakeEngine(contractEngine);
     expect(typeof instance.extractMemory).toBe("function");

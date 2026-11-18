@@ -13,7 +13,6 @@ import {
   includeCrashDumpOnRequest,
   listCrashDumps,
   pruneCrashDumps,
-  startLocalCrashReporter,
   unnamedCrashDumps,
 } from "./crash-dumps.mjs";
 import { formatDesktopCrashRecord } from "./diagnostics.mjs";
@@ -36,16 +35,13 @@ function dump(dir, name, { at = T0, bytes = 16, sub = "completed" } = {}) {
   return file;
 }
 
-describe("startLocalCrashReporter", () => {
-  it("starts Crashpad with uploads off, no server address and compression", () => {
-    const start = vi.fn();
-    expect(startLocalCrashReporter({ start })).toBe(true);
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(start).toHaveBeenCalledWith({ uploadToServer: false, submitURL: "", compress: true });
-  });
-
-  it("lets the app start when the reporter throws", () => {
-    expect(startLocalCrashReporter({ start: () => { throw new Error("no crashpad"); } })).toBe(false);
+describe("password-process startup", () => {
+  it("never starts Crashpad, including local-only memory dumps", () => {
+    const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
+    const helper = readFileSync(new URL("./crash-dumps.mjs", import.meta.url), "utf8");
+    expect(main).not.toMatch(/import\s*\{[^}]*\bcrashReporter\b/);
+    expect(main).not.toMatch(/startLocalCrashReporter\s*\(/);
+    expect(helper).not.toMatch(/crashReporter\s*\.\s*start\s*\(/);
   });
 });
 

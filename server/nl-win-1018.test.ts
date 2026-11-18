@@ -1,3 +1,4 @@
+import "./testing/port-integrity.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -10,7 +11,9 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { deviceCommands, deviceContexts } from "./testing/wipe-device-aliases.ts";
 import { autoVerdict } from "./auto-approve.ts";
+import { expectNoLimitsOwnerOutcome } from "./testing/no-limits-1019.ts";
 import { beginOutsideTurn, forgetOutsideState, markTurnOutside, safeMarkSite, turnOutsideRead, wireOutsideStore } from "./email/external-marks.ts";
 import { fileOutsideStore } from "./outside-store.ts";
 import { ownSite, ownToolGate, ownToolOfRoute } from "./outside-own.ts";
@@ -48,7 +51,7 @@ describe("NL-WIN-1018 D1: value-free first-mark provenance", () => {
     expect(ownSite("route:/api/internal/unified-browser", "tools/list-and-more")).toBe("own-route:route:/api/internal/unified-browser rpc=other");
     expect(ownSite("route:/api/internal/unified-browser", "")).toBe("own-route:route:/api/internal/unified-browser rpc=other");
     expect(ownSite("route:/api/internal/mcp-remote/secret-name")).toBe("own-route:route:/api/internal/mcp-remote");
-    expect(ownSite("route:/api/internal/some/C:\\Users\\x\\key.pem")).toBe("own-route:route:unlisted");
+    expect(ownSite("route:/api/internal/some/C:\\Users\\x\\key.pem")).toBe("own-route:route:unlisted"); // secret-scan: fixture
     expect(ownSite("web_search")).toBe("own-route:web_search");
     expect(safeMarkSite("item:interpreter branch=i4+i13")).toBe("item:interpreter branch=i4+i13");
     expect(safeMarkSite("a path /Users/x/secret$(rm)")).toBe("other"); // secret-scan: fixture
@@ -111,34 +114,53 @@ describe("NL-WIN-1018 D4: Windows pwsh, the owner's own clean No limits turn", (
     "bash build.sh",
     "bash -c './build.sh'", "bash ./b.sh; Remove-Item -Recurse C:\\", "cmd /c build.bat", "powershell -c ./build.sh",
     "bash ./.ssh/run.sh", "/bin/bash ./build.sh", "bash './build.sh'", "bash ./build.sh extra", "bash ./b.sh\nRemove-Item x",
-  ])("still cards %s", (text) => {
-    const found = verdict(NO_LIMITS, text);
-    expect(found.approve, text).toBeNull();
-    expect(found.source, text).toBe("always-ask");
-    expect(found.rule, text).toBe("unreadable");
+  ])("holds below No limits, runs at No limits unless it names a wipe: %s", (text) => {
+    // NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn runs what the reader cannot follow; only the wipe list (and the plainWipe
+    // proxy, here the Remove-Item rows) stays a card. Full access still holds every spelling the D4 admission does not take.
+    // MAIN RULING 2026-11-13 narrow-wipe (Sean), WIPE-NARROW.md section 1:
+    // a recursive delete of the drive root still requires the wipe card.
+    const wipeRule = text === "bash ./b.sh; Remove-Item -Recurse C:\\" ? "delete-root" : undefined;
+    const noLimits = verdict(NO_LIMITS, text);
+    expectNoLimitsOwnerOutcome(noLimits, text, wipeRule, text);
+    if (wipeRule) expect(noLimits.rule, text).toBe(wipeRule);
+    const held = verdict(FULL, text);
+    expect(held.approve, `${text} at Full access`).toBeNull();
+    expect(held.source, text).toBe("always-ask");
+    expect(held.rule, text).toBe("unreadable");
   });
   it("a script on a deny-ruled path keeps the deny card (a link under the folder to a system folder)", () => {
     symlinkSync("/etc", join(dir, "etc-link"));
     symlinkSync("/usr/bin", join(dir, "usrbin-link"));
     for (const text of ["bash ./etc-link/x.sh", "bash etc-link/x.sh", "bash ./usrbin-link/x.sh"]) {
-      expect(verdict(NO_LIMITS, text), text).toMatchObject({ approve: null, source: "always-ask", rule: "protected-path", classification: "deny" });
+      // NOLIM 1.0.19: the owner's No limits turn runs a protected-path row (only the wipe list still cards); Full access still holds it
+      expect(verdict(FULL, text).approve, text).toBeNull();
+      expectNoLimitsOwnerOutcome(verdict(NO_LIMITS, text), text, "protected-path", text);
     }
   });
   it("the same bash ./build.sh cards at Auto and Ask; at Full access it runs as the Claude Bash tool's own text does (WIN-PWSH-1018)", () => {
     for (const bot of [AUTO, ASK]) expect(verdict(bot, text0).approve, JSON.stringify(bot)).toBeNull();
     expect(verdict(FULL, text0).approve).not.toBeNull();
   });
+  // NOLIM 1.0.19 (N2.4): the finalizer reads the STORED origin only. Work that is not provably the owner's (another origin, no stored origin,
+  // unattended, automated, channel-owner facts that conflict with an owner origin) keeps the card.
   it.each<[string, object]>([
-    ["marked turn", { outsideRead: ["web page"] }], ["outsideRead absent", { outsideRead: undefined }], ["no proof", { ownerStarted: false, fullAccessOrigin: undefined }],
-    ["origin other", { fullAccessOrigin: "other" }], ["unattended", { unattended: true }], ["automated", { automated: true }], ["routineLevel", { routineLevel: true }],
-    ["scope set", { scope: "local-computer" }], ["channelOwner", { channelOwner: true }], ["inputCut", { inputCut: true }], ["inputTruncated", { inputTruncated: true }],
-    ["inputMissing", { call: { engine: "codex", commandShell: "pwsh", inputMissing: "command", toolCall: { name: "shell", input: {} } } }], ["commandCwdInvalid", { commandCwdInvalid: true }],
+    ["no proof", { ownerStarted: false, fullAccessOrigin: undefined }],
+    ["origin other", { fullAccessOrigin: "other" }], ["unattended", { unattended: true }], ["automated", { automated: true }],
+    ["channelOwner", { channelOwner: true }],
   ])("the same bash ./build.sh cards on a %s", (_name, extra) => {
     const found = verdict(NO_LIMITS, text0, extra);
     expect(found.approve).toBeNull();
   });
+  // the marks and the cut or missing input are not read at No limits: the owner's work runs
+  it.each<[string, object]>([
+    ["marked turn", { outsideRead: ["web page"] }], ["outsideRead absent", { outsideRead: undefined }], ["routineLevel", { routineLevel: true }],
+    ["scope set", { scope: "local-computer" }], ["inputCut", { inputCut: true }], ["inputTruncated", { inputTruncated: true }],
+    ["inputMissing", { call: { engine: "codex", commandShell: "pwsh", inputMissing: "command", toolCall: { name: "shell", input: {} } } }], ["commandCwdInvalid", { commandCwdInvalid: true }],
+  ])("the same bash ./build.sh runs at No limits on a %s", (_name, extra) => {
+    expect(verdict(NO_LIMITS, text0, extra).approve).toBeTruthy();
+  });
   it("on a Windows folder (drive cwd, stubbed disk): the same shape runs, a device name, a junction and an ADS card", () => {
-    const winDir = "C:\\Users\\o\\bot";
+    const winDir = "C:\\Users\\o\\bot"; // secret-scan: fixture
     const links: Record<string, string> = { "c:/users/o/bot/junction/x.sh": "d:/elsewhere/x.sh" };
     const unseen = {
       platform: "win32" as const,
@@ -148,39 +170,58 @@ describe("NL-WIN-1018 D4: Windows pwsh, the owner's own clean No limits turn", (
     const win = (text: string) => verdict(NO_LIMITS, text, { commandCwd: winDir, workFolder: winDir, unseen: { platform: "win32", fs } });
     expect(win("bash ./build.sh")).toMatchObject({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
     expect(win("bash sub/b.sh")).toMatchObject({ source: "no-limits" });
+    // NOLIM 1.0.19: the D4 admission still does not take these spellings (Full access holds them); the owner's No limits turn runs them
     for (const text of ["bash ./NUL.sh", "bash ./con.txt.sh", "bash ./junction/x.sh", "bash ./b.sh:ads", "bash .\\build.sh", "bash C:\\tmp\\b.sh", "bash ./sub./b.sh"]) {
-      expect(win(text).approve, text).toBeNull();
+      expectNoLimitsOwnerOutcome(win(text), text, undefined, text);
     }
   });
   it("Astra 1: the D4 admission needs the whole clean gate even when the lane seam is off", () => {
     const seamOff = { noPreRunSeamAtNoLimits: true };
+    // NOLIM 1.0.19: the outside marks are not read at No limits, so the seam being off changes nothing there: the owner's work runs
     for (const extra of [{ outsideRead: ["web page"] }, { outsideRead: undefined }, { outsideRead: ["outside tool"] }]) {
-      expect(verdict(NO_LIMITS, text0, { ...seamOff, ...extra }).approve, JSON.stringify(extra)).toBeNull();
+      expect(verdict(NO_LIMITS, text0, { ...seamOff, ...extra }).approve, JSON.stringify(extra)).toBeTruthy();
     }
   });
   it("Astra 2: a script the session already knows still goes through the D4 checks and the owner waiver", () => {
     const known = (text: string, extra: object = {}) => verdict(NO_LIMITS, text, {
       sessionFile: () => ({ text: "echo hi\n" }), readOnlyHooks: { sessionEdits: new Set([join(dir, "build.sh"), join(dir, "junction", "x.sh")]) }, ...extra });
     // a clean session-known script has no unseen path, so D4 cannot place it: it keeps the PowerShell card (fail closed, never a bypass)
-    expect(known(text0).approve).toBeNull();
-    expect(known(text0, { inputCut: true }).approve).toBeNull();
-    expect(known(text0, { outsideRead: ["web page"] }).approve).toBeNull();
-    expect(known("bash ./junction/x.sh").approve).toBeNull();
+    // (NOLIM 1.0.19: the owner's No limits turn runs each of these)
+    for (const [text, extra] of [[text0, {}], [text0, { inputCut: true }], [text0, { outsideRead: ["web page"] }], ["bash ./junction/x.sh", {}]] as const) {
+      expect(known(text, extra).approve, text).toBeTruthy();
+    }
   });
-  it("a missing script, and no cwd, card", () => {
-    expect(verdict(NO_LIMITS, "bash ./nothere.sh").approve).toBeNull();
-    expect(verdict(NO_LIMITS, text0, { commandCwd: undefined, workFolder: undefined }).approve).toBeNull();
+  it("a missing script, and no cwd, card below No limits and run at the owner's No limits turn (an unreadable text is not a wipe)", () => {
+    expect(verdict(FULL, "bash ./nothere.sh").approve).toBeNull();
+    expect(verdict(FULL, text0, { commandCwd: undefined, workFolder: undefined }).approve).toBeNull();
+    expect(verdict(NO_LIMITS, "bash ./nothere.sh").approve).toBeTruthy();
+    expect(verdict(NO_LIMITS, text0, { commandCwd: undefined, workFolder: undefined }).approve).toBeTruthy();
+  });
+  it.each([undefined, "pwsh"] as const)("a Windows host keeps the exact POSIX disk-write card with shell %s", (commandShell) => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      const actual = verdict(NO_LIMITS, "dd if=/dev/zero of=/dev/sda", {
+        commandCwd: "D:\\work\\project", workFolder: "D:\\work\\project",
+        call: commandShell ? { engine: "codex", commandShell } : undefined,
+      });
+      expect(actual, JSON.stringify(actual)).toMatchObject({ approve: null, source: "always-ask", rule: "disk-erase", classification: "deny" });
+    } finally { Object.defineProperty(process, "platform", platform); }
   });
   it("the fail-closed boundary keeps its exact wipe card on POSIX and pwsh", () => {
+    // MAIN RULING: "keep only the wipe check, everything else is NO LIMITS".
+    // Preserve the original exact wipe-card contract, including deny classification.
     const posix = (text: string) => verdict(NO_LIMITS, text, { call: undefined });
     expect(posix("rm -rf /")).toMatchObject({ approve: null, source: "always-ask", rule: "delete-root", classification: "deny" });
     expect(posix("rm -rf ~")).toMatchObject({ approve: null, source: "always-ask", rule: "delete-home", classification: "deny" });
     expect(posix(":(){ :|:& };:")).toMatchObject({ approve: null, source: "always-ask", rule: "fork-bomb", classification: "deny" });
-    expect(posix("dd if=/dev/zero of=/dev/sda")).toMatchObject({ approve: null, source: "always-ask", rule: "disk-erase", classification: "deny" });
+    const diskWrite = posix("dd if=/dev/zero of=/dev/sda");
+    expect(diskWrite, JSON.stringify(diskWrite)).toMatchObject({ approve: null, source: "always-ask", rule: "disk-erase", classification: "deny" });
     expect(posix("mkfs.ext4 /dev/sda1")).toMatchObject({ approve: null, source: "always-ask", rule: "disk-erase", classification: "deny" });
     expect(verdict(NO_LIMITS, "Remove-Item -Recurse -Force C:\\")).toMatchObject({ approve: null, source: "always-ask", rule: "delete-root", classification: "deny" });
     expect(verdict(NO_LIMITS, "Format-Volume -DriveLetter C")).toMatchObject({ approve: null, source: "always-ask", rule: "disk-erase", classification: "deny" });
     expect(verdict(NO_LIMITS, "Clear-Disk -Number 0 -RemoveData")).toMatchObject({ approve: null, source: "always-ask", rule: "disk-erase", classification: "deny" });
+    expect(verdict(NO_LIMITS, "bash ./b.sh; rm -rf /")).toMatchObject({ approve: null, source: "always-ask", rule: "delete-root" });
     expect(verdict(NO_LIMITS, "bash ./b.sh; rm -rf /").approve).toBeNull();
   });
 });
@@ -198,7 +239,78 @@ describe("NL-WIN-1018 D5: a shell's -o <set-option name> is not an output file (
   });
   it("keeps today's reading for a name outside the list, a pair the -c reader does not accept, and fish", () => {
     for (const text of [`bash -o foo -c 'rm -f ${target}/x'`, `bash -oc errexit 'ls'`, `bash -xo errexit -c 'ls'`, `fish -o errexit -c 'ls'`]) {
-      expect(owner(text).approve, text).toBeNull();
+      // NOLIM 1.0.19: the reader's reading is unchanged (these are not the corpus rows that run via the -o fix); the owner's No limits turn
+      // runs them unless the text names a wipe (the `rm -f` row does, through the plainWipe proxy)
+      expectNoLimitsOwnerOutcome(owner(text), text, undefined, text);
     }
   });
+});
+
+describe("NL-WIN-1018 D1: the interpreter branch ids belong to the scan that logs them", () => {
+  it("an oversized text after an interpreter scan does not report the earlier branches", async () => {
+    const scan = await import("./outside-scan.ts");
+    scan.outsideScanMarks("node build.js", { engineEnv: true });
+    expect(scan.interpreterBranches()).not.toBe("none");
+    scan.outsideScanMarks("a".repeat(8_000_000));
+    expect(scan.interpreterBranches()).toBe("none");
+  });
+});
+
+describe("NL-WIN-1019: the i10 branch names why it fired, in fixed words only", () => {
+  const hooks = (root: string, fresh = false) => ({
+    cwd: "/w", home: "/h", lookupProgram: (name: string) => `${root}/${name}`,
+    probe: (p: string) => ({ kind: "file" as const, real: p, fresh, zip: false, native: true }),
+  });
+  it("a bare bash resolving outside the system roots logs its word class, root class, native and age", async () => {
+    const scan = await import("./outside-scan.ts");
+    expect(scan.outsideScanMarks("bash ./build.sh", hooks("/opt/p"))).toContain("interpreter");
+    expect(scan.interpreterBranches()).toBe("i10:bare-first-nonsys-native-aged-unnamed");
+    expect(safeMarkSite(`item:interpreter branch=${scan.interpreterBranches()}`)).toBe("item:interpreter branch=i10:bare-first-nonsys-native-aged-unnamed");
+    expect(scan.outsideScanMarks("bash ./build.sh", hooks("/usr/bin"))).toEqual([]);
+    expect(scan.interpreterBranches()).toBe("none");
+  });
+  it("no path or program name reaches the log", async () => {
+    const scan = await import("./outside-scan.ts");
+    scan.outsideScanMarks("/opt/secret-dir/mytool ./x", hooks("/opt/secret-dir"));
+    expect(scan.interpreterBranches()).toMatch(/^[a-z0-9:+-]+$/);
+    expect(scan.interpreterBranches()).not.toContain("secret");
+  });
+});
+
+
+describe("NL-WIN-1018 canonical device aliases", () => {
+  for (const context of deviceContexts) {
+    it.each(deviceCommands(context.dialect))(`${context.name} alias keeps the exact disk-erase deny card: %s`, text => {
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { ...platform, value: context.platform });
+      try {
+        const actual = autoVerdict(NO_LIMITS as never, "Bash", text, {
+          fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null,
+          commandText: text, commandCwd: context.cwd, workFolder: context.cwd,
+          call: { engine: "codex", commandShell: context.dialect === "pwsh" ? "pwsh" : "bash" },
+        } as unknown as Context);
+        expect(actual, JSON.stringify(actual)).toMatchObject({ approve: null, source: "always-ask", rule: "disk-erase", classification: "deny" });
+      } finally { Object.defineProperty(process, "platform", platform); }
+    });
+  }
+});
+
+
+describe('NL-WIN H1/H2 exact root alias deny cards',()=>{
+ for(const platform of ['linux','win32'] as const)for(const shell of ['bash','pwsh']){
+  it.each([['//etc','delete-system-folder'],['///etc','delete-system-folder'],['//root/.ssh','delete-system-folder'],['//home/fixture','delete-home'],['/home//fixture/','delete-home'],['/home/./fixture','delete-home'],['/tmp/home-link/.','delete-home'],['/tmp/home-link/./','delete-home'],['/tmp/home-link/./x/..','delete-home']] as const)(`${platform} ${shell} keeps the exact root-alias card at %s`,(path,rule)=>{
+   const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;
+   Object.defineProperty(process,'platform',{...descriptor,value:platform});
+   try{
+    const setup=shell==='pwsh'?"New-Item -ItemType SymbolicLink -Path '/tmp/home-link' -Target '/home/fixture'; Remove-Item -Recurse ":'ln -s /home/fixture /tmp/home-link; rm -rf ';
+    const text=setup+"'"+path+"'";
+    const actual=autoVerdict(NO_LIMITS as never,'Bash',text,{
+     fullAccessOrigin:'owner',ownerStarted:true,stopLine:null,outsideRead:null,
+     commandText:text,commandCwd:'/work/project',workFolder:'/work/project',dataDir:'/root/.ssh/state',
+     promptFacts:{home:'/home/fixture'},call:{engine:'codex',commandShell:shell},
+    } as unknown as Context);
+    expect(actual,JSON.stringify(actual)).toMatchObject({approve:null,source:'always-ask',rule,classification:'deny'});
+   }finally{Object.defineProperty(process,'platform',descriptor);}
+  });
+ }
 });

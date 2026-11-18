@@ -8,7 +8,8 @@
 //   - the server still revokes the turn's token at its end, so a token copied
 //     out of the file is dead even before the file is next rewritten.
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,6 +18,8 @@ import { cacheEnvFromProcess, clearMountIncomplete, mountHoldsStandIn, mountInco
 
 /** Env names whose value is a per-turn secret. */
 export const TURN_SECRET_ENV = [
+  "MURAGE_RELAY_TICKET",
+  "MURAGE_RELAY_SOCKET",
   "MURAGE_COMMS_TOKEN",
   "MURAGE_MEMORY_TOKEN",
   "MURAGE_CONNECTORS_TOKEN",

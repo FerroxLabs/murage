@@ -1,4 +1,5 @@
-import fs from 'node:fs/promises';
+import { writeFile as countedWriteFile } from "./counted-fs-promises.ts";
+import fs from "node:fs/promises";
 import path from 'node:path';
 import { constants } from 'node:fs';
 import { acquireDataDirLease, dataDirLeasePaths } from '../electron/data-dir-lease.mjs';
@@ -158,7 +159,7 @@ export async function startBrowserExtensionBroker({ stateDir, onMessage, configA
     if (windows) writePrivateWindowsJson(instanceConfigPath, { version: 1, instance, socketPath, token });
     else {
       await fs.chmod(socketPath, 0o600);
-      await fs.writeFile(instanceConfigPath, JSON.stringify({ version: 1, instance, socketPath, token }), { mode: 0o600, flag: 'wx' });
+      await countedWriteFile(instanceConfigPath, JSON.stringify({ version: 1, instance, socketPath, token }), { mode: 0o600, flag: 'wx' });
     }
     ownsConfig = true;
     if (configAlias) {

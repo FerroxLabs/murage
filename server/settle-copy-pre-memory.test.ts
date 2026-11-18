@@ -13,7 +13,7 @@ import { afterEach, expect, it } from "vitest";
 import { MEMORY_PRE_V3_SNAPSHOT, MEMORY_SCHEMA_V2, migrateMemorySchema } from "./memory/schema.ts";
 import { DEFAULT_MEMORY_LEARNING_V1 } from "./memory/learning-policy.ts";
 import { ftsSettled, settleFtsCopy } from "./settle-copy.ts";
-import { DELETED_TEXT, deleteThreadRows, fileHolds, headerIsRollback, holdMerges, keptRows, seedMixed, sidecarsOf } from "./testing/fts-copy-fixture.ts";
+import { seedCopyIntents, DELETED_TEXT, deleteThreadRows, fileHolds, headerIsRollback, holdMerges, keptRows, seedMixed, sidecarsOf } from "./testing/fts-copy-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
@@ -99,4 +99,39 @@ it("T12: a failing copy still cleans up: no partial, no side file, no final name
   expect(readdirSync(f.root).filter(name => name.startsWith("messages.pre-memory"))).toEqual([]);
   expect(Number(f.db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version)).toBe(2);
   expect(existsSync(f.snapshot)).toBe(false);
+});
+
+it("T-COPY-MEMORY: real private-copy caller removes retired postings", () => {
+  const f = buildV2();
+  seedCopyIntents(f.db);
+  f.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); ALTER TABLE messages_fts RENAME TO messages_fts_retired; CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); INSERT INTO messages_fts_retired(rowid,t) VALUES(9999999,'qzxretiredcanary')");
+  migrate(f);
+  const copy = new DatabaseSync(f.snapshot, { readOnly: true });
+  try { expect(copy.prepare("SELECT * FROM search_intents").all()).toEqual([]); expect(copy.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'messages_fts_retired%'").all()).toEqual([]); }
+  finally { copy.close(); }
+  expect(readFileSync(f.snapshot).includes(Buffer.from("qzx"))).toBe(false);
+});
+
+it.each(["retired", "queue", "shadow"])("T-COPY-RETRY %s: remake an existing final copy with no legacy index or sidecars", async debt => {
+  const f = buildV2();
+  f.db.prepare("VACUUM INTO ?").run(f.snapshot);
+  const old = new DatabaseSync(f.snapshot);
+  try {
+    old.exec("DROP TABLE messages_fts");
+    if (debt === "queue") seedCopyIntents(old);
+    else if (debt === "shadow") old.exec("CREATE TABLE messages_fts_retired_8_data(id INTEGER PRIMARY KEY, block BLOB); INSERT INTO messages_fts_retired_8_data VALUES(11,x'717A78')");
+    else old.exec("CREATE VIRTUAL TABLE messages_fts_retired USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); INSERT INTO messages_fts_retired(rowid,t) VALUES(9999999,'qzx')");
+  } finally { old.close(); }
+  expect(sidecarsOf(f.snapshot)).toEqual([]);
+
+  migrate(f);
+  expectSettledCopy(f.snapshot);
+  const copy = new DatabaseSync(f.snapshot, { readOnly: true });
+  try {
+    expect(copy.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'messages_fts_retired%'").all()).toEqual([]);
+    if (copy.prepare("SELECT 1 FROM sqlite_schema WHERE name='search_intents'").get()) expect(copy.prepare("SELECT * FROM search_intents").all()).toEqual([]);
+  } finally { copy.close(); }
+  const clean = readFileSync(f.snapshot);
+  migrate(f);
+  expect(readFileSync(f.snapshot)).toEqual(clean);
 });

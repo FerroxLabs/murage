@@ -22,6 +22,7 @@
 // Links: the CLI prints a vendor auth URL. The renderer only makes allow-listed hosts clickable, and main re-checks
 // the host here before shell.openExternal. Nothing the CLI prints is logged or stored.
 import { randomUUID } from "node:crypto";
+import { checkedGoogleLink } from "../shared/agy-oauth-link.mjs";
 
 import { CloudHomeError } from "./cloud-home-client.mjs";
 import { HOME_ID } from "./cloud-home-store.mjs";
@@ -35,7 +36,8 @@ export const ENGINE_LOGIN_CHANNELS = Object.freeze({
   closed: "cloud-home:engine-login:closed", // main -> renderer
 });
 
-export const ENGINE_LOGIN_ENGINES = Object.freeze(["codex", "claudeAgent", "grokAgent", "kimiAgent", "opencodeGo"]);
+export const ENGINE_LOGIN_BOT_REQUIRED = Object.freeze(["antigravityAgent"]);
+export const ENGINE_LOGIN_ENGINES = Object.freeze(["codex", "claudeAgent", "antigravityAgent", "grokAgent", "kimiAgent", "opencodeGo"]);
 export const ENGINE_LOGIN_ACTIONS = Object.freeze(["login", "logout", "enroll-key"]);
 /** Engines that save a typed API key (`enroll-key`); OpenCode also names the key's provider. */
 export const ENGINE_KEY_ENGINES = Object.freeze(["codex", "opencodeGo"]);
@@ -49,6 +51,7 @@ export const ENGINE_LOGIN_SHAPES = Object.freeze({ bot: /^[\w-]{1,64}$/, provide
  */
 export function engineLoginPath({ engine, action = "login", bot, provider, secret }) {
   if (!ENGINE_LOGIN_ENGINES.includes(engine) || !ENGINE_LOGIN_ACTIONS.includes(action)) return null;
+  if (ENGINE_LOGIN_BOT_REQUIRED.includes(engine) && action !== "enroll-key" && bot === undefined) return null;
   if (bot !== undefined && (action === "enroll-key" || !ENGINE_LOGIN_SHAPES.bot.test(String(bot)))) return null;
   if (action === "enroll-key") {
     if (!ENGINE_KEY_ENGINES.includes(engine) || typeof secret !== "string" || !ENGINE_LOGIN_SHAPES.secret.test(secret)) return null;
@@ -59,7 +62,8 @@ export function engineLoginPath({ engine, action = "login", bot, provider, secre
   if (provider !== undefined) query.set("provider", provider);
   return `/api/engine-login/${engine}?${query.toString()}`;
 }
-export const ENGINE_LOGIN_LIMITS = Object.freeze({ idleMs: 120_000, totalMs: 900_000, keepaliveMs: 45_000, maxInputBytes: 4096, maxInputTotal: 16 * 1024, maxLinkLength: 2048 });
+/** agyIdleMs mirrors server/cloud-home/engine-login.ts: Antigravity waits on the owner picking a Google account, with no keystrokes meanwhile. */
+export const ENGINE_LOGIN_LIMITS = Object.freeze({ idleMs: 120_000, agyIdleMs: 600_000, totalMs: 900_000, keepaliveMs: 45_000, maxInputBytes: 4096, maxInputTotal: 16 * 1024, maxLinkLength: 2048 });
 
 /**
  * Hosts the vendor CLIs print sign-in links for. Exact match, https only. Sources: the URLs the CLIs printed in the
@@ -69,7 +73,7 @@ export const ENGINE_LOGIN_LIMITS = Object.freeze({ idleMs: 120_000, totalMs: 900
  * and the vendors' own sign-in hosts (claude.ai, platform.claude.com). src/lib/engine-login-terminal.ts holds the same
  * list for the renderer; a test keeps the two equal.
  */
-export const ENGINE_LOGIN_AUTH_HOSTS = Object.freeze(["accounts.x.ai", "auth.openai.com", "claude.ai", "claude.com", "platform.claude.com", "www.kimi.ai"]);
+export const ENGINE_LOGIN_AUTH_HOSTS = Object.freeze(["accounts.google.com", "accounts.x.ai", "auth.openai.com", "claude.ai", "claude.com", "platform.claude.com", "www.kimi.ai"]);
 
 /** The normalized href when `value` is an https link to an allow-listed vendor auth host, else null. */
 export function checkAuthUrl(value, hosts = ENGINE_LOGIN_AUTH_HOSTS) {
@@ -78,6 +82,8 @@ export function checkAuthUrl(value, hosts = ENGINE_LOGIN_AUTH_HOSTS) {
   try { url = new URL(value); } catch { return null; }
   if (url.protocol !== "https:" || url.username || url.password || url.port !== "") return null;
   if (!hosts.includes(url.hostname)) return null;
+  // accounts.google.com serves every Google sign-in: a link there opens only when it is exactly Antigravity's own.
+  if (url.hostname === "accounts.google.com") return checkedGoogleLink(url.href) === null ? null : url.href;
   return url.href;
 }
 
@@ -187,7 +193,7 @@ export function createEngineLoginRelay({ client, createSocket, openExternal, tim
 
   function armIdle(session) {
     if (session.timers.idle) timers.clearTimeout(session.timers.idle);
-    session.timers.idle = timers.setTimeout(() => end(session, "idle-timeout"), limits.idleMs);
+    session.timers.idle = timers.setTimeout(() => end(session, "idle-timeout"), (session.engine === "antigravityAgent" && session.action === "login") ? limits.agyIdleMs : limits.idleMs);
     session.timers.idle?.unref?.();
   }
 

@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 // Transparent stdio bridge to the official Cua MCP server in a VPS
 // container. Docker's SSH transport handles authentication through the
 // user's normal SSH config and agent; this process stores no credentials.
@@ -13,7 +14,7 @@ let args: string[];
 try {
   args = vpsContainerMcpArgs(sshAlias, containerName ?? "");
 } catch {
-  process.stderr.write("invalid VPS MCP connection\n");
+  process.stderr.write("bridge refusals=1\n");
   process.exit(2);
 }
 
@@ -23,6 +24,7 @@ const controlUrl = process.env.MURAGE_CONTROL_URL ?? "";
 const controlToken = () => turnSecret("MURAGE_CONTROL_TOKEN");
 
 runMcpBridge({
+  releaseRole: "vpsContainerMcp",
   command: "docker",
   args,
   label: "VPS Cua Driver",
