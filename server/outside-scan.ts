@@ -55,9 +55,12 @@ let memo: {
   parts: Map<string, readonly string[]>; scripts: Map<string, boolean>; lists: Map<string, ReadonlyArray<readonly string[]>>; interp: Map<string, boolean>; bases: Map<string, string>; hides: Map<string, OutsideMark | null>;
   counts: WeakMap<readonly (readonly string[])[], Map<string, number>>;
 } | null = null;
-/** Tests only: how many scans failed closed and why the last one did, and how many texts (a text and each `${…}` body)
- *  were read. */
-export const scanFailClosed = { count: 0, reason: "", texts: 0 };
+/** Scan diagnostics: fail-closed counts and reason, texts read (including `${…}` bodies), and the last scan's
+ * interpreter branch labels. Keep observation on this object, outside the public scan entry points. */
+export const scanFailClosed = {
+  count: 0, reason: "", texts: 0,
+  get interpreterBranches(): string { return interpreterBranches(); },
+};
 
 /** The folded text both checks read: `$'…'` decoded, NFKC, lower case. */
 function folded(text: string): string {
@@ -120,9 +123,10 @@ export function partsSpendForTests(word: string): number {
 // ---------------------------------------------------------------------------------------------------------------------
 // 2.2 plainWipe
 
-const WIPE = words(`rm rmdir unlink shred srm dd mkfs newfs wipefs fdisk sfdisk parted gpart diskutil format diskpart
+const WIPE = words(`rm rmdir unlink shred srm dd mkfs newfs wipefs fdisk sfdisk parted gpart diskutil diskpart
   format-volume clear-disk remove-item ri del erase rd deltree rmtree rmsync rmdirsync unlinksync rimraf removedirs
   remove removefile deletefile removedirectory delete truncate`);
+const SEGMENT_SPLIT = /([\s(){}<>,=:.[\]]+)/;
 const DELETE_OPTIONS = words("delete delete-after delete-before delete-during delete-excluded");
 const RECURSE_AFTER = words("remove-item ri rm del rd gci get-childitem");
 const DEV_OK = ["null", "zero", "random", "urandom", "stdin", "stdout", "stderr", "tty", "ptmx", "fd/", "pts/", "shm/"];
@@ -142,7 +146,7 @@ export function plainWipe(text: string): boolean {
   return scoped(() => {
   try {
   const raw = folded(text);
-  if (namesDevice(raw) || DEVICE_SPELLINGS.some((spelling) => raw.includes(spelling))) return true;
+  if (namesDevice(raw) || DEVICE_SPELLINGS.some((spelling) => raw.includes(spelling)) || formatIn(raw)) return true;
   const s = raw.replace(/["'`\\]/g, "");
   if (namesDevice(s) || DEVICE_SPELLINGS.some((spelling) => s.includes(spelling))) return true;
   // words read twice: backslashes taken out (`r\m`), and backslashes as folder marks (`C:\x\rm.exe`)
@@ -156,11 +160,64 @@ export function plainWipe(text: string): boolean {
   });
 }
 
+/** Split only unquoted separators. An unmatched quote extends to the end. */
+function formatSegments(text: string, quotes: string, separators: string): string[] {
+  const segments: string[] = [];
+  let quote = "", start = 0;
+  for (let at = 0; at < text.length; at++) {
+    const ch = text[at]!;
+    if (quote) { if (ch === quote) quote = ""; }
+    else if (quotes.includes(ch)) quote = ch;
+    else if (separators.includes(ch)) { segments.push(text.slice(start, at)); start = at + 1; }
+  }
+  segments.push(text.slice(start));
+  return segments;
+}
+
+function formatStripOuter(text: string, quotes: string): string {
+  const s = text.trim();
+  return s.length >= 2 && quotes.includes(s[0]!) && s.at(-1) === s[0] ? s.slice(1, -1) : s;
+}
+
+/** Extra wipe signal for clear format/drive commands and at most two explicit launchers. */
+function formatIn(text: string, depth = 0): boolean {
+  if (depth > 2) return false;
+  for (const segment of [...formatSegments(text, "'\"", ";&|\n"), ...formatSegments(text, '"', "&|\n")]) {
+    const seg = segment.trim();
+    const w = seg ? seg.split(/\s+/) : [];
+    if (w.length < 2) continue;
+    const name = w[0]!.slice(Math.max(w[0]!.lastIndexOf("/"), w[0]!.lastIndexOf("\\")) + 1).toLowerCase().replace(/\.(com|exe)$/, "");
+    if (name === "format" && /^[a-z]:[\\/]?$/i.test(w[1]!)) return true;
+    // Word offsets preserve the launcher's original spacing and quoting.
+    const rest = (k: number): string => {
+      let at = 0;
+      for (let n = 0; n < k && at < seg.length; n++) {
+        while (at < seg.length && !/\s/.test(seg[at]!)) at++;
+        while (at < seg.length && /\s/.test(seg[at]!)) at++;
+      }
+      return seg.slice(at);
+    };
+    if (name === "cmd") {
+      let k = 1;
+      while (k < w.length && /^\/[a-z](:\S*)?$/i.test(w[k]!) && !/^\/[ck]$/i.test(w[k]!)) k++;
+      if (k < w.length && /^\/[ck]$/i.test(w[k]!) && formatIn(formatStripOuter(rest(k + 1), '"'), depth + 1)) return true;
+    }
+    if (name === "powershell" || name === "pwsh") {
+      let k = 1;
+      while (k < w.length && /^-[a-z]+$/i.test(w[k]!) && !/^-(c|command)$/i.test(w[k]!)) k++;
+      if (k < w.length && /^-(c|command)$/i.test(w[k]!) && formatIn(formatStripOuter(rest(k + 1), "\"'"), depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
 function wipeWords(s: string): boolean {
   let recurseArmed = false;
   for (const segment of s.split(/[;&|\n]/)) {
     let git = false;
-    for (const word of segment.split(/[\s(){}<>,=:.[\]]+/)) {
+    const tokens = segment.split(SEGMENT_SPLIT); // words at even indexes, the separators between them at odd ones
+    for (let at = 0; at < tokens.length; at += 2) {
+      const word = tokens[at]!;
       if (!word) continue;
       const parts = partsOf(word);
       for (const part of parts) {
@@ -406,7 +463,7 @@ function closeTable(s: string): () => Int32Array {
   };
 }
 const M2_STARTS = ";&|\n({`";
-const M2_KEYWORDS = ["then", "do", "else", "elif", "time", "!"];
+const M2_KEYWORD = /(?:then|do|else|elif|time|!)\s/y;
 /** M2_PREFIX: at the start, or after one of `; & | newline ( { \`` (so after `$(` too), blanks, any run of
  *  `then do else elif time !` each followed by blanks, then an assignment. Each position's answer is kept, so a chain
  *  shared by many starts is walked once. */
@@ -414,17 +471,29 @@ function m2Prefix(s: string): boolean {
   spend(4 * s.length + 1);
   const n = s.length;
   const close = closeTable(s);
-  const solid = new Int32Array(n + 1);
-  solid[n] = n;
-  for (let i = n - 1; i >= 0; i--) solid[i] = isBlank(s[i]) ? solid[i + 1]! : i;
+  // Most command starts have no leading blanks. Build the shared blank-run
+  // table only when one needs it, rather than scanning and allocating for
+  // every punctuation-heavy text (including the 128 KiB assignment corpus).
+  let solid: Int32Array | undefined;
+  const afterBlanks = (p: number): number => {
+    if (!isBlank(s[p])) return p;
+    if (!solid) {
+      solid = new Int32Array(n + 1);
+      solid[n] = n;
+      for (let i = n - 1; i >= 0; i--) solid[i] = isBlank(s[i]) ? solid[i + 1]! : i;
+    }
+    return solid[p]!;
+  };
   const seen = new Uint8Array(n + 1);
   const from = (p: number): boolean => {
-    for (let q = solid[p]!; !seen[q]; ) {
+    for (let q = afterBlanks(p); !seen[q]; ) {
       seen[q] = 1;
       if (assignAt(s, q, close)) return true;
-      const kw = M2_KEYWORDS.find((k) => s.startsWith(k, q) && isBlank(s[q + k.length]));
-      if (kw === undefined) return false;
-      q = solid[q + kw.length]!;
+      // A sticky, fixed-word match does no search or suffix backtracking and
+      // avoids a callback and six prefix checks at every candidate start.
+      M2_KEYWORD.lastIndex = q;
+      if (!M2_KEYWORD.test(s)) return false;
+      q = afterBlanks(M2_KEYWORD.lastIndex);
     }
     return false;
   };
@@ -919,6 +988,7 @@ const runsCode = (segment: readonly string[]): boolean =>
   segment.some((w) => partsOf(w.toLowerCase()).some((p) => (isInterp(p) && !AWK.has(p)) || SHELL_RUNNERS.has(p)));
 function runnerResolves(text: string, g: OutsideScanHooks, at: Probe): boolean {
   const cwd = g.cwd!;
+  const why = (reason: string): true => { i10Why = reason; return true; };
   const edited = (file: string): boolean => g.sessionEdits?.has(file) === true;
   let lookups = 0;
   const looked = new Map<string, string | null | undefined>();
@@ -937,7 +1007,7 @@ function runnerResolves(text: string, g: OutsideScanHooks, at: Probe): boolean {
     for (const [k, w] of [first, ...targets].entries()) {
       const target = k > 0;
       if (w.startsWith("-")) continue;
-      if (target && /[$`]/.test(w)) return true;
+      if (target && /[$`]/.test(w)) return why("target-subst");
       const named = interpPart(w.toLowerCase()) !== undefined;
       const byPath = /[\\/]/.test(w);
       let file: string | null | undefined;
@@ -948,21 +1018,24 @@ function runnerResolves(text: string, g: OutsideScanHooks, at: Probe): boolean {
         // the bound is on distinct names: a repeated name is one lookup and gets the same answer
         if (looked.has(w)) file = looked.get(w);
         else {
-          if (++lookups > LOOKUP_MAX) return true;
+          if (++lookups > LOOKUP_MAX) return why("lookup-max");
           file = g.lookupProgram(w);
           looked.set(w, file);
         }
         // a bare interpreter name is judged by the text rules; an unknown PATH marks every other bare program
-        if (file === undefined) { if (named) continue; return true; }
+        if (file === undefined) { if (named) continue; return why("lookup-unknown"); }
         if (file === null) continue;
       }
-      if (edited(file)) return true;
+      if (edited(file)) return why("session-edited");
       const hit = at(file, true);
       if (!hit) continue;
       // Fable Low 1 (S4-INTERP): a session edit made through the realpath (a symlink's target) counts too
-      if (edited(hit.real)) return true;
+      if (edited(hit.real)) return why("session-edited-real");
       // a bare interpreter name on the PATH marks only when that file was written this turn
-      if (named && !byPath ? hit.kind === "file" && hit.fresh : programMarks(hit, named)) return true;
+      if (named && !byPath ? hit.kind === "file" && hit.fresh : programMarks(hit, named)) {
+        // NL-WIN-1019 diagnostic: fixed words only (word class, root class, native, fresh), never a path or a program name
+        return why(`${byPath ? "path" : "bare"}-${target ? "target" : "first"}-${systemBinary(hit.real) ? "sys" : "nonsys"}-${hit.native === true ? "native" : "plain"}-${hit.fresh ? "fresh" : "aged"}-${named ? "named" : "unnamed"}`);
+      }
     }
     // Astra acct5 r1 #1 (S4 parity): a file written earlier this turn and handed to an interpreter or a shell marks. Every
     // later word is asked (a superset: over-marks only).
@@ -972,7 +1045,7 @@ function runnerResolves(text: string, g: OutsideScanHooks, at: Probe): boolean {
         const file = path.resolve(cwd, w);
         const hit = at(file);
         // Fable Low A (L1): the probe is already taken; a case alias or link spelling of an edited file is held by its realpath
-        if (edited(file) || hit?.fresh === true || (hit !== null && edited(hit.real))) return true;
+        if (edited(file) || hit?.fresh === true || (hit !== null && edited(hit.real))) return why(edited(file) ? "ran-edited" : hit?.fresh === true ? "ran-fresh" : "ran-edited-real");
       }
     }
   }
@@ -1350,6 +1423,11 @@ export function listB(s: string): string[][] {
   });
 }
 
+/** listB with `\` kept as a literal character, for the path words of a Windows cwd (pwsh, cmd and bash all keep `"D:\a"`). */
+export function listBKept(s: string): string[][] {
+  return scoped(() => splitWordsRead(s, true));
+}
+
 /** H6 allowlist S7: listB with `\` kept as a literal character (`C:\Python312\python.exe`). Read for interpreter runs only. */
 function listBW(s: string): ReadonlyArray<readonly string[]> {
   return splitWords(s, true);
@@ -1517,6 +1595,7 @@ function finishFailClosed(reason: string, length: number): OutsideMark[] {
   return [...FAIL_CLOSED_MARKS];
 }
 export function outsideScanMarks(text: string, hooks: OutsideScanHooks = {}, depth = 0): OutsideMark[] {
+  if (workLeft === Infinity) interpBranches = [], i10Why = "";
   if (text.length > SCAN_GATE_CHARS) {
     if (workLeft !== Infinity) failClosed("the text is past the gate");
     return finishFailClosed("the text is past the gate", text.length);
@@ -1544,11 +1623,13 @@ export function outsideScanMarks(text: string, hooks: OutsideScanHooks = {}, dep
 
 /** NL-WIN-1018 diagnostic: which `interpreter` branches of the last top-level scan fired (fixed ids i1..i16 in source order, never a value). */
 let interpBranches: string[] = [];
+/** NL-WIN-1019: why i10 (runnerResolves) fired, a fixed hyphenated word list (no value); empty until it does. */
+let i10Why = "";
 function noteInterpBranch(id: string): void { if (!interpBranches.includes(id)) interpBranches.push(id); }
-export function interpreterBranches(): string { return interpBranches.join("+") || "none"; }
+export function interpreterBranches(): string { return interpBranches.map((id) => (id === "i10" && i10Why ? `i10:${i10Why}` : id)).join("+") || "none"; }
 
 function scanWithin(text: string, g: OutsideScanHooks, depth: number): OutsideMark[] {
-  if (depth === 0) interpBranches = [];
+  if (depth === 0) interpBranches = [], i10Why = "";
   const marks = new Set<OutsideMark>();
   const bodies = scanText(text, g, marks);
   // S10 1.0.18 (Grok r7 #1): the `${…}` bodies, each read once (a body's scan reads no bodies of its own: the queue does)

@@ -123,8 +123,8 @@ export class PushOutbox {
     const risk: PushRisk = n.kind === "approval" && n.requestId ? world.risk(n.threadId, n.requestId, revision) : "unrated";
     const actionable = n.kind !== "approval" || (n.requestId !== undefined && world.actionable(n.threadId, n.requestId));
     const category = actionable ? pushCategory(n.kind, risk) : "question";
-    const held = isAttention(n.kind) && present;
-    const messageId = n.messageId ?? world.latestMessageId(n.threadId) ?? null;
+    const held = n.kind !== "connector-reconnect" && isAttention(n.kind) && present;
+    const messageId = n.kind === "connector-reconnect" && n.requestId ? `connector:${n.requestId}` : n.messageId ?? world.latestMessageId(n.threadId) ?? null;
     const timeSensitive = n.kind === "approval" && n.requestId ? world.timeSensitive(n.threadId, n.requestId) : false;
     const phoneUsed = this.phoneUsed(n.threadId);
     let created = 0;
@@ -132,6 +132,8 @@ export class PushOutbox {
     const askOnly = present && !isAttention(n.kind) && n.askDeviceId !== undefined;
     for (const binding of store.bindings()) {
       if (askOnly && binding.deviceId !== n.askDeviceId) continue;
+      // A replay after a server restart reuses the durable incident identity.
+      if (n.kind === "connector-reconnect" && n.requestId && store.latestForRequest(binding.bindingId, n.requestId)) continue;
       const eventRef = this.randomRef();
       const secret = store.keySecret(binding.bindingId);
       if (!secret) continue;

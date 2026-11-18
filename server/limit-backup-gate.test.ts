@@ -3,6 +3,12 @@
 //
 // U22 G20: the one limit-backup gate, and the place each of the 13 call sites asks it (designs/U22-HIDDEN-BACKUP-CHOKEPOINT.md).
 // Each site test names the hole it closes: a hidden or removed engine offered, saved, restored or started.
+import {createSpendGate,decodeLimitsBody,SpendGateRefusal,type AccountRead} from './spend-gate.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { OwnerLimitContinuations, LimitApplications, type OwnerLimitSnapshot } from './owner-limit-continuation.ts';
+import { wiring } from './decision-wiring/fixture.ts';
+import ts from "typescript";
+import vm from "node:vm";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -99,7 +105,8 @@ describe("every limit-backup site asks the one gate", () => {
     expect(card).toContain("This conversation is gone.");
   });
   it("#3 the automatic failover says why a saved backup did not take over", () => {
-    const direct = between("function onDirectLimitTurnCompleted(", "bus.subscribe(");
+    // MAIN RULING INT-CONFLICT-DEFAULT 8430339793 a62419d6d5: observe the same execution subscription after the audience split; retain every gate/order assertion.
+    const direct = between("function onDirectLimitTurnCompleted(", "bus.subscribeExecution(");
     expect(direct).toContain("backupVerdict(turn.selection, backup, now)");
     // presence first: a missing call (-1) must never pass an ordering check
     const why = direct.indexOf("backupRefusalOf(verdict.reason, turn.selection, backup)");
@@ -110,8 +117,13 @@ describe("every limit-backup site asks the one gate", () => {
   });
   it("#4 r5: the card's choices are checked in the same synchronous step that posts it", () => {
     // postKept filters inside the continuation that calls appendMessage: no continuation sits between the check and the post
-    const direct = between("void postKept(limitChoicesFor(turn.selection, now), (c) => backupUsable(turn.selection, c.selection, Date.now()), (choices) => {", "}).catch(");
-    expect(direct.indexOf("store.appendMessage")).toBeGreaterThan(-1);
+    // MAIN RULING INT-CONFLICT-DEFAULT bfd0af6461 c93def1029: the final synchronous callback presents the registered service card; its outer authority preparation is awaited.
+    const posted = between("await postKept(limitChoicesFor(turn.selection, now), (choice) => backupUsable(turn.selection, choice.selection, Date.now()), (choices) => {", "\n      });");
+    const direct = posted.slice(posted.indexOf("(choices) => {") + "(choices) => {".length);
+    expect(direct.indexOf("queue.open(")).toBeGreaterThan(-1);
+    expect(direct.indexOf("queue.presentNow(")).toBeGreaterThan(direct.indexOf("queue.open("));
+    expect(direct.indexOf("queue.presentNow(request, request.outcome.ref, () => {})")).toBeGreaterThan(-1);
+    expect(direct).toContain("authority: { claim, proof, identity }");
     expect(direct).not.toMatch(/\bawait\b|\.then\(/);
     expect(source).not.toContain("keptAfter(limitChoicesFor(");
   });
@@ -125,9 +137,21 @@ describe("every limit-backup site asks the one gate", () => {
     expect(reply).toBeGreaterThan(cut);
     expect(route.slice(cut, reply)).not.toMatch(/\bawait\b/);
   });
-  it("r5 Low: a room goal keeps the backup's own refusal line in its result", () => {
-    expect(source).toContain("orchestration.result.stopReason = (e.stopReason === \"submission_refused\" && lateBackupLine) || (e.stopReason ?? null);");
-    expect(source).not.toContain("orchestration.result.stopReason = e.stopReason ?? null;");
+  it("r5 Low: executes the production room result expression and keeps the backup refusal", () => {
+    const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+    let expression: string | undefined;
+    const visit = (node: ts.Node) => {
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && node.left.getText(ast) === "orchestration.result.stopReason") expression = node.right.getText(ast);
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    expect(expression).toBeDefined();
+    const actual = (stopReason: string | undefined, lateBackupLine?: string, fluxTerminal = false) => vm.runInNewContext(`(${expression})`, {e:{stopReason},lateBackupLine,fluxTerminal});
+    expect(actual("submission_refused", "Kimi is hidden.")).toBe("Kimi is hidden.");
+    expect(actual("submission_refused")).toBe("submission_refused");
+    expect(actual("other", "Kimi is hidden.")).toBe("other");
+    expect(actual(undefined)).toBeNull();
+    expect(actual("submission_refused", "Kimi is hidden.", true)).toBe("flux_refusal");
   });
   it("#5 the listing cuts a hidden engine before its snapshot", () => {
     const list = between("async function limitChoicesFor(", "function failOverThread(");
@@ -578,16 +602,83 @@ describe("every limit-backup site asks the one gate", () => {
     expect(resolver).toMatch(/targetAllowed: \(rowId\) =>/);
     expect(resolver).toContain("backupVerdict(row.from, row.to)");
   });
-  it("#11/#12 the direct and room dispatch boundaries ask the gate after setup", () => {
-    const boundaries = source.split("beforeSubmit: () => submissionBoundary.beforeSubmit(() => {");
-    expect(boundaries.length).toBe(3);
-    for (const after of boundaries.slice(1)) expect(after.slice(0, 600)).toContain("assertBackupStillUsable(");
-    // r4 M1: the provenance the resolver carried, never the chat re-read at dispatch
-    expect(boundaries[1].slice(0, 900)).toContain("assertBackupStillUsable(turnSelection.backupFrom, turnSelection.selection, Date.now())");
-    expect(boundaries[2].slice(0, 900)).toContain("assertBackupStillUsable(roomTurnSelection.backupFrom, roomTurnSelection.selection, Date.now())");
-    const boundary = between("function assertBackupStillUsable(", "\n}\n");
-    expect(boundary).toContain("assertBackupAtDispatch(backupVerdict, backupFrom, selection, now, backupRefusalOf)");
-    expect(boundary).not.toMatch(/store\.|limitFailovers\./);
+  it("#11/#12 executes the shipped direct and room write callbacks against live gate state after setup", async () => {
+    const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+    const declarations = new Map<string, ts.VariableDeclaration>();
+    const wrappers: ts.ArrowFunction[] = [];
+    let gateFunction: ts.FunctionDeclaration | undefined;
+    const visit = (node: ts.Node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && ["validateDirectSubmission", "validateRoomSubmission"].includes(node.name.text)) declarations.set(node.name.text, node);
+      if (ts.isPropertyAssignment(node) && node.name.getText(ast) === "beforeSubmit" && ts.isArrowFunction(node.initializer)) wrappers.push(node.initializer);
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "assertBackupStillUsable") gateFunction = node;
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    expect([...declarations.keys()].sort()).toEqual(["validateDirectSubmission", "validateRoomSubmission"]);
+    expect(gateFunction).toBeDefined();
+    for (const [name, declaration] of declarations) {
+      const wrapper = wrappers.find(node => ts.isCallExpression(node.body) && node.body.arguments.some(arg => ts.isIdentifier(arg) && arg.text === name));
+      expect(wrapper, `${name} must reach the actual beforeSubmit hook`).toBeDefined();
+      let hidden = false;
+      const verdict = vi.fn(backupGate({...pass, hidden: () => hidden}));
+      const accepted = vi.fn(), boundary = new TurnSubmissionBoundary();
+      const selection = {backupFrom:from,selection:kimi};
+      const db=new DatabaseSync(':memory:'),applications=new LimitApplications(()=>db);
+      const snapshot:OwnerLimitSnapshot={botId:'bot',threadId:'thread',generation:'owner-turn',sourceMessageId:'source',sourceDigest:'digest',principal:'owner',policy:'unlimited',epoch:0};
+      let principal=snapshot.principal;
+      const continuations=new OwnerLimitContinuations(()=>principal===snapshot.principal);
+      const ticket=continuations.authorizeRaisedCard(snapshot,true)!;
+      const application=applications.prepare(snapshot,kimi,'raised');
+      expect(continuations.select(ticket,application)).toBe(true);expect(continuations.claim(ticket,application)).toBe(true);expect(applications.claim(application)).toBe(true);
+      const {validateOwnerLimitDispatch}=wiring(['validateOwnerLimitDispatch','ownerLimitSelectionCurrent','assertBackupStillUsable'],{
+        limitActiveDispatches:new Map([['fixture-generation',{ticket,application}]]),limitApplications:applications,ownerLimitContinuations:continuations,
+        ownerLimitSnapshot:()=>({...snapshot,principal,epoch:applications.epoch('thread')}),DirectTurnSetupCancelled:Error,
+        assertBackupAtDispatch,backupVerdict:verdict,backupRefusalOf:()=>"Kimi is hidden.",
+        limitFailovers:{get:()=>({rowId:application.rowId,resendSendId:application.sendId,botId:'bot',threadId:'thread',sourceMessageId:'source',hop:1,state:'applied',to:kimi,from})},
+        store:{taskByThread:()=>({limitFailover:application.rowId,modelSelection:kimi})},
+      });
+      const context = vm.createContext({
+        assertBackupAtDispatch, backupVerdict:verdict, backupRefusalOf:() => "Kimi is hidden.", submissionBoundary:boundary,
+        validateOwnerLimitDispatch, dispatchClaimId: 'fixture-generation',
+        providerRouteIsCurrent:() => true, providerRoute:undefined, limitTurns:{assertCanSubmit(){}}, packGuard:{assertCurrent(){}},
+        assertCursorNotSealed(){}, store:{taskByThread(){}}, bot:{id:"bot"}, threadId:"thread", instanceId:"engine", resumeCursor:undefined,
+        turnSelection:selection, roomTurnSelection:selection, opts:undefined, trace:{mark(){}}, memoryReceipt:{accepted},
+        abandoned:false, isCancelled:undefined, internalGeneration:1, internalTurnOwners:new Map([["thread",{generation:1}]]), internalCapabilities:{activeGeneration:() => 1},
+        // This callback fixture has no pinned owner send; the real new stale-send check still runs in production callbacks that carry one.
+        ownerSend:undefined,
+        // The memory mode is unchanged between setup and submission, so the revoke check passes and the backup gate is what is measured.
+        memoryState:() => ({mode:"active"}), directStoredMemoryMode:"active", roomStoredMemoryMode:"active",
+        // A pinned memory receipt with nothing held: the pin re-check is the exported stub, not what is measured here.
+        assertMemoryPinsAtSubmission(){}, recallHeld:false, recallReadiness:{assertHeld(){}},
+        directFencePreparing:false, directFencePreflight:false, roomFencePreparing:false, roomFencePreflight:false,
+      });
+      const js = ts.transpileModule(`${gateFunction!.getText(ast)}\nconst ${name} = ${declaration.initializer!.getText(ast)}; globalThis.run = ${wrapper!.getText(ast)};`, {compilerOptions:{target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.None}}).outputText;
+      vm.runInContext(js, context);
+      const run = context.run as () => void;
+      boundary.started(); run();
+      expect(accepted).toHaveBeenCalledOnce(); accepted.mockClear();
+      await Promise.resolve();
+      if(name==='validateDirectSubmission'){
+        principal='replacement-owner';expect(run).toThrow('backup continuation stopped before submission');expect(accepted).not.toHaveBeenCalled();
+      }
+      principal=snapshot.principal; hidden=true;
+      expect(run).toThrow(BackupRefusedError);
+      expect(accepted).not.toHaveBeenCalled();
+      expect(verdict).toHaveBeenLastCalledWith(from,kimi,expect.any(Number));
+      expect(boundary.hasReleasedSubmission).toBe(true);
+      // #11 on its own: a claim with no active owner-limit dispatch gives validateOwnerLimitDispatch nothing to check, so the callback's own
+      // backup check is the only thing between a hidden backup and the engine (the room callback never had the other check).
+      if(name==='validateDirectSubmission'){
+        context.dispatchClaimId='no-active-dispatch';
+        hidden=false; expect(run).not.toThrow();
+        hidden=true; verdict.mockClear(); accepted.mockClear();
+        expect(run).toThrow(BackupRefusedError);
+        expect(accepted).not.toHaveBeenCalled();
+        expect(verdict).toHaveBeenCalledOnce();
+        expect(verdict).toHaveBeenLastCalledWith(from,kimi,expect.any(Number));
+      }
+      db.close();
+    }
   });
   it("#13 the picker reads the hidden list after the snapshot await", async () => {
     // int1018 b8 1651c2e9e ported U22 G20/#13 onto the mapped instance scan (1d800ddbc): the registration and the hidden list are read
@@ -741,4 +832,62 @@ describe("limit-backup races, with the await held open", () => {
     expect(backupRefusalMessage(new Error("the engine refused"))).toBeUndefined();
     expect(new TurnSubmissionBoundary().refusedWith).toBeUndefined();
   });
+});
+
+
+// MAIN RULING INT-CONFLICT-DEFAULT c24d4d9fef / 8009bd1db9: keep the train's durable receipt; the final recheck and dispatch remain synchronous.
+it("the decision-owned backup answer rechecks and dispatches without an asynchronous gap", () => {
+  const answer = between("function answerLimitCard(", "\n}\n");
+  expect(answer).toContain("await consumeChoice()");
+  const finalDispatch = answer.slice(answer.indexOf("if (!accepted && await consumeChoice()"));
+  expect(finalDispatch).toContain("principal !== JSON.stringify(threadHumanPrincipal(threadId))");
+  expect(finalDispatch).toContain("failOverThread(");
+  expect(finalDispatch.slice(finalDispatch.indexOf("if (principal !=="), finalDispatch.indexOf("failOverThread("))).not.toMatch(/\bawait\b|\.then\(/);
+  expect(source).toContain("const queue = serviceQueue('event-limit')");
+});
+
+// R4#9: the actual consuming function owns the claim after spend admission's await.
+it.each(['principal','credit','epoch','ticket','live'] as const)('R4 consuming dispatch rechecks %s after the spend await',async change=>{
+ const db=new DatabaseSync(':memory:'),applications=new LimitApplications(()=>db);
+ const snapshot:OwnerLimitSnapshot={botId:'bot',threadId:'thread',generation:'owner-turn',sourceMessageId:'source',sourceDigest:'digest',principal:'owner',policy:'unlimited',epoch:0};
+ let principal=snapshot.principal;
+ const continuations=new OwnerLimitContinuations(s=>s.principal===principal&&s.epoch===applications.epoch(s.threadId));
+ const ticket=continuations.authorizeRaisedCard(snapshot,true)!;
+ const application=applications.prepare(snapshot,kimi,'raised');
+ expect(continuations.select(ticket,application)).toBe(true);
+ const entered=held<void>(),reading=held<AccountRead>(),at=Date.parse('2026-11-10T10:00:00Z'),key='fixture-dispatch-credit';
+ const spendGate=createSpendGate({credentials:()=>[{id:'account',kind:'account',key:()=>key}],enabled:true,limitUsd:()=>100,now:()=>at,
+  read:()=>{entered.release();return reading.promise;}});
+ const backupVerdict=backupGate(pass),invoked=vi.fn(),bytes:string[]=[];
+ const {dispatchSpendTurn}=wiring(['dispatchSpendTurn','claimOwnerLimitDispatch','validateOwnerLimitDispatch','ownerLimitSelectionCurrent','assertBackupStillUsable'],{
+  internalTurnOwners:new Map([['thread',{generation:'fixture-generation'}]]),
+  limitActiveDispatches:new Map([['fixture-generation',{ticket,application}]]),limitApplications:applications,ownerLimitContinuations:continuations,
+  ownerLimitSnapshot:()=>({...snapshot,principal,epoch:applications.epoch('thread')}),DirectTurnSetupCancelled:Error,
+  limitFailovers:{get:()=>({rowId:application.rowId,resendSendId:application.sendId,botId:'bot',threadId:'thread',sourceMessageId:'source',hop:1,state:'applied',to:kimi,from})},
+  store:{taskByThread:()=>({limitFailover:application.rowId,modelSelection:kimi})},
+  spendGate,isFluxHost:()=>true,isFluxModel:()=>true,fluxKey:()=>key,assertBackupAtDispatch,backupVerdict,backupRefusalOf:()=> 'Fixture refusal',
+ });
+ try{
+  const pending=dispatchSpendTurn({threadId:'thread',model:'fixture',providerRoute:{preset:'flux',baseUrl:'https://fixture.invalid',apiKey:key}}, {invoked},()=>{bytes.push('provider request');return 'sent';});
+  // Attach rejection handling before releasing either await; unrelated rejection is never success.
+  const outcome=Promise.resolve(pending).then(value=>({value,error:undefined}),error=>({value:undefined,error}));
+  await entered.promise;
+  expect(invoked).not.toHaveBeenCalled();expect(bytes).toEqual([]);
+  if(change==='principal')principal='replacement-owner';
+  if(change==='epoch')applications.cancel('thread');
+  if(change==='ticket')continuations.cancel('thread');
+  if(change==='credit')expect(spendGate.onBudgetReached({error:'key_budget_reached',limit:'monthly_spend',key_id:'fixture-key',key_monthly_budget_usd:1,spent_usd_this_month:1,resets_at:'2026-12-01T00:00:00Z'},key)).toEqual({armed:true});
+  reading.release({kind:'body',decoded:decodeLimitsBody({key_id:'fixture-key',key_monthly_budget_usd:10,key_monthly_token_limit:null,spent_usd_this_month:0,tokens_this_month:0,spend_basis:'customer_billed_sale',resets_at:'2026-12-01T00:00:00Z',as_of:new Date(at).toISOString(),account_id:'fixture-account',month:'2026-11',account_spent_usd_this_month:0,account_as_of:new Date(at).toISOString()})!});
+  const result=await outcome;
+  if(change==='live'){
+   expect(result).toEqual({value:'sent',error:undefined});expect(bytes).toEqual(['provider request']);expect(invoked).toHaveBeenCalledOnce();
+   expect(continuations.claim(ticket,application)).toBe(false);expect(applications.claim(application)).toBe(false);
+  }else{
+   expect(result.value).toBeUndefined();
+   if(change==='credit')expect(result.error).toBeInstanceOf(SpendGateRefusal);
+   else expect(result.error?.message).toBe('backup continuation stopped before submission');
+   expect(bytes).toEqual([]);expect(invoked).not.toHaveBeenCalled();
+   expect(db.prepare('SELECT state FROM owner_limit_applications WHERE source_key=?').get(application.sourceKey)?.state).toBe('pending');
+  }
+ }finally{spendGate.endTurn('thread');db.close();}
 });

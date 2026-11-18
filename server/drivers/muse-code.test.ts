@@ -1,3 +1,5 @@
+import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
+import {driverOwnerDecisionFixture} from '../testing/driver-decision-fixture.ts';
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -12,6 +14,8 @@ import { Connection } from "@muse-code/sdk";
 import { withCliMemoryLearning } from "./cli-memory-learning.ts";
 import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { droppedUnsent } from "../memory/learning-send.ts";
+import { buildTurnContext, replaysTranscriptNatively } from "../turn-context.ts";
+import { sourced } from "../testing/bot-row.ts";
 import { MemorySendFenced, isMemorySendFenced } from "../memory/learning-send-fence.ts";
 import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -57,7 +61,7 @@ describe("Muse Code driver: launch and level mapping", () => {
     expect(MuseCodeDriver.defaultConfig()).toEqual({ cli: "muse" });
   });
 
-  it("maps Ask, Auto, Full access and No limits to one asking mode, read-only at Ask, never trusting the folder or dropping the sandbox", () => {
+  it("maps Ask, Auto and Full access to one asking mode, read-only at Ask, never trusting the folder or dropping the sandbox", () => {
     expect(MUSE_APPROVAL_MODE).toBe("promptUnmatched");
     expect(musePosture({ askLevel: true, routeAsks: true })).toBe("ask");
     expect(musePosture({ routeAsks: true })).toBe("auto");
@@ -171,7 +175,7 @@ describe("Muse Code driver: launch and level mapping", () => {
 
   it("mounts Murage's tools as required stdio session servers", () => {
     const turn: SendTurnInput = { threadId: "t", text: "hi", integrations: { memory: { command: "node", args: ["m"], env: { A: "1" } } } };
-    expect(museMcpServers(turn)).toEqual({ "murage-memory": { transport: "stdio", command: "node", args: ["m"], env: { A: "1" }, mode: "required" } });
+    expect(museMcpServers(fixtureMountTurn(turn))).toEqual({ "murage-memory": { transport: "stdio", command: "node", args: ["m"], env: { A: "1" }, mode: "required" } });
     expect(museMcpServers({ threadId: "t", text: "hi" })).toBeNull();
   });
 
@@ -471,7 +475,7 @@ describe("Muse physical write admission", () => {
   it("all driver prompt methods use the admitted command helper", () => {
     const source = readFileSync(new URL("./muse-code.ts", import.meta.url), "utf8");
     const methods = [...source.matchAll(/musePromptCommand\(host.connection, host.admissions, "([^"]+)"/g)].map(m => m[1]);
-    expect(methods.sort()).toEqual([...MUSE_PROMPT_METHODS].sort());
+    expect(methods.sort()).toEqual([...MUSE_PROMPT_METHODS, "turn/interrupt"].sort());
     expect(source).not.toMatch(/connection\.(?:command|request)\("turn\/(?:start|steer)"/);
   });
 });
@@ -514,6 +518,12 @@ describe("Muse Code's process", () => {
   }, { timeout: 10_000 });
   const opened = (events: RuntimeEvent[]) => events.filter((event): event is Extract<RuntimeEvent, { type: "request.opened" }> => event.type === "request.opened");
   const turn = (extra: Partial<SendTurnInput> = {}): SendTurnInput => ({ threadId: "t-1", text: "hi", cwd: root, ...extra });
+
+  it("H-workflow Muse advertises the browser mount the native session supports", async () => {
+    const { instance } = await start({ FAKE_MUSE_GRANT: "sessionMcp" });
+    expect(instance.adapter.capabilities.browserMcp).toBe(true);
+    expect(instance.adapter.capabilities.memoryMcp).toBe(true);
+  });
 
   it("MARKS D3: a turn without a bot folder fails closed and never launches in process.cwd; the --version probe gets a folder", async () => {
     const { instance, spawned, events } = await start({});
@@ -717,7 +727,7 @@ describe("Muse Code's process", () => {
     expect(requests("approval/decide").map((entry) => entry.params!.choiceId)).toEqual(["c-abort"]);
   }, 20_000);
 
-  it("keeps the sandbox and the asks on Full access and No limits, so Murage answers every ask", async () => {
+  it("keeps the sandbox and the asks on Full access, so Murage answers every ask", async () => {
     const { instance, events } = await start({ FAKE_MUSE_TURN: "approval" });
     await instance.adapter.sendTurn(turn({ stopLine: true }));
     await vi.waitFor(() => expect(opened(events)).toHaveLength(1));
@@ -729,6 +739,20 @@ describe("Muse Code's process", () => {
     expect(modes).toEqual(["promptUnmatched"]);
     expect(JSON.stringify(entries())).not.toContain("allowAll");
     expect(requests("approval/decide").map((entry) => entry.params!.choiceId)).toEqual(["c-once"]);
+  }, 20_000);
+
+  it("E2 No limits disables Muse sandbox and still sends tool calls to Murage", async () => {
+    const { instance, events } = await start({ FAKE_MUSE_TURN: "approval" });
+    const release=driverOwnerDecisionFixture(instance.adapter);
+    try {
+    await instance.adapter.sendTurn(turn({ stopLine: true, noLimits: true }));
+    await vi.waitFor(() => expect(opened(events)).toHaveLength(1));
+    expect(await instance.adapter.respondToRequest("t-1", "ap-1", { behavior: "allow" })).toBe("allowed-once");
+    expect(await completedOf(events)).toMatchObject({ ok: true });
+    expect(turnLaunches()[0]!.launch).toEqual(["serve", "--disable-sandbox", "--contributor-mode", "off"]);
+    expect(requests("session/start")[0]!.params!.approvalMode).toBe("promptUnmatched");
+    expect(musePosture({ stopLine: true, noLimits: true })).toBe("unlimited");
+    }finally{release();}
   }, 20_000);
 
   it("runs Ask read-only and refuses a shell ask with no card", async () => {
@@ -782,7 +806,7 @@ describe("Muse Code's process", () => {
   it("fails the turn when a required mount was not granted, and passes mounts as required when it was", async () => {
     const memory = { command: process.execPath, args: ["-e", ""], env: {} };
     const refused = await start();
-    await refused.instance.adapter.sendTurn(turn({ integrations: { memory } }));
+    await refused.instance.adapter.sendTurn(fixtureMountTurn(turn({ integrations: { memory } })));
     expect(await completedOf(refused.events)).toMatchObject({ ok: false });
     expect(refused.events.find((event) => event.type === "runtime.error")).toMatchObject({ message: MUSE_MOUNTS_REFUSED_LINE });
     expect(requests("session/start")).toHaveLength(0);
@@ -791,7 +815,7 @@ describe("Muse Code's process", () => {
     await removeTempDir(root);
 
     const granted = await start({ FAKE_MUSE_GRANT: "sessionMcp" });
-    await granted.instance.adapter.sendTurn(turn({ integrations: { memory } }));
+    await granted.instance.adapter.sendTurn(fixtureMountTurn(turn({ integrations: { memory } })));
     expect(await completedOf(granted.events)).toMatchObject({ ok: true });
     expect(requests("initialize").some((entry) => JSON.stringify(entry.params).includes("sessionMcp"))).toBe(true);
     expect(requests("session/start")[0]!.params).toMatchObject({ config: { mcpServers: { "murage-memory": { transport: "stdio", mode: "required" } } } });
@@ -832,7 +856,7 @@ describe("Muse Code's process", () => {
     const { instance } = await start();
     const gate = openLearningGate();
     const error = new MemorySendFenced();
-    gate.admit = () => { throw error; };
+    gate.check = () => { throw error; };
     const learning = withCliMemoryLearning(instance);
     await expect(learning.extractMemory!("private learning text", 100, new AbortController().signal, { policyRevision: "fixture", messages: [{ role: "user", content: "private learning text" }], fence: gate, cwd: fixtureBotFolder() })).rejects.toBe(error);
     expect(droppedUnsent(error, gate)).toBe(true);
@@ -1164,6 +1188,7 @@ describe("L12 retirement and delivery", () => {
   const fixture = async (config: Record<string, unknown> = {},
     initialIntercept?: (child: any, frame: Frame, callback: (error?: Error | null) => void) => boolean,
     waitCatalog = true) => {
+    vi.spyOn(procs, "resolveEngineExecutable").mockReturnValue({ command: "/isolated-stream-fixture", args: [] });
     const children: Array<any> = [];
     const events: RuntimeEvent[] = [];
     let intercept = initialIntercept;
@@ -1231,6 +1256,147 @@ describe("L12 retirement and delivery", () => {
     };
   };
   afterEach(() => vi.restoreAllMocks());
+
+  it("per-turn work never scans executables or spawns", async () => {
+    const f = await fixture();
+    try {
+      const child = await f.started();
+      const lookups = vi.mocked(procs.resolveEngineExecutable).mock.calls.length;
+      const spawns = f.spawn.mock.calls.length;
+      child.send({ method: "session/tokenUsage", params: { sessionId: "s-1", usage: { inputTokens: 3 } } });
+      await f.instance.adapter.steer!("l12", "FAKE-STEER");
+      expect(vi.mocked(procs.resolveEngineExecutable)).toHaveBeenCalledTimes(lookups);
+      expect(f.spawn).toHaveBeenCalledTimes(spawns);
+    } finally { await f.instance.dispose(); }
+  });
+
+  it.each(["allow", "deny"] as const)("P-MUSE acknowledged %s settles before an immediate native completion", async behavior => {
+    const f = await fixture(); const child = await f.started();
+    const start = child.frames.find((frame: Frame) => frame.method === "turn/start");
+    child.send({ method: "approval/requested", params: { sessionId: "s-1", turnId: start.params.commandId,
+      approvalId: "race-approval", currentRequirementId: { sourceIndex: 0 }, subject: { kind: "shell", command: "printf fixture", workspaceRoot: fixtureBotFolder() }, availableChoices: CHOICES } });
+    await vi.waitFor(() => expect(f.events.some(e => e.type === "request.opened")).toBe(true));
+    f.intercept((peer, frame, callback) => {
+      if (frame.method !== "approval/decide") return false;
+      callback();
+      peer.send({ id: frame.id, result: { commandId: frame.params.commandId } },
+        { method: "turn/completed", params: { sessionId: "s-1", turnId: start.params.commandId, terminal: "completed" } });
+      return true;
+    });
+    expect(await f.instance.adapter.respondToRequest("l12", "race-approval", { behavior })).toBe(behavior === "allow" ? "allowed-once" : "rejected");
+    await vi.waitFor(() => expect(f.events.some(e => e.type === "turn.completed")).toBe(true));
+    const resolutions = f.events.filter(e => e.type === "request.resolved" && e.requestId === "race-approval");
+    expect(resolutions).toHaveLength(1);
+    expect(resolutions[0]).toMatchObject({ behavior, source: "user" });
+    expect(f.events.indexOf(resolutions[0])).toBeLessThan(f.events.findIndex(e => e.type === "turn.completed"));
+    await f.instance.dispose();
+  });
+
+  it.each(["allow", "deny"] as const)("P-MUSE strict %s receipt settles before immediate native completion", async behavior => {
+    const f = await fixture(); const child = await f.started();
+    const start = child.frames.find((frame: Frame) => frame.method === "turn/start");
+    child.send({ method: "approval/requested", params: { sessionId: "s-1", turnId: start.params.commandId,
+      approvalId: "strict-race", currentRequirementId: { sourceIndex: 0 }, subject: { kind: "shell", command: "printf fixture", workspaceRoot: fixtureBotFolder() }, availableChoices: CHOICES } });
+    await vi.waitFor(() => expect(f.events.some(e => e.type === "request.opened")).toBe(true));
+    f.intercept((peer, frame, callback) => {
+      if (frame.method !== "approval/decide") return false;
+      callback();peer.send({ id: frame.id, result: { commandId: frame.params.commandId } },
+        { method: "turn/completed", params: { sessionId: "s-1", turnId: start.params.commandId, terminal: "completed" } });
+      return true;
+    });
+    expect(await f.instance.decisionAdapter!.respondToRequest("l12", "strict-race", { behavior }, { answerId: "strict-"+behavior })).toEqual({state:"accepted"});
+    await vi.waitFor(() => expect(f.events.some(e => e.type === "turn.completed")).toBe(true));
+    expect(f.events.filter(e=>e.type==='request.resolved'&&e.requestId==='strict-race')).toHaveLength(1);
+    await f.instance.dispose();
+  });
+
+  it("P-MUSE missing strict receipt still lets terminal retirement fail closed", async () => {
+    const f=await fixture();const child=await f.started();
+    const start=child.frames.find((frame:Frame)=>frame.method==='turn/start');
+    child.send({method:'approval/requested',params:{sessionId:'s-1',turnId:start.params.commandId,approvalId:'missing-strict',currentRequirementId:{sourceIndex:0},subject:{kind:'shell',command:'printf fixture',workspaceRoot:fixtureBotFolder()},availableChoices:CHOICES}});
+    await vi.waitFor(()=>expect(f.events.some(e=>e.type==='request.opened')).toBe(true));
+    f.intercept((peer,frame,callback)=>{
+      if(frame.method!=='approval/decide')return false;callback();
+      peer.send({method:'approval/resolved',params:{sessionId:'s-1',approvalId:'missing-strict',decision:'denied'}},
+        {id:frame.id,result:{commandId:frame.params.commandId}},
+        {method:'turn/completed',params:{sessionId:'s-1',turnId:start.params.commandId,terminal:'completed'}});return true;
+    });
+    const receipt=f.instance.decisionAdapter!.respondToRequest('l12','missing-strict',{behavior:'deny'},{answerId:'missing-native-confirmation'});
+    try{
+      await vi.waitFor(()=>expect(f.events.some(e=>e.type==='turn.completed')).toBe(true),{timeout:1000});
+      expect(await receipt).toEqual({state:'failed'});
+    }finally{await f.instance.dispose();}
+  });
+
+  it("P-MUSE delivers transcript handoff context to the resumed native turn", async()=>{
+    const f=await fixture();const child=await f.started();
+    const first=child.frames.find((frame:Frame)=>frame.method==='turn/start');
+    child.send({method:'turn/completed',params:{sessionId:'s-1',turnId:first.params.commandId,terminal:'completed'}});
+    await vi.waitFor(()=>expect(f.events.some(e=>e.type==='turn.completed')).toBe(true));
+    await f.send({text:'Continue the routine from the delivered reply.',transcript:[{role:'assistant',text:'S3_PEER_REPLY delivered by the requested teammate.'}]});
+    await vi.waitFor(()=>expect(child.frames.filter((frame:Frame)=>frame.method==='turn/start')).toHaveLength(2));
+    const text=child.frames.filter((frame:Frame)=>frame.method==='turn/start')[1].params.input.map((item:any)=>item.text??'').join('\n');
+    expect(text).toContain('S3_PEER_REPLY delivered by the requested teammate.');
+    expect(text).toContain('Continue the routine from the delivered reply.');
+    await f.instance.dispose();
+  });
+
+  it.each(['fresh','rewound','external','memory'] as const)('P-MUSE %s context delivers each history row exactly once',async reason=>{
+    const f=await fixture();
+    const transcript=sourced([{role:'assistant' as const,text:'UNIQUE_PRIOR_REPLY',engine:{instanceId:'other',label:'Other'}}]);
+    const context=buildTurnContext({text:'UNIQUE_LATEST_REQUEST',transcript,fresh:reason==='fresh',rewound:reason==='rewound',externallyUpdated:reason==='external',memoryRefreshed:reason==='memory',replaysNatively:replaysTranscriptNatively('museCode')});
+    try{
+      await f.send({text:context.turnText,transcript});
+      await vi.waitFor(()=>expect(f.host()?.frames.some((frame:Frame)=>frame.method==='turn/start')).toBe(true));
+      const text=f.host().frames.find((frame:Frame)=>frame.method==='turn/start').params.input.map((item:any)=>item.text??'').join('\n');
+      expect(text.split('UNIQUE_PRIOR_REPLY')).toHaveLength(2);
+      expect(text.split('UNIQUE_LATEST_REQUEST')).toHaveLength(2);
+    }finally{await f.instance.dispose();}
+  });
+
+  it("backs off power-refused snapshots and catalog launches exponentially, caps retries, and recovers", async () => {
+    const f = await fixture();
+    f.version("empty");
+    const refused = vi.spyOn(procs, "hostPowerRefused").mockReturnValue(true);
+    vi.useFakeTimers();
+    try {
+      const first = await f.instance.snapshot();
+      expect(first).toMatchObject({ state: "unavailable", reason: expect.stringContaining("could not start") });
+      expect(first.reason).not.toContain("isn't installed");
+      let count = f.spawn.mock.calls.length;
+      for (const delay of [30_000, 60_000, 120_000, 240_000, 300_000, 300_000]) {
+        for (let elapsed = 5_000; elapsed < delay; elapsed += 5_000) {
+          await vi.advanceTimersByTimeAsync(5_000);
+          expect(await f.instance.snapshot()).toEqual(first);
+          await f.instance.refreshModels!();
+          expect(f.spawn).toHaveBeenCalledTimes(count);
+        }
+        await vi.advanceTimersByTimeAsync(5_000);
+        await Promise.all([f.instance.snapshot(), f.instance.snapshot()]);
+        expect(f.spawn).toHaveBeenCalledTimes(++count);
+      }
+      refused.mockReturnValue(false); f.version("normal");
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect((await f.instance.snapshot()).reason).not.toBe(first.reason);
+      await f.instance.refreshModels!();
+      expect(f.instance.models.source).toBe("live");
+    } finally { await f.instance.dispose(); vi.useRealTimers(); }
+  });
+
+  it("backs off a refused catalog startup before any version poll", async () => {
+    vi.spyOn(procs, "hostPowerRefused").mockReturnValue(true);
+    const f = await fixture({}, (child, frame, callback) => {
+      if (frame.method !== "initialize") return false;
+      callback(); queueMicrotask(() => child.end()); return true;
+    }, false);
+    try {
+      await f.instance.refreshModels!();
+      const count = f.spawn.mock.calls.length;
+      expect(await f.instance.snapshot()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("could not start") });
+      await f.instance.refreshModels!();
+      expect(f.spawn).toHaveBeenCalledTimes(count);
+    } finally { await f.instance.dispose(); }
+  });
 
   it("T08 root exit enters cleanup while descendant pipes remain open", async () => {
     const f = await fixture(); const child = await f.started(); const death = f.holdDeath();
@@ -1395,7 +1561,7 @@ describe("L12 retirement and delivery", () => {
       );
       child.ack(frame, { grantedCapabilities: ["sessionMcp"] }); return true;
     });
-    await f.send({ resumeCursor: "s-1", integrations: { memory: { command: "PRIVATE-MCP", args: [], env: {} } } });
+    await f.send(fixtureMountTurn({ threadId: "l12", text: "PRIVATE-L12", cwd: fixtureBotFolder(), resumeCursor: "s-1", integrations: { memory: { command: "PRIVATE-MCP", args: [], env: {} } } }));
     await vi.waitFor(() => expect(f.events.filter(e => e.type === "turn.completed")).toMatchObject([{ ok: false }]));
     expect(f.host().frames.some((frame: Frame) => ["session/resume", "session/start", "turn/start"].includes(frame.method))).toBe(false);
     expect(JSON.stringify(f.host().frames)).not.toContain("modelId");
@@ -1884,3 +2050,9 @@ describe("L12 retirement and delivery", () => {
 
 // Adapter turns in this suite use an isolated durable store.
 useOutsideStoreFixture();
+
+it('P1 retains the full native commandText even without JSON args',()=>{
+ const command = 'printf "exact  bytes\\n" > fixture.txt';
+ expect(museToolStart({itemId:'p1',kind:'toolCall',status:'in_progress',tool:'shell',commandText:command})).toMatchObject({input:{command}});
+ expect(museToolStart({itemId:'p1b',kind:'toolCall',status:'in_progress',tool:'shell',commandText:command,args:JSON.stringify({cwd:'/fixture',command:'native args'})})).toMatchObject({input:{cwd:'/fixture',command:'native args'}});
+});

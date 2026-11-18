@@ -177,8 +177,8 @@ export function ensureOpenCardIndex(db: DatabaseSync, hooks: EnsureIndexHooks = 
  * options rows are read: every family that is filled from history (setup,
  * intake, browser, skill, publish) is one. Rows written since the table exists are
  * indexed by their writer. Returns whether more remain. */
-export function indexKeyedCardsChunk(db: DatabaseSync, rows = BACKFILL_CHUNK_ROWS): boolean {
-  const state = readIndexState(db, "keyed_card");
+export function indexKeyedCardsChunk(db: DatabaseSync, rows = BACKFILL_CHUNK_ROWS, stateName = "keyed_card"): boolean {
+  const state = readIndexState(db, stateName);
   if (state.done) return false;
   const newest = newestRowid(db);
   const upper = Math.min(newest, state.cursor + rows);
@@ -192,7 +192,7 @@ export function indexKeyedCardsChunk(db: DatabaseSync, rows = BACKFILL_CHUNK_ROW
       for (const { family, key } of keys) add.run(row.thread_id, family, key, row.id);
     }
     const done = upper >= newest;
-    writeIndexState(db, "keyed_card", { done: done ? 1 : 0, cursor: Math.max(state.cursor, upper), skipped });
+    writeIndexState(db, stateName, { done: done ? 1 : 0, cursor: Math.max(state.cursor, upper), skipped });
     return !done;
   });
 }
@@ -212,6 +212,17 @@ export function ensureKeyedCardIndex(db: DatabaseSync, hooks: EnsureIndexHooks =
     return;
   }
   while (indexKeyedCardsChunk(db)) { /* chunk by chunk, each committed */ }
+}
+
+/** Older completed keyed-card passes predate botReview: repeat once with a separate,
+ * transactionally saved cursor before serving notices; later opens do no scan. */
+export function ensureBotReviewIndex(db: DatabaseSync, hooks: EnsureIndexHooks = {}): void {
+  if (readIndexState(db, "bot_review_v1").done) return;
+  const total = newestRowid(db);
+  hooks.onStart?.({ done: readIndexState(db, "bot_review_v1").cursor, total });
+  while (indexKeyedCardsChunk(db, BACKFILL_CHUNK_ROWS, "bot_review_v1")) {
+    hooks.onChunk?.({ done: readIndexState(db, "bot_review_v1").cursor, total });
+  }
 }
 
 /** Every stored-attachment file name (uuid.ext, lowercase) a message's JSON mentions: the definition conversation deletion asks by. */

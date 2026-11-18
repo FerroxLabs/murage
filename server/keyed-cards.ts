@@ -16,10 +16,10 @@
  * routine run: the thread is a routine's, not the owner's direct chat) and digest (the project digest status line of
  * one day, by that day) and orphaned (a request card the start retired because its run died: still unanswered and answerable, so it counts as
  * open to the routes that answer it, but it is not in the open-card list that the boot reads). */
-export type KeyedFamily = "orphaned" | "setup" | "intake" | "browser" | "skill" | "publish" | "echo" | "steer" | "routineRun" | "digest";
+export type KeyedFamily = "orphaned" | "setup" | "intake" | "browser" | "skill" | "publish" | "echo" | "steer" | "routineRun" | "digest" | "botReview";
 
 interface KeyedShape {
-  card?: { requestId?: unknown; orphaned?: unknown; setup?: { key?: unknown } | null; intake?: unknown; dismissed?: unknown; answered?: unknown; browserSetup?: { resumed?: unknown } | null; skillRequest?: { stagedId?: unknown } | null; publish?: { action?: unknown; connect?: { state?: unknown } | null } | null } | null;
+  card?: { botReviewId?: unknown; requestId?: unknown; orphaned?: unknown; setup?: { key?: unknown } | null; intake?: unknown; dismissed?: unknown; answered?: unknown; browserSetup?: { resumed?: unknown } | null; skillRequest?: { stagedId?: unknown } | null; publish?: { action?: unknown; connect?: { state?: unknown } | null } | null } | null;
   setupEcho?: unknown;
   steerUnconfirmed?: unknown;
   steerId?: unknown;
@@ -39,6 +39,7 @@ export function keyedCardsOf(message: KeyedShape): Array<{ family: KeyedFamily; 
   const found: Array<{ family: KeyedFamily; key: string }> = [];
   const card = message.card;
   if (card) {
+    if (typeof card.botReviewId === "string" && card.botReviewId && !card.answered) found.push({ family: "botReview", key: card.botReviewId });
     if (card.setup && typeof card.setup.key === "string" && card.setup.key) found.push({ family: "setup", key: card.setup.key });
     if (card.intake && !card.dismissed) found.push({ family: "intake", key: "" });
     if (card.browserSetup && !card.answered && !card.browserSetup.resumed) found.push({ family: "browser", key: "" });

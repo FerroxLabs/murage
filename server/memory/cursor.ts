@@ -20,9 +20,9 @@ const PLAINTEXT_BYTES = CURSOR_PLAINTEXT_BYTES;
 export { MEMORY_CURSOR_MAX_CHARS };
 const KEY = randomBytes(32);
 
-export interface CursorReader { botId: string; threadId: string; scopeIds: readonly string[]; policyRevision: number; deletionEpoch: number }
+export interface CursorReader { scopeDigest?: string; view?: import('./recall-view.ts').RecallViewHandle; humanPrincipal?: unknown; notOwnerAudience?: boolean; botId: string; threadId: string; scopeIds: readonly string[]; policyRevision: number; deletionEpoch: number }
 const bindingOf = (reader: CursorReader, historical: boolean) => createHash("sha256")
-  .update(JSON.stringify([reader.botId, reader.threadId, [...reader.scopeIds].sort(), reader.policyRevision, reader.deletionEpoch, historical])).digest();
+  .update(JSON.stringify([reader.botId, reader.threadId, reader.scopeDigest ? [reader.view,reader.scopeDigest] : reader.view ?? [...reader.scopeIds].sort(), reader.humanPrincipal, reader.notOwnerAudience, reader.policyRevision, reader.deletionEpoch, historical])).digest();
 
 /** The token a reader is handed in place of the helper's raw cursor. */
 export function sealMemoryCursor(raw: string, reader: CursorReader, historical: boolean, now = Date.now()): string {

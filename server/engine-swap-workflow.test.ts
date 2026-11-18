@@ -1,15 +1,33 @@
-import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureDisplayReply, fixtureMessageEvidence } from "./testing/display-fixture.ts";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
-const api = async (method: string, path: string, body?: unknown): Promise<any> => {
-  const res = await fetch(fixture.info.url + path, { method, headers: { "content-type": "application/json", ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
+const request = async (server: VerificationServer, auth: Record<string, string>, method: string, path: string, body?: unknown): Promise<any> => {
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428: submit the actual opaque display action.
+  if (method === "POST" && path.endsWith("/respond")) body = fixtureDisplayReply(join(server.info.dataDir, "messages.db"), body);
+  const res = await fetch(server.info.url + path, { method, headers: { "content-type": "application/json", ...auth }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const value = await res.json(); expect(res.status, JSON.stringify(value)).toBeLessThan(300); return value;
 };
-const messages = async (threadId: string): Promise<any[]> => (await api("GET", `/api/threads/${threadId}/messages`)).messages;
+const api = (method: string, path: string, body?: unknown) => request(fixture, headers, method, path, body);
+// MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428: inspect only displayed rows; the helper proves opaque handles and no public native ids.
+const messages = async (threadId: string): Promise<any[]> => fixtureMessageEvidence(join(fixture.info.dataDir, "messages.db"), (await api("GET", `/api/threads/${threadId}/messages`)).messages);
+/** On a turn that never settles: the thread's rows (shape only), the bot's busy state and the server log's tail, to stderr. */
+const dumpStall = async (botId: string, threadId: string, step: number) => {
+  const out: string[] = [`[f9-stall] step=${step} at=${new Date().toISOString()}`];
+  try {
+    const rows = ((await (await fetch(fixture.info.url + `/api/threads/${threadId}/messages`, { headers })).json()) as { messages?: any[] }).messages ?? [];
+    for (const row of rows) out.push(`[f9-stall] row kind=${row.kind} role=${row.role} turn=${row.turnId ?? "-"} terminal=${row.turnTerminal ? 1 : 0} engine=${row.engine?.instanceId ?? "-"} tool=${row.tool?.name ?? "-"} ok=${row.tool?.ok ?? "-"} status=${row.status ?? row.card?.status ?? "-"} text=${JSON.stringify(String(row.text ?? "").slice(0, 160))}`);
+    const bots = ((await (await fetch(fixture.info.url + "/api/bots?messages=0", { headers })).json()) as { bots?: any[] }).bots ?? [];
+    out.push(`[f9-stall] bot ${JSON.stringify(bots.find((item: any) => item.id === botId) ?? null).slice(0, 600)}`);
+  } catch (error) { out.push(`[f9-stall] api read failed: ${String(error)}`); }
+  try { out.push(`[f9-stall] server log tail:\n${readFileSync(fixture.info.logPath, "utf8").split("\n").slice(-200).join("\n")}`); }
+  catch (error) { out.push(`[f9-stall] log read failed: ${String(error)}`); }
+  console.error(out.join("\n"));
+};
 beforeAll(async () => {
   fixture = await launchVerificationServer({}, undefined, { instrumentationSource: `
     const fs = await import('node:fs'); const path = await import('node:path');
@@ -34,7 +52,13 @@ it("F9 drives engine A to B to A through the real isolated server and fake engin
   for (const [index, engine] of ["verification", "second", "verification"].entries()) {
     await api("PATCH", `/api/bots/${bot.id}`, { modelSelection: { instanceId: engine, model }, computer: "off", browser: false });
     await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: `SWAP_STEP_${index}` });
-    await expect.poll(async () => (await messages(bot.threadId)).filter(row => row.turnTerminal).length, { timeout: 20000 }).toBe(index + 1);
+    try {
+      await expect.poll(async () => (await messages(bot.threadId)).filter(row => row.turnTerminal).length, { timeout: 20000 }).toBe(index + 1);
+    } catch (error) {
+      // F9 diagnostic (CI-REDS 1.0.18, test-only): a timed-out turn names its stall instead of only its count
+      await dumpStall(bot.id, bot.threadId, index);
+      throw error;
+    }
     await expect.poll(async () => !(await api("GET", "/api/bots?messages=0")).bots.find((item: any) => item.id === bot.id).busy, { timeout: 20000 }).toBe(true);
     const rows = await messages(bot.threadId), terminal = rows.filter(row => row.turnTerminal).at(-1);
     expect(terminal.engine.instanceId).toBe(engine);
@@ -46,7 +70,7 @@ it("F9 drives engine A to B to A through the real isolated server and fake engin
     if (index === 2) expect(JSON.stringify(dump.prompt)).toContain("Engine B");
     snapshots.push({ engine, rows, prompt: dump.prompt });
   }
-  writeFileSync(join(process.cwd(), ".engine-swap-workflow-evidence.json"), JSON.stringify({ fixture: fixture.info, snapshots }, null, 2));
+  console.info("Engine swap verification", JSON.stringify({ fixture: fixture.info, snapshots }));
 }, 60000);
 
 it("F3 folds real tool start, completion and options events with the turn stamp read by the guard", async () => {
@@ -62,4 +86,73 @@ it("F3 folds real tool start, completion and options events with the turn stamp 
   await expect.poll(async () => (await messages(bot.threadId)).some(row => row.turnTerminal && row.turnId === card.turnId), { timeout: 20000 }).toBe(true);
   const rows = await messages(bot.threadId);
   expect(rows.filter(row => row.tool && !row.murage).every(row => row.turnId === card.turnId)).toBe(true);
+}, 60000);
+
+it("shows a short reply and its engine after an old stored marker", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { engineDividers } = await import("../shared/chat-engine-notes.ts");
+  const marker = "«redacted»", answer = "The city has a population of about half a million.";
+  const server = await launchVerificationServer({}, undefined, {
+    turnLog: { replies: [marker, answer] },
+    instrumentationSource: `
+      const fs = await import('node:fs'); const path = await import('node:path');
+      const file = path.join(process.env.MURAGE_DATA_DIR, 'config.json');
+      const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+      cfg.instances.second = {...cfg.instances.verification, displayName: 'Engine B'};
+      cfg.instances.verification.displayName = 'Engine A';
+      fs.writeFileSync(file, JSON.stringify(cfg));
+      process.env.FAKE_CLAUDE_TEXT_ONLY = '1';
+      process.env.FAKE_CLAUDE_COMMANDS = JSON.stringify(Array.from({ length: 40 }, (_, i) => ({
+        name: 'command-' + i, description: 'An ordinary menu entry.', argumentHint: 'Optional input.',
+      })));
+    `,
+  });
+  try {
+    const proof = await request(server, {}, "GET", "/api/desktop-secret");
+    const auth = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
+    const chat = (method: string, path: string, body?: unknown) => request(server, auth, method, path, body);
+    const instances = (await chat("GET", "/api/instances")).instances;
+    const model = instances.find((instance: any) => instance.instanceId === "verification").models.options[0].id;
+    const { bot } = await chat("POST", "/api/bots", { name: "Display fixture", modelSelection: { instanceId: "second", model } });
+    await chat("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false });
+    const route = `/api/threads/${bot.threadId}/messages`;
+    const rows = async () => (await chat("GET", route)).messages as import("./store.ts").Message[];
+    const send = (text: string) => chat("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text });
+    await send("First short question.");
+    await expect.poll(async () => (await rows()).some(row => row.turnTerminal), { timeout: 20000 }).toBe(true);
+    await expect.poll(async () => !(await chat("GET", "/api/bots?messages=0")).bots.find((item: any) => item.id === bot.id).busy, { timeout: 20000 }).toBe(true);
+    const previous = (await rows()).find(row => row.turnTerminal)!;
+    await chat("PATCH", `/api/bots/${bot.id}`, { modelSelection: { instanceId: "verification", model } });
+    await send("Second short question.");
+    await expect.poll(async () => (await rows()).filter(row => row.turnTerminal).length, { timeout: 20000 }).toBe(2);
+    const page = await rows();
+    const reply = page.findLast(row => row.turnTerminal)!;
+    const db = new DatabaseSync(join(server.info.dataDir, "messages.db"), { readOnly: true });
+    try {
+      const stored = db.prepare("SELECT text FROM messages WHERE id=?");
+      expect(stored.get(previous.id)?.text).toBe(marker);
+      expect(stored.get(reply.id)?.text).toBe(answer);
+    } finally { db.close(); }
+    expect(page.find(row => row.id === previous.id)).toMatchObject({ text: marker, engine: { instanceId: "second" } });
+    expect(reply).toMatchObject({ text: answer, engine: { instanceId: "verification" } });
+    const labels = engineDividers(page, engine => instances.find((instance: any) => instance.instanceId === engine.instanceId)?.displayName ?? engine.instanceId);
+    expect(labels.get(reply.id)).toContain("Engine changed: Engine A.");
+    const sidebar = (await chat("GET", "/api/bots?view=sidebar")).bots.find((item: any) => item.id === bot.id);
+    expect(sidebar.sidebarLine).toMatchObject({ messageId: reply.id, text: answer });
+
+    // Reopen a legacy row with a persisted marker and a separate clean field.
+    await server.stop();
+    const legacyDb = new DatabaseSync(join(server.info.dataDir, "messages.db"));
+    const detail = "A readable detail from the earlier reply.";
+    try {
+      legacyDb.prepare("UPDATE messages SET json=json_set(json, '$.removedText', ?) WHERE id=?").run(detail, previous.id);
+    } finally { legacyDb.close(); }
+    await server.restart();
+    auth["x-murage-surface-secret"] = (await request(server, {}, "GET", "/api/desktop-secret")).secret;
+    expect((await rows()).find(row => row.id === previous.id)).toMatchObject({ text: marker, removedText: detail });
+    const shared = await request(server, {}, "GET", route);
+    expect(shared.messages.find((row: any) => row.id === previous.id)).toMatchObject({ text: marker, removedText: marker });
+    const external = await request(server, {}, "GET", `/api/threads/${bot.threadId}/export?format=json`);
+    expect(external.messages.find((row: any) => row.id === previous.id)).toMatchObject({ text: marker, removedText: marker });
+  } finally { await server.close(); }
 }, 60000);

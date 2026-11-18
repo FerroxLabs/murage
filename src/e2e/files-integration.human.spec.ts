@@ -1,7 +1,7 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
@@ -78,7 +78,7 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await stop(pr
 
 test("registered MCP task output appears once in Chat, Inbox and Files with a byte-exact download", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   // The row's name is its own hit target (sidebar hit areas), so a person
   // clicks the name, which selects the row. Was:
@@ -133,7 +133,7 @@ test("saved copy survives a real fixture restart and task deletion; narrow Files
   const bytes = Buffer.from(await (await request(`/api/artifacts/${artifact.id}/download`)).arrayBuffer()); expect(createHash("sha256").update(bytes).digest("hex")).toBe(artifact.sha256);
   expect((await api("/api/inbox?view=results")).items.find((entry: { id: string }) => entry.id === item.id).read).toBe(true);
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "dark"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "dark"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin); const sidebar = await openSidebar(page); await openSidebarPlace(sidebar, "files");
   // Files opens in the workspace pane beside a selected bot, and as its own
   // dialog when nothing is selected (Sidebar.tsx murage:open-files), as here

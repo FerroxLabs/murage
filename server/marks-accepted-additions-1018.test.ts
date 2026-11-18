@@ -10,6 +10,7 @@ import { autoVerdict, type AutoContext } from "./auto-approve.ts";
 import { DELETE_FLAGS, DELETE_VERBS, DISK_VERBS, wipeVerb, wipeWordIn } from "./shell/wipe-vocab.ts";
 import { doubtFree as doubtFreeRaw } from "./testing/marks-doubt-free.ts";
 import { ownerMarks } from "./testing/marks-nlh0.ts";
+import { expectNoLimitsOwnerOutcome } from "./testing/no-limits-1019.ts";
 
 // MARKS R1 (MurageMain 11-08, G1): these rows state the owner clean No limits strict read, so each reader call runs under ownerMarks;
 // every other level and origin reads as NLH0 (its NLH0 rows are in marks-owner-reads-1018.test.ts, which has no wipe-vocab import and so also runs on NLH0).
@@ -28,9 +29,12 @@ describe("MARKS-ACCEPTED-1 byDesign held=waived", () => {
   // the exemption in nlmi-marks-r16-rows.test.ts `cards()` is only legitimate while the product really answers a could-not-read on the
   // owner's clean No limits turn with a run tagged held=waived, and Full access cards that same command
   it.each(['cp a "$OUT"', 'echo x > "$LOG"'])("MARKS-ACCEPTED-1 %s runs tagged held=waived, Full access cards it", (command) => {
+    // 27bc69112e (Sean ruling 2026-11-12 02:05Z, No limits wipe-only): the owner's No limits turn takes noLimitsOnlyVerdict,
+    // which runs every non-wipe call as a plain no-limits run; the could-not-read waiver and its held=waived tag are gone.
+    // The strict read still doubts it, and Full access still cards it.
     const owner = verdict(OWNER, command);
-    expect(owner.approve).toBeTruthy();
-    expect(owner.rule).toBe("held=waived");
+    expect(owner).toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
+    expect(alwaysAskCommand(command, "/w")).toMatchObject({ rule: "unreadable" });
     expect(verdict(FULL, command).approve).toBeNull();
   });
 });
@@ -62,7 +66,8 @@ describe("MARKS-ACCEPTED-3 N5 protected path joined from adjacent literals", () 
     for (const hit of [alwaysAskCommand(command, "/w"), doubtFree(command, "/w")]) {
       expect(hit).toMatchObject({ classification: "deny", rule: "unknown-target" });
     }
-    expect(verdict(OWNER, command)).toMatchObject({ approve: null, classification: "deny" });
+    // NOLIM 1.0.19: the reader's rule is unchanged; the owner's No limits turn runs it (only the wipe list still cards)
+    expectNoLimitsOwnerOutcome(verdict(OWNER, command), command, alwaysAskCommand(command, "/w")?.rule);
   });
   it("MARKS-ACCEPTED-3 joined literals that are not protected stay unflagged", () => {
     expect(doubtFree(`python3 -c 'print("/tm"+"p/out")'`, "/w")?.classification).not.toBe("deny");
@@ -104,7 +109,12 @@ describe("MARKS-ACCEPTED-4 shell/wipe-vocab.ts", () => {
     expect(doubtFree('cp a "$OUT"', "/w")?.classification).not.toBe("deny");
   });
   it("MARKS-ACCEPTED-4 N5 inline code holding a wipe word is unknown-target", () => {
-    expect(verdict(OWNER, `perl -e 'unlink($x); mystery()'`)).toMatchObject({ approve: null, classification: "deny", rule: "unknown-target" });
+    const command = `perl -e 'unlink($x); mystery()'`;
+    // the reader still names the deny (raw strict read); 27bc69112e wipe-only: unknown-target is not on the wipe list, so the
+    // owner's No limits turn runs it and Full access still cards it
+    expect(alwaysAskCommand(command, "/w")).toMatchObject({ classification: "deny", rule: "unknown-target" });
+    expectNoLimitsOwnerOutcome(verdict(OWNER, command), command, "unknown-target");
+    expect(verdict(FULL, command).approve).toBeNull();
   });
 });
 
@@ -114,9 +124,9 @@ describe("MARKS-ACCEPTED-5 owner clean No limits runs an unseen script file", ()
   it.each(["node ./build.js", "bash ./build.sh"])("MARKS-ACCEPTED-5 %s runs on the owner's clean No limits turn, no card", (command) => {
     expect(verdict(OWNER, command).approve, command).toBeTruthy();
   });
-  it.each(["node ./build.js", "bash ./build.sh"])("MARKS-ACCEPTED-5 %s still cards without the owner-started proof", (command) => {
-    for (const proof of [{ ownerStarted: false }, { fullAccessOrigin: "other" }]) {
-      expect(autoVerdict(OWNER as never, "Bash", command, { ...context(command), ...proof } as AutoContext).approve, `${command} ${JSON.stringify(proof)}`).toBeNull();
-    }
+  // NOLIM 1.0.19 (N2.4): who started the work is the STORED origin. Stored "owner" runs even without ownerStarted; an "other" origin cards.
+  it.each(["node ./build.js", "bash ./build.sh"])("MARKS-ACCEPTED-5 %s still cards for work another origin started", (command) => {
+    expect(autoVerdict(OWNER as never, "Bash", command, { ...context(command), fullAccessOrigin: "other" } as AutoContext).approve, command).toBeNull();
+    expect(autoVerdict(OWNER as never, "Bash", command, { ...context(command), ownerStarted: false } as AutoContext).approve, `${command} stored owner origin`).toBeTruthy();
   });
 });

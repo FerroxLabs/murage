@@ -42,7 +42,6 @@ function fenceGate(fence: () => AdmissionFenceAnswer): LearningGate {
   return Object.assign(Object.create(open) as LearningGate, {
     check,
     send<R>(emit: () => R): R { check(); return open.send(emit); },
-    admit() { check(); open.admit(); },
   });
 }
 /** A fence that reads "none" until the adapter's await has let the read move. */

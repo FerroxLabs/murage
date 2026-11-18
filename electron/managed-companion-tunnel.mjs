@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Lifecycle for the remotely-managed Cloudflare Tunnel connector.
 //
 // This module deliberately knows nothing about account UI or Electron IPC.
@@ -427,14 +428,14 @@ export function createManagedCompanionTunnel({
           String(originTarget.pid),
           String(originPort),
         ],
-        {
+        withHideInherit({
           env: minimalGuardianEnvironment(environment),
           shell: false,
           windowsHide: true,
           // This open pipe is the parent-death signal. The guardian owns both
           // gateway and connector and tears them down on EOF.
           stdio: ["pipe", "ignore", "ignore"],
-        },
+        }),
       );
       child = spawned;
       const cancellationController = new AbortController();

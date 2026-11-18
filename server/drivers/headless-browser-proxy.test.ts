@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
+import { runBoundBridge } from "../testing/bound-proxy-fixture.ts";
 import { WebSocketServer } from "ws";
 import { cdpUrlFromReply, startTargetGuard } from "./headless-target-guard.ts";
-import { closeHeadlessAuthority, createHeadlessAuthorityReader, createHeadlessBrowserProxy, startHeadlessEngine } from "./headless-browser-proxy.ts";
+import { createHeadlessBrowserProxy, startHeadlessEngine } from "./headless-browser-proxy.ts";
 
 const spec = { command: "/fixture/engine", args: ["mcp"], env: { AGENT_BROWSER_SESSION: "owned", AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64) } };
 const call = { id: 1, method: "tools/call", params: { name: "agent_browser_open", arguments: { url: "https://example.com" } } };
@@ -76,26 +77,48 @@ describe("headless MCP scope", () => {
 
 describe("headless authority transport", () => {
   const env = { MURAGE_CONTROL_URL: "http://127.0.0.1:5555/api/internal/control?botId=one", MURAGE_CONTROL_TOKEN: "private", MURAGE_BOT_ID: "bot one", MURAGE_THREAD_ID: "thread/one" };
+  async function authorityCall(kind: "read" | "close", body: unknown, status = 200, environment = env) {
+    // Real proxy admission lives in a child of the fixture supervisor, whose
+    // IPC channel belongs exclusively to turn-release acknowledgements.
+    const script = `
+      const { createInterface } = await import('node:readline');
+      const transport = await import(${JSON.stringify(new URL('./headless-browser-proxy.ts', import.meta.url).href)});
+      const { releaseProxyFrame } = await import(${JSON.stringify(new URL('../proxy-turn-release.ts', import.meta.url).href)});
+      createInterface({ input: process.stdin }).on('line', async line => {
+        const request = JSON.parse(line), calls = [];
+        const fetchImpl = async (url, options) => {
+          calls.push([String(url), { headers: options.headers, method: options.method, redirect: options.redirect }]);
+          return new Response(JSON.stringify(${JSON.stringify(body)}), { status: ${status} });
+        };
+        let value, error;
+        try { value = ${kind === "read" ? "await transport.createHeadlessAuthorityReader" : "await transport.closeHeadlessAuthority"}(${JSON.stringify(environment)}, fetchImpl)${kind === "read" ? "()" : ""}; }
+        catch (failure) { error = failure.message; }
+        await releaseProxyFrame('headlessBrowser', JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { value, error, calls } }));
+      });`;
+    const frames = await runBoundBridge(script, [JSON.stringify({ jsonrpc: "2.0", id: 1, method: "fixture-authority" })], 1, false, { role: "headlessBrowser" });
+    const result = JSON.parse(frames[0]!).result as { value: unknown; error?: string; calls: Array<[string, RequestInit]> };
+    if (result.error) throw new Error(result.error);
+    return result;
+  }
   it("uses only authenticated loopback with bound bot/thread and refuses ambiguous state", async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ spec, held: false })));
-    expect(await createHeadlessAuthorityReader(env, fetchImpl)()).toEqual({ spec, held: false });
-    const [url, options] = fetchImpl.mock.calls[0]! as unknown as [URL, RequestInit];
+    const observed = await authorityCall("read", { spec, held: false });
+    expect(observed.value).toEqual({ spec, held: false });
+    const [address, options] = observed.calls[0]!, url = new URL(address);
     expect(url.pathname).toBe("/api/internal/headless-browser");
     expect(url.searchParams.get("threadId")).toBe("thread/one");
     expect(options.headers).toEqual({ authorization: "Bearer private" });
     expect(options.redirect).toBe("error");
-    await expect(createHeadlessAuthorityReader(env, async () => new Response(JSON.stringify({ spec })))()).rejects.toThrow(/refused/u);
-    expect(() => createHeadlessAuthorityReader({ ...env, MURAGE_CONTROL_URL: "https://public.example" })).toThrow(/refused/u);
+    await expect(authorityCall("read", { spec })).rejects.toThrow(/refused/u);
+    await expect(authorityCall("read", { spec, held: false }, 200, { ...env, MURAGE_CONTROL_URL: "https://public.example" })).rejects.toThrow(/refused/u);
   });
   it("centralizes session close through authenticated DELETE and requires a cleanup receipt", async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ closed: true })));
-    await closeHeadlessAuthority(env, fetchImpl);
-    const [url, options] = fetchImpl.mock.calls[0]! as unknown as [URL, RequestInit];
+    const observed = await authorityCall("close", { closed: true });
+    const [address, options] = observed.calls[0]!, url = new URL(address);
     expect(url.pathname).toBe("/api/internal/headless-browser");
     expect(options.method).toBe("DELETE");
     expect(options.headers).toEqual({ authorization: "Bearer private" });
-    await expect(closeHeadlessAuthority(env, async () => new Response("{}", { status: 401 }))).rejects.toThrow(/refused/u);
-    await expect(closeHeadlessAuthority(env, async () => new Response('{"closed":false}'))).rejects.toThrow(/refused/u);
+    await expect(authorityCall("close", {}, 401)).rejects.toThrow(/refused/u);
+    await expect(authorityCall("close", { closed: false })).rejects.toThrow(/refused/u);
   });
 });
 
@@ -124,7 +147,7 @@ describe("real isolated engine subprocess", () => {
       const control = JSON.parse(stdout) as { keys: string[]; uv: string };
       expect(control.uv).toBe(process.versions.uv);
       expect(control.keys.filter(key => !runtimeKeys.has(key))).toEqual([]);
-      const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: { AGENT_BROWSER_SESSION: "isolated-fixture" } });
+      const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: { AGENT_BROWSER_SESSION: "isolated-fixture" } }, null);
       try {
         const result = await client.request("tools/list") as { session: string; keys: string[] };
         expect(result.session).toBe("isolated-fixture");
@@ -143,7 +166,7 @@ describe("real isolated engine subprocess", () => {
     // The peer answers the withdrawn call only when the cancel arrives, and
     // echoes both the id it was working on and the notification it received.
     const script = `let buf='',held;process.stdin.on('data',c=>{buf+=c;let n;while((n=buf.indexOf('\\n'))>=0){const m=JSON.parse(buf.slice(0,n));buf=buf.slice(n+1);if(m.method==='tools/call'&&m.params.name==='slow'){held=m.id;continue;}if(m.method==='notifications/cancelled'){process.stdout.write(JSON.stringify({id:held,result:{held,cancel:m}})+'\\n');continue;}if(m.id!==undefined)process.stdout.write(JSON.stringify({id:m.id,result:{}})+'\\n');}});`;
-    const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: {} });
+    const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: {} }, null);
     try {
       await client.request("initialize");
       const stop = new AbortController();
@@ -163,7 +186,7 @@ describe("real isolated engine subprocess", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     // the peer never answers an action
     const script = `let buf='';process.stdin.on('data',c=>{buf+=c;let n;while((n=buf.indexOf('\\n'))>=0){const m=JSON.parse(buf.slice(0,n));buf=buf.slice(n+1);if(m.method==='initialize')process.stdout.write(JSON.stringify({id:m.id,result:{}})+'\\n');}});`;
-    const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: {} });
+    const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: {} }, null);
     try {
       await client.request("initialize");
       const stop = new AbortController();
@@ -210,8 +233,8 @@ describe("alerts where the engine does not auto-answer (Windows)", () => {
 describe("closing the engine child", () => {
   it("does not wait for a daemon that still holds the stdio pipes", async () => {
     // the child exits at once; a grandchild keeps its inherited stdout open for 30 s, like the engine's daemon
-    const script = `require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},30000)"],{stdio:["ignore","inherit","inherit"],detached:true}).unref();process.stdin.on("data",()=>{});process.stdin.on("end",()=>process.exit(0));`;
-    const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: {} });
+    const script = `require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},30000)"],{windowsHide:true,stdio:["ignore","inherit","inherit"],detached:true}).unref();process.stdin.on("data",()=>{});process.stdin.on("end",()=>process.exit(0));`;
+    const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: {} }, null);
     const started = Date.now();
     await client.close();
     expect(Date.now() - started).toBeLessThan(4_000);

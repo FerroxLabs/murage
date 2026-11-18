@@ -37,7 +37,7 @@ test("every electron main-process module references only defined identifiers", (
     assert.ok(files.some((file) => path.basename(file) === "main.mjs"), "main.mjs must be linted");
     const result = spawnSync(process.execPath, [
       oxlint, "-c", config, "--disable-nested-config", "-A", "all", "-D", "no-undef", "--format", "json", ...files,
-    ], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    ], { windowsHide: true, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
     assert.equal(result.error, undefined, String(result.error));
     const report = JSON.parse(result.stdout);
     const undefinedNames = report.diagnostics.map((item) =>
@@ -141,6 +141,7 @@ test("main.mjs evaluates to app.whenReady and registers native file IPC handlers
       if (key.startsWith("MURAGE_") || key.startsWith("ELECTRON_")) delete environment[key];
     }
     const result = spawnSync(process.execPath, ["--input-type=module", "-e", childSource], {
+      windowsHide: true,
       cwd: scratch,
       encoding: "utf8",
       timeout: 60_000,

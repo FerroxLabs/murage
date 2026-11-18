@@ -1,7 +1,7 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
@@ -34,7 +34,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
 
 test("Edit then Enter shows the edited message and new answer without switching versions", async ({ page }, info) => {
-  await page.addInitScript(() => localStorage.setItem("murage-email-gate", "skipped"));
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   await (await openSidebar(page)).getByText(BOT, { exact: true }).click();
   const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });

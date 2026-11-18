@@ -12,7 +12,7 @@
 // delegation result comes back to the room as "@X replied to the delegated
 // task". A stored `replyToId` always wins.
 import type { Message } from "@/state/store";
-import { mentionedPeers, mentionsEveryone } from "../../shared/mention-boundary";
+import { mentionedPeers, mentionsEveryone } from "../../shared/mention-boundary.ts";
 
 const DELEGATION_RESULT = " replied to the delegated task:";
 

@@ -16,6 +16,14 @@
 // An uncertain outcome is never replayed by the caller: nothing proves that nothing went out (3.4, Astra R3).
 
 import { fluxUsageHeaders } from "../flux-usage-tags.ts";
+import { authorizeFluxDispatch, reportFlux402 } from "../flux-start-gate.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const spendBot = new AsyncLocalStorage<string>();
+/** Owner approval uses the owner credential, while the send bills its bot.
+ * Carry that binding through async work without changing the client API. */
+export function withEmailSpendBot<T>(botId: string, work: () => T): T { return spendBot.run(botId, work); }
+import { randomUUID } from "node:crypto";
 
 export type CredentialKind = "account" | "owner" | "bot";
 export interface FluxCredential { token: string; /** the Flux key id, recorded per attempt; never the secret */ keyId: string }
@@ -24,18 +32,28 @@ export interface EmailCredentialProvider {
   account(): FluxCredential | null;
   /** The email:owner desktop token. */
   owner(): FluxCredential | null;
-  /** The bot's own email:bot key. */
-  bot(botId: string): FluxCredential | null;
+  /** The bot's own email:bot key; with `inboxId`, the key for that inbox (an inbox the binding moved away from has its retired key). */
+  bot(botId: string, inboxId?: string): FluxCredential | null;
+  /** EMAIL-ACCOUNT-CHANGE r5 F1: the ref (owner:<fp> or account:<fp>) of the credential an owner-kind call would use right now. */
+  ownerRef?(): string | null;
 }
-export type CredentialRef = { kind: "account" } | { kind: "owner" } | { kind: "bot"; botId: string } | { kind: "candidate"; credential: FluxCredential };
+/** r6 F1: the owner variant REQUIRES `expectOwnerRef` by type: the owner ref (the email:owner key id) the run or binding record names. The call is
+ *  refused with no request when it is empty or differs from the owner credential at selection time. A bot ref with `charge: true` (send, reply)
+ *  passes the client's gate, which refuses it while the bot's inbox owner is unproven (F1b). */
+export type CredentialRef = { kind: "account" } | { kind: "owner"; expectOwnerRef: string } | { kind: "bot"; botId: string; inboxId?: string; charge?: true } | { kind: "candidate"; credential: FluxCredential };
 
 export interface FluxErrorBody { error: string; message: string; fields: Record<string, unknown> }
 
-export type FluxOutcome<T = Record<string, unknown>> =
+export type FluxOutcome<T = Record<string, unknown>> = (
   | { kind: "ok"; status: number; body: T; keyId: string; costUsd?: string }
   | { kind: "held"; status: 202; body: T; keyId: string }
   | { kind: "refused"; status: number; code: string; message: string; error: FluxErrorBody; keyId: string }
-  | { kind: "uncertain"; status?: number; reason: "network" | "timeout" | "server" | "idempotency_in_progress" | "idempotency_mismatch" | "bad_body" | "no_credential"; keyId?: string };
+  | { kind: "local_refused"; code: "owner_unproven" | "owner_mismatch"; keyId?: undefined }
+  | { kind: "uncertain"; status?: number; reason: "network" | "timeout" | "server" | "idempotency_in_progress" | "idempotency_mismatch" | "bad_body" | "no_credential" | "owner_changed"; keyId?: string }
+) & {
+  /** r5 F1: on an owner-kind call, the owner ref of the credential that made it (never set when no request was made). */
+  usedOwnerRef?: string;
+};
 
 /** Codes that are a flat error body yet prove nothing about whether a send went out (3.4, Astra follow-up). */
 export const UNCERTAIN_CODES: ReadonlySet<string> = new Set(["idempotency_in_progress", "idempotency_mismatch"]);
@@ -52,7 +70,11 @@ export interface FluxEmailClientOptions {
   observe?: (ref: CredentialRef, outcome: FluxOutcome<unknown>) => void;
   /** Section 8 outage backoff: an answer to give instead of calling Flux while that credential waits (null = call). */
   gate?: (ref: CredentialRef) => FluxOutcome<never> | null;
+  /** Accepted restore outcomes survive a client/runtime restart. Keys contain the owner key id, never its token. */
+  restoreOutcomes?: { read(id: string): StoredRestoreOutcome | null; write(id: string, value: StoredRestoreOutcome): void };
 }
+
+export interface StoredRestoreOutcome { inboxId: string; botId: string; outcome: FluxOutcome<InboxBody> }
 
 /** Contract 3 bodies are flat ({ error: "<code>", message }); an older shape nests { error: { code | type, message } }. Both are read. */
 export function parseFluxError(raw: unknown): FluxErrorBody | null {
@@ -117,7 +139,7 @@ export interface EmailEvent { id: string; type: string; created?: string; inbox_
 export interface MessageSummary { id: string; direction?: string; client_reference?: string | null; thread_id?: string; [field: string]: unknown }
 export interface BotKeyBody { key: string; key_id: string; label?: string; [field: string]: unknown }
 
-/** POST/DELETE /api/desktop/bot-keys answer 404 with no body while Flux's FLUX_BOT_KEYS_ENABLED is off (r2.5): bot email is dark, which is
+/** POST/DELETE /api/desktop/bot-keys answer 404 with no body while Flux's server-side rollout flag is off (r2.5): bot email is dark, which is
  *  not a failure of this bot. A real missing key is a 404 with a body (key_not_found). */
 export function botKeysDark(outcome: { kind: string; status?: number; code?: string }): boolean {
   return outcome.kind === "refused" && outcome.status === 404 && outcome.code === "http_404";
@@ -127,28 +149,49 @@ export interface OutboundAttachment { filename: string; content_type: string; co
 export interface SendRequest { to: string[]; cc: string[]; subject: string; text: string; attachments: OutboundAttachment[]; client_reference: string }
 export interface ReplyRequest { text: string; cc: string[]; attachments: OutboundAttachment[]; reply_all: false; client_reference: string }
 
+interface RestoreRequest {
+  inboxId: string;
+  botId: string;
+  result: Promise<FluxOutcome<InboxBody>>;
+  delivery?: Promise<FluxOutcome<InboxBody>>;
+}
+
 export class FluxEmailClient {
   private readonly timeoutMs: number;
   private readonly options: FluxEmailClientOptions;
+  private readonly restores = new Map<string, RestoreRequest>();
   constructor(options: FluxEmailClientOptions) { this.options = options; this.timeoutMs = options.timeoutMs ?? 30_000; }
 
   private credential(ref: CredentialRef): FluxCredential | null {
     const { credentials } = this.options;
     // candidate: a freshly minted email key checked against #5 before it is saved (rotation, 2.3)
-    return ref.kind === "account" ? credentials.account() : ref.kind === "owner" ? credentials.owner() : ref.kind === "candidate" ? ref.credential : credentials.bot(ref.botId);
+    return ref.kind === "account" ? credentials.account() : ref.kind === "owner" ? credentials.owner() : ref.kind === "candidate" ? ref.credential : credentials.bot(ref.botId, ref.inboxId);
   }
+
+  /** r6 F1: the ref of the owner credential an owner-kind call would use right now (null with none). Read only at a run's or a call's start. */
+  currentOwnerRef(): string | null { return this.options.credentials.ownerRef?.() ?? null; }
 
   async request<T>(ref: CredentialRef, method: string, path: string, init: { body?: unknown; idempotencyKey?: string; host?: "api" | "app"; query?: Record<string, string | number | undefined>; timeoutMs?: number; botId?: string } = {}): Promise<FluxOutcome<T>> {
     const credential = this.credential(ref);
     if (!credential) return { kind: "uncertain", reason: "no_credential" };
+    // EMAIL-ACCOUNT-CHANGE r6 F1: every owner-kind call names the owner ref its run or binding record started on; a missing or empty value, or an
+    // owner credential with another ref, is refused before any request (the check is against the credential selected, never the present as a default).
+    let usedOwnerRef: string | undefined;
+    if (ref.kind === "owner") {
+      // the credential selected above is the owner's: its key id is the owner ref
+      if (!ref.expectOwnerRef || credential.keyId !== ref.expectOwnerRef) return { kind: "uncertain", reason: "owner_changed" };
+      usedOwnerRef = credential.keyId;
+    }
     const waiting = this.options.gate?.(ref);
     if (waiting) return waiting;
-    const outcome = await this.exchange<T>(credential, method, path, { ...init, botId: init.botId ?? (ref.kind === "bot" ? ref.botId : undefined) });
+    const botId = init.botId ?? (ref.kind === "bot" ? ref.botId : spendBot.getStore());
+    const exchanged = await this.exchange<T>(credential, method, path, { ...init, botId, spendKey: botId ? this.credential({ kind: "bot", botId })?.token : undefined });
+    const outcome: FluxOutcome<T> = usedOwnerRef ? { ...exchanged, usedOwnerRef } : exchanged;
     try { this.options.observe?.(ref, outcome as FluxOutcome<unknown>); } catch { /* health never decides an answer */ }
     return outcome;
   }
 
-  private async exchange<T>(credential: FluxCredential, method: string, path: string, init: { body?: unknown; idempotencyKey?: string; host?: "api" | "app"; query?: Record<string, string | number | undefined>; timeoutMs?: number; botId?: string }): Promise<FluxOutcome<T>> {
+  private async exchange<T>(credential: FluxCredential, method: string, path: string, init: { body?: unknown; idempotencyKey?: string; host?: "api" | "app"; query?: Record<string, string | number | undefined>; timeoutMs?: number; botId?: string; spendKey?: string }): Promise<FluxOutcome<T>> {
     const base = (init.host === "app" ? this.options.appBase : this.options.apiBase).replace(/\/+$/, "");
     const url = new URL(base + path);
     for (const [name, value] of Object.entries(init.query ?? {})) if (value !== undefined) url.searchParams.set(name, String(value));
@@ -161,13 +204,24 @@ export class FluxEmailClient {
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, init.timeoutMs ?? this.timeoutMs);
     (timer as { unref?: () => void }).unref?.();
     try {
+      // Account setup, recipient rules, withdrawal and reconciliation must
+      // remain usable while spending waits. New sends and reads meet the gate.
+      if ((method === "POST" && (/\/messages(?:\/[^/]+\/reply)?$/.test(path) || /\/(?:approve|send)$/.test(path))) ||
+          (method === "GET" && /\/(?:messages|threads)(?:\/[^/]+)?$/.test(path) && !init.query?.client_reference)) {
+        await authorizeFluxDispatch(init.spendKey ?? credential.token);
+      }
       const response = await this.options.fetch(url.toString(), { method, headers, body: init.body === undefined ? undefined : JSON.stringify(init.body), signal: controller.signal, redirect: "error" });
       let text = "";
       try { text = await response.text(); } catch { return { kind: "uncertain", status: response.status, reason: timedOut ? "timeout" : "network", keyId: credential.keyId }; }
       let body: unknown = undefined;
       if (text) { try { body = JSON.parse(text); } catch { body = undefined; } }
+      if (response.status === 402) reportFlux402(text, init.spendKey ?? credential.token);
       return classifyResponse<T>(response.status, body, credential.keyId, response.headers.get("x-flux-cost-usd"));
-    } catch {
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === "spend_limit") {
+        const message = error instanceof Error ? error.message : "Flux work waits";
+        return { kind: "refused", status: 409, code: "spend_limit", message, error: { error: "spend_limit", message, fields: {} }, keyId: credential.keyId };
+      }
       return { kind: "uncertain", reason: timedOut ? "timeout" : "network", keyId: credential.keyId };
     } finally { clearTimeout(timer); }
   }
@@ -175,41 +229,89 @@ export class FluxEmailClient {
   // #31 / #33
   capabilities() { return this.request<Capabilities>({ kind: "account" }, "GET", "/v1/email/capabilities"); }
   // #34, #35
-  enable(acceptTermsVersion: string) { return this.request<Record<string, unknown>>({ kind: "owner" }, "POST", "/v1/email/enable", { body: { accept_terms_version: acceptTermsVersion } }); }
+  enable(acceptTermsVersion: string, expectOwnerRef: string) { return this.request<Record<string, unknown>>({ kind: "owner", expectOwnerRef }, "POST", "/v1/email/enable", { body: { accept_terms_version: acceptTermsVersion } }); }
   /** #1 settings (owner): the account counters (account_sends_today, account_sends_per_day) for the account line. */
-  getSettings() { return this.request<{ limits?: Record<string, unknown>; account_state?: string }>({ kind: "owner" }, "GET", "/v1/email/settings"); }
-  disable(acknowledge: string) { return this.request<Record<string, unknown>>({ kind: "owner" }, "POST", "/v1/email/disable", { body: { acknowledge } }); }
+  getSettings(expectOwnerRef: string) { return this.request<{ limits?: Record<string, unknown>; account_state?: string }>({ kind: "owner", expectOwnerRef }, "GET", "/v1/email/settings"); }
+  disable(acknowledge: string, expectOwnerRef: string) { return this.request<Record<string, unknown>>({ kind: "owner", expectOwnerRef }, "POST", "/v1/email/disable", { body: { acknowledge } }); }
   // bot-keys (contract r2.4/r2.5, 1.2): an email:bot key per bot {bot_id, scopes, bot_monthly_spend_limit_usd}, Idempotency-Key kept 24 h by
   // Flux (ask 9). The bot's monthly budget is the one number Flux stamps on every key of the bot; no per-key budget, no label (Flux names it).
-  mintBotKey(input: { botId: string; botMonthlySpendLimitUsd?: number }, idempotencyKey: string) {
-    return this.request<BotKeyBody>({ kind: "owner" }, "POST", "/api/desktop/bot-keys", {
+  mintBotKey(input: { botId: string; botMonthlySpendLimitUsd?: number }, idempotencyKey: string, expectOwnerRef: string) {
+    return this.request<BotKeyBody>({ kind: "owner", expectOwnerRef }, "POST", "/api/desktop/bot-keys", {
       host: "app", idempotencyKey, botId: input.botId,
       body: { bot_id: input.botId, scopes: ["email:bot"], ...(input.botMonthlySpendLimitUsd !== undefined ? { bot_monthly_spend_limit_usd: input.botMonthlySpendLimitUsd } : {}) },
     });
   }
-  revokeBotKey(keyId: string) { return this.request<Record<string, unknown>>({ kind: "owner" }, "DELETE", `/api/desktop/bot-keys/${encodeURIComponent(keyId)}`, { host: "app" }); }
+  /** The confirming read of one bot key (GET bot-keys/<id>): 200 means the key exists, 404 key_not_found means it is gone. */
+  getBotKey(keyId: string) { return this.request<Record<string, unknown>>({ kind: "owner", expectOwnerRef: this.currentOwnerRef() ?? "" }, "GET", `/api/desktop/bot-keys/${encodeURIComponent(keyId)}`, { host: "app" }); }
   // #3 to #7. #3 is owner-only in v1 (r2.5) and names the bot with bot_id (there is no bot_key_id): 404 bot_not_found, 409 inbox_exists
   // (carries inbox_id), and a bot key would get 403 owner_required, so only the owner token ever calls it.
-  createInbox(input: { botId: string; username?: string; displayName?: string }, idempotencyKey: string) {
-    return this.request<InboxBody>({ kind: "owner" }, "POST", "/v1/email/inboxes", { idempotencyKey, botId: input.botId, body: { bot_id: input.botId, ...(input.username ? { username: input.username } : {}), ...(input.displayName ? { display_name: input.displayName } : {}) } });
+  createInbox(input: { botId: string; username?: string; displayName?: string }, idempotencyKey: string, expectOwnerRef: string) {
+    return this.request<InboxBody>({ kind: "owner", expectOwnerRef }, "POST", "/v1/email/inboxes", { idempotencyKey, botId: input.botId, body: { bot_id: input.botId, ...(input.username ? { username: input.username } : {}), ...(input.displayName ? { display_name: input.displayName } : {}) } });
   }
-  listInboxes(ref: CredentialRef = { kind: "owner" }) { return this.request<ListBody<InboxBody>>(ref, "GET", "/v1/email/inboxes"); }
+  /** A status read of the owner's inbox list (the "other setups" line); no charge and no run, so no owner ref is named. */
+  listInboxesView(expectOwnerRef: string) { return this.request<ListBody<InboxBody>>({ kind: "owner", expectOwnerRef }, "GET", "/v1/email/inboxes"); }
+  listInboxes(ref: CredentialRef) { return this.request<ListBody<InboxBody>>(ref, "GET", "/v1/email/inboxes"); }
   getInbox(ref: CredentialRef, inboxId: string) { return this.request<InboxBody>(ref, "GET", `/v1/email/inboxes/${encodeURIComponent(inboxId)}`); }
-  patchInbox(inboxId: string, patch: Record<string, unknown>) { return this.request<InboxBody>({ kind: "owner" }, "PATCH", `/v1/email/inboxes/${encodeURIComponent(inboxId)}`, { body: patch }); }
+  patchInbox(inboxId: string, patch: Record<string, unknown>, expectOwnerRef: string) { return this.request<InboxBody>({ kind: "owner", expectOwnerRef }, "PATCH", `/v1/email/inboxes/${encodeURIComponent(inboxId)}`, { body: patch }); }
   /** The per-inbox policy write (#6 send_policy, email:owner only). */
-  setSendPolicy(inboxId: string, policy: "ask" | "auto") { return this.patchInbox(inboxId, { send_policy: policy }); }
+  setSendPolicy(inboxId: string, policy: "ask" | "auto", expectOwnerRef: string) { return this.patchInbox(inboxId, { send_policy: policy }, expectOwnerRef); }
   /** #8: `acknowledge` must equal the pause reason exactly (the owner read why). */
-  resumeInbox(inboxId: string, acknowledge: string) { return this.request<InboxBody>({ kind: "owner" }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/resume`, { body: { acknowledge } }); }
+  resumeInbox(inboxId: string, acknowledge: string, expectOwnerRef: string) { return this.request<InboxBody>({ kind: "owner", expectOwnerRef }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/resume`, { body: { acknowledge } }); }
   /** #7 (r2.5): 202 state "closing" (closing_until): 30 days with no sends, restorable, then deleted and #5 answers 404. */
-  deleteInbox(inboxId: string) { return this.request<InboxBody>({ kind: "owner" }, "DELETE", `/v1/email/inboxes/${encodeURIComponent(inboxId)}`); }
   /** Activation #37 Keep address: a closing inbox comes back with the same address (`bot_id` must be its bound bot). */
-  restoreInbox(inboxId: string, botId: string) { return this.request<InboxBody>({ kind: "owner" }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/restore`, { botId, body: { bot_id: botId } }); }
+  restoreInbox(inboxId: string, botId: string, restoreId: string = randomUUID(), expectOwnerRef: string = ""): Promise<FluxOutcome<InboxBody>> {
+    // MAIN RULING: /fixture/jobs/_small/RULING-RESTORE-S1.md.
+    // Register before dispatch: an in-flight duplicate joins; a committed duplicate returns the stored result, including its ids.
+    const owner = this.credential({ kind: "owner", expectOwnerRef });
+    if (!owner) return Promise.resolve({ kind: "uncertain", reason: "no_credential" });
+    // Restore dispatches directly so duplicates can share one physical result.
+    // Apply the same captured-owner fence as request(), before even reading a saved result.
+    if (!expectOwnerRef || owner.keyId !== expectOwnerRef) return Promise.resolve({ kind: "uncertain", reason: "owner_changed" });
+    if (!restoreId) return Promise.resolve({ kind: "uncertain", reason: "idempotency_mismatch", keyId: owner.keyId });
+    const id = JSON.stringify([this.options.apiBase, owner.keyId, restoreId]);
+    const prior = this.restores.get(id), stored = prior ? null : this.options.restoreOutcomes?.read(id);
+    if (prior || stored) {
+      const binding = prior ?? stored!;
+      if (binding.inboxId !== inboxId || binding.botId !== botId) return Promise.resolve({ kind: "uncertain", reason: "idempotency_mismatch", keyId: owner.keyId });
+      return prior ? this.restoreResult(id, prior) : Promise.resolve(structuredClone(stored!.outcome));
+    }
+    const result = Promise.resolve().then(async (): Promise<FluxOutcome<InboxBody>> => {
+      const ref = { kind: "owner", expectOwnerRef } as const, waiting = this.options.gate?.(ref);
+      if (waiting) return waiting;
+      const exchanged = await this.exchange<InboxBody>(owner, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/restore`, { botId, idempotencyKey: restoreId, body: { bot_id: botId } });
+      const outcome = { ...exchanged, usedOwnerRef: owner.keyId };
+      try { this.options.observe?.(ref, outcome); } catch { /* health never decides an answer */ }
+      return outcome;
+    }).then(outcome => {
+      if (outcome.kind === "uncertain") {
+        // Acceptance is unknown: retry carries the SAME server idempotency key (including after a restart).
+        this.restores.delete(id);
+      }
+      return outcome;
+    });
+    const entry: RestoreRequest = { inboxId, botId, result };
+    this.restores.set(id, entry);
+    return this.restoreResult(id, entry);
+  }
+
+  private restoreResult(id: string, entry: RestoreRequest): Promise<FluxOutcome<InboxBody>> {
+    if (!entry.delivery) {
+      // Keep the physical result even if its durable write fails. A later caller
+      // retries only persistence; concurrent callers share this delivery attempt.
+      entry.delivery = entry.result.then(outcome => {
+        if (outcome.kind !== "uncertain") this.options.restoreOutcomes?.write(id, { inboxId: entry.inboxId, botId: entry.botId, outcome });
+        return outcome;
+      });
+      void entry.delivery.catch(() => { entry.delivery = undefined; });
+    }
+    return entry.delivery.then(outcome => structuredClone(outcome));
+  }
   // #9, #10: Idempotency-Key required, client_reference = send_id (ask 7)
   send(botId: string, inboxId: string, body: SendRequest, idempotencyKey: string) {
-    return this.request<SendBody>({ kind: "bot", botId }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/messages`, { idempotencyKey, body: { ...body, html: null, on_new_recipient: "hold" } });
+    return this.request<SendBody>({ kind: "bot", botId, inboxId, charge: true }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/messages`, { idempotencyKey, body: { ...body, html: null, on_new_recipient: "hold" } });
   }
   reply(botId: string, inboxId: string, messageId: string, body: ReplyRequest, idempotencyKey: string) {
-    return this.request<SendBody>({ kind: "bot", botId }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/messages/${encodeURIComponent(messageId)}/reply`, { idempotencyKey, body: { ...body, html: null } });
+    return this.request<SendBody>({ kind: "bot", botId, inboxId, charge: true }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/messages/${encodeURIComponent(messageId)}/reply`, { idempotencyKey, body: { ...body, html: null } });
   }
   // #11, #12, #14, #15
   listMessages(ref: CredentialRef, inboxId: string, query: { client_reference?: string; direction?: "inbound" | "outbound"; thread_id?: string; since?: string; limit?: number; cursor?: string } = {}) {
@@ -220,16 +322,16 @@ export class FluxEmailClient {
   getThread(ref: CredentialRef, inboxId: string, threadId: string) { return this.request<Record<string, unknown>>(ref, "GET", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/threads/${encodeURIComponent(threadId)}`); }
   // #16 to #18
   listRecipients(ref: CredentialRef, inboxId: string) { return this.request<ListBody<Record<string, unknown>>>(ref, "GET", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/recipients`); }
-  addRecipient(inboxId: string, entry: string, rule: "allow" | "block") { return this.request<Record<string, unknown>>({ kind: "owner" }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/recipients`, { body: { entry, rule } }); }
-  removeRecipient(inboxId: string, entry: string) { return this.request<Record<string, unknown>>({ kind: "owner" }, "DELETE", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/recipients/${encodeURIComponent(entry)}`); }
+  addRecipient(inboxId: string, entry: string, rule: "allow" | "block", expectOwnerRef: string) { return this.request<Record<string, unknown>>({ kind: "owner", expectOwnerRef }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/recipients`, { body: { entry, rule } }); }
+  removeRecipient(inboxId: string, entry: string, expectOwnerRef: string) { return this.request<Record<string, unknown>>({ kind: "owner", expectOwnerRef }, "DELETE", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/recipients/${encodeURIComponent(entry)}`); }
   // #19 to #21, #23, #32
   listApprovals(ref: CredentialRef, query: { state?: string; inbox_id?: string } = { state: "pending" }) { return this.request<ListBody<ApprovalSummary>>(ref, "GET", "/v1/email/approvals", { query }); }
   getApproval(ref: CredentialRef, approvalId: string) { return this.request<ApprovalDetail>(ref, "GET", `/v1/email/approvals/${encodeURIComponent(approvalId)}`); }
-  approve(approvalId: string, heldIds: string[]) {
-    return this.request<ApproveBody>({ kind: "owner" }, "POST", `/v1/email/approvals/${encodeURIComponent(approvalId)}/approve`, { body: { scope: "once", held_ids: heldIds, acknowledge_future_sends: false } });
+  approve(approvalId: string, heldIds: string[], expectOwnerRef: string) {
+    return this.request<ApproveBody>({ kind: "owner", expectOwnerRef }, "POST", `/v1/email/approvals/${encodeURIComponent(approvalId)}/approve`, { body: { scope: "once", held_ids: heldIds, acknowledge_future_sends: false } });
   }
   withdrawHeld(ref: CredentialRef, heldId: string) { return this.request<Record<string, unknown>>(ref, "DELETE", `/v1/email/held/${encodeURIComponent(heldId)}`); }
-  retryHeld(heldId: string, idempotencyKey: string) { return this.request<SendBody>({ kind: "owner" }, "POST", `/v1/email/held/${encodeURIComponent(heldId)}/send`, { idempotencyKey }); }
+  retryHeld(heldId: string, idempotencyKey: string, expectOwnerRef: string) { return this.request<SendBody>({ kind: "owner", expectOwnerRef }, "POST", `/v1/email/held/${encodeURIComponent(heldId)}/send`, { idempotencyKey }); }
   // #28 long-poll
   events(ref: CredentialRef, query: { cursor?: string; wait?: number; limit?: number; inbox_id?: string } = {}) {
     const wait = Math.max(0, Math.min(25, query.wait ?? 25));

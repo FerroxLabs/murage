@@ -1,19 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  applyComposioCredentialResult,
-  composioLegacyBrokerUntil,
-  deriveManagedComposioCredentials,
-  ensureManagedComposioCredentials,
-  MANAGED_COMPOSIO_UPDATE_OPTIONS,
-  managedComposioAccess,
-  fluxComposioBrokerUrl,
-  legacyBrokerOpen,
-  managedComposioChildEnvironment,
-  normalizeManagedComposioBrokerUrl,
-  publicComposioLegacyClaim,
-  readComposioLegacyClaim,
-  writeComposioLegacyClaim,
-} from "./managed-composio.mjs";
+import { applyComposioCredentialResult, composioLegacyBrokerUntil, MANAGED_COMPOSIO_UPDATE_OPTIONS, managedComposioAccess, fluxComposioBrokerUrl, legacyBrokerOpen, managedComposioChildEnvironment, normalizeManagedComposioBrokerUrl, publicComposioLegacyClaim, readComposioLegacyClaim, writeComposioLegacyClaim } from "./managed-composio.mjs";
+import { deriveManagedComposioCredentials, ensureManagedComposioCredentials } from "./testing/composio-fixture.mjs";
 import { COMPOSIO_LEGACY_BROKER_UNTIL, FLUX_COMPOSIO_BROKER_URL } from "./composio-release-config.mjs";
 
 const TOKEN = "a".repeat(64);
@@ -359,4 +346,14 @@ describe("a lifecycle result computed before the taken-over marker", () => {
     const result = applyComposioCredentialResult({ ...snapshot }, snapshot, { fluxComposioBrokerToken: T });
     expect(result.applied).toBe(true);
   });
+});
+
+it("key removal clears its token before any remote revoke and durably retains cleanup", async () => {
+  const { withComposioCredentialChange } = await import("./managed-composio.mjs");
+  const current = { fluxApiKey: "sk-flux-fixture-owner", fluxComposioBrokerToken: "a".repeat(64), unrelated: "kept" };
+  const next = withComposioCredentialChange(current, { ...current, fluxApiKey: "" }, "https://broker.example.test");
+  expect(next.fluxComposioBrokerToken).toBeUndefined();
+  expect(next.unrelated).toBe("kept");
+  expect(JSON.parse(next.composioPendingRevocations)).toEqual([{ fluxBrokerUrl: "https://broker.example.test", token: current.fluxComposioBrokerToken }]);
+  expect(current.fluxComposioBrokerToken).toBe("a".repeat(64));
 });

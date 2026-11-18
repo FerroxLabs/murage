@@ -4,11 +4,13 @@
 // the helper checked it; a damaged one still is, and the set-aside copy (with its log files) is removed once the new index is open, so the
 // words of deleted conversations do not outlive the deletion in it. Copies an earlier build left are removed at the next start. Nothing
 // outside the index's own directory, and no other quarantine, is touched. Fixtures in throwaway temp directories only.
+import { closeSealed, openTestIndex, put } from "./testing/open-index.ts";
 import { chmodSync, copyFileSync, renameSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
+import { spawn } from "node:child_process";
 import { afterEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
@@ -28,7 +30,7 @@ function fresh(): { root: string; data: string; path: string } {
   return { root, data, path: join(data, "memory-index.db") };
 }
 const row = (id: string, text: string) => ({ id, version: 1, scopeId: "scope", text, deleted: false });
-function seed(path: string, text = MARKER): void { const index = new MemoryIndex(path); try { index.upsert([row("kept", text)]); } finally { index.close(); } }
+async function seed(path: string, text = MARKER): Promise<void> { const index = await openTestIndex(path); try { await put(index, [row("kept", text)]); } finally { await closeSealed(index); } }
 const quarantines = (dir: string) => readdirSync(dir).filter(name => name.includes(".corrupt-"));
 const holding = (dir: string) => readdirSync(dir).filter(name => { const file = join(dir, name); return statSync(file).isFile() && readFileSync(file).includes(Buffer.from(MARKER)); });
 const finds = (index: MemoryIndex, text: string) => index.search(text, [{ id: "kept", version: 1 }], null, "unused").hits.map(hit => hit.id);
@@ -62,40 +64,39 @@ it("classifies only SQLITE_CORRUPT, SQLITE_NOTADB and a failed check as damage; 
 
 it("waits out another connection's lock during the check and opens the same index, set aside nothing", async () => {
   const { data, path } = fresh();
-  seed(path);
+  await seed(path);
   const lock = await holdLock(path, 400);
   const started = Date.now();
-  const index = new MemoryIndex(path);
+  const index = await openTestIndex(path);
   try {
     expect(Date.now() - started).toBeGreaterThanOrEqual(200);
     expect(index.rebuilt).toBe(false);
     expect(finds(index, MARKER)).toEqual(["kept"]);
     expect(quarantines(data)).toEqual([]);
-  } finally { index.close(); await lock.release().catch(() => {}); }
+  } finally { index.close(); lock.release().catch(() => {}); }
 });
 
 it("a lock held past the wait fails the open (the helper's start is retried) and never sets the healthy index aside", async () => {
   const { data, path } = fresh();
-  seed(path);
+  await seed(path);
   const lock = await holdLock(path);
   try {
     let thrown: unknown = null;
-    try { new MemoryIndex(path).close(); } catch (error) { thrown = error; }
-    expect((thrown as { errcode?: number } | null)?.errcode, String(thrown)).toBeTypeOf("number");
-    expect(((thrown as { errcode: number }).errcode & 0xff)).toBe(5);
+    try { (await openTestIndex(path)).close(); } catch (error) { thrown = error; }
+    expect(String(thrown)).toBe("Error: MEMORY_INDEX_EXIT 1");
     expect(quarantines(data)).toEqual([]);
     expect(existsSync(path)).toBe(true);
   } finally { await lock.release(); }
-  const index = new MemoryIndex(path);
+  const index = await openTestIndex(path);
   try { expect(index.rebuilt).toBe(false); expect(finds(index, MARKER)).toEqual(["kept"]); } finally { index.close(); }
 }, 30_000);
 
-it("a file that is not a database is set aside, rebuilt empty, and the set-aside copy and its log are removed", () => {
+it("a file that is not a database is set aside, rebuilt empty, and the set-aside copy and its log are removed", async () => {
   const { data, path } = fresh();
   writeFileSync(path, Buffer.concat([Buffer.from("not a sqlite file at all "), Buffer.from(MARKER), Buffer.alloc(8192, 7)]));
   writeFileSync(`${path}-wal`, Buffer.concat([Buffer.from("stale log "), Buffer.from(MARKER)]));
   writeFileSync(`${path}-shm`, Buffer.alloc(32768, 1));
-  const index = new MemoryIndex(path);
+  const index = await MemoryIndex.create(path, { charge: async () => true, reset: { resetId: 1, resets: 1, kind: "open" } });
   try {
     expect(index.rebuilt).toBe(true);
     expect(finds(index, MARKER)).toEqual([]);
@@ -104,17 +105,17 @@ it("a file that is not a database is set aside, rebuilt empty, and the set-aside
   } finally { index.close(); }
 });
 
-it("an index whose pages are damaged is set aside and rebuilt, and no copy of its words is left in the directory", () => {
+it("an index whose pages are damaged is set aside and rebuilt, and no copy of its words is left in the directory", async () => {
   const { data, path } = fresh();
-  const index0 = new MemoryIndex(path);
-  try { index0.upsert(Array.from({ length: 400 }, (_, n) => row(`r${n}`, `${MARKER} filler${n} ${"x".repeat(200)}`))); index0.checkpointNow(); } finally { index0.close(); }
+  const index0 = await openTestIndex(path);
+  try { await put(index0, Array.from({ length: 400 }, (_, n) => row(`r${n}`, `${MARKER} filler${n} ${"x".repeat(200)}`))); (await index0.sealAndTruncate()).truncated; } finally { index0.close(); }
   expect(existsSync(`${path}-wal`) && statSync(`${path}-wal`).size > 0).toBe(false);
   const bytes = readFileSync(path), page = bytes.readUInt16BE(16) || 65536;
   // overwrite every page after the schema page with noise, keeping the header valid so the file still opens as SQLite
   for (let at = page; at < bytes.length; at++) bytes[at] = (at * 31) & 0xff;
   for (let at = page * 2; at < bytes.length; at += page * 3) bytes.write(MARKER, at + 64);
   writeFileSync(path, bytes);
-  const index = new MemoryIndex(path);
+  const index = await MemoryIndex.create(path, { charge: async () => true, reset: { resetId: 1, resets: 1, kind: "open" } });
   try {
     expect(index.rebuilt).toBe(true);
     expect(quarantines(data)).toEqual([]);
@@ -122,12 +123,12 @@ it("an index whose pages are damaged is set aside and rebuilt, and no copy of it
   } finally { index.close(); }
 });
 
-it("a set-aside copy an earlier build left behind is removed at the next start of a healthy index", () => {
+it("a set-aside copy an earlier build left behind is removed at the next start of a healthy index", async () => {
   const { data, path } = fresh();
-  seed(path, "currentwords");
+  await seed(path, "currentwords");
   for (const name of ["memory-index.db.corrupt-1790000000000", "memory-index.db.corrupt-1790000000000-wal", "memory-index.db.corrupt-1790000000000-shm", "memory-index.db.corrupt-1700000000001"])
     writeFileSync(join(data, name), Buffer.from(`old copy ${MARKER}`));
-  const index = new MemoryIndex(path);
+  const index = await openTestIndex(path);
   try {
     expect(index.rebuilt).toBe(false);
     expect(finds(index, "currentwords")).toEqual(["kept"]);
@@ -136,9 +137,9 @@ it("a set-aside copy an earlier build left behind is removed at the next start o
   } finally { index.close(); }
 });
 
-it("touches nothing outside the index's directory, nothing nested, no other quarantine, no link and no look-alike name", () => {
+it("touches nothing outside the index's directory, nothing nested, no other quarantine, no link and no look-alike name", async () => {
   const { root, data, path } = fresh();
-  seed(path, "currentwords");
+  await seed(path, "currentwords");
   const outside = join(root, "memory-index.db.corrupt-1790000000000"), nested = join(data, "sub", "memory-index.db.corrupt-1790000000001");
   mkdirSync(join(data, "sub"));
   writeFileSync(outside, MARKER); writeFileSync(nested, MARKER);
@@ -149,7 +150,7 @@ it("touches nothing outside the index's directory, nothing nested, no other quar
   writeFileSync(join(data, "memory-index.db.corrupt-1790000000006", "inside"), MARKER);
   let linked = false;
   try { symlinkSync(outside, join(data, "memory-index.db.corrupt-1790000000007")); linked = true; } catch { /* no symlink permission (Windows) */ }
-  const index = new MemoryIndex(path);
+  const index = await openTestIndex(path);
   try {
     expect(index.rebuilt).toBe(false);
     expect(readFileSync(outside, "utf8")).toBe(MARKER);
@@ -186,24 +187,24 @@ it.each(["off", "capture"] as const)("with memory %s and nothing owed (no helper
     controller.start();
     await vi.waitFor(() => expect(quarantines(DATA_DIR)).toEqual(["messages.db.corrupt-1790000000001"]), { timeout: 20_000, interval: 25 });
     expect((controller as unknown as { child: unknown }).child).toBeNull();
-  } finally { await controller.stop().catch(() => {}); closeMemoryIndexReader(); closeDatabase(); }
+  } finally { controller.stop().catch(() => {}); closeMemoryIndexReader(); closeDatabase(); }
 }, 30_000);
 
 /** A real write-ahead log holding MARKER: copied from a live index while its writes are still in the log (not yet checkpointed). */
-function realWal(): Buffer {
+async function realWal(): Promise<Buffer> {
   const { path } = fresh();
-  const index = new MemoryIndex(path);
+  const index = await openTestIndex(path);
   try {
-    index.upsert([row("kept", MARKER)]);
+    await put(index, [row("kept", MARKER)]);
     expect(statSync(`${path}-wal`).size).toBeGreaterThan(0);
     return readFileSync(`${path}-wal`);
   } finally { index.close(); }
 }
-const unsafe = (make: () => unknown) => { try { make(); } catch (error) { return String((error as Error).message); } return "no error"; };
+const unsafe = async (make: () => unknown) => { try { await make(); } catch (error) { return String((error as Error).message); } return "no error"; };
 
-it("a log-file rename that fails moves the whole set back (a real WAL stays with its index file) and throws", () => {
+it("a log-file rename that fails moves the whole set back (a real WAL stays with its index file) and throws", async () => {
   const { data, path } = fresh();
-  seed(path, "currentwords");
+  await seed(path, "currentwords");
   const db = new DatabaseSync(path);
   db.exec("PRAGMA wal_autocheckpoint=0");
   db.exec(`CREATE TABLE walrow(text TEXT); INSERT INTO walrow VALUES('${MARKER}')`);
@@ -219,17 +220,17 @@ it("a log-file rename that fails moves the whole set back (a real WAL stays with
   expect(readFileSync(`${copy}-wal`).equals(wal)).toBe(true);
   expect(existsSync(`${copy}.corrupt-123`)).toBe(false);
   // the set is whole again: the index opens with the row its log held
-  const index = new MemoryIndex(copy);
+  const index = await openTestIndex(copy);
   try { expect(index.rebuilt).toBe(false); expect(finds(index, "currentwords")).toEqual(["kept"]); } finally { index.close(); }
   const check = new DatabaseSync(copy);
   try { expect(check.prepare("SELECT text FROM walrow").get()?.text).toBe(MARKER); } finally { check.close(); }
 });
 
-it("with no index file, a real WAL left at the live name is removed before the fresh index opens, so none of its words come back", () => {
+it("with no index file, a real WAL left at the live name is removed before the fresh index opens, so none of its words come back", async () => {
   const { data, path } = fresh();
-  writeFileSync(`${path}-wal`, realWal());
+  writeFileSync(`${path}-wal`, await realWal());
   writeFileSync(`${path}-shm`, Buffer.alloc(32768, 0));
-  const index = new MemoryIndex(path);
+  const index = await openTestIndex(path);
   try {
     expect(index.rebuilt).toBe(true);
     expect(finds(index, MARKER)).toEqual([]);
@@ -237,58 +238,72 @@ it("with no index file, a real WAL left at the live name is removed before the f
   } finally { index.close(); }
 });
 
-it("with no index file, a log that cannot be removed fails the start and no fresh index is opened beside it", () => {
+it("with no index file, a log that cannot be removed fails the start and no fresh index is opened beside it", async () => {
   const { data, path } = fresh();
-  writeFileSync(`${path}-wal`, realWal());
+  writeFileSync(`${path}-wal`, await realWal());
   chmodSync(data, 0o555);
   let message: string;
-  try { message = unsafe(() => new MemoryIndex(path).close()); } finally { chmodSync(data, 0o755); }
+  try { message = await unsafe(async () => (await openTestIndex(path)).close()); } finally { chmodSync(data, 0o755); }
   // root (or Windows) can unlink in a read-only directory: then the log is removed and the fresh index opens
   if (message === "no error") { expect(holding(data)).toEqual([]); return; }
   expect(existsSync(path)).toBe(false);
   expect(existsSync(`${path}-wal`)).toBe(true);
 });
 
-it("a log file that is a link is refused (UNSAFE_MEMORY_INDEX), with or without the index file, and its target is untouched", () => {
+it("a log file that is a link is refused (UNSAFE_MEMORY_INDEX), with or without the index file, and its target is untouched", async () => {
   const { root, path } = fresh();
   const target = join(root, "elsewhere");
   writeFileSync(target, MARKER);
   try { symlinkSync(target, `${path}-wal`); } catch { return; /* no symlink permission (Windows) */ }
-  expect(unsafe(() => new MemoryIndex(path).close())).toBe("UNSAFE_MEMORY_INDEX");
+  expect(await unsafe(async () => (await openTestIndex(path)).close())).toBe("MEMORY_INDEX_EXIT 1");
   expect(existsSync(path)).toBe(false);
   unlinkSync(`${path}-wal`);
-  seed(path, "currentwords");
+  await seed(path, "currentwords");
+  // The closed checked-writer fixture may retain an empty SHM; replace only this fixture artifact.
+  if (existsSync(`${path}-shm`)) unlinkSync(`${path}-shm`);
   symlinkSync(target, `${path}-shm`);
-  expect(unsafe(() => new MemoryIndex(path).close())).toBe("UNSAFE_MEMORY_INDEX");
+  expect(await unsafe(async () => (await openTestIndex(path)).close())).toBe("MEMORY_INDEX_EXIT 1");
   expect(readlinkSync(`${path}-shm`)).toBe(target);
   expect(readFileSync(target, "utf8")).toBe(MARKER);
   // setting a damaged index aside refuses a linked log too, and leaves the index file where it was
-  expect(unsafe(() => quarantineIndex(path, 456))).toBe("UNSAFE_MEMORY_INDEX");
+  expect(await unsafe(() => quarantineIndex(path, 456))).toBe("UNSAFE_MEMORY_INDEX");
   expect(existsSync(path)).toBe(true);
   expect(existsSync(`${path}.corrupt-456`)).toBe(false);
 });
 
-it.skipIf(process.platform !== "linux")("a start that throws after the open leaves no connection on the file", () => {
+it.skipIf(process.platform !== "linux")("a start that throws after the open leaves no connection on the file", async () => {
   const { path } = fresh();
   const db = new DatabaseSync(path);
   db.exec("CREATE TABLE index_meta(x)"); // passes the check; the first read of index_meta then fails
   db.close();
+  // I3 deliberately leaves SQLite handles open on failure. Exercise the real process
+  // exit instead of replacing it with an exception in the long-lived test process.
+  const source = `import { MemoryIndex } from ${JSON.stringify(new URL("./index.ts", import.meta.url).href)};
+    console.log("MEMW_OPEN_STARTED");
+    await MemoryIndex.create(process.argv[1], { charge: async () => true }); process.exit(99);`;
+  const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", source, path], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = ""; child.stdout.on("data", chunk => { stdout += String(chunk); });
+  let stderr = ""; child.stderr.on("data", chunk => { stderr += String(chunk); });
+  const code = await new Promise<number | null>((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
+  expect(stdout.trim(), stderr).toBe("MEMW_OPEN_STARTED");
+  expect(code, stderr).toBe(1);
   const open = () => readdirSync("/proc/self/fd").filter(fd => { try { return readlinkSync(`/proc/self/fd/${fd}`).startsWith(path); } catch { return false; } });
   expect(open()).toEqual([]);
-  expect(unsafe(() => new MemoryIndex(path).close())).not.toBe("no error");
-  expect(open()).toEqual([]);
-});
+  const retry = new DatabaseSync(path);
+  try { retry.exec("PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; SELECT * FROM index_meta; ROLLBACK"); }
+  finally { retry.close(); }
+}, 30_000);
 
-it("past the check the handle waits for no lock (busy_timeout 0)", () => {
+it("past the check the handle waits for no lock (busy_timeout 0)", async () => {
   const { path } = fresh();
-  const index = new MemoryIndex(path);
+  const index = await openTestIndex(path);
   try { expect(Object.values((index as unknown as { db: DatabaseSync }).db.prepare("PRAGMA busy_timeout").get() ?? {})).toEqual([0]); } finally { index.close(); }
 });
 
 /** An index whose last writes (MARKER among them) are still only in its real log, with a -shm beside it. */
-function indexWithLiveWal(): { data: string; copy: string } {
+async function indexWithLiveWal(): Promise<{ data: string; copy: string }> {
   const { data, path } = fresh();
-  seed(path, "currentwords");
+  await seed(path, "currentwords");
   const db = new DatabaseSync(path);
   db.exec("PRAGMA wal_autocheckpoint=0");
   db.exec(`CREATE TABLE walrow(text TEXT); INSERT INTO walrow VALUES('${MARKER}')`);
@@ -301,8 +316,8 @@ function indexWithLiveWal(): { data: string; copy: string } {
   return { data: live, copy };
 }
 
-it("when a log cannot be put back after a failed set-aside, the index file stays aside and the next start rebuilds without the old words", () => {
-  const { data, copy } = indexWithLiveWal();
+it("when a log cannot be put back after a failed set-aside, the index file stays aside and the next start rebuilds without the old words", async () => {
+  const { data, copy } = await indexWithLiveWal();
   expect(readFileSync(`${copy}-wal`).includes(Buffer.from(MARKER))).toBe(true);
   // forward: the index file and its -wal move, the -shm fails; back: the -wal fails
   const rename = (from: string, to: string) => {
@@ -312,7 +327,7 @@ it("when a log cannot be put back after a failed set-aside, the index file stays
   expect(() => quarantineIndex(copy, 789, rename)).toThrow("EBUSY");
   expect(existsSync(copy)).toBe(false);               // not restored without its log
   expect(existsSync(`${copy}.corrupt-789`)).toBe(true);
-  const index = new MemoryIndex(copy);
+  const index = await openTestIndex(copy);
   try {
     expect(index.rebuilt).toBe(true);
     expect(finds(index, "currentwords")).toEqual([]);
@@ -321,9 +336,9 @@ it("when a log cannot be put back after a failed set-aside, the index file stays
   } finally { index.close(); }
 });
 
-it("with no index file, a log whose removal fails stops the start before any open (directory writable)", () => {
+it("with no index file, a log whose removal fails stops the start before any open (directory writable)", async () => {
   const { path } = fresh();
-  writeFileSync(`${path}-wal`, realWal());
+  writeFileSync(`${path}-wal`, await realWal());
   const refuse = () => { throw Object.assign(new Error("EBUSY: held open"), { code: "EBUSY" }); };
   expect(() => prepareIndexOpen(path, refuse)).toThrow("EBUSY");
   expect(existsSync(`${path}-wal`)).toBe(true);
@@ -332,19 +347,19 @@ it("with no index file, a log whose removal fails stops the start before any ope
   expect(() => prepareIndexOpen(path, () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); })).not.toThrow();
 });
 
-it("an index path that is a link, dangling or not, is refused before the open and nothing is created at its target", () => {
+it("an index path that is a link, dangling or not, is refused before the open and nothing is created at its target", async () => {
   const { root, path } = fresh();
   const target = join(root, "outside.db");
   try { symlinkSync(target, path); } catch { return; /* no symlink permission (Windows) */ }
-  expect(unsafe(() => new MemoryIndex(path).close())).toBe("UNSAFE_MEMORY_INDEX");
+  expect(await unsafe(async () => (await openTestIndex(path)).close())).toBe("MEMORY_INDEX_EXIT 1");
   expect(existsSync(target)).toBe(false);
   expect(indexFilesRegular(path)).toBe(false);
 });
 
-it("read-only connections refuse a linked log too: the controller's start-up read leaves the link's target untouched", () => {
+it("read-only connections refuse a linked log too: the controller's start-up read leaves the link's target untouched", async () => {
   closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   const path = join(DATA_DIR, "memory-index.db");
-  seed(path);
+  await seed(path);
   expect(indexFilesRegular(path)).toBe(true);
   const target = join(fresh().root, "outside-shm");
   writeFileSync(target, Buffer.alloc(64, 9));

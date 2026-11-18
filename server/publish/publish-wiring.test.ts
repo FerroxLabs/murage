@@ -30,3 +30,26 @@ it("every engine reaches both tools through the agents server, and an answer on 
   expect(index).toMatch(/publishOperations\.resolve\(threadId, requestId, behavior\)/);
   expect(index).toMatch(/publishOperations\.cancelThread\(threadId\)/);
 });
+
+// MAIN 2026-11-17T17:20Z Q3: a publish card gets the same thread waiting flag and notification as image and HighLevel cards.
+it("image, HighLevel and publish cards all wait through the one service waiting function and its shared flag", () => {
+  const index = read("../index.ts");
+  for (const [make, service] of [["const imageOperations = new ImageOperations", "image"], ["const publishOperations = new PublishOperations", "publish"], ["const highlevelCards = new HighLevelReviewCards", "highlevel"]]) {
+    const start = index.indexOf(make);
+    expect(start, make).toBeGreaterThan(0);
+    // The constructor call ends at its closing "});" (a line of its own, or after the last option).
+    const block = index.slice(start, start + index.slice(start).search(/\n\}\);|\} \}\);/));
+    // design1019-approval-attention: the shared flag is the attention module's generation-owned wait (attentionWait),
+    // and every service passes the actor/claim generation it captured, never the thread's current turn.
+    expect(block, make).toContain(`serviceCardWaiting(approvalAttention, "${service}", {`);
+    // The image close also passes whether the owner answered (an abandoned call never resumes a parked project board).
+    expect(block, make).toMatch(service === "image" ? /generation \? \{ generation \} : undefined, answered\)/ : /generation \? \{ generation \} : undefined\)/);
+    expect(block, make).not.toMatch(/setWaitingOnHuman|noteHumanWait/);
+  }
+  const at = index.indexOf("function attentionWait(");
+  expect(at).toBeGreaterThan(0);
+  const flag = index.slice(at, index.indexOf("\n}", at));
+  expect(flag).toMatch(/setWaitingOnHuman\(threadId, waiting, requestId, generation\)/);
+  expect(flag).toMatch(/noteHumanWait\(threadId, requestId, waiting, generation\)/);
+  expect(index).toContain("wait: attentionWait,");
+});

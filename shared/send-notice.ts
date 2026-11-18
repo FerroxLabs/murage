@@ -8,14 +8,17 @@
 // own language on every device, and a pack that has not caught up falls back to
 // the English below.
 
-export const SEND_NOTICE_CODES = ["notRecorded", "lateRefused", "notConfirmed", "refused"] as const;
+export const SEND_NOTICE_CODES = ["notRecorded", "lateRefused", "notConfirmed", "refused", "toolTurnRefused", "stepTurnRefused"] as const;
 export type SendNoticeCode = (typeof SEND_NOTICE_CODES)[number];
+export type NativeTurnNoticeCode = Extract<SendNoticeCode, "toolTurnRefused" | "stepTurnRefused">;
 
 /** The prefix of a transcript notice line's tool name: `send-notice:<code>`. */
 export const SEND_NOTICE_PREFIX = "send-notice:";
 
 /** English, for the surfaces that have no language pack (a Markdown export, a log). */
 export const SEND_NOTICE_ENGLISH: Record<SendNoticeCode, string> = {
+  toolTurnRefused: "I couldn't use that tool on this turn, so I stopped here. Your next message will work as usual.",
+  stepTurnRefused: "I couldn't use that step on this turn, so I stopped here. Your next message will work as usual.",
   notRecorded: "Murage couldn't record that message, so nothing was sent. Your words are still in the box. Try again in a moment.",
   lateRefused: "The bot could not take that message in time and a newer one had already gone ahead, so it was not run. Send it again if you still want it.",
   notConfirmed: "This message may not have reached the bot before Murage closed. It was not sent again. Send it again if you still want it.",

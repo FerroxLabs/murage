@@ -141,3 +141,13 @@ it("is mounted once, in the shell", () => {
   expect(hook).toContain('window.addEventListener("hashchange"');
   expect(hook).toContain("if (state.hydrated) queue.ready();");
 });
+
+describe("connector notification links", () => {
+  it("opens only the authenticated reconnect view, without focusing a fabricated message", () => {
+    const actions: any[] = [];
+    const incidentId = "12345678-1234-4234-8234-123456789abc";
+    const target = parseOpenHash(`#open=owner&msg=connector%3A${incidentId}`)!;
+    expect(openDeepLink(target, { bots: [], groups: [] }, action => actions.push(action))).toBe(true);
+    expect(actions).toEqual([{ type: "openConnectorReconnect", incidentId }]);
+  });
+});

@@ -400,7 +400,7 @@ function decide(id: string, env: HandoffEnv, options: AdmitOptions, taken: { cla
 }
 
 /** Where the hand-off runs: the stored conversation. Once the prompt exists in it the destination never changes (a deleted one cancels); with no prompt yet a
- * stored conversation that is gone is resolved again. With nothing stored, it is resolved once and stored. */
+ * stored conversation that is gone is resolved again. An owner No limits admission binds the bot, so before its prompt exists it follows the current owner chat. */
 function destinationOf(row: HandoffRow, item: PendingDelegationItem, request: RoomRequest | null, shared: boolean, target: BotRecord, sender: BotRecord, source: string, probe: boolean): string | "gone" | "unresolved" {
   const owned = (threadId: string): boolean => target.threadId === threadId || Boolean(target.tasks?.some((task) => task.threadId === threadId));
   let stored = row.target_thread_id;
@@ -413,7 +413,7 @@ function destinationOf(row: HandoffRow, item: PendingDelegationItem, request: Ro
   if (stored) {
     const turnKey = row.turn_key ?? delegationTurnKey(row.id);
     const prompted = promptExists(stored, turnKey);
-    if (owned(stored)) return stored;
+    if (owned(stored) && (prompted || !item.executionAudience?.admission)) return stored;
     if (prompted) return "gone";
   }
   let resolved: string | undefined;
@@ -684,6 +684,7 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
   try {
     if (ctx.shared) {
       text = sharedOps!.text(request!) + doneWhenBriefLine(item.doneWhen);
+      // These synchronous values are provisional; startTurn awaits chain saves and recomputes before use.
       options = sharedOps!.turnOptions(request!);
       // F3 (02-3): a shared hand-off's worker carries its trace like the non-shared one: derived from the request tree (turnOptions), else the
       // trace its asker advanced and the row carries (a parentless hand-off from a direct conversation)
@@ -700,8 +701,20 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
       clearWaitLine(bus, source, item);
       const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
       text = `[Delegated by @${sender.name}, another bot in this Murage workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}${doneWhenBriefLine(item.doneWhen)}`;
+      // Bind only to the dispatch's resolved destination. A later dispatch cannot move an existing loan.
+      let packId: string | undefined;
+      try {
+        packId = transaction(db => {
+          db.prepare("UPDATE delegation_packs SET destination_thread_id=? WHERE delegation_id=? AND source_thread_id=? AND target_bot_id=? AND destination_thread_id IS NULL")
+            .run(destination, id, source, target.id);
+          const pack = db.prepare("SELECT id FROM delegation_packs WHERE delegation_id=? AND source_thread_id=? AND target_bot_id=? AND destination_thread_id=?")
+            .get(id, source, target.id, destination);
+          return pack ? String(pack.id) : undefined;
+        }, { op: "delegation-pack-bind" });
+      } catch { /* The note still starts if the context metadata cannot be recorded. */ }
       options = {
         automation: { kind: "delegation" },
+        ...(packId ? { packId } : {}),
         chainRootThreadId: source,
         handoffSourceThreadId: source,
         // the prompt rests on the one row that handed it over (rule 7); a legacy item without it keeps the asking conversation's prefix

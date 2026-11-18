@@ -2,22 +2,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // U22 (1.0.4): the permission proxy connects only to Murage's own permission pipe (Windows) or a .sock file (elsewhere). A
-// listener at any other path never sees a connection, and every ask is answered with the unavailable note the driver ends the
-// turn on.
-import { spawn } from "node:child_process";
+// listener at any other path never sees a connection. Its bound supervisor receives
+// one terminal refusal, and no ordinary reply reaches the engine.
+import { once } from "node:events";
 import { mkdtempSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
-import { BROKER_UNAVAILABLE_NOTE, brokerPathForArgv } from "./permission-pipe.ts";
-import { removeTempDirSync } from "./testing/cleanup.ts";
+import { brokerPathForArgv } from "./permission-pipe.ts";
+import { removeTempDirSync, waitForExit } from "./testing/cleanup.ts";
+import { boundProxyState, boundProxyTerminal, spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
+import { terminalProxyRefusal } from "./proxy-turn-release.ts";
 
 const proxy = fileURLToPath(new URL("./permission-proxy.ts", import.meta.url));
 const WIN = process.platform === "win32";
-const cleanups: Array<() => void> = [];
-afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
+const cleanups: Array<() => void | Promise<void>> = [];
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
 /** A listener that records every connection and answers each ask with an allow. */
 function listener(path: string): Promise<{ server: Server; connections: () => number }> {
@@ -34,17 +36,21 @@ function listener(path: string): Promise<{ server: Server; connections: () => nu
       conn.write(JSON.stringify({ t: "answer", id: ask.id, behavior: "allow" }) + "\n");
     });
   });
-  cleanups.push(() => server.close());
+  cleanups.push(() => new Promise<void>((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve());
+  }));
   return new Promise((resolve) => server.listen(path, () => resolve({ server, connections: () => count })));
 }
 
 /** One approve call through the proxy started on `brokerArg`; the permission JSON it answers and its stderr. */
 async function ask(brokerArg: string): Promise<{ answer: { behavior: string; message?: string }; stderr: string }> {
-  const child = spawn(process.execPath, [proxy, brokerArg], { stdio: ["pipe", "pipe", "pipe"] });
-  cleanups.push(() => { try { child.kill(); } catch { /* gone */ } });
+  const child = await spawnBoundProxy("permission", process.execPath, [proxy, brokerArg], { windowsHide: true });
+  cleanups.push(() => waitForExit(child, { signal: "SIGTERM" }));
   let out = "", stderr = "";
   child.stderr.setEncoding("utf8").on("data", (d) => { stderr += d; });
-  const line = new Promise<string>((resolve) => {
+  const line = new Promise<string>((resolve, reject) => {
+    child.once("error", reject);
+    child.stdout.once("end", () => reject(new Error("permission fixture closed before answering")));
     child.stdout.setEncoding("utf8").on("data", (d) => { out += d; const nl = out.indexOf("\n"); if (nl >= 0) resolve(out.slice(0, nl)); });
   });
   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "approve", arguments: { tool_name: "Bash", input: { command: "ls" } } } }) + "\n");
@@ -62,13 +68,22 @@ it("connects to a path of Murage's own shape and carries the broker's answer", a
   expect(broker.connections()).toBe(1);
 });
 
-it("refuses a listener at any other path: no connection, every ask denied with the unavailable note, the reason on stderr", async () => {
+it("refuses a listener at any other path: no connection or ordinary output, one sealed supervisor refusal", async () => {
   const dir = mkdtempSync(join(tmpdir(), "murage-proxy-path-"));
   cleanups.push(() => removeTempDirSync(dir));
   const path = WIN ? `\\\\.\\pipe\\not-murage-${process.pid}-x` : join(dir, "evil");
   const other = await listener(path);
-  const { answer, stderr } = await ask(brokerPathForArgv(path));
-  expect(answer).toEqual({ behavior: "deny", message: BROKER_UNAVAILABLE_NOTE });
-  expect(stderr).toContain("refusing the broker path");
+  const child = await spawnBoundProxy("permission", process.execPath, [proxy, brokerPathForArgv(path)]);
+  cleanups.push(() => waitForExit(child, { signal: "SIGTERM" }));
+  let stdout = "", stderr = "";
+  child.stdout.on("data", chunk => { stdout += chunk; });
+  child.stderr.on("data", chunk => { stderr += chunk; });
+  await once(child, "close");
+  // MAIN RULING INT-CONFLICT-DEFAULT 17e3852e0c66 / de8e93bd0f9a: the consuming transport's terminal
+  // refusal replaces the retired local deny fallback; no ordinary reply escapes.
+  expect(stdout).toBe("");
+  expect(boundProxyTerminal(child)).toEqual(terminalProxyRefusal(null));
+  expect(boundProxyState(child)).toMatchObject({ sealed: true, refusals: 1 });
+  expect(stderr).toContain("permission refusals=1");
   expect(other.connections()).toBe(0);
 });

@@ -1,4 +1,5 @@
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { bindFixtureAdapter } from "../testing/mcp-admission-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -24,7 +25,6 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import * as claude from "./claude.ts";
 import { resetClaudeVersionGate } from "./claude-guards.ts";
 
-vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 
 const mod = claude as unknown as Record<string, any>;
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
@@ -148,6 +148,7 @@ describe("14.5 the sign-in card remembers the owner's answer (routines and unatt
 
   const create = async () => {
     instance = await claude.ClaudeDriver.create({ instanceId: "claude-ng-test", displayName: "Claude Ng Test", environment: {}, enabled: true, config: { cli: FAKE_CLI, permissionMode: "acceptEdits" } });
+    bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
 

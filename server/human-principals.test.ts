@@ -6,7 +6,8 @@ import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
-import { ensureScope, memoryAccess, assertMemoryAccess, reconcileMemoryRoster } from "./memory/policy.ts";
+import { ensureScope, assertMemoryAccess, reconcileMemoryRoster } from "./memory/policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "./testing/recall-access-fixture.ts";
 import { writeBotIdentity } from "./memory/identity.ts";
 import { hydrateMemoryRecord } from "./memory/bundle.ts";
 import { searchMemory } from "./memory/search.ts";
@@ -17,6 +18,19 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 const fresh=()=>new Store(()=>({instanceId:"fixture",model:"fixture"}));
+it.each(["signal", "whatsapp"] as const)("T-OWNER-RULE %s owner must be the linking authority (kills omitted owner guard)", platform => {
+  const origin = { platform, authorityId: "11111111-1111-4111-8111-111111111111", userId: "11111111-1111-4111-8111-111111111111", connectionId: "owner-rule" };
+  const ticket = ownerMemoryTicket();
+  const ownerId = observeVerifiedHuman(origin);
+  linkHumanBinding(ticket, { bindingId: ownerId, expectedRevision: 1, as: "owner" });
+  expect(resolveHumanBinding(ownerId).personId).toBe("workspace-owner");
+  const strangerId = observeVerifiedHuman({ ...origin, userId: "22222222-2222-4222-8222-222222222222" });
+  expect(() => linkHumanBinding(ticket, { bindingId: strangerId, expectedRevision: 1, as: "owner" })).toThrow("HUMAN_OWNER_INELIGIBLE");
+  expect(() => resolveHumanBinding(strangerId)).toThrow("HUMAN_LINK_REQUIRED");
+  expect(humanBindingStatus(ticket).bindings.find(value => value.id === strangerId)).toMatchObject({ personId: null, revision: 1 });
+  expect(resolveHumanBinding(ownerId).personId).toBe("workspace-owner");
+});
+
 function person(userId="UOTHER"){
   const id=observeVerifiedHuman({platform:"slack",authorityId:"TEAM",connectionId:"connection-"+userId,userId});
   linkHumanBinding(ownerMemoryTicket(),{bindingId:id,expectedRevision:1,as:"person"});

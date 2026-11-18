@@ -11,6 +11,7 @@ const FIXED: Record<string, Company> = {
   geminiAgent: co("google", "Google"),
   antigravityAgent: co("google", "Google"),
   grokAgent: co("xai", "xAI"),
+  deepseekAgent: co("deepseek", "DeepSeek"),
   kimiAgent: co("moonshot", "Moonshot AI"),
   qwenAgent: co("alibaba", "Alibaba Cloud"),
   cursorAgent: co("cursor", "Cursor"),

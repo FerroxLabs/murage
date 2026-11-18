@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "7ff2de72e371256713b350e94d232f3d07428b14",
+  "date": "2026-11-15",
+  "base": "7ed777368bf7c1c63db51363c159e19e14df7825",
+  "scope": "1115-COPY-LEDGER-REVIEW: retained accepted verdicts, corrected last-changing locale-line author",
+  "strings": {
+    "en:ux.l1.level.unlimitedSummary": {
+      "text": "This bot, its routines and webhooks run at No limits unless you choose a lower level. Only the wipe check can ask.",
+      "en": "This bot, its routines and webhooks run at No limits unless you choose a lower level. Only the wipe check can ask.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "en:ux.l1.level.channelNoLimits": {
+      "text": "Channel messages",
+      "en": "Channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "en:ux.l1.level.setupNoLimits": {
+      "text": "Setup requests",
+      "en": "Setup requests",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "de:ux.l1.level.unlimitedSummary": {
+      "text": "Dieser Bot, seine Routinen und Webhooks nutzen Ohne Limits, sofern du keine niedrigere Stufe wählst. Nur die Löschprüfung kann nachfragen.",
+      "en": "This bot, its routines and webhooks run at No limits unless you choose a lower level. Only the wipe check can ask.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "de:ux.l1.level.channelNoLimits": {
+      "text": "Kanalnachrichten",
+      "en": "Channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "de:ux.l1.level.setupNoLimits": {
+      "text": "Einrichtungsanfragen",
+      "en": "Setup requests",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "es:ux.l1.level.unlimitedSummary": {
+      "text": "Este bot, sus rutinas y webhooks usan Sin límites salvo que elijas un nivel inferior. Solo la comprobación de borrado puede pedir aprobación.",
+      "en": "This bot, its routines and webhooks run at No limits unless you choose a lower level. Only the wipe check can ask.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "es:ux.l1.level.channelNoLimits": {
+      "text": "Mensajes de canales",
+      "en": "Channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "es:ux.l1.level.setupNoLimits": {
+      "text": "Solicitudes de configuración",
+      "en": "Setup requests",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "fr:ux.l1.level.unlimitedSummary": {
+      "text": "Ce bot, ses routines et ses webhooks utilisent Sans limites, sauf si tu choisis un niveau inférieur. Seule la vérification d’effacement peut demander une approbation.",
+      "en": "This bot, its routines and webhooks run at No limits unless you choose a lower level. Only the wipe check can ask.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "fr:ux.l1.level.channelNoLimits": {
+      "text": "Messages des canaux",
+      "en": "Channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "fr:ux.l1.level.setupNoLimits": {
+      "text": "Demandes de configuration",
+      "en": "Setup requests",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "hi:ux.l1.level.unlimitedSummary": {
+      "text": "यह बॉट, इसकी रूटीन और वेबहुक बिना सीमा पर चलते हैं, जब तक आप निचला स्तर न चुनें। केवल सब मिटाने की जाँच मंज़ूरी माँग सकती है।",
+      "en": "This bot, its routines and webhooks run at No limits unless you choose a lower level. Only the wipe check can ask.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "hi:ux.l1.level.channelNoLimits": {
+      "text": "चैनल संदेश",
+      "en": "Channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "hi:ux.l1.level.setupNoLimits": {
+      "text": "सेटअप के अनुरोध",
+      "en": "Setup requests",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "ja:ux.l1.level.unlimitedSummary": {
+      "text": "このボットとそのルーティン、Webhook は、低いレベルを選ばない限り無制限で実行されます。承認を求めるのは全消去の確認だけです。",
+      "en": "This bot, its routines and webhooks run at No limits unless you choose a lower level. Only the wipe check can ask.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "ja:ux.l1.level.channelNoLimits": {
+      "text": "チャネルのメッセージ",
+      "en": "Channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "ja:ux.l1.level.setupNoLimits": {
+      "text": "セットアップのリクエスト",
+      "en": "Setup requests",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "pt-br:ux.l1.level.unlimitedSummary": {
+      "text": "Este bot, suas rotinas e webhooks usam Sem limites, a menos que você escolha um nível inferior. Só a verificação de apagamento pode pedir aprovação.",
+      "en": "This bot, its routines and webhooks run at No limits unless you choose a lower level. Only the wipe check can ask.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "pt-br:ux.l1.level.channelNoLimits": {
+      "text": "Mensagens dos canais",
+      "en": "Channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "pt-br:ux.l1.level.setupNoLimits": {
+      "text": "Solicitações de configuração",
+      "en": "Setup requests",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "zh:ux.l1.level.unlimitedSummary": {
+      "text": "此机器人及其例行任务和 Webhook 使用无限制，除非你选择较低级别。只有清空检查会请求批准。",
+      "en": "This bot, its routines and webhooks run at No limits unless you choose a lower level. Only the wipe check can ask.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "zh:ux.l1.level.channelNoLimits": {
+      "text": "频道消息",
+      "en": "Channel messages",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "zh:ux.l1.level.setupNoLimits": {
+      "text": "设置请求",
+      "en": "Setup requests",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    }
+  },
+  "files": {}
+}

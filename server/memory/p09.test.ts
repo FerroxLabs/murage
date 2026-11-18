@@ -1,3 +1,4 @@
+import { authorityStamp } from './authority-epoch.ts';
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
@@ -9,7 +10,8 @@ import { captureWork } from "./chunks.ts";
 import { consolidateMemorySource, refreshMemoryCheckpoint } from "./consolidate.ts";
 import { archiveMemoryRecord, restoreArchivedMemoryRecord, memoryRetentionStatus } from "./retention.ts";
 import { ownerMemoryTicket } from "./authority.ts";
-import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
+import { reconcileMemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { buildMemoryBundle, MEMORY_FRAME_TOKENS } from "./bundle.ts";
@@ -35,11 +37,24 @@ function complete(text:string,options:{id?:string;speaker?:string;kind?:string;o
 function access(){const registry=new InternalCapabilities(),generation=registry.begin("bot",threadId),token=registry.mint({botId:"bot",threadId,generation,depth:0,kind:"memory",skillAuthoring:false});return memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);}
 
 it("refreshes 1000 completed turns incrementally while retaining every original source and bounded checkpoint lineage",()=>{
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  const originalIds: string[] = [], stamp = authorityStamp();
+  let first: Record<string, unknown> | undefined;
+  let firstEvidence: Record<string, unknown>[] = [];
   let last:{checkpointId?:string;version?:number}|undefined;
-  transaction(()=>{for(let i=0;i<1000;i++){const source=complete(`Observed outcome ${i}; source evidence is retained.`);last=refreshMemoryCheckpoint(source.jobId);}});
-  expect(last?.version).toBe(1000);
+  transaction(()=>{for(let i=0;i<1000;i++){const source=complete(`Observed outcome ${i}; source evidence is retained.`);originalIds.push(source.id);last=refreshMemoryCheckpoint(source.jobId);
+    if(i===0){first=database().prepare('SELECT * FROM memory_records WHERE id=? AND version=?').get(last.checkpointId!,last.version!);firstEvidence=database().prepare('SELECT * FROM memory_evidence WHERE record_id=? AND record_version=?').all(last.checkpointId!,last.version!);}
+  }});
+  const head=database().prepare('SELECT * FROM memory_checkpoint_heads').get()!;
+  expect(head.sequence).toBe(1000);
+  expect({id:head.record_id,version:head.record_version}).toEqual({id:last?.checkpointId,version:last?.version});
+  expect(database().prepare('SELECT id FROM memory_sources ORDER BY id').all().map(row=>row.id)).toEqual(originalIds.sort());
+  expect(database().prepare('SELECT * FROM memory_records WHERE id=? AND version=?').get(String(first!.id),Number(first!.version))).toEqual(first);
+  expect(database().prepare('SELECT * FROM memory_evidence WHERE record_id=? AND record_version=?').all(String(first!.id),Number(first!.version))).toEqual(firstEvidence);
+  expect(authorityStamp()).toBe(stamp);
+  expect(database().prepare('SELECT count(*) n FROM memory_checkpoint_members').get()!.n).toBe(1000);
   expect(database().prepare("SELECT count(*) AS n FROM memory_sources").get()?.n).toBe(1000);
-  expect(database().prepare("SELECT count(*) AS n FROM memory_records WHERE kind='checkpoint' AND state='active'").get()?.n).toBe(1);
+  expect(database().prepare("SELECT count(*) AS n FROM memory_checkpoint_heads WHERE state='active'").get()?.n).toBe(1);
   expect(database().prepare("SELECT count(*) AS n FROM memory_evidence WHERE record_id=? AND record_version=?").get(last!.checkpointId!,last!.version!)?.n).toBeLessThanOrEqual(4);
   expect(String(database().prepare("SELECT text FROM memory_records WHERE id=? AND version=?").get(last!.checkpointId!,last!.version!)?.text)).toContain("outcome 999");
   expect(memoryRetentionStatus().automaticPermanentForgetting).toBe(false);

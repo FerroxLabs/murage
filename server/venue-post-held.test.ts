@@ -3,13 +3,15 @@
 // VENUE-POST-1017 step 4, gate tier: T35 (the held card's one transaction and boot recovery), the card copy, Stop, the engine rows (T36
 // Cursor env) and the room's context line. Fails on base (no venue-post-held.ts, no venue_post row in OWN_HANDLER_CARDED).
 import { DatabaseSync } from "node:sqlite";
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { bootCallersChild, inStrict } from "./testing/boot-callers.ts";
+import { onStrictMount } from "./testing/strict-fs.ts";
 import { OWN_HANDLER_CARDED, isOwnHandlerCarded } from "../shared/own-servers.ts";
 import { cursorOwnReadAllow } from "./drivers/acp/cursor.ts";
 import { GATE_UNASKED } from "./drivers/pi-permission-gate.ts";
 import { answerHeldVenuePost, type HeldAnswerHost } from "./venue-post.ts";
 import {
-  heldVenuePost, holdVenuePost, initializeVenuePosts, isVenuePostRequestId, moveVenuePost, recoverVenuePosts, stopHeldVenuePosts,
+  heldVenuePost, holdVenuePost, initializeVenuePosts, isVenuePostRequestId, moveVenuePost, recoverAndSettleVenuePosts, recoverVenuePosts, stopHeldVenuePosts,
   venuePostCardTitle, venuePostDoneLine, venuePostPreview, venuePostRequestId, VENUE_POST_CARD_POST, VENUE_POST_CARD_SKIP, VENUE_POST_NOT_POSTED,
 } from "./venue-post-held.ts";
 
@@ -92,4 +94,39 @@ it("T36: venue_post is handler-carded and unasked on every engine, and Cursor al
   expect(allow({ MURAGE_VENUE_POST: "1" })).toContain("Mcp(murage-agents:venue_post)");
   expect(allow({})).not.toContain("Mcp(murage-agents:venue_post)");
   expect(allow({ MURAGE_EMAIL_TOOLS: "send" }).some(entry => entry.endsWith(":venue_post)"))).toBe(false);
+});
+
+// Boot tolerance E1 (ACCEPTANCE.md): the composed recovery is all or nothing. A normal start whose worker floor is refusing (needs `--tmpfs /strict`).
+describe("E1 composed recovery is all or nothing", () => {
+  it("a card writer failure after the move rolls back both rows; the next call settles once", () => {
+    const db=new DatabaseSync(":memory:");
+    try {
+      seed(db);moveVenuePost(db,"vpost-a","held","posting");
+      db.exec("CREATE TABLE card_probe(answered TEXT); INSERT INTO card_probe VALUES(NULL)");
+      let reached=false;
+      expect(()=>recoverAndSettleVenuePosts(db,tx(db),()=>true,()=>{
+        expect(heldVenuePost(db,"vpost-a")?.state).toBe("posted");
+        db.prepare("UPDATE card_probe SET answered=?").run("Post it");
+        reached=true;throw new Error("card writer interrupted");
+      })).toThrow("card writer interrupted");
+      expect(reached).toBe(true);
+      expect(heldVenuePost(db,"vpost-a")?.state).toBe("posting");
+      expect(db.prepare("SELECT answered FROM card_probe").get()).toEqual({answered:null});
+      let settled=0;
+      const settle=()=>{settled++;db.prepare("UPDATE card_probe SET answered=?").run("Post it");};
+      recoverAndSettleVenuePosts(db,tx(db),()=>true,settle);
+      expect(heldVenuePost(db,"vpost-a")?.state).toBe("posted");
+      expect(db.prepare("SELECT answered FROM card_probe").get()).toEqual({answered:"Post it"});
+      expect(recoverAndSettleVenuePosts(db,tx(db),()=>true,settle)).toEqual([]);
+      expect(settled).toBe(1);
+    } finally {db.close();}
+  });
+  it.skipIf(!onStrictMount)("a refusal leaves the row posting and the card unanswered; once the floor clears the next call settles both", { timeout: 180_000 }, () => {
+    inStrict("e1-venue", dir => {
+      expect(bootCallersChild("composed", dir)).toMatchObject({
+        startMode: "normal", verdict: "DiskFloorRefusal", first: "DiskFloorRefusal", rowAfterRefusal: "posting", cardAfterRefusal: null,
+        cleared: true, second: "ok", rowAfterRetry: "posted", cardAfterRetry: "Post it",
+      });
+    });
+  });
 });

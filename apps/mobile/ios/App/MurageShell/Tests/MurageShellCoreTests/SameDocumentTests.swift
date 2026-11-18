@@ -2,7 +2,7 @@ import XCTest
 @testable import MurageShellCore
 
 final class SameDocumentTests: XCTestCase {
-    let host = "https://mac.tailnet123.ts.net"
+    let host = "https://mac.tail000000.ts.net"
 
     private func url(_ string: String) -> URL { URL(string: string)! }
 
@@ -22,14 +22,14 @@ final class SameDocumentTests: XCTestCase {
 
     func testAnotherOriginOrNoPageIsANewDocument() {
         XCTAssertFalse(SameDocument.of(current: nil, target: url(host + "/#open=b")))
-        XCTAssertFalse(SameDocument.of(current: url("https://other.tailnet123.ts.net/"), target: url(host + "/#open=b")))
+        XCTAssertFalse(SameDocument.of(current: url("https://other.tail000000.ts.net/"), target: url(host + "/#open=b")))
         XCTAssertFalse(SameDocument.of(current: url(host + ":8444/"), target: url(host + "/#open=b")))
     }
 
     /// replaceState fires no hashchange; a failure answers false so the caller loads as before.
     func testTheReloadScriptQuotesTheTarget() {
         let script = SameDocument.reloadScript(target: url(host + "/#open=a'b%22c"))
-        XCTAssertTrue(script.contains("history.replaceState(null, '', \"https://mac.tailnet123.ts.net/#open=a'b%22c\")"), script)
+        XCTAssertTrue(script.contains("history.replaceState(null, '', \"https://mac.tail000000.ts.net/#open=a'b%22c\")"), script)
         XCTAssertTrue(script.contains("location.reload()"), script)
         XCTAssertTrue(script.contains("return false"), script)
     }

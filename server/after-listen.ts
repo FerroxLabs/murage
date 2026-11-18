@@ -10,6 +10,7 @@
 // stall line while it runs.
 import { awaitWriterGate, isDatabaseBusy } from "./db-busy.ts";
 import { ioBudget } from "./io-budget.ts";
+import { afterListenSteps, isReadOnly } from "./read-only-start.ts";
 import { heldStep } from "./observe.ts";
 import { startupMark } from "./startup-trace.ts";
 
@@ -42,9 +43,12 @@ export function noteHealthAnswered(): void {
 
 // The listen tick writes nothing (STALLS-FINAL-DESIGN 3.4): work a start began before listen and that pages on after it (the boot settling of
 // hand-offs) holds its writes until the first health answer, or until the after-listen steps start anyway (the fallback, nobody asking).
-let releaseStartupWrites: () => void = () => {};
-const startupWrites = new Promise<void>((resolve) => { releaseStartupWrites = resolve; });
-/** Resolves at the first health answer (or the after-listen fallback): from then on the start's own background writes may run. */
+// A read-only start never releases them (boot tolerance A2): its background writes (the transcript fill, the settling, the cloud computer lines)
+// are left to the next normal start.
+let resolveStartupWrites: () => void = () => {};
+const releaseStartupWrites = () => { if (!isReadOnly()) resolveStartupWrites(); };
+const startupWrites = new Promise<void>((resolve) => { resolveStartupWrites = resolve; });
+/** Resolves at the first health answer (or the after-listen fallback): from then on the start's own background writes may run. Never in a read-only start. */
 export function startupWritesReady(): Promise<void> { return startupWrites; }
 
 // The start's background work (the after-listen steps, the boot recoveries they start, the boot settling of hand-offs). A long writer that takes
@@ -79,7 +83,8 @@ const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 /** Run the steps one per event-loop turn, starting after the first health
  *  answer or the fallback. A step that throws is reported and the rest run. */
-export async function runAfterListen(steps: readonly AfterListenStep[], options: { fallbackMs?: number; first?: Promise<void>; busyMs?: number; maxWaitMs?: number; busyRetryMs?: number; busyAttempts?: number } = {}): Promise<void> {
+export async function runAfterListen(allSteps: readonly AfterListenStep[], options: { fallbackMs?: number; first?: Promise<void>; busyMs?: number; maxWaitMs?: number; busyRetryMs?: number; busyAttempts?: number } = {}): Promise<void> {
+  const steps = afterListenSteps(allSteps); // a read-only start runs none of them (read-only-start.ts)
   const fallbackMs = options.fallbackMs ?? AFTER_LISTEN_FALLBACK_MS;
   const busyMs = options.busyMs ?? LOOP_BUSY_MS, maxWaitMs = options.maxWaitMs ?? AFTER_LISTEN_MAX_WAIT_MS;
   const first = options.first ?? firstHealth;

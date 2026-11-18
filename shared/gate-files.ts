@@ -6,6 +6,10 @@
 // The list is closed and built from the row ids in sensitive-paths.ts, so an edit to a row flows through. It is a
 // plain-text guard: it reads what the call names, and a script that writes one of these files is not seen.
 
+import { dataCredentialHit, dataCredentialRoots } from "./data-credential-paths.ts";
+import { runtimeCredentialPaths } from "./runtime-credential-paths.ts";
+import { homedir, tmpdir } from "node:os";
+import { credentialGlobHit } from "./sensitive-globs.ts";
 import { SENSITIVE_PATHS, SENSITIVE_TEXT } from "./sensitive-paths.ts";
 
 export interface GateRow { id: string; re: RegExp }
@@ -14,7 +18,8 @@ export interface GateRow { id: string; re: RegExp }
 const MURAGE_EXEC = /murage-exec(-[0-9A-Za-z]+)?([\\/]|$|["'\s])/i;
 
 const GATE_PATH_IDS = [
-  "murage-exec", "murage-engine-hooks", "agy-workspace-hooks", "fuigo-engine-config", "project-tooling", "project-git",
+  "murage-cred", "murage-mcp", "murage-pi-mcp", "murage-claude-private", "murage-flux-hermes", "murage-hook-env", "murage-render",
+  "murage-copilot-mcp", "murage-exec", "shell-snapshots", "murage-engine-hooks", "agy-workspace-hooks", "fuigo-engine-config", "project-tooling", "project-git",
   "gitconfig", "envrc", "shell-rc", "shell-startup", "system-startup", "ssh", "harness-keys", "keys-and-cluster-configs",
 ] as const;
 const GATE_TEXT_IDS = ["cmd-autorun"] as const;
@@ -35,7 +40,7 @@ const LOCAL_TOOLS = /node_modules[\\/]\.bin(?=[\\/]|$|[\s"'])/gi;
 
 /** A copy with `./`, empty and `seg/../` segments collapsed, for either separator. A segment starts only after a
  * separator, a space or a quote, so the walk over a long word stays linear. */
-function collapsedPaths(text: string): string {
+export function collapsedPaths(text: string): string {
   let copy = text.replace(/[\\/]\.(?=[\\/])/g, "").replace(/([\\/])[\\/]+/g, "$1");
   for (let pass = 0; pass < 16; pass++) {
     const next = copy.replace(/(?<![^\\/\s"'])(?!\.\.?[\\/])[^\\/\s"']+[\\/]\.\.[\\/]/g, "");
@@ -50,12 +55,24 @@ function rowIn(text: string): GateRow | undefined {
 }
 
 /** The rule of the first gate row these texts name, as written or with their paths collapsed. */
-export function gateHit(texts: readonly string[]): string | null {
+export function gateHit(texts: readonly string[], commandWords: readonly string[] = []): string | null {
   for (const text of texts) {
     const row = rowIn(text) ?? rowIn(collapsedPaths(text));
     if (row) return row.re.source;
   }
-  return null;
+  const data = dataCredentialHit(texts.flatMap(text => [text, collapsedPaths(text)]));
+  if (data) return data;
+  const runtime = runtimeCredentialPaths();
+  for (const { root, entries } of runtime) {
+    const hit = dataCredentialHit(texts, [root], entries);
+    if (hit) return hit;
+  }
+  const temp = tmpdir();
+  return credentialGlobHit(commandWords, { runtime, roots: {
+    temp: [...new Set([temp, "/tmp", "/private/tmp", ...(temp.startsWith("/var/") ? ["/private" + temp] : [])])],
+    home: homedir(), data: dataCredentialRoots(),
+    cloud: process.env.MURAGE_CLOUD_ROLE === "home" ? ["/data/engine-homes/hermesAgent"] : [],
+  } });
 }
 
 /** FULL-DENY-1018: the rule of a gate row that only the collapsed spelling names (`~/.kube/./config`, `~/.ssh//config`, `x/../`
@@ -76,5 +93,5 @@ const RULE_IDS: ReadonlyMap<string, string> = new Map([
 
 /** The row id for a rule the verdict holds, which is a regex source: the value-free name a log line may carry. */
 export function ruleRowId(rule: string | undefined): string | undefined {
-  return rule === undefined ? undefined : RULE_IDS.get(rule);
+  return rule === undefined ? undefined : RULE_IDS.get(rule) ?? (rule.startsWith("murage-data-credentials:") ? "murage-data-credentials" : undefined) ?? (rule.startsWith("credential-family:") ? rule.slice("credential-family:".length) : undefined);
 }

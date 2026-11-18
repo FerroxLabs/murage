@@ -42,6 +42,10 @@ export const COMPACT_TO = 2048;
 export const MAX_SPANS = 256;
 export const TEXT_SYSCALLS = 64;
 export const SPAN_OPEN_MS = 24 * 3600 * 1000;
+/** A stamped end (`until`) comes from the JS clock, a ctime from the filesystem's; on Windows the JS clock can trail the file
+ *  clock by a timer tick (~16 ms) and its drift between resyncs, so an end admits a ctime this far past it (Windows run
+ *  44128474678, U11: a file written just before the turn end read as clean). Only widens. */
+export const FS_CLOCK_SKEW_MS = 100;
 const KIND_RANK: Record<RegistryKind, number> = { file: 0, window: 1, repo: 2, tree: 3, span: 4 };
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -142,15 +146,17 @@ export class TextBudget {
   private readonly fs: FsHooks;
   private readonly stats = new Map<string, StatResult>();
   private readonly reals = new Map<string, string | null | "failed" | "spent">();
+  private readFailed = false;
   constructor(fs: FsHooks, limit = TEXT_SYSCALLS) { this.fs = fs; this.left = limit; }
   spent(): boolean { return this.left <= 0; }
+  failed(): boolean { return this.readFailed; }
   lstat(p: string): StatResult {
     const known = this.stats.get(p);
     if (known !== undefined) return known;
     if (this.left <= 0) return "spent";
     this.left--;
     let result: StatResult;
-    try { result = this.fs.lstat(p); } catch { result = "failed"; }
+    try { result = this.fs.lstat(p); } catch { this.readFailed = true; result = "failed"; }
     this.stats.set(p, result);
     return result;
   }
@@ -160,7 +166,7 @@ export class TextBudget {
     if (this.left <= 0) return "spent";
     this.left--;
     let result: string | null | "failed";
-    try { result = this.fs.realpath(p); } catch { result = "failed"; }
+    try { result = this.fs.realpath(p); } catch { this.readFailed = true; result = "failed"; }
     this.reals.set(p, result);
     return result;
   }
@@ -194,6 +200,8 @@ export interface MatchOptions {
   searched?: boolean;
   /** step 2c: the engine's PATH folders (at most 64, lexical and realpath, known at turn start) */
   pathFolders?: readonly string[];
+  /** Startup-only: do not treat a folder merely holding an entry as a read. */
+  holds?: boolean;
 }
 
 const labelOf = (e: RegistryEntry): DlLabel => (e.cloned || e.kind === "repo" ? "cloned folder" : "downloaded file");
@@ -230,6 +238,11 @@ export class DownloadRegistry {
   /** A copy, for tests and the store. */
   list(): RegistryEntry[] { return [...this.entries, ...this.spans].map((e) => ({ ...e })); }
   empty(): boolean { return this.entries.length === 0 && this.spans.length === 0; }
+
+  entriesUnder(folder: string): RegistryEntry[] {
+    const key = registryKey(folder), prefix = key.endsWith('/') ? key : key + '/';
+    return [...this.entries, ...this.spans].filter(e => e.path === key || e.path.startsWith(prefix)).map(e => ({ ...e, path: folder.replace(/\/$/, '') + e.path.slice(key.length) }));
+  }
 
   private countBase(entry: RegistryEntry, by: 1 | -1): void {
     const base = baseOf(entry.path);
@@ -405,19 +418,19 @@ export class DownloadRegistry {
     if (this.empty()) return null;
     const { budget } = options;
     const pKey = registryKey(p);
-    const lexical = this.byEntries(pKey);
+    const lexical = this.byEntries(pKey, options.holds !== false);
     if (lexical.label) return lexical.label;
     const q = budget.deepestReal(p);
     if (q === "hit") return "downloaded file";
     const qKey = registryKey(q);
-    const real = qKey === pKey ? lexical : this.byEntries(qKey);
+    const real = qKey === pKey ? lexical : this.byEntries(qKey, options.holds !== false);
     if (real.label) return real.label;
     const window = lexical.window ?? real.window;
     if (window || this.spans.length) {
       const stat = budget.lstat(q);
       if (stat === "failed" || stat === "spent") return window ? labelOf(window) : "downloaded file";
       if (stat) {
-        if (window && (stat.dir || (stat.ctime >= window.since && (window.until === undefined || stat.ctime <= window.until)))) return labelOf(window);
+        if (window && (stat.dir || (stat.ctime >= window.since && (window.until === undefined || stat.ctime <= window.until + FS_CLOCK_SKEW_MS)))) return labelOf(window);
         if (this.inSpan(stat.ctime)) return "downloaded file";
       }
     }
@@ -439,13 +452,13 @@ export class DownloadRegistry {
     // still open at ctime (merged spans keep this short)
     let lo = 0, hi = this.spans.length;
     while (lo < hi) { const mid = (lo + hi) >> 1; if (this.spans[mid]!.since <= ctime) lo = mid + 1; else hi = mid; }
-    for (let i = lo - 1; i >= 0; i--) if (spanEnd(this.spans[i]!) >= ctime) return true;
+    for (let i = lo - 1; i >= 0; i--) if (spanEnd(this.spans[i]!) + FS_CLOCK_SKEW_MS >= ctime) return true;
     return false;
   }
 
   /** The entry checks of step 2 with no syscall: a file equal to it, a tree or repo at or above it, a folder holding an entry;
    *  and the window at or above it that needs the lstat. */
-  private byEntries(key: string): { label: DlLabel | null; window?: RegistryEntry } {
+  private byEntries(key: string, holds = true): { label: DlLabel | null; window?: RegistryEntry } {
     let window: RegistryEntry | undefined;
     for (const entry of this.at(key)) {
       if (entry.kind === "file" || entry.kind === "tree" || entry.kind === "repo") return { label: labelOf(entry) };
@@ -453,7 +466,7 @@ export class DownloadRegistry {
     }
     const prefix = key.endsWith("/") ? key : key + "/";
     const below = this.entries[this.lowerBound(prefix)];
-    if (below && below.path.startsWith(prefix)) return { label: labelOf(below) };
+    if (holds && below && below.path.startsWith(prefix)) return { label: labelOf(below) };
     for (let up = parentKey(key); up !== null; up = parentKey(up)) {
       for (const entry of this.at(up)) {
         if (entry.kind === "tree" || entry.kind === "repo") return { label: labelOf(entry) };

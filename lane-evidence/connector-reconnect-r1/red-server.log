@@ -1,0 +1,141 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connected-app-health.test.ts (24 tests | 5 failed) 577ms
+     ✓ flips Gmail to needs-reconnect while Calendar stays active 64ms
+     ✓ keeps the failed account when inventory says connected:false 14ms
+     ✓ learns an expired account from inventory without a tool call 15ms
+     ✓ a healthy second account or a newly added account cannot erase the expired account 19ms
+     ✓ clears when a call to that app succeeds 22ms
+     ✓ clears when the person signs in again (a new account) 23ms
+     ✓ is not set by an ordinary tool error, a lookup, or a broker that is dark 24ms
+     ✓ marks the one app that failed when a call touches two 14ms
+     ✓ never removes the active account before the new sign-in is active, then retires exactly that one 135ms
+     ✓ a mark made before any inventory was held still clears when a new account signs in 21ms
+     ✓ names the app by its own curated label, letters, digits and spaces only, whatever the catalog says 22ms
+     ✓ names the app that needs reconnecting, and differs from the unreachable line 16ms
+     ✓ names several apps and follows the copy rules 6ms
+     ✓ reads a single-tool error answer and an event stream 7ms
+     ✓ reads success and ordinary errors as not an authorization failure 6ms
+     ✓ does not read a 403, forbidden or a missing scope as a sign-in failure: signing in again would not change it 6ms
+     ✓ reads a row only for an app the request named, at the answer's own level 9ms
+     ✓ reads the broker's structured signal, never free words in a message 7ms
+     ✓ ignores another request's frame 6ms
+   × P1-1 ACTIVE inventory cannot hide a known expired grant 19ms
+   × P1-2 verified same-owner proactive renewal keeps UUID and cooldown 24ms
+   × P1-3 reconnecting A never implicates healthy B 16ms
+   × P1-3 success clears only its account and preserves the other incident UUID 16ms
+   × P2-5 one inventory check writes once at 10 and 1000 connectors; unchanged writes zero 50ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connected-app-health.test.ts > P1-1 ACTIVE inventory cannot hide a known expired grant
+AssertionError: expected undefined to deeply equal [ { id: 'buffer-a' } ]
+
+- Expected:
+[
+  {
+    "id": "buffer-a",
+  },
+]
+
++ Received:
+undefined
+
+ ❯ server/connected-app-health.test.ts:363:80
+    361|   accounts.buffer = [{ id: "buffer-a", status: "ACTIVE", expiresAt: Da…
+    362|   await connectedServices(cfg(), { fresh: true });
+    363|   expect(appsNeedingReconnect(cfg()).find(a => a.slug === "buffer")?.a…
+       |                                                                                ^
+    364| });
+    365| it("P1-2 verified same-owner proactive renewal keeps UUID and cooldown…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  server/connected-app-health.test.ts > P1-2 verified same-owner proactive renewal keeps UUID and cooldown
+AssertionError: expected 'd00c2746-2cad-4dbe-ad01-e145bd92a1dd' to be '443db857-1a7c-487a-861f-c7b0e5232996' // Object.is equality
+
+Expected: "443db857-1a7c-487a-861f-c7b0e5232996"
+Received: "d00c2746-2cad-4dbe-ad01-e145bd92a1dd"
+
+ ❯ server/connected-app-health.test.ts:377:30
+    375|   await connectedServices(cfg(), { fresh: true });
+    376|   const renewed = reconnectIncidents(cfg())[0]!;
+    377|   expect(renewed.incidentId).toBe(first.incidentId);
+       |                              ^
+    378|   expect(renewed.notifiedAt).toBeDefined();
+    379|   expect(renewed.due).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  server/connected-app-health.test.ts > P1-3 reconnecting A never implicates healthy B
+AssertionError: expected [ { id: 'A', alias: 'work' }, …(1) ] to deeply equal [ { id: 'A', alias: 'work' } ]
+
+- Expected
++ Received
+
+  [
+    {
+      "alias": "work",
+      "id": "A",
+    },
++   {
++     "alias": "home",
++     "id": "B",
++   },
+  ]
+
+ ❯ server/connected-app-health.test.ts:390:52
+    388|   rows = [{ tool_slug: "GMAIL_FETCH_EMAILS", ok: false, error: "401 Un…
+    389|   await accountCall("work");
+    390|   expect(appsNeedingReconnect(cfg())[0]?.accounts).toEqual([{ id: "A",…
+       |                                                    ^
+    391|   await authorizeService(cfg(), "gmail", "work", { reconnect: "A" });
+    392|   accounts.gmail = [{ id: "C", alias: "work 2", status: "ACTIVE" }, { …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  server/connected-app-health.test.ts > P1-3 success clears only its account and preserves the other incident UUID
+AssertionError: expected [ { slug: 'gmail', …(8) } ] to have a length of 2 but got 1
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ server/connected-app-health.test.ts:402:18
+    400|   await accountCall("work"); await accountCall("home");
+    401|   const before = reconnectIncidents(cfg());
+    402|   expect(before).toHaveLength(2);
+       |                  ^
+    403|   const b = before.find(i => i.accounts[0]?.id === "B")!;
+    404|   rows = [{ tool_slug: "GMAIL_FETCH_EMAILS", ok: true }];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  server/connected-app-health.test.ts > P2-5 one inventory check writes once at 10 and 1000 connectors; unchanged writes zero
+AssertionError: initial 10: expected 20 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 20
+
+ ❯ server/connected-app-health.test.ts:415:40
+    413|     const stop = connectorHealthStore().onChange(() => writes++);
+    414|     await connectedServices(cfg(), { fresh: true });
+    415|     expect(writes, `initial ${count}`).toBe(1);
+       |                                        ^
+    416|     writes = 0;
+    417|     await connectedServices(cfg(), { fresh: true });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 19 passed (24)
+   Start at  03:10:07
+   Duration  9.53s (transform 7.08s, setup 8.46s, import 348ms, tests 577ms, environment 0ms)
+

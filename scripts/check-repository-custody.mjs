@@ -83,7 +83,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   let content;
   if (tree) ({ violations, content } = treeCustody(tree));
   else {
-    const paths = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" }).split("\0").filter(Boolean);
+    const paths = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).split("\0").filter(Boolean);
     violations = custodyViolations(paths);
     content = indexedPrivateContent();
   }

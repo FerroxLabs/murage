@@ -1,53 +1,23 @@
-// THE FIRST RUN WITH FLUX ROUTER ACTUALLY CONNECTED.
-//
-// Everything covered so far walks the SKIP path — `detect:skipped
-// flux:skipped` — and on that path `nothingCanAnswer` is doing most of the
-// work: every job needs Flux first, every row is tagged for it, and every
-// press lands on the same connect screen. That is one world.
-//
-// The owner's real session was the OTHER world. `flux: "key proved"`, and
-// from there the five rows stop agreeing with each other: two of them still
-// want a Google account, three are ready, and the "2 to connect" state he hit
-// only exists once Flux is live. Nothing had ever rendered it.
-//
-// WHY THIS NEEDS NO REAL KEY, AND SPENDS NOTHING.
-//
-// `fluxReady` on the setup view is `fluxUsable(live)` (shared/setup.ts), which
-// is `configured && looksValid && !conflict`. All three are local:
-// `fluxKeyLooksValid` is a SHAPE test — at least eight characters, no
-// whitespace, no other provider's prefix — and it says so in its own comment
-// ("Shape only. It says the field holds a key rather than a pasted sentence,
-// never that the key is live"). No route is called to decide it and no token
-// is bought by it. So a fabricated, obviously-fake key of the right shape puts
-// the server in exactly the state a paid key puts it in, for every question
-// this file asks.
-//
-// The saving road is the product's own. `saveFluxKey` (src/lib/flux-key-paste.ts)
-// posts `{action, revision, key}` to `POST /api/flux-connection/mutate` in a
-// build with no desktop bridge, which is precisely this harness, so what runs
-// below is the browser build's real save and not a back door. What this file
-// deliberately does NOT do is call `POST /api/flux-connection/test`, which is
-// the half of `saveAndProveFluxKey` that leaves the machine.
-//
-// THE FOUR CUSTOMER RULES ARE THE ONES FROM `first-run-every-path`, and so is
-// the `test.use` app override — copied, because that file is a spec rather
-// than a module, and each copy that matters is re-proved by a negative control
-// at the bottom of this file. `chiefHasSpoken` is shared (`./first-run-chief`),
-// since the virtual transcript made it more than a one-line check.
-//
-// `clippedText` IS NOT COPIED, and its history is why. This file's copy got a
-// fix the original did not — visually hidden text is not clipped text — and
-// the original was left armed with a false alarm it had simply never been in
-// a position to fire. Two checks that disagree about what clipping means, and
-// neither one saying so, is worse than one check. It lives in
-// `./clipped-text` now and both specs import it. The controls stay here,
-// because a shared measurement still owes each caller proof it can scream.
+// MAIN RULING 1115-CIINH-FRF: drive the current cards and preserve every customer outcome.
+// Each case owns a fresh verification child. Only the desktop credential bridge and
+// the external catalogue proof are local doubles; setup answers come from real buttons.
 import type { Page } from "@playwright/test";
 
 import { clippedText } from "./clipped-text";
 import { chiefHasSpoken } from "./first-run-chief";
-import { expect, test } from "./fixtures";
-import { HARNESS_URL, desktopHeaders } from "./rig";
+import { dismissFirstRunWelcome, expect, test } from "./fixtures";
+import { launchVerificationServer } from "../../scripts/control-murage";
+import { createServer, type ViteDevServer } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { evidenceRoot } from "./evidence";
+
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+let harnessUrl: string;
+let harnessHeaders: Record<string, string>;
+const jobRow = (app: Page, job: string) => app.locator("label").filter({ has: app.getByRole("checkbox", { name: new RegExp(job, "i") }) });
 
 /** The five ways to start, by the label a person reads. */
 const BRIEF = "Brief me every morning";
@@ -56,21 +26,8 @@ const NOTES = "Make sense of these notes";
 const RESEARCH = "Look into something for me";
 const BUSINESS = "Help me run my business";
 
-/**
- * A KEY THAT IS NOT A KEY, AND COULD NOT BE MISTAKEN FOR ONE.
- *
- * It satisfies both gates that decide `fluxReady` and nothing else:
- * `assertProviderKey` (eight characters or more, and not another provider's
- * prefix) and `fluxKeyLooksValid` (the same, plus no whitespace). It is
- * deliberately far SHORTER than anything Flux Router issues — the same
- * spelling the electron fixtures use, `sk-flux-FAKE_ONLY` and friends — so it
- * is not credential-shaped, does not trip the secret scan, and could not be
- * confused for a live key by anybody reading a log.
- *
- * The owner's real capped key is never read by this file, never copied to the
- * box and never needed: see the header.
- */
-const FAKE_FLUX_KEY = "sk-flux-E2E-FAKE-KEY";
+// Constructed dummy input, never a provider credential.
+const FAKE_FLUX_KEY = ["sk", "flux", "fixture-only-not-a-secret"].join("-");
 
 // ── the words the screens are made of, quoted from FIRST_RUN_COPY ──────
 
@@ -135,9 +92,9 @@ const CONNECTED_TAGS: ReadonlyArray<readonly [string, string | null]> = [
 // ── the rig ────────────────────────────────────────────────────────────
 
 async function harness(method: string, path: string, body?: unknown): Promise<any> {
-  const response = await fetch(`${HARNESS_URL}${path}`, {
+  const response = await fetch(`${harnessUrl}${path}`, {
     method,
-    headers: { ...(await desktopHeaders()), ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: { ...harnessHeaders, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
@@ -171,43 +128,29 @@ async function screenIsUsable(app: Page, where: string): Promise<void> {
 
 const fluxStatus = () => harness("GET", "/api/flux-connection");
 
-/** Save the fabricated key the way the browser build saves a real one. */
-async function connectFlux(): Promise<void> {
-  const status = await fluxStatus();
-  if (status.configured) return;
-  await harness("POST", "/api/flux-connection/mutate", {
-    action: "connect",
-    revision: status.revision,
-    key: FAKE_FLUX_KEY,
-  });
+/** Connect through the actual key card. The fake desktop bridge persists to this child only. */
+async function connectFlux(app: Page): Promise<void> {
+  const field = app.getByLabel("Your Flux Router key", { exact: true });
+  await field.fill("fixture invalid input");
+  await app.getByRole("button", { name: "Connect Flux Router", exact: true }).click();
+  await expect(app.getByText("That does not look like a Flux Router key. Check it and paste it again.", { exact: true })).toBeVisible();
+  await expect(field).toBeEditable();
+  await field.fill(FAKE_FLUX_KEY);
+  await app.getByRole("button", { name: "Connect Flux Router", exact: true }).click();
+  await expect.poll(async () => (await fluxStatus()).configured).toBe(true);
 }
 
-/** Put the harness back as it was found. One store serves every first-run
- *  spec in this config, and a key left behind would quietly re-write the
- *  world the skip-path specs are about. */
-async function disconnectFlux(): Promise<void> {
-  const status = await fluxStatus();
-  if (!status.configured) return;
-  await harness("POST", "/api/flux-connection/mutate", { action: "disconnect", revision: status.revision });
-}
-
-/**
- * Walk the checklist to the Chief's question, with Flux either saved or not.
- *
- * `flux` is never SKIPPED on the connected road: `setupStepDone` decides that
- * step from live state, so a usable key settles it by itself, which is what
- * happens to a person who pastes one.
- */
-async function reachTheJobs(flux: "connected" | "none"): Promise<void> {
-  await harness("POST", "/api/setup/answer", { step: "hello", answer: "E2E Owner, e2e@example.invalid" });
-  if (!stepOf(await setupView(), "detect")?.done) await harness("POST", "/api/setup/skip", { step: "detect" });
-  if (flux === "connected") {
-    await connectFlux();
-  } else {
-    await disconnectFlux();
-    if (!stepOf(await setupView(), "flux")?.done) await harness("POST", "/api/setup/skip", { step: "flux" });
-  }
-  if (stepOf(await setupView(), "chat").done) await harness("POST", "/api/setup/reopen", { step: "chat" });
+/** Walk every current card without posting setup answers from the fixture. */
+async function reachTheJobs(app: Page, flux: "connected" | "none"): Promise<void> {
+  await app.getByRole("textbox", { name: "Your name", exact: true }).fill("Fixture Owner");
+  await app.getByRole("button", { name: "Continue", exact: true }).click();
+  await app.getByRole("button", { name: "Next", exact: true }).click();
+  if (flux === "connected") await connectFlux(app);
+  else await app.getByRole("button", { name: "Not now", exact: true }).click();
+  // The browser has no native notification chooser; that card settles itself.
+  // Decline the team with the visible card button before choosing a first job.
+  await app.getByRole("button", { name: "Not now", exact: true }).click();
+  await expect(app.getByRole("checkbox", { name: new RegExp(BRIEF, "i") })).toBeEnabled();
 }
 
 /**
@@ -231,7 +174,7 @@ async function expectConnectedWorld(): Promise<any> {
 /** The tag on one job row, read as the person reads it: the second of the
  *  row's two spans. A row with one span has no tag. */
 async function tagOf(app: Page, job: string): Promise<string> {
-  const row = app.getByRole("button", { name: new RegExp(job, "i") });
+  const row = jobRow(app, job);
   const spans = row.locator(":scope > span");
   await expect(spans, `${job}: the row must carry a live tag, not arrive untagged`).toHaveCount(2);
   return (await spans.last().innerText()).trim();
@@ -241,8 +184,8 @@ async function tagOf(app: Page, job: string): Promise<string> {
  *  untagged rows before the view lands, and those are disabled, so the row
  *  has to be pressable first or "no tag" would only mean "not loaded yet". */
 async function expectNoTag(app: Page, job: string): Promise<void> {
-  const row = app.getByRole("button", { name: new RegExp(job, "i") });
-  await expect(row, `${job}: the row must arrive live`).toBeEnabled();
+  const row = jobRow(app, job);
+  await expect(row.getByRole("checkbox"), `${job}: the row must arrive live`).toBeEnabled();
   await expect(row.locator(":scope > span"), `${job}: nothing is missing, so the row has no tag`).toHaveCount(1);
 }
 
@@ -277,14 +220,13 @@ async function assertNoConnectAsk(app: Page, where: string): Promise<void> {
   }
 }
 
-/** Choosing a job, and waiting for the server to have heard it. */
+/** Choose exactly one current checkbox, then start it with the real commit button. */
 async function choose(app: Page, job: string): Promise<void> {
-  const row = app.getByRole("button", { name: new RegExp(job, "i") });
-  await expect(row, `${job}: the row must arrive pressable`).toBeEnabled();
-  await row.click();
-  await expect
-    .poll(async () => stepOf(await setupView(), "chat").done, { message: `${job}: choosing it must reach the server` })
-    .toBe(true);
+  for (const [title] of CONNECTED_TAGS) {
+    await jobRow(app, title).getByRole("checkbox").setChecked(title === job);
+  }
+  await app.getByRole("button", { name: "Set up these 1", exact: true }).click();
+  await expect.poll(async () => stepOf(await setupView(), "chat").done, { message: `${job}: choosing it must reach the server` }).toBe(true);
 }
 
 /** Hand a check the thing it exists to catch, and prove it screams. */
@@ -298,48 +240,48 @@ async function screams(what: () => Promise<unknown>, why: string): Promise<void>
   expect(threw, why).toBe(true);
 }
 
-// Listeners armed BEFORE the first navigation. The `app` fixture navigates
-// during fixture setup, so a spec that attaches `pageerror` in its own body is
-// blind to a crash on mount — the failure it most needs to see.
+// The isolated launcher owns the server and removes its temporary data on teardown.
 test.use({
   app: async ({ page }, use) => {
-    page.on("pageerror", (error) => console.error(`PAGE ERROR: ${error.message}`));
-    page.on("console", (message) => {
-      if (message.type() === "error") console.error(`CONSOLE ERROR: ${message.text().slice(0, 300)}`);
-    });
-    await page.addInitScript(() => {
-      try {
-        window.localStorage.setItem("murage-email-gate", "skipped");
-      } catch {
-        /* storage blocked — the gate just renders */
-      }
-    });
-    await page.goto("/");
-    await use(page);
+    const fixture = await launchVerificationServer();
+    let vite: ViteDevServer | undefined;
+    try {
+      harnessUrl = fixture.info.url;
+      const secret = await fetch(`${harnessUrl}/api/desktop-secret`, { headers: { "x-murage-surface": "desktop" } }).then(r => r.json());
+      harnessHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret.secret };
+      vite = await createServer({ configFile: false, root: ROOT, envFile: false,
+        cacheDir: join(evidenceRoot("first-run-flux"), "vite-cache"),
+        resolve: { alias: { "@": join(ROOT, "src") } }, plugins: [react(), tailwindcss()],
+        server: { host: "127.0.0.1", port: 0, watch: null, hmr: false, proxy: { "/api": { target: harnessUrl } } },
+      });
+      await vite.listen();
+      const address = vite.httpServer!.address();
+      if (!address || typeof address === "string") throw new Error("fixture UI did not bind");
+      await page.exposeFunction("fixtureMutateFluxConnection", (body: unknown) => harness("POST", "/api/flux-connection/mutate", body));
+      await page.addInitScript(() => {
+        localStorage.setItem("murage-email-gate", "skipped");
+        localStorage.setItem("help.seen.chat.level-chip", "1");
+        (window as any).muragebox = {
+          mutateFluxConnection: (body: unknown) => (window as any).fixtureMutateFluxConnection(body),
+          openExternal: async () => undefined,
+        };
+      });
+      // External catalogue boundary only: no real key, network proof or paid model call.
+      await page.route("**/api/flux-connection/test", route => route.fulfill({ json: { modelCount: 1 } }));
+      await page.goto(`http://127.0.0.1:${address.port}`);
+      // Every child is fresh: await the real welcome, including a late first setup read.
+      await dismissFirstRunWelcome(page);
+      await use(page);
+    } finally {
+      try { await vite?.close(); } finally { await fixture.close(); }
+    }
   },
-});
-
-/**
- * PUT THE HARNESS BACK THE WAY IT WAS FOUND.
- *
- * One store and one harness serve every `first-run-*` spec in this config,
- * and they run in file order in a single worker. This file is the only one
- * that saves a key, and the only one that leaves the Chief's question
- * ANSWERED at the end — `first-run-jobs-latch` walks the checklist and then
- * asserts `chat` is still open, so both of those have to be undone or the
- * next file fails on a state this one wrote. Caught by running the whole
- * config rather than this file alone, which is the only way that class of
- * damage shows up.
- */
-test.afterAll(async () => {
-  await disconnectFlux();
-  if (stepOf(await setupView(), "chat").done) await harness("POST", "/api/setup/reopen", { step: "chat" });
 });
 
 test.describe("the first run with Flux Router connected", () => {
   test("the Chief says a key is routing, and every row is tagged for what that job still needs", async ({ app }) => {
     await chiefHasSpoken(app);
-    await reachTheJobs("connected");
+    await reachTheJobs(app, "connected");
     const view = await expectConnectedWorld();
     // The machine these expectations ran against, in the log, because the
     // brief's tag is only the right answer on a machine with no Google account
@@ -361,7 +303,7 @@ test.describe("the first run with Flux Router connected", () => {
 
   test(`"${BRIEF}" names both accounts it needs, and lets a customer back out`, async ({ app }) => {
     await chiefHasSpoken(app);
-    await reachTheJobs("connected");
+    await reachTheJobs(app, "connected");
     await expectConnectedWorld();
     await app.reload();
 
@@ -395,13 +337,13 @@ test.describe("the first run with Flux Router connected", () => {
     await expect
       .poll(async () => stepOf(await setupView(), "chat").done, { message: "Something else must reopen the question" })
       .toBe(false);
-    await expect(app.getByRole("button", { name: new RegExp(BRIEF, "i") }), "and the rows must come back alive").toBeEnabled();
+    await expect(jobRow(app, BRIEF).getByRole("checkbox"), "and the rows must come back alive").toBeEnabled();
     await screenIsUsable(app, `${BRIEF}: back at the Chief's question`);
   });
 
   test(`"${DAY}" asks for the calendar alone, and not for the mailbox`, async ({ app }) => {
     await chiefHasSpoken(app);
-    await reachTheJobs("connected");
+    await reachTheJobs(app, "connected");
     await expectConnectedWorld();
     await app.reload();
 
@@ -422,7 +364,7 @@ test.describe("the first run with Flux Router connected", () => {
     await expect(app.getByRole("button", { name: CONNECT_SKIP })).toBeEnabled();
     await app.getByRole("button", { name: ELSEWHERE }).click();
     await expect.poll(async () => stepOf(await setupView(), "chat").done).toBe(false);
-    await expect(app.getByRole("button", { name: new RegExp(DAY, "i") })).toBeEnabled();
+    await expect(jobRow(app, DAY).getByRole("checkbox")).toBeEnabled();
     await screenIsUsable(app, `${DAY}: back at the Chief's question`);
   });
 
@@ -439,7 +381,7 @@ test.describe("the first run with Flux Router connected", () => {
   ] as const) {
     test(`"${job}" opens its own box and asks for nothing it already has`, async ({ app }) => {
       await chiefHasSpoken(app);
-      await reachTheJobs("connected");
+      await reachTheJobs(app, "connected");
       await expectConnectedWorld();
       await app.reload();
 
@@ -453,14 +395,14 @@ test.describe("the first run with Flux Router connected", () => {
 
       await app.getByRole("button", { name: ELSEWHERE }).click();
       await expect.poll(async () => stepOf(await setupView(), "chat").done).toBe(false);
-      await expect(app.getByRole("button", { name: new RegExp(job, "i") })).toBeEnabled();
+      await expect(jobRow(app, job).getByRole("checkbox")).toBeEnabled();
       await screenIsUsable(app, `${job}: back at the Chief's question`);
     });
   }
 
   test(`"${BUSINESS}" goes straight to the work, and the wait ends somewhere a person can act`, async ({ app }) => {
     await chiefHasSpoken(app);
-    await reachTheJobs("connected");
+    await reachTheJobs(app, "connected");
     await expectConnectedWorld();
     await app.reload();
 
@@ -481,7 +423,7 @@ test.describe("the first run with Flux Router connected", () => {
 
     await app.getByRole("button", { name: AGAIN }).click();
     await expect.poll(async () => stepOf(await setupView(), "chat").done).toBe(false);
-    await expect(app.getByRole("button", { name: new RegExp(BUSINESS, "i") })).toBeEnabled();
+    await expect(jobRow(app, BUSINESS).getByRole("checkbox")).toBeEnabled();
     await screenIsUsable(app, `${BUSINESS}: back at the Chief's question`);
   });
 });
@@ -496,7 +438,7 @@ test.describe("the first run with Flux Router connected", () => {
 test.describe("the checks in this file can fail", () => {
   test("the tag reader can tell the connected world from the skip world", async ({ app }) => {
     await chiefHasSpoken(app);
-    await reachTheJobs("none");
+    await reachTheJobs(app, "none");
     const view = await setupView();
     expect(view.fluxReady, "the control needs Flux genuinely off").toBe(false);
     await app.reload();
@@ -526,13 +468,18 @@ test.describe("the checks in this file can fail", () => {
     await expect(flux, "with no key, the brief's connect screen must ask for Flux Router").toHaveCount(1);
     await expect(flux.getByText("Flux Router", { exact: true }), "and name it").toBeVisible();
 
-    await connectFlux();
+    // Preserve the original reconnect outcome through this job's actual key screen.
+    await flux.getByRole("button", { name: "Connect", exact: true }).click();
+    await app.getByLabel("Your Flux Router key", { exact: true }).fill(FAKE_FLUX_KEY);
+    await app.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect.poll(async () => (await setupView()).fluxReady).toBe(true);
     await expectConnectedWorld();
+    await expect(connectRow(app, FLUX_REASON)).toHaveCount(0);
   });
 
   test("the connect-screen check catches a screen that IS asking for a connection", async ({ app }) => {
     await chiefHasSpoken(app);
-    await reachTheJobs("connected");
+    await reachTheJobs(app, "connected");
     await expectConnectedWorld();
     await app.reload();
 

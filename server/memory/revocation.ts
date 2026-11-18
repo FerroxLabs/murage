@@ -53,7 +53,11 @@ export function revokeThreadDisclosures(db: DatabaseSync, threadId: string, caus
   return noteRevocation("thread", cause, Number(db.prepare(sql).run(threadId).changes));
 }
 
-export function revokeRecordDisclosures(db: DatabaseSync, cause: string, affected: { recordIds?: readonly string[]; sourceIds?: readonly string[]; viaSources?: boolean; withdraws?: false }): number {
+export function revokeRecordDisclosures(db: DatabaseSync, cause: string, affected: { recordIds?: readonly string[]; sourceIds?: readonly string[]; viaSources?: boolean; withdraws?: false;
+  /** The one version of a record that was withdrawn, when its replacement keeps the same id (a changed notebook's chunks, import.ts): the
+   * write-time revoke then names that version only, so the replacement is not denied with it. Receipts still end at any version (none can
+   * cite the replacement yet: it is written in the same transaction). */
+  versions?: Readonly<Record<string, number>> }): number {
   // A change that withdraws nothing any session was shown and adds nothing one must not keep (designs/MEMORY-CHANGED-RESET-106.md):
   // pinning (a mark is added, never removed), keeping a learned memory (its confirmation, not its words) and remembering a brand-new
   // record (nothing can cite an id that did not exist). No receipt ends and no write-time revoke is committed, so a warm engine
@@ -67,7 +71,8 @@ export function revokeRecordDisclosures(db: DatabaseSync, cause: string, affecte
   let revokeId = 0;
   if (affected.viaSources !== false) for (const id of recordIds) {
     if (typeof id !== "string") continue;
-    const r = commitRevoke(db, { kind: "memory", ref: { kind: "record", id }, cause: writetimeCause(cause) });
+    const version = affected.versions?.[id];
+    const r = commitRevoke(db, { kind: "memory", ref: { kind: "record", id, ...(version !== undefined && version > 0 ? { version } : {}) }, cause: writetimeCause(cause) });
     revokeId ||= r;
   }
   // A record's words also travel in its evidence sources: a session may have

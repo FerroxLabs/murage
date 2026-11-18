@@ -1,0 +1,54 @@
+COMMAND node_modules/.bin/vitest run server/decision/engine-action.test.ts -t "BASE native questions"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/engine-action.test.ts > BASE native questions retain their original card path at ask
+[memory] index build before listen name=memory_records_pinned ms=3
+[memory] index build before listen name=memory_source_lsn_created ms=4
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/engine-action.test.ts (11 tests | 4 failed | 7 skipped) 1185ms
+   ↓ BASE engine builder receives frozen authority/verdict and binds grant keys and options once
+   ↓ owner RUN never calls the engine builder or BASE callback
+   ↓ reserved engine action identities cannot create an approval
+   ↓ cleared deny before engine presentation runs and leaves no card
+   ↓ a cleared service deny after queue persistence executes once without a new permission row
+   ↓ native posture retirement supersedes an answered identity without sending another answer
+   ↓ structured question parts keep their native choices and settle with one complete answer
+   × BASE native questions retain their original card path at ask 350ms
+   × BASE native questions retain their original card path at auto 263ms
+   × BASE native questions retain their original card path at full 288ms
+   × BASE native questions retain the guest card at No limits 281ms
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 7 skipped (11)
+   Start at  08:15:40
+   Duration  5.39s (transform 3.27s, setup 3.86s, import 236ms, tests 1.19s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/engine-action.test.ts > BASE native questions retain their original card path at ask
+ FAIL  server/decision/engine-action.test.ts > BASE native questions retain their original card path at auto
+ FAIL  server/decision/engine-action.test.ts > BASE native questions retain their original card path at full
+AssertionError: expected 'question' to be 'card' // Object.is equality
+
+Expected: "card"
+Received: "question"
+
+ ❯ server/decision/engine-action.test.ts:30:166
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  server/decision/engine-action.test.ts > BASE native questions retain the guest card at No limits
+AssertionError: expected 'question' to be 'card' // Object.is equality
+
+Expected: "card"
+Received: "question"
+
+ ❯ server/decision/engine-action.test.ts:34:163
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
