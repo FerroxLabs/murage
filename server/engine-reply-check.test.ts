@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import * as replyRedaction from "./redact.ts";
 import { checkEngineReply, engineCheckHost, engineLine, replyCheckFailure } from "./engine-reply-check.ts";
 
 // The check folder lives in a temp system root here, never in the machine's real /tmp.
@@ -74,6 +75,7 @@ describe("the hidden session", () => {
     const listeners = new Set<(event: RuntimeEvent) => void>();
     const sent: Array<Record<string, unknown>> = [];
     const live = { dispose: async () => {}, adapter: {
+      capabilities: { fencedLearningWrite: true },
       onEvent: (listener: (event: RuntimeEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
       sendTurn: async (input: { threadId: string }) => { sent.push(input); queueMicrotask(() => script(input.threadId, event => { for (const listener of listeners) listener(event); })); return {}; },
       respondToRequest: async () => {}, interruptTurn: async () => {}, resetSession: async () => {},
@@ -88,7 +90,8 @@ describe("the hidden session", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ text: ENGINE_REPLY_PROMPT, proposalOnly: true, background: true, stopLine: true, sessionReset: true });
     expect(String(sent[0]!.threadId)).toMatch(/^memory-learning-/);
-    expect(Object.keys(sent[0]!).sort()).toEqual(["background", "cwd", "proposalOnly", "sessionReset", "stopLine", "text", "threadId", "usageFeature"]);
+    expect(sent[0]!.beforePrepare).toBeUndefined();
+    expect(Object.keys(sent[0]!).sort()).toEqual(["background", "beforePrepare", "cwd", "proposalOnly", "sessionReset", "stopLine", "text", "threadId", "usageFeature"]);
   });
   it("reads a sign-in the engine reported as data, whatever its words say", async () => {
     const { live } = hidden((id, emit) => { emit(event(id, { type: "runtime.error", message: "Something went wrong", authRequired: true })); emit(event(id, { type: "turn.completed", ok: false })); });
@@ -105,5 +108,32 @@ describe("the hidden session", () => {
     const control = new AbortController(); control.abort();
     await expect(live.checkReply!(control.signal)).rejects.toThrow("MEMORY_EXTRACTION_ABORTED");
     expect(sent).toEqual([]);
+  });
+});
+
+
+describe("R3 setup-check display boundary", () => {
+  it.each([
+    [{ engineLine: "rate limit **password**: hunter2\nTAILSECRET" }, "limit"],
+    [{ engineLine: "**password**: hunter2\nPlease login again" }, "signin"],
+    [{ message: "Forbidden", status: 401 }, "refused"],
+    [{ message: "Unknown", status: 401 }, "signin"],
+    [{ message: "rate limit", code: "update_required" }, "refused"],
+    [{ message: "Forbidden", limit: true }, "limit"],
+    [{ message: "Unknown", signedOut: true }, "signin"],
+    [{ message: "MEMORY_EXTRACTION_TIMEOUT" }, "refused"],
+    [{ message: "Ordinary refusal" }, "refused"],
+  ])("engine-reply-check.classification-unchanged %j", (error, result) => {
+    expect(replyCheckFailure(error, "Fixture").result).toBe(result);
+  });
+  it("engine-reply-check.order", () => {
+    const raw = "rate limit **password**: hunter2\nTAILSECRET" + "x".repeat(700);
+    const spy = vi.spyOn(replyRedaction, "redactSecretsForSink");
+    try {
+      const output = replyCheckFailure({ engineLine: raw }, "Fixture");
+      expect(spy).toHaveBeenCalledWith(raw);
+      expect(JSON.stringify(output)).not.toMatch(/hunter2|TAILSECRET/);
+      expect(output.result).toBe("limit");
+    } finally { spy.mockRestore(); }
   });
 });

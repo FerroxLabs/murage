@@ -1,3 +1,4 @@
+// MAIN RULING RULINGS-1019-RECALL-1116 R7-7.
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -21,11 +22,13 @@ import { shownLinesRoots } from "../steer-lineage.ts";
 import type { Message } from "../store.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { captureBotDeletion, captureThreadDeletion } from "./capture.ts";
+import { buildMemoryBundle } from "./bundle.ts";
 import { COLD_CHECK_ROWS, continuationMemoryRevoked } from "./disclosures.ts";
 import { FORGET_INLINE_ROWS, forgetMemory } from "./forget.ts";
 import { renderLearnedBlock } from "./lessons.ts";
 import { advanceRevocationJob, INLINE_REVOCATION, memoryRevocationIdle, memoryRevocationStats, pipStanceParses, resetMemoryRevocationStats, resetPipStanceParses, runRevocationJobsNow, stopMemoryRevocation, wakeMemoryRevocation } from "./memory-revocation.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { readableMemoryRecord } from "./readable.ts";
 import { REVOKE_PACE, REVOKE_PACE_COMMIT, REVOKE_WRITE_BUDGET, resetRevokeWriteBudget } from "./revoke-budget.ts";
 import { contentRevoked, LineageAllowance, recordOutputRoots, type Disclosure } from "./replay-lineage.ts";
@@ -70,6 +73,8 @@ const BOUNDED_SCANS = new Set([
   "UPDATE memory_identity_stamp SET n=n+1", // a one-row counter (provenance-stamp.ts)
   "SELECT 1 FROM memory_revoke_jobs WHERE state IN ('active','undoing') LIMIT 1",
   "SELECT 1 FROM memory_receipt_flips LIMIT 1",
+  // MAIN RULING INT-CONFLICT-DEFAULT 249523340e / e98bb792a54: exact replay epoch existence probe reads at most one row; all other scan guards remain.
+  "SELECT 1 FROM send_replay_epochs LIMIT 1",
   "SELECT revoke_id,root,cursor FROM memory_revoke_jobs WHERE state='seeding' AND kind='bulk' AND json_valid(root) AND json_extract(root,'$.cause')='fold' ORDER BY revoke_id LIMIT 1",
   "SELECT id FROM memory_scopes LIMIT 1",
   "SELECT 1 AS x FROM memory_line_lineage LIMIT 1",
@@ -366,9 +371,18 @@ it("T5: archiving a record cited by 50k or 500k receipts and a cold check of a 5
     return { ...workOf(work), why: why.reason, scans: unboundedScans(database(), work.sqls.keys()) };
   };
   const c1 = cold("S-small"), c2 = cold("S-large");
-  expect(c1.why).toBe("memory-changed (long-session)"); expect(c2.why).toBe(c1.why);
+  expect(c1.why).toBe("upgrade-session-holds-recall"); expect(c2.why).toBe(c1.why);
   expectNoMoreWork(c2, c1, JSON.stringify({ c1, c2 })); expect(c1.scans).toEqual([]); expect(c2.scans).toEqual([]);
   expect(COLD_CHECK_ROWS).toBeLessThan(50_000);
+  // a bundle built for the held session is served only what the search proved: the bridge proves nothing, so no recalled evidence rides along
+  const nothing = { search: async () => ({ hits: [], vectorRows: 0 }) };
+  const held = await buildMemoryBundle("recalled historical text", access(), nothing, { allowance: LineageAllowance.tool() });
+  expect(held.evidence).toEqual([]);
+  expect(held.text).not.toContain("recalled historical text");
+  expect(JSON.stringify(held)).not.toContain("recalled historical text");
+  // control: the same build does carry recalled evidence when the search proves a hit, so the empty result above is the bundle's doing
+  const proven = await buildMemoryBundle(SECRET, access(), { search: async () => ({ hits: [{ id: "cited-s", version: 1 }] as never, vectorRows: 0 }) }, { allowance: LineageAllowance.tool() });
+  expect(proven.evidence.map(r => r.id)).toContain("cited-s");
   // archive: the request flips at most its inline budget, the job the rest
   const archive = (id: string) => { const { work } = sqlWork(database(), () => transaction(d => revokeRecordDisclosures(d, "archive", { recordIds: [id], viaSources: true }))); return { ...workOf(work), scans: unboundedScans(database(), work.sqls.keys()) }; };
   const a1 = archive("cited-s"), a2 = archive("cited-l");
@@ -381,7 +395,7 @@ it("T5: archiving a record cited by 50k or 500k receipts and a cold check of a 5
   expect(drained.maxBytes).toBeLessThanOrEqual(1024);
 }, 600_000);
 
-it("T5: a deleted bot's job ends the receipts made before its commit, never one made after it (A2#9)", async () => {
+it("T5: a deleted bot's job keeps unrelated receipts made before and after its commit", async () => {
   live();
   const db = database();
   ensureScope("bot", "gone");
@@ -397,7 +411,7 @@ it("T5: a deleted bot's job ends the receipts made before its commit, never one 
   wakeMemoryRevocation(database, { pauseMs: 1 });
   await memoryRevocationIdle();
   expect(db.prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get("r0002001")!.state).toBe("delivered");
-  expect(Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state='revoked'").get()!.n)).toBe(2_000);
+  expect(Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state='revoked'").get()!.n)).toBe(0);
 }, 300_000);
 
 // ---- T6: 100k vs 1M evidence rows: the lookups are filled in slices, each slice and the forget's commit bounded ----

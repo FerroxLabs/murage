@@ -1,0 +1,16 @@
+model = "gpt-5.4"
+model_provider = "s0b"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+[features]
+hooks = true
+shell_snapshot = false
+apply_patch_freeform = true
+[model_providers.s0b]
+name = "S0b loopback stub"
+base_url = "http://127.0.0.1:18081/v1"
+wire_api = "responses"
+requires_openai_auth = false
+[mcp_servers.s0b]
+command = "/usr/bin/python3"
+args = ["/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/mcp-stub.py"]

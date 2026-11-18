@@ -1,3 +1,4 @@
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 // Full access, end to end: the approval level above Auto.
 //
 // The unit tests in full-access.test.ts pin the RULES; these pin the WIRING
@@ -20,15 +21,22 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { makeTestHome, removeTempDir } from "./testing/cleanup.ts";
 import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
 import { raiseLevel } from "./testing/raise-level.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
+import { fixtureDisplayReply, fixtureMessageEvidence } from "./testing/display-fixture.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 // The server is a child process, so its load probe is answered from a preload: see the file for why.
 const IDLE_LOAD_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "idle-load-preload.mjs")).href;
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
+// Grok waits for this real protocol notification before its first prompt.
+// The permission fixture must acknowledge readiness rather than spend the
+// production handshake deadline waiting for a notification it never emits.
+// Bound mounts also require the per-server list, as the real Grok CLI provides.
+const GROK_MCP_READY = { FAKE_ACP_MCP_LIST: "all:ready", FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_PERMISSION_SESSION: "1" };
 /** A shell profile (an Auto "sensitive" stop) and a personal folder. */
 const PROTECTED_READ = "cat ~/.zshrc ~/Documents/notes.txt";
 /** Auto's destructive guard stops this; inside its own folder, Full access
@@ -44,6 +52,9 @@ let home: string;
 let stderr = "";
 
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428: normal replies use public handles; preserve the explicit legacy forged-key attack body unchanged.
+  if (method === "POST" && path.endsWith("/respond") && !(body && typeof body === 'object' && Object.hasOwn(body, 'taskAllowKey')))
+    body = fixtureDisplayReply(join(home, ".murage", "messages.db"), body);
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
@@ -55,7 +66,8 @@ const api = (method: string, path: string, body?: unknown) => request(method, pa
 const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
 const botState = async (botId: string) => (await desktopApi("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === botId);
 const taskState = async (botId: string, threadId: string) => (await botState(botId)).tasks.find((task: any) => task.threadId === threadId);
-const threadMessages = async (threadId: string) => ((await desktopApi("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[];
+// MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428: assert execution evidence for actually displayed rows and independently prove no native requestId leaves HTTP.
+const threadMessages = async (threadId: string) => fixtureMessageEvidence(join(home, ".murage", "messages.db"), (await desktopApi("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []);
 const liveCard = async (threadId: string) =>
   (await threadMessages(threadId)).find((m) => m.kind === "options" && m.card?.requestId && m.card?.answered === undefined) ?? null;
 
@@ -98,7 +110,7 @@ async function deny(botId: string, threadId: string, requestId: string) {
   await waitIdle(botId, threadId);
 }
 
-describe.skipIf(process.platform === "win32")("Full access", () => {
+describe("Full access", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1], 18_799, 200);
     base = `http://127.0.0.1:${port}`;
@@ -117,36 +129,41 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
           // folder — Auto stops at the first; Full access must not
           protected: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: PROTECTED_READ },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: PROTECTED_READ },
             config: { cli: FAKE_CLI, fullAuto: false },
           },
           cleaner: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: CLEAN_BUILD },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: CLEAN_BUILD },
             config: { cli: FAKE_CLI, fullAuto: false },
           },
           // fullAuto on the engine: under Full access it must still ask
           deleter: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE },
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
         },
       }),
     );
-    child = spawn(process.execPath, ["--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+    // Carry the fake-engine override and native test dependency into this fixture child.
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...powerBlockTestEnv(), ...fixturePlatformEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
+        NODE_ENV: "test",
+        MURAGE_ENGINE_EXCLUSION_PATH: process.env.MURAGE_ENGINE_EXCLUSION_PATH,
         MURAGE_PORT: String(port),
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
+    child.stdout!.on("data", (c) => (stderr += c));
     const deadline = Date.now() + 20_000;
     for (;;) {
       try {
@@ -163,8 +180,13 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
   }, 40_000);
 
   afterAll(async () => {
-    await waitForExit(child, { signal: "SIGTERM" });
-    await removeTempDir(home);
+    try {
+      console.info('Full access fixture server', stderr);
+      console.info('Full access fixture state', JSON.stringify((await desktopApi('GET', '/api/bots?messages=100')).body));
+    } finally {
+      await stopFixtureServer(child);
+      await removeTempDir(home);
+    }
   });
 
   it("refuses to switch Full access on from anything but the desktop app", async () => {
@@ -297,9 +319,17 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
       const card = await poll(() => liveCard(bot.threadId), 20_000);
       expect(card, `a delete outside its folder ran unasked under Full access. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
       expect(card.card.held).toBe("Delete 1 item outside its folder: ~/Documents/old");
-      expect(card.card.taskAllowKey).toMatch(/^stop:delete:\/.*\/Documents\/old$/);
+      expect(card.card.taskAllowKey).toBe(`stop:delete:${join(home, "Documents", "old").replaceAll("\\", "/").replace(/^([a-z]:)/i, "/$1")}`);
       // Always allow is scoped the same way, never the bare tool
       expect(card.card.allowKey).toBe(card.card.taskAllowKey);
+
+      // The strict display protocol also rejects the extra forged scope field,
+      // leaving the original card open before the legacy attack below.
+      const invalidDisplay = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
+        requestHandle: `p.${card.id}`, action: 'allow', allowForTask: true, taskAllowKey: 'stop:delete:/',
+      });
+      expect(invalidDisplay.status).toBe(400);
+      expect((await liveCard(bot.threadId))?.card?.answered).toBeUndefined();
 
       // a forged key cannot ride along: the server records the card's own
       const allowed = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card.requestId, behavior: "allow", allowForTask: true, taskAllowKey: "stop:delete:/" });

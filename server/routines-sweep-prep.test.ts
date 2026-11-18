@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // 1.0.2 bgwork (Fable r1 P2/P3): the sweep is incremental, a package addition names its own state generation,
 // and a cloned run shares no raw object with its consumer.
+import ts from "typescript";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RoutineManager } from "./routines.ts";
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -33,7 +34,10 @@ describe("incremental sweep", () => {
     const i = m as Internals;
     i.sweep(0);
     let reads = 0;
-    for (const raw of [i.runsRaw, i.routinesRaw]) for (let k = 0; k < raw.length; k++) { const v = raw[k]; Object.defineProperty(raw, k, { get() { reads++; return v; }, set(x) { raw[k] = x; }, configurable: true }); }
+    const iterate = i.runStore[Symbol.iterator].bind(i.runStore);
+    i.runStore[Symbol.iterator] = function* () { for (const run of iterate()) { reads++; yield run; } };
+    const raw = i.routinesRaw;
+    for (let k = 0; k < raw.length; k++) { const v = raw[k]; Object.defineProperty(raw, k, { get() { reads++; return v; }, set(x) { raw[k] = x; }, configurable: true }); }
     i.sweep(0);
     expect(reads).toBe(0);
   });
@@ -50,17 +54,34 @@ describe("incremental sweep", () => {
   });
 
   it("a run taken out other than by the history cap forces a full save", () => {
-    const { m } = make();
+    const { m, file } = make();
     const i = m as Internals;
     i.save({ runs: [], routines: [] });
     expect(i.fullSave).toBe(false);
+    const removed = i.runs[0].id;
     i.runs.splice(0, 1);
     i.sweep(0);
-    expect(i.fullSave).toBe(true);
+    // The explicit owner facade now completes the full transaction itself.
+    // Assert durable deletion, a stronger promise than a pending dirty flag.
+    expect(readRoutinesWithRuns(file).runs.map((run: { id: string }) => run.id)).not.toContain(removed);
+    expect(m.runById(removed)).toBeNull();
+    expect(i.fullSave).toBe(false);
   });
 });
 
 describe("preparePackageAddition", () => {
+  it("S9 package addition preserves an omitted permission level on disk and after publish", () => {
+    const {m,file,routines}=make();
+    const template={...JSON.parse(JSON.stringify(routines[0])),id:'svc-imported',enabled:false,nextRunAt:null};
+    delete template.permissionMode;delete template.permissionExplicit;
+    const batch=m.preparePackageAddition([template]);
+    const saved=JSON.parse(batch.bytes.toString('utf8')).routines.find((r:any)=>r.id===template.id);
+    expect(saved).not.toHaveProperty('permissionMode');expect(saved).not.toHaveProperty('permissionExplicit');
+    writeFileSync(file,batch.bytes);batch.publish();
+    expect(m.listRoutines().find(r=>r.id===template.id)).not.toHaveProperty('permissionMode');
+    expect(readRoutinesWithRuns(file).routines.find((r:any)=>r.id===template.id)).not.toHaveProperty('permissionMode');
+  });
+
   it("its bytes carry a fresh stateGeneration that publish records, so the next tick cannot clobber a cursor", () => {
     const { m, file, routines } = make();
     const i = m as Internals;
@@ -95,6 +116,63 @@ describe("engine start hold", () => {
   it("beginStart is taken inside the try that releases it, so no early throw leaks the hold", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    {
     expect(source).toMatch(/try \{\s*releaseEngineStart = ownerFirstGate\.beginStart\(threadId\);/);
+    // Execute the production setup prefix and its actual catch prefix. A
+    // retained-reader failure happens before any engine or async setup work.
+    const start = source.indexOf("    try {\n      releaseEngineStart = ownerFirstGate.beginStart(threadId);");
+    const end = source.indexOf("      await yieldTurnSetup();", start);
+    const catchStart = source.indexOf("    } catch (error) {\n      const e = recallPreparationFailure(error);", end);
+    const catchEnd = source.indexOf("      releaseTurnHold();", catchStart) + "      releaseTurnHold();".length;
+    expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+    expect(catchStart).toBeGreaterThan(end); expect(catchEnd).toBeGreaterThan(catchStart);
+    const release = vi.fn(), releaseTurnHold = vi.fn(), preparation = new Error("fixture preparation failed");
+    const beginStart = vi.fn(() => release), failed = vi.fn();
+    const ports = {
+      ownerFirstGate: { beginStart }, threadId: "fixture-thread", directReader: {},
+      finalizeDirectReader: () => { throw preparation; }, trace: { mark: vi.fn() },
+      recallPreparationFailure: (error: unknown) => error,
+      directRuns: { current: () => false }, run: {}, DirectTurnSetupCancelled: Error,
+      acceptedTurnCleanupFailed: false, settleDirectAttempts: failed, dispatchClaimId: "fixture-claim",
+      admitted: { rejectionOwner: { current: () => true } }, handbackToken: undefined,
+      awaitingHandback: new Map(), releaseTurnHold,
+    };
+    const body = `let releaseEngineStart = () => {}; ${source.slice(start, end)} ${source.slice(catchStart, catchEnd)} }`;
+    const executable = ts.transpileModule(body, { compilerOptions: { target: ts.ScriptTarget.ESNext } }).outputText;
+    new Function(...Object.keys(ports), executable)(...Object.values(ports));
+    expect(beginStart).toHaveBeenCalledExactlyOnceWith("fixture-thread");
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(releaseTurnHold).toHaveBeenCalledTimes(1);
+    expect(failed).toHaveBeenCalledTimes(1);
+    }
+    {
+    const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+    const nodes: ts.Node[] = [];
+    const visit = (node: ts.Node): void => { nodes.push(node); ts.forEachChild(node, visit); };
+    visit(ast);
+    const initializers = nodes.filter(ts.isVariableDeclaration).filter(node => node.name.getText(ast) === "releaseEngineStart");
+    const declaration = initializers[0];
+    const starts = nodes.filter(ts.isCallExpression).filter(node => node.expression.getText(ast) === "ownerFirstGate.beginStart");
+    const start = starts[0];
+    let enclosing: ts.Node | undefined = start?.parent;
+    while (enclosing && !ts.isTryStatement(enclosing)) enclosing = enclosing.parent;
+    const guarded = enclosing && ts.isTryStatement(enclosing) ? enclosing : undefined;
+    const releases = (block: ts.Node | undefined) => nodes.filter(ts.isCallExpression).filter(node => block && node.getStart(ast) > block.getStart(ast) && node.end < block.end && node.getText(ast) === "releaseEngineStart()");
+    expect({
+      declarations: initializers.length,
+      mutable: !!(declaration && ts.isVariableDeclarationList(declaration.parent) && (declaration.parent.flags & ts.NodeFlags.Let)),
+      initializer: declaration?.initializer?.getText(ast),
+      starts: starts.length,
+      assignment: start?.parent.getText(ast),
+      startsInFollowingTry: !!(guarded && declaration && start && declaration.end < guarded.getStart(ast)
+        && start.getStart(ast) > guarded.tryBlock.getStart(ast) && start.end < guarded.tryBlock.end),
+      successReleases: releases(guarded?.tryBlock).length,
+      catchReleases: releases(guarded?.catchClause?.block).length,
+    }).toEqual({
+      declarations: 1, mutable: true, initializer: "() => {}", starts: 1,
+      assignment: "releaseEngineStart = ownerFirstGate.beginStart(threadId)",
+      startsInFollowingTry: true, successReleases: 1, catchReleases: 1,
+    }); // MAIN RULING 1115-R5RUL-24 (GrokBuild)
+    }
   });
 });

@@ -1,0 +1,60 @@
+OPEN NEEDS-RE-REVIEW en:ux.l2c.pause.fluxAlso, de:ux.l2c.pause.fluxAlso, de:ux.l2c.pause.capabilityOff.body, es:ux.l2c.pause.fluxAlso, fr:ux.l2c.pause.fluxAlso, fr:ux.l2c.pause.capabilityOff.body, hi:ux.l2c.pause.fluxAlso, ja:ux.l2c.pause.fluxAlso, pt-br:ux.l2c.pause.fluxAlso, zh:ux.l2c.pause.fluxAlso
+
+Record: 2026-11-11-1019-pause-95b6ea300928
+Sol bundle extracted byte for byte from the sole fenced JSON block in sol-pause2/last.txt. SHA256: 95b6ea300928abd461572c1720613c98570bf758f774a3f6a7f2bb40ccabe20c. Reviewer: sol. Original verdicts: 126 pass, 10 fail.
+
+Recorded before applying the corrections so the immutable evidence matches the text Sol reviewed. The recorder has no corrected verdict and no verify subcommand. After applying all 10 exact corrections, rebuilt reviewed.json with copy-review.mjs rebuild. The changed strings have no ledger entries. The unchanged 126 passes point to the new record. The attempt to record the original bundle after correction refuses it (exit 1); see record-after-corrections.log. No verdicts were invented or changed.
+
+MAIN must seat Sol again for re-review-request.json, which has exactly 10 current strings and blank verdicts. Source acceptance remains open; no source hashes or pending-review exemptions were changed.
+
+Verification used the recorder tests plus verify-record.mjs (exact bundle/record equality, record hash, rebuilt ledger equality, 126 passes and 10 exact corrections without ledger approval). Both passed. The copy-lint and i18n run passed 343 of 348 tests. The same five checks documented in preB-locale remain open: two source-acceptance checks, two review-ledger checks, and the pinned-file check. Deterministic copy rules passed, as did all 133 recorder tests and all 27 tests in the two i18n files. generate-locale.mjs --check exits 1 for source acceptance. See test-summary.json for exact failing names.
+
+Commands in network-none Node 24 containers through it-remote.sh, IT_JOB=rec-pause, IT_W=this worktree, IT_ORIG=it-local-generic.sh, one container at a time on murage-vt4:
+pnpm exec vitest run scripts/copy-review.test.mjs scripts/generate-locale.test.mjs src/locales/copy-final.test.ts src/lib/i18n.test.ts src/lib/i18n-intl-locale.test.ts --maxWorkers=2 --reporter=default --reporter=json --outputFile=docs/verification/rec-pause/tests.json
+node scripts/generate-locale.mjs --check
+node docs/verification/rec-pause/verify-record.mjs
+
+No server or conversation behavior changed or was claimed verified. No live app, Mac, provider, or billable service was used. Observed host load was below 85. No project memory directory or ijfw_memory_prelude tool/command was available.
+
+Raw test and leak reports are retained outside the worktree in the rec-pause job evidence directory. The baseline v2 guard flags the same 63 inherited files: 49 mobile-owned tailnet files and 14 other files classified in docs/verification/preB-locale/leak-classification.md. The guard copy only adds required nonempty-variable checks to cleanup paths; patterns and scanning rules are unchanged.
+
+en:ux.l2c.pause.fluxAlso
+Old: Flux Router's own limit for this key also applies.
+New: A limit in Flux Router has also been reached.
+
+de:ux.l2c.pause.fluxAlso
+Old: Das eigene Limit von Flux Router für diesen Schlüssel gilt ebenfalls.
+New: Ein Limit in Flux Router ist ebenfalls erreicht.
+
+de:ux.l2c.pause.capabilityOff.body
+Old: Flux Router liefert den Kontobetrag nicht mehr, den Murage zum Pausieren an deinem Limit braucht. Deine Bots arbeiten weiter, und die Anzeige warnt dich weiterhin bei 80% und 100%. Limits, die du in Flux Router festlegst, gelten weiterhin.
+New: Flux Router liefert den Kontobetrag nicht mehr, den Murage braucht, um beim Erreichen deines Limits zu pausieren. Deine Bots arbeiten weiter, und die Anzeige warnt dich weiterhin bei 80% und 100%. Limits, die du in Flux Router festlegst, gelten weiterhin.
+
+es:ux.l2c.pause.fluxAlso
+Old: También se aplica el límite que Flux Router tiene para esta clave.
+New: También se ha alcanzado un límite en Flux Router.
+
+fr:ux.l2c.pause.fluxAlso
+Old: La limite définie dans Flux Router pour cette clé s’applique aussi.
+New: Une limite de Flux Router est également atteinte.
+
+fr:ux.l2c.pause.capabilityOff.body
+Old: Flux Router n’envoie plus le montant du compte dont Murage a besoin pour mettre tes bots en pause à ta limite. Tes bots continuent de travailler et l’indicateur t’avertit toujours à 80% et à 100%. Les limites que tu définis dans Flux Router restent en vigueur.
+New: Flux Router n’envoie plus le montant du compte dont Murage a besoin pour mettre tes bots en pause lorsque ta limite est atteinte. Tes bots continuent de travailler et l’indicateur t’avertit toujours à 80% et à 100%. Les limites que tu définis dans Flux Router restent en vigueur.
+
+hi:ux.l2c.pause.fluxAlso
+Old: Flux Router में इस कुंजी के लिए तय सीमा भी लागू होती है।
+New: Flux Router में भी एक सीमा पूरी हो गई है।
+
+ja:ux.l2c.pause.fluxAlso
+Old: Flux Routerでこのキーに設定された上限も適用されます。
+New: Flux Router側の上限にも達しています。
+
+pt-br:ux.l2c.pause.fluxAlso
+Old: O limite definido no Flux Router para esta chave também se aplica.
+New: Um limite no Flux Router também foi atingido.
+
+zh:ux.l2c.pause.fluxAlso
+Old: Flux Router 为此密钥设置的限额也会生效。
+New: Flux Router 中的一项限额也已达到。
+

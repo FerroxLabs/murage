@@ -1,8 +1,14 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, expect, it } from 'vitest';
-import { launchVerificationServer, type VerificationServer } from '../scripts/control-murage.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { afterAll, beforeAll, expect, it, onTestFailed } from 'vitest';
+import type { VerificationServer } from '../scripts/control-murage.ts';
+// MAIN RULING INT-CONFLICT-DEFAULT: the isolated memory fixture needs real
+// native BG admission to publish the receipts whose bounded queries we count.
+// Fixture consumer owner: c4-misc-a2; native meter fixture owner: c3-memory.
+import { launchMemoryVerificationServer as launchVerificationServer } from './testing/memory-verification-fixture.ts';
+import { prepareFixtureRecall } from './testing/recall-ready-fixture.ts';
 import { countControlSource, sendCountCommand } from './testing/bounded-reads.ts';
 
 const server = fileURLToPath(new URL('.', import.meta.url));
@@ -12,46 +18,66 @@ const api = async (method:string,path:string,body?:unknown) => {
   const r=await fetch(fixture.info.url+path,{method,headers:{...headers,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
   return {status:r.status,body:await r.json() as any};
 };
+// 2fe571bb91 widened the cited-scope query to include notebook ids and kinds.
+// Count that query with the same visit oracle; the SQL bounds below are unchanged.
 const instrumentation = `
 const fs=await import('node:fs'), path=await import('node:path');
+await import(${JSON.stringify(new URL('./testing/idle-load-preload.mjs', import.meta.url).href)});
+await import(${JSON.stringify(new URL('./testing/claude-retained-session-preload.mjs', import.meta.url).href)});
 const {registerHooks}=await import('node:module');
+let coldCheckPending=false;
 let nextPass=0,currentPass; // Cleared at the next microtask, so an await cannot share this diagnostic pass.
-let seededThrough=0;
+let seededThrough=0, scopesThrough=0;
 let counts={calls:[],queries:0,pairs:0,scopes:0,plans:[]};
 const {Session}=await import('node:inspector');const profiler=new Session();profiler.connect();profiler.post('Profiler.enable');
+globalThis.__eldColdCheck=scope=>{if(!coldCheckPending || scope!=='turn')return false;coldCheckPending=false;return true;};
 globalThis.__eldCheck=(stamp,session)=>{if(currentPass===undefined){currentPass=++nextPass;queueMicrotask(()=>{currentPass=undefined;});}counts.calls.push({stamp,session,pass:currentPass,queries:0});};
 registerHooks({load(url,context,next){const result=next(url,context);if(url.endsWith('/server/memory/disclosures.ts')){
  let source=String(result.source).replace('function continuationMemoryRevokedWork(', 'function continuationMemoryRevokedWorkUncounted(');
- source+='\\nfunction continuationMemoryRevokedWork(...args: Parameters<typeof continuationMemoryRevokedWorkUncounted>) { (globalThis as any).__eldCheck(authorityParts()?.stamp,JSON.stringify(args.slice(1,4))); return continuationMemoryRevokedWorkUncounted(...args); }';
+ source+='\\nfunction continuationMemoryRevokedWork(...args: Parameters<typeof continuationMemoryRevokedWorkUncounted>) { if ((globalThis as any).__eldColdCheck(args[0].scope)) resetSessionHolds(); (globalThis as any).__eldCheck(authorityParts()?.stamp,JSON.stringify(args.slice(1,4))); return continuationMemoryRevokedWorkUncounted(...args); }';
  return {...result,source};}return result;}});
 const sqlite=await import('node:sqlite');const prepare=sqlite.DatabaseSync.prototype.prepare;const installed=new WeakSet();
 sqlite.DatabaseSync.prototype.prepare=function(sql,...rest){
- if(sql.startsWith('SELECT DISTINCT s.owner_key')){
+ if(sql.startsWith('SELECT DISTINCT s.id,s.kind,s.owner_key')){
   if(!installed.has(this)){this.function('eld_scope',(_id)=>{counts.scopes++;return 1;});installed.add(this);}
-  const measured=sql+' AND eld_scope(s.id)';const db=this;
+  const measured=sql+' WHERE eld_scope(s.id)';const db=this;
   const stmt=prepare.call(db,measured,...rest);const all=stmt.all.bind(stmt);
   stmt.all=(...args)=>{counts.queries++;counts.pairs+=JSON.parse(args[0]).length;if(counts.calls.length)counts.calls.at(-1).queries++;const plan=q=>prepare.call(db,'EXPLAIN QUERY PLAN '+q).all(...args).map(r=>r.detail);
     const original=plan(sql);if(JSON.stringify(original)!==JSON.stringify(plan(measured)))throw Error('measurement changed query plan');
     counts.plans.push(original);return all(...args);};return stmt;
  }return prepare.call(this,sql,...rest);
 };
+await import(${JSON.stringify(new URL('./testing/recall-ready-preload.mjs', import.meta.url).href)});
 const {pathToFileURL}=await import('node:url');
 const {database}=await import(pathToFileURL(path.join(${JSON.stringify(server)},'database.ts')).href);
 const configFile=path.join(process.env.MURAGE_DATA_DIR,'config.json');const config=JSON.parse(fs.readFileSync(configFile,'utf8'));
 config.instances.verification.environment={...config.instances.verification.environment,FAKE_CLAUDE_DUMP_EACH_TURN:'1'};
 config.instances.verification2={...config.instances.verification,displayName:'Second fake engine'};fs.writeFileSync(configFile,JSON.stringify(config));
 ${countControlSource(`command=>{
+ // Scope creation is a structural authority change. Prepare the real reader
+ // after those writes, before adding the unrelated history whose queries we measure.
+ // Producer owner: recall-scope; fixture consumer owner: c4-misc-a3.
+ if(command.seedScopes){const db=database();
+ if(command.seedScopes<=scopesThrough || command.seedScopes-scopesThrough>500)throw Error('invalid scope chunk');
+ db.exec('BEGIN');try {
+ const scope=db.prepare("INSERT INTO memory_scopes VALUES(?,'conversation',?,'[]',0)");
+ for(let i=scopesThrough;i<command.seedScopes;i++)scope.run('eld-s'+i,'eld-t'+i);
+ db.exec('COMMIT');scopesThrough=command.seedScopes;
+ }catch(e){db.exec('ROLLBACK');throw e;}}
  if(command.seed){const db=database();
- if(command.seed<=seededThrough || command.seed-seededThrough>500)throw Error('invalid seed chunk');
+ if(command.seed<=seededThrough || command.seed>scopesThrough || command.seed-seededThrough>500)throw Error('invalid seed chunk');
  db.exec('BEGIN');
  try {const first=seededThrough;
- const scope=db.prepare("INSERT INTO memory_scopes VALUES(?,'conversation',?,'[]',0)");
  const record=db.prepare("INSERT INTO memory_records VALUES(?,1,?,'fact','fixture','fixture','active',0,0,NULL,NULL,?)");
  const message=db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,1,'user','text','fixture',?)");
- for(let i=first;i<command.seed;i++){scope.run('eld-s'+i,'eld-t'+i);for(let j=0;j<25;j++){const id='eld-r'+i+'-'+j;record.run(id,'eld-s'+i,1700000000000+i*64+j);message.run('eld-t'+i,id,JSON.stringify({id,at:1,role:'user',kind:'text',text:'fixture'}));}}
+ for(let i=first;i<command.seed;i++){for(let j=0;j<25;j++){const id='eld-r'+i+'-'+j;record.run(id,'eld-s'+i,1700000000000+i*64+j);message.run('eld-t'+i,id,JSON.stringify({id,at:1,role:'user',kind:'text',text:'fixture'}));}}
  db.exec('COMMIT');seededThrough=command.seed;}catch(e){db.exec('ROLLBACK');throw e;}
  }
  if(command.start){
+ // MAIN RULING INT-CONFLICT-DEFAULT: measure a real cold dependency proof;
+ // the warmer can refill a hold during fixture preparation. Arm the miss at
+ // the first real turn check, immediately before the guarded production check.
+ coldCheckPending=true;
  const rows=database().prepare("SELECT count(*) AS n FROM messages WHERE thread_id GLOB 'eld-t[0-9]*'").get().n;
  if(rows!==seededThrough*25)throw Error('seed row count mismatch');
  counts={calls:[],queries:0,pairs:0,scopes:0,plans:[]};profiler.post('Profiler.start');}
@@ -72,38 +98,68 @@ async function command(c:object) {
   return JSON.parse(readFileSync(path,'utf8')).counts as {calls:Array<{stamp:string;session:string;pass:number;queries:number}>;queries:number;pairs:number;scopes:number;plans:string[][];seededMessages:number;profile?:{total:number;learningSourceBot:number;threadIsBotsOwn:number}};
 }
 beforeAll(async()=>{
- fixture=await launchVerificationServer({},undefined,{instrumentationSource:instrumentation,dumpLog:true});
+ fixture=await launchVerificationServer({},undefined,{instrumentationSource:"process.env.MURAGE_TURN_TRACE='1';\n"+instrumentation,dumpLog:true});
  headers={'x-murage-surface':'desktop','x-murage-surface-secret':(await api('GET','/api/desktop-secret')).body.secret};
  console.log('isolated fixture',fixture.info);
 },60000);
 afterAll(async()=>{await fixture?.close();});
 
 it('engine switches and stopped turns resolve dependencies by cited rows at 50,000 and 500,000 messages', {timeout:240000},async()=>{
+ onTestFailed(()=>{console.info('continuation fixture diagnostic',readFileSync(fixture.info.logPath,'utf8').slice(-20000));});
  const instances=(await api('GET','/api/instances')).body.instances;
  const model=instances.find((i:any)=>i.instanceId==='verification').models.options[0].id;
  const bot=(await api('POST','/api/bots',{name:'History probe',modelSelection:{instanceId:'verification',model}})).body.bot;
  await api('PATCH',`/api/bots/${bot.id}`,{computer:'off',browser:false,composio:false});
+ // MAIN RULING INT-CONFLICT-DEFAULT: bounded citation work needs an actual
+ // cited record, not an implicit extractor result from a happy fake engine.
+ // Create and pin fictional owner-private canon through the real owner API.
+ const record=await api('POST','/api/memory/action',{action:'identity-write',botId:bot.id,
+  kind:'character-canon',key:'history-fixture',expectedVersion:0,basis:'fiction',
+  audience:'owner-private',text:'The history fixture remembers a blue garden gate.'});
+ expect(record.status).toBe(200);
+ expect((await api('POST','/api/memory/action',{action:'pin',id:record.body.id,version:record.body.version,pinned:true})).status).toBe(200);
+ const cited=()=>{
+  const db=new DatabaseSync(join(fixture.info.dataDir,'messages.db'),{readOnly:true});
+  try{return db.prepare("SELECT record_versions FROM memory_disclosures WHERE thread_id=? AND state='delivered'").all(bot.threadId)
+   .some(row=>(JSON.parse(String(row.record_versions)) as Array<{id:string;version:number}>).some(ref=>ref.id===record.body.id&&ref.version===record.body.version));}
+  finally{db.close();}
+ };
+
  const replies=async()=>((await api('GET',`/api/threads/${bot.threadId}/messages?limit=100`)).body.messages as any[]).filter(m=>m.role==='bot'&&m.kind==='text'&&m.text).length;
  const idle=async()=>{await expect.poll(async()=> (await api('GET',`/api/bots/${bot.id}`)).body.bot?.activity,{timeout:30000}).toBe('idle');};
- const turn=async(text:string)=>{const n=await replies();expect((await api('POST',`/api/bots/${bot.id}/messages`,{threadId:bot.threadId,text})).status).toBe(202);await expect.poll(replies,{timeout:30000}).toBe(n+1);await idle();};
+ // MAIN RULING INT-CONFLICT-DEFAULT: acknowledge actual reader construction
+ // before each measured dispatch; background extraction can remain deferred.
+ const turn=async(text:string)=>{await prepareFixtureRecall(fixture.info.dataDir,bot.id,bot.threadId);const n=await replies();expect((await api('POST',`/api/bots/${bot.id}/messages`,{threadId:bot.threadId,text})).status).toBe(202);await expect.poll(replies,{timeout:30000}).toBe(n+1);await idle();};
  await turn('Remember the history probe colour is blue.');await turn('Repeat the colour.');
+ await expect.poll(cited,{timeout:30000,message:'the measured session must really cite its pinned fixture record'}).toBe(true);
  const results=[];
  let seededThrough=0;
  for(const threads of [2000,20000]){
+  // MAIN RULING INT-CONFLICT-DEFAULT: settle structural view preparation
+  // before populating unrelated records. Keep both complete history populations
+  // and every query/visit/plan bound; construction is outside this measurement.
+  for(let scopes=seededThrough;scopes<threads;){scopes=Math.min(threads,scopes+500);await command({seedScopes:scopes});}
+  await prepareFixtureRecall(fixture.info.dataDir,bot.id,bot.threadId);
   // Seeding is setup, outside the measured profile. Acknowledge bounded chunks
   // so one 450,000-row synchronous insert cannot consume the command deadline.
   while(seededThrough<threads){
    seededThrough=Math.min(threads,seededThrough+500);
    expect((await command({seed:seededThrough})).seededMessages).toBe(seededThrough*25);
+   // Settle each 12,500-row page through real bounded maintenance; no one
+   // fixture acknowledgement must drain the entire 500,000-row population.
+   await prepareFixtureRecall(fixture.info.dataDir,bot.id,bot.threadId);
   }
   await command({start:true});
-  await api('PATCH',`/api/bots/${bot.id}`,{modelSelection:{instanceId:'verification2',model}});
+  const switched=await api('PATCH',`/api/bots/${bot.id}/tasks/${bot.threadId}`,{modelSelection:{instanceId:'verification2',model}});
+  expect(switched.status).toBe(200);expect(switched.body.task.modelSelection.instanceId).toBe('verification2');
   await turn('Use the other engine.');await turn('Continue on the other engine.');
-  await api('PATCH',`/api/bots/${bot.id}`,{modelSelection:{instanceId:'verification',model}});
+  const returned=await api('PATCH',`/api/bots/${bot.id}/tasks/${bot.threadId}`,{modelSelection:{instanceId:'verification',model}});
+  expect(returned.status).toBe(200);expect(returned.body.task.modelSelection.instanceId).toBe('verification');
   await turn('Return to the first engine.');await turn('Continue on the first engine.');
   const engineSwitch=await command({dump:true});
   await command({start:true});
   const dumps=()=>existsSync(fixture.fixtureDumpLogPath)?readFileSync(fixture.fixtureDumpLogPath,'utf8').trim().split('\n').length:0;
+  await prepareFixtureRecall(fixture.info.dataDir,bot.id,bot.threadId);
   const n=dumps();
   expect((await api('POST',`/api/bots/${bot.id}/messages`,{threadId:bot.threadId,text:'__fixture_hold_authority__'})).status).toBe(202);
   await expect.poll(dumps,{timeout:30000}).toBeGreaterThan(n);

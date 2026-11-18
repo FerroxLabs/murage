@@ -1,3 +1,6 @@
+import { highlevelHandlerTools } from "../../highlevel/engine-policy.ts";
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Cursor Agent CLI harness support — Anysphere's `cursor-agent acp` over ACP
 // stdio, billed on the Cursor subscription (`cursor-agent login`,
 // CURSOR_API_KEY, or CURSOR_AUTH_TOKEN). The generic protocol runtime lives in
@@ -20,6 +23,7 @@ import { removeLink } from "../../link-removal.ts";
 import { OWN_BUILTINS, OWN_HANDLER_CARDED, OWN_READS } from "../../../shared/own-servers.ts";
 import { EMAIL_TOOLS_ENV } from "../email-tool-schemas.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
+import { engineReach } from "../../flux-engine-reach.ts";
 
 /** Translate an argv `--model` slug into the id this ACP session will accept.
  *
@@ -83,6 +87,23 @@ export const STATIC_CURSOR_MODELS: ModelCatalog = {
     { id: "auto", label: "Auto" },
     { id: "composer-2.5", label: "Composer 2.5" },
     { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+    // Exact Model ID fields at https://cursor.com/docs/models/<model>.
+    { id: "claude-fable-5-2", label: "Claude Fable 5.2" },
+    { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
+    { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+    { id: "gemini-4-carbon", label: "Gemini 4 Carbon" },
+    { id: "gemini-4-hydrogen", label: "Gemini 4 Hydrogen" },
+    { id: "gemini-4-argon", label: "Gemini 4 Argon" },
+    { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+    { id: "muse-wonder-1.0", label: "Muse Wonder" },
+    { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+    { id: "grok-4.7", label: "Grok 4.7" },
+    { id: "grok-4.6", label: "Grok 4.6" },
+    { id: "grok-4.5", label: "Grok 4.5" },
     { id: "gpt-5.3-codex", label: "Codex 5.3" },
     { id: "claude-sonnet-5-thinking-high", label: "Claude Sonnet 5 1M Thinking" },
   ],
@@ -97,7 +118,7 @@ function firstJsonValue(text: string): unknown {
   const trimmed = text.trim();
   if (!trimmed) return null;
   try {
-    return JSON.parse(trimmed);
+    return registerBusyloopPayloadSite("read", JSON.parse(trimmed));
   } catch {
     // CLIs sometimes print a banner before the payload. Take the first
     // {...} or [...] span that parses, rather than requiring a clean stdout.
@@ -108,7 +129,7 @@ function firstJsonValue(text: string): unknown {
     const slice = trimmed.slice(start, end).trim();
     if (!slice.endsWith("}") && !slice.endsWith("]")) continue;
     try {
-      return JSON.parse(slice);
+      return registerBusyloopPayloadSite("read", JSON.parse(slice));
     } catch {
       // keep shrinking
     }
@@ -392,9 +413,9 @@ export function probeCursorSessionModels(
           done([]);
           return 0;
         }
-        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: nextId, method, params })}\n`, (error) => {
+        NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: nextId, method, params })}\n`, (error) => {
           if (error) done([]);
-        });
+        }));
       } catch {
         done([]);
         return 0;
@@ -422,14 +443,14 @@ export function probeCursorSessionModels(
         buffer = buffer.slice(nl + 1);
         let message: Record<string, unknown> | null;
         try {
-          message = asRecord(JSON.parse(line));
+          message = asRecord(registerBusyloopPayloadSite("read", JSON.parse(line)));
         } catch {
           continue;
         }
         if (!message) continue;
         if (initId && message.id === initId) {
           if (!message.result) return done([]);
-          newId = send("session/new", { cwd: cursorProbeFolder(), mcpServers: [] });
+          newId = NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", send("session/new", { cwd: cursorProbeFolder(), mcpServers: [] }));
         } else if (newId && message.id === newId) {
           const listed = asRecord(asRecord(message.result)?.models)?.availableModels;
           return done(Array.isArray(listed) ? listed.filter((model): model is CursorSessionModel => Boolean(asRecord(model))) : []);
@@ -437,10 +458,10 @@ export function probeCursorSessionModels(
       }
       if (Buffer.byteLength(buffer) > SESSION_PROBE_MAX_RECORD_BYTES) done([]);
     });
-    initId = send("initialize", {
+    initId = NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", send("initialize", {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-    });
+    }));
   });
 }
 
@@ -546,6 +567,9 @@ export function cursorOwnReadAllow(turn: Pick<SendTurnInput, "integrations">): s
   }
   // VENUE-POST-1017: a handler-carded tool with its own mount key is allowed only on a turn whose agents mount carries that key
   for (const row of OWN_HANDLER_CARDED) if (row.mount === "own:agents" && row.mountEnv && agents?.env?.[row.mountEnv] === "1") allow.push(`Mcp(${agents.serverName ?? OWN_BUILTINS.agents}:${row.tool})`);
+  if (turn.integrations?.highlevel) {
+    for (const tool of highlevelHandlerTools) allow.push(`Mcp(${OWN_BUILTINS.highlevel}:${tool})`);
+  }
   return allow;
 }
 
@@ -591,7 +615,7 @@ export function scopeCursorHostComputerConfig(env: Record<string, string | undef
   const file = join(dir, "cli-config.json");
   let config: Record<string, unknown> = {};
   try {
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(file, "utf8")));
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) config = parsed as Record<string, unknown>;
   } catch { /* absent or unreadable: start from the minimum */ }
   const permissions = config.permissions as { allow?: unknown; deny?: unknown } | undefined;
@@ -607,6 +631,8 @@ export function scopeCursorHostComputerConfig(env: Record<string, string | undef
 
 export const cursorSupport = (run: typeof execCli): AcpSupport => ({
   driverKind: "cursorAgent",
+  // U05: cursor-agent only talks to Cursor's own backend (no host override).
+  fluxReach: (env) => engineReach(env, { compiledDefault: "https://api2.cursor.sh" }),
   displayName: "Cursor",
   models: STATIC_CURSOR_MODELS,
   // Cursor and other coding agents can both install a generic `agent` shim.
@@ -672,7 +698,7 @@ export const cursorSupport = (run: typeof execCli): AcpSupport => ({
     // slug so a CLI that advertises nothing behaves exactly as before.
     const modelId = resolveCursorAcpModelId(sessionModels ?? [], turn.model) ?? turn.model;
     try {
-      await request("session/set_model", { sessionId, modelId });
+      await NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", request("session/set_model", { sessionId, modelId }));
     } catch (e) {
       const err = e as Error & { code?: unknown };
       // -32601 method missing, -32602 id not in this session's namespace. In

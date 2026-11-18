@@ -211,9 +211,8 @@ describe("reconcileProjectRecords", () => {
   it("archives a desk task whose project rows are gone", async () => {
     const { store, migration, database } = await freshStore();
     const bot = store.createBot({ name: "Finch" }, { seedMessages: false });
-    const task = store.createTask(bot!.id, "Desk", false)!;
-    // Lane E2a writes this marker; simulate it directly on the record.
-    task.channelProjectDesk = { groupId: "ghost-group" };
+    // Desk membership is indexed when the task is published.
+    const task = store.createTask(bot!.id, "Desk", false, { groupId: "ghost-group" })!;
     migration.reconcileProjectRecords(store);
     const reloaded = store.taskByThread(bot!.id, task.threadId);
     expect(reloaded!.channelProjectDesk!.archivedAt).toBeGreaterThan(0);
@@ -267,15 +266,15 @@ it("repairs Close and Reopen JSON and desk archive flags after row commits", asy
   const group=store.createGroup("Work",[bot.id]);
   store.patchGroup(group.id,{channelProject:{goal:"Work",status:"active",startedAt:NOW,updatedAt:NOW}});
   migration.migrateChannelProjects(store);
-  const desk=store.createTask(bot.id,"Desk",false)!; desk.channelProjectDesk={groupId:group.id};
+  const desk=store.createTask(bot.id,"Desk",false,{groupId:group.id})!;
   const {setProjectClosed,setProjectReopened}=await import("./project-settings.ts");
   setProjectClosed(database(),{groupId:group.id,at:NOW+1}); migration.reconcileProjectRecords(store);
   expect(store.group(group.id)?.channelProject).toMatchObject({status:"done",completedAt:NOW+1});
-  expect(desk.channelProjectDesk.archivedAt).toBe(NOW+1);
+  expect(store.taskByThread(bot.id,desk.threadId)!.channelProjectDesk!.archivedAt).toBe(NOW+1);
   setProjectReopened(database(),{groupId:group.id,at:NOW+2}); migration.reconcileProjectRecords(store);
   expect(store.group(group.id)?.channelProject).toMatchObject({status:"active"});
   expect(store.group(group.id)?.channelProject?.completedAt).toBeUndefined();
-  expect(desk.channelProjectDesk.archivedAt).toBeUndefined();
+  expect(store.taskByThread(bot.id,desk.threadId)!.channelProjectDesk!.archivedAt).toBeUndefined();
   expect(records.projectSettingsFor(database(),group.id)?.runState).toBe("paused");
 });
 

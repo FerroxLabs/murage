@@ -103,8 +103,8 @@ describe("V6 (c) ownWrite keys", () => {
 
 describe("V7 engines seen in full", () => {
   it("Claude, Codex, the ACP core engines and the chat-completions drivers are covered; every other engine is not", () => {
-    for (const kind of ["claudeAgent", "codex", "fuigoAgent", "grokAgent", "grok", "geminiAgent", "cursorAgent", "openai-compat", "minimax"]) expect(engineSeenInFull(kind)).toBe(true);
-    for (const kind of ["hermesAgent", "openclawAgent", "antigravityAgent", "piAgent", "kimiAgent", "droidAgent", "opencodeGo", "qwenAgent", "clineAgent", "customAcp", "boxAgent"]) expect(engineSeenInFull(kind)).toBe(false);
+    for (const kind of ["claudeAgent", "codex", "fuigoAgent", "grokAgent", "grok", "geminiAgent", "cursorAgent", "openai-compat", "minimax", "customAcp", "kimiAgent", "droidAgent"]) expect(engineSeenInFull(kind)).toBe(true);
+    for (const kind of ["hermesAgent", "openclawAgent", "antigravityAgent", "piAgent", "opencodeGo", "qwenAgent", "clineAgent", "boxAgent"]) expect(engineSeenInFull(kind)).toBe(false);
     expect(engineSeenInFull(undefined)).toBe(false);
   });
 });

@@ -1,0 +1,2 @@
+[2026-11-09T13:00:00.000Z] approvals: asked bot=fabricated tool=Bash reason=outside-turn origin=owner unattended=0 cmd=shell level=no-limits owner=0 suppressed=3
+approvals: asked bot=fabricated tool=Bash reason=outside-turn origin=owner unattended=0 cmd=shell level=no-limits owner=0 suppressed=0

@@ -52,6 +52,7 @@ insert into auth.users values ('00000000-0000-0000-0000-000000000097', 'old@x.te
 insert into auth.identities (provider_id, user_id, identity_data, provider)
   values ('g-old', '00000000-0000-0000-0000-000000000097', '{"sub":"g-old","email":"old@x.test"}', 'google');
 SQL
+q -f /w/onecode-epoch-table.sql
 q -f /w/custom-access-token-hook-oauth-guard.sql
 
 # Supabase Auth's writes, as supabase_auth_admin. U n = user uuid n.

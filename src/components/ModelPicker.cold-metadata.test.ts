@@ -11,9 +11,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { modelMetadataReady, preloadModelMetadata, subscribeModelMetadata } from "@/lib/model-metadata";
 import { priceBandNote } from "@/lib/provider-model-picker";
-import { PickerPriceNote } from "./ModelPicker";
+import { PickerPriceNote } from "./ModelPickerDialog";
 
 const pickerSource = readFileSync(fileURLToPath(new URL("./ModelPicker.tsx", import.meta.url)), "utf8");
+// The chip keeps the state (1.0.19 slice P); the lazy dialog draws the note, so links 3 and 4 read the dialog.
+const dialogSource = readFileSync(fileURLToPath(new URL("./ModelPickerDialog.tsx", import.meta.url)), "utf8");
 
 describe("cold Flux-only picker: the price note", () => {
   it("starts cold: the note waits instead of showing an undated line", () => {
@@ -34,9 +36,9 @@ describe("cold Flux-only picker: the price note", () => {
     // 2. the rows are rebuilt on that render (their memo keys on metadataReady), so `ordered` is the fresh list
     expect(pickerSource).toMatch(/const rows=useMemo\(\(\)=>engine\?pickerModels\(engine,connections\):\[\],\[engine,connections,metadataReady\]\);/);
     // 3. the open menu renders the note from that render, shown whenever it lists any row (a Flux-only list included)
-    expect(pickerSource).toMatch(/<PickerPriceNote shown=\{!!ordered\.length\}\/>/);
+    expect(dialogSource).toMatch(/<PickerPriceNote shown=\{!!ordered\.length\}\/>/);
     // 4. the note reads readiness at render time, never a value captured before the landing
-    expect(pickerSource).toMatch(/export function PickerPriceNote\(\{shown\}:\{shown:boolean\}\)\{[\s\S]{0,120}if\(!shown\|\|!modelMetadataReady\(\)\)return null;/);
+    expect(dialogSource).toMatch(/export function PickerPriceNote\(\{shown\}:\{shown:boolean\}\)\{[\s\S]{0,120}if\(!shown\|\|!modelMetadataReady\(\)\)return null;/);
   });
 
   it("a failed chunk load leaves the note pending and the next open tries again", async () => {

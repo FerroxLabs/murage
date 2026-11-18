@@ -1538,6 +1538,8 @@ describe("SEC-006: iOS fresh authentication", () => {
       "await signPresent(origin: origin, message: request.message, reason: request.reason)",
       'await signPresent(origin: request.origin, message: request.message, reason: "Enable phone tools for your bots")',
       'await signPresent(origin: request.origin, message: request.message, reason: PhoneJobStrings.text("ask_setup_title"))',
+      // D8: the typed ask-proof entry; its message only comes from AskProofSigning (Core AskProof.prepare).
+      "await signPresent(origin: signing.origin, message: signing.message, reason: reason)",
     ]);
   });
   it("never logs key material, signatures or nonces", () => {

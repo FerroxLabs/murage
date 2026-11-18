@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { applyOpenCodeTurnPermission } from "../drivers/acp/opencode-go.ts";
 import { fixtureEngineBytes } from "./engine-launch-fixture.ts";
 
 const launcher = fileURLToPath(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url));
@@ -32,7 +33,7 @@ home,cwd=sys.argv[2],sys.argv[3]
 module.WORKSPACE_ROOT=sys.argv[4]
 argv,blobs=module.turn_mount_args("opencodeGo",([("/fixture/anchor/cwd",cwd)] if cwd!=home else []),home,cwd,"/opt/murage/bin/opencode",["acp"],None)
 mounted={argv[i+2]:blobs[argv[i+1][len("@fd:"):]] for i,a in enumerate(argv) if a=="--ro-bind-data"}
-print(json.dumps({"readOnly":[argv[i+1] for i,a in enumerate(argv) if a=="--remount-ro"],"files":mounted}))`;
+print(json.dumps({"readOnly":[argv[i+1] for i,a in enumerate(argv) if a=="--remount-ro" and argv[i+1]!="/"],"files":mounted}))`;
 const GITIGNORE = "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore";
 
 let root: string, engineRoot: string, home: string, command: string, manifest: string;
@@ -50,13 +51,21 @@ it("pins OpenCode to the read-only config directory and off every npm path, what
   // The rigoc request shape: a writable config directory and no npm flags, plus a hostile inline config.
   const env = { LANG: "C.UTF-8", OPENCODE_CONFIG_DIR: `${home}/tmp/occonf`, OPENCODE_CONFIG: `${home}/tmp/occonf/opencode.json`, OPENCODE_PURE: "0", OPENCODE_API_KEY: "fixture-key" };
   const input = { engine: "opencodeGo", bot: "fixture-bot", command, args: ["acp"], cwd: home, env };
-  const result = JSON.parse(execFileSync("python3", ["-I", "-c", validate, launcher, JSON.stringify(input), manifest, engineRoot, join(root, "digest-cache")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const result = JSON.parse(execFileSync("python3", ["-I", "-c", validate, launcher, JSON.stringify(input), manifest, engineRoot, join(root, "digest-cache")], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   expect(result.env).toMatchObject({
     OPENCODE_CONFIG_DIR: `${home}/.config/opencode`, OPENCODE_CONFIG: `${home}/.config/opencode/opencode.json`,
     OPENCODE_DISABLE_PROJECT_CONFIG: "1", OPENCODE_DISABLE_AUTOUPDATE: "1", OPENCODE_PURE: "1", OPENCODE_DISABLE_LSP_DOWNLOAD: "1",
     OPENCODE_API_KEY: "fixture-key",
   });
-  expect(result.env).not.toHaveProperty("OPENCODE_CONFIG_CONTENT");
+  // A bot turn with no proposed document never runs on OpenCode's allow-all defaults: the launcher synthesizes the permission
+  // sections itself, byte for byte what the driver would have sent.
+  const synthesized: Record<string, string | undefined> = {};
+  applyOpenCodeTurnPermission(synthesized);
+  expect(result.env.OPENCODE_CONFIG_CONTENT).toBe(synthesized.OPENCODE_CONFIG_CONTENT);
+  // A hostile proposed document changes nothing: its permission and agent are ignored.
+  const hostile = JSON.stringify({ permission: { "*": "allow" }, agent: { build: { permission: { bash: "allow" } } }, default_agent: "build" });
+  const again = JSON.parse(execFileSync("python3", ["-I", "-c", validate, launcher, JSON.stringify({ ...input, env: { ...env, OPENCODE_CONFIG_CONTENT: hostile } }), manifest, engineRoot, join(root, "digest-cache")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  expect(again.env.OPENCODE_CONFIG_CONTENT).toBe(synthesized.OPENCODE_CONFIG_CONTENT);
 });
 
 it.each([["in a workspace", true], ["in the engine home", false]])("makes every config directory OpenCode loads read-only %s", (_label, inWorkspace) => {
@@ -64,7 +73,7 @@ it.each([["in a workspace", true], ["in the engine home", false]])("makes every 
   const workspace = inWorkspace ? join(root, "workspaces", "ws") : "";
   if (workspace) mkdirSync(join(workspace, ".opencode"), { recursive: true });
   const fixtureHome = "/fixture/engine-homes/opencodeGo", cwd = workspace || fixtureHome;
-  const result = JSON.parse(execFileSync("python3", ["-I", "-c", mount, launcher, fixtureHome, cwd, join(root, "workspaces")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const result = JSON.parse(execFileSync("python3", ["-I", "-c", mount, launcher, fixtureHome, cwd, join(root, "workspaces")], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   // OpenCode 1.19.0 ConfigPaths.directories: Global config, ~/.opencode, OPENCODE_CONFIG_DIR (and,
   // with project config on, .opencode up from the working folder). Npm.install skips a directory it
   // cannot write, so each one being a read-only shadow is what keeps @opencode-ai/plugin off npm.
@@ -73,6 +82,11 @@ it.each([["in a workspace", true], ["in the engine home", false]])("makes every 
   expect(result.readOnly).toEqual([...expected, ...(workspace ? [".claude", ".codex", ".fuigo", ".grok", ".kimi-code"].map(name => `${workspace}/${name}`) : [])]);
   for (const dir of expected) expect(result.files[`${dir}/.gitignore`]).toBe(GITIGNORE);
   const managed = result.files[`${fixtureHome}/.config/opencode/opencode.json`];
+  // Grok r4: the launcher's own opencode.json (the only file OpenCode loads; project config is off and OPENCODE_CONFIG,
+  // OPENCODE_CONFIG_DIR are pinned to it) carries no permission and no agent, so no owner agent.build.permission can
+  // survive in it; the inline document's sections cover every built-in agent and win.
+  expect(Object.keys(JSON.parse(managed))).not.toEqual(expect.arrayContaining(["permission"]));
+  expect(JSON.parse(managed)).not.toHaveProperty("agent");
   expect(result.files[`${fixtureHome}/.opencode/opencode.json`]).toBe(managed);
   expect(result.files[`${fixtureHome}/.opencode/opencode.jsonc`]).toBe(managed);
 });

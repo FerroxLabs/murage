@@ -92,6 +92,7 @@ describe("launch secret handoff over a private pipe (audit P1, S1b R8)", () => {
       process.stdout.write("ready:" + (got === "d".repeat(64)) + "\\n");
       setInterval(() => {}, 1000);`;
     const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script], {
+      windowsHide: true,
       env: { PATH: process.env.PATH, ...launchSecretVia("MURAGE_X", "stdin") },
       stdio: ["pipe", "pipe", "ignore"],
     });

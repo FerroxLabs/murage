@@ -10,6 +10,15 @@ import { reconcileMemoryRoster } from "./policy.ts";
 import type { TextOnlyExtractor } from "./extract.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { activateGroundedMemory, learningReviewReason } from "./automatic-learning.ts";
+import { setMemoryCaptureRoster } from "./capture-scope.ts";
+import { recordEmailDerived } from "./email-derived.ts";
+import { isLearnableSource } from "./learnable.ts";
+import { learningWriteDecision } from "./learning-guard.ts";
+import { installLearningDestination } from "./learning-destination.ts";
+import { insertMemoryRecord } from "./record-write.ts";
+import { noLimitsAppliesTo } from "../no-limits-origin.ts";
+import { turnAudienceIsOwner } from "../owner-audience.ts";
 
 beforeEach(()=>{
   closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});
@@ -182,4 +191,48 @@ it("Keep preserves fictional identity disclaimers",async()=>{
  transaction(()=>changeLearningEvent(db,String(event.id),"keep"));
  expect(db.prepare("SELECT confidence_basis FROM memory_record_details WHERE record_id=?").get(row.id)?.confidence_basis).toBe(basis);
  expect(db.prepare("SELECT kept_at FROM memory_learning_events WHERE id=?").get(event.id)?.kept_at).not.toBeNull();
+});
+
+it('S16 No limits grounded background learning preserves a default review hold',async()=>{
+ const {setMemoryCaptureRoster}=await import('./capture-scope.ts');
+ const bot={id:'bot',threadId:'thread',autoApprove:true,fullAccess:true,noLimits:true,permissionExplicit:true};
+ setMemoryCaptureRoster(()=>({bots:[bot],groups:[]}));
+ try{
+  const text='I prefer concise fixture answers.',job=capture(text);
+  await consolidateMemorySource(job,extract(text,'owner-statement'),signal(),{reviewOnly:true});
+  expect(record()).toMatchObject({state:'candidate',text,confidence_basis:learningReviewReason('default-review')});
+ }finally{setMemoryCaptureRoster(null);}
+});
+
+
+it.each([
+ ["W0",false,false,false,false,undefined],
+ ["W1",true,false,false,false,"external-mail"],
+ ["W1b",true,true,false,false,"external-mail"],
+ ["W2",false,false,true,false,"needs-owner-approval"],
+ ["W3",false,false,false,true,"default-review"],
+] as const)("G1 %s: No limits preserves learned-content holds",(witness,email,paraphrase,approval,reviewOnly,reason)=>{
+ const bot={id:"bot",threadId:"thread",autoApprove:true,fullAccess:true,noLimits:true,permissionExplicit:true};
+ setMemoryCaptureRoster(()=>({bots:[bot],groups:[]}));
+ const restore=approval?installLearningDestination(()=>({ok:false,reason:"needs-owner-approval"})):()=>{};
+ try{
+  settings({automaticFacts:true,reviewMode:false});
+  const quote="I prefer concise answers.",text=paraphrase?"Prefers short answers.":quote;
+  capture(quote);
+  const db=database(),source=db.prepare("SELECT * FROM memory_sources WHERE id='source'").get()!;
+  expect(source).toMatchObject({state:"active",speaker:"owner",thread_id:"thread",revision:1});
+  expect(turnAudienceIsOwner("thread",{},db)).toBe(true);
+  expect(noLimitsAppliesTo("unattended",bot)).toBe(true);
+  expect(isLearnableSource(db,"source",1)).toEqual({learnable:true});
+  const scope=String(source.scope_id),id=`candidate:${witness}`;
+  insertMemoryRecord(db,{id,version:1,scopeId:scope,kind:"fact",text,assertion:"assistant-inference",state:"candidate",validFrom:1,createdAt:1});
+  db.prepare("INSERT INTO memory_evidence VALUES(?,1,'source',1,0,?)").run(id,Buffer.byteLength(quote));
+  if(email)db.exec("UPDATE memory_source_versions SET payload=json_set(payload,'$.externalContent','email') WHERE source_id='source' AND revision=1");
+  expect(recordEmailDerived(db,id,1)).toBe(email);
+  expect(learningWriteDecision(db,{writer:"activation",sourceId:"source",sourceRevision:1,targetScopeId:scope,botId:bot.id,target:"memory"})).toEqual(approval?{decision:"owner-approval",reason:"needs-owner-approval"}:{decision:"auto",scopeId:scope});
+  const activated=transaction(()=>activateGroundedMemory(db,id,"owner-statement",paraphrase?{supported:true}:undefined,reviewOnly?{reviewOnly:true}:undefined));
+  expect(activated).toBe(reason===undefined);
+  expect(record()).toMatchObject({state:reason===undefined?"active":"candidate",text});
+  if(reason)expect(record().confidence_basis).toBe(learningReviewReason(reason));
+ }finally{restore();setMemoryCaptureRoster(null);}
 });

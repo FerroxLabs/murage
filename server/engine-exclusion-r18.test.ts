@@ -17,7 +17,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 
 import { ConversationDeletions, runConversationDeletion } from "./conversation-deletion.ts";
 import { executeEnginePlans } from "./engine-exec.ts";
-import { forgetExclusionAddon, heldFileOf, loadExclusionAddon, overrideAllowed, type ExclusionAddon, type NativeHandle } from "./engine-exclusion.ts";
+import { forgetExclusionAddon, heldFileOf, loadExclusionAddon, overrideAllowed, ADDON_VERSION, type ExclusionAddon, type NativeHandle } from "./engine-exclusion.ts";
 import { exclOps, mutOps } from "./engine-fs.ts";
 import { engineHistoryTestHooks, type EngineHistoryJob } from "./engine-history-offthread.ts";
 import { planEngineHistory, removeEngineHistoryFiles as removeRaw, runEngineHistoryJob } from "./engine-history-run.ts";
@@ -399,13 +399,13 @@ describe("r17-7: on Windows every operation on a held file is made by the addon 
   it("on Windows an addon that lacks the handle functions does not load", () => {
     const dir = mkdtempSync(join(scratch, "addon-"));
     const file = join(dir, "posix-only.cjs");
-    writeFileSync(file, "module.exports={lock:()=>true,processes:()=>[],renameNoReplace:()=>0,version:()=>5};");
+    writeFileSync(file, `module.exports={lock:()=>true,processes:()=>[],renameNoReplace:()=>0,writers:()=>({writers:[],unreadable:[]}),fullSync:()=>"full",version:()=>${ADDON_VERSION}};`);
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     const saved = process.env.MURAGE_ENGINE_EXCLUSION_PATH;
     process.env.MURAGE_ENGINE_EXCLUSION_PATH = file;
     forgetExclusionAddon();
     try {
-      expect(loadExclusionAddon()?.version()).toBe(10); // here (not Windows) it is complete enough
+      expect(loadExclusionAddon()?.version()).toBe(ADDON_VERSION); // here (not Windows) it is complete enough
       forgetExclusionAddon();
       Object.defineProperty(process, "platform", { value: "win32" });
       expect(loadExclusionAddon()).toBeNull(); // on Windows an addon without the handle functions is refused
@@ -612,7 +612,7 @@ describe("r17-9: MURAGE_ENGINE_EXCLUSION_PATH is honoured only by an unpackaged 
     const dir = mkdtempSync(join(scratch, "override-"));
     const marker = join(dir, "ran");
     const file = join(dir, "hostile.cjs");
-    writeFileSync(file, `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran"); module.exports={lock:()=>true,processes:()=>[],renameNoReplace:()=>0,openFile:()=>null,handleRead:()=>0,handleWrite:()=>0,handleSync:()=>0,handleLock:()=>0,handleMarkDelete:()=>0,handleId:()=>0,handleSize:()=>0,handleClose:()=>0,version:()=>5};`);
+    writeFileSync(file, `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran"); module.exports={lock:()=>true,processes:()=>[],renameNoReplace:()=>0,openFile:()=>null,handleRead:()=>0,handleWrite:()=>0,handleSync:()=>0,handleLock:()=>0,handleMarkDelete:()=>0,handleId:()=>0,handleSize:()=>0,handleClose:()=>0,writers:()=>({writers:[],unreadable:[]}),fullSync:()=>"full",version:()=>${ADDON_VERSION}};`);
     const saved = { path: process.env.MURAGE_ENGINE_EXCLUSION_PATH, packaged: process.env.MURAGE_PACKAGED };
     process.env.MURAGE_ENGINE_EXCLUSION_PATH = file;
     process.env.MURAGE_PACKAGED = "1";
@@ -623,7 +623,7 @@ describe("r17-9: MURAGE_ENGINE_EXCLUSION_PATH is honoured only by an unpackaged 
       // and the same file IS used by an unpackaged test process (the stand-ins the suite relies on)
       delete process.env.MURAGE_PACKAGED;
       forgetExclusionAddon();
-      expect(loadExclusionAddon()?.version()).toBe(10);
+      expect(loadExclusionAddon()?.version()).toBe(ADDON_VERSION);
       expect(existsSync(marker)).toBe(true);
     } finally {
       if (saved.path === undefined) delete process.env.MURAGE_ENGINE_EXCLUSION_PATH; else process.env.MURAGE_ENGINE_EXCLUSION_PATH = saved.path;

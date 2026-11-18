@@ -22,12 +22,11 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { createBackupScheduleHost } from "../electron/backup-schedule-host.mjs";
-import { backupAgePinForTarget } from "../shared/backup-age-pin.ts";
 import { BackupCoordinator } from "./backup-coordinator.ts";
 import { inspectEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
 import { installationRecoveryCommand } from "./installation-recovery-command.ts";
 import { restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys, optionalBackupAgeUnavailable } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -47,7 +46,7 @@ function digestTree(root: string, relative = "", into = new Map<string, string>(
  * snapshot checkpoints the WAL into the database it captures. */
 const SIDECAR = /\.db-(wal|shm)$/;
 
-const noPinnedAge = !backupAgePinForTarget(process.platform, process.arch) || !process.env.MURAGE_BACKUP_TEST_AGE_DIR;
+const noPinnedAge = optionalBackupAgeUnavailable();
 
 describe("a scheduled backup can actually be restored", () => {
   it.skipIf(noPinnedAge)("survives the installation being destroyed, and every backed-up byte comes back", { timeout: 120_000 }, async () => {

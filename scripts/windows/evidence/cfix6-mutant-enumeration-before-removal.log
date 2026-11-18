@@ -1,0 +1,6 @@
+PASS witness hang : TimeoutSeconds 60; prelaunch CIM blocked past 150 seconds
+[31;1mException: [0m/work/scripts/windows/p11c-check.ps1:7[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m   7 | [0m … bool]$ok,[string]$name){if(-not $ok){[36;1mthrow "ASSERTION: $name"[0m};"PASS  …[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                        ~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mASSERTION: witness hang : name removal precedes enumeration[0m

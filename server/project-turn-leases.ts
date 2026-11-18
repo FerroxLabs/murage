@@ -145,6 +145,15 @@ export class ProjectTurnLeases {
     return true;
   }
 
+  /** The engine's close of a stopped generation's turn was confirmed: nothing
+   * writes any more, so its writer lease releases now instead of waiting for a
+   * terminal event. Returns whether a lease was held. */
+  releaseClosed(generation: string): boolean {
+    if (!this.owners.has(generation)) return false;
+    this.release(generation);
+    return true;
+  }
+
   /** Restore admission that tolerates the Stop → Restore window: acquire the
    * restore lease now, or, when every holder of the folder is a turn whose
    * stop was already requested (`markStopRequested`), wait up to `timeoutMs`

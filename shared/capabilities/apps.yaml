@@ -15,7 +15,7 @@ entries:
     limits: >
       On Telegram a stop-line card also offers Allow for this task. A card about controlling a
       computer offers Deny only; approve it in Murage. WhatsApp approvals stay in Murage.
-    settings_path: Settings → Messaging apps
+    settings_path: Settings → Connected apps
     platforms: [mac, windows, linux]
     engines: [all]
     anchors:
@@ -62,11 +62,11 @@ entries:
     answer: >
       Yes. A bot can open and read pages in its own built-in browser tab, with its own sign-ins, and
       you can watch it and take over at any time. It is on by default. Switch it off for every bot
-      under Settings, Devices, Built-in browser, or for one bot in its Bot settings.
+      under Settings, Computer & browser, Built-in browser, or for one bot in its Bot settings.
     limits: >
       It works on the engines that take Murage's browser: Fuigo, Claude, Codex and the agent engines
       without tools of their own. OpenClaw, Pi, Antigravity and OpenAI-compatible engines do not get it.
-    settings_path: Settings → Devices → Built-in browser
+    settings_path: Settings → Computer & browser → Built-in browser
     platforms: [mac, windows, linux]
     engines: [fuigo, claude, codex, grok, cursor, kimi, droid, opencode, qwen, hermes, gemini, cline]
     anchors:
@@ -103,4 +103,27 @@ entries:
     verified: 1.0.14
     doc: features/automation#routines
     internal: SABLE-WISHLIST-TRIAGE 1a. Ingress binds 127.0.0.1 (webhook-ingress.ts listenWebhookIngress); index.ts passes only the port. A Cloud home publishes /hooks through Caddy, so this entry is desktop only.
+  - id: apps.web-read
+    name: Read a web page
+    status: can
+    questions:
+      - Can my bot open a web result and read the page?
+      - Can a bot read a link?
+      - Can my bot read a whole web page?
+    answer: >
+      Yes. After a web search or a link, a bot can open the page and read it with Murage, instead of only
+      seeing the search snippet. Murage saves the full page once.
+    limits: >
+      A long page comes in pieces of up to 16,000 characters. The page is read as untrusted text. OpenClaw and
+      Box Agent read pages with their own tools, so long pages may be cut short; so may some agent engines.
+    platforms: [mac, windows, linux]
+    engines: [fuigo, claude, codex, grok, cursor, kimi, droid, antigravity, opencode, qwen, hermes, gemini, cline, muse, pi, openai-compatible, copilot, deepseek]
+    anchors:
+      - tool:web_read
+      - 'file:server/bot-shapes.ts#To read a web page, use'
+      - 'file:server/index.ts#webRead: Boolean(integrations.agents)'
+    verified: 1.0.19
+    since: 1.0.19
+    doc: features/bot-tools#reading-web-pages
+    internal: 1.0.19 "Read beyond the search result" (00447f6978, 2026-11-11, after the 1.0.18 bump). The prompt line is added whenever Murage's tool server is attached (integrations.agents). Engine coverage follows shared/web-read-routing.ts, where OpenClaw and Box Agent do not mount Murage tools (excluded); kimi, cursor, cline, deepseek, muse, antigravity and custom ACP keep a documented residual limitation.
 retired: []

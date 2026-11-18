@@ -119,7 +119,7 @@ describe("auto room: the awaited override", () => {
 const LIVE = process.env.MURAGE_DECIDE_TEST_LIVE_EVAL === "1";
 describe.skipIf(!LIVE)("live eval against Flux /v1/decide", () => {
   it("routes the bench's labelled messages", async () => {
-    const fixture = JSON.parse(readFileSync(join(process.env.MURAGE_DECIDE_FIXTURE ?? "/Volumes/Scratch/work/clef-conformance/room-routing.json"), "utf8")) as {
+    const fixture = JSON.parse(readFileSync(join(process.env.MURAGE_DECIDE_FIXTURE ?? "/Volumes/Fixture/ExampleWorkspace/clef-conformance/room-routing.json"), "utf8")) as {
       rooms: Record<string, { name: string; humans: string[]; members: RoomRoutingInput["members"] }>;
       items?: Array<{ room: string; text: string; from?: string; expected?: string }>;
     };
@@ -138,3 +138,5 @@ describe.skipIf(!LIVE)("live eval against Flux /v1/decide", () => {
     expect(scored === 0 || right / scored >= 0.9).toBe(true);
   }, 300_000);
 });
+
+// secret-scan: fixture (generic /Volumes/Fixture and /Users/fixture paths only; no host data)

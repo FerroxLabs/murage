@@ -20,6 +20,7 @@ import { createWindowsUpdateVerifier, installWindowsUpdateVerifier, parseDisting
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const bundlePath = join(root, "electron/vendor/electron-updater.cjs");
+const bundleRequire = createRequire(bundlePath);
 const bundle = readFileSync(bundlePath, "utf8");
 const destination = "C:\\updates\\fixture.exe";
 const subject = "CN=Fixture Publisher, O=Fixture Company";
@@ -38,7 +39,7 @@ function fixture({ native, publishers = [subject] } = {}) {
   isolated.require = (name) => {
     if (name === "electron") return { app: {}, autoUpdater: new EventEmitter() };
     if (name === "child_process") return childProcess;
-    return require(name);
+    return bundleRequire(name);
   };
   isolated._compile(bundle, bundlePath);
   const updater = new isolated.exports.NsisUpdater(null, { version: "1.0.0" });
@@ -174,6 +175,10 @@ test("generated upstream verifier patch rejects missing, duplicate and moved sha
 
 test("the shipped verifier is exactly the reviewed patch of upstream", async () => {
   const result = await build({ entryPoints: [require.resolve("electron-updater")], bundle: true, platform: "node", target: "node20", format: "cjs", external: ["electron"], write: false, logLevel: "silent" });
-  const module = (text) => /var require_windowsExecutableCodeSignatureVerifier = __commonJS\(\{[\s\S]*?\n\}\);/.exec(text)?.[0];
+  // esbuild's registry key records the dependency's location. The remote runner
+  // mounts pnpm at /nm; compare every byte of the verifier after canonicalizing
+  // only that source-location label, which has no effect on its implementation.
+  const module = (text) => /var require_windowsExecutableCodeSignatureVerifier = __commonJS\(\{[\s\S]*?\n\}\);/.exec(text)?.[0]
+    .replace(/"[^"\n]*\/node_modules\/electron-updater\/out\/windowsExecutableCodeSignatureVerifier\.js"(?=\(exports2\))/, '"electron-updater/out/windowsExecutableCodeSignatureVerifier.js"');
   assert.equal(module(patchWindowsSignatureVerifier(result.outputFiles[0].text)), module(bundle));
 });

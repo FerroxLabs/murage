@@ -22,14 +22,20 @@ import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import type { VerificationServer } from "../scripts/control-murage.ts";
+// Native meter fixture producer owner: c3-memory. Verification consumer owner: r2-thread-seal.
+import { launchMemoryVerificationServer as launchVerificationServer } from "./testing/memory-verification-fixture.ts";
 import { RESTARTED_PREAMBLE, FRESH_PREAMBLE } from "./turn-context.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
+// Producer owner: recall-scope-c (durable task state). Consumer owner: r2-thread-seal (seal fixtures).
+import { readBotRecords } from "./bot-turn-state.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const STORE_URL = pathToFileURL(join(SERVER_DIR, "store.ts")).href;
 const WATCH_URL = pathToFileURL(join(SERVER_DIR, "memory", "reset-watch.ts")).href;
 const ALLOWANCE_URL = pathToFileURL(join(SERVER_DIR, "memory", "lineage-allowance.ts")).href;
+const RETAINED_PRELOAD_URL = pathToFileURL(join(SERVER_DIR, "testing", "claude-retained-session-preload.mjs")).href;
 const posixOnly = describe.skipIf(process.platform === "win32");
 
 /** The marks a prompt carries (turn-context.ts). */
@@ -43,6 +49,9 @@ const REWOUND = "The user rewound this conversation";
  * server (the real Store.sealThread) and read the sealed-turn counter.
  */
 const instrumentation = `
+  // Receipt producer owner: sc-safety. Retained-session consumer owner: r2-thread-seal.
+  // Use the reviewed receipt for the exact scripted CLI; other executable admission stays real.
+  await import(${JSON.stringify(RETAINED_PRELOAD_URL)});
   const fs=await import('node:fs');const path=await import('node:path');
   const dir=process.env.MURAGE_DATA_DIR;
   const cfgFile=path.join(dir,'config.json');const cfg=JSON.parse(fs.readFileSync(cfgFile,'utf8'));
@@ -66,8 +75,9 @@ const instrumentation = `
   cfg.instances.gatedLong=make({FAKE_CLAUDE_MCP_READY_MS:JSON.stringify({'murage-memory':6000,agents:6000}),MURAGE_MCP_REQUIRED_WAIT_MS:'20000'});
   cfg.instances.newIdGated=make({FAKE_CLAUDE_INIT_AT_START:'1',FAKE_CLAUDE_RESUME_NEW_ID:'reported-other-id',FAKE_CLAUDE_MCP_READY_MS:memoryLate});
   cfg.instances.newIdLate=make({FAKE_CLAUDE_RESUME_NEW_ID:'reported-other-id'});
-  cfg.instances.finalSteer=make({FAKE_CLAUDE_MODE:'final-steer',FAKE_CLAUDE_FINAL_STEERS:'2'});
+  cfg.instances.finalSteer=make({FAKE_CLAUDE_MODE:'final-steer',FAKE_CLAUDE_FINAL_STEERS:'2',FAKE_CLAUDE_FINAL_STREAM_PREFIX:'reply to: '});
   cfg.instances.earlyWarm=make({FAKE_CLAUDE_INIT_AT_START:'1'});
+  cfg.instances.mountedWarm=make({FAKE_CLAUDE_START_DELAY_MS:'1',FAKE_CLAUDE_START_LOG:gate('mounted-warm-starts.log')});
   fs.writeFileSync(cfgFile,JSON.stringify(cfg));
   process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS='250';
   const {Store}=await import(${JSON.stringify(STORE_URL)});
@@ -89,6 +99,7 @@ const instrumentation = `
       if(command.gauges)result.gauges=watch.sessionGauges();
       if(command.lockFolds!==undefined)lockedFolds=command.lockFolds;
       if(command.pair)saveCursor.apply(store,command.pair);
+      if(command.nativeWarm)store.patchBot(command.nativeWarm,{draftOnly:true,computer:'off',browser:false});
     }catch(error){result.error=String(error);}
     fs.writeFileSync(out,JSON.stringify(result));
   },30).unref();
@@ -112,6 +123,34 @@ async function waitUntil(check: () => unknown | Promise<unknown>, what: string, 
   const end = Date.now() + ms;
   while (!(await check())) { if (Date.now() > end) throw new Error(`timed out waiting for ${what}`); await sleep(50); }
 }
+/** Health is served before the after-listen lineage backfill completes. These cases start with a resumable database; they do not exercise an upgrade in progress. */
+async function waitForLineageReady(threadIds: string[]) {
+  await waitUntil(() => {
+    const db = new DatabaseSync(file("messages.db"), { readOnly: true });
+    try {
+      if (Number(db.prepare("SELECT ready FROM memory_lineage_cert WHERE id=1").get()?.ready ?? 0) !== 1) return false;
+      const thread = db.prepare("SELECT ready FROM memory_lineage_thread_ready WHERE thread_id=?");
+      return threadIds.every(id => Number(thread.get(id)?.ready ?? 1) === 1);
+    } finally { db.close(); }
+  }, "the fixture's lineage backfill to finish");
+}
+/** Wait for the seed chapter's derived search projection before starting the deliberately delayed engine session. No recall is released here. */
+async function waitForSearchReady() {
+  await waitUntil(() => {
+    if (!existsSync(file("search.db"))) return false;
+    const db = new DatabaseSync(file("messages.db"), { readOnly: true });
+    const search = new DatabaseSync(file("search.db"), { readOnly: true });
+    try {
+      const state = search.prepare("SELECT (SELECT v FROM search_state WHERE k='owner') AS owner,(SELECT v FROM search_state WHERE k='applied_seq') AS applied,EXISTS(SELECT 1 FROM search_state WHERE k='built') AS building").get()!;
+      const owner = String(db.prepare("SELECT done FROM transcript_index_state WHERE name='search_owner'").get()!.done);
+      const newest = Number(db.prepare("SELECT COALESCE(MAX(seq),0) AS n FROM search_intents").get()!.n);
+      return state.owner === owner && Number(state.building) === 0 && Number(state.applied) >= newest;
+    } catch (error) {
+      if (error instanceof Error && /no such table|database is locked/.test(error.message)) return false;
+      throw error;
+    } finally { search.close(); db.close(); }
+  }, "the seed chapter's search projection to catch up", 60_000);
+}
 const readJson = (path: string) => { try { return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null; } catch { return null; } };
 const serverLog = () => readFileSync(fixture.info.logPath, "utf8");
 const logged = () => (existsSync(file("seal-turns.jsonl")) ? readFileSync(file("seal-turns.jsonl"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { botId: string | null; threadId: string | null; prompt?: string; steer?: string }) : []);
@@ -119,36 +158,40 @@ const logged = () => (existsSync(file("seal-turns.jsonl")) ? readFileSync(file("
 interface Bot { id: string; threadId: string }
 let control = 0;
 /** Asks the running server (through the instrumentation) to seal a thread or report the sealed-turn counter. */
-async function ask(command: { seal?: [string, string]; counts?: true; gauges?: true; lockFolds?: boolean; pair?: unknown[] }) {
+async function ask(command: { seal?: [string, string]; counts?: true; gauges?: true; lockFolds?: boolean; pair?: unknown[]; nativeWarm?: string }) {
   const id = ++control;
   rmSync(file("seal-out.json"), { force: true });
   writeFileSync(file("seal-ctl.json"), JSON.stringify({ ...command, id }));
-  await expect.poll(() => readJson(file("seal-out.json"))?.id, { timeout: 10_000 }).toBe(id);
+  await waitUntil(() => readJson(file("seal-out.json"))?.id === id, "the seal control response", 10_000);
   const answer = readJson(file("seal-out.json"));
   expect(answer.error, JSON.stringify(answer)).toBeUndefined();
   return answer;
 }
 const seal = (bot: Bot, threadId = bot.threadId) => ask({ seal: [bot.id, threadId] });
 
-async function createBot(instanceId: string, name: string): Promise<Bot> {
+async function createBot(instanceId: string, name: string, nativeWarm = false): Promise<Bot> {
   const instance = (await call("GET", "/api/instances")).body.instances.find((entry: any) => entry.instanceId === instanceId);
   const modelSelection = { instanceId, model: instance.models.options[0].id };
   const created = await call("POST", "/api/bots", { name, modelSelection, requireAvailableModel: true });
   expect(created.status, created.text).toBe(201);
   const bot = created.body.bot as Bot;
   expect((await call("PATCH", `/api/bots/${bot.id}`, { modelSelection, computer: "off" })).status).toBe(200);
+  // MAIN RULING INT-CONFLICT-DEFAULT, c3-drivers fence/idle fixture application:
+  // positive prewarms use native mount-free drafts; mounted refusal stays covered below.
+  if (nativeWarm) await ask({ nativeWarm: bot.id });
   return bot;
 }
 const botView = async (bot: Bot) => (await call("GET", "/api/bots")).body.bots.find((entry: any) => entry.id === bot.id);
 const isIdle = async (bot: Bot) => (await botView(bot))?.busy === false;
 const mark = (label: string) => `${label}_${++sequence}`;
 
-/** The task as saved on disk (bots.json is the saved roster). */
+/** The durable task boot reads: the roster checkpoint plus generation-bound task deltas. */
 const taskOnDisk = (bot: Bot, threadId = bot.threadId): any =>
-  (JSON.parse(readFileSync(file("bots.json"), "utf8")) as any[]).find((row) => row.id === bot.id)?.tasks?.find((task: any) => task.threadId === threadId);
+  readBotRecords(fixture.info.dataDir).find((row) => row.id === bot.id)?.tasks?.find((task) => task.threadId === threadId);
 /** Everything a pre-seal session left on the task: the cursor and the three records beside it. */
 const sessionMeta = (task: any) => JSON.stringify([task?.resumeCursors ?? null, task?.resumeAudiences ?? null, task?.resumeContracts ?? null, task?.resumePlainToolNames ?? null]);
-const editDisk = (change: (rows: any[]) => void) => { const rows = JSON.parse(readFileSync(file("bots.json"), "utf8")); change(rows); writeFileSync(file("bots.json"), JSON.stringify(rows)); };
+// Called only with the fixture stopped. Fold the same durable view before changing restart premises.
+const editDisk = (change: (rows: any[]) => void) => { const rows = readBotRecords(fixture.info.dataDir); change(rows); writeFileSync(file("bots.json"), JSON.stringify(rows)); };
 const taskRow = (rows: any[], bot: Bot, threadId = bot.threadId) => rows.find((row) => row.id === bot.id).tasks.find((task: any) => task.threadId === threadId);
 
 /** What the fake Claude CLI was launched with for the turn that carried `tag`: argv and the whole prompt. */
@@ -170,7 +213,7 @@ async function turn(bot: Bot, text: string, threadId = bot.threadId) {
 const resumed = (argv: string[]) => argv.includes("--resume");
 /** The native session a turn ran in, whether its process was spawned for it (--resume, --session-id) or kept from the turn before. */
 const sessionOf = (argv: string[]): string => argv[argv.includes("--resume") ? argv.indexOf("--resume") + 1 : argv.indexOf("--session-id") + 1]!;
-/** Saved to disk, the cursor and its binding for this engine (the save is coalesced). */
+/** Saved to disk, the cursor and its binding for this engine, including task deltas. */
 const bound = (bot: Bot, instanceId = "verification", threadId = bot.threadId) => waitUntil(() => { const task = taskOnDisk(bot, threadId); const entry = task?.resumeSeals?.[instanceId]; return task?.resumeCursors?.[instanceId] !== undefined && entry?.cursor === task.resumeCursors[instanceId] && entry.generation >= (task.sealGeneration ?? 0); }, "the cursor to be saved with its binding", 15_000);
 const waitCursor = (bot: Bot) => waitUntil(() => taskOnDisk(bot)?.resumeCursors?.verification && taskOnDisk(bot)?.resumeContracts?.verification !== undefined, "the first cursor to be saved", 15_000);
 
@@ -183,7 +226,8 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     await authenticate();
     for (const [key, instanceId] of [["cursor", "verification"], ["stripped", "verification"], ["fresh", "verification"], ["aud", "verification"], ["con", "verification"],
       ["switch", "verification"], ["rewind", "verification"], ["second", "second"], ["plain", "verification"], ["ten", "verification"], ["warmSealed", "warmable"], ["warmOpen", "warmable"],
-      ["mixed", "verification"]] as const) bots[key] = await createBot(instanceId, key);
+      ["mixed", "verification"]] as const) bots[key] = await createBot(instanceId, key, instanceId === "warmable");
+    await waitForLineageReady(Object.values(bots).map(bot => bot.threadId));
     // a first, ordinary turn on the engine-backed bots: this is the session a recall later outlives
     for (const key of ["cursor", "stripped", "aud", "con", "switch", "rewind", "plain", "ten", "mixed"]) {
       await turn(bots[key]!, `PRE_${key} remember the word PELICAN_${key}`);
@@ -206,6 +250,7 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     });
     await fixture.restart();
     await authenticate();
+    await waitForLineageReady(Object.values(bots).map(bot => bot.threadId));
   }, 300_000);
 
   afterAll(async () => { await fixture?.close(); });
@@ -330,7 +375,7 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     }
   }, 120_000);
 
-  it("a tainted turn after an audience move opens as restarted (not a switch), notes no reset, and its session then carries the new audience", async () => {
+  it("a tainted turn after an audience move opens as restarted (not a switch), logs its reset, and its session then carries the new audience", async () => {
     const bot = bots.aud!;
     expect(sessionMeta(taskOnDisk(bot))).toContain("a-different-audience");
     const saw = await turn(bot, "AUDIENCE_MOVED continue");
@@ -340,7 +385,10 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     await bound(bot);
     // cursor metadata is live again on a sealed thread
     expect(sessionMeta(taskOnDisk(bot))).not.toContain("a-different-audience");
-    expect(serverLog()).not.toMatch(new RegExp(`continuation reset thread=${bot.threadId}`));
+    // MAIN RULING 1114-RECALL-S1-TYPED-AVAILABILITY: every discarded session logs its cause.
+    expect(serverLog().split("\n").filter(line => line.includes(`continuation reset thread=${bot.threadId}`))).toEqual([
+      `memory continuation reset thread=${bot.threadId} engine=verification reason=audience-changed`,
+    ]);
     const next = await turn(bot, "AUDIENCE_MOVED_TWO continue");
     expect(sessionOf(next.argv)).toBe(sessionOf(saw.argv));
   }, 60_000);
@@ -384,7 +432,7 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     expect(taskOnDisk(bot).sealGeneration).toBe(1);
   }, 60_000);
 
-  it("/warm on a sealed thread starts no engine and answers started false; on an unsealed thread it warms as before", async () => {
+  it("/warm on a sealed thread starts no engine until a clean session is bound, then resumes that one; on an unsealed thread it warms as before", async () => {
     const starts = () => (existsSync(file("warm-starts.log")) ? readFileSync(file("warm-starts.log"), "utf8").split("\n").filter(Boolean).length : 0);
     const sealed = bots.warmSealed!, open = bots.warmOpen!;
     // each thread takes one turn first: the engine remembers how to start itself for a thread only after one (claude.ts lastTurns),
@@ -394,6 +442,7 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     await sleep(3_000);
     const baseline = starts();
     expect(baseline).toBe(2);
+    await seal(sealed); // its session is below this release: nothing may resume it, not even a warm
     const refused = await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: sealed.threadId });
     expect(refused.status).toBe(200);
     expect(refused.body).toEqual({ warming: true, started: false });
@@ -404,8 +453,21 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     expect(warmed.body.warming).toBe(true);
     expect(warmed.body.started).toBe(true);
     await expect.poll(starts, { timeout: 15_000 }).toBe(baseline + 1);
-    // (j) a clean turn ended and its session is resumable: the seal still refuses the warm, and the same with a chat's own engine
+    // (j) a clean turn ended and its session is resumable: the warm resumes that session and only that one
+    await turn(sealed, "WARM_SEALED_FRESH hello");
     await bound(sealed, "warmable");
+    await sleep(3_000);
+    const beforeClean = starts();
+    expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: sealed.threadId })).body).toEqual({ warming: true, started: true });
+    await expect.poll(starts, { timeout: 15_000 }).toBe(beforeClean + 1);
+    await sleep(3_000);
+    // the next release refuses it again, until the next fresh session binds
+    await seal(sealed);
+    const afterRelease = starts();
+    expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: sealed.threadId })).body).toEqual({ warming: true, started: false });
+    await sleep(1_000);
+    expect(starts()).toBe(afterRelease);
+    // a chat's own engine: the warm is judged on and sent to the instance the chat's turn would use, never the bot's
     const task = await call("POST", `/api/bots/${sealed.id}/tasks`, { title: "Its own engine" });
     const threadId = task.body.task.threadId as string;
     const model = (await call("GET", "/api/instances")).body.instances.find((entry: any) => entry.instanceId === "verification").models.options[0].id;
@@ -415,12 +477,13 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     await bound(sealed, "verification", threadId);
     await sleep(2_000);
     const before = starts();
-    for (const refusedThread of [sealed.threadId, threadId]) {
-      expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: refusedThread })).body).toEqual({ warming: true, started: false });
-    }
+    const warmed2 = await call("POST", `/api/bots/${sealed.id}/warm`, { threadId });
+    expect(warmed2.body, warmed2.text).toEqual({ warming: true, started: true });
     await sleep(1_000);
-    expect(starts()).toBe(before);
-  }, 90_000);
+    expect(starts()).toBe(before); // nothing started on the bot's own engine
+    await seal(sealed, threadId);
+    expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId })).body).toEqual({ warming: true, started: false });
+  }, 120_000);
 
   it("ten turns on a sealed thread raise no reset-loop warning and only the tainted one is counted", async () => {
     const bot = bots.ten!;
@@ -525,6 +588,8 @@ posixOnly("no line is steered into a session started below the seal (S7 a to d)"
     const bot = await createBot("slowInitC", "steer c");
     expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: "slow starting turn", threadId: bot.threadId })).status).toBe(202);
     await expect.poll(async () => (await botView(bot)).busy, { timeout: 20_000 }).toBe(true);
+    // busy starts during preparation; this case needs the captured dispatch, before the delayed CLI init.
+    await expect.poll(() => serverLog().includes(`claude dispatch thread=${bot.threadId}`), { timeout: 20_000 }).toBe(true);
     // the engine has not handled its init yet: the steer is taken and waits (claude.ts queuedSteers)
     const waiting = call("POST", `/api/bots/${bot.id}/messages`, { text: "second line c", threadId: bot.threadId });
     await sleep(1_200);
@@ -541,6 +606,8 @@ posixOnly("no line is steered into a session started below the seal (S7 a to d)"
     await seal(bot);
     expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: "slow sealed turn", threadId: bot.threadId })).status).toBe(202);
     await expect.poll(async () => (await botView(bot)).busy, { timeout: 20_000 }).toBe(true);
+    // The seal predicate judges a running session, so wait for its dispatch rather than preparation's busy flag.
+    await expect.poll(() => serverLog().includes(`claude dispatch thread=${bot.threadId}`), { timeout: 20_000 }).toBe(true);
     const second = await call("POST", `/api/bots/${bot.id}/messages`, { text: "second line d", threadId: bot.threadId });
     expect(second.status, second.text).toBe(202);
     await expect.poll(async () => (await texts(bot)).some((m) => m.role === "bot" && m.text.includes("second line d")), { timeout: 60_000 }).toBe(true);
@@ -747,7 +814,8 @@ const FAKE_CODEX = join(SERVER_DIR, "testing", "fake-codex-app-server.ts");
 const FAKE_PI = join(SERVER_DIR, "testing", "fake-pi-cli.ts");
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 /** Adds a Codex, a Pi and a Fuigo (ACP) instance, each with a log of what the harness sent its fake engine. */
-const engineInstrumentation = instrumentation.replace("fs.writeFileSync(cfgFile,JSON.stringify(cfg));", `
+// The fake Pi child needs the shared test-only host-power setup too; the Vitest worker's symbol does not cross spawn().
+const engineInstrumentation = POWER_BLOCK_UNWRAP_SOURCE + instrumentation.replace("fs.writeFileSync(cfgFile,JSON.stringify(cfg));", `
   fs.mkdirSync(path.join(process.env.HOME,'.fuigo'),{recursive:true});fs.writeFileSync(path.join(process.env.HOME,'.fuigo','auth.json'),'{}');
   cfg.instances['seal-codex']={driver:'codex',displayName:'Codex fixture',environment:{FAKE_CODEX_MODE:'resume',FAKE_CODEX_UNIQUE_THREADS:'1',FAKE_CODEX_CALL_LOG:gate('codex-calls.log'),FAKE_CODEX_DUMP:gate('codex-dump.json')},config:{cli:${JSON.stringify(FAKE_CODEX)},fullAuto:true}};
   cfg.instances['seal-pi']={driver:'piAgent',displayName:'Pi fixture',environment:{FAKE_PI_COMMAND_LOG:gate('pi-commands.log'),FAKE_PI_UNIQUE:'1'},config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true}};
@@ -871,17 +939,16 @@ posixOnly("a session that starts after the release is carried by the real sessio
   };
   /** The memory capability of the turn on `threadId`, read from the mcp config the driver wrote for the engine that is still starting. */
   function startingTurnMemoryEnv(threadId: string) {
-    for (const line of execFileSync("ps", ["-axo", "args="], { encoding: "utf8" }).split("\n")) {
+    for (const line of execFileSync("ps", ["-axo", "args="], { windowsHide: true, encoding: "utf8" }).split("\n")) {
       if (!line.includes("fake-claude-cli")) continue;
       const path = /--mcp-config\s+(\S+)/.exec(line)?.[1];
       if (!path) continue;
       try {
-        // the per-turn tokens live in the credential file each server entry names, not in the config (drivers/turn-credentials.ts)
-        const entries = Object.values((JSON.parse(readFileSync(path, "utf8")) as { mcpServers?: Record<string, { env?: Record<string, string> }> }).mcpServers ?? {}).map((server) => server.env ?? {});
-        const merged = entries.map((env) => {
-          if (!env.MURAGE_CRED_FILE || !env.MURAGE_CRED_SERVER) return env;
-          try { return { ...env, ...((JSON.parse(readFileSync(env.MURAGE_CRED_FILE, "utf8")) as Record<string, Record<string, string>>)[env.MURAGE_CRED_SERVER] ?? {}) }; } catch { return env; }
-        });
+        // Observe the actual admitted mount behind the CLI shim, as the fake's dump does after the prompt.
+        const mcpConfig = JSON.parse(readFileSync(path, "utf8")) as { mcpServers?: Record<string, { env?: Record<string, string> }> };
+        const credentialFile = Object.values(mcpConfig.mcpServers ?? {}).find(server => server.env?.MURAGE_CRED_FILE)?.env?.MURAGE_CRED_FILE;
+        const view = credentialFile ? withTurnSecrets({ mcpConfig, credFile: { content: readJson(credentialFile) }, fixtureMounts: readJson(credentialFile + ".fixture-mounts.json") }) : { mcpConfig };
+        const merged = Object.values(view.mcpConfig.mcpServers ?? {}).map(server => server.env ?? {});
         if (merged.some((env) => env.MURAGE_THREAD_ID === threadId)) { const memory = merged.find((env) => env.MURAGE_MEMORY_TOKEN && env.MURAGE_HARNESS_URL); if (memory) return memory; }
       } catch { /* not written yet */ }
     }
@@ -895,6 +962,7 @@ posixOnly("a session that starts after the release is carried by the real sessio
     expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: `${word} the other chapter`, threadId: task })).status).toBe(202);
     await busy(bot);
     await waitUntil(() => isIdle(bot), "the other conversation's turn to settle", 60_000);
+    await waitForSearchReady();
     const before = sessionCarryParents().filter((thread) => thread === task).length;
     // the first turn of the main conversation: its engine is still starting (nothing is read for 6.5 s), so no session exists yet
     expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: "Start the main conversation", threadId: bot.threadId })).status).toBe(202);
@@ -995,8 +1063,10 @@ posixOnly("a session bound to the seal it started under (THREAD-SEAL 3.3 to 3.5)
   }, 90_000);
 
   it("(q) a held prewarm's init folds with the turn that takes the process, before acceptance, and the binding holds", async () => {
-    const bot = await createBot("earlyWarm", "held prewarm");
+    const bot = await createBot("earlyWarm", "held prewarm", true);
     const first = await turn(bot, "HELD_1 hello");
+    expect(first.argv).toContain("--tools");
+    expect(first.argv[first.argv.indexOf("--tools") + 1]).toBe("");
     await bound(bot, "earlyWarm");
     await sleep(2_500); // the (shortened) activity window lets the idle engine go, so a warm has something to start
     const savedBefore = savesOf(sessionOf(first.argv)).length;
@@ -1013,6 +1083,23 @@ posixOnly("a session bound to the seal it started under (THREAD-SEAL 3.3 to 3.5)
     }
     await sleep(600);
     expect(entryOf(bot, "earlyWarm")).toEqual({ cursor: sessionOf(first.argv), generation: 0 });
+  }, 90_000);
+
+  it("(q) a clean mounted session refuses prewarm without spawning or changing its binding", async () => {
+    const bot = await createBot("mountedWarm", "mounted prewarm refusal");
+    await turn(bot, "MOUNTED_WARM hello");
+    await bound(bot, "mountedWarm");
+    await sleep(2_500);
+    const before = entryOf(bot, "mountedWarm");
+    const starts = () => readFileSync(file("mounted-warm-starts.log"), "utf8").split("\n").filter(Boolean).length;
+    const count = starts();
+    expect(count).toBe(1);
+    const warmed = await call("POST", `/api/bots/${bot.id}/warm`, { threadId: bot.threadId });
+    expect(warmed.status).toBe(200);
+    expect(warmed.body).toEqual({ warming: true, started: false });
+    await sleep(600);
+    expect(starts()).toBe(count);
+    expect(entryOf(bot, "mountedWarm")).toEqual(before);
   }, 90_000);
 
   it("(d, l) a server restart keeps the session resumable; audience, contract, engine and rewind still decide on a clean generation", async () => {
@@ -1065,7 +1152,7 @@ posixOnly("a session bound to the seal it started under (THREAD-SEAL 3.3 to 3.5)
     const saw = await engineSaw(tag);
     const sent = await call("POST", `/api/bots/${bot.id}/messages`, { text: "the line before it", threadId: bot.threadId });
     expect(sent.status, sent.text).toBe(202);
-    expect(sent.body.steered).toBe(true);
+    expect(sent.body.steered, sent.text).toBe(true);
     // the final answer holds on (FAKE_CLAUDE_FINAL_STEERS 2, or 3 s): the release lands after the write and before the follow-up's init
     await seal(bot);
     await settled(bot);

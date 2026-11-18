@@ -1,3 +1,10 @@
+import { askShapeOf, type AskShape } from "./ask-shape.ts";
+import { degradedWipeContext, wipeContextFor } from './wipe/context.ts';
+import { noLimitsAppliesTo, permissionsForNoLimitsOrigin, type NoLimitsOrigin } from './no-limits-origin.ts';
+import { inheritedPermissions, permissionsForOrigin } from "./permission-inheritance.ts";
+import { wipeBreaker, nativeWipeBreaker } from "./wipe-breaker.ts";
+import { highlevelEngineAsk } from "./highlevel/engine-policy.ts";
+import { opendir as asyncOpendir, realpath as asyncRealpath } from "node:fs/promises";
 // Auto mode: when a bot may answer its own permission requests.
 //
 // Two ways in — the bot is in auto mode, or the user pressed "Always
@@ -20,13 +27,19 @@ import { ownerMarks, withoutDoubts } from "./shell/marks.ts";
 import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, COULD_NOT_READ_FINDINGS, protectedScriptHit, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
 import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, routineExactGrantCovers, type ExactCommand } from "../shared/exact-command.ts";
 import { approvalSummaryIsCut } from "../shared/approval-summary.ts";
-import { SENSITIVE_RULES } from "../shared/sensitive-paths.ts";
-import { gateHit, gateHitSpelled, ruleRowId } from "../shared/gate-files.ts";
-import { globKeyRead } from "../shared/sensitive-globs.ts";
+import { SENSITIVE_RULES, SENSITIVE_PATHS } from "../shared/sensitive-paths.ts";
+import { GATE_ROWS, gateHit, gateHitSpelled, ruleRowId } from "../shared/gate-files.ts";
+import { countShellStart, shellProof, type ShellFloorCause, type ShellProofFacts, type ShellProofSource } from "./shell-proof.ts";
+import { unresolvedShellParent, shellAndList, shellDirectoryEffects, type ShellCwdState, copyShellCwdState, admitShellPlace, admitShellPending, unionShellState, SHELL_MAX_PLACES, provenCdList, setsDotglob, linkCopyOperands, literalGlobPattern, globPatternText, pathGlobsIntersect, unavailableAnchoredGlobRead, rememberShellCwds, unknownShellGlobRead, type ShellCwdByThread, cdOperands, homeForm, placedGlobs, globKeyRead } from "../shared/sensitive-globs.ts";
 import { fileToolRead, splitCommand, isReadPassHold, keyRowId, keyValueShapeIn, PATH_RULES, readKindRules, TEXT_RULES, type CommandDataRead, type FileToolRead } from "./key-text.ts";
 import { powershellRunner } from "./shell/pwsh.ts";
 import { lex, Unreadable, type Part, type Word } from "./shell/lex.ts";
+import { noLimitsProtectedWrite, structuredProtectedWrite } from "./no-limits-protected.ts";
+import { parse, type Script } from "./shell/parse.ts";
 import { braceCandidates } from "./shell/walk.ts";
+import { isGlobWord, shellGlobWords } from "./x3-glob-words.ts";
+import { dataCredentialHit } from "../shared/data-credential-paths.ts";
+import { legacyGlobKeyRead } from "../shared/legacy-glob-key-read.ts";
 import { requiredFields } from "./drivers/contracts.ts";
 import { homedir } from "node:os";
 import { realPathInOrder, win32Canonical, type PlaceOptions } from "../shared/in-project.ts";
@@ -97,16 +110,17 @@ function matchFirst(rules: readonly RegExp[], text: string): string | null {
  * under a dot folder there (`~/.*rc`, `~/*\/config.toml`, `$HOME/.fu*o/x`): no reader can say which key file that
  * is, so it is held as one. A command the lexer cannot read gives undefined; the always-ask reader holds those.
  */
-export function dequotedShellText(text: string, depth = 0): { text: string; globText: string; homeGlob?: string } | undefined {
+export function dequotedShellText(text: string, depth = 0): { text: string; globText: string; globWords: string[]; homeGlob?: string } | undefined {
   // past this depth the text is not read: held, never handed on with its quotes
-  if (depth > 4) return { text: "", globText: "", homeGlob: "substitutions nested too deep to read" };
+  if (depth > 4) return { text: "", globText: "", globWords: [], homeGlob: "substitutions nested too deep to read" };
   let tokens;
   try { tokens = lex(text); } catch (error) {
     if (error instanceof Unreadable) return undefined;
-    return { text: "", globText: "", homeGlob: "a command the reader could not read" };
+    return { text: "", globText: "", globWords: [], homeGlob: "a command the reader could not read" };
   }
   const out: string[] = [];
   const globOut: string[] = [];
+  const globWords: string[] = [];
   let homeGlob: string | undefined;
   // globText: the same words with a quoted or escaped `*`, `?` or `[` kept literal, so only a real glob meets the
   // glob reader (`echo $'\?'` prints a question mark; it names no file)
@@ -135,12 +149,34 @@ export function dequotedShellText(text: string, depth = 0): { text: string; glob
       }
     }
   }).join("");
+  // Keep each shell word intact. The historical text render above is unchanged.
+  const renderWords = (parts: readonly Part[]): string[] => {
+    let choices = [""];
+    for (const part of parts) {
+      let values: string[];
+      if (part.kind === "var") {
+        values = ["$" + part.name];
+        if (part.word && /^:?[-=+?]$/.test(part.op ?? "")) {
+          const operands = renderWords(part.word.parts);
+          values.push(...operands);
+          // lexWordText joins operand words. Read this ambiguous rooted operand as a whole.
+          if (operands.some(value => /[*?]|\[.*\]/.test(value) && /(?:\/tmp|\/private\/tmp|\/var\/folders|murage-|\$\{?(?:TMPDIR|TEMP|TMP|HOME|USERPROFILE|MURAGE_DATA_DIR)|~\/|[a-z]:[\\/])/i.test(value))) globWords.push("\u0001credential-glob-overflow*");
+        } else if (part.op && /^(?:TMPDIR|TEMP|TMP|HOME|USERPROFILE|MURAGE_DATA_DIR)$/.test(part.name) && parts.some(p => p.kind === "glob")) globWords.push("\u0001credential-glob-overflow*");
+      } else if (part.kind === "subst" || part.kind === "procsub" || part.kind === "arith") {
+        globWords.push(...(dequotedShellText(part.text, depth + 1)?.globWords ?? []));
+        values = [""];
+      } else values = [render([part], true)];
+      choices = choices.flatMap(prefix => values.map(value => prefix + value));
+      if (choices.length > 256) { globWords.push("\u0001credential-glob-overflow*"); return []; }
+    }
+    return choices;
+  };
   for (const token of tokens) {
     // an unquoted heredoc body runs its substitutions: the body is read as words of its own
     if (token.kind === "op" && token.heredoc && !token.heredoc.quoted && /\$\(|`/.test(token.heredoc.body)) {
       const body = dequotedShellText(token.heredoc.body, depth + 1)
         ?? { text: "", globText: "", homeGlob: "a heredoc substitution the reader could not read" };
-      out.push(body.text); globOut.push(body.globText);
+      out.push(body.text); globOut.push(body.globText); globWords.push(...("globWords" in body ? body.globWords : []));
       homeGlob ??= body.homeGlob;
       continue;
     }
@@ -149,9 +185,9 @@ export function dequotedShellText(text: string, depth = 0): { text: string; glob
     homeGlob ??= homeGlobIn(word);
     let candidates: Word[];
     try { candidates = braceCandidates(word); } catch { candidates = [word]; homeGlob ??= "a brace with too many values"; }
-    for (const candidate of candidates) { out.push(render(candidate.parts, false)); globOut.push(render(candidate.parts, true)); }
+    for (const candidate of candidates) { out.push(render(candidate.parts, false)); globOut.push(render(candidate.parts, true)); globWords.push(...renderWords(candidate.parts)); }
   }
-  return { text: out.join(" "), globText: globOut.join(" "), ...(homeGlob ? { homeGlob } : {}) };
+  return { text: out.join(" "), globText: globOut.join(" "), globWords, ...(homeGlob ? { homeGlob } : {}) };
 }
 
 /** A glob or brace in the first segment under the home folder, or in any segment at or below a dot folder there. */
@@ -407,6 +443,9 @@ export function wholeCommandOf(tool: string, input: unknown, turnCwd: string | u
 }
 
 export interface AutoApprover {
+  draftOnly?: boolean;
+  permissionExplicit?: boolean;
+  permissionRev?: number;
   /** Server-owned identity for value-free approval diagnostics. */
   id?: string;
   autoApprove?: boolean;
@@ -416,21 +455,23 @@ export interface AutoApprover {
   /** Full access also covers the owner's own messages from Telegram, Slack
    * and Discord. Off unless it is exactly `true`. */
   fullAccessChannelMessages?: boolean;
-  /** No limits, the level above Full access: no stop line. Counts only
-   * while Full access does. On a turn the owner started the key guard keeps only
-   * the gate files (`ownerNoLimits`); on every other turn it still asks. */
+  /** No limits, above Full access: only catastrophe/wipe permission cards.
+   * Origin eligibility is shared with the registered decision layer. */
   noLimits?: boolean;
   alwaysAllow?: string[];
 }
 
 /** Is this bot (or task) on Full access? */
 export function hasFullAccess(bot: AutoApprover | null | undefined): boolean {
-  return bot?.autoApprove === true && bot.fullAccess === true;
+  const effective = bot && inheritedPermissions(bot);
+  if (effective?.draftOnly) return false;
+  return effective?.autoApprove === true && effective.fullAccess === true;
 }
 
 /** Is this bot (or task) on No limits? Only on top of Full access. */
 export function hasNoLimits(bot: AutoApprover | null | undefined): boolean {
-  return hasFullAccess(bot) && bot?.noLimits === true;
+  const effective = bot && inheritedPermissions(bot);
+  return hasFullAccess(effective) && effective?.noLimits === true;
 }
 
 /** Who started the turn, as Full access reads it: the owner at the desktop
@@ -457,6 +498,7 @@ export function fullAccessCovers(bot: AutoApprover | null | undefined, origin: F
  * contrast: a grant WOULD have fired, and the only thing that stopped it
  * was that nobody started this turn — the most audit-worthy card of all. */
 export type AutoVerdictSource =
+  | "owner-switch"
   /** One of the few commands that always ask, at every level, No limits
    * included: deleting the drive, the home folder or a system folder,
    * erasing a disk, or a fork bomb (server/always-ask.ts). It still asks;
@@ -517,7 +559,7 @@ export type AutoVerdictSource =
    * its non-interactive form. `rule` names the row, `note` its reason.
    * Ahead of every standing answer; Full access and No limits keep theirs. */
   | "prompt-guard"
-  /** NOLIMITS-MEANS-IT 1.0.20 (design r4 6.1): an owner No limits lane turn that read outside content (or whose state
+  /** Legacy lower-level policy (design r4 6.1): an owner No limits lane turn that read outside content (or whose state
    * the server did not state) asks before every shell text that is not a read-only shape and every acting tool.
    * `rule` is `outside-content`, `note` names the first source. Never waived; offers no grant. */
   | "outside-turn"
@@ -579,24 +621,33 @@ export function approvalHoldNote(verdict: AutoVerdict | null | undefined): strin
  * rule decided without the call site re-deriving (and eventually
  * mis-deriving) the match. */
 export interface AutoContext {
+  wipeThreadId?:string; wipeBotId?:string;
+  shellCwdByThread?: ShellCwdByThread;
+  globExpansionRule?: string | null;
+  /** Attributed expansion findings, independent of the first winning reason. */
+  globFindings?: readonly CredentialGlobOutcome[];
+  shellCwdPrepared?: boolean;
+  threadId?: string;
+  /** Server-proven origin, separate from the older Full access policy. */
+  noLimitsOrigin?: NoLimitsOrigin;
   /** Existing server turn-origin fact, never taken from engine input. */
   fullAccessOrigin?: FullAccessOrigin;
   /** NOLIMITS-MEANS-IT: this call belongs to the bound provider turn of a run the owner started directly. Read from the
    * server's own run record at each ask; absent means false. Never copied to a held item, a message or disk. */
   ownerStarted?: boolean;
-  /** NOLIMITS-MEANS-IT 1.0.20 (design r4 3.1, C2): the marks this turn carried BEFORE this call. `null` = a clean turn,
+  /** Legacy lower-level policy (design r4 3.1, C2): the marks this turn carried BEFORE this call. `null` = a clean turn,
    * filled by the server only when its outside store is wired and loaded (3.5). Absent counts as marked: no relief. */
   outsideRead?: readonly (OutsideMark | OutsideSource)[] | null;
-  /** NOLIMITS-MEANS-IT 1.0.20 (section 1, r3): the engine has no pre-run seam at No limits (OpenClaw). The lane does
+  /** Legacy lower-level policy (section 1, r3): the engine has no pre-run seam at No limits (OpenClaw). The lane does
    * not apply: exactly today's behaviour, clean or marked. */
   noPreRunSeamAtNoLimits?: boolean;
-  /** NOLIMITS-MEANS-IT 1.0.20 (6.3): no call of this engine session wrote since it was tainted. Only `true` lets a
+  /** Legacy lower-level policy (6.3): no call of this engine session wrote since it was tainted. Only `true` lets a
    * read-only shape (6.2) run on a marked lane turn; absent is false. */
   readOnlySoFar?: boolean;
-  /** NOLIMITS-MEANS-IT 1.0.20 (6.2): the hooks the read-only shape check runs with (cwd, `sessionEdits`, the registry
+  /** Legacy lower-level policy (6.2): the hooks the read-only shape check runs with (cwd, `sessionEdits`, the registry
    * check, the PATH lookup on the shared 64-syscall budget). Absent: no shell text is read-only on a marked turn. */
   readOnlyHooks?: ReadOnlyHooks;
-  /** NOLIMITS-MEANS-IT 1.0.20 (6.1.3): the engine's working folder. Absent: every engine file edit on a marked lane
+  /** Legacy lower-level policy (6.1.3): the engine's working folder. Absent: every engine file edit on a marked lane
    * turn asks. */
   workFolder?: string;
   /** the engine's whole command, uncapped, for the always-ask reader (the
@@ -607,6 +658,10 @@ export interface AutoContext {
   commandCwd?: string;
   commandCwdInvalid?: boolean;
   runtimePaths?: Readonly<Record<string, string>>;
+  /** Known command environment for the bounded No limits root expansion. */
+  commandEnv?: Readonly<Record<string, string | undefined>>;
+  projectRoots?: readonly string[] | (() => readonly string[]);
+  dataDir?: string;
   /** Where the paths this call names really are, links followed
    * (`realKeyPaths`): the key guard reads them, so a harmless name that links
    * to a key file is held as that file (1.0.4, 09-1). */
@@ -859,8 +914,10 @@ type KeyWhy = "path" | "value" | "field" | "mcp" | "summary" | "unmodeled" | "pw
 const keyWhyOf = new WeakMap<AutoVerdict, KeyWhy>();
 /** APPROVALS-SIMPLE-1018: why the reader held an `unreadable` hit, a fixed content-free name (UnseenWhy and three more). */
 const readerWhyOf = new WeakMap<AutoVerdict, string>();
+const readerShapeOf = new WeakMap<AutoVerdict, AskShape>();
 const ASK_LOG_MS = 60_000;
 const ALWAYS_ASK_LOG_RULES = new Set(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "unknown-target", "protected-path"]);
+const GATE_LOG_ROWS = new Set(GATE_ROWS.map(row => row.id));
 
 const LOCAL_HOLD_WORDS = "the engine's own check held this as a key file";
 const REAL_PATH_WORDS = "a path this call names could not be followed to where it lands, so it is held as a key file";
@@ -903,8 +960,17 @@ function askReasonClass(verdict: AutoVerdict): string {
 }
 
 /** One ask line per bot/tool/class/minute; the next line reports suppressed repeats. */
-function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context?: AutoContext): void {
-  if (verdict.approve !== null) return;
+function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context?: AutoContext, prior?: AutoVerdict): void {
+  if (verdict.approve !== null) {
+    if (verdict.source !== "no-limits") return;
+    const botId = bot.id && /^[\w-]{1,128}$/.test(bot.id) ? bot.id : "unknown";
+    const toolName = /^[a-zA-Z][\w.:-]{0,127}$/.test(tool) ? tool : "unknown";
+    const reason = askReasonClass(prior ?? verdict);
+    const heldRow = prior?.rule?.startsWith("held=gate:") ? prior.rule.slice("held=gate:".length) : undefined;
+    const row = ruleRowId(prior?.rule) ?? keyRowId(prior?.rule) ?? (heldRow && GATE_LOG_ROWS.has(heldRow) ? heldRow : undefined);
+    console.info(`approvals: auto bot=${botId} tool=${toolName} reason=${reason}${row ? ` row=${row}` : ""} level=no-limits initiator=${noLimitsInitiator(bot, context)}`);
+    return;
+  }
   const botId = bot.id && /^[\w-]{1,128}$/.test(bot.id) ? bot.id : "unknown";
   const toolName = /^[a-zA-Z][\w.:-]{0,127}$/.test(tool) ? tool : "unknown";
   const reason = askReasonClass(verdict), held = askHeldClass(verdict), key = JSON.stringify([botId, toolName, reason, held]), now = Date.now();
@@ -916,7 +982,7 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   const origin = fullAccessOriginOf(context);
   const cmd = !isCommandTool(tool) && context?.exactCommand === undefined ? "none" : isPowerShellTool(tool) || context?.call?.commandShell === "pwsh" ? "pwsh" : "shell";
   const reader = verdict.reader ? ` reader=${verdict.reader}` : "";
-  // NOLIMITS-MEANS-IT 1.0.20 (design 11): every ask of a marked lane turn names its first source, a fixed mark name
+  // Legacy lower-level policy (design 11): every ask of a marked lane turn names its first source, a fixed mark name
   const outsideMark = markedLaneTurn(bot, context) ? (context?.outsideRead?.[0] ?? "unknown") : undefined;
   const outsideField = outsideMark !== undefined && /^[a-z ]{1,32}$/.test(outsideMark) ? ` outside=${outsideMark.replace(/ /g, "-")}` : "";
   // NOLIMITS-MEANS-IT and KEY-TEXT: fixed names only: whether the owner started this turn, a row's id and the class of read, never a path, a name or command text
@@ -924,13 +990,112 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   const row = keyRow ?? (verdict.source === "sensitive-guard" ? ruleRowId(verdict.rule) : undefined);
   const why = keyWhyOf.get(verdict) ?? readerWhyOf.get(verdict);
   const keyFields = `${row ? ` row=${row}` : ""}${why ? ` why=${why}` : ""}`;
-  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)} owner=${context?.ownerStarted === true ? 1 : 0}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}${outsideField}`);
+  const initiatorField = hasNoLimits(bot) ? ` initiator=${noLimitsInitiator(bot, context)}` : "";
+  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)}${initiatorField} owner=${context?.ownerStarted === true ? 1 : 0}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}${outsideField}${readerShapeOf.has(verdict) ? ` shape=${readerShapeOf.get(verdict)}` : ""}`);
+}
+
+/** Sean ruling 2026-11-12 02:05Z. All No limits calls take this path,
+ * including outside, unattended, cut and failed-reader calls. Other levels
+ * continue through the existing policy without any changed guards. Every card
+ * it raises is a wipe (ALWAYS_ASK_NO_LIMITS), so it carries the deny class. */
+function noLimitsOnlyVerdict(tool: string, summary: string, context?: AutoContext): AutoVerdict {
+  if (context?.question || isQuestionTool(tool)) return {approve:null,source:"question-tool"};
+  const safe = <T>(read: () => T): T | undefined => { try { return read(); } catch { return undefined; } };
+  const command = safe(() => context?.commandText) ?? safe(() => context?.exactCommand?.command);
+  const call = safe(() => context?.call);
+  const executable=isCommandTool(tool)||call?.toolKind==='execute'||/^(?:use_tool|exec|execute_command|start_process|run)$/.test(bareToolName(tool));
+  const inner = executable?safe(() => commandArgument(call?.toolCall?.input)):undefined;
+  const shell: 'pwsh' | undefined = isPowerShellTool(tool) || call?.commandShell === "pwsh" ? "pwsh" : undefined;
+  const input = safe(() => call?.toolCall?.input);
+  const request={cwd:safe(()=>context?.commandCwd)??safe(()=>context?.exactCommand?.cwd)??safe(()=>context?.workFolder),project:safe(()=>context?.workFolder),home:safe(()=>context?.promptFacts?.home),dataDir:safe(()=>context?.dataDir)};
+  let shared:import('./wipe/types.ts').WipeContext;try{shared=wipeContextFor(context?.wipeThreadId,context?.wipeBotId,request);}catch{shared=degradedWipeContext(request,context?.wipeBotId);}
+  const wipeContext = { ...shared, cwdOpaque:safe(()=>context?.commandCwdInvalid)??shared.cwdOpaque, cwd: safe(() => context?.commandCwd) ?? safe(() => context?.exactCommand?.cwd) ?? safe(() => context?.workFolder) ?? safe(() => context?.promptFacts?.cwd) ?? shared.cwd,
+    project: safe(() => context?.workFolder) ?? safe(() => context?.promptFacts?.cwd) ?? shared.project, home: safe(() => context?.promptFacts?.home) ?? shared.home, env: safe(() => context?.commandEnv) ?? safe(() => context?.runtimePaths) ?? shared.env,
+    dataDir: safe(() => context?.dataDir) ?? shared.dataDir, shell };
+  if(/^(?:execute_code|python|python3|node|javascript)$/i.test(tool)){
+   const code=safe(()=>typeof input==='string'?input:(input as {code?:unknown;script?:unknown})?.code??(input as {script?:unknown})?.script);
+   if(typeof code==='string'){const found=wipeBreaker(code,{...wipeContext,lang:/node|javascript/i.test(tool)?'js':'py'});if(found)return {approve:null,source:'always-ask',rule:found.rule,classification:'deny',reason:found.rule,note:found.what};}
+  }
+  const native = nativeWipeBreaker(tool, input, wipeContext);
+  if (native) return { approve: null, source: "always-ask", rule: native.rule, classification: "deny", reason: native.rule, note: native.what };
+  const texts = new Set([command, inner, ...(!executable || command !== undefined || inner !== undefined ? [] : [summary])]);
+  for (const text of texts) if (text !== undefined) {
+    const wipe = wipeBreaker(text, wipeContext);
+    if (wipe) return { approve: null, source: "always-ask", rule: wipe.rule, classification: "deny", reason: wipe.rule, note: wipe.what };
+  }
+  return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits" };
+}
+
+/** Bounded command admission, recovered from 2888da485c. */
+export const COMMAND_READ_MAX_WORK = 16 * 1024;
+/** Full access may read at most 128 KiB in one verdict. */
+export const COMMAND_GATE_CHARS = 128 * 1024;
+/** A here-document only a plain `cat` or `tee` takes costs about a quarter of that per character: no reader runs it. */
+const FILE_DATA_SHARE = 4;
+const FILE_WRITERS: ReadonlySet<string> = new Set(["cat", "tee"]);
+const OVERLONG_NOTE = alwaysAskNote({ ...unreadableHit(), what: "This is longer than Murage reads ahead of running it, so it asks you first." });
+
+/** The read work in one text. It is the length, less three quarters of what a top-level `cat` or `tee` writes from a
+ * here-document with nothing in it to expand. A text past what the discount could ever bring under the cap is never
+ * parsed here. Any other body counts whole: a shell, an interpreter or a pipe may run it. */
+export function commandReadWork(text: string, pwsh: boolean): number {
+  if (text.length <= COMMAND_READ_MAX_WORK || pwsh || text.length > COMMAND_READ_MAX_WORK * FILE_DATA_SHARE) return text.length;
+  let script: Script;
+  try {
+    script = parse(text);
+  } catch {
+    return text.length;
+  }
+  let work = text.length;
+  for (const item of script.items) for (const pipeline of item.andOr.pipelines) {
+    const command = pipeline.commands.length === 1 ? pipeline.commands[0]! : undefined;
+    if (command?.kind !== "simple" || !isPlainWord(command.words[0], FILE_WRITERS)) continue;
+    for (const { heredoc } of command.redirects) {
+      if (!heredoc || !(heredoc.quoted || !/[$`\\]/.test(heredoc.body))) continue;
+      const { body } = heredoc;
+      // the prompt and pin readers still read the body as shell, so what they split or re-read keeps its cost (measured)
+      work += Math.ceil(body.length / FILE_DATA_SHARE) - body.length + DATA_RE_READ * (body.match(DATA_RE_READS)?.length ?? 0) + DATA_SPLIT * (body.match(DATA_SPLITS)?.length ?? 0);
+    }
+  }
+  return work;
+}
+const DATA_RE_READS = /`|[$<>]\(/g;
+const DATA_RE_READ = 8;
+const DATA_SPLITS = /[|;&]/g;
+const DATA_SPLIT = 2;
+
+function isPlainWord(word: Word | undefined, names: ReadonlySet<string>): boolean {
+  const part = word?.parts.length === 1 ? word.parts[0] : undefined;
+  return part?.kind === "lit" && part.quote === "none" && names.has(part.text);
 }
 
 export function autoVerdict(bot: AutoApprover, tool: string, summary: string, context?: AutoContext): AutoVerdict {
   let verdict: AutoVerdict;
+  let prior: AutoVerdict | undefined;
+  let unlimited=false;
+  try{
+    const initiator = noLimitsInitiator(bot, context);
+    const origin = context?.noLimitsOrigin ?? (context?.fullAccessOrigin === "owner-channel" && context.channelOwner ? "owner-channel" : initiator === 'routine' && context?.unattended !== true ? 'owner-routine' : initiator);
+    bot = permissionsForNoLimitsOrigin(origin,bot);
+    if(hasNoLimits(bot)&&bot.fullAccessChannelMessages===false&&(origin==='owner-channel'||bot.permissionExplicit===true&&['guest','other-human','other'].includes(origin))){
+      const note='Channel messages are off for this bot. Turn them on in the bot’s Settings.';
+      console.info('[no-limits] '+note);
+      return {approve:null,source:'owner-switch',classification:'deny',rule:'channel-off',note};
+    }
+    unlimited = noLimitsAppliesTo(origin, bot);
+    if (hasNoLimits(bot) && !unlimited) {
+      // Guests and unproven turns use the same Ask reader as an Ask bot.
+      bot = permissionsForOrigin(bot, false);
+    }
+  }catch{ /* Unread origin facts retain the existing BASE failure path. */ }
   try {
-    verdict = autoVerdictOf(bot, tool, summary, context);
+    if (!unlimited && !context?.shellCwdPrepared && context?.shellCwdByThread && context.threadId && isCommandTool(tool)) {
+      rememberShellCwds(context.shellCwdByThread, context.threadId, context.commandText ?? context.exactCommand?.command ?? summary,
+        context.commandCwd ?? context.exactCommand?.cwd, process.platform, context.promptFacts?.home);
+    }
+    prior = unlimited ? noLimitsOnlyVerdict(tool, summary, context) : autoVerdictOf(bot, tool, summary, context);
+    verdict = prior;
+    if (hasNoLimits(bot)) noLimitsFactsOf.set(verdict, {initiator:noLimitsInitiator(bot,context),n2:verdict.approve===null});
   } catch (error) {
     // 1.0.9 (Sean's log, 10-28): a reader that throws must never drop the
     // request. Thrown out of the approval listener, it raised no card and
@@ -938,12 +1103,12 @@ export function autoVerdict(bot: AutoApprover, tool: string, summary: string, co
     // fault here asks, at every level, as an unreadable command does.
     // the ask is set first; the log line is best-effort and never undoes it.
     // The error's own message may carry the command's text: only its kind and where it was thrown
-    verdict = { approve: null, source: "always-ask", rule: "unreadable", note: alwaysAskNote(unreadableHit()) };
+    verdict = unlimited ? noLimitsOnlyVerdict(tool, summary, context) : { approve: null, source: "always-ask", rule: "unreadable", note: alwaysAskNote(unreadableHit()) };
     try {
       console.error(`auto-approve: verdict failed (${error instanceof Error ? error.name : typeof error}), asking${error instanceof Error && error.stack ? `\n${error.stack.split("\n").slice(1, 6).join("\n")}` : ""}`);
     } catch { /* the ask stands */ }
   }
-  try { logAsked(bot, tool, verdict, context); } catch { /* the verdict stands */ }
+  try { logAsked(bot, tool, verdict, context, prior); } catch { /* the verdict stands */ }
   return verdict;
 }
 
@@ -957,6 +1122,12 @@ function autoVerdictOf(
   // blocks: no mode, grant or turn origin lets the machine answer it. It
   // names no rule — no grant was consulted, and none could apply.
   if (context?.question || isQuestionTool(tool)) return { approve: null, source: "question-tool" };
+  // HL-WRITES-1019 C3: all family tools mix reads and changes. Release only
+  // a proved own mount to its host before input values reach generic guards.
+  const highlevel = highlevelEngineAsk(context?.call, "unmarked");
+  if (highlevel?.kind === "own") {
+    return { approve: "HighLevel call released to Murage's handler", source: "own-unasked", rule: `own:highlevel/${highlevel.tool}` };
+  }
   // Next, and ahead of every mode, grant and allowance: the short list of
   // commands that wipe the computer always asks the owner. No limits lifts the
   // stop line, not this. It reads the engine's own command, whole, when there
@@ -978,6 +1149,15 @@ function autoVerdictOf(
   // and every ACP engine on Windows, `powershell.exe -Command`)
   const shell = isPowerShellTool(tool) || (commandTool && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
   const text = context?.commandText ?? context?.exactCommand?.command;
+  const carried = resolveCall(context?.call);
+  const carriedCommand = commandArgument(carried.kind === "engine" || carried.kind === "mcp" ? carried.input : context?.call?.toolCall?.input);
+  const gateParts = [text, summary, carriedCommand];
+  const fullRead = fullAccessCovers(bot, fullAccessOriginOf(context));
+  if (gateParts.some(part => part !== undefined && (fullRead ? part.length > COMMAND_GATE_CHARS : commandReadWork(part, shell === "pwsh") > COMMAND_READ_MAX_WORK))) {
+    const held: AutoVerdict = { approve: null, source: "always-ask", rule: "unreadable", note: OVERLONG_NOTE, reader: "held" };
+    readerWhyOf.set(held, "over-length");
+    return held;
+  }
   // 1.0.9: the HOME the requesting engine's shell was handed, from its own
   // environment record; a `~` in an unseen-script text needs it (always-ask.ts)
   const home = context?.promptFacts?.home;
@@ -1056,8 +1236,25 @@ function autoVerdictOf(
     // Each executable component must qualify on its own before any aggregation.
     const normalize = (finding: AlwaysAskHit | null): AlwaysAskHit | null => {
       if (!finding) return null;
-      const denied = finding.unseenScript ? ownerMarks(() => protectedScriptHit(finding.unseenPaths ?? [])) : null;
-      if (denied) return denied;
+      // No limits distinguishes a protected write from legacy path mentions and script reads.
+      if (finding.rule === "protected-path") {
+        const write = noLimitsProtectedWrite(text ?? summary, context, shell) ?? (innerText !== undefined ? noLimitsProtectedWrite(innerText, context, shell) : null);
+        const command = [text ?? summary, innerText ?? ""].join("\n");
+        // Archive mode/operand roles are decided by the write reader above.
+        const namedWriter = /(?:wipe|nuke|cleanse|zap)|^(?:zip|time|touch|tee|truncate|mv|chmod|chown|install)$/.test(finding.program ?? "");
+        return write ?? (namedWriter || /\btime\s+-o\s|\bCopy-Item\s/i.test(command) || plainWipe(command) ? finding : null);
+      }
+      // Sensitive tooling and read mentions keep no reader card on owner No limits work.
+      const componentText = [text ?? summary, innerText ?? ""].join("\n");
+      if (finding.rule === "unreadable" && finding.classification !== "deny" && !finding.mandatory && !finding.namedCatastrophe
+        && matchFirst(PATH_RULES, componentText) && !plainWipe(componentText)
+        && !noLimitsProtectedWrite(text ?? summary, context, shell, true)
+        && (innerText === undefined || !noLimitsProtectedWrite(innerText, context, shell, true))) return null;
+      // An opaque native call without a protected write keeps the owner run outcome.
+      if (finding.rule === "unreadable" && finding.readerFailed && finding.classification !== "deny" && !finding.mandatory && !finding.namedCatastrophe
+        && /\b(?:ctypes|cffi|ffi-napi|fiddle|dlopen)\b/i.test(componentText) && !plainWipe(componentText)
+        && !noLimitsProtectedWrite(text ?? summary, context, shell, true)
+        && (innerText === undefined || !noLimitsProtectedWrite(innerText, context, shell, true))) return null;
       if (finding.classification === "deny" || finding.mandatory) return finding;
       if (finding.unseenScript && context?.scope === "local-computer") return { ...unreadableHit(), unseenWhy: "relayed" };
       const owner = finding.unseenScript && hasNoLimits(bot)
@@ -1069,7 +1266,9 @@ function autoVerdictOf(
       return covered ? null : finding;
     };
     const findings = [normalize(outer), normalize(innerHit)].filter((hit): hit is AlwaysAskHit => hit !== null);
-    catastrophe = findings.find(hit => hit.classification === "deny") ?? findings.find(hit => hit.mandatory) ?? findings[0] ?? null;
+    catastrophe = structuredProtectedWrite(text ?? summary, context, shell)
+      ?? (innerText !== undefined ? structuredProtectedWrite(innerText, context, shell) : null)
+      ?? findings.find(hit => hit.classification === "deny") ?? findings.find(hit => hit.mandatory) ?? findings[0] ?? null;
     waived = catastrophe !== null && catastrophe.classification !== "deny" && !catastrophe.mandatory
       && !windowsShellCall(shell, [text ?? summary, innerText])
       && couldNotReadWaived(bot, context, [catastrophe, outer, innerHit], [text ?? summary, ...(innerText !== undefined ? [innerText] : [])]);
@@ -1080,6 +1279,7 @@ function autoVerdictOf(
         classification: catastrophe.classification ?? "ask", reason: catastrophe.reason ?? catastrophe.doubt ?? catastrophe.rule,
         note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
       if (reader) readerWhyOf.set(held, catastrophe.mandatory ? catastrophe.reason ?? "named" : catastrophe.doubt ?? catastrophe.unseenWhy ?? (catastrophe.unseenScript ? "unseen-script" : catastrophe.readerFailed ? "reader-failed" : "named"));
+      if (reader) readerShapeOf.set(held, askShapeOf(text ?? summary));
       return held;
     }
   } else {
@@ -1122,17 +1322,25 @@ function autoVerdictOf(
     if (waived) logWaived(bot, tool, catastrophe!);
     if (catastrophe && !unseenCovered && !waived) {
       const reader = catastrophe.rule === "unreadable" ? "held" : undefined;
-      const held: AutoVerdict = { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
+      const held: AutoVerdict = { approve: null, source: "always-ask", rule: catastrophe.rule,
+        reason: catastrophe.reason ?? catastrophe.doubt ?? catastrophe.rule,
+        note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
       // APPROVALS-SIMPLE-1018 5 (NOLIMITS-UNREADABLE R6): the asked line says which reader shape still cards, no text
       if (reader) readerWhyOf.set(held, catastrophe.doubt ?? catastrophe.unseenWhy ?? (catastrophe.unseenScript ? "unseen-script" : catastrophe.readerFailed ? "reader-failed" : "named"));
+      if (reader) readerShapeOf.set(held, askShapeOf(text ?? summary));
       return held;
     }
   }
-  // NOLIMITS-MEANS-IT 1.0.20 (design r4 6.1): a marked lane turn asks here, after the always-ask read and ahead of every
+  // Legacy lower-level policy (design r4 6.1): a marked lane turn asks here, after the always-ask read and ahead of every
   // mode, grant, own-tool and own-folder answer. A Windows shell call keeps this card too (ruling 3: only 2.1 and 2.3
   // are withheld there; design 7.5).
   const outside = outsideTurnCard(bot, tool, context, resolvedCall, shell, commandTool, [text ?? summary, innerText]);
-  if (outside) return outside;
+  // Gate-file reads/mentions on proven owner work are not outside-content holds.
+  const gateRead = outside && hasNoLimits(bot) && ["owner", "routine", "owner-channel"].includes(noLimitsInitiator(bot, context))
+    && gateHit([text ?? summary, innerText ?? ""]) !== null
+    && !noLimitsProtectedWrite(text ?? summary, context, shell, true)
+    && (innerText === undefined || !noLimitsProtectedWrite(innerText, context, shell, true));
+  if (outside && !gateRead) return outside;
   // a carved command is guarded on its whole text too, so a key or a
   // destructive step past the card's cut summary still holds
   const passed = verdictPastAlwaysAsk(bot, tool, summary, context, windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined ? text : undefined, windowsBash);
@@ -1201,16 +1409,16 @@ export function ownerNoLimits(bot: AutoApprover, context: AutoContext | undefine
     && !context.unattended && !context.automated && !context.routineLevel;
 }
 
-/** NOLIMITS-MEANS-IT 1.0.20 (section 1, r3): the lane predicate. Relief (2) and the marked-turn rule (6) use it. */
+/** Legacy lower-level policy (section 1, r3): the lane predicate. Relief (2) and the marked-turn rule (6) use it. */
 export function laneApplies(bot: AutoApprover, context: AutoContext | undefined): boolean {
   return ownerNoLimits(bot, context) && context?.noPreRunSeamAtNoLimits !== true;
 }
 
-/** NOLIMITS-MEANS-IT 1.0.20, MurageMain ruling 3 (11-06): on Windows, PowerShell and cmd commands keep TODAY's behaviour
+/** Legacy lower-level policy, MurageMain ruling 3 (11-06): on Windows, PowerShell and cmd commands keep TODAY's behaviour
  *  at No limits (fail closed, the same no-regression exception as OpenClaw): neither the could-not-read waiver (2.1) nor
  *  the gate-file relief (2.3) applies. A call is a Windows shell call when its dialect is PowerShell (a PowerShell tool,
  *  or a driver that runs commands under it), or when any of its texts names cmd or PowerShell as a word anywhere. Words
- *  only over-match, which keeps today's card. A real Windows-path registry is follow-up F4 (1.0.21). */
+ *  only over-match in this legacy BASE reader. Admitted No limits calls use the wipe-only path above. */
 const WINDOWS_SHELL_WORD = /(?:^|[\s;&|(){}\\/=])(?:cmd|powershell|pwsh)(?:\.exe)?(?=$|[\s;&|(){}\\/])/i;
 export function windowsShellCall(dialect: string | undefined, texts: ReadonlyArray<string | undefined>): boolean {
   return dialect !== undefined || texts.some((text) => text !== undefined && WINDOWS_SHELL_WORD.test(text));
@@ -1263,12 +1471,13 @@ function editInsideWorkFolder(context: AutoContext, input: unknown): boolean {
 }
 
 type OutsideShell = "pwsh" | undefined;
-/** NOLIMITS-MEANS-IT 1.0.20 (design r4 6.1 items 1-3): on a marked lane turn, every shell text cards unless it is a
+/** Legacy lower-level policy (design r4 6.1 items 1-3): on a marked lane turn, every shell text cards unless it is a
  *  read-only shape and the session has written nothing since it was tainted; every tool other than the local and
  *  outside readers and an in-folder engine edit cards. Items 4 (the whole key guard, the base could-not-read card)
  *  hold because 2.1 and 2.3 apply only on a clean turn. OWN_WRITERS card here too until their handler holds (6.1.5)
  *  exist: more cards, never fewer. Returns null when the call may go on to the usual verdict. */
 function outsideTurnCard(bot: AutoApprover, tool: string, context: AutoContext | undefined, resolved: ResolvedCall, shell: OutsideShell, commandTool: boolean, texts: ReadonlyArray<string | undefined>): AutoVerdict | null {
+  if (hasNoLimits(bot)) return null; // Sean 2026-11-12 02:05Z: wipe-only.
   if (!markedLaneTurn(bot, context)) return null;
   const card: AutoVerdict = { approve: null, source: "outside-turn", rule: "outside-content", note: outsideTurnNote(context?.outsideRead?.[0]) };
   const inner = commandArgument(resolved.kind === "engine" || resolved.kind === "mcp" ? resolved.input : context?.call?.toolCall?.input);
@@ -1450,6 +1659,52 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   const fields: FileToolRead | undefined = covered ? fileToolRead(tool, context?.call, resolved, summary) : undefined;
   const commandData: CommandDataRead | "plain" | "unmodeled" | "summary" | undefined = covered && pinShell !== "pwsh" && !windowsBash?.length ? coveredCommandRead(tool, summary, resolved, [context?.exactCommand?.command, innerCommand, wholeText, context?.commandText]) : undefined;
   const dataRead = typeof commandData === "object" ? commandData : undefined;
+  // Option B: known placement only adds candidates to the unchanged judgement.
+  const placedGlobRead = (text: string): string | null => {
+    // X3 r5 section 1: on a prepared call the verdict layer's glob read is b18's
+    // `globKeyRead`, exactly. X3's own finding arrives only as globExpansionRule.
+    // Unprepared calls (file-tool glob fields) keep head behaviour [F7].
+    // Eligible No limits calls return before this BASE policy is reached.
+    if (context?.shellCwdPrepared) return legacyGlobKeyRead(text);
+    const command = isCommandTool(tool) || commandParts.length > 0 || wholeText !== undefined;
+    // X3 intersections read lexer operands, never parameter syntax as a filename.
+    const words = command ? shellGlobWords(text, { shell: pinShell }).map(word => word.token) : [text];
+    const cwd = context?.commandCwd ?? context?.exactCommand?.cwd;
+    const state = context?.threadId ? context.shellCwdByThread?.get(context.threadId) : undefined;
+    for (const word of words) {
+      const direct = globKeyRead(word);
+      if (direct) return direct;
+      // A cd only places actual operands; entering /etc does not read /etc/profile.
+      for (const place of [cwd, ...cdOperands(text)].filter((place): place is string => !!place)) {
+        const folder = homeForm(place, process.platform, context?.promptFacts?.home);
+        if (/[$`%]/.test(folder)) continue;
+        for (const joined of placedGlobs(word, folder)) {
+          const hit = matchFirst(SENSITIVE, joined) ?? globKeyRead(joined);
+          if (hit) return hit;
+        }
+      }
+      if (state) {
+        for (const [target, earlier] of state.targets) for (const joined of placedGlobs(word, target)) {
+          const hit = matchFirst(SENSITIVE, joined) ?? globKeyRead(joined);
+          if (hit) return `${hit} (${earlier})`;
+        }
+        if (state.unknown) {
+          const hit = unknownShellGlobRead(word);
+          if (hit) return `${hit} (${state.unknown}; shell cwd unknown)`;
+        }
+      }
+    }
+    return null;
+  };
+  const cdFolderRead = (): string | null => {
+    for (const operand of cdOperands([guarded, context?.commandText ?? ""].join("\n"))) {
+      const folder = homeForm(operand, process.platform, context?.promptFacts?.home);
+      const hit = matchFirst(PATH_RULES, folder.replace(/[\\/]$/, "") + "/")
+        ?? (isGlobWord(folder) && !/[$`%]/.test(folder) ? globKeyRead(`cd ${folder}`) : null);
+      if (hit) return hit;
+    }
+    return null;
+  };
   // the file tool's own read: every path field and real path by the kind's rows, a glob field as a glob, no content
   const fieldHit = (read: FileToolRead): string | null => {
     for (const text of [...read.paths, ...(context?.realPaths ?? []), ...(read.summaryRead ? [summary] : [])]) {
@@ -1457,7 +1712,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
       if (hit) return hit;
     }
     for (const glob of read.globs) {
-      const hit = matchFirst(SENSITIVE, glob) ?? globKeyRead(glob);
+      const hit = matchFirst(SENSITIVE, glob) ?? placedGlobRead(glob);
       if (hit) return hit;
     }
     return null;
@@ -1485,10 +1740,10 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     : commandData === "plain" ? matchFirst(PATH_RULES, [guarded, ...coveredOtherStrings(resolved, context?.call), ...(context?.realPaths ?? [])].join("\n")) ?? matchFirst(TEXT_RULES, keyText)
     : matchFirst(SENSITIVE, keyText);
   const dequotedHit = (): string | null => !dequoted ? null
-    : (dataRead ? matchFirst(TEXT_RULES, dequoted.text) ?? globKeyRead(dataRead.globs) : matchFirst(SENSITIVE, dequoted.text) ?? globKeyRead(dequoted.globText)) ?? (dequoted.homeGlob ? `${dequoted.homeGlob}${HOME_GLOB_WORDS}` : null);
+    : (dataRead ? matchFirst(TEXT_RULES, dequoted.text) ?? placedGlobRead(dataRead.globs) : matchFirst(SENSITIVE, dequoted.text) ?? placedGlobRead(dequoted.globText)) ?? (dequoted.homeGlob ? `${dequoted.homeGlob}${HOME_GLOB_WORDS}` : null);
   // A10: a key's value in any string, at every level, whatever else the call is
   const shapeHit = (): string | null => keyValueShapeIn(keyText) ?? (dequoted ? keyValueShapeIn(dequoted.text) : null);
-  const keyHit = (): string | null => unread ?? localHold ?? rowHit() ?? shapeHit() ?? (dataRead ? null : globKeyRead(commandGlobText)) ?? dequotedHit();
+  const keyHit = (): string | null => unread ?? localHold ?? context?.globExpansionRule ?? rowHit() ?? cdFolderRead() ?? shapeHit() ?? (dataRead ? null : placedGlobRead(commandGlobText)) ?? dequotedHit();
   const sensitive = destructive ? null : keyHit();
   const sensitiveSource: AutoVerdictSource = unread ? "unread-call" : "sensitive-guard";
   const keyHeld = (rule: string): AutoVerdict => {
@@ -1580,18 +1835,21 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     // No limits on a turn the owner started keeps only the gate files of the key guard: a call naming one still asks,
     // and everything else the guard holds runs and is recorded by its fixed name. The gate runs with no key hit too,
     // since the rows read path spellings the key rows do not (`~/.kube/./config`). Every other turn keeps the whole guard.
-    if (ownerNoLimits(bot, context)) {
-      const gate = gateHit([keyText, rawDequotedText(keyText, pinShell === "pwsh").text, ...(dequoted ? [dequoted.text] : [])]);
-      // NOLIMITS-MEANS-IT 1.0.20 (2.3): on a clean lane turn a gate file runs and is recorded by its row; a marked turn
-      // keeps today's card here (the whole key guard on a marked turn is the 6.1 slice); a Windows shell call keeps it too.
-      // NL-SELFGUARD-RULING-1018: Murage's own hook programs (`murage-engine-hooks`) keep the card on a clean turn as well:
-      // an honest bot never writes them, and a write is the one route by which a clean turn changes the guard for another
-      // bot's live turn. The relief is the owner's own turn only (MARKS r13 H2), never a channel.
-      const cleanGate = gate !== null && ruleRowId(gate) !== "murage-engine-hooks" && ownerOwnTurn(bot, context) && cleanLaneTurn(bot, context) && !windowsShellCall(pinShell, [keyText, promptText]);
-      if (gate && !cleanGate) return { approve: null, source: "sensitive-guard", rule: gate };
-      // a call that did not arrive whole keeps its card, whatever the reason (design R3); a cut the card made is no such call
+    if (hasNoLimits(bot) && ["owner", "routine", "owner-channel"].includes(noLimitsInitiator(bot, context))) {
+      const gateTexts = [keyText, rawDequotedText(keyText, pinShell === "pwsh").text, ...(dequoted ? [dequoted.text] : [])];
+      const gate = gateHit(gateTexts);
+      // S1-B3: only write targets retain the protected-path hold. A read, a mention,
+      // or running tooling does not become a write because its text names a gate file.
+      const executable = [context?.commandText, ...commandParts].filter((part): part is string => part !== undefined);
+      if (!executable.length && isCommandTool(tool)) executable.push(summary);
+      const write = executable.map(command => noLimitsProtectedWrite(command, context, pinShell, true)).find(hit => hit?.program !== undefined);
+      const fileWrite = fields?.read === false || /^(?:Write|Edit|MultiEdit|NotebookEdit|write|edit)$/.test(tool);
+      const filePaths = [...(fields?.paths ?? []), ...(context?.realPaths ?? []), ...(fields ? [] : [scan.text, summary])];
+      const fileGate = fileWrite ? gateHit(filePaths) ?? matchFirst(PATH_RULES, filePaths.join("\n")) ?? localHold : null;
+      if (write || fileGate) return { approve: null, source: "sensitive-guard", rule: fileGate ?? write?.program ?? "protected-path", classification: "deny", reason: "protected-path" };
+      // Completeness handling is retained here; it is independent of path matching.
       if (context?.inputTruncated === true || context?.call?.inputMissing !== undefined) return { approve: null, source: "unread-call", rule: unread ?? "the call was cut before it could be checked" };
-      if (cleanGate) return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits", rule: `held=gate:${ruleRowId(gate!) ?? "row"}` };
+      if (gate && cleanLaneTurn(bot, context)) return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits", rule: `held=gate:${ruleRowId(gate) ?? "row"}` };
       const held = keyGuard ? askHeldClass({ approve: null, source: sensitiveSource, rule: keyGuard }) : undefined;
       return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits", ...(held ? { rule: `held=${held}` } : {}) };
     }
@@ -1704,6 +1962,565 @@ const PATH_FIELDS = ["path", "file_path", "filePath", "notebook_path", "paths", 
 /** What `realKeyPaths` found: the real place of every path this call names
  * whose real place differs from its spelling, and the first one that could
  * not be followed, if any. */
+export interface CredentialGlobFs {
+  realpath(path: string): Promise<string>;
+  opendir(path: string): Promise<{
+    read(): Promise<{ name: string; isDirectory(): boolean; isSymbolicLink(): boolean } | null>;
+    close(): Promise<void>;
+  }>;
+}
+/** X3 r5 sections 3-4: how one glob word's listing ended at one place.
+ * The ONE typed value the place loop reads from `expandCredentialGlob`.
+ * - "witness": a real expansion is a key file (or a key directory read by a
+ *   reader), r5 (W). `witness` is the expanded path, `rowId` its row.
+ * - "listed": every step was read; no witness. Quiet.
+ * - "absent": only ENOENT/ENOTDIR branches were dropped; no witness. Quiet.
+ * - "cannot": a step really could not be read (`code`: EACCES, EPERM, EIO,
+ *   ELOOP, ..., "timeout", "saturated", "queue", "visited", "entries",
+ *   "home", "cwd", "platform", "syntax"). `cards` is true iff a frontier
+ *   pair could hold a key under the threshold-1 rule, r5 (C).
+ * - "budget": the shared 65,536-step matching budget ran out; cards with
+ *   the one "file patterns could not be checked in time" card.
+ * `cards` is the only field the loop needs to decide; `rule` is the hold
+ * reason text when it cards, else null. `steps` is what this call charged. */
+export interface CredentialGlobOutcome {
+  kind: "witness" | "listed" | "absent" | "cannot" | "budget";
+  cards: boolean;
+  rule: string | null;
+  witness: string | null;
+  rowId: string | null;
+  code: string | null;
+  steps: number;
+  /** Literal and real spellings of every observed protected expansion (bounded by the entry cap). */
+  witnessPaths?: readonly string[];
+}
+/** One matching-step budget per command (r5 section 3), shared by every
+ * expansion, place and frontier check of that command. Pass the same object
+ * to every `expandCredentialGlob` call of one command. */
+export interface GlobStepBudget { used: number; readonly limit: number }
+export const GLOB_STEP_LIMIT = 65_536;
+export const newGlobStepBudget = (): GlobStepBudget => ({ used: 0, limit: GLOB_STEP_LIMIT });
+/** One lexer glob word (r5 section 2) with what the judge needs about the
+ * command it sits in: `reader` false only for a bare name-only enumerator
+ * (r5 section 1 [S1]); `dotMatch` true when `*`/`?`/`[..]` may match a
+ * leading dot (PowerShell, cmd, dotglob). */
+export interface GlobWord { token: string; reader: boolean; dotMatch: boolean }
+export { shellGlobWords };
+export interface CredentialGlobResult {
+  available: boolean;
+  witness: string | null;
+  rule: string | null;
+  textFallback: boolean;
+  reason?: string;
+  outcome: CredentialGlobOutcome;
+}
+
+// Shared across requests and both directory mechanisms. A timed out caller
+// releases no slot: the underlying operation and its cleanup must settle.
+// X3 r5 section 3: a saturated pool WAITS for a slot inside the same
+// deadline; a slot not won by the deadline is a timeout.
+const pathAdmissions = new Set<Promise<unknown>>();
+const PATH_ADMISSIONS = 8;
+async function admittedPathIO<T>(work: () => Promise<T>, deadline: number): Promise<{ value: T } | { reason: string }> {
+  while (pathAdmissions.size >= PATH_ADMISSIONS) {
+    if (performance.now() >= deadline) return { reason: "timeout" };
+    let wait: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.race([...pathAdmissions]).then(() => undefined, () => undefined),
+      new Promise<void>(resolve => { wait = setTimeout(resolve, Math.max(0, deadline - performance.now())); }),
+    ]);
+    if (wait !== undefined) clearTimeout(wait);
+  }
+  if (performance.now() >= deadline) return { reason: "timeout" };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const pending = Promise.resolve().then(work);
+  pathAdmissions.add(pending);
+  void pending.then(() => pathAdmissions.delete(pending), () => pathAdmissions.delete(pending));
+  const result = await Promise.race([
+    pending.then(value => performance.now() < deadline ? { value } : { reason: "timeout" }, () => ({ reason: performance.now() >= deadline ? "timeout" : "unreadable" })),
+    new Promise<{ reason: string }>(resolve => { timer = setTimeout(() => resolve({ reason: "timeout" }), Math.max(0, deadline - performance.now())); }),
+  ]);
+  if (timer !== undefined) clearTimeout(timer);
+  return result;
+}
+
+/** The one card a command gets when its matching budget runs out (r5 section 3). */
+export const GLOB_BUDGET_WORDS = "file patterns could not be checked in time";
+class GlobBudgetSpent extends Error {}
+class GlobDeadline extends Error {}
+/** r5 section 4: ENOENT and ENOTDIR are ABSENT (that branch holds nothing). Every other code is CANNOT. */
+const ABSENT_CODES = new Set(["ENOENT", "ENOTDIR"]);
+const ioCode = (error: unknown): string => {
+  const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" && code ? code : "EUNKNOWN";
+};
+/** One step of the shared per-command matching budget. The counter never passes its limit. */
+export function chargeGlobStep(budget: GlobStepBudget): () => void {
+  return () => {
+    if (budget.used >= budget.limit) throw new GlobBudgetSpent();
+    budget.used++;
+  };
+}
+const rowIdOf = (rule: string | null): string | null => rule === null ? null : SENSITIVE_PATHS.find(row => row.re.source === rule)?.id ?? null;
+const globSegment = isGlobWord;
+
+/** X3 r5 sections 1, 3 and 4: list one glob word at one place, names only,
+ * and judge what was found. Results are call-local snapshots; work finishing
+ * after the deadline can neither publish evidence nor change cwd.
+ * - Witness (section 1): an expanded FILE, link or unknown-type entry whose
+ *   path (or a link's real path) a PATH_RULES row holds, exactly as the same
+ *   path typed literally would be held. An expanded DIRECTORY is a witness
+ *   only for a reader (`reader`, default true), by `homeForm(D) + "/"`.
+ * - ABSENT (section 4): ENOENT/ENOTDIR drops that branch only.
+ * - CANNOT: any other code, the deadline, or a cap. The unlisted frontier
+ *   cards iff one of its pairs meets a row folder or the threshold-1 rule.
+ * - `..` is walked physically; the POSIX dot rule applies when `dotMatch` is false. */
+export async function expandCredentialGlob(token: string, options: {
+  cwd?: string; home?: string; deadline?: number; fs?: CredentialGlobFs;
+  /** Shared per-command step budget; a fresh one when absent. */
+  budget?: GlobStepBudget;
+  /** False only for a bare name-only enumerator; absent means reader (fail closed). */
+  reader?: boolean;
+  /** Leading-dot matching; absent means the POSIX dot rule is OFF (dots match, fail closed). */
+  dotMatch?: boolean;
+} = {}): Promise<CredentialGlobResult> {
+  const deadline = options.deadline ?? performance.now() + 50;
+  const fs = options.fs ?? credentialGlobFs;
+  const budget = options.budget ?? newGlobStepBudget();
+  const reader = options.reader ?? true;
+  const dotMatch = options.dotMatch ?? true;
+  const platform = process.platform;
+  const startUsed = budget.used;
+  const charge = chargeGlobStep(budget);
+  token = win32Canonical(token, platform);
+  if (platform === "win32") token = token.replace(/\\/g, "/");
+  const absolute = /^(?:\/|[a-z]:[\\/])/i.test(token);
+  type Pair = { directory: string; position: number };
+  let witness: string | null = null, witnessRule: string | null = null, budgetSpent = false, lossyUnlisted = false;
+  const witnessPaths = new Set<string>();
+  // The frontier check (section 4) for one unlisted pair, charged to the budget.
+  // A pair with no `base` is a whole word that was never listed.
+  type Unlisted = { base?: string; rest: string };
+  const frontierRule = (pairs: readonly Unlisted[]): string | null => {
+    for (const { base, rest } of pairs) {
+      charge();
+      if (base === undefined) {
+        const hit = unavailableAnchoredGlobRead(rest, platform, options.home, charge);
+        if (hit) return hit;
+        continue;
+      }
+      const folder = homeForm(base, platform, options.home).replace(/\/$/, "");
+      const hit = matchFirst(PATH_RULES, folder + "/") ?? unavailableAnchoredGlobRead(literalGlobPattern(folder) + "/" + rest, platform, options.home, charge);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const finish = (code: string | null, frontier: readonly Unlisted[], absent: boolean): CredentialGlobResult => {
+    let kind: CredentialGlobOutcome["kind"], rule: string | null = null;
+    if (witness) { kind = "witness"; rule = witnessRule; }
+    else if (budgetSpent) { kind = "budget"; rule = GLOB_BUDGET_WORDS; }
+    else if (code !== null || frontier.length) {
+      kind = "cannot";
+      // A folder or link whose name did not decode cleanly was matched but never opened, so what
+      // the shell reads through it is unknown: it always cards, with the could-not-check words.
+      try { rule = frontierRule(frontier) ?? (lossyUnlisted ? GLOB_BUDGET_WORDS : null); } catch (error) {
+        if (!(error instanceof GlobBudgetSpent)) throw error;
+        kind = "budget"; rule = GLOB_BUDGET_WORDS;
+      }
+    } else kind = absent ? "absent" : "listed";
+    const cards = rule !== null;
+    return {
+      available: code === null, witness, rule, textFallback: false, ...(code !== null ? { reason: code } : {}),
+      outcome: { kind, cards, rule, witness, rowId: kind === "witness" ? rowIdOf(rule) : null, code, steps: budget.used - startUsed, witnessPaths: [...witnessPaths] },
+    };
+  };
+  if (budget.used >= budget.limit) { budgetSpent = true; return finish(null, [], false); }
+  // Without a folder to list from, the whole word is the frontier (a relative one may sit anywhere).
+  const whole = (code: string) => finish(code, [{ rest: absolute || token.startsWith("~/") ? token : "/**/" + token }], false);
+  let path = token;
+  if (/^[a-z]:[\\/]/i.test(path) && platform !== "win32") return whole("platform");
+  if (path.startsWith("~/")) {
+    if (!options.home) return whole("home");
+    path = literalGlobPattern(options.home.replace(/\/$/, "")) + path.slice(1);
+  } else if (!absolute) {
+    if (!options.cwd) return whole("cwd");
+    path = literalGlobPattern(options.cwd.replace(/\/$/, "")) + "/" + path;
+  }
+  if (globPatternText(path).length > 4096) return whole("syntax");
+  if (platform === "win32") path = path.replace(/\\/g, "/");
+  const root = path.match(/^[a-z]:\//i)?.[0] ?? (platform === "win32" ? path.match(/^\/\/[^/]+\/[^/]+\//)?.[0] : undefined) ?? "/";
+  const segments = path.slice(root.length).split("/").filter(segment => segment !== "" && segment !== ".");
+  const join = (directory: string, name: string) => directory.replace(/\/$/, "") + "/" + name;
+  // Walk state. Every field is read synchronously when the walk is closed.
+  const queue: Pair[] = [{ directory: root, position: 0 }];
+  const refused: Pair[] = [], unreadable: { pair: Pair; code: string }[] = [];
+  const visited = new Set<string>();
+  let current: Pair | null = null, stopped: string | undefined, absent = false, closed = false, entries = 0;
+  const live = () => {
+    if (closed) throw new GlobDeadline();
+    if (performance.now() >= deadline) throw new GlobDeadline();
+  };
+  const enqueue = (pair: Pair) => {
+    if (queue.length >= 256) { refused.push(pair); stopped ??= "queue"; return; }
+    queue.push(pair);
+  };
+  const observe = async (forms: readonly string[], type: "file" | "dir" | "link" | "unknown") => {
+    const all = [...forms];
+    if (type === "link") {
+      try { const real = await fs.realpath(forms[0]!); live(); all.push(real); } catch (error) {
+        if (error instanceof GlobDeadline) throw error;
+        // An unresolved link is CANNOT evidence for the folder being walked, never a quiet "listed".
+        if (current) unreadable.push({ pair: current, code: ioCode(error) });
+      }
+    }
+    for (const form of all) {
+      charge();
+      const placed = homeForm(form, platform, options.home).replace(/\/$/, "");
+      let hit = type !== "dir" ? matchFirst(PATH_RULES, placed) ?? dataCredentialHit([form]) : null;
+      if (!hit && reader && type !== "file") hit = matchFirst(PATH_RULES, placed + "/");
+      if (hit) { live(); witness ??= forms[0]!; witnessRule ??= hit; witnessPaths.add(form); }
+    }
+  };
+  const walk = async () => {
+    while (queue.length && !stopped) {
+      live();
+      const next = queue.shift()!;
+      current = next;
+      let physical: string;
+      try { physical = await fs.realpath(next.directory); live(); } catch (error) {
+        if (error instanceof GlobDeadline) throw error;
+        const code = ioCode(error);
+        if (ABSENT_CODES.has(code)) absent = true; else unreadable.push({ pair: next, code });
+        current = null;
+        continue;
+      }
+      const key = JSON.stringify([physical, next.position]);
+      if (visited.has(key)) { current = null; continue; }
+      if (visited.size >= 256) { refused.push(next); current = null; stopped = "visited"; break; }
+      visited.add(key);
+      const segment = segments[next.position];
+      if (segment === undefined) { await observe(next.directory === physical ? [physical] : [next.directory, physical], "unknown"); current = null; continue; }
+      if (!globSegment(segment)) { enqueue({ directory: join(physical, globPatternText(segment)), position: next.position + 1 }); current = null; continue; }
+      const last = next.position === segments.length - 1;
+      if (segment === "**" && !last) enqueue({ directory: physical, position: next.position + 1 });
+      let dir: Awaited<ReturnType<CredentialGlobFs["opendir"]>>;
+      try { dir = await fs.opendir(physical); } catch (error) {
+        if (error instanceof GlobDeadline) throw error;
+        const code = ioCode(error);
+        if (ABSENT_CODES.has(code)) absent = true; else unreadable.push({ pair: next, code });
+        current = null;
+        continue;
+      }
+      try {
+        live();
+        for (;;) {
+          let entry: Awaited<ReturnType<typeof dir.read>>;
+          try { entry = await dir.read(); } catch (error) { unreadable.push({ pair: next, code: ioCode(error) }); break; }
+          live();
+          if (!entry) break;
+          if (++entries > 2000) { stopped = "entries"; return; }
+          // POSIX dot rule: `*`, `?`, `[..]` and `**` never match a leading dot
+          if (!dotMatch && entry.name.startsWith(".") && !segment.startsWith(".")) continue;
+          if (segment !== "**" && !pathGlobsIntersect([literalGlobPattern(entry.name)], [segment], charge)) continue;
+          const child = join(physical, entry.name);
+          const type = entry.isDirectory() ? "dir" : entry.isSymbolicLink() ? "link" : "file";
+          // A name holding U+FFFD may be a lossy decode of raw bytes. That text is not the entry's
+          // address: reopening it finds nothing, or a different entry really spelled U+FFFD. The
+          // walk never reopens it. The entry is judged by its text and recorded as not listed.
+          const lossy = type !== "file" && entry.name.includes("\uFFFD");
+          if (last) await observe([child], lossy ? "unknown" : type);
+          if (lossy) {
+            lossyUnlisted = true;
+            unreadable.push({ pair: { directory: child, position: segment === "**" ? next.position : next.position + 1 }, code: "EILSEQ" });
+          } else if (type !== "file") {
+            if (segment === "**") enqueue({ directory: child, position: next.position });
+            else if (!last) enqueue({ directory: child, position: next.position + 1 });
+          }
+          if (stopped) return;
+        }
+      } finally {
+        // This cleanup occupies the admission slot but never extends the
+        // caller's wait. No evidence is written after it.
+        await dir.close();
+      }
+      current = null;
+    }
+  };
+  const result = await admittedPathIO(() => walk().then(() => null as string | null, error => {
+    if (error instanceof GlobBudgetSpent) { budgetSpent = true; return null; }
+    if (error instanceof GlobDeadline) return "timeout";
+    return "unreadable";
+  }), deadline);
+  // Close the walk and snapshot the unlisted part at once (immutable from here).
+  closed = true;
+  const stop = "reason" in result ? result.reason : result.value ?? stopped ?? null;
+  const pairs: Pair[] = stop !== null ? [...queue, ...(current ? [current] : []), ...refused] : [];
+  pairs.push(...unreadable.map(one => one.pair));
+  const code = stop ?? unreadable[0]?.code ?? null;
+  return finish(code, pairs.map(pair => ({ base: pair.directory, rest: segments.slice(pair.position).join("/") })), absent);
+}
+const credentialGlobFs: CredentialGlobFs = { realpath: asyncRealpath, opendir: path => asyncOpendir(path, { bufferSize: 1 }) };
+
+/** X3 r5 section 5 with rev 3.2 sections 2-3: the record's constant bounds. */
+export { SHELL_MAX_PLACES, SHELL_OVERFLOW_REASON, SHELL_MAX_PENDING, SHELL_MAX_PENDING_BYTES, unionShellState } from "../shared/sensitive-globs.ts";
+/** Reason class K (rev 3.2 section 3): one card per overflow episode per record. */
+export const K_CARD_RULE = "this session has used more than 32 folders, so Murage now checks every file pattern in it";
+/** Reason class P5 (r5:103): every relative glob word in an unknown folder. */
+export const P5_CARD_PREFIX = "the folder this command runs in is not known";
+
+const admitPlace = admitShellPlace;
+/** P2: an ABSENT target is a pending lexical place, not a place and not unknown. */
+const admitPending = admitShellPending;
+type FolderOutcome = { path: string } | { code: string };
+const absentCode = (code: string): boolean => code === "ENOENT" || code === "ENOTDIR";
+async function realFolder(fs: CredentialGlobFs, path: string, deadline: number): Promise<FolderOutcome> {
+  const result = await admittedPathIO(() => fs.realpath(path).then(
+    (value): FolderOutcome => ({ path: value }),
+    (error: { code?: unknown } | undefined): FolderOutcome => ({ code: typeof error?.code === "string" ? error.code : "EUNKNOWN" })), deadline);
+  return "reason" in result ? { code: result.reason === "timeout" ? "ETIMEDOUT" : "EBUSY" } : result.value;
+}
+async function searchable(fs: CredentialGlobFs, path: string, deadline: number): Promise<boolean> {
+  const result = await admittedPathIO(async () => { const dir = await fs.opendir(path); await dir.close(); return true; }, deadline);
+  return "value" in result;
+}
+
+/** Physical H3 effects use at most the first 25 ms of the shared budget.
+ * This function returns new state; no asynchronous operation owns live state.
+ * `replacement` is P1 (r5:79-86): the final folder set an exit-0 completion of
+ * this exact call would prove, or absent when no such proof is possible. */
+export async function resolveShellDirectories(text: string, initial: ShellCwdState, options: {
+  home?: string; cdpath?: string; shell?: "pwsh"; deadline?: number; fs?: CredentialGlobFs; directoryBuiltins?: boolean;
+} = {}): Promise<{ parent: ShellCwdState; local: ShellCwdState; destinations: Set<string>; replacement?: ShellCwdState }> {
+  const deadline = options.deadline ?? performance.now() + 25;
+  const fs = options.fs ?? credentialGlobFs;
+  const parent = copyShellCwdState(initial);
+  // S3': each pending ABSENT entry is re-resolved once, at the next call.
+  // Existing, it is an ordinary place (and can overflow). Still absent, it is
+  // dropped: the cd failed and the shell is not there. Unreadable, it is kept
+  // as a place whose listing is CANNOT (fail closed).
+  const pending = parent.pending ?? [];
+  delete parent.pending;
+  for (const path of pending) {
+    if (performance.now() >= deadline) { admitPending(parent, path, `shell folder ${path.slice(0, 256)} cannot be proven`); continue; }
+    const outcome = await realFolder(fs, path, deadline);
+    if ("path" in outcome) admitPlace(parent, outcome.path, `earlier cd ${path.slice(0, 256)}`);
+    else if (outcome.code === "ETIMEDOUT" || outcome.code === "EBUSY") admitPending(parent, path, `shell folder ${path.slice(0, 256)} cannot be proven`);
+    else if (!absentCode(outcome.code)) admitPlace(parent, path, `earlier cd ${path.slice(0, 256)} (unreadable)`);
+  }
+  if (setsDotglob(text)) parent.dotglob = true;
+  const local = copyShellCwdState(parent);
+  const effects = shellDirectoryEffects(text, false, 0, undefined, options.shell);
+  const destinations = new Set<string>();
+  // P1 chain: the place set after each top-level cd of a single `&&` list.
+  const startUnknown = Boolean(parent.unknown);
+  const provenCds = options.shell === "pwsh" || options.directoryBuiltins === false || !shellAndList(text) ? -1 : provenCdList(text);
+  // Ruling H1 (positive knowledge only): only a text the scanner's tokenizer proves is a flat list of simple commands
+  // joined only by `&&`, whose cds are each a plain one-operand `cd`, can be a P1 chain. PowerShell text never is one.
+  let chain: { targets: string[]; lastAbsolute: boolean; seen: boolean; command: string } | undefined = options.shell !== "pwsh" && provenCds >= 0
+    ? { targets: [...parent.targets.keys()], lastAbsolute: false, seen: false, command: "" } : undefined;
+  let parentsRemaining = effects.filter(effect => effect.scope === "parent").length;
+  // Ruling H1: every parent directory effect the scanner saw must be one of the proven cd commands (a `cd` inside a
+  // comment, `eval`, `source`, `pushd` ... are scanner effects the tokenizer did not prove).
+  if (chain && parentsRemaining !== provenCds) chain = undefined;
+  for (const effect of effects) {
+    if (performance.now() >= deadline) {
+      if (parentsRemaining) { parent.unknown ??= "shell folder lookup timed out"; chain = undefined; }
+      local.unknown ??= "shell folder lookup timed out";
+      break;
+    }
+    if (effect.scope === "parent") parentsRemaining--;
+    if (effect.scope === "child") {
+      for (const [path, reason] of parent.targets) {
+        if (local.targets.size >= SHELL_MAX_PLACES && !local.targets.has(path)) local.unknown ??= "too many possible shell folders";
+        else local.targets.set(path, reason);
+      }
+      local.unknown ??= parent.unknown;
+    }
+    const isParent = effect.scope === "parent";
+    const targetState = isParent ? parent : local;
+    const reason = `shell folder ${effect.command.slice(0, 256)} cannot be proven`;
+    const operand = effect.operand && (process.platform === "win32" ? win32Canonical(effect.operand, process.platform).replace(/\\/g, "/") : effect.operand);
+    const absoluteOperand = Boolean(operand && (operand.startsWith("/") || (process.platform === "win32" && /^[a-z]:\//i.test(operand))));
+    // P4: unknown only for a non-literal operand
+    if (options.directoryBuiltins === false) { targetState.unknown ??= reason; if (isParent) chain = undefined; }
+    if (effect.kind !== "filesystem" || !operand || effect.flags.includes("-P") || /[$`*?[]|%[^%]+%/.test(operand) || unresolvedShellParent(operand) || (options.cdpath && !absoluteOperand)) {
+      targetState.unknown ??= reason;
+      if (isParent) chain = undefined;
+      continue;
+    }
+    // P3: `~/` resolves only with the handed HOME
+    const absolute = absoluteOperand ? operand : operand.startsWith("~/") && options.home ? options.home + operand.slice(1) : undefined;
+    const join = (base: string) => base.replace(/\/$/, "") + "/" + operand;
+    const candidates = absolute ? [absolute] : [...targetState.targets.keys()].map(join);
+    const chainCandidates = isParent && chain ? absolute ? [absolute] : chain.targets.map(join) : [];
+    if (!candidates.length || (operand.startsWith("~") && !absolute)) {
+      targetState.unknown ??= reason;
+      if (isParent) chain = undefined;
+      continue;
+    }
+    const outcomes = new Map<string, FolderOutcome>();
+    for (const path of new Set([...candidates, ...chainCandidates])) {
+      if (performance.now() >= deadline) { targetState.unknown ??= reason; if (isParent) chain = undefined; break; }
+      outcomes.set(path, await realFolder(fs, path, deadline));
+    }
+    const placed = `earlier ${effect.command.slice(0, 64)} ${operand.slice(0, 256)}`;
+    for (const path of candidates) {
+      const outcome = outcomes.get(path);
+      if (!outcome) continue;
+      if ("path" in outcome) { destinations.add(outcome.path); admitPlace(targetState, outcome.path, placed); }
+      else if (absentCode(outcome.code)) admitPending(targetState, path, reason);
+      // No answer in time: where the shell went is not known.
+      else if (outcome.code === "ETIMEDOUT" || outcome.code === "EBUSY") targetState.unknown ??= reason;
+      // P2: a CANNOT target is added; its listing is CANNOT
+      else admitPlace(targetState, path, `${placed} (unreadable)`);
+    }
+    if (isParent && chain) {
+      const next: string[] = [];
+      for (const path of chainCandidates) {
+        const outcome = outcomes.get(path);
+        if (outcome && "path" in outcome) { if (!next.includes(outcome.path)) next.push(outcome.path); }
+        else if (!outcome || !absentCode(outcome.code)) { chain = undefined; break; }
+      }
+      if (chain) {
+        if (!next.length) chain = undefined;
+        else { chain.targets = next; chain.lastAbsolute = Boolean(absolute); chain.seen = true; chain.command = `${effect.command.slice(0, 64)} ${operand.slice(0, 256)}`; }
+      }
+    }
+  }
+  for (const [path, reason] of parent.targets) {
+    if (local.targets.size >= SHELL_MAX_PLACES && !local.targets.has(path)) local.unknown ??= "too many possible shell folders";
+    else local.targets.set(path, reason);
+  }
+  local.unknown ??= parent.unknown;
+  if (parent.capped) local.capped = true;
+  // P1 with rev 3.2 section 2 and S-a/S-b: a commit only adds places (a
+  // union). Under unknown only an absolute or handed-HOME last cd installs an
+  // exact cwd and clears unknown; a relative one keeps unknown, and its
+  // candidates are already in the additive state.
+  let replacement: ShellCwdState | undefined;
+  if (chain?.seen && (!startUnknown || chain.lastAbsolute)) {
+    let ok = true;
+    for (const path of chain.targets) if (!(await searchable(fs, path, deadline))) { ok = false; break; }
+    if (ok) replacement = { targets: new Map(chain.targets.map(path => [path, `committed ${chain!.command}`])), ...(parent.dotglob ? { dotglob: true } : {}), ...(chain.lastAbsolute ? { install: true } : {}) };
+  }
+  return { parent, local, destinations, ...(replacement ? { replacement } : {}) };
+}
+
+/** What one shell call carries that could say where it starts. Proof
+ * selection (X3 r5 rev 3.2 section 1) adds its own fields here. */
+export interface ShellCall extends ShellProofFacts { namedCwd?: string | null; attributed?: boolean }
+/** The start set one call is judged against. `source` "record" is the floor:
+ * the session record with every earlier call's effects. Any other source is
+ * a per-call start; it never reads the floor, but the call still publishes
+ * its effects into the record. */
+export interface ShellStartSet {
+  state: ShellCwdState;
+  source: "record" | "named" | ShellProofSource;
+  /** Whether this call's globs match a leading dot. Missing means ON: the
+   * owner's ruling for floor and Codex calls. A proof arm sets it from its
+   * proof (P-CLAUDE shellProof GLOBIGNORE, P-FUIGO its field, missing = on). */
+  dotglob?: boolean;
+  /** Why a call that named its driver stayed on the floor (A2 causes, value-free). */
+  floor?: ShellFloorCause;
+}
+/** X3 r5 rev 3.2 section 1: the ONE place a call's start set is chosen.
+ * Default: the record (floor). The "named" arm is the pre-existing attributed
+ * call folder, kept unchanged until proof selection replaces it. */
+export function startSetFor(call: ShellCall, record: ShellCwdState): ShellStartSet {
+  // Rev 3.2 section 1: a call that names its driver gets exactly one of the three per-call proofs, else the record.
+  // A proven call reads no record (no K, no cross-call P5). Without a bound record (SS:81 `snapshot(undefined)`)
+  // `record` is unknown and the proof still applies; nothing re-seeds it from the spawn folder (rev 3.2 section 7).
+  if (call.driver !== undefined) {
+    const proof = shellProof(call);
+    if ("floor" in proof) return { source: "record", state: record, floor: proof.floor, dotglob: true };
+    return { source: proof.source, state: { targets: new Map([[proof.cwd, `${proof.source} proven call folder`]]) }, dotglob: proof.dotglob };
+  }
+  if (call.attributed && call.namedCwd !== undefined) {
+    return { source: "named", state: call.namedCwd === null ? { targets: new Map<string, string>(), unknown: "invalid call folder" } : { targets: new Map([[call.namedCwd, "named call folder"]]) } };
+  }
+  return { source: "record", state: record };
+}
+
+/** Ruling H3: the card for a candidate place the 50 ms deadline reached before it was judged. */
+export const SHELL_DEADLINE_CARD_RULE = "the file-pattern check ran out of time before every possible folder was looked at";
+
+/** Ruling H4: a prepared floor judgement whose record was retired or whose publish was refused cannot keep its quiet
+ * rule. It is judged again against `unknown`: a relative glob word then cards (P5) and the local state is unknown.
+ * Anchored globs keep their own verdict, and a call on its own proven start (not the floor) is left alone. */
+export function invalidateShellJudgement(prepared: { local: ShellCwdState; rule: string | null; start: ShellStartSet }, text: string, shell?: "pwsh"): void {
+  if (prepared.start.source !== "record") return;
+  const unknownState: ShellCwdState = { targets: new Map(), unknown: "shell session record retired or its publish was refused" };
+  prepared.local = unknownState;
+  const payloads: string[] = [];
+  shellDirectoryEffects(text, false, 0, payloads, shell);
+  const globs = shellGlobWords(text, { ...(shell ? { shell } : {}), payloads, dotglob: true });
+  if (globs.incomplete) { prepared.rule ??= GLOB_BUDGET_WORDS; return; }
+  if (globs.length > 128) { prepared.rule ??= "too many file patterns to check"; return; }
+  if (globs.some(word => !/^(?:\/|[a-z]:[\\/]|~[\\/])/i.test(word.token))) prepared.rule ??= `${P5_CARD_PREFIX} (${unknownState.unknown})`;
+}
+
+export async function prepareShellJudgement(text: string, initial: ShellCwdState, options: {
+  home?: string; cdpath?: string; shell?: "pwsh"; fs?: CredentialGlobFs;
+} & ShellCall = {}): Promise<{ parent: ShellCwdState; local: ShellCwdState; rule: string | null; expansions: CredentialGlobResult[]; replacement?: ShellCwdState; start: ShellStartSet }> {
+  const start = performance.now(), deadline = start + 50;
+  const startSet = startSetFor(options, initial);
+  if (options.driver !== undefined) countShellStart(options.driver, startSet.floor ?? startSet.source);
+  const callInitial = startSet.state;
+  const directoryBuiltins = options.driver === undefined || startSet.source === "claude";
+  const effects = await resolveShellDirectories(text, callInitial, { ...options, directoryBuiltins, deadline: start + 25 });
+  // Shadow floor state (A:68), additive only (X3-SIMPLIFY-SaSb S-a, S-b): every call publishes its effects into its
+  // record by union; nothing erases an earlier place or clears `unknown` here. A Claude proof's effects are resolved
+  // over the record itself and then unioned. Every other per-call start (Fuigo's bound field, Codex `params.cwd`, the
+  // named folder) unions its cwd and this call's effects from it. A proven call's P1 commit is kept, and the registry
+  // unions it too.
+  if (startSet.source === "claude") {
+    effects.parent = unionShellState(initial, (await resolveShellDirectories(text, initial, { ...options, directoryBuiltins, deadline: start + 25 })).parent);
+  } else if (startSet.source !== "record") {
+    effects.parent = unionShellState(initial, effects.parent);
+  }
+  const expansions: CredentialGlobResult[] = [];
+  // Wrapped payloads (env -C, nohup, sudo ... sh -c) that the lexer does not unwrap itself
+  const payloads: string[] = [];
+  shellDirectoryEffects(text, false, 0, payloads, options.shell);
+  let rule: string | null = null;
+  // Only destinations visited by this call are folder reads. Retained launch
+  // and failure-path candidates remain available for placing actual globs.
+  for (const target of effects.destinations) rule ??= matchFirst(PATH_RULES, homeForm(target, process.platform, options.home).replace(/\/$/, "") + "/");
+  // P6: a link, copy or mount operand gets the same folder check as a cd operand
+  for (const operand of linkCopyOperands(text)) rule ??= matchFirst(PATH_RULES, homeForm(operand, process.platform, options.home).replace(/[\\/]$/, "") + "/");
+  // r5 section 2 (G1): glob words come only from the shell lexer, payloads included
+  // Owner dot-match ruling: floor and Codex calls match leading dots; a proof
+  // arm (P-CLAUDE shellProof, P-FUIGO field) sets startSet.dotglob itself.
+  const globs = shellGlobWords(text, { ...(options.shell ? { shell: options.shell } : {}), payloads, dotglob: startSet.dotglob ?? Boolean(effects.local.dotglob) });
+  if (globs.incomplete) return { ...effects, rule: GLOB_BUDGET_WORDS, expansions, start: startSet };
+  if (globs.length > 128) return { ...effects, rule: "too many file patterns to check", expansions, start: startSet };
+  let kShown = false;
+  // r5 section 3: one matching-step budget per command, shared by every word and place
+  const budget = newGlobStepBudget();
+  for (const word of globs) {
+    const token = word.token;
+    const anchored = /^(?:\/|[a-z]:[\\/]|~[\\/])/i.test(token);
+    // rev 3.2 section 3: under unknown a relative glob word is decided before
+    // any expansion (no listing). A capped record's first one is the
+    // episode's K card; every later one is P5.
+    if (!anchored && effects.local.unknown) {
+      if (effects.parent.capped && !effects.parent.kShown && !kShown) { kShown = true; rule ??= K_CARD_RULE; }
+      else rule ??= `${P5_CARD_PREFIX} (${effects.local.unknown})`;
+      continue;
+    }
+    const bases = anchored ? [undefined] : effects.local.targets.size ? [...effects.local.targets.keys()] : [undefined];
+    for (const cwd of bases) {
+      // Ruling H3: a place the deadline reached before it was judged is unknown, which is a card; never a silent skip.
+      if (performance.now() >= deadline) { rule ??= SHELL_DEADLINE_CARD_RULE; continue; }
+      const result = await expandCredentialGlob(token, { home: options.home, cwd, deadline, fs: options.fs, budget, reader: word.reader, dotMatch: word.dotMatch });
+      expansions.push(result);
+      if (result.outcome.cards) rule ??= result.outcome.rule ?? result.rule;
+    }
+  }
+  if (kShown) effects.parent.kShown = true;
+  return { ...effects, rule, expansions, start: startSet };
+}
+
 export interface RealKeyPaths { paths: string[]; cannot: string | null }
 
 /** Where each path this call names really lands, links followed, resolved
@@ -1756,4 +2573,59 @@ export function autoDecision(
   context?: AutoContext,
 ): string | null {
   return autoVerdict(bot, tool, summary, context).approve;
+}
+
+export const NO_LIMITS_SOURCE: Readonly<Record<AutoVerdictSource, "run" | "keep">> = {
+  "always-ask": "run", "narrow": "run", "always-allow": "run", "exact-command": "run", "auto-mode": "run", "full-access": "run",
+  "no-limits": "run", "own-workspace": "run", "own-files": "run", "own-tool-results": "run", "project-work-roots": "run",
+  "owner-switch":"keep", "own-unasked": "run", "stop-line": "run", "task-allowance": "run", "routine-allow": "run", "unattended-block": "run",
+  "local-computer-block": "run", "destructive-guard": "run", "sensitive-guard": "run", "unread-call": "run", "prompt-guard": "run",
+  "outside-turn": "run", "question-tool": "keep", "no-grant": "run",
+};
+
+export type NoLimitsInitiator = FullAccessOrigin | "unproven";
+/** Legacy origin metadata only; registered decision provenance owns permission. */
+export function noLimitsInitiator(bot: AutoApprover | null | undefined, context: AutoContext | undefined): NoLimitsInitiator {
+  const stored = context?.fullAccessOrigin;
+  if (stored === undefined) {
+    // routineLevel is the caller's live owner-routine attribution, not a
+    // stored permission flag. Legacy callers need no duplicate origin when
+    // nothing contradicts that attribution. Unattended work needs its origin.
+    return context?.routineLevel === true && context.unattended !== true && context.channelOwner !== true
+      && fullAccessCovers(bot, "routine") ? "routine" : "unproven";
+  }
+  if (stored === "other") return "other";
+  if (stored === "owner") {
+    if (context!.unattended === true || context!.automated === true || context!.channelOwner === true) return "unproven";
+  } else if (stored === "routine") {
+    // No limits routines inherit their bot level even when scheduled.
+    if (context!.routineLevel !== true || context!.channelOwner === true || context!.unattended === true && !hasNoLimits(bot)) return "unproven";
+  } else if (stored === "owner-channel") {
+    if (context!.channelOwner !== true) return "unproven";
+  } else return "unproven";
+  return fullAccessCovers(bot, stored) ? stored : "other";
+}
+
+/** Compatibility for pre-integration consumers. Permission authority belongs to
+ * decision/index.ts; the BASE policy never re-decides a registered request. */
+export function finalizeNoLimits(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, verdict: AutoVerdict, _prior: readonly import("../shared/no-limits-decision.ts").ReaderVerdict[] = []): AutoVerdict {
+  if(verdict.source==="owner-switch")return verdict;
+  try{
+    if (!hasNoLimits(bot)) return verdict;
+    const initiator = noLimitsInitiator(bot, context);
+    const origin = context?.noLimitsOrigin ?? (context?.fullAccessOrigin === "owner-channel" && context.channelOwner ? "owner-channel" : initiator === 'routine' && context?.unattended !== true ? 'owner-routine' : initiator);
+    if (!noLimitsAppliesTo(origin, bot)) return verdict;
+  }catch{return verdict;}
+  const result = noLimitsOnlyVerdict(tool, summary, context);
+  if (verdict.source === "question-tool") return verdict;
+  if (result.approve !== null && verdict.approve !== null) return verdict;
+  noLimitsFactsOf.set(result, { initiator: noLimitsInitiator(bot, context), n2: result.approve === null });
+  if(result.approve!==null)try{logAsked(bot,tool,result,context,verdict);}catch{ /* logging cannot hold a call */ }
+  return result;
+}
+/** Current verdict metadata only; entries disappear with their verdict. */
+const noLimitsFactsOf = new WeakMap<AutoVerdict, { initiator: NoLimitsInitiator; n2: boolean }>();
+export function noLimitsFacts(verdict: Pick<AutoVerdict, never> | null | undefined): { initiator: NoLimitsInitiator; n2: boolean } | undefined {
+  const facts = verdict ? noLimitsFactsOf.get(verdict as AutoVerdict) : undefined;
+  return facts ? { ...facts } : undefined;
 }

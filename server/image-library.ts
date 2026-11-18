@@ -10,7 +10,8 @@
 // already holds returns that version. Deleting is soft: render records keep
 // the version they used, and numbering carries on after a delete.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { join, relative, isAbsolute, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { initializeImageLibrary } from "./image-operations-schema.ts";

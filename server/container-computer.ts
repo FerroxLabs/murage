@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Cua-backed Local VM lifecycle and health checks.
 //
 // Murage owns only the sandbox boundary: image preparation, container
@@ -9,13 +10,16 @@ import { engineStderrRedacted, engineStderrTailRedacted, ENGINE_STDERR_CAPTURE_C
 import { cloudBoxRelayEnv, isCloudHome } from "./box-relay.ts";
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { writeFile } from "./counted-fs-promises.ts";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { augmentedPath } from "./env-path.ts";
 import { DATA_DIR } from "./config.ts";
+import { ownedPath } from "./data-roots.ts";
+import { rebaseStoredPath } from "./stored-paths.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { nextTask } from "./procs.ts";
 
@@ -83,6 +87,13 @@ export const SHARED_LOCAL_VM_TARGET: LocalVmTarget = {
   viewerPort: HOST_VIEWER_PORT,
   label: "shared",
 };
+
+function relocatedWorkspaceMount(mounts: Array<{ source?: string; destination?: string }> | undefined, target: LocalVmTarget): boolean {
+  if (mounts?.length !== 1 || mounts[0]?.destination !== VM_WORKSPACE_GUEST || typeof mounts[0].source !== "string") return false;
+  const tail = target.key === "shared" ? ["vm-home"] : ["vm-homes", target.workspaceDir.split(/[\\/]/).at(-1)!];
+  const next = rebaseStoredPath(mounts[0].source, root => [join(root, ...tail)]);
+  return "path" in next && resolve(next.path) === resolve(target.workspaceDir);
+}
 
 /** Derive filesystem/container identities from a digest, never from a bot's
  * display name or caller-controlled path fragment. */
@@ -209,12 +220,12 @@ LABEL ${MANAGED_LABEL}="1" \\
  * status (the start-up engine snapshot scan reached it before listen). `exec` is a test seam. */
 export async function sh(cmd: string, args: string[], timeout = 8000, exec: typeof run = run): Promise<{ stdout: string }> {
   await nextTask();
-  const { stdout } = await exec(cmd, args, {
+  const { stdout } = await exec(cmd, [...args], withHideInherit({
     timeout,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, PATH: augmentedPath() },
-  });
+  }));
   return { stdout };
 }
 
@@ -286,6 +297,8 @@ export interface ContainerComputerStatus {
   image: boolean;
   imageMatches: boolean;
   managed: boolean;
+  /** An owned container's only bind is the exact constructor under a recorded previous data root. */
+  workspaceMoved?: boolean;
   container: "running" | "stopped" | "missing";
   network: "loopback" | "unsafe" | "unknown";
   security: "hardened" | "unsafe" | "unknown";
@@ -316,6 +329,7 @@ function emptyStatus(platform: NodeJS.Platform, target: LocalVmTarget): Containe
     image: false,
     imageMatches: false,
     managed: false,
+    workspaceMoved: false,
     container: "missing",
     network: "unknown",
     security: "unknown",
@@ -500,6 +514,7 @@ export async function containerComputerStatus(
       status.imageMatches =
         appleImage === IMAGE && status.image_id !== null && appleImageId === status.image_id;
       status.managed = containerLabelsMatch(detail?.configuration?.labels, target);
+      status.workspaceMoved = status.managed && relocatedWorkspaceMount(detail?.configuration?.mounts?.map(mount => ({ source: mount.source, destination: mount.destination })), target);
       status.persistence = appleWorkspaceMountIsSafe(detail?.configuration?.mounts, platform, target.workspaceDir)
         ? "durable"
         : "unsafe";
@@ -537,6 +552,8 @@ export async function containerComputerStatus(
         status.image_id !== null &&
         normalizeImageId(detail?.Image) === status.image_id;
       status.managed = containerLabelsMatch(detail?.Config?.Labels, target);
+      status.workspaceMoved = status.managed && relocatedWorkspaceMount(detail?.Mounts?.filter(mount => mount.Type === "bind" && mount.RW === true).map(mount => ({ source: mount.Source, destination: mount.Destination })), target)
+        && detail?.Mounts?.length === 1;
       status.persistence = dockerWorkspaceMountIsSafe(
         detail?.Mounts,
         platform,
@@ -929,10 +946,17 @@ export async function containerComputerAction(
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
 ): Promise<ContainerComputerStatus> {
   if (runner === sh && platform === process.platform) screenshotStatusCache.delete(target.key);
-  const before = await containerComputerStatus(runner, platform, target);
+  let before = await containerComputerStatus(runner, platform, target);
   const runtime = before.runtime;
   if (!runtime) throw Object.assign(new Error(before.problem ?? "No container runtime is installed"), { status: 409 });
   if (!before.daemonUp) throw Object.assign(new Error(before.problem ?? `${runtime} is not running`), { status: 409 });
+
+  // S5 site 22: a bind cannot be edited in place. Recreate only the exact owned target and keep its host workspace.
+  if (action === "run" && before.workspaceMoved && before.managed && before.image && before.create_supported) {
+    ownedPath(target.workspaceDir, { create: true });
+    await runner(runtime, ["rm", runtime === "container" ? "--force" : "-f", target.containerName], 2 * 60_000);
+    before = await containerComputerStatus(runner, platform, target);
+  }
 
   if (action === "run" && before.container !== "missing") {
     throw Object.assign(new Error("A Local VM already exists; remove it before creating a replacement"), { status: 409 });

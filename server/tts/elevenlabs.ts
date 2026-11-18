@@ -1,3 +1,4 @@
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { ProviderBudgetReached, speechFetch, type SpeechPolicy } from "./speech-policy.ts";
 // ElevenLabs, the one voice.
 //
@@ -72,7 +73,7 @@ export type VerifyResult = { ok: true } | { ok: false; message: string };
 
 async function safeJson(res: Response): Promise<any> {
   try {
-    return await res.json();
+    return await registerBusyloopPayloadSite("read", res.json());
   } catch {
     return null;
   }
@@ -107,7 +108,7 @@ function message(status: number, what: string, body: any): string {
  * picker needs next, so it tests exactly the capability that matters. */
 export async function verifyKey(key: string): Promise<VerifyResult> {
   try {
-    const res = await fetch(`${API}/voices`, {
+    const res = await fetch(fluxRouteFor(`${API}/voices`).requestUrl, {
       headers: { "xi-api-key": key },
       redirect: "error",
       signal: AbortSignal.timeout(20_000),
@@ -120,7 +121,7 @@ export async function verifyKey(key: string): Promise<VerifyResult> {
 }
 
 async function getJson(key: string, url: string, what: string): Promise<any> {
-  const res = await fetch(url, {
+  const res = await fetch(fluxRouteFor(url).requestUrl, {
     headers: { "xi-api-key": key },
     redirect: "error",
     signal: AbortSignal.timeout(20_000),
@@ -195,7 +196,7 @@ export async function listVoices(key: string, { query }: { query?: string } = {}
 /** Add a Voice Library voice to the owner's own account (it takes one of
  *  their voice slots) and return the id to speak with. */
 export async function addSharedVoice(key: string, publicOwnerId: string, voiceId: string, name: string): Promise<string> {
-  const res = await fetch(`${API}/voices/add/${encodeURIComponent(publicOwnerId)}/${encodeURIComponent(voiceId)}`, {
+  const res = await fetch(fluxRouteFor(`${API}/voices/add/${encodeURIComponent(publicOwnerId)}/${encodeURIComponent(voiceId)}`).requestUrl, {
     method: "POST",
     headers: { "xi-api-key": key, "content-type": "application/json" },
     body: JSON.stringify({ new_name: name }),

@@ -19,9 +19,9 @@
 // call is injected, so nothing here can reach api.sendlane.com.
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_LIST_ID, type SendlaneFetch } from "../src/announcements";
+import { DEFAULT_LIST_ID, FORWARDER_HOURLY_CAP, UNSUBSCRIBE_HOURLY_CAP, type SendlaneFetch } from "../src/announcements";
 import { createWorker } from "../src/index";
 
 const BASE_URL = "https://auth.murage.test";
@@ -57,15 +57,15 @@ function fakeSendlane(answers: Array<Answer | Error> = [OK]) {
  *  Worker reads it as a string; this is the only way a test can hand it a
  *  different one. */
 function withEnv(overrides: Record<string, string>): Env {
-  return { ...env, ...overrides } as unknown as Env;
+  return { ...env, MURAGE_ENV: "live", ...overrides } as unknown as Env;
 }
 
 async function subscribe(
   sendlane: SendlaneFetch,
   body: unknown,
-  options: { caller?: string; env?: Env } = {},
+  options: { caller?: string; env?: Env; headers?: Record<string, string> } = {},
 ) {
-  const headers = new Headers({ "content-type": "application/json" });
+  const headers = new Headers({ "content-type": "application/json", ...options.headers });
   headers.set("cf-connecting-ip", options.caller ?? "203.0.113.7");
   const request = new Request(`${BASE_URL}${PATH}`, {
     method: "POST",
@@ -73,50 +73,12 @@ async function subscribe(
     body: JSON.stringify(body),
   });
   const ctx = createExecutionContext();
-  const response = await createWorker(fetch, sendlane).fetch(request, options.env ?? env, ctx);
+  const response = await createWorker(fetch, sendlane).fetch(request, options.env ?? withEnv({}), ctx);
   await waitOnExecutionContext(ctx);
   return response;
 }
 
 describe("announcement signup", () => {
-  it("puts one address on Murage's own list, and the keys reach Sendlane only", async () => {
-    const sendlane = fakeSendlane();
-    const response = await subscribe(sendlane.impl, { email: "Someone@Example.COM ", name: "  Someone  " });
-
-    expect(response.status).toBe(200);
-    const text = await response.text();
-    expect(JSON.parse(text)).toEqual({ ok: true });
-
-    expect(sendlane.calls).toHaveLength(1);
-    const sent = sendlane.calls[0]!;
-    expect(sent.url).toContain("https://api.sendlane.com/api/v1/list-subscriber-add");
-    // The owner's ruling: "List ID 37 is Murage's list."
-    expect(sent.body.get("list_id")).toBe(DEFAULT_LIST_ID);
-    expect(sent.body.get("email")).toBe("someone@example.com");
-    expect(sent.body.get("first_name")).toBe("Someone");
-    expect(sent.body.get("tag_names")).toBe("murage,app-onboarding");
-    expect(sent.body.get("api")).toBe(env.SENDLANE_API_KEY);
-    expect(sent.body.get("hash")).toBe(env.SENDLANE_HASH_KEY);
-
-    // And nowhere else. A credential that leaks into the answer is a
-    // credential that has shipped to every caller of a public endpoint.
-    expect(text).not.toContain(env.SENDLANE_API_KEY);
-    expect(text).not.toContain(env.SENDLANE_HASH_KEY);
-    response.headers.forEach((value) => {
-      expect(value).not.toContain(env.SENDLANE_API_KEY);
-      expect(value).not.toContain(env.SENDLANE_HASH_KEY);
-    });
-  });
-
-  it("omits a name it does not have rather than sending an empty one", async () => {
-    const sendlane = fakeSendlane();
-    // Sendlane leaves omitted fields intact, so a blank name must be absent
-    // rather than an empty string that wipes a name the record already has.
-    const response = await subscribe(sendlane.impl, { email: "noname@example.com", name: "   " });
-    expect(response.status).toBe(200);
-    expect(sendlane.calls[0]!.body.has("first_name")).toBe(false);
-  });
-
   it("refuses an address that is not an address, before anything reaches Sendlane", async () => {
     const sendlane = fakeSendlane();
     for (const bad of ["", "   ", "someone", "someone@", "@example.com", "some one@example.com"]) {
@@ -126,135 +88,6 @@ describe("announcement signup", () => {
     }
     // The client is not trusted to have validated anything.
     expect(sendlane.calls).toHaveLength(0);
-  });
-
-  it("treats an HTML error body as retryable, not as a rejection", async () => {
-    // Sendlane answers with an HTML error page instead of JSON when it is
-    // unhappy, including under concurrency, and it does it with a 200. Read as
-    // a success, that body would report a subscriber who was never added.
-    const sendlane = fakeSendlane([HTML, HTML, OK]);
-    const response = await subscribe(sendlane.impl, { email: "html@example.com" });
-    expect(response.status).toBe(200);
-    expect(sendlane.calls).toHaveLength(3);
-  });
-
-  it("retries a server error and then reports failure rather than success", async () => {
-    const sendlane = fakeSendlane([UNWELL]);
-    const response = await subscribe(sendlane.impl, { email: "unwell@example.com" });
-    expect(response.status).toBe(502);
-    await expect(response.json()).resolves.toEqual({ error: "announcements_upstream" });
-    expect(sendlane.calls).toHaveLength(3);
-  });
-
-  it("does not retry a plain rejection", async () => {
-    // A 4xx that is not an HTML error page is Sendlane saying no on purpose.
-    // Hammering it three times changes nothing.
-    const sendlane = fakeSendlane([REJECTED]);
-    const response = await subscribe(sendlane.impl, { email: "rejected@example.com" });
-    expect(response.status).toBe(502);
-    expect(sendlane.calls).toHaveLength(1);
-  });
-
-  it("reports a network failure instead of throwing it at the caller", async () => {
-    const sendlane = fakeSendlane([new Error("ECONNREFUSED")]);
-    const response = await subscribe(sendlane.impl, { email: "down@example.com" });
-    expect(response.status).toBe(502);
-    await expect(response.json()).resolves.toEqual({ error: "announcements_upstream" });
-  });
-
-  it("refuses, visibly, when the Worker holds no Sendlane credentials", async () => {
-    // The failure that mattered was the silent one: a build that collected
-    // nothing said nothing. An unconfigured Worker must not answer a cheerful
-    // 200 that the desktop will record as a subscriber.
-    const sendlane = fakeSendlane();
-    const unset: Array<Record<string, string>> = [
-      { SENDLANE_API_KEY: "" },
-      { SENDLANE_HASH_KEY: "" },
-      { SENDLANE_API_KEY: "   ", SENDLANE_HASH_KEY: "   " },
-    ];
-    for (const missing of unset) {
-      const response = await subscribe(
-        sendlane.impl,
-        { email: "unconfigured@example.com" },
-        { env: withEnv(missing), caller: "203.0.113.9" },
-      );
-      expect(response.status).toBe(503);
-      await expect(response.json()).resolves.toEqual({ error: "announcements_unconfigured" });
-    }
-    expect(sendlane.calls).toHaveLength(0);
-  });
-
-  it("refuses a list id that is not a list id rather than posting to one", async () => {
-    const sendlane = fakeSendlane();
-    const response = await subscribe(
-      sendlane.impl,
-      { email: "badlist@example.com" },
-      { env: withEnv({ SENDLANE_LIST_ID: "thirty-seven" }), caller: "203.0.113.10" },
-    );
-    expect(response.status).toBe(503);
-    expect(sendlane.calls).toHaveLength(0);
-  });
-
-  it("lets an operator point the signup at a different list", async () => {
-    const sendlane = fakeSendlane();
-    const response = await subscribe(
-      sendlane.impl,
-      { email: "otherlist@example.com" },
-      { env: withEnv({ SENDLANE_LIST_ID: "412" }), caller: "203.0.113.11" },
-    );
-    expect(response.status).toBe(200);
-    expect(sendlane.calls[0]!.body.get("list_id")).toBe("412");
-  });
-
-  it("stops one address being signed up over and over", async () => {
-    const sendlane = fakeSendlane();
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const allowed = await subscribe(
-        sendlane.impl,
-        { email: "repeat@example.com" },
-        { caller: "203.0.113.12" },
-      );
-      expect(allowed.status, `attempt ${attempt}`).toBe(200);
-    }
-    const refused = await subscribe(
-      sendlane.impl,
-      { email: "repeat@example.com" },
-      { caller: "203.0.113.12" },
-    );
-    expect(refused.status).toBe(429);
-    await expect(refused.json()).resolves.toEqual({ error: "rate_limited" });
-    // Refused means refused: the fourth attempt never reached Sendlane, and
-    // the list never saw it.
-    expect(sendlane.calls).toHaveLength(3);
-  });
-
-  it("stops one caller working through a list of addresses", async () => {
-    // The per-address limit alone stops nothing — a script simply uses a new
-    // address every time — so the caller is bounded too.
-    const sendlane = fakeSendlane();
-    for (let index = 0; index < 10; index += 1) {
-      const allowed = await subscribe(
-        sendlane.impl,
-        { email: `flood-${index}@example.com` },
-        { caller: "198.51.100.4" },
-      );
-      expect(allowed.status, `address ${index}`).toBe(200);
-    }
-    const refused = await subscribe(
-      sendlane.impl,
-      { email: "flood-10@example.com" },
-      { caller: "198.51.100.4" },
-    );
-    expect(refused.status).toBe(429);
-    expect(sendlane.calls).toHaveLength(10);
-
-    // Somebody else's first run is not collateral damage.
-    const elsewhere = await subscribe(
-      sendlane.impl,
-      { email: "flood-10@example.com" },
-      { caller: "198.51.100.5" },
-    );
-    expect(elsewhere.status).toBe(200);
   });
 
   it("is a POST of JSON and nothing else", async () => {
@@ -292,4 +125,140 @@ describe("announcement signup", () => {
     await expect(response.json()).resolves.toEqual({ error: "invalid_request" });
     expect(sendlane.calls).toHaveLength(0);
   });
+});
+
+
+describe("site forwarder (X-Murage-Site-Token)", () => {
+  // Test-only value, bound only in this file.
+  const TOKEN = "test-only-site-forwarder-token-not-a-real-one"; // secret-scan: fixture
+  const WITH_TOKEN = { "X-Murage-Site-Token": TOKEN };
+  const forwarderEnv = (overrides: Record<string, string> = {}) => withEnv({ SITE_FORWARDER_TOKEN: TOKEN, ...overrides });
+  const hmac = async (scope: string, value: string) => {
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.BETTER_AUTH_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    return Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${scope}:${value}`))), (b) => b.toString(16).padStart(2, "0")).join("");
+  };
+  const consents = async () => (await env.DB.prepare(
+    "SELECT email_key, source, consent_text, list_id, created_at FROM announcement_consents ORDER BY id",
+  ).all<{ email_key: string; source: string; consent_text: string | null; list_id: string | null; created_at: number }>()).results;
+
+  it("a valid token skips the edge limiter (MACHINE_OPEN_LIMIT); no token and a wrong token do not", async () => {
+    const sendlane = fakeSendlane();
+    const limiter = { calls: 0, async limit() { limiter.calls += 1; return { success: false }; } };
+    const limited = (overrides: Record<string, string> = {}) => ({ ...forwarderEnv(overrides), MACHINE_OPEN_LIMIT: limiter }) as unknown as Env;
+    const ok = await subscribe(sendlane.impl, { email: "edge@example.com", source: "footer", requestId: "edge-request-0000000001" }, { env: limited(), headers: WITH_TOKEN });
+    expect(ok.status).toBe(200);
+    expect(limiter.calls).toBe(0);
+    const anonymous = await subscribe(sendlane.impl, { email: "edge2@example.com" }, { env: limited() });
+    expect(anonymous.status).toBe(429);
+    const wrong = await subscribe(sendlane.impl, { email: "edge3@example.com" }, { env: limited(), headers: { "X-Murage-Site-Token": "nope" } });
+    expect(wrong.status).toBe(429);
+    // Updates consent B1: the forwarder is D1 only, no Sendlane call.
+    expect(sendlane.calls).toHaveLength(0);
+  });
+
+  it("a wrong token is 401, logged with names only, and nothing is sent or recorded", async () => {
+    const sendlane = fakeSendlane();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await subscribe(sendlane.impl, { email: "wrong@example.com", name: "Wrong Name", source: "site" },
+      { env: forwarderEnv(), headers: { "X-Murage-Site-Token": `${TOKEN}x` } });
+    const lines = error.mock.calls.map((c) => String(c[0]));
+    error.mockRestore();
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "unauthorized" });
+    expect(sendlane.calls).toHaveLength(0);
+    expect(await consents()).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM announcement_rate_limits").first<{ n: number }>())?.n).toBe(0);
+    expect(lines.some((l) => l.includes("forwarder_unauthorized"))).toBe(true);
+    for (const l of lines) {
+      expect(l).not.toContain(TOKEN);
+      expect(l).not.toContain("wrong@example.com");
+      expect(l).not.toContain("Wrong Name");
+    }
+  });
+
+  it("with the secret missing or blank the token is ignored: today's strict path, no forwarder", async () => {
+    for (const secret of ["", "   "]) {
+      const sendlane = fakeSendlane();
+      const off = withEnv({ SITE_FORWARDER_TOKEN: secret });
+      // An empty secret never matches an empty or any other header.
+      for (const header of [TOKEN, "", secret]) {
+        const extra = await subscribe(sendlane.impl, { email: "off@example.com", source: "site" },
+          { env: off, caller: "203.0.113.60", headers: { "X-Murage-Site-Token": header } });
+        expect(extra.status, `secret "${secret}" header "${header}"`).toBe(400);
+        await expect(extra.json()).resolves.toEqual({ error: "invalid_request" });
+      }
+      const plain = await subscribe(sendlane.impl, { email: `plain${secret.length}@example.com` },
+        { env: off, caller: "203.0.113.61", headers: WITH_TOKEN });
+      expect(plain.status).toBe(200);
+      // Updates consent B1: the 1.0.19 path is D1 only, no Sendlane call.
+      expect(sendlane.calls).toHaveLength(0);
+    }
+    expect(await consents()).toHaveLength(0);
+  });
+
+});
+
+describe("POST /v1/announcements/unsubscribe (site forwarder only)", () => {
+  const TOKEN = "test-only-site-forwarder-token-not-a-real-one"; // secret-scan: fixture
+  const WITH_TOKEN = { "X-Murage-Site-Token": TOKEN };
+  const UNSUB = "/v1/announcements/unsubscribe";
+  const unsubEnv = (overrides: Record<string, string> = {}) => withEnv({ SITE_FORWARDER_TOKEN: TOKEN, SENDLANE_WAITLIST_LIST_ID: "39", ...overrides });
+  const SUCCESS: Answer = { status: 200, body: '{"success":"Unsubscribed Successfully."}' };
+  const hmac = async (scope: string, value: string) => {
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.BETTER_AUTH_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    return Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${scope}:${value}`))), (b) => b.toString(16).padStart(2, "0")).join("");
+  };
+
+  async function unsubscribe(sendlane: SendlaneFetch, body: unknown, options: { env?: Env; headers?: Record<string, string>; caller?: string } = {}) {
+    const headers = new Headers({ "content-type": "application/json", ...(options.headers ?? WITH_TOKEN) });
+    headers.set("cf-connecting-ip", options.caller ?? "198.51.100.90");
+    const request = new Request(`${BASE_URL}${UNSUB}`, { method: "POST", headers, body: JSON.stringify(body) });
+    const ctx = createExecutionContext();
+    const response = await createWorker(fetch, sendlane).fetch(request, options.env ?? unsubEnv(), ctx);
+    await waitOnExecutionContext(ctx);
+    return response;
+  }
+
+  it("answers the unknown-route 404 without the token, with a wrong token, and with the secret unset", async () => {
+    const sendlane = fakeSendlane();
+    const unknown = await subscribeUnknownRoute();
+    for (const attempt of [
+      await unsubscribe(sendlane.impl, { email: "a@example.com" }, { headers: {} }),
+      await unsubscribe(sendlane.impl, { email: "a@example.com" }, { headers: { "X-Murage-Site-Token": "nope" } }),
+      await unsubscribe(sendlane.impl, { email: "a@example.com" }, { env: withEnv({}), headers: WITH_TOKEN }),
+    ]) {
+      expect(attempt.status).toBe(404);
+      expect(await attempt.text()).toBe(unknown);
+    }
+    expect(sendlane.calls).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM announcement_optouts").first<{ n: number }>())?.n).toBe(0);
+  });
+
+  async function subscribeUnknownRoute() {
+    const ctx = createExecutionContext();
+    const response = await createWorker(fetch, fakeSendlane().impl).fetch(
+      new Request(`${BASE_URL}/v1/announcements/nothing-here`, { method: "POST", body: "{}" }), withEnv({}), ctx);
+    await waitOnExecutionContext(ctx);
+    return response.text();
+  }
+
+  it("strict body: unknown fields and bad addresses are 400", async () => {
+    const sendlane = fakeSendlane();
+    expect((await unsubscribe(sendlane.impl, { email: "x@example.com", extra: 1 })).status).toBe(400);
+    expect((await unsubscribe(sendlane.impl, { email: "not-an-address" })).status).toBe(400);
+    expect(sendlane.calls).toHaveLength(0);
+  });
+
+  it("the per-address limit applies; the per-IP edge limiter is skipped for the forwarder", async () => {
+    const sendlane = fakeSendlane([SUCCESS]);
+    const limiter = { calls: 0, async limit() { limiter.calls += 1; return { success: false }; } };
+    const limited = { ...unsubEnv(), MACHINE_OPEN_LIMIT: limiter } as unknown as Env;
+    for (let index = 0; index < 3; index += 1) expect((await unsubscribe(sendlane.impl, { email: "lim@example.com" }, { env: limited })).status).toBe(200);
+    expect((await unsubscribe(sendlane.impl, { email: "lim@example.com" }, { env: limited })).status).toBe(429);
+    expect(limiter.calls).toBe(0);
+  });
+
+  const waitFor = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5)); expect(condition()).toBe(true); };
+  const nonceRow = async (key: string) => env.DB.prepare("SELECT comp_pending, comp_nonce FROM announcement_optouts WHERE email_key = ? AND list_id = ?").bind(key, DEFAULT_LIST_ID).first<{ comp_pending: number; comp_nonce: string | null }>();
+
 });

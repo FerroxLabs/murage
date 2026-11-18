@@ -12,7 +12,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
-import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { recordAdmittedEvents, type EventRecorder } from "../testing/admitted-events.ts";
 import { AntigravityDriver } from "./antigravity.ts";
 import { ClaudeDriver } from "./claude.ts";
 import { PiDriver } from "./pi.ts";
@@ -35,7 +35,7 @@ afterEach(async () => {
 });
 
 const turnLog = async (threadId: string, send: Record<string, unknown> = {}) => {
-  recorder = recordEvents(instance.adapter);
+  recorder = recordAdmittedEvents(instance.adapter);
   await instance.adapter.sendTurn({ threadId, text: "go", cwd: scratch, ...send });
   await recorder.until((event) => event.type === "turn.completed");
   return readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");

@@ -579,3 +579,123 @@ export function ratePushRevision(
   store.rateRisk(threadId, requestId, rating, now, revision);
   return rating;
 }
+
+// ── the owner's browser on a Cloud home (browser-owner-policy.ts, DESIGN section 4) ──────────────────────────────────
+//
+// An Allow from the owner's remembered browser needs a fresh emailed code only when the card is high risk. This is a strict
+// subset of "not low": the cards that spend money, delete outside the folder, touch credentials, send mail, publish, take
+// local-computer scope, cannot be read in full, or carry no stamp. Messages the stop line holds are plain here (a sales bot
+// sends all day and Always does not exist on a Cloud home). The rating is stamped on the card when it is raised
+// (`card.riskReason`) and recomputed from the live card when it is answered; the stricter of the two wins.
+
+export const RISK_REASONS = ["pay", "delete", "credential", "message", "read", "none"] as const;
+export type RiskReason = typeof RISK_REASONS[number];
+const REASON_RANK: Record<RiskReason, number> = { pay: 5, delete: 4, credential: 3, message: 2, read: 1, none: 0 };
+const HIGH_REASONS: ReadonlySet<string> = new Set<RiskReason>(["pay", "delete", "credential"]);
+export const isRiskReason = (value: unknown): value is RiskReason => typeof value === "string" && Object.hasOwn(REASON_RANK, value);
+/** The stricter of two reasons. An absent or unknown value counts as the other. */
+export const stricterReason = (a: unknown, b: unknown): RiskReason | undefined => {
+  const x = isRiskReason(a) ? a : undefined, y = isRiskReason(b) ? b : undefined;
+  return x && y ? (REASON_RANK[y] > REASON_RANK[x] ? y : x) : x ?? y;
+};
+export const reasonIsHigh = (reason: unknown): boolean => typeof reason === "string" && HIGH_REASONS.has(reason);
+
+/** The kind of every stop-line finding behind a call: the hit, and every finding of every row of a connector batch. A kind the
+ *  rating does not know reads as the strictest ("pay"), so a new kind fails closed. */
+function stopKinds(stopHit: unknown, stopRows: unknown): RiskReason[] {
+  const kinds: RiskReason[] = [];
+  const add = (hit: unknown) => {
+    const kind = hit !== null && typeof hit === "object" ? (hit as { kind?: unknown }).kind : undefined;
+    kinds.push(kind === "pay" || kind === "delete" || kind === "message" ? kind : "pay");
+  };
+  if (stopHit !== null && stopHit !== undefined && stopHit !== false) add(stopHit);
+  if (Array.isArray(stopRows)) for (const row of stopRows) { if (Array.isArray(row)) for (const hit of row) add(hit); else if (row) add(row); }
+  return kinds;
+}
+
+export interface BrowserRiskInput {
+  stopHit?: unknown;
+  /** The per-row findings of a connector batch (stopLineRowsFor). Mixed batches rate by the strictest row. */
+  stopRows?: unknown;
+  tool?: unknown;
+  summary?: unknown;
+  /** The paths a call touches, when known. */
+  paths?: unknown;
+  truncated?: boolean;
+  scope?: unknown;
+  /** What the existing rating said about everything the stop line and the credential rules did not name. */
+  rating?: "low" | "risky" | "unrated";
+}
+
+/** The reason to stamp on a card, or to recompute from the live card. Never throws. */
+export function riskReasonOf(input: BrowserRiskInput): RiskReason {
+  try {
+    let reason: RiskReason = "none";
+    const raise = (next: RiskReason) => { if (REASON_RANK[next] > REASON_RANK[reason]) reason = next; };
+    for (const kind of stopKinds(input.stopHit, input.stopRows)) raise(kind);
+    // a card that cannot be read in full, or takes the local computer, is stamped as the strictest reading of credentials
+    if (input.truncated || input.scope) raise("credential");
+    const { tool, summary } = input;
+    if (typeof tool !== "string" || typeof summary !== "string" || tool.length + summary.length + 1 > MAX_RISK_TEXT) raise("credential");
+    else {
+      const paths = Array.isArray(input.paths) ? input.paths.filter((path): path is string => typeof path === "string").join(" ") : "";
+      if (CREDENTIAL_CHECKS.some((check) => check(`${tool}\n${summary}`) || (paths !== "" && check(paths)))) raise("credential");
+    }
+    if (reason === "none" && input.rating !== "low") raise("read");
+    return reason;
+  } catch {
+    return "pay";
+  }
+}
+
+/** The fields of a card this rating reads. */
+export interface BrowserRiskCard {
+  requestId?: unknown; tool?: unknown; summary?: unknown; subtitle?: unknown; riskReason?: unknown; toolInputTruncated?: unknown; approvalScope?: unknown;
+  emailSend?: unknown; emailTrustOffer?: unknown; routineRequest?: unknown; skillRequest?: unknown; questions?: unknown; browserCardKind?: unknown;
+}
+export interface BrowserRiskLive { stopHit?: unknown; stopRows?: unknown; paths?: unknown }
+/** What the harness knows about a request id the card alone does not say. */
+export type BrowserRiskKnown = "peer" | "host-consent" | "browser-step" | undefined;
+
+/** Kinds the harness raises that are not a tool permission: plain in r1, by an explicit list. Anything else with no stamp is high. */
+const PLAIN_REQUEST_PREFIXES = ["limit-", "image-", "setup-", "ask-"];
+
+/** The reason a browser Allow is judged by: the stamp and the live card, whichever is stricter. Undefined when the card is not a
+ *  tool permission (it has no reason of its own). */
+export function browserEffectiveReason(card: BrowserRiskCard, live?: BrowserRiskLive): RiskReason | undefined {
+  const liveReason = riskReasonOf({
+    stopHit: live?.stopHit, stopRows: live?.stopRows, paths: live?.paths, tool: card.tool, summary: card.summary ?? card.subtitle,
+    truncated: card.toolInputTruncated === true, scope: card.approvalScope, rating: "low",
+  });
+  return stricterReason(card.riskReason, liveReason);
+}
+
+/** Does this answer need a fresh emailed code from the owner's browser? True when in doubt. */
+export function browserHighRisk(card: BrowserRiskCard | null | undefined, live?: BrowserRiskLive, known?: BrowserRiskKnown): boolean {
+  try {
+    if (!card) return true;
+    if (card.emailSend || card.emailTrustOffer) return true;
+    const requestId = typeof card.requestId === "string" ? card.requestId : "";
+    if (requestId.startsWith("publish-")) return true;
+    if (card.approvalScope) return true;
+    if (Array.isArray(card.questions) && card.questions.length) return false;
+    if (card.toolInputTruncated === true) return true;
+    if (card.routineRequest || card.skillRequest || card.browserCardKind) return false;
+    if (known) return false;
+    if (typeof card.tool === "string") {
+      // a tool permission: stamped, readable, and not one of the high reasons now
+      if (!isRiskReason(card.riskReason)) return true;
+      return reasonIsHigh(browserEffectiveReason(card, live));
+    }
+    if (PLAIN_REQUEST_PREFIXES.some(prefix => requestId.startsWith(prefix))) return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+/** The advisory stamp a card carries: `lowRisk` everywhere (the phone and desktop read it), `riskReason` only on a Cloud home,
+ * where the owner's browser reads it. Off a Cloud home the stamp is exactly what it was before the reason existed. */
+export function riskStamp(low: boolean, riskReason: RiskReason, cloudHome: boolean): { lowRisk?: true; riskReason?: RiskReason } {
+  return { ...(low ? { lowRisk: true as const } : {}), ...(cloudHome ? { riskReason } : {}) };
+}

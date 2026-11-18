@@ -1,0 +1,45 @@
+COMMAND node_modules/.bin/vitest run server/decision/engine-action.test.ts -t "BASE native questions"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/engine-action.test.ts > BASE native questions retain their original card path at ask
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/engine-action.test.ts > BASE native questions retain their original card path at auto
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=56 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ❯ server/decision/engine-action.test.ts (10 tests | 3 failed | 7 skipped) 1783ms
+   ↓ BASE engine builder receives frozen authority/verdict and binds grant keys and options once
+   ↓ owner RUN never calls the engine builder or BASE callback
+   ↓ reserved engine action identities cannot create an approval
+   ↓ cleared deny before engine presentation runs and leaves no card
+   ↓ a cleared service deny after queue persistence executes once without a new permission row
+   ↓ native posture retirement supersedes an answered identity without sending another answer
+   ↓ structured question parts keep their native choices and settle with one complete answer
+   × BASE native questions retain their original card path at ask 598ms
+   × BASE native questions retain their original card path at auto 603ms
+   × BASE native questions retain their original card path at full 578ms
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 7 skipped (10)
+   Start at  07:52:47
+   Duration  10.78s (transform 7.05s, setup 8.40s, import 450ms, tests 1.78s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/engine-action.test.ts > BASE native questions retain their original card path at ask
+ FAIL  server/decision/engine-action.test.ts > BASE native questions retain their original card path at auto
+ FAIL  server/decision/engine-action.test.ts > BASE native questions retain their original card path at full
+AssertionError: expected 'question' to be 'card' // Object.is equality
+
+Expected: "card"
+Received: "question"
+
+ ❯ server/decision/engine-action.test.ts:30:166
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+

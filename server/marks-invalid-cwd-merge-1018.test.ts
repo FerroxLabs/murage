@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { approvalKey, autoVerdict, type AutoContext } from "./auto-approve.ts";
 import { exactCommandKey } from "../shared/exact-command.ts";
+import { expectNoLimitsOwnerOutcome } from "./testing/no-limits-1019.ts";
 
 const levels = [
   { id: "ask" }, { id: "auto", autoApprove: true },
@@ -20,12 +21,18 @@ const context = (command: string, patch = {}) => ({ commandText: command, comman
   unseen: { platform: "posix", fs: { realpath: (path: string) => path, stat: () => ({ isFile: () => true, isDirectory: () => false }) } },
   sessionFile: () => "unavailable", ...patch }) as unknown as AutoContext;
 
+// NOLIM 1.0.19 (N1, N2.4): the No limits bot runs this unknown-target row for work whose stored origin is the owner's; an unattended,
+// automated or channel-owner turn is "unproven" and keeps the card. Every other level keeps the card everywhere.
+const noLimitsRuns = (bot: { noLimits?: boolean }, patch: { unattended?: boolean; automated?: boolean; channelOwner?: boolean }) =>
+  bot.noLimits === true && patch.unattended !== true && patch.automated !== true && patch.channelOwner !== true;
+
 describe("MARKS merge: an invalid command folder never auto-approves", () => {
   for (const [label, folder] of [["empty cwd plus the flag", { commandCwd: "", commandCwdInvalid: true }], ["the flag beside a valid-looking cwd", { commandCwd: "/w", commandCwdInvalid: true }]] as const) {
     it(`${label}: no approval and a card at every level and turn kind`, () => {
       for (const bot of levels) for (const patch of contexts) {
         const verdict = autoVerdict(bot, "Bash", "touch out", context("touch out", { ...patch, ...folder }));
-        expect(verdict, `${bot.id} ${JSON.stringify(patch)}`).toMatchObject({ approve: null, classification: "deny", rule: "unknown-target" });
+        if (noLimitsRuns(bot, patch)) expectNoLimitsOwnerOutcome(verdict, "touch out", "unknown-target", `${bot.id} ${JSON.stringify(patch)}`);
+        else expect(verdict, `${bot.id} ${JSON.stringify(patch)}`).toMatchObject({ approve: null, classification: "deny", rule: "unknown-target" });
       }
     });
   }
@@ -41,7 +48,9 @@ describe("MARKS N4: an invalid command folder is never run silently (4 levels x 
     for (const folder of [{ commandCwd: "", commandCwdInvalid: true }, { commandCwd: "/w", commandCwdInvalid: true }]) {
       for (const bot of levels) for (const patch of contexts) {
         const verdict = autoVerdict(bot, "Bash", command, context(command, { ...patch, ...folder }));
-        expect(verdict, `${command} ${bot.id} ${JSON.stringify(patch)} ${JSON.stringify(folder)}`).toMatchObject({ approve: null, source: "always-ask", classification: "deny", rule: "unknown-target" });
+        const label = `${command} ${bot.id} ${JSON.stringify(patch)} ${JSON.stringify(folder)}`;
+        if (noLimitsRuns(bot, patch)) expectNoLimitsOwnerOutcome(verdict, command, "unknown-target", label);
+        else expect(verdict, label).toMatchObject({ approve: null, source: "always-ask", classification: "deny", rule: "unknown-target" });
       }
     }
   });

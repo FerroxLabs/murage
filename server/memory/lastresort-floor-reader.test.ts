@@ -99,10 +99,15 @@ it("(f) additive: words nobody proved are the owner's (unproven) plus a reader a
 // Astra F2: the rows above build their own refs and readers, so they cannot see the production call sites. These read index.ts (as
 // direct-replay-without-memory.test.ts does) and pin the owner-only tag at both producers and the reader at all three floors.
 const index = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
-it("(g) wiring: the content tag is passed ONLY for the owner, at the direct and the room producer", () => {
-  expect(index).toContain('...ownReplayRefs(threadId, ownShownIds, directOwnerAudience ? "content" : undefined)');
-  expect(index).toContain('...ownReplayRefs(threadId, roomOwnShownIds, roomOwnerAudience ? "content" : undefined)');
-  expect(index.match(/ownReplayRefs\(/g)?.length).toBe(2);
+it("(g) wiring: direct and room minimal prompts use only fresh human input, with stored replay removed", () => {
+  expect(index).toContain('let directPrompt = memoryLastResort ? messageOnlyPrompt(turnLineage,');
+  expect(index).toContain('let roomPrompt = roomLastResort ? messageOnlyPrompt(roomTurnLineage,');
+  expect(index).not.toContain('ownReplayRefs(');
+  expect(index).toContain('userMessage.role === "user" ? userMessage.text : undefined');
+  expect(index).toContain('roomHumanInput.text : undefined');
+  expect(index).toContain('transcript = [];');
+  expect(index).toContain('memoryContext:memoryLastResort || selectiveDropped ? undefined');
+  expect(index).toContain('memoryContext:roomLastResort || roomSelectiveDropped ? undefined');
 });
 it("(h) wiring: a non-owner last resort passes its fence reader to all three floors, an owner one passes none", () => {
   expect(index).toContain('const lastResortReader: LineageReader | undefined = memoryLastResort && !directOwnerAudience ? { audience: { owner: false, scopeIds: lineageReaderScopes({ scopeIds: [], humanPrincipal }) } } : undefined;');

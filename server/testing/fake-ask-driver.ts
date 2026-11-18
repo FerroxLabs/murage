@@ -10,7 +10,7 @@
 //                    agents-env.json   the agents integration's env of the latest turn that mounted it (its comms token and thread).
 //                    hold              written by the test: the next turn takes it (it is removed) and stays live until `release`.
 //                    live              the turn id of a held turn, while it is held.
-//                    release           written by the test: the held turn takes it (it is removed) and finishes.
+//                    release           written by the test: the named turn takes it and finishes (empty retains the legacy any-turn signal).
 //                    reply.txt         written by the test: the next turn to reply says this text (once; it is removed).
 //                    limit             written by the test: the next turn to START refuses at its usage limit before doing anything (once; it is removed).
 //                    refuse-steer      written by the test: the next steer is rejected and the held turn stays live (once; it is removed).
@@ -28,7 +28,7 @@
 // be seen again by later turns). Every other turn replies "Ask reply" and completes.
 import { appendFileSync, existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AnyProviderDriver, DriverCreateInput, ProviderInstance, RuntimeEvent, RuntimeEventListener } from "../contracts.ts";
+import type { AnyProviderDriver, DriverCreateInput, ProviderInstance, RuntimeEvent, RuntimeEventListener, SourceContext } from "../contracts.ts";
 import { newEventId } from "../contracts.ts";
 import { appendNative } from "../drivers/native.ts";
 
@@ -39,9 +39,9 @@ type EmittedEvent = RuntimeEvent extends infer Event
   ? Event extends RuntimeEvent ? Omit<Event, "eventId" | "provider" | "providerInstanceId" | "createdAt"> : never
   : never;
 
-const waitForFile = (path: string, stop: () => boolean): Promise<void> => new Promise((resolve) => {
-  if (existsSync(path) || stop()) return resolve();
-  const poll = setInterval(() => { if (!existsSync(path) && !stop()) return; clearInterval(poll); resolve(); }, 20);
+const waitForFile = (ready: () => boolean, stop: () => boolean): Promise<void> => new Promise((resolve) => {
+  if (ready() || stop()) return resolve();
+  const poll = setInterval(() => { if (!ready() && !stop()) return; clearInterval(poll); resolve(); }, 20);
   poll.unref?.();
 });
 
@@ -61,32 +61,50 @@ export function makeAskDriver(kind: string = ASK_DRIVER_KIND): AnyProviderDriver
       const nativeTrace = input.environment.FAKE_ASK_NATIVE === "1";
       const note = (row: Record<string, unknown>) => { if (dir) appendFileSync(join(dir, "dump.jsonl"), `${JSON.stringify(row)}\n`); };
       const listeners = new Set<RuntimeEventListener>();
+      const sources = new Map<string, SourceContext | undefined>();
       const emit = (event: EmittedEvent) => {
         const full = { eventId: newEventId(), provider: kind, providerInstanceId: input.instanceId, createdAt: new Date().toISOString(), ...event } as RuntimeEvent;
-        for (const listener of Array.from(listeners)) listener(full);
+        // A provider frame carries the host admission captured for its exact
+        // turn, including the terminal frame after active work is removed.
+        for (const listener of Array.from(listeners)) listener(full, full.turnId ? sources.get(full.turnId) : undefined);
+        if (full.type === "turn.completed" && full.turnId) sources.delete(full.turnId);
       };
       const active = new Map<string, { turnId: string; interrupted: boolean }>();
       const adapter: ProviderInstance["adapter"] = {
         provider: kind,
         capabilities: switchable
-          ? Object.defineProperty({ sessionModelSwitch: "unsupported", ...(steers ? { queueing: true } : {}) }, "agentsMcp", { enumerable: true, get: () => !existsSync(join(dir, "no-tools")) })
-          : { sessionModelSwitch: "unsupported", ...(tools ? { agentsMcp: true } : {}), ...(steers ? { queueing: true } : {}) },
+          ? Object.defineProperty({ sessionModelSwitch: "unsupported", fencedWrites: true, ...(steers ? { queueing: true } : {}) }, "agentsMcp", { enumerable: true, get: () => !existsSync(join(dir, "no-tools")) })
+          : { sessionModelSwitch: "unsupported", fencedWrites: true, ...(tools ? { agentsMcp: true } : {}), ...(steers ? { queueing: true } : {}) },
         sendTurn: async (turn) => {
           const turnId = `ask-turn-${++counter}`;
-          note({ turnId, threadId: turn.threadId, text: turn.text, system: turn.system ?? "", ...(turn.integrations?.phoneJobs ? { phoneJobs: { tools: turn.integrations.phoneJobs.env.MURAGE_PHONE_TOOLS ?? "", hasToken: Boolean(turn.integrations.phoneJobs.env.MURAGE_CONTROL_TOKEN) } } : {}), ...(turn.integrations?.highlevel ? { highlevel: true } : {}) });
+          sources.set(turnId, turn.sourceContext);
           if (dir && turn.integrations?.agents) writeFileSync(join(dir, "agents-env.json"), JSON.stringify(turn.integrations.agents.env));
           if (dir && turn.integrations?.phoneJobs) writeFileSync(join(dir, "phone-jobs-env.json"), JSON.stringify(turn.integrations.phoneJobs.env));
-          if (nativeTrace) appendNative(turn.threadId, { dir: "out", source: "fakeAsk", msg: { type: "user", prompt: turn.text, turnId } });
           const entry = { turnId, interrupted: false };
           active.set(turn.threadId, entry);
           emit({ type: "turn.started", threadId: turn.threadId, turnId });
           if (dir && existsSync(join(dir, "limit"))) {
+            // A provider limit is one attempted turn; ordinary turns are recorded only at prompt ingress below.
+            note({ turnId, threadId: turn.threadId, text: turn.text, system: turn.system ?? "", ...(turn.integrations?.phoneJobs ? { phoneJobs: { tools: turn.integrations.phoneJobs.env.MURAGE_PHONE_TOOLS ?? "", hasToken: Boolean(turn.integrations.phoneJobs.env.MURAGE_CONTROL_TOKEN) } } : {}), ...(turn.integrations?.highlevel ? { highlevel: true } : {}) });
             rmSync(join(dir, "limit"), { force: true });
             active.delete(turn.threadId);
             emit({ type: "turn.completed", ok: false, stopReason: "usage limit reached", threadId: turn.threadId, turnId });
             return { turnId };
           }
-          try { turn.beforeSubmit?.(); } catch {
+          let attempt: number | void = undefined;
+          let enteredWrite = false;
+          try {
+            attempt = turn.beforeSubmit?.();
+            // This append is the fixture engine's actual prompt ingress. A receipt
+            // follows its synchronous acceptance, never allocation or validation.
+            enteredWrite = true;
+            note({ turnId, threadId: turn.threadId, text: turn.text, system: turn.system ?? "", ...(turn.integrations?.phoneJobs ? { phoneJobs: { tools: turn.integrations.phoneJobs.env.MURAGE_PHONE_TOOLS ?? "", hasToken: Boolean(turn.integrations.phoneJobs.env.MURAGE_CONTROL_TOKEN) } } : {}), ...(turn.integrations?.highlevel ? { highlevel: true } : {}) });
+            if (nativeTrace) appendNative(turn.threadId, { dir: "out", source: "fakeAsk", msg: { type: "user", prompt: turn.text, turnId } });
+            turn.attemptWritten?.(attempt);
+            turn.onEngineWrite?.();
+          } catch {
+            if (enteredWrite) turn.attemptUncertain?.(attempt);
+            else turn.attemptNotWritten?.(attempt);
             active.delete(turn.threadId);
             emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
             return { turnId };
@@ -98,9 +116,14 @@ export function makeAskDriver(kind: string = ASK_DRIVER_KIND): AnyProviderDriver
               rmSync(join(dir, "hold"), { force: true });
               writeFileSync(join(dir, "live"), turnId);
               if (nativeTrace && tools) appendNative(turn.threadId, { dir: "in", source: "fakeAsk", msg: { type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_first", name: "mcp__phoneJobs__phone_calendar_read", input: { start: "2026-10-26T09:00:00Z", note: "FIRST-CALL-ARGS-CANARY" } }] } } });
-              await waitForFile(join(dir, "release"), gone);
-              rmSync(join(dir, "release"), { force: true });
-              rmSync(join(dir, "live"), { force: true });
+              const releasePath = join(dir, "release"), livePath = join(dir, "live");
+              const released = () => {
+                try { const target = readFileSync(releasePath, "utf8"); return target === "" || target === turnId; }
+                catch { return false; }
+              };
+              await waitForFile(released, gone);
+              if (released()) rmSync(releasePath, { force: true });
+              if (existsSync(livePath) && readFileSync(livePath, "utf8") === turnId) rmSync(livePath, { force: true });
               const toolEventPath = join(dir, "tool-event.txt");
               if (tools && !gone() && existsSync(toolEventPath)) {
                 const words = readFileSync(toolEventPath, "utf8");
@@ -127,14 +150,15 @@ export function makeAskDriver(kind: string = ASK_DRIVER_KIND): AnyProviderDriver
           if (!entry || entry.interrupted) return;
           entry.interrupted = true;
           active.delete(threadId);
-          if (dir) rmSync(join(dir, "live"), { force: true });
-          emit({ type: "turn.completed", ok: false, stopReason: "interrupted", threadId, turnId: entry.turnId });
+          const livePath = join(dir, "live");
+          if (dir && existsSync(livePath) && readFileSync(livePath, "utf8") === entry.turnId) rmSync(livePath, { force: true });
+          emit({ type: "turn.completed", ok: false, stopReason: "cancelled", threadId, turnId: entry.turnId });
         },
         // no native session is kept between turns: an authorized replay has nothing to end
         resetSession: async () => {},
         respondToRequest: async () => "unavailable" as const,
         hasSession: () => false,
-        stopAll: async () => { active.clear(); },
+        stopAll: async () => { active.clear(); sources.clear(); },
         onEvent: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
       };
       if (steers) {
@@ -162,7 +186,7 @@ export function makeAskDriver(kind: string = ASK_DRIVER_KIND): AnyProviderDriver
         models: { default: "ask-1", options: [{ id: "ask-1", label: "Ask one" }] },
         snapshot: async () => ({ state: "available", version: "0.0.0-ask" }),
         adapter,
-        dispose: async () => { listeners.clear(); active.clear(); },
+        dispose: async () => { listeners.clear(); active.clear(); sources.clear(); },
       };
     },
   };

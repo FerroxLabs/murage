@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "astra-gpt6",
+  "date": "2026-11-09",
+  "base": "0f852922a",
+  "scope": "settings-a-voice-memory",
+  "strings": {
+    "en:settings.l4.voiceNotes.title": {
+      "text": "Voice notes",
+      "en": "Voice notes",
+      "verdict": "pass"
+    },
+    "en:settings.l4.voiceNotes.configured": {
+      "text": "Configured to transcribe voice notes with {service}. Service availability is checked when you transcribe.",
+      "en": "Configured to transcribe voice notes with {service}. Service availability is checked when you transcribe.",
+      "verdict": "pass"
+    },
+    "en:settings.l4.voiceNotes.notConfigured": {
+      "text": "Add a Flux, Groq or OpenAI connection in Models and engines to transcribe voice notes.",
+      "en": "Add a Flux, Groq or OpenAI connection in Models and engines to transcribe voice notes.",
+      "verdict": "pass"
+    },
+    "en:settings.l4.voiceNotes.unknown": {
+      "text": "Voice-note transcription status is unavailable right now.",
+      "en": "Voice-note transcription status is unavailable right now.",
+      "verdict": "pass"
+    },
+    "en:settings.l4.voiceNotes.attachments": {
+      "text": "Chat attachments and phone recordings also need a Flux key.",
+      "en": "Chat attachments and phone recordings also need a Flux key.",
+      "verdict": "pass"
+    },
+    "en:memorySettings.openMemory": {
+      "text": "Open memory",
+      "en": "Open memory",
+      "verdict": "pass"
+    },
+    "de:memorySettings.openMemory": {
+      "text": "Gedächtnis öffnen",
+      "en": "Open memory",
+      "verdict": "pass"
+    },
+    "de:settings.l4.voiceNotes.title": {
+      "text": "Sprachnachrichten",
+      "en": "Voice notes",
+      "verdict": "pass"
+    },
+    "de:settings.l4.voiceNotes.configured": {
+      "text": "Für die Transkription von Sprachnachrichten mit {service} eingerichtet. Ob der Dienst verfügbar ist, wird beim Transkribieren geprüft.",
+      "en": "Configured to transcribe voice notes with {service}. Service availability is checked when you transcribe.",
+      "verdict": "pass"
+    },
+    "de:settings.l4.voiceNotes.notConfigured": {
+      "text": "Füge unter „Modelle & Engines“ eine Verbindung zu Flux, Groq oder OpenAI hinzu, um Sprachnachrichten zu transkribieren.",
+      "en": "Add a Flux, Groq or OpenAI connection in Models and engines to transcribe voice notes.",
+      "verdict": "pass"
+    },
+    "de:settings.l4.voiceNotes.unknown": {
+      "text": "Der Status der Transkription von Sprachnachrichten ist gerade nicht abrufbar.",
+      "en": "Voice-note transcription status is unavailable right now.",
+      "verdict": "pass"
+    },
+    "de:settings.l4.voiceNotes.attachments": {
+      "text": "Chat-Anhänge und Aufnahmen vom Telefon brauchen ebenfalls einen Flux-Schlüssel.",
+      "en": "Chat attachments and phone recordings also need a Flux key.",
+      "verdict": "pass"
+    },
+    "es:memorySettings.openMemory": {
+      "text": "Abrir memoria",
+      "en": "Open memory",
+      "verdict": "pass"
+    },
+    "es:settings.l4.voiceNotes.title": {
+      "text": "Notas de voz",
+      "en": "Voice notes",
+      "verdict": "pass"
+    },
+    "es:settings.l4.voiceNotes.configured": {
+      "text": "Configurado para transcribir notas de voz con {service}. La disponibilidad del servicio se comprueba al transcribir.",
+      "en": "Configured to transcribe voice notes with {service}. Service availability is checked when you transcribe.",
+      "verdict": "pass"
+    },
+    "es:settings.l4.voiceNotes.notConfigured": {
+      "text": "Añade una conexión de Flux, Groq u OpenAI en Modelos y motores para transcribir notas de voz.",
+      "en": "Add a Flux, Groq or OpenAI connection in Models and engines to transcribe voice notes.",
+      "verdict": "pass"
+    },
+    "es:settings.l4.voiceNotes.unknown": {
+      "text": "El estado de la transcripción de notas de voz no está disponible ahora mismo.",
+      "en": "Voice-note transcription status is unavailable right now.",
+      "verdict": "pass"
+    },
+    "es:settings.l4.voiceNotes.attachments": {
+      "text": "Los archivos adjuntos del chat y las grabaciones del teléfono también necesitan una clave de Flux.",
+      "en": "Chat attachments and phone recordings also need a Flux key.",
+      "verdict": "pass"
+    },
+    "fr:memorySettings.openMemory": {
+      "text": "Ouvrir la mémoire",
+      "en": "Open memory",
+      "verdict": "pass"
+    },
+    "fr:settings.l4.voiceNotes.title": {
+      "text": "Notes vocales",
+      "en": "Voice notes",
+      "verdict": "pass"
+    },
+    "fr:settings.l4.voiceNotes.configured": {
+      "text": "Configuré pour transcrire les notes vocales avec {service}. La disponibilité du service est vérifiée quand tu lances une transcription.",
+      "en": "Configured to transcribe voice notes with {service}. Service availability is checked when you transcribe.",
+      "verdict": "pass"
+    },
+    "fr:settings.l4.voiceNotes.notConfigured": {
+      "text": "Ajoute une connexion Flux, Groq ou OpenAI dans Modèles et moteurs pour transcrire les notes vocales.",
+      "en": "Add a Flux, Groq or OpenAI connection in Models and engines to transcribe voice notes.",
+      "verdict": "pass"
+    },
+    "fr:settings.l4.voiceNotes.unknown": {
+      "text": "L’état de la transcription des notes vocales n’est pas disponible pour le moment.",
+      "en": "Voice-note transcription status is unavailable right now.",
+      "verdict": "pass"
+    },
+    "fr:settings.l4.voiceNotes.attachments": {
+      "text": "Les pièces jointes du chat et les enregistrements du téléphone ont aussi besoin d’une clé Flux.",
+      "en": "Chat attachments and phone recordings also need a Flux key.",
+      "verdict": "pass"
+    },
+    "hi:memorySettings.openMemory": {
+      "text": "मेमोरी खोलें",
+      "en": "Open memory",
+      "verdict": "pass"
+    },
+    "hi:settings.l4.voiceNotes.title": {
+      "text": "वॉइस नोट",
+      "en": "Voice notes",
+      "verdict": "pass"
+    },
+    "hi:settings.l4.voiceNotes.configured": {
+      "text": "{service} से वॉइस नोट को लिखित रूप में बदलने के लिए सेट अप है। सेवा उपलब्ध है या नहीं, इसकी जाँच तब होती है जब आप वॉइस नोट को लिखित रूप में बदलते हैं।",
+      "en": "Configured to transcribe voice notes with {service}. Service availability is checked when you transcribe.",
+      "verdict": "pass"
+    },
+    "hi:settings.l4.voiceNotes.notConfigured": {
+      "text": "वॉइस नोट को लिखित रूप में बदलने के लिए मॉडल और इंजन में Flux, Groq या OpenAI का कनेक्शन जोड़ें।",
+      "en": "Add a Flux, Groq or OpenAI connection in Models and engines to transcribe voice notes.",
+      "verdict": "pass"
+    },
+    "hi:settings.l4.voiceNotes.unknown": {
+      "text": "वॉइस नोट को लिखित रूप में बदलने की स्थिति अभी उपलब्ध नहीं है।",
+      "en": "Voice-note transcription status is unavailable right now.",
+      "verdict": "pass"
+    },
+    "hi:settings.l4.voiceNotes.attachments": {
+      "text": "चैट के अटैचमेंट और फ़ोन की रिकॉर्डिंग के लिए भी Flux कुंजी चाहिए।",
+      "en": "Chat attachments and phone recordings also need a Flux key.",
+      "verdict": "pass"
+    },
+    "ja:memorySettings.openMemory": {
+      "text": "メモリを開く",
+      "en": "Open memory",
+      "verdict": "pass"
+    },
+    "ja:settings.l4.voiceNotes.title": {
+      "text": "ボイスノート",
+      "en": "Voice notes",
+      "verdict": "pass"
+    },
+    "ja:settings.l4.voiceNotes.configured": {
+      "text": "{service} でボイスノートを文字起こしするように設定されています。サービスが利用できるかどうかは、文字起こしの際に確認されます。",
+      "en": "Configured to transcribe voice notes with {service}. Service availability is checked when you transcribe.",
+      "verdict": "pass"
+    },
+    "ja:settings.l4.voiceNotes.notConfigured": {
+      "text": "ボイスノートを文字起こしするには、「モデルとエンジン」で Flux、Groq、OpenAI のいずれかの接続を追加してください。",
+      "en": "Add a Flux, Groq or OpenAI connection in Models and engines to transcribe voice notes.",
+      "verdict": "pass"
+    },
+    "ja:settings.l4.voiceNotes.unknown": {
+      "text": "ボイスノートの文字起こしの状態は、今は確認できません。",
+      "en": "Voice-note transcription status is unavailable right now.",
+      "verdict": "pass"
+    },
+    "ja:settings.l4.voiceNotes.attachments": {
+      "text": "チャットの添付ファイルやスマートフォンの録音にも Flux キーが必要です。",
+      "en": "Chat attachments and phone recordings also need a Flux key.",
+      "verdict": "pass"
+    },
+    "pt-br:memorySettings.openMemory": {
+      "text": "Abrir memória",
+      "en": "Open memory",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l4.voiceNotes.title": {
+      "text": "Notas de voz",
+      "en": "Voice notes",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l4.voiceNotes.configured": {
+      "text": "Configurado para transcrever notas de voz com {service}. A disponibilidade do serviço é verificada quando você faz uma transcrição.",
+      "en": "Configured to transcribe voice notes with {service}. Service availability is checked when you transcribe.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l4.voiceNotes.notConfigured": {
+      "text": "Adicione uma conexão do Flux, Groq ou OpenAI em Modelos e motores para transcrever notas de voz.",
+      "en": "Add a Flux, Groq or OpenAI connection in Models and engines to transcribe voice notes.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l4.voiceNotes.unknown": {
+      "text": "O status da transcrição de notas de voz não está disponível agora.",
+      "en": "Voice-note transcription status is unavailable right now.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l4.voiceNotes.attachments": {
+      "text": "Os anexos do chat e as gravações do telefone também precisam de uma chave do Flux.",
+      "en": "Chat attachments and phone recordings also need a Flux key.",
+      "verdict": "pass"
+    },
+    "zh:memorySettings.openMemory": {
+      "text": "打开记忆",
+      "en": "Open memory",
+      "verdict": "pass"
+    },
+    "zh:settings.l4.voiceNotes.title": {
+      "text": "语音笔记",
+      "en": "Voice notes",
+      "verdict": "pass"
+    },
+    "zh:settings.l4.voiceNotes.configured": {
+      "text": "已配置为使用 {service} 转写语音笔记。服务是否可用会在转写时检查。",
+      "en": "Configured to transcribe voice notes with {service}. Service availability is checked when you transcribe.",
+      "verdict": "pass"
+    },
+    "zh:settings.l4.voiceNotes.notConfigured": {
+      "text": "在“模型与引擎”中添加 Flux、Groq 或 OpenAI 连接，即可转写语音笔记。",
+      "en": "Add a Flux, Groq or OpenAI connection in Models and engines to transcribe voice notes.",
+      "verdict": "pass"
+    },
+    "zh:settings.l4.voiceNotes.unknown": {
+      "text": "暂时无法获取语音笔记的转写状态。",
+      "en": "Voice-note transcription status is unavailable right now.",
+      "verdict": "pass"
+    },
+    "zh:settings.l4.voiceNotes.attachments": {
+      "text": "聊天附件和手机录音也需要 Flux 密钥。",
+      "en": "Chat attachments and phone recordings also need a Flux key.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test, type Page } from "./page-error-guard";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { createServer, type ViteDevServer } from "vite";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 

@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { RemoteSseSessions, sessionOwnedBy } from "./remote-mcp-sse-sessions.ts";
+import { RemoteSseSessions, sessionOwnedBy, type SseOpenInput } from "./remote-mcp-sse-sessions.ts";
 import { startFakeRemoteMcp, type FakeRemoteMcp } from "./testing/fake-remote-mcp.ts";
+import { upstreamOwnerFixture } from "./testing/upstream-owner-fixture.ts";
+import { RELEASE_LIMITS } from "./memory/release-budget.ts";
 
 let fake: FakeRemoteMcp | undefined;
 let sessions: RemoteSseSessions | undefined;
+let upstream: ReturnType<typeof upstreamOwnerFixture>;
+beforeEach(() => { upstream = upstreamOwnerFixture(); });
+const openSession = (input: SseOpenInput) => upstream.run(input.generation, () => sessions!.open(input));
 afterEach(async () => {
   sessions?.closeAll();
   sessions = undefined;
   await fake?.close();
   fake = undefined;
 });
-const open = (overrides: Record<string, unknown> = {}) => sessions!.open({ name: "legacy", generation: "gen-1", url: fake!.mcpUrl, headers: {}, confirmed: "this-computer", ...overrides });
+const open = (overrides: Record<string, unknown> = {}) => openSession({ name: "legacy", generation: "gen-1", url: fake!.mcpUrl, headers: {}, confirmed: "this-computer", ...overrides });
 /** A call made for the entry as it is now: its current dial link and local confirmation. */
 const current = () => ({ headers: {}, timeoutMs: 3_000, dialUrl: fake!.mcpUrl, confirmed: "this-computer" as const });
 
@@ -125,7 +130,7 @@ describe("legacy HTTP+SSE sessions held by the harness", () => {
     sessions = new RemoteSseSessions();
     expect(await open()).toMatchObject({ ok: false, reason: "sign-in-ended" });
     expect(await open({ bearer: fake.mintAccessToken() })).toMatchObject({ ok: true });
-    const nowhere = await sessions.open({ name: "legacy", generation: "g", url: `${fake.origin}/nope`, headers: {}, bearer: fake.mintAccessToken(), confirmed: "this-computer" });
+    const nowhere = await openSession({ name: "legacy", generation: "g", url: `${fake.origin}/nope`, headers: {}, bearer: fake.mintAccessToken(), confirmed: "this-computer" });
     expect(nowhere).toMatchObject({ ok: false, reason: "wrong-address" });
   });
 
@@ -205,22 +210,22 @@ describe("legacy HTTP+SSE sessions held by the harness", () => {
     const url = `http://127.0.0.1:${(slow.address() as AddressInfo).port}/sse`;
     try {
       sessions = new RemoteSseSessions({ isLive: () => true, sweepMs: 60_000 });
-      const racing = await Promise.all(Array.from({ length: 10 }, () => sessions!.open({ name: "svc", generation: "gen-A", url, headers: {}, confirmed: "this-computer" })));
+      const racing = await Promise.all(Array.from({ length: 10 }, () => openSession({ name: "svc", generation: "gen-A", url, headers: {}, confirmed: "this-computer" })));
       expect(racing.filter((result) => result.ok)).toHaveLength(4);
       expect(sessions.size).toBe(4);
       // a refused open leaves no reservation behind: another turn still gets its own four
-      const other = await Promise.all(Array.from({ length: 6 }, () => sessions!.open({ name: "svc", generation: "gen-B", url, headers: {}, confirmed: "this-computer" })));
+      const other = await Promise.all(Array.from({ length: 6 }, () => openSession({ name: "svc", generation: "gen-B", url, headers: {}, confirmed: "this-computer" })));
       expect(other.filter((result) => result.ok)).toHaveLength(4);
       sessions.closeAll();
       sessions = new RemoteSseSessions({ max: 3, maxPerGeneration: 10 });
-      const global = await Promise.all(Array.from({ length: 8 }, (_, index) => sessions!.open({ name: "svc", generation: `gen-${index}`, url, headers: {}, confirmed: "this-computer" })));
+      const global = await Promise.all(Array.from({ length: 8 }, (_, index) => openSession({ name: "svc", generation: `gen-${index}`, url, headers: {}, confirmed: "this-computer" })));
       expect(global.filter((result) => result.ok)).toHaveLength(3);
       expect(sessions.size).toBe(3);
       // a failed open gives its slot back
       sessions.closeAll();
       sessions = new RemoteSseSessions({ maxPerGeneration: 1 });
-      expect(await sessions.open({ name: "svc", generation: "gen-F", url: `http://127.0.0.1:1/sse`, headers: {}, confirmed: "this-computer" })).toMatchObject({ ok: false });
-      expect(await sessions.open({ name: "svc", generation: "gen-F", url, headers: {}, confirmed: "this-computer" })).toMatchObject({ ok: true });
+      expect(await openSession({ name: "svc", generation: "gen-F", url: `http://127.0.0.1:1/sse`, headers: {}, confirmed: "this-computer" })).toMatchObject({ ok: false });
+      expect(await openSession({ name: "svc", generation: "gen-F", url, headers: {}, confirmed: "this-computer" })).toMatchObject({ ok: true });
     } finally {
       for (const stream of streams) stream.destroy();
       slow.closeAllConnections();
@@ -233,5 +238,19 @@ describe("legacy HTTP+SSE sessions held by the harness", () => {
     sessions = new RemoteSseSessions();
     expect(await open({ confirmed: "local-network" })).toMatchObject({ ok: false, reason: "address-changed" });
     expect(fake.requests).toHaveLength(0);
+  });
+
+  it("retains the opening generation's budget when a later call has no ambient owner", async () => {
+    fake = await startFakeRemoteMcp({ auth: "none", transport: "sse" });
+    sessions = new RemoteSseSessions();
+    const opened = await open();
+    if (!opened.ok) throw new Error("open");
+    const budget = upstream.budget("gen-1");
+    expect(budget.counts.bytes).toBeGreaterThan(0);
+    budget.charge({ attempts: RELEASE_LIMITS.attempts - budget.counts.attempts });
+    await expect(sessions.call(opened.sessionId, "legacy", "gen-1", { jsonrpc: "2.0", id: 1, method: "tools/list" }, current()))
+      .rejects.toMatchObject({ code: "MEMORY_CONTEXT_REVOKED" });
+    expect(sessions.size).toBe(0);
+    expect(fake.requests.filter(entry => entry.path === "/messages")).toHaveLength(0);
   });
 });

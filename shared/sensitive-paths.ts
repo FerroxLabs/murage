@@ -25,9 +25,33 @@ export interface SensitivePathRow {
   /** Claude `permissions.ask` Read rules for this row: in-project rows
    * relative, home rows as `~/`. */
   read: readonly string[];
+  /** Additional named leaves/roots for unknown-cwd writes; never a filesystem scan. */
+  cwdSuffixes?: readonly string[];
   /** Claude `permissions.ask` Bash text rules for the same names. */
   bash: readonly string[];
 }
+
+
+// Owner homes must start a path, including when the account name contains spaces.
+const OWNER_HOME = /(?<![\w.\/\\-])(?:~|\$(?:\{(?:env:)?(?:HOME|USERPROFILE)\}|(?:env:)?(?:HOME|USERPROFILE))|%USERPROFILE%|[\\/]root|[\\/](?:home|Users)[\\/][^\\/"'\r\n]+|[a-z]:[\\/]Users[\\/][^\\/"'\r\n]+|[\\/][a-z][\\/]Users[\\/][^\\/"'\r\n]+)[\\/]/.source;
+const FILE_END = /(?=$|["'\s;|&)<>])/.source;
+const OWNER_FILES = [
+  ".pi/agent/models.json", ".qwen/settings.json", ".factory/settings.json", ".factory/mcp.json",
+  ".grok/config.toml", ".kimi-code/config.toml", ".kimi-code/credentials/kimi-code.json",
+  ".gemini/config/mcp_config.json", ".hermes/config.yaml", ".hermes/profiles/*/config.yaml",
+  ".config/opencode/opencode.json", ".config/opencode/opencode.jsonc", ".claude.json",
+  // BUILD-FIX 15 writer names belong to this same row's projections too.
+  ...[".pi/agent/models.json", ".qwen/settings.json", ".factory/settings.json",
+    ".grok/config.toml", ".kimi-code/config.toml", ".hermes/config.yaml",
+    ".hermes/profiles/*/config.yaml", ".config/opencode/opencode.json"]
+    .map(file => file + ".*.tmp"),
+  ".factory/mcp.json.*.tmp", ".gemini/config/.mcp_config.json.murage-*-*.tmp",
+  ".agent-browser/sessions/*.json*", ".agent-browser/sessions/*.murage-storage.enc*",
+  ...[".pi/agent", ".qwen", ".factory", ".grok", ".kimi-code", ".gemini", ".hermes", ".local/share/opencode"]
+    .flatMap(folder => ["auth*", ".auth*", "oauth_creds*", "credential*", ".credential*", "token*", ".token*", "api_key*", "api-key*"].map(name => folder + "/" + name)),
+];
+const OWNER_CONFIG = /(?:\.pi[\\/]agent[\\/]models\.json(?:\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?|\.qwen[\\/]settings\.json(?:\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?|\.factory[\\/](?:settings\.json(?:\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?|mcp\.json(?:\.\d+\.tmp)?)|\.(?:grok|kimi-code)[\\/]config\.toml(?:\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?|\.kimi-code[\\/]credentials[\\/]kimi-code\.json|\.gemini[\\/]config[\\/](?:mcp_config\.json|\.mcp_config\.json\.murage-\d+-\d+\.tmp)|\.hermes[\\/](?:profiles[\\/][^\\/"'\r\n]+[\\/])?config\.yaml(?:\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?|\.config[\\/]opencode[\\/]opencode\.json(?:c|\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?|\.claude\.json|\.agent-browser[\\/]sessions[\\/][^\\/"'\r\n]+\.(?:json(?:\.enc)?|murage-storage\.enc)(?:\*|\.\d+\.[0-9a-f-]+\.tmp)?|\.(?:pi[\\/]agent|qwen|factory|grok|kimi-code|gemini|hermes|local[\\/]share[\\/]opencode)[\\/]\.?(?:auth|oauth_creds|credentials?|tokens?|api[_-]?keys?)(?:[._-][^\\/\s"']*)?)/.source;
+const OWNER_VARIABLE_CONFIG = /(?<![\w.\/\\-])(?:\$(?:\{(?:GROK_HOME|KIMI_CODE_HOME)\}|(?:GROK_HOME|KIMI_CODE_HOME))[\\/](?:config\.toml(?:\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?|credentials[\\/]kimi-code\.json)|\$(?:\{HERMES_HOME\}|HERMES_HOME)[\\/](?:profiles[\\/][^\\/"'\r\n]+[\\/])?config\.yaml(?:\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?|\$(?:\{OPENCODE_CONFIG_DIR\}|OPENCODE_CONFIG_DIR)[\\/]opencode\.json(?:c|\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?|\$(?:\{XDG_CONFIG_HOME\}|XDG_CONFIG_HOME)[\\/]opencode[\\/]opencode\.json(?:c|\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?)/.source;
 
 export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   {
@@ -37,7 +61,16 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     bash: ["* .env*", "*/.env*"],
   },
   {
+    // A whole-input Ask read must recognize a glob that can select .env.
+    // Keep the literal env row's rule identity stable for existing verdicts.
+    id: "env-glob",
+    re: /(^|[\s/\\"'])\.env(\*|$|["'\s])/i,
+    read: [".env"],
+    bash: ["* .env*", "*/.env*"],
+  },
+  {
     id: "ssh",
+    cwdSuffixes: ["*id_rsa*", "*id_ed25519*", "*authorized_keys*"],
     re: /\.ssh[\\/]|id_rsa|id_ed25519|authorized_keys/i,
     read: ["~/.ssh/**"],
     bash: ["*.ssh/*", "*id_rsa*", "*id_ed25519*", "*authorized_keys*"],
@@ -66,9 +99,9 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "harness-keys",
-    re: /\.codex[\\/]auth\.json|\.claude[\\/]\.credentials|provider-keys|\.murage[\\/]config\.json/i,
-    read: ["~/.codex/auth.json", "~/.claude/.credentials*", "~/.murage/config.json", "**/provider-keys*"],
-    bash: ["*.codex/auth.json*", "*.claude/.credentials*", "*provider-keys*", "*.murage/config.json*"],
+    re: /\.codex[\\/]auth\.json|\.claude[\\/]\.credentials|provider-keys|(?:^|[\\/])\.credentials\.yaml|\.murage[\\/]config\.json/i,
+    read: ["**/.credentials.yaml", "~/.codex/auth.json", "~/.claude/.credentials*", "~/.murage/config.json", "**/provider-keys*"],
+    bash: ["*/.credentials.yaml*", "*.codex/auth.json*", "*.claude/.credentials*", "*provider-keys*", "*.murage/config.json*"],
   },
   // Desktop userData can be relocated by restore profiles: match the
   // store basename, not only the default Murage directory.
@@ -81,6 +114,7 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // Rule 35: the Windows spellings, rows of their own.
   {
     id: "windows-credential-files",
+    cwdSuffixes: ["application_default_credentials.json"],
     // 1.0.10 fix round (Grok High): gcloud's POSIX folder too, and its application default credentials by name
     re: /(^|[\s\\/"'])_(netrc|npmrc)\b|\.azure[\\/]|appdata[\\/]roaming[\\/](?:gcloud|npm[\\/]etc)[\\/]|[\\/]npm[\\/]etc[\\/]npmrc\b|\.config[\\/]gcloud(?:[\\/]|$|["'\s])|application_default_credentials\.json|[\\/]login data\b/i,
     read: ["~/_netrc", "~/_npmrc", "~/.azure/**", "~/AppData/Roaming/gcloud/**", "~/.config/gcloud/**", "~/AppData/Roaming/npm/etc/**", "**/Login Data"],
@@ -135,11 +169,26 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: ["**/murage-exec*/**", "**/murage-exec*"],
     bash: ["*murage-exec*"],
   },
+  // X3 A rev 3 (the snapshot key row): Claude Code sources a file from its shell-snapshots folder before every
+  // Bash call, so a write there changes where a later call starts. Any config folder's copy, not only ~/.claude.
+  {
+    id: "shell-snapshots",
+    re: /(?:^|[\s\\/"'=])shell-snapshots(?:[\\/]|$|["'\s;|&)<>])/i,
+    read: ["**/shell-snapshots/**", "**/shell-snapshots"],
+    bash: ["*shell-snapshots*"],
+  },
+  {
+    id: "murage-copilot-mcp",
+    re: /murage-copilot-mcp(-[0-9A-Za-z]+)?([\\/]|$|["'\s])/i,
+    read: ["**/murage-copilot-mcp*/**", "**/murage-copilot-mcp*"],
+    bash: ["*murage-copilot-mcp*"],
+  },
   // 1.0.3 (hook self-guard): the hook programs Murage writes for an engine and
   // the folders they live in (DATA_DIR/native/antigravity-relay, -ask, -scope
   // and codex-scope). The engine re-reads them on every call, so a write to one
   // would replace the guard that judges every later call.
   // 1.0.10: native/hermes-ask (the Hermes ask hook and its overlay config): a bot editing the overlay could remove Murage's ask hook.
+  // No limits: no card; hook-canon.ts checks and restores these files before every use.
   {
     id: "murage-engine-hooks",
     re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope|hermes-ask)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
@@ -160,6 +209,7 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // `plugins::$DATA`): Win32 reads those as the folder (lanes/release103/SG-WIN-PATHTRICKS.md), so the row does too.
   {
     id: "agy-workspace-hooks",
+    cwdSuffixes: [".agents", ".agent", "_agents", "_agent"],
     re: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)[. ]*(?:[\\/:]|$|["'\s;|&)>`]))|(?<=^|[\s"'=\\/])[._]agents?(?:\/|\\(?!["']))(?=$|["'\s;|&)>])|(?<=^|[\s=\\/])\.agents?(?=$|[\r\n"']|[ \t]*[;|&>)])|(?<=(?:^|[\s=])["'])\.agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=\(["'])\.agents?(?=["']\))|(?<=[ \t=]["'])_agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=^|[\s=\\/])_agents?(?=$|[\r\n"']|[ \t]*(?:[;|>]|&&))|(?<=["'])[._]agents?["'][ \t]*,[ \t]*["'](?:hooks\.json|plugins\.json|plugins|agents)["']/i,
     ancestor: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)[. ]*(?:[\\/:]|$|["'\s;|&)>`]))/i,
     read: [".agents/hooks.json", ".agent/hooks.json", "_agents/hooks.json", "_agent/hooks.json", ".agents/plugins.json", ".agent/plugins.json", "_agents/plugins.json", "_agent/plugins.json", ".agents/plugins/**", ".agent/plugins/**", "_agents/plugins/**", "_agent/plugins/**", ".agents/agents/**", ".agent/agents/**", "_agents/agents/**", "_agent/agents/**"],
@@ -183,6 +233,48 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: ["~/.fuigo/config.toml", "~/.fuigo/managed_config.toml", "~/.fuigo/requirements.toml", "~/.fuigo/sandbox.toml", "~/.fuigo/sessions/*/permission*.toml", ".fuigo/config.toml"],
     bash: ["*.fuigo/config.toml*", "*.fuigo/managed_config.toml*", "*.fuigo/requirements.toml*", "*.fuigo/sandbox.toml*", "*.fuigo/sessions/*/permission*"],
   },
+  {
+    id: "murage-cred",
+    re: /murage-cred-[A-Za-z0-9]{6}[\\/][0-9a-f]{32}\.json(?:\.tmp)?(?=$|["'\s;|&)<>])/i,
+    read: ["**/murage-cred-*/*.json", "**/murage-cred-*/*.json.tmp"], bash: ["*murage-cred-*/*.json*"],
+  },
+  {
+    id: "murage-mcp",
+    re: /murage-mcp-[A-Za-z0-9]{6}[\\/]mcp\.json(?=$|["'\s;|&)<>])/i,
+    read: ["**/murage-mcp-*/mcp.json"], bash: ["*murage-mcp-*/mcp.json*"],
+  },
+  {
+    id: "murage-pi-mcp",
+    re: /murage-pi-mcp-[A-Za-z0-9]{6}[\\/]mcp\.json(?=$|["'\s;|&)<>])/i,
+    read: ["**/murage-pi-mcp-*/mcp.json"], bash: ["*murage-pi-mcp-*/mcp.json*"],
+  },
+  {
+    id: "murage-claude-private",
+    re: /claude-private[\\/][0-9a-f]{32}\.json(?:\.new-\d+)?(?=$|["'\s;|&)<>])/i,
+    read: ["**/claude-private/*.json", "**/claude-private/*.json.new-*"], bash: ["*claude-private/*.json*"],
+  },
+  {
+    id: "murage-flux-hermes",
+    re: /flux-hermes-home[\\/]config\.yaml(?:\.\d+\.[0-9a-f-]+\.tmp)?(?=$|["'\s;|&)<>])/i,
+    read: ["**/flux-hermes-home/config.yaml", "**/flux-hermes-home/config.yaml.*.tmp"], bash: ["*flux-hermes-home/config.yaml*"],
+  },
+  {
+    id: "murage-hook-env",
+    re: /hook-env[\\/]\d+-[0-9a-f]{16}\.env(?=$|["'\s;|&)<>])/i,
+    read: ["**/hook-env/*.env"], bash: ["*hook-env/*.env*"],
+  },
+  {
+    id: "murage-render",
+    re: /murage-render-[0-9a-f]{16}[\\/]mcp\.json(?=$|["'\s;|&)<>])/i,
+    read: ["**/murage-render-*/mcp.json"], bash: ["*murage-render-*/mcp.json*"],
+  },
+  {
+    id: "owner-engine-config",
+    re: new RegExp("(?:" + OWNER_HOME + OWNER_CONFIG + "|" + OWNER_VARIABLE_CONFIG + ")" + FILE_END, "i"),
+    read: OWNER_FILES.map(file => "~/" + file),
+    bash: OWNER_FILES.map(file => "*" + file + "*"),
+  },
+
 ];
 
 export interface SensitiveTextRow { id: string; re: RegExp }

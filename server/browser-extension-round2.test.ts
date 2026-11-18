@@ -45,9 +45,9 @@ describe("Round 2: bounded large-page read", () => {
     const html = PAGES.find((p: any) => p.id === "t3-rows").html();
     const ctx = { currentUrl: "https://fixture.test/t3-rows", fenceOrigin: "https://fixture.test", activeHtml: async () => html, authorize: () => true, admitUrl: async () => {} };
     const first = await readWithBrowserAuthority({}, ctx);
-    expect(first.structuredContent.truncated).toBe(true);
+    expect(first.structuredContent).toMatchObject({ truncated: false, eof: false, next_offset: 16000 });
     expect(first.content[0].text).not.toContain("Product 5000");
-    expect(first.content[0].text).toMatch(/read.*filter/);
+    expect(first.structuredContent.handle).toMatch(/^w-/);
     expect(first.content[0].text.length).toBeLessThan(20400);
     const last = await readWithBrowserAuthority({ filter: "Product 5000" }, ctx);
     expect(last.structuredContent.truncated).toBe(false);

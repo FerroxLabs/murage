@@ -3,7 +3,7 @@ import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createRoutineEvent, parseRoutineEvent } from "../shared/routine-event.ts";
+import { channelOriginSchema, createRoutineEvent, parseRoutineEvent, routineEventForRun } from "../shared/routine-event.ts";
 import { RoutineManager } from "./routines.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -15,6 +15,27 @@ function fixture() {
   return { options, manager: new RoutineManager(options) };
 }
 describe("normalized routine event provenance", () => {
+  it("T-EVENT accepts Signal in both channel enums and rejects an unknown platform", () => {
+    const origin = { platform: "signal", connectionId: "signal-connection" } as const;
+    expect(channelOriginSchema.safeParse(origin).success).toBe(true);
+    expect(channelOriginSchema.safeParse({ ...origin, platform: "unknown" }).success).toBe(false);
+    const event = createRoutineEvent({ runId: "run", definitionId: "routine", source: "channel", receivedAt: 900, channelOrigin: origin });
+    expect(event).toMatchObject({ source: "channel", origin: { kind: "channel", channel: "signal", connectionId: origin.connectionId } });
+    expect(parseRoutineEvent(event)).toEqual(event);
+    expect(parseRoutineEvent({ ...event, origin: { ...event.origin, channel: "unknown" } })).toBeNull();
+  });
+
+  it("T-EVENT keeps Signal provenance strict and derived from the run (kills trusted saved provenance)", () => {
+    const channelOrigin = { platform: "signal", connectionId: "signal-connection" } as const;
+    const run = { id: "run", routineId: "routine", createdAt: 1000, scheduledFor: 900, manual: false, channelOrigin };
+    const expected = createRoutineEvent({ runId: run.id, definitionId: run.routineId, source: "channel", receivedAt: 900, channelOrigin });
+    expect(routineEventForRun(run)).toEqual(expected);
+    expect(routineEventForRun({ ...run, event: createRoutineEvent({ runId: run.id, definitionId: run.routineId, source: "manual", receivedAt: 1000 }) })).toEqual(expected);
+    expect(routineEventForRun({ ...run, telegramConnectionId: "telegram-connection" })).toBeUndefined();
+    expect(routineEventForRun({ ...run, channelOrigin: { ...channelOrigin, connectionId: "" } })).toBeUndefined();
+    expect(channelOriginSchema.safeParse({ ...channelOrigin, authority: "owner" }).success).toBe(false);
+  });
+
   it("keeps Telegram channel origin and cumulative budget across duplicate intake", () => {
     const f = fixture();
     // Channel intake requires a linked human principal; this is the local owner.

@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { manifestFileTarget, verifyModelDirectory } from "../shared/memory-model-verify.mjs";
 import { safeWipe } from "../server/testing/safe-wipe.mjs";
+import { fetchBuildInput } from "./fetch-build-input.mjs";
 
 export const MODEL_BUNDLE_TARGETS = Object.freeze(["darwin-arm64", "darwin-x64", "win32-x64", "linux-x64"]);
 /** The note earlier Intel macOS stages held in place of the model. A package that still carries it is refused. */
@@ -29,7 +30,7 @@ export function bundleBytes(manifest) {
 }
 
 async function download(manifest, file, destination, fetchImpl) {
-  const response = await fetchImpl(modelFileUrl(manifest, file), { redirect: "follow" });
+  const response = await fetchBuildInput(modelFileUrl(manifest, file), { sha256: file.sha256, bytes: file.bytes, fetchImpl });
   if (!response.ok) throw new Error(`Model download failed for ${file.path}: HTTP ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   await mkdir(path.dirname(destination), { recursive: true });

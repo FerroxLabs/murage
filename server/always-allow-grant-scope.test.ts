@@ -20,6 +20,8 @@
 // What a grant COVERS is not this file's subject: auto-approve.test.ts pins
 // that the 0.1.54 destructive/sensitive guards still card every one of
 // these keys.
+import { sessionBoundAcpPermissionEnvironment } from "./testing/acp-permission-fixture.ts";
+import { fixtureDisplayApi } from "./testing/display-fixture.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,6 +31,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -50,7 +53,7 @@ let home: string;
 let stderr = "";
 let desktopHeaders: Record<string, string>;
 
-const request = async (
+const request = fixtureDisplayApi(() => join(home, ".murage", "messages.db"), async (
   method: string,
   path: string,
   body?: unknown,
@@ -62,7 +65,7 @@ const request = async (
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json() };
-};
+});
 const api = (method: string, path: string, body?: unknown) => request(method, path, body);
 const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -155,7 +158,7 @@ posixOnly("an always-allow grant is remembered for the bot", () => {
       instances: {
         asker: {
           driver: "grokAgent",
-          environment: { FAKE_ACP_MODE: "permission" },
+          environment: sessionBoundAcpPermissionEnvironment({ FAKE_ACP_MODE: "permission" }),
           config: { cli: FAKE_CLI, fullAuto: false },
         },
       },
@@ -176,9 +179,10 @@ posixOnly("an always-allow grant is remembered for the bot", () => {
       cardFile("app-card", { botId: "grant-app", name: "Grant app" }, { tool: "other", allowKey: APP_KEY }),
     );
 
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...powerBlockTestEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home,

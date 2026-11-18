@@ -12,13 +12,13 @@
 // the real one answers (/props n_ctx, /v1/models, tool calls on chat, messages
 // and responses). It serves two models: one whose tools work and one that
 // answers with prose instead of calling the tool, so the failed-test marker has
-// something true to mark. The live proof against SeanBeast's real llama.cpp is
+// something true to mark. The live proof against fixture-server's real llama.cpp is
 // docs/plans/0152-LOCAL-MODELS-PROOF.md; this spec is what keeps the screens
 // honest after that machine is switched off.
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -109,7 +109,7 @@ const widths = [390, 1440] as const;
 
 async function open(page: Page, skin: string, width: number) {
   await page.setViewportSize({ width, height: 960 });
-  await page.addInitScript((skin) => { localStorage.setItem("murage-skin", skin); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); }, skin);
+  await page.addInitScript((skin) => { localStorage.setItem("murage-skin", skin); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); }, skin);
   await page.goto(origin);
   await page.evaluate((skin) => { document.documentElement.dataset.skin = skin; }, skin);
 }

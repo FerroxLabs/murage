@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // macOS: the update path for a Mac where Squirrel.Mac cannot replace the app by itself.
 //
 // Squirrel.Mac installs in place only when it can write the app bundle and its folder. When it
@@ -135,7 +136,7 @@ export function shipItState({execPath, home, exec = execFileSync, supported = fa
   if (!bundle || !home) return "error";
   let output;
   try {
-    const bytes = exec("/bin/ps", [...SHIPIT_ARGV], {timeout:3000, killSignal:"SIGKILL", maxBuffer:4*1024*1024, env:{PATH:"/usr/bin:/bin"}});
+    const bytes = exec("/bin/ps", [...SHIPIT_ARGV], withHideInherit({timeout:3000, killSignal:"SIGKILL", maxBuffer:4*1024*1024, env:{PATH:"/usr/bin:/bin"}}));
     output = typeof bytes === "string" ? bytes : new TextDecoder("utf-8", {fatal:true}).decode(bytes);
   } catch { return "error"; }
   const result = Object.freeze({output, supported}); completeResults.add(result);
@@ -178,7 +179,7 @@ export function bundleInfoOnDisk({execPath, read = readFileSync, exec = execFile
   const bundle = macBundlePath(execPath); if (!bundle) return null;
   try {
     const bytes = read(bundle+"/Contents/Info.plist");
-    const value = JSON.parse(exec("/usr/bin/plutil", ["-convert","json","-o","-","-"], {input:bytes,encoding:"utf8",timeout:3000,killSignal:"SIGKILL",maxBuffer:1024*1024,env:{PATH:"/usr/bin:/bin"}}));
+    const value = JSON.parse(exec("/usr/bin/plutil", ["-convert","json","-o","-","-"], withHideInherit({input:bytes,encoding:"utf8",timeout:3000,killSignal:"SIGKILL",maxBuffer:1024*1024,env:{PATH:"/usr/bin:/bin"}})));
     return value.CFBundleIdentifier === MAC_BUNDLE_ID && PLAIN_VERSION.test(value.CFBundleShortVersionString) ? Object.freeze({version:value.CFBundleShortVersionString}) : null;
   } catch { return null; }
 }

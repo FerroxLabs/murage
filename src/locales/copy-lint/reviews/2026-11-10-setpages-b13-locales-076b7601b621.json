@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sonnet-b13",
+  "date": "2026-11-10",
+  "base": "17168c3e9",
+  "scope": "setpages-b13-locales",
+  "strings": {
+    "en:whatsapp.risk.short": {
+      "text": "A spare number is best: WhatsApp may restrict numbers linked this way.",
+      "en": "A spare number is best: WhatsApp may restrict numbers linked this way.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "en:whatsapp.simple.sentence": {
+      "text": "Link a WhatsApp number to message your Chief.",
+      "en": "Link a WhatsApp number to message your Chief.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "en:whatsapp.simple.setUp": {
+      "text": "Set up WhatsApp",
+      "en": "Set up WhatsApp",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "en:whatsapp.simple.manage": {
+      "text": "Manage",
+      "en": "Manage",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "en:settings.howThisWorks": {
+      "text": "How this works",
+      "en": "How this works",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "de:whatsapp.risk.short": {
+      "text": "Am besten nutzt du eine Zweitnummer: WhatsApp kann so verknüpfte Nummern einschränken.",
+      "en": "A spare number is best: WhatsApp may restrict numbers linked this way.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "de:whatsapp.simple.sentence": {
+      "text": "Verknüpfe eine WhatsApp-Nummer, um deinem Chief zu schreiben.",
+      "en": "Link a WhatsApp number to message your Chief.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "de:whatsapp.simple.setUp": {
+      "text": "WhatsApp verknüpfen",
+      "en": "Set up WhatsApp",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "de:whatsapp.simple.manage": {
+      "text": "Verwalten",
+      "en": "Manage",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "de:settings.howThisWorks": {
+      "text": "So funktioniert es",
+      "en": "How this works",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "es:whatsapp.risk.short": {
+      "text": "Es mejor usar un número secundario: WhatsApp puede restringir los números vinculados de esta forma.",
+      "en": "A spare number is best: WhatsApp may restrict numbers linked this way.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "es:whatsapp.simple.sentence": {
+      "text": "Vincula un número de WhatsApp para enviar mensajes a tu Chief.",
+      "en": "Link a WhatsApp number to message your Chief.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "es:whatsapp.simple.setUp": {
+      "text": "Vincular WhatsApp",
+      "en": "Set up WhatsApp",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "es:whatsapp.simple.manage": {
+      "text": "Gestionar",
+      "en": "Manage",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "es:settings.howThisWorks": {
+      "text": "Cómo funciona",
+      "en": "How this works",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "fr:whatsapp.risk.short": {
+      "text": "Utilise de préférence un numéro secondaire : WhatsApp peut limiter l’utilisation des numéros associés de cette façon.",
+      "en": "A spare number is best: WhatsApp may restrict numbers linked this way.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "fr:whatsapp.simple.sentence": {
+      "text": "Associe un numéro WhatsApp pour envoyer des messages à ton Chief.",
+      "en": "Link a WhatsApp number to message your Chief.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "fr:whatsapp.simple.setUp": {
+      "text": "Associer WhatsApp",
+      "en": "Set up WhatsApp",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "fr:whatsapp.simple.manage": {
+      "text": "Gérer",
+      "en": "Manage",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "fr:settings.howThisWorks": {
+      "text": "Comment ça marche",
+      "en": "How this works",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "hi:whatsapp.risk.short": {
+      "text": "अतिरिक्त नंबर इस्तेमाल करना बेहतर है: WhatsApp इस तरह लिंक किए गए नंबरों का इस्तेमाल सीमित कर सकता है।",
+      "en": "A spare number is best: WhatsApp may restrict numbers linked this way.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "hi:whatsapp.simple.sentence": {
+      "text": "अपने Chief को मैसेज भेजने के लिए एक WhatsApp नंबर लिंक करें।",
+      "en": "Link a WhatsApp number to message your Chief.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "hi:whatsapp.simple.setUp": {
+      "text": "WhatsApp लिंक करें",
+      "en": "Set up WhatsApp",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "hi:whatsapp.simple.manage": {
+      "text": "मैनेज करें",
+      "en": "Manage",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "hi:settings.howThisWorks": {
+      "text": "यह कैसे काम करता है",
+      "en": "How this works",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "ja:whatsapp.risk.short": {
+      "text": "予備の番号がおすすめです。この方法でリンクした番号は、WhatsApp が利用を制限する場合があります。",
+      "en": "A spare number is best: WhatsApp may restrict numbers linked this way.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "ja:whatsapp.simple.sentence": {
+      "text": "あなたの Chief にメッセージを送るには、WhatsApp 番号をリンクしてください。",
+      "en": "Link a WhatsApp number to message your Chief.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "ja:whatsapp.simple.setUp": {
+      "text": "WhatsApp をリンク",
+      "en": "Set up WhatsApp",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "ja:whatsapp.simple.manage": {
+      "text": "管理",
+      "en": "Manage",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "ja:settings.howThisWorks": {
+      "text": "仕組み",
+      "en": "How this works",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "pt-br:whatsapp.risk.short": {
+      "text": "É melhor usar um número extra: o WhatsApp pode restringir números conectados dessa forma.",
+      "en": "A spare number is best: WhatsApp may restrict numbers linked this way.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "pt-br:whatsapp.simple.sentence": {
+      "text": "Conecte um número do WhatsApp para enviar mensagens ao seu Chief.",
+      "en": "Link a WhatsApp number to message your Chief.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "pt-br:whatsapp.simple.setUp": {
+      "text": "Conectar o WhatsApp",
+      "en": "Set up WhatsApp",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "pt-br:whatsapp.simple.manage": {
+      "text": "Gerenciar",
+      "en": "Manage",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "pt-br:settings.howThisWorks": {
+      "text": "Como funciona",
+      "en": "How this works",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "zh:whatsapp.risk.short": {
+      "text": "建议使用备用号码：WhatsApp 可能会限制以这种方式关联的号码。",
+      "en": "A spare number is best: WhatsApp may restrict numbers linked this way.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "zh:whatsapp.simple.sentence": {
+      "text": "关联一个 WhatsApp 号码，给你的 Chief 发消息。",
+      "en": "Link a WhatsApp number to message your Chief.",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "zh:whatsapp.simple.setUp": {
+      "text": "关联 WhatsApp",
+      "en": "Set up WhatsApp",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "zh:whatsapp.simple.manage": {
+      "text": "管理",
+      "en": "Manage",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    },
+    "zh:settings.howThisWorks": {
+      "text": "运作方式",
+      "en": "How this works",
+      "verdict": "pass",
+      "note": "gpt-6.1-sol acct6 review: round 1 (fr whatsapp.risk.short and zh settings.howThisWorks reworded to Sol's own text, round 2 pass); whatsapp.simple.sentence en = Sol's line, its 7 translations drafted acct5 and reviewed acct6 in B13, all pass"
+    }
+  },
+  "files": {}
+}

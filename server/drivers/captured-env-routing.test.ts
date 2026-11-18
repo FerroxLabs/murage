@@ -1,3 +1,4 @@
+import { admittedFixtureInstance } from "../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -77,7 +78,7 @@ afterEach(async () => {
 });
 
 const claude = async (environment: Record<string, string> = {}) => {
-  instance = await ClaudeDriver.create({ instanceId: "claude-captured", displayName: "Claude", environment, enabled: true, config: { cli: FAKE_CLAUDE, permissionMode: "acceptEdits" } });
+  instance = await admittedFixtureInstance(ClaudeDriver.create({ instanceId: "claude-captured", displayName: "Claude", environment, enabled: true, config: { cli: FAKE_CLAUDE, permissionMode: "acceptEdits" } }));
   recorder = recordEvents(instance.adapter);
 };
 
