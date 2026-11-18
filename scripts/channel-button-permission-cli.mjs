@@ -15,7 +15,46 @@ const out = value => process.stdout.write(JSON.stringify(value) + "\n");
 // A warm session keeps this process across turns, and the driver removes the
 // launch MCP config once it has spawned us, like a real CLI that mounts its
 // servers once: read it on the first turn and keep it for the rest.
-let mountedConfig;
+let mountedConfig, mountedSession;
+// One connection belongs to the warm CLI, including every turn it serves.
+// Ending the admitted transport before the result retires the running CLI.
+function mountPermissionHost(host) {
+  const child = spawn(host.command, host.args ?? [], { env: { ...process.env, ...host.env }, stdio: ["pipe", "pipe", "ignore"] });
+  const lines = createInterface({ input: child.stdout });
+  const pending = new Map();
+  let nextId = 0, failure;
+  const fail = error => {
+    failure ??= error;
+    for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(failure); }
+    pending.clear();
+  };
+  child.on("error", fail);
+  child.stdin.on("error", fail);
+  child.on("close", () => { lines.close(); fail(new Error("Permission host closed without decision")); });
+  const send = value => child.stdin.write(JSON.stringify(value) + "\n");
+  const request = (method, params) => new Promise((resolve, reject) => {
+    if (failure) { reject(failure); return; }
+    const id = ++nextId;
+    const timer = setTimeout(() => { fail(new Error("Permission timed out")); child.kill(); }, 600000);
+    pending.set(id, { resolve, reject, timer });
+    try { send({ jsonrpc: "2.0", id, method, params }); } catch (error) { fail(error); }
+  });
+  lines.on("line", line => {
+    let message;
+    try { message = JSON.parse(line); } catch { fail(new Error("Invalid permission host response")); return; }
+    const entry = pending.get(message.id);
+    if (!entry) return;
+    pending.delete(message.id); clearTimeout(entry.timer);
+    if (message.error) entry.reject(new Error("Permission host refused request"));
+    else entry.resolve(message.result);
+  });
+  const ready = (async () => {
+    await request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "channel-button-fixture", version: "1" } });
+    send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  })();
+  // The driver's process-tree retirement owns closure, after the terminal result.
+  return { ready, request };
+}
 async function permission() {
   const match = /^mcp__(.+?)__(.+)$/.exec(arg("--permission-prompt-tool") ?? "");
   if (!match || !argv.includes("--mcp-config")) throw new Error("Actual permission host is required");
@@ -26,24 +65,10 @@ async function permission() {
   const input = { command: "printf murage-button-fixture", description: "Qualification permission only; fixture never executes this command" };
   out({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Bash", input }] } });
   appendFileSync(receiptFile, JSON.stringify({ id, phase: "requested" }) + "\n", { mode: 0o600 });
-  const decision = await new Promise((resolve, reject) => {
-    const child = spawn(host.command, host.args ?? [], { env: { ...process.env, ...host.env }, stdio: ["pipe", "pipe", "ignore"] });
-    const timer = setTimeout(() => { child.kill(); reject(new Error("Permission timed out")); }, 600000);
-    const lines = createInterface({ input: child.stdout });
-    const send = value => child.stdin.write(JSON.stringify(value) + "\n");
-    let result;
-    child.on("error", reject);
-    child.on("close", () => { clearTimeout(timer); lines.close(); if (result) resolve(result); else reject(new Error("Permission host closed without decision")); });
-    lines.on("line", line => {
-      const message = JSON.parse(line);
-      if (message.id === 1) {
-        send({ jsonrpc: "2.0", method: "notifications/initialized" });
-        send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: match[2], arguments: { tool_name: "Bash", input, tool_use_id: id } } });
-      }
-      if (message.id === 2) { result = JSON.parse(message.result?.content?.[0]?.text ?? "null"); child.stdin.end(); }
-    });
-    send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "channel-button-fixture", version: "1" } } });
-  });
+  const session = mountedSession ??= mountPermissionHost(host);
+  await session.ready;
+  const result = await session.request("tools/call", { name: match[2], arguments: { tool_name: "Bash", input, tool_use_id: id } });
+  const decision = JSON.parse(result?.content?.[0]?.text ?? "null");
   if (!["allow", "deny"].includes(decision.behavior)) throw new Error("Unexpected permission decision");
   appendFileSync(receiptFile, JSON.stringify({ id, phase: "resolved", behavior: decision.behavior }) + "\n", { mode: 0o600 });
   const text = `Qualification permission ${decision.behavior === "allow" ? "allowed once" : "denied"}; no tool was executed.`;

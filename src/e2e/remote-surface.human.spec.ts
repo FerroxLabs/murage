@@ -82,6 +82,10 @@ async function answerLiveFirstRun(page: import("@playwright/test").Page): Promis
   });
 }
 
+// Both tests rewrite /api/setup, which the app polls; a poll still in flight when the page closes must not fail the
+// test after its assertions have passed.
+test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: "ignoreErrors" }); });
+
 test("a phone is never asked to introduce itself, or to set itself up", async ({ page }) => {
   await answerEmptyWorkspace(page);
   await answerLiveFirstRun(page);
@@ -103,11 +107,18 @@ test("a phone is never asked to introduce itself, or to set itself up", async ({
   const sidebar = await openSidebar(page);
   await sidebar.getByRole("button", { name: "App settings" }).first().click();
   await expect(page.getByRole("button", { name: "Phone and other devices", exact: true })).toHaveCount(0);
-  // The Settings pages a phone never gets (desktop only since 1.0.3 L1); the Places bar keeps its own Apps button.
+  // The Settings pages a phone never gets (desktopOnly in src/lib/settings-pages.ts). Below `md` the section list is
+  // the one page selector beside the search (584db7c3a4); its heading groups and page buttons are hidden there. Since
+  // 1.0.19 a phone does get General, a read-only Models & engines (LOCKED 2.4, d766e437fc) and Connected apps
+  // (cb1fa01908); the desktop-only pages that Simple mode would otherwise show are never offered.
   const settingsNav = page.getByRole("navigation", { name: "Settings sections" });
-  await expect(settingsNav.getByRole("button", { name: "General", exact: true })).toBeVisible();
-  await expect(settingsNav.getByRole("button", { name: "Connected apps", exact: true })).toHaveCount(0);
-  await expect(settingsNav.getByRole("button", { name: "Models & engines", exact: true })).toHaveCount(0);
+  const pageSelect = settingsNav.getByRole("combobox", { name: "Settings page", exact: true });
+  await expect(pageSelect).toBeVisible();
+  const offered = () => pageSelect.locator("option").evaluateAll((options) => options.map((option) => option.getAttribute("aria-label") ?? option.textContent ?? ""));
+  await expect.poll(offered).toEqual(expect.arrayContaining(["General", "Models & engines", "Connected apps"]));
+  for (const desktopOnly of ["Computer & browser", "Phone and other devices", "Backups"]) {
+    expect(await offered(), `${desktopOnly} is not offered on a phone`).not.toContain(desktopOnly);
+  }
   for (const copy of [PHONE_WIZARD, ...DENIALS]) {
     await expect(page.getByText(copy)).toHaveCount(0);
   }

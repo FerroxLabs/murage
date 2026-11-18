@@ -1,27 +1,18 @@
-# Fuigo release provenance
+# Fuigo native engine
 
-Murage pins Fuigo **1.0.20** as a separate native executable. The engine requires no global Node, npm or Fuigo installation inside a packaged app.
+Murage prepares Fuigo **1.0.43** as a separate native executable. The engine requires no global Node, npm or Fuigo installation inside a packaged app.
 
-The [official npm manifest](https://registry.npmjs.org/fuigo/1.0.20) declares six exact-version platform dependencies. Each registry archive was downloaded and verified against the SHA-512 integrity and SHA-1 shasum in the public npm metadata, then SHA-256 hashed; the `package/bin` executable was Brotli-decompressed without running any install script, SHA-256 hashed, and its header read to confirm the architecture (Mach-O arm64 / x86_64, ELF `0xb7` / `0x3e`, PE `0xaa64` / `0x8664`). `scripts/fuigo-1.0.20-provenance.json` records every receipt.
+The [current receipt](../../scripts/fuigo-1.0.43-provenance.json) records the published package checksums and source commit. No 1.0.42 digest or source commit is reused. Packaging refuses pending pins before downloading or reusing a binary.
 
-Source: `2eb306e08ae24d05c15c74b6b1c1d3235e0f1d96` (tag `v1.0.20`; the npm `gitHead` of all seven packages names the same commit). The darwin-arm64, linux-x64 and win32-x64 executables report `fuigo 1.0.20 (2eb306e08ae2)` and complete ACP `initialize`, `authenticate` and `session/new` with Murage's spawn arguments against an isolated home and a synthetic local model.
+After npm publication, run `scripts/fill-fuigo-pin.sh <linux> <win> <darwin>` with the independently reviewed **executable** SHA-256 values for linux-x64, win32-x64 and darwin-arm64. The command checks the exact version's npm SHA-512 integrity and SHA-1 shasum, package identities, wrapper dependency versions and executable headers. It also records digests for the other three existing platform pins. Windows arm64 remains unstageable. No executable or package install script runs during fill; the lockfile refresh is offline. A mismatch stops before writing pins. Reruns verify the same digests. Native release qualification is a separate gate.
 
-| Target | Package | Tarball SHA-256 | Executable SHA-256 |
-| --- | --- | --- | --- |
-| darwin-arm64 | `@fuigo/darwin-arm64@1.0.20` | `d7088f6115a7322ec5c4858034994028458a700e6b376f24f5514c92981b08e5` | `114294e8b5ee7298deb3c7a25de15bf0e84621881099e3b1def4967b7d1f782a` |
-| darwin-x64 | `@fuigo/darwin-x64@1.0.20` | `f1274e5173f3da2e46cbd1be1b429fbdac5f7a506aa7deef3c6796847b0111fb` | `ed142b9654d1695f67cfeb18dbafa07a72e4ac441e67aa6175dea7548b8681e2` |
-| linux-arm64 | `@fuigo/linux-arm64@1.0.20` | `430434b98c892bedfdc52bec6c78703ffd8ef5653e720555662b89e6b085ba0d` | `e2b5dbb315a86da4e85069738a0970002cf6d5f0a3e43b4c6ae4da19b680211a` |
-| linux-x64 | `@fuigo/linux-x64@1.0.20` | `ff99ff1bd936c31880282cb8313dc99758fd1e8369e35c14947ee75e193f396c` | `c3b073eae4eba40e87511c6c00d7c53ccd033d243178b7bc6c397145ffbda678` |
-| win32-arm64 | `@fuigo/win32-arm64@1.0.20` | `a00882794053dab644e1db2177aceb8abb054edaea5279222fd7a852d689eaf5` | `6b8ac196de0187f463db40b09b42cf0cb5ff347b37e2b4dbf85c6b7b84fe9361` |
-| win32-x64 | `@fuigo/win32-x64@1.0.20` | `12291ba4d16c8aba2c68e1dde0ae3588612a791693fe23bf01c0f490a61c5f1a` | `dd90bb955e65eec71f59a502405a1ad240541990a6c11f98be409383c868863d` |
+The [1.0.42 release pin](../../scripts/fixtures/fuigo-1.0.42-pin.md) and [receipt](../../scripts/fuigo-1.0.42-provenance.json) remain historical evidence, not the current pin.
 
-The existing `scripts/prepare-fuigo.mjs` validates both digests and the executable header before staging. Existing platform selection remains unchanged; this bump adds no platform or parser support. The 1.0.20 arm64 engines are still ELF aarch64 and PE ARM64, which the shared header parser does not classify, so linux-arm64 and win32-arm64 stay pinned but unstageable. The linux-x64 engine needs glibc 2.39 or newer, the same as 1.0.19. Staged files remain in ignored `dist-native/fuigo/`. `MURAGE_FUIGO_ARCHIVE_DIR` can supply the reviewed archives without another download.
+The Apache-2.0 LICENSE, NOTICE, dependency notices and vendored notices in this directory are packaged as `licenses/fuigo-*`. Package checksums are not code-signing or notarization proof; application signing continues through its existing packaging process.
 
-## License and memory
+## Memory ownership
 
-The Apache-2.0 LICENSE, NOTICE, comprehensive dependency notices and vendored notices are copied from the published package into this directory and packaged as `licenses/fuigo-*`. At 1.0.20 they are byte-identical to the copies already vendored here (re-compared at this bump), and identical across all six platform packages. Existing named license links remain available. Package checksums are not code-signing or notarization proof; application signing continues through its existing packaging process.
-
-Fuigo enables local workspace memory by default (since 1.0.9). Global sharing, remote embeddings and automatic model consolidation remain opt-in. Murage explicitly passes `--no-memory` before `agent` and `--no-leader` for every hosted turn, so Murage remains the memory owner even when ambient `FUIGO_MEMORY=1` or standalone configuration enables Fuigo memory. The 1.0.20 executable still accepts that exact argument order. Standalone Fuigo configuration is not rewritten. This dependency update does not rewrite user configuration or migrate memory/session stores.
+Fuigo enables local workspace memory by default (since 1.0.9). Global sharing, remote embeddings and automatic model consolidation remain opt-in. Murage explicitly passes `--no-memory` before `agent` and `--no-leader` for every hosted turn, so Murage remains the memory owner even when ambient `FUIGO_MEMORY=1` or standalone configuration enables Fuigo memory. The pinned executable accepts that exact argument order. Standalone Fuigo configuration is not rewritten. This dependency update does not rewrite user configuration or migrate memory/session stores.
 
 ## Tool presentation (1.0.11)
 

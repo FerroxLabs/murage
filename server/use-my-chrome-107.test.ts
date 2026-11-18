@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { createNativeBrowser, type NativeBrowser } from "./browser-native-relay.ts";
+import { ownedCloseCli } from "./browser-owned-close.ts";
 import { pairedExtensionProfile, resetUserChromeTroubleCache, userChromeAttachLog, UserChromeBinds, userChromeTrouble, useMyChromeProfile, useMyChromeRoute } from "./user-chrome.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -235,7 +236,14 @@ else answer({});
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const native = createNativeBrowser({ command: process.execPath, args: [], env: { AGENT_BROWSER_SOCKET_DIR: dir, AGENT_BROWSER_SESSION: "umc", AGENT_BROWSER_CDP: `ws://127.0.0.1:${port}/devtools/browser/${ID}`, FAKE_CALLS: calls } }, { cliPrefix: [engine] });
-    closers.push(() => native.close());
+    // This attach fixture has no daemon; its maintenance CLI reports that fact.
+    const close = vi.spyOn(ownedCloseCli, "run").mockResolvedValue({ code: 0, stdout: JSON.stringify({
+      launchId: null, closed: true, path: "not_running", groupExhausted: true, treeExhausted: false, outsideSeen: 0, unconfirmed: null,
+    }) });
+    closers.push(async () => {
+      await native.close();
+      expect(close).toHaveBeenCalledExactlyOnceWith(expect.any(Object), null);
+    });
     const noop = () => {};
     await Promise.all([native.connect(noop, noop, noop), native.connect(noop, noop, noop)]);
     const ran = readFileSync(calls, "utf8").trim().split("\n");

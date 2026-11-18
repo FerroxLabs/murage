@@ -11,6 +11,8 @@
 // it): it scans the set in resident-sized chunks inside one budget, keeping the most similar candidates over all of them,
 // and reports only where it stopped. Whether that stop matters (a record the reader may READ lies past it) is decided
 // in the main process, after authorization.
+import { RecallPreparationPending } from './recall-recovery.ts';
+import { RecallWorkBudget } from './recall-view-index.ts';
 import type { MemoryEligibility } from "./eligibility.ts";
 import type { IndexHit, MemoryIndex } from "./index.ts";
 import { byScore, compareRefs } from "./ref-order.ts";
@@ -22,17 +24,21 @@ export const scanLimits = { chunks: 8, budgetMs: 700 };
 
 export function answerQuery(index: MemoryIndex, eligibility: MemoryEligibility, input: MemorySearchInput, vector: number[] | null, identity: string, degraded?: string, now: () => number = Date.now): { result: MemorySearchResult; eligibilityMs: number; timings: Record<string, number> } {
   const started = performance.now(), wallStart = now();
-  let eligible = eligibility.read(input);
+  if(input.view&&!input.reader)throw new RecallPreparationPending();
+  const budget=new RecallWorkBudget(8192);
+  let eligible = eligibility.read(input,budget);
+  const words=input.view?eligibility.lexical(input.query,input.view,budget.reserveCandidates(Math.max(0,budget.remaining-1024))):undefined;
   const eligibilityMs = performance.now() - started;
   let degradedReason = degraded;
   const usable = input.semantic ? vector : null;
   let found;
-  try { found = index.search(input.query, eligible.allowed, usable, identity, input.limit); }
-  catch { found = index.search(input.query, eligible.allowed, null, identity, input.limit); degradedReason = "semantic-index-unavailable"; }
+  const searchOptions=input.view?{words:false,resident:false}:undefined;
+  try { found = index.search(input.query, eligible.allowed, usable, identity, input.limit,searchOptions); }
+  catch { found = index.search(input.query, eligible.allowed, null, identity, input.limit,searchOptions); degradedReason = "semantic-index-unavailable"; }
   const semanticRan = usable !== null && degradedReason !== "semantic-index-unavailable";
   const { timings, ...rest } = found;
   let { hits, vectorRows, vectorRanked, unvectored, unvectoredMore } = rest;
-  const lexicalRanked = rest.lexicalRanked;
+  const lexicalRanked = words?words.hits.map(row=>[row.id,row.version] as RankedRef):rest.lexicalRanked;
   let resumeAfter: string | undefined;
   if (semanticRan && eligible.capacity) {
     // Continue over the rest of the eligible set, a chunk at a time, until it ends or the budget does.
@@ -41,9 +47,9 @@ export function answerQuery(index: MemoryIndex, eligibility: MemoryEligibility, 
     const missing = [...unvectored ?? []];
     let more = Boolean(unvectoredMore);
     for (let chunk = 1; eligible.capacity; chunk++) {
-      if (chunk >= scanLimits.chunks || now() >= deadline) { resumeAfter = eligible.nextCursor; break; }
+      if (chunk >= scanLimits.chunks || now() >= deadline || input.view&&budget.remaining<=1) { resumeAfter = eligible.nextCursor; break; }
       const previous = eligible;
-      eligible = eligibility.read({ ...input, cursor: previous.nextCursor! });
+      eligible = eligibility.read({ ...input, cursor: previous.nextCursor! },budget);
       let part;
       // A chunk that cannot be scored ends the scan where the last good chunk ended: what is left is reported, never skipped.
       try { part = index.search(input.query, eligible.allowed, usable, identity, input.limit, { words: false, resident: false }); }
@@ -62,6 +68,7 @@ export function answerQuery(index: MemoryIndex, eligibility: MemoryEligibility, 
   // Neither list went past the first chunk when meaning search did not run: say so.
   if (!semanticRan && eligible.capacity) resumeAfter = eligible.nextCursor;
   const semanticFinal = semanticRan;
+  if(input.view)eligibility.validate(input.view,input.reader!);
   const result: MemorySearchResult = {
     hits, vectorRows, lexicalRanked, vectorRanked,
     ...semanticFinal && unvectored !== undefined ? { unvectored, unvectoredMore: Boolean(unvectoredMore), vectorModel: identity } : {},

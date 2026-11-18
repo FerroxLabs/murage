@@ -3,8 +3,9 @@
 //
 // One quiet, dismissible line when update checks have been failing for a day or more (the main process sets
 // `staleCheckSince`; electron/updater-health.mjs). Dismissal is remembered per streak in this browser only.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { X } from "lucide-react";
+import { useClearOfComposer, useNoticeTurn } from "@/lib/notice-lane";
 import { useUpdaterState } from "@/lib/updater";
 
 const DISMISSED_KEY = "murage.updateStaleNotice.dismissed";
@@ -26,13 +27,19 @@ export function UpdateStaleNotice() {
   const [dismissed, setDismissed] = useState<string | null>(readDismissed);
   const since = s?.staleCheckSince;
   const bannerOpen = Boolean(s && s.status !== "idle" && s.status !== "checking");
-  // UpdateBanner sits in the same corner; it has priority while it is open.
-  if (!s || !since || dismissed === since || bannerOpen) return null;
+  // UpdateBanner sits in the same corner; it has priority while it is open. Any other corner notice goes first too (lib/notice-lane.ts).
+  const wants = Boolean(s && since && dismissed !== since && !bannerOpen);
+  const turn = useNoticeTurn("update-stale", wants);
+  const frame = useRef<HTMLDivElement>(null);
+  const clear = useClearOfComposer(frame, wants && turn);
+  if (!s || !since || !wants || !turn) return null;
   const updater = window.muragebox!.updater!;
   return (
     <div
+      ref={frame}
       role="status"
       data-testid="update-stale-notice"
+      style={clear}
       className="fixed bottom-4 left-4 z-40 flex max-w-sm items-center gap-3 rounded-lg border border-hairline/40 bg-panel px-3 py-2 text-[12px] text-ink-secondary shadow-lg"
     >
       <span>{staleNoticeText(since)}</span>

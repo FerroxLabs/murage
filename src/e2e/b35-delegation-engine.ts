@@ -53,10 +53,10 @@ export interface B35LogEntry {
 
 /** Helpers the inserted block reuses from the fake CLI instead of duplicating. */
 const REQUIRED_HELPERS = [
-  'import { spawn } from "node:child_process";',
+  'import { spawn, type ChildProcess } from "node:child_process";',
   "const argAfter = ",
   "const out = ",
-  "const fixtureRequested = ",
+  'import { fixtureRequested } from "./fixture-request.ts";',
   "const promptText = ",
   "const callPermissionPromptTool = ",
   "const finishIfDone = ",

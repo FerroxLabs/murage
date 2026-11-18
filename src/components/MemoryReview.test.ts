@@ -101,3 +101,7 @@ it("labels a verbatim piece of a chat line as a chat excerpt, with who said it (
   expect(html).toContain("Chat excerpt · ");
   expect(memoryRecordOriginLabel({ id: "r", kind: "fact", assertion: "owner-statement", validFrom: 1 })).not.toContain("Chat excerpt");
 });
+
+it("states when a memory's sources and history are incomplete", () => {
+  expect(render({ ...inspection, incomplete: true })).toContain("Only part of this memory&#x27;s sources and history is shown.");
+});

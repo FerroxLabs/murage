@@ -1,11 +1,13 @@
-import { constants, closeSync, fstatSync, openSync, createWriteStream, rmSync } from "node:fs";
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
+import { createWriteStream } from "./counted-fs.ts";
+import { constants, closeSync, fstatSync, openSync, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { win32 } from "node:path";
 import { backupAgePinForTarget } from "../shared/backup-age-pin.ts";
 import { trustedBackupAgeExecutable, normalizeBackupAgeDiagnostic } from "../electron/backup-age-attestation.mjs";
-import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
+import { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 import { createWindowsBackupResourceResolver } from "./windows-backup-resources.ts";
 import { redactCauseText } from "../shared/backup-capture-failure.mjs";
 import { safeBackupProgress } from "../shared/backup-progress.mjs";
@@ -88,7 +90,7 @@ async function runAge(executable: string,args: string[],input: Readable,output: 
   const outputFd=openSync(output,"wx",0o600);
   let bytes=0;
   const onBytes=safeBackupProgress(options.onBytes);
-  const child=spawn(executable,args,{stdio:inputFd===undefined?["pipe","pipe","pipe"]:["pipe","pipe","pipe",inputFd],env:{PATH:""},windowsHide:true});
+  const child=spawn(executable,[...args],withHideInherit({stdio:inputFd===undefined?["pipe","pipe","pipe"]:["pipe","pipe","pipe",inputFd],env:{PATH:""},windowsHide:true}));
   let didClose=false;
   // Log-only facts about the tool (never shown, never returned to a window):
   // its exit, a spawn errno, and the head of its error output. The head is

@@ -20,7 +20,12 @@
 namespace {
 constexpr size_t frameLimit = 32768, controlLimit = 131072, keyLimit = 136;
 constexpr unsigned long long byteLimit = 20ull * 1024 * 1024 * 1024;
-constexpr char ageDigest[] = "2821a4ed191da07372acd302e5f6feae7a7985e285e1417765ebe74025af45f0";
+#ifndef MURAGE_AGE_DIGEST
+#define MURAGE_AGE_DIGEST "2821a4ed191da07372acd302e5f6feae7a7985e285e1417765ebe74025af45f0"
+#endif
+// Packaging rebuilds this helper with the final signed age digest, then signs
+// the rebuilt helper. Source-only fixtures retain the pinned upstream digest.
+constexpr char ageDigest[] = MURAGE_AGE_DIGEST;
 struct Failure {};
 void need(bool okay) { if (!okay) throw Failure{}; }
 void win(BOOL okay) { need(okay != FALSE); }

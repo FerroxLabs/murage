@@ -1,0 +1,2767 @@
+{
+  "summary": {
+    "components": 192,
+    "artifacts": 342,
+    "sha256": 342,
+    "pgpArtifacts": 334,
+    "pgpSigningKeys": 37,
+    "sha256Only": 8,
+    "missingKeys": [
+      "94B291AEF984A085",
+      "CF776DADF519DEE3"
+    ],
+    "extensions": {
+      ".jar": 142,
+      ".module": 93,
+      ".pom": 107
+    }
+  },
+  "artifacts": [
+    {
+      "group": "ch.qos.logback",
+      "name": "logback-classic",
+      "version": "1.6.6",
+      "artifact": "logback-classic-1.6.6.jar",
+      "sha256": "5230217ccba7a9d31dda1dd878e5606037a7972282c7d3f8eac1efa80e9463d9",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "ch.qos.logback",
+      "name": "logback-classic",
+      "version": "1.6.6",
+      "artifact": "logback-classic-1.6.6.pom",
+      "sha256": "e3c14a0a5ab76cb0ffebd08ed19a5766964c52195ede15bdd5408707142d9cc1",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "ch.qos.logback",
+      "name": "logback-core",
+      "version": "1.6.6",
+      "artifact": "logback-core-1.6.6.jar",
+      "sha256": "5458415d5d58a97ab670632f9b2bdac2d6f7e0e11455b45dd4e64e90d12670ab",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "ch.qos.logback",
+      "name": "logback-core",
+      "version": "1.6.6",
+      "artifact": "logback-core-1.6.6.pom",
+      "sha256": "741545bf1c537ad4f9328ff96cddbc53e9a0f1da8476655590ba071a2f1fe284",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "ch.qos.logback",
+      "name": "logback-parent",
+      "version": "1.6.6",
+      "artifact": "logback-parent-1.6.6.pom",
+      "sha256": "6ee29ad89247ddf2ac2acc7f2015a5fff6cfc24dfceada474fec029d2f9416fc",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "com.fasterxml",
+      "name": "oss-parent",
+      "version": "79",
+      "artifact": "oss-parent-79.pom",
+      "sha256": "9206b7dd67fb138036576c3dfca947a2a8f3e2c4d2d9c1f2d1dea519b3a4dae1",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson",
+      "name": "jackson-bom",
+      "version": "2.22.4",
+      "artifact": "jackson-bom-2.22.4.pom",
+      "sha256": "a3c00688a7bf8e128451137b68f90d9137957a372756083d74555a47241d1636",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson",
+      "name": "jackson-parent",
+      "version": "2.22",
+      "artifact": "jackson-parent-2.22.pom",
+      "sha256": "7d45a7efb69df207bed7cc54b87a0bb012f10952c095570a273b49485da0d129",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-annotations",
+      "version": "2.22",
+      "artifact": "jackson-annotations-2.22.jar",
+      "sha256": "21ddb598807d3a51a876704eb979d9296e1c6a6f47ab1826ff88c6d6a127a2d0",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-annotations",
+      "version": "2.22",
+      "artifact": "jackson-annotations-2.22.module",
+      "sha256": "3d22704448e98dfd578c5df5646dd0a98aec04080b08a3245cf8beb8a25dcb5d",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-core",
+      "version": "2.22.4",
+      "artifact": "jackson-core-2.22.4.jar",
+      "sha256": "2d30c375cddea9657a1e1ef97547a2694b663b355facb4de53a097782b312d1a",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-core",
+      "version": "2.22.4",
+      "artifact": "jackson-core-2.22.4.module",
+      "sha256": "f48a33005b4950f90af0aed735c29c9e7e43df9e2a4d649db7a2dc2e90ce96f5",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-databind",
+      "version": "2.22.4",
+      "artifact": "jackson-databind-2.22.4.jar",
+      "sha256": "d4cbf8947087f305869826801913abdc50735a1fab2074a1993e7bc67ca974a3",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-databind",
+      "version": "2.22.4",
+      "artifact": "jackson-databind-2.22.4.module",
+      "sha256": "fdf629a455277b8696a0e79533d99531bea7f5f5edaf6cab38646608b8cbb9c3",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson.module",
+      "name": "jackson-module-kotlin",
+      "version": "2.22.1",
+      "artifact": "jackson-module-kotlin-2.22.1.module",
+      "sha256": "ae7b387957b7ba28c08ffa3c59cc459d924bccf7923970238cfd7c918b969bd9",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson.module",
+      "name": "jackson-module-kotlin",
+      "version": "2.22.4",
+      "artifact": "jackson-module-kotlin-2.22.4.jar",
+      "sha256": "2db567181c61405c025a5209d1153bcf4947e876fd2a2592bc71634d367379b3",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.fasterxml.jackson.module",
+      "name": "jackson-module-kotlin",
+      "version": "2.22.4",
+      "artifact": "jackson-module-kotlin-2.22.4.module",
+      "sha256": "d8df679188e6cba9f978f6dfda3695a108314f210c3ef2cbc4ec5eb5eed4dbcf",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "com.github.hypfvieh",
+      "name": "dbus-java-core",
+      "version": "5.0.0",
+      "artifact": "dbus-java-core-5.0.0.jar",
+      "sha256": "ad975d1a17d3778ddebd631e3d9d5337294aa915bc65fde6e9087d90729bbb45",
+      "pgp": "7744B88EDD98A7402C0C341D9291F17036AEE155"
+    },
+    {
+      "group": "com.github.hypfvieh",
+      "name": "dbus-java-core",
+      "version": "5.0.0",
+      "artifact": "dbus-java-core-5.0.0.pom",
+      "sha256": "919542530d70665c9ee9a1c2d566b063e506f075f83ca4b659d27382d46a982c",
+      "pgp": "7744B88EDD98A7402C0C341D9291F17036AEE155"
+    },
+    {
+      "group": "com.github.hypfvieh",
+      "name": "dbus-java-parent",
+      "version": "5.0.0",
+      "artifact": "dbus-java-parent-5.0.0.pom",
+      "sha256": "24eced1582d9b2ac3f2c424e89c1a339515f7950dba2ad60df7d913b19b54a9f",
+      "pgp": "7744B88EDD98A7402C0C341D9291F17036AEE155"
+    },
+    {
+      "group": "com.github.hypfvieh",
+      "name": "dbus-java-transport-native-unixsocket",
+      "version": "5.0.0",
+      "artifact": "dbus-java-transport-native-unixsocket-5.0.0.jar",
+      "sha256": "ef70874968340139a70903bd08bfa6e4eceb9e811df89a78a6c8b1640612e067",
+      "pgp": "7744B88EDD98A7402C0C341D9291F17036AEE155"
+    },
+    {
+      "group": "com.github.hypfvieh",
+      "name": "dbus-java-transport-native-unixsocket",
+      "version": "5.0.0",
+      "artifact": "dbus-java-transport-native-unixsocket-5.0.0.pom",
+      "sha256": "d59971db9a0b35986c9f936c116c37e8b0c6027295573c72945b8c9668507060",
+      "pgp": "7744B88EDD98A7402C0C341D9291F17036AEE155"
+    },
+    {
+      "group": "com.github.javaparser",
+      "name": "javaparser-core",
+      "version": "3.28.2",
+      "artifact": "javaparser-core-3.28.2.jar",
+      "sha256": "b5499a3b1c40b16c0671fabe478c9aafeab38160c6fde74a6c13f42d86716ecd",
+      "pgp": "6DE9B8077FBB2F8A019F4904BD17A565509DEE20"
+    },
+    {
+      "group": "com.github.javaparser",
+      "name": "javaparser-core",
+      "version": "3.28.2",
+      "artifact": "javaparser-core-3.28.2.pom",
+      "sha256": "87d2b333dfec96896d5a49e80a95b92ef572f610e848276b45eaa061e05b4132",
+      "pgp": "6DE9B8077FBB2F8A019F4904BD17A565509DEE20"
+    },
+    {
+      "group": "com.github.javaparser",
+      "name": "javaparser-parent",
+      "version": "3.28.2",
+      "artifact": "javaparser-parent-3.28.2.pom",
+      "sha256": "0358ce75bca1a54c141e16b7f1621e973fa177ddf64fe02b0f38df23ad400543",
+      "pgp": "6DE9B8077FBB2F8A019F4904BD17A565509DEE20"
+    },
+    {
+      "group": "com.github.javaparser",
+      "name": "javaparser-symbol-solver-core",
+      "version": "3.28.2",
+      "artifact": "javaparser-symbol-solver-core-3.28.2.jar",
+      "sha256": "4cb097c0834427939c01f4169dd0bab20068673913341c5b6db27be1a7445098",
+      "pgp": "6DE9B8077FBB2F8A019F4904BD17A565509DEE20"
+    },
+    {
+      "group": "com.github.javaparser",
+      "name": "javaparser-symbol-solver-core",
+      "version": "3.28.2",
+      "artifact": "javaparser-symbol-solver-core-3.28.2.pom",
+      "sha256": "4f2ae4a378430e45ca951c706fe7f08b79a3cc8b37dd151e94c8d4ef6896fef6",
+      "pgp": "6DE9B8077FBB2F8A019F4904BD17A565509DEE20"
+    },
+    {
+      "group": "com.github.openjson",
+      "name": "openjson",
+      "version": "1.0.13",
+      "artifact": "openjson-1.0.13.jar",
+      "sha256": "7d4184cf891f359ee72095a4ce1cb9cd8f3c676676dfe716ea89fab4d0e6e953",
+      "missingKeys": [
+        "CF776DADF519DEE3"
+      ]
+    },
+    {
+      "group": "com.github.openjson",
+      "name": "openjson",
+      "version": "1.0.13",
+      "artifact": "openjson-1.0.13.pom",
+      "sha256": "6c7e953b4f5ab7df94a699ee9ba8e4ecd9de2a084b72899b57647a23758986a8",
+      "missingKeys": [
+        "CF776DADF519DEE3"
+      ]
+    },
+    {
+      "group": "com.github.turasa",
+      "name": "core-network",
+      "version": "2.15.3_unofficial_157",
+      "artifact": "core-network-2.15.3_unofficial_157.jar",
+      "sha256": "dbabe9f00ca32dd6cb234102bdbca736d7d179714ad3b578e7b77bedc9fbb3b3",
+      "pgp": "173C716444AF39DE35165576A2CC07A88B18559C"
+    },
+    {
+      "group": "com.github.turasa",
+      "name": "core-network",
+      "version": "2.15.3_unofficial_157",
+      "artifact": "core-network-2.15.3_unofficial_157.module",
+      "sha256": "b0f39b9b0956c01b826f6a3f2f997068a2fd1ed0feb770aa86f7a8f12b307133",
+      "pgp": "173C716444AF39DE35165576A2CC07A88B18559C"
+    },
+    {
+      "group": "com.github.turasa",
+      "name": "serialization",
+      "version": "2.15.3_unofficial_157",
+      "artifact": "serialization-2.15.3_unofficial_157.jar",
+      "sha256": "91b5a72e85981e3b699bf117020cd4ea2fe754352dc557cbd524e084475a3dd2",
+      "pgp": "173C716444AF39DE35165576A2CC07A88B18559C"
+    },
+    {
+      "group": "com.github.turasa",
+      "name": "serialization",
+      "version": "2.15.3_unofficial_157",
+      "artifact": "serialization-2.15.3_unofficial_157.module",
+      "sha256": "2100d2ae11be1ef15847197d282340dc80080b6cfe98c65386bb53bef2f6f3d3",
+      "pgp": "173C716444AF39DE35165576A2CC07A88B18559C"
+    },
+    {
+      "group": "com.github.turasa",
+      "name": "signal-network",
+      "version": "2.15.3_unofficial_157",
+      "artifact": "signal-network-2.15.3_unofficial_157.jar",
+      "sha256": "0108a5b75e5e314237f2167a08c61307dfa3ee82ad6f65a2390ef82e5bf4d374",
+      "pgp": "173C716444AF39DE35165576A2CC07A88B18559C"
+    },
+    {
+      "group": "com.github.turasa",
+      "name": "signal-network",
+      "version": "2.15.3_unofficial_157",
+      "artifact": "signal-network-2.15.3_unofficial_157.module",
+      "sha256": "2919371d7e049a8469672d84e869cceaf8165effb290df5ffa28b96b5e83c1c1",
+      "pgp": "173C716444AF39DE35165576A2CC07A88B18559C"
+    },
+    {
+      "group": "com.github.turasa",
+      "name": "signal-service-java",
+      "version": "2.15.3_unofficial_157",
+      "artifact": "signal-service-java-2.15.3_unofficial_157.jar",
+      "sha256": "a4e4da0604e62420db20c92c3ff683791a0ebff7ee66e9a428d8b6ff7134654b",
+      "pgp": "173C716444AF39DE35165576A2CC07A88B18559C"
+    },
+    {
+      "group": "com.github.turasa",
+      "name": "signal-service-java",
+      "version": "2.15.3_unofficial_157",
+      "artifact": "signal-service-java-2.15.3_unofficial_157.module",
+      "sha256": "ed148a40844b824e15dd136d27e7013d11c8f6960b1c01f470475107f3372278",
+      "pgp": "173C716444AF39DE35165576A2CC07A88B18559C"
+    },
+    {
+      "group": "com.github.turasa",
+      "name": "util-jvm",
+      "version": "2.15.3_unofficial_157",
+      "artifact": "util-jvm-2.15.3_unofficial_157.jar",
+      "sha256": "b127556ba0fb7f34c428d83fe458e6a8595d5c873c1f901848efb27b85ebd1ed",
+      "pgp": "173C716444AF39DE35165576A2CC07A88B18559C"
+    },
+    {
+      "group": "com.github.turasa",
+      "name": "util-jvm",
+      "version": "2.15.3_unofficial_157",
+      "artifact": "util-jvm-2.15.3_unofficial_157.module",
+      "sha256": "8aeb10ccb69476b13eafb9f9c43f564029b760f2825b869e2b63b4aa1fa7699d",
+      "pgp": "173C716444AF39DE35165576A2CC07A88B18559C"
+    },
+    {
+      "group": "com.google.code.findbugs",
+      "name": "jsr305",
+      "version": "3.0.2",
+      "artifact": "jsr305-3.0.2.jar",
+      "sha256": "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7",
+      "pgp": "7616EB882DAF57A11477AAF559A252FB1199D873"
+    },
+    {
+      "group": "com.google.code.findbugs",
+      "name": "jsr305",
+      "version": "3.0.2",
+      "artifact": "jsr305-3.0.2.pom",
+      "sha256": "19889dbdf1b254b2601a5ee645b8147a974644882297684c798afe5d63d78dfe",
+      "pgp": "7616EB882DAF57A11477AAF559A252FB1199D873"
+    },
+    {
+      "group": "com.google.code.gson",
+      "name": "gson",
+      "version": "2.11.0",
+      "artifact": "gson-2.11.0.jar",
+      "sha256": "57928d6e5a6edeb2abd3770a8f95ba44dce45f3b23b7a9dc2b309c581552a78b",
+      "pgp": "C7BE5BCC9FEC15518CFDA882B0F3710FA64900E7"
+    },
+    {
+      "group": "com.google.code.gson",
+      "name": "gson",
+      "version": "2.11.0",
+      "artifact": "gson-2.11.0.pom",
+      "sha256": "c0e547bea998888e6e25c5886a90e762272bc88b5275343dd2c05ded6ca2e360",
+      "pgp": "C7BE5BCC9FEC15518CFDA882B0F3710FA64900E7"
+    },
+    {
+      "group": "com.google.code.gson",
+      "name": "gson-parent",
+      "version": "2.11.0",
+      "artifact": "gson-parent-2.11.0.pom",
+      "sha256": "8acb1f3b72a6f026916ac0735bad9aab0293d527edb7b365327def13a9367b7a",
+      "pgp": "C7BE5BCC9FEC15518CFDA882B0F3710FA64900E7"
+    },
+    {
+      "group": "com.google.errorprone",
+      "name": "error_prone_annotations",
+      "version": "2.27.0",
+      "artifact": "error_prone_annotations-2.27.0.jar",
+      "sha256": "24c923372c58e35d0b9f16a028929bb9aedc77521867c274f2bd0735df5ba1f5",
+      "pgp": "EE0CA873074092F806F59B65D364ABAA39A47320"
+    },
+    {
+      "group": "com.google.errorprone",
+      "name": "error_prone_annotations",
+      "version": "2.27.0",
+      "artifact": "error_prone_annotations-2.27.0.pom",
+      "sha256": "4ca5a35d61235e16549ac346d1e34551cdf0fe27e84aa57e03cbeb255ea4e5da",
+      "pgp": "EE0CA873074092F806F59B65D364ABAA39A47320"
+    },
+    {
+      "group": "com.google.errorprone",
+      "name": "error_prone_parent",
+      "version": "2.27.0",
+      "artifact": "error_prone_parent-2.27.0.pom",
+      "sha256": "fa81829d049559df6927f9c9a6fd6bbd09f8b50e6d4736ae72c8300b6c3d7654",
+      "pgp": "EE0CA873074092F806F59B65D364ABAA39A47320"
+    },
+    {
+      "group": "com.google.zxing",
+      "name": "core",
+      "version": "3.5.4",
+      "artifact": "core-3.5.4.jar",
+      "sha256": "71de5d89341b5fcf5dd89da7f44e84d825d0e084cdf3ec77c9abe26b0f0ceb13",
+      "pgp": "CE3285F320685193D11FEA01F6CE9695C9318406"
+    },
+    {
+      "group": "com.google.zxing",
+      "name": "core",
+      "version": "3.5.4",
+      "artifact": "core-3.5.4.pom",
+      "sha256": "502c7368ae869f15428c020a2432eec9dde7436454f3edd1816e0d4b3d0609bf",
+      "pgp": "CE3285F320685193D11FEA01F6CE9695C9318406"
+    },
+    {
+      "group": "com.google.zxing",
+      "name": "zxing-parent",
+      "version": "3.5.4",
+      "artifact": "zxing-parent-3.5.4.pom",
+      "sha256": "9133f322d86101c5c478c08ea3d6734dc376423937ddab1aa2a06aae24fc85c9",
+      "pgp": "CE3285F320685193D11FEA01F6CE9695C9318406"
+    },
+    {
+      "group": "com.googlecode.libphonenumber",
+      "name": "libphonenumber",
+      "version": "9.0.41",
+      "artifact": "libphonenumber-9.0.41.jar",
+      "sha256": "c9efe6739636308930ecd2d3f282173e7d98a7c07592dbca466c02df8494f4a8",
+      "pgp": "76DF4612A2C7D5821832A8A2665487B2DBDA9781"
+    },
+    {
+      "group": "com.googlecode.libphonenumber",
+      "name": "libphonenumber",
+      "version": "9.0.41",
+      "artifact": "libphonenumber-9.0.41.pom",
+      "sha256": "38933a5d322d8ea60d31f10b1a621dbedab3db3496d9e6e47a35776c0945c6f2",
+      "pgp": "76DF4612A2C7D5821832A8A2665487B2DBDA9781"
+    },
+    {
+      "group": "com.googlecode.libphonenumber",
+      "name": "libphonenumber-parent",
+      "version": "9.0.41",
+      "artifact": "libphonenumber-parent-9.0.41.pom",
+      "sha256": "0cf572feab84d54af2b7239e183ad458e5345b4835c52571187b6b457f7d142f",
+      "pgp": "76DF4612A2C7D5821832A8A2665487B2DBDA9781"
+    },
+    {
+      "group": "com.squareup.okhttp3",
+      "name": "okhttp",
+      "version": "5.3.2",
+      "artifact": "okhttp-5.3.2.module",
+      "sha256": "0b7774203a736b5d22fc45b522ec927bbe2c90487dd5865b64e57e00605e4711",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.squareup.okhttp3",
+      "name": "okhttp-coroutines",
+      "version": "5.3.2",
+      "artifact": "okhttp-coroutines-5.3.2.jar",
+      "sha256": "44371091a9a5821f58cc8149781f5f8a05691dc562fa3f96775f4310e6aa277e",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.squareup.okhttp3",
+      "name": "okhttp-coroutines",
+      "version": "5.3.2",
+      "artifact": "okhttp-coroutines-5.3.2.module",
+      "sha256": "58648e33aaf7f0671e01747dcb93b0ee4cb61643fa35825d5aedde448318cf66",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.squareup.okhttp3",
+      "name": "okhttp-jvm",
+      "version": "5.3.2",
+      "artifact": "okhttp-jvm-5.3.2.jar",
+      "sha256": "c771f48075b763f6c322055e21129a94b7de4c1faf3f8f58ace320b0c9517a30",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.squareup.okhttp3",
+      "name": "okhttp-jvm",
+      "version": "5.3.2",
+      "artifact": "okhttp-jvm-5.3.2.module",
+      "sha256": "39130cf6065280d90de2e827350c3170bb55eb2f4835c2b4416f3b83b1f1ab85",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.squareup.okio",
+      "name": "okio",
+      "version": "3.17.0",
+      "artifact": "okio-3.17.0.module",
+      "sha256": "3d878db9ffd4e959c30f9a8366a88c22d001e9b324378d7dbeed98568e7ec559",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.squareup.okio",
+      "name": "okio-jvm",
+      "version": "3.17.0",
+      "artifact": "okio-jvm-3.17.0.jar",
+      "sha256": "3b13dcc3e1573047c2d507fc4f7fcb0bb0cbcd9d395da21d20e09406e2cd6a73",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.squareup.okio",
+      "name": "okio-jvm",
+      "version": "3.17.0",
+      "artifact": "okio-jvm-3.17.0.module",
+      "sha256": "d4617d0df71f202e7299471848e625f4f36d7fa64d46c3503f70acf4821a45de",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.squareup.wire",
+      "name": "wire-runtime",
+      "version": "6.0.0-alpha02",
+      "artifact": "wire-runtime-6.0.0-alpha02.module",
+      "sha256": "120157959adc9edada9acc4f33697edc55280ea67731318abaeb3b3094681b3a",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.squareup.wire",
+      "name": "wire-runtime-jvm",
+      "version": "6.0.0-alpha02",
+      "artifact": "wire-runtime-jvm-6.0.0-alpha02.jar",
+      "sha256": "750aa2aac9e923b6388b57fecc53c526d10efee868395ac7f15ccbb95f781520",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.squareup.wire",
+      "name": "wire-runtime-jvm",
+      "version": "6.0.0-alpha02",
+      "artifact": "wire-runtime-jvm-6.0.0-alpha02.module",
+      "sha256": "98b4572bc1bf3c3123e65387c64629af505e41078976d672828ef5979709940c",
+      "pgp": "1D217F8475EEE9F19AB8DD6B793FD5751A0F0780"
+    },
+    {
+      "group": "com.zaxxer",
+      "name": "HikariCP",
+      "version": "7.1.0",
+      "artifact": "HikariCP-7.1.0.jar",
+      "sha256": "2be45c641b841e81df87292e181f2c203500c5f0e9a1676f135927387f3cf40b",
+      "pgp": "F3A90E6B10E809F851AB4FC54CC08E7F47C3EC76"
+    },
+    {
+      "group": "com.zaxxer",
+      "name": "HikariCP",
+      "version": "7.1.0",
+      "artifact": "HikariCP-7.1.0.pom",
+      "sha256": "5b8df2699933ea898aa50d4def4fc2226b15e6f4d993e373a16070f7ed480216",
+      "pgp": "F3A90E6B10E809F851AB4FC54CC08E7F47C3EC76"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-annotations",
+      "version": "2.2.2.1",
+      "artifact": "arrow-annotations-2.2.2.1.module",
+      "sha256": "d094135cdba22d74dee0c72d1de6850078ebce508298cbdf4a3e9d37a7898d94",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-annotations-jvm",
+      "version": "2.2.2.1",
+      "artifact": "arrow-annotations-jvm-2.2.2.1.jar",
+      "sha256": "579e6b6918fab3a2ce4fe7b72d70afdef71c4097ef075ca4fc5db032973b9040",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-annotations-jvm",
+      "version": "2.2.2.1",
+      "artifact": "arrow-annotations-jvm-2.2.2.1.module",
+      "sha256": "12c373b8b22b43b7e79cb3f217bfd6b6f1ccf41ee5bd2e75cfba6b1440caf474",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-atomic",
+      "version": "2.2.2.1",
+      "artifact": "arrow-atomic-2.2.2.1.module",
+      "sha256": "9151cc578143c4353fd45fa06e7cbd2ef997c87ce92c5b939171818a8b72c2e9",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-atomic-jvm",
+      "version": "2.2.2.1",
+      "artifact": "arrow-atomic-jvm-2.2.2.1.jar",
+      "sha256": "4bda03d528a74ff76b215487afab361ef9038de5fef669de9f75e337f63d978e",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-atomic-jvm",
+      "version": "2.2.2.1",
+      "artifact": "arrow-atomic-jvm-2.2.2.1.module",
+      "sha256": "c8dde315663730857c9c33a44902ea326e136d7644dd51cb1f09c4fb34c2bf6c",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-core",
+      "version": "2.2.2.1",
+      "artifact": "arrow-core-2.2.2.1.module",
+      "sha256": "864b62011366ca6fa08f441caec7b44fd946c31f1c09eab349c60c4e5002e015",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-core-jvm",
+      "version": "2.2.2.1",
+      "artifact": "arrow-core-jvm-2.2.2.1.jar",
+      "sha256": "0c7fafac17508f5c50571b7b7730278852e928f0906883936e707d4520a4b557",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-core-jvm",
+      "version": "2.2.2.1",
+      "artifact": "arrow-core-jvm-2.2.2.1.module",
+      "sha256": "3175f419f0b57dc1dd31d484488fb7d70fb08a628d3ef6c3ac2fb5b177bbd588",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-exception-utils",
+      "version": "2.2.2.1",
+      "artifact": "arrow-exception-utils-2.2.2.1.module",
+      "sha256": "afad8e7edf4d92d94cd948054f32e347bbb9897f69eeb2f669a538be41df8c87",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-exception-utils-jvm",
+      "version": "2.2.2.1",
+      "artifact": "arrow-exception-utils-jvm-2.2.2.1.jar",
+      "sha256": "bd59b9e8b93e3006bb2c8849bd39238e0e9559fd2c0532678983644e56ffad16",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.arrow-kt",
+      "name": "arrow-exception-utils-jvm",
+      "version": "2.2.2.1",
+      "artifact": "arrow-exception-utils-jvm-2.2.2.1.module",
+      "sha256": "398eb19cc23271a815a93f38904dac85ea2c9e10153adce1a8de248566991524",
+      "pgp": "6CE63E2E1685215A995BB3020B99A4AB5DB59AA2"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-aop",
+      "version": "5.2.12",
+      "artifact": "micronaut-aop-5.2.12.jar",
+      "sha256": "88fa7c661a622897e280c0f784597f6897d34e959d59f36c34c0f09dc827ee0c",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-aop",
+      "version": "5.2.12",
+      "artifact": "micronaut-aop-5.2.12.module",
+      "sha256": "bf5fee88b12e4c17eab8b54ab3797ef9416bc92ccde024d9dd7185000678f78c",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-context",
+      "version": "5.2.12",
+      "artifact": "micronaut-context-5.2.12.jar",
+      "sha256": "ba33641d57138c5d7f0e3d516cf1fca125a758f2f25bd65c37d58ba1b6baee0a",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-context",
+      "version": "5.2.12",
+      "artifact": "micronaut-context-5.2.12.module",
+      "sha256": "d1e2368a9ffe1900667649fcf2ca29f1a8ac7a11e9f81a4a881a9e4308bcda19",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-context-propagation",
+      "version": "5.2.12",
+      "artifact": "micronaut-context-propagation-5.2.12.jar",
+      "sha256": "dd890d5bb59aed30e4c4006875282b67d14c38401a29cc499143461c51e96923",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-context-propagation",
+      "version": "5.2.12",
+      "artifact": "micronaut-context-propagation-5.2.12.module",
+      "sha256": "0301cd3fc06038a45e3e95b490107cb43d378912e4e954539a1cd48cfc10e486",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-core",
+      "version": "5.2.12",
+      "artifact": "micronaut-core-5.2.12.jar",
+      "sha256": "dfa8694430314ab977b6c7e1bc003c7722bb4cc6aa8c14cbf90bacb37be82d2c",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-core",
+      "version": "5.2.12",
+      "artifact": "micronaut-core-5.2.12.module",
+      "sha256": "d50a70444f5118ef4f60d3f15cc0f72577bcb41321724d83ee8173be170885be",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-core-bom",
+      "version": "5.2.12",
+      "artifact": "micronaut-core-bom-5.2.12.module",
+      "sha256": "05b90d1d0153b24176361a9697a3fb6a42cf1e8afee21ca30f86d5ddbe78ff52",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-core-processor",
+      "version": "5.2.12",
+      "artifact": "micronaut-core-processor-5.2.12.jar",
+      "sha256": "e0a9de17075c6422382fce2550666e3d3bb7d7e7a14387cb4f2f89bca5fde6f8",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-core-processor",
+      "version": "5.2.12",
+      "artifact": "micronaut-core-processor-5.2.12.module",
+      "sha256": "daa2bead94df1e784f065cfc86170b6287817f6cd6e50987c905468b2e2bc1d7",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-core-reactive",
+      "version": "5.2.12",
+      "artifact": "micronaut-core-reactive-5.2.12.jar",
+      "sha256": "52af5ce83f74ce9bb97fdc1f51833b17aaf52b83309683a5f0268d5bd8a4471e",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-core-reactive",
+      "version": "5.2.12",
+      "artifact": "micronaut-core-reactive-5.2.12.module",
+      "sha256": "bc73678324f122615102c18a492b59ee25df71c694f8d78278db06fc82b5ee81",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-http",
+      "version": "5.2.12",
+      "artifact": "micronaut-http-5.2.12.jar",
+      "sha256": "961a0d32d3cd1faca82e5c4dfa5e9b027a50de52eef72a57648dc667539572d0",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-http",
+      "version": "5.2.12",
+      "artifact": "micronaut-http-5.2.12.module",
+      "sha256": "29dc59161d224fc03755ebb81ac83bfe5c9362114af111897f49d86d62546251",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-inject",
+      "version": "5.2.12",
+      "artifact": "micronaut-inject-5.2.12.jar",
+      "sha256": "fc80abf8689b67fbca1dfadb112741ff972df18c7c1bbcf24231078ced7ce978",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-inject",
+      "version": "5.2.12",
+      "artifact": "micronaut-inject-5.2.12.module",
+      "sha256": "d77f74f62b9670db39a188eb39c6dd49db1ed34de9e99a058370fd9bc860619f",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-inject-java",
+      "version": "5.2.12",
+      "artifact": "micronaut-inject-java-5.2.12.jar",
+      "sha256": "fcd2681d6ec35a133ef7133d97fc1ea1608f92495b887f2a5b9f2f7cb3329e44",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut",
+      "name": "micronaut-inject-java",
+      "version": "5.2.12",
+      "artifact": "micronaut-inject-java-5.2.12.module",
+      "sha256": "f42ba8de2d492156bfd0014e395a5edd26e78dfedec047051c4b46cc0783297a",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.jsonschema",
+      "name": "micronaut-json-schema-annotations",
+      "version": "2.3.1",
+      "artifact": "micronaut-json-schema-annotations-2.3.1.jar",
+      "sha256": "f75d172876f35a0c171f0b523434f66db717081bfb8b0798f6c78095af566085",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.jsonschema",
+      "name": "micronaut-json-schema-annotations",
+      "version": "2.3.1",
+      "artifact": "micronaut-json-schema-annotations-2.3.1.module",
+      "sha256": "67c034b5aa7d5b27e3ab6cbbc7d06236a2583173ca1acb06af792991bc29fb56",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.jsonschema",
+      "name": "micronaut-json-schema-common",
+      "version": "2.3.1",
+      "artifact": "micronaut-json-schema-common-2.3.1.jar",
+      "sha256": "26090f17adea05150e1133f6c83ee8c71b4ee74afb61557498ca9d9033930b81",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.jsonschema",
+      "name": "micronaut-json-schema-common",
+      "version": "2.3.1",
+      "artifact": "micronaut-json-schema-common-2.3.1.module",
+      "sha256": "b8b119e988e60aec04895bdd6b09dde45654ef7a1e358c7249d00d7cb8617683",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.jsonschema",
+      "name": "micronaut-json-schema-processor",
+      "version": "2.3.1",
+      "artifact": "micronaut-json-schema-processor-2.3.1.jar",
+      "sha256": "896e3efcf2373efeeeeb3f91b28b3f9d16a22faa347758a4f5b32b6f2bd31903",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.jsonschema",
+      "name": "micronaut-json-schema-processor",
+      "version": "2.3.1",
+      "artifact": "micronaut-json-schema-processor-2.3.1.module",
+      "sha256": "34136839165b455eeda9c412c7a5a578c0755b4c1046e0b5a6909da6b8d7327f",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.sourcegen",
+      "name": "micronaut-sourcegen-bom",
+      "version": "2.1.0",
+      "artifact": "micronaut-sourcegen-bom-2.1.0.module",
+      "sha256": "8487b0a4ac7817689cb6e0201e7f9db667fe509492622db5ea296770244c4e43",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.sourcegen",
+      "name": "micronaut-sourcegen-bytecode-writer",
+      "version": "2.1.0",
+      "artifact": "micronaut-sourcegen-bytecode-writer-2.1.0.jar",
+      "sha256": "bf691a3e6bf6c56fe9ae9ab3fbd3a9f5c8da06a60253cf198a6249dcbd066b4a",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.sourcegen",
+      "name": "micronaut-sourcegen-bytecode-writer",
+      "version": "2.1.0",
+      "artifact": "micronaut-sourcegen-bytecode-writer-2.1.0.module",
+      "sha256": "150e681d3ad277ea0cffb3ee48b2016e7b6e56f0642fa389e403e3f29b89709c",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.sourcegen",
+      "name": "micronaut-sourcegen-model",
+      "version": "2.1.0",
+      "artifact": "micronaut-sourcegen-model-2.1.0.jar",
+      "sha256": "00c7bd1fece8676a64872a6d45b837e37519a2bd2e5b5734c9de7c0333bd0984",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.micronaut.sourcegen",
+      "name": "micronaut-sourcegen-model",
+      "version": "2.1.0",
+      "artifact": "micronaut-sourcegen-model-2.1.0.module",
+      "sha256": "256dd2d38fed4fa90117bde7cf20e429fc640565bfd980286808395673b55f3b",
+      "pgp": "B829146841894118F8DCABF1E270B36858DB4EAE"
+    },
+    {
+      "group": "io.netty",
+      "name": "netty-bom",
+      "version": "4.2.18.Final",
+      "artifact": "netty-bom-4.2.18.Final.pom",
+      "sha256": "1274869dd11559b8490099a7e6f3ed94eddfade282be91627863cac8fc705663",
+      "pgp": "0D35D3F60078655126908E8AF3D1600878E85A3D"
+    },
+    {
+      "group": "io.projectreactor",
+      "name": "reactor-core",
+      "version": "3.8.7",
+      "artifact": "reactor-core-3.8.7.jar",
+      "sha256": "9a5f1bfc5ad0416a410ff63beaa279cc30c2da3ae9b111a678c83c99298a1551",
+      "pgp": "48B086A7D843CFA258E83286928FBF39003C0425"
+    },
+    {
+      "group": "io.projectreactor",
+      "name": "reactor-core",
+      "version": "3.8.7",
+      "artifact": "reactor-core-3.8.7.module",
+      "sha256": "ee434c6263efb5b7f8f8d102e863cf9e71f9b761f36f74d57b7107ed4edd8972",
+      "pgp": "48B086A7D843CFA258E83286928FBF39003C0425"
+    },
+    {
+      "group": "io.reactivex.rxjava3",
+      "name": "rxjava",
+      "version": "3.1.12",
+      "artifact": "rxjava-3.1.12.jar",
+      "sha256": "1808a433ef55dcc2965523e512ab914a5d0d727228a2683ed7559d7cccf44e37",
+      "pgp": "E9CC3CD1AE59E851E4DB3FA350FFD7487D34B5B9"
+    },
+    {
+      "group": "io.reactivex.rxjava3",
+      "name": "rxjava",
+      "version": "3.1.12",
+      "artifact": "rxjava-3.1.12.module",
+      "sha256": "da39f4da4feed77dfe10b9809d5cb2b2f3b445aea71b69e15232a4269893873b",
+      "pgp": "E9CC3CD1AE59E851E4DB3FA350FFD7487D34B5B9"
+    },
+    {
+      "group": "io.reactivex.rxjava3",
+      "name": "rxkotlin",
+      "version": "3.0.1",
+      "artifact": "rxkotlin-3.0.1.jar",
+      "sha256": "c142e3460b676ac51d9e04152173a44e469a95fe220264fde0e6fb38653aff64",
+      "missingKeys": [
+        "94B291AEF984A085"
+      ]
+    },
+    {
+      "group": "io.reactivex.rxjava3",
+      "name": "rxkotlin",
+      "version": "3.0.1",
+      "artifact": "rxkotlin-3.0.1.pom",
+      "sha256": "28fd4e05b081f03c24091061003eee1cdb8a770430801edb633ca4dc3140673d",
+      "missingKeys": [
+        "94B291AEF984A085"
+      ]
+    },
+    {
+      "group": "jakarta.annotation",
+      "name": "jakarta.annotation-api",
+      "version": "2.1.1",
+      "artifact": "jakarta.annotation-api-2.1.1.jar",
+      "sha256": "5f65fdaf424eee2b55e1d882ba9bb376be93fb09b37b808be6e22e8851c909fe",
+      "pgp": "59A8E169739301FD48139CA00E325BECB6962A24"
+    },
+    {
+      "group": "jakarta.annotation",
+      "name": "jakarta.annotation-api",
+      "version": "2.1.1",
+      "artifact": "jakarta.annotation-api-2.1.1.pom",
+      "sha256": "af650eca1de1b98741006acd82507e4408cffedd2fee33a0ea463d61508db7ec",
+      "pgp": "59A8E169739301FD48139CA00E325BECB6962A24"
+    },
+    {
+      "group": "jakarta.inject",
+      "name": "jakarta.inject-api",
+      "version": "2.0.1",
+      "artifact": "jakarta.inject-api-2.0.1.jar",
+      "sha256": "f7dc98062fccf14126abb751b64fab12c312566e8cbdc8483598bffcea93af7c",
+      "pgp": "4021EEEAFF5DE8404DCD0A270AA3E5C3D232E79B"
+    },
+    {
+      "group": "jakarta.inject",
+      "name": "jakarta.inject-api",
+      "version": "2.0.1",
+      "artifact": "jakarta.inject-api-2.0.1.pom",
+      "sha256": "e7fd7232e96307a575b2494c9367d68cf43ec98244aace3ccc23e1773ffa6fda",
+      "pgp": "4021EEEAFF5DE8404DCD0A270AA3E5C3D232E79B"
+    },
+    {
+      "group": "javax.inject",
+      "name": "javax.inject",
+      "version": "1",
+      "artifact": "javax.inject-1.jar",
+      "sha256": "91c77044a50c481636c32d916fd89c9118a72195390452c81065080f957de7ff",
+      "signature": "not published/retrievable during Gradle generation; exact SHA256 required"
+    },
+    {
+      "group": "javax.inject",
+      "name": "javax.inject",
+      "version": "1",
+      "artifact": "javax.inject-1.pom",
+      "sha256": "943e12b100627804638fa285805a0ab788a680266531e650921ebfe4621a8bfa",
+      "signature": "not published/retrievable during Gradle generation; exact SHA256 required"
+    },
+    {
+      "group": "net.sourceforge.argparse4j",
+      "name": "argparse4j",
+      "version": "0.9.0",
+      "artifact": "argparse4j-0.9.0.jar",
+      "sha256": "9eb3b54043038bc111bf0e15a8f69895244f92e3c2bc2800158578ca711f6117",
+      "pgp": "18073E0D190AF1F9612DC15BB2A48B8A40190C7C"
+    },
+    {
+      "group": "net.sourceforge.argparse4j",
+      "name": "argparse4j",
+      "version": "0.9.0",
+      "artifact": "argparse4j-0.9.0.pom",
+      "sha256": "2aaf731b1df8f1985258c5202a7c1c0617f0e92715b35d5cd482c180aabb04b5",
+      "pgp": "18073E0D190AF1F9612DC15BB2A48B8A40190C7C"
+    },
+    {
+      "group": "net.sourceforge.argparse4j",
+      "name": "argparse4j-root",
+      "version": "0.9.0",
+      "artifact": "argparse4j-root-0.9.0.pom",
+      "sha256": "0c8dd4a71d6fe7a3c48bc4d965948e12260d21ed6577eea59c8359ed44d0aaad",
+      "pgp": "18073E0D190AF1F9612DC15BB2A48B8A40190C7C"
+    },
+    {
+      "group": "org.apache.groovy",
+      "name": "groovy-bom",
+      "version": "5.0.6",
+      "artifact": "groovy-bom-5.0.6.module",
+      "sha256": "5af023b38bd7057b268f87a7d5cdd7427bf8a8e295c334ca9f937c01b72c39d0",
+      "pgp": "34441E504A937F43EB0DAEF96A65176A0FB1CD0B"
+    },
+    {
+      "group": "org.apache.groovy",
+      "name": "groovy-bom",
+      "version": "5.0.6",
+      "artifact": "groovy-bom-5.0.6.pom",
+      "sha256": "ad5d4b53e161e6537afe57dc96a6608cb36896cfb733caa997e9be28d59ab54e",
+      "pgp": "34441E504A937F43EB0DAEF96A65176A0FB1CD0B"
+    },
+    {
+      "group": "org.apache.groovy",
+      "name": "groovy-bom",
+      "version": "5.0.8",
+      "artifact": "groovy-bom-5.0.8.module",
+      "sha256": "3657f5207155d1630f1c4f50346d3f3e06118750a694b42df104952efbfa7722",
+      "pgp": "34441E504A937F43EB0DAEF96A65176A0FB1CD0B"
+    },
+    {
+      "group": "org.apache.groovy",
+      "name": "groovy-bom",
+      "version": "5.0.8",
+      "artifact": "groovy-bom-5.0.8.pom",
+      "sha256": "82fd5e38fb6147f9cf798769bf9c007cdca3ab8b32abadaa110761fc90678273",
+      "pgp": "34441E504A937F43EB0DAEF96A65176A0FB1CD0B"
+    },
+    {
+      "group": "org.apiguardian",
+      "name": "apiguardian-api",
+      "version": "1.1.2",
+      "artifact": "apiguardian-api-1.1.2.jar",
+      "sha256": "b509448ac506d607319f182537f0b35d71007582ec741832a1f111e5b5b70b38",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.apiguardian",
+      "name": "apiguardian-api",
+      "version": "1.1.2",
+      "artifact": "apiguardian-api-1.1.2.module",
+      "sha256": "e08028131375b357d1d28734e9a4fb4216da84b240641cb3ef7e7c7d628223fc",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.bouncycastle",
+      "name": "bcprov-jdk18on",
+      "version": "1.86",
+      "artifact": "bcprov-jdk18on-1.86.jar",
+      "sha256": "2af190b300cbb0b35e248ccf5f4a06b6072030aeb3da7a98ec73abe5b4cb371f",
+      "pgp": "7B121B76A7ED6CE6E60AD51784E913A8E3A748C0"
+    },
+    {
+      "group": "org.bouncycastle",
+      "name": "bcprov-jdk18on",
+      "version": "1.86",
+      "artifact": "bcprov-jdk18on-1.86.pom",
+      "sha256": "970b70cb75a184639b6fb9ba3c465aca6a4e1a5f3fff4d65ce8574b2fd79ef38",
+      "pgp": "7B121B76A7ED6CE6E60AD51784E913A8E3A748C0"
+    },
+    {
+      "group": "org.checkerframework",
+      "name": "checker-qual",
+      "version": "3.55.1",
+      "artifact": "checker-qual-3.55.1.jar",
+      "sha256": "857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288",
+      "pgp": "19BEAB2D799C020F17C69126B16698A4ADF4D638"
+    },
+    {
+      "group": "org.checkerframework",
+      "name": "checker-qual",
+      "version": "3.55.1",
+      "artifact": "checker-qual-3.55.1.module",
+      "sha256": "39069b8aeedcdc477f4b45bd1e8e352007b7b990a4e17814ed59fb3112d81503",
+      "pgp": "19BEAB2D799C020F17C69126B16698A4ADF4D638"
+    },
+    {
+      "group": "org.eclipse.ee4j",
+      "name": "project",
+      "version": "1.0.6",
+      "artifact": "project-1.0.6.pom",
+      "sha256": "4e7d8329d8da7dcf30779d824241be145f27108932f5a5a24eb907677bc8d72d",
+      "pgp": "AA70C7C433D501636392EC02153E7A3C2B4E5118"
+    },
+    {
+      "group": "org.eclipse.ee4j",
+      "name": "project",
+      "version": "1.0.7",
+      "artifact": "project-1.0.7.pom",
+      "sha256": "205c039a42cbae3556efbeb04a483eb3a3cf9550bd75bf84260dc8f28218f105",
+      "pgp": "AA70C7C433D501636392EC02153E7A3C2B4E5118"
+    },
+    {
+      "group": "org.graalvm.buildtools",
+      "name": "graalvm-reachability-metadata",
+      "version": "1.1.18",
+      "artifact": "graalvm-reachability-metadata-1.1.18.jar",
+      "sha256": "682a475d09b3ac1152672b2f706c88f54b6048f6c88a33a6965f7bdf24da804a",
+      "pgp": "AC0DEC49536DBA0E75C27D56E3BA60ACAC1A05AE"
+    },
+    {
+      "group": "org.graalvm.buildtools",
+      "name": "graalvm-reachability-metadata",
+      "version": "1.1.18",
+      "artifact": "graalvm-reachability-metadata-1.1.18.module",
+      "sha256": "8a07275b1927f897c3c48d02497927d0e8eaafa7cf1f495679b0367618d0fb1e",
+      "pgp": "AC0DEC49536DBA0E75C27D56E3BA60ACAC1A05AE"
+    },
+    {
+      "group": "org.graalvm.buildtools",
+      "name": "junit-platform-native",
+      "version": "1.1.18",
+      "artifact": "junit-platform-native-1.1.18.jar",
+      "sha256": "c95138d014bb9c25c70913f0982d5d29fc0881c967eeea42285c31d64774d657",
+      "pgp": "AC0DEC49536DBA0E75C27D56E3BA60ACAC1A05AE"
+    },
+    {
+      "group": "org.graalvm.buildtools",
+      "name": "junit-platform-native",
+      "version": "1.1.18",
+      "artifact": "junit-platform-native-1.1.18.module",
+      "sha256": "51604bb29a5d073a8452f292dd87159a6d3fc0d4ab37e51e2541f4020bda8085",
+      "pgp": "AC0DEC49536DBA0E75C27D56E3BA60ACAC1A05AE"
+    },
+    {
+      "group": "org.graalvm.buildtools",
+      "name": "native-gradle-plugin",
+      "version": "1.1.18",
+      "artifact": "native-gradle-plugin-1.1.18.jar",
+      "sha256": "176ad5f953b7881623b40bd390a5d6dc454acec2add889f160b5e784c9e34332",
+      "pgp": "AC0DEC49536DBA0E75C27D56E3BA60ACAC1A05AE"
+    },
+    {
+      "group": "org.graalvm.buildtools",
+      "name": "native-gradle-plugin",
+      "version": "1.1.18",
+      "artifact": "native-gradle-plugin-1.1.18.module",
+      "sha256": "d9607662c725b8d3965579547a3733d55a0f90c5b4ff3154692361fb3f21f048",
+      "pgp": "AC0DEC49536DBA0E75C27D56E3BA60ACAC1A05AE"
+    },
+    {
+      "group": "org.graalvm.buildtools",
+      "name": "utils",
+      "version": "1.1.18",
+      "artifact": "utils-1.1.18.jar",
+      "sha256": "dab53b1321cee4e6deee505321c36e41538905ca1e9d15bec53f44a89e6b88c1",
+      "pgp": "AC0DEC49536DBA0E75C27D56E3BA60ACAC1A05AE"
+    },
+    {
+      "group": "org.graalvm.buildtools",
+      "name": "utils",
+      "version": "1.1.18",
+      "artifact": "utils-1.1.18.module",
+      "sha256": "75db124fd988820c98f75baa343942feaba3777ffe07c24d46ec6d865dd646dc",
+      "pgp": "AC0DEC49536DBA0E75C27D56E3BA60ACAC1A05AE"
+    },
+    {
+      "group": "org.graalvm.buildtools.native",
+      "name": "org.graalvm.buildtools.native.gradle.plugin",
+      "version": "1.1.18",
+      "artifact": "org.graalvm.buildtools.native.gradle.plugin-1.1.18.pom",
+      "sha256": "2b839e733931992871f5e24386e714c38c93fd6c13932bc171226bab46f0875b",
+      "pgp": "AC0DEC49536DBA0E75C27D56E3BA60ACAC1A05AE"
+    },
+    {
+      "group": "org.gradle.kotlin",
+      "name": "gradle-kotlin-dsl-plugins",
+      "version": "6.7.6",
+      "artifact": "gradle-kotlin-dsl-plugins-6.7.6.jar",
+      "sha256": "25f9dfe83fee8d12408aca94c8b596d2ebdb7331730fad815d5470ccb92aaeb0",
+      "pgp": "1BD97A6A154E7810EE0BC832E2F38302C8075E3D"
+    },
+    {
+      "group": "org.gradle.kotlin",
+      "name": "gradle-kotlin-dsl-plugins",
+      "version": "6.7.6",
+      "artifact": "gradle-kotlin-dsl-plugins-6.7.6.module",
+      "sha256": "9e6127e1412675f5294b5324ccfde26f12a95c024e230353da2f9fe6318f43f1",
+      "pgp": "1BD97A6A154E7810EE0BC832E2F38302C8075E3D"
+    },
+    {
+      "group": "org.gradle.kotlin.kotlin-dsl",
+      "name": "org.gradle.kotlin.kotlin-dsl.gradle.plugin",
+      "version": "6.7.6",
+      "artifact": "org.gradle.kotlin.kotlin-dsl.gradle.plugin-6.7.6.pom",
+      "sha256": "a74aa6bd177ed61defa0d57524f0d9429f9553d845a4dc2d7363442090e7e2b2",
+      "signature": "not published/retrievable during Gradle generation; exact SHA256 required"
+    },
+    {
+      "group": "org.jetbrains",
+      "name": "annotations",
+      "version": "13.0",
+      "artifact": "annotations-13.0.jar",
+      "sha256": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478",
+      "pgp": "2E3A1AFFE42B5F53AF19F780BCF4173966770193"
+    },
+    {
+      "group": "org.jetbrains",
+      "name": "annotations",
+      "version": "13.0",
+      "artifact": "annotations-13.0.pom",
+      "sha256": "965aeb2bedff369819bdde1bf7a0b3b89b8247dd69c88b86375d76163bb8c397",
+      "pgp": "2E3A1AFFE42B5F53AF19F780BCF4173966770193"
+    },
+    {
+      "group": "org.jetbrains",
+      "name": "annotations",
+      "version": "23.0.0",
+      "artifact": "annotations-23.0.0.jar",
+      "sha256": "7b0f19724082cbfcbc66e5abea2b9bc92cf08a1ea11e191933ed43801eb3cd05",
+      "pgp": "33FD4BFD33554634053D73C0C2148900BCD3C2AF"
+    },
+    {
+      "group": "org.jetbrains",
+      "name": "annotations",
+      "version": "23.0.0",
+      "artifact": "annotations-23.0.0.pom",
+      "sha256": "c9490f655132328df2cfbcfdf743f53fc3916d6c1d10437175a6ca6e3a67771c",
+      "pgp": "33FD4BFD33554634053D73C0C2148900BCD3C2AF"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "fus-statistics-gradle-plugin",
+      "version": "2.4.10",
+      "artifact": "fus-statistics-gradle-plugin-2.4.10-gradle813.jar",
+      "sha256": "d312eb7d69a8d5ac5377c712546665c9b94a63ca8fc9cdd315431f10672e8091",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "fus-statistics-gradle-plugin",
+      "version": "2.4.10",
+      "artifact": "fus-statistics-gradle-plugin-2.4.10.module",
+      "sha256": "8ed5af5c6da4a233cad89f0bedacfccfd3ef0e19396a020bb974e2fedbe23e97",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-assignment",
+      "version": "2.4.10",
+      "artifact": "kotlin-assignment-2.4.10-gradle813.jar",
+      "sha256": "350dc125b48e62b2d458ecde12153274c1d5b644bee34a8c4565776ed43ba851",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-assignment",
+      "version": "2.4.10",
+      "artifact": "kotlin-assignment-2.4.10.module",
+      "sha256": "bb0abf587a21039337fd81a8347564f6c5b7b1d44c7b46f15dfa41a349ee36a9",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-assignment-compiler-plugin-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-assignment-compiler-plugin-embeddable-2.4.10.jar",
+      "sha256": "f915c845195fc5dedfe893057cfa6cb806a5819f46cfca408abef483817f3afd",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-assignment-compiler-plugin-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-assignment-compiler-plugin-embeddable-2.4.10.pom",
+      "sha256": "ca65889d2a6b5f336035c3458f57cbdb73d300958f26a6bf50bff310b5918bef",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-bom",
+      "version": "2.4.10",
+      "artifact": "kotlin-bom-2.4.10.pom",
+      "sha256": "3bafe37c142a7527f1107823ad643aeb2f38933db205947b9ff21d5dd3128e8c",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-statistics",
+      "version": "2.4.10",
+      "artifact": "kotlin-build-statistics-2.4.10.jar",
+      "sha256": "ba2748b67fb7b24ee1401eecfee32eb67dd055c85a59a5742188f795477a11cc",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-statistics",
+      "version": "2.4.10",
+      "artifact": "kotlin-build-statistics-2.4.10.pom",
+      "sha256": "01cc32ad3b11274444939d06424cbf43a3e207e877683d1c851196ca19088ac1",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-api",
+      "version": "2.4.0",
+      "artifact": "kotlin-build-tools-api-2.4.0.jar",
+      "sha256": "66917335497f9ab75a36c34b3d90bad2bc8dc256c34b2413ecd0c9467fcf597d",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-api",
+      "version": "2.4.0",
+      "artifact": "kotlin-build-tools-api-2.4.0.pom",
+      "sha256": "9686fa8f16867b2aba2e5c0e4cfc4a0aeecf59fe6de419f89f7bd838fdde8e74",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-api",
+      "version": "2.4.10",
+      "artifact": "kotlin-build-tools-api-2.4.10.jar",
+      "sha256": "3953d283e7710c990672e403a87df393d9726a9bf3e172194ebb5c33e062fcb0",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-api",
+      "version": "2.4.10",
+      "artifact": "kotlin-build-tools-api-2.4.10.pom",
+      "sha256": "78242a9440f92400eaf3df8d2108ad706f669a53125845a7d31d3df7c4de4439",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-compat",
+      "version": "2.4.10",
+      "artifact": "kotlin-build-tools-compat-2.4.10.jar",
+      "sha256": "cdcc50d8016f4250e7dc61822f28f227ba9a9b7d3f9eb5503c315eb12188d952",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-compat",
+      "version": "2.4.10",
+      "artifact": "kotlin-build-tools-compat-2.4.10.pom",
+      "sha256": "a081a796f828ae644b59950f072cd00bd64ac74f12b12e830399da8de2e4fa34",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-cri-impl",
+      "version": "2.4.0",
+      "artifact": "kotlin-build-tools-cri-impl-2.4.0.jar",
+      "sha256": "5168b866945f6ac1ffcb6d4c88cf582497249469c2e4a4eafc0bcd35b5a264a9",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-cri-impl",
+      "version": "2.4.0",
+      "artifact": "kotlin-build-tools-cri-impl-2.4.0.pom",
+      "sha256": "856d59395489276e93edb4390c99397de83e20d27572c5238c56ed21e43433da",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-cri-impl",
+      "version": "2.4.10",
+      "artifact": "kotlin-build-tools-cri-impl-2.4.10.jar",
+      "sha256": "781c95a28f053ded2d183b818bdae98db3d6d15ebc0555cecf64800fea003b3b",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-cri-impl",
+      "version": "2.4.10",
+      "artifact": "kotlin-build-tools-cri-impl-2.4.10.pom",
+      "sha256": "ada6ecb7cb544ef2fcee73e252c31f80c8e342c3bdb51bb9999fe57fec041fd2",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-impl",
+      "version": "2.4.0",
+      "artifact": "kotlin-build-tools-impl-2.4.0.jar",
+      "sha256": "076c0a7f84d303f1e390774410c8678b8b584faa3f642435f93d2e4e81dabe7c",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-impl",
+      "version": "2.4.0",
+      "artifact": "kotlin-build-tools-impl-2.4.0.pom",
+      "sha256": "485ca3d511aa384207db5706e0741dc79ace45d40e0489f9ef29731aafb14f7c",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-impl",
+      "version": "2.4.10",
+      "artifact": "kotlin-build-tools-impl-2.4.10.jar",
+      "sha256": "4a32f63522ef4726afbdee1783f05698499abc7a5ecade3a6cafa3e4074562ee",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-build-tools-impl",
+      "version": "2.4.10",
+      "artifact": "kotlin-build-tools-impl-2.4.10.pom",
+      "sha256": "f1b431c37717f0d472cd053dc81d893204cb59280f8035d636f534bc7c5d8db4",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-compiler-embeddable",
+      "version": "2.4.0",
+      "artifact": "kotlin-compiler-embeddable-2.4.0.jar",
+      "sha256": "c2b25e8c1c93ec416ba4327f5e31eaec0f0c8847241b9353e294b8db9dce564f",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-compiler-embeddable",
+      "version": "2.4.0",
+      "artifact": "kotlin-compiler-embeddable-2.4.0.pom",
+      "sha256": "f5d78540108e7bbc9162253ce52c42507ead2e530945213dd2a3b793b590c53c",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-compiler-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-compiler-embeddable-2.4.10.jar",
+      "sha256": "9309638a2ee03e6bde9ef4b7444055a94b84ab906563675d71ff9aecb64da913",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-compiler-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-compiler-embeddable-2.4.10.pom",
+      "sha256": "c3adb4f66fbfaa843c019b402d2c7e5f0880d32956bd8dd84022946177251102",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-compiler-runner",
+      "version": "2.4.0",
+      "artifact": "kotlin-compiler-runner-2.4.0.jar",
+      "sha256": "ad9608152740e92d94a278b4ff2ca82c4bf5ff8ef219220e3c07aeb554638cee",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-compiler-runner",
+      "version": "2.4.0",
+      "artifact": "kotlin-compiler-runner-2.4.0.pom",
+      "sha256": "5e1ed156cb8d38b61e2ccc546dbd8b2bde778367eb298f8875bd820fbfd0b0f2",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-compiler-runner",
+      "version": "2.4.10",
+      "artifact": "kotlin-compiler-runner-2.4.10.jar",
+      "sha256": "9e869d66504572852f421bcb1625c0d564c2b3c8cecbf6cd5fef7e7f33e0013e",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-compiler-runner",
+      "version": "2.4.10",
+      "artifact": "kotlin-compiler-runner-2.4.10.pom",
+      "sha256": "180738762c8941c4e30d7174a92071955bd869587332d785e61391167c82bc5a",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-daemon-client",
+      "version": "2.4.0",
+      "artifact": "kotlin-daemon-client-2.4.0.jar",
+      "sha256": "f546f0b3699c4984f320dd03080de05cad61064208ba8f37df0d3f8f4a7fd14a",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-daemon-client",
+      "version": "2.4.0",
+      "artifact": "kotlin-daemon-client-2.4.0.pom",
+      "sha256": "143793627382d905eda93e152a28c993f6323fc4b748370a45c7badc99914a13",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-daemon-client",
+      "version": "2.4.10",
+      "artifact": "kotlin-daemon-client-2.4.10.jar",
+      "sha256": "a3d1a5854fd92766de1ca37ff003a822d3da2039902008384dd1f7375f3d5cf9",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-daemon-client",
+      "version": "2.4.10",
+      "artifact": "kotlin-daemon-client-2.4.10.pom",
+      "sha256": "f6de9e3a0e89add8e043fa76866d9a2ff10fb87963b1396377bbb00c229fde6e",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-daemon-embeddable",
+      "version": "2.4.0",
+      "artifact": "kotlin-daemon-embeddable-2.4.0.jar",
+      "sha256": "383093af5e078435b60043d19bfa83eb6191be0f4d13a28fb1c8a0f3ab24fe66",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-daemon-embeddable",
+      "version": "2.4.0",
+      "artifact": "kotlin-daemon-embeddable-2.4.0.pom",
+      "sha256": "cb36e780fcb39ee09aab6e398f9bd5ea27f982bb6e19329742a20eb2ebdc2936",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-daemon-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-daemon-embeddable-2.4.10.jar",
+      "sha256": "547d969a2eab602fe0bdfd9fcb1b563a5c6d30099d3351394d6427eba8288467",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-daemon-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-daemon-embeddable-2.4.10.pom",
+      "sha256": "44ed1a490a4b646313fc0bc2683897a1eac4d8c6b57c0825d3e81fa7ca376d35",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugin",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugin-2.4.10-gradle813.jar",
+      "sha256": "13e22c869df3972db9496b47bf2815fbcfb61e0439f96cbd8d6aeb912b481375",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugin",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugin-2.4.10.module",
+      "sha256": "0e7713d84605da0bee038b578f31795882ccd721220a79cc36736ac9af9cb412",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugin-annotations",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugin-annotations-2.4.10.jar",
+      "sha256": "15c3b98f18c874b9ac5be2565f3724b3eaf6c6cf57dc784d73516a22a9e470cf",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugin-annotations",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugin-annotations-2.4.10.pom",
+      "sha256": "44fc5a0a711c92df16f00d3575d0f2c4a264f43ab2f588e455b3c6043124fd53",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugin-api",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugin-api-2.4.10-gradle813.jar",
+      "sha256": "74c4e4f7d037e850bab666db12c90a49e065d9495fd2dfdaa7bc39dd963083d6",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugin-api",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugin-api-2.4.10.module",
+      "sha256": "ade28e1831b222e161e00c120d5c9d56f9d4fe3b0aabed9e54912d71ab6ee8cb",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugin-idea",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugin-idea-2.4.10.jar",
+      "sha256": "086734484c7edf19a620ab1a617d097c40e03bc52602e77840ea5ebd6380e514",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugin-idea",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugin-idea-2.4.10.module",
+      "sha256": "7e883fbfe9d2c9ced4a8fa99217a8dd413bb14a7ea932edbbda35d5e91a5119a",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugin-idea-proto",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugin-idea-proto-2.4.10.jar",
+      "sha256": "355ac566ff74d74d230f7cb6d55e2ed50158b4c28fc186fc8d8268e8fe9868f4",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugin-idea-proto",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugin-idea-proto-2.4.10.pom",
+      "sha256": "074ee0dd408de542a8e4b726daad829dc33a9e56ddb4f43a00eb9b9f67aff17f",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugins-bom",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugins-bom-2.4.10.module",
+      "sha256": "48eb4756284d1d7ea24639d22861f15ff0cb685a15331a6c6a3674ff44baf029",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-gradle-plugins-bom",
+      "version": "2.4.10",
+      "artifact": "kotlin-gradle-plugins-bom-2.4.10.pom",
+      "sha256": "733fccda03ae34773e7b5c85d0e278c897df283370059cb39825f7c0381e49b6",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-klib-commonizer-api",
+      "version": "2.4.10",
+      "artifact": "kotlin-klib-commonizer-api-2.4.10.jar",
+      "sha256": "971bb968b4af10932bcc18f3395721ee48cc166597b50926731aeeff334086da",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-klib-commonizer-api",
+      "version": "2.4.10",
+      "artifact": "kotlin-klib-commonizer-api-2.4.10.pom",
+      "sha256": "139b3ce8d655807eb68a45798f04329760b2106669ab332d2ac108843d758b29",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-klib-commonizer-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-klib-commonizer-embeddable-2.4.10.jar",
+      "sha256": "c5e543412f81a32ff4611a886e18399fa5afa15c77e3ef2fdc0faa397ad8abce",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-klib-commonizer-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-klib-commonizer-embeddable-2.4.10.pom",
+      "sha256": "bebdd5b6115a8d377edd8d00e8c1d4cfcacbf2bc0bdbb7248d43c5c7a19bafab",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-native-utils",
+      "version": "2.4.10",
+      "artifact": "kotlin-native-utils-2.4.10.jar",
+      "sha256": "76ec55f967dc8f57481a27b3e7868cc97cb32964d6d285517aef310c3d754a44",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-native-utils",
+      "version": "2.4.10",
+      "artifact": "kotlin-native-utils-2.4.10.pom",
+      "sha256": "9b91e38cfc84eaa34183140192c307ddc68f4a4c6035f554c4c22e15f33916c7",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-reflect",
+      "version": "1.6.10",
+      "artifact": "kotlin-reflect-1.6.10.jar",
+      "sha256": "3277ac102ae17aad10a55abec75ff5696c8d109790396434b496e75087854203",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-reflect",
+      "version": "1.6.10",
+      "artifact": "kotlin-reflect-1.6.10.pom",
+      "sha256": "57905524274a00ae028aaccc27283f6bc5925a934a046c1cc5d06c8ee4d6d5a9",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-reflect",
+      "version": "2.1.21",
+      "artifact": "kotlin-reflect-2.1.21.jar",
+      "sha256": "bcd75a36ca4ad8e06117214ed807f8dea2fe61a71e07f91ca14f4335024b8463",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-reflect",
+      "version": "2.1.21",
+      "artifact": "kotlin-reflect-2.1.21.pom",
+      "sha256": "ed79e02bf08ec715ecbcd1e2d7a45362d7aa7c33f92ef675e6dfa4a4931bcc5f",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-reflect",
+      "version": "2.2.20",
+      "artifact": "kotlin-reflect-2.2.20.jar",
+      "sha256": "8209083a4a7c4e476d9842b078308fa96a96f07a6bd99f05f3586ee13289ab26",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-reflect",
+      "version": "2.2.20",
+      "artifact": "kotlin-reflect-2.2.20.pom",
+      "sha256": "4e27474066db83fba2c59074289ba712be8c85157cde0b905029a445c275f5ba",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-reflect",
+      "version": "2.4.10",
+      "artifact": "kotlin-reflect-2.4.10.jar",
+      "sha256": "25a1aef7454d46548ecaaf51021b0e52e38141a62ed75af124da109b7324c4e5",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-reflect",
+      "version": "2.4.10",
+      "artifact": "kotlin-reflect-2.4.10.pom",
+      "sha256": "4258f0212f4bd72e3047f7daace38e0de2ebff3f7e923e836431fd8f5b19189d",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-sam-with-receiver",
+      "version": "2.4.10",
+      "artifact": "kotlin-sam-with-receiver-2.4.10-gradle813.jar",
+      "sha256": "a84421755b6d88994ea547921a0a548f62a5fa35062e1a4c8e71644ca08f36b8",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-sam-with-receiver",
+      "version": "2.4.10",
+      "artifact": "kotlin-sam-with-receiver-2.4.10.module",
+      "sha256": "1b23bbbdf7eb4c34e63482e04f54efc4b437add063ced3507da889b0af9c069f",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-sam-with-receiver-compiler-plugin-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-sam-with-receiver-compiler-plugin-embeddable-2.4.10.jar",
+      "sha256": "8f30cb3c9ca1127c0c196abf3eb9eee96415442d471c341327d5fc05ca2ad4c9",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-sam-with-receiver-compiler-plugin-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-sam-with-receiver-compiler-plugin-embeddable-2.4.10.pom",
+      "sha256": "26785f2a3a79b173f50e8bac682001430cb6291074d49fc0af11adb18cbc70ed",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-script-runtime",
+      "version": "2.4.0",
+      "artifact": "kotlin-script-runtime-2.4.0.jar",
+      "sha256": "196e8ecbf63daf477e34e67c2f871ee232ae7bf8b377432d876d1bbf9d273de3",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-script-runtime",
+      "version": "2.4.0",
+      "artifact": "kotlin-script-runtime-2.4.0.pom",
+      "sha256": "ce705c50e7e0afb22298acff0a983cdb6ea0f7fe2d1b473cee42b38405bc357f",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-script-runtime",
+      "version": "2.4.10",
+      "artifact": "kotlin-script-runtime-2.4.10.jar",
+      "sha256": "f4a5b30c2fdfbe386b097101b7989dbeea3743c06396136664784e08e15c6899",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-script-runtime",
+      "version": "2.4.10",
+      "artifact": "kotlin-script-runtime-2.4.10.pom",
+      "sha256": "edcf0e2cd709646c4e5945be0f0a4920a0f3f417f328756746a29d92b23b1593",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-scripting-common",
+      "version": "2.4.10",
+      "artifact": "kotlin-scripting-common-2.4.10.jar",
+      "sha256": "d5399982cdbf5994f7f3a731afacfbc5c21b797d97ffd7328b62cea670103076",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-scripting-common",
+      "version": "2.4.10",
+      "artifact": "kotlin-scripting-common-2.4.10.pom",
+      "sha256": "185636a91c18f09f8af87f87ea1788c2d55f72a6880210a0365a5a6a44d61833",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-scripting-compiler-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-scripting-compiler-embeddable-2.4.10.jar",
+      "sha256": "156c68ff816251c9d297c90d77e7e8e513eaad594277cee50a36faeddbe88935",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-scripting-compiler-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-scripting-compiler-embeddable-2.4.10.pom",
+      "sha256": "07d9913a83317c28ca7704be0c109a1429a276236e43be8b98f87dbd4d02afad",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-scripting-compiler-impl-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-scripting-compiler-impl-embeddable-2.4.10.jar",
+      "sha256": "1dcfc5495d8c74966fcbbd39240a9c0f8ab36bb4faad2ea5ffc000c5d7785171",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-scripting-compiler-impl-embeddable",
+      "version": "2.4.10",
+      "artifact": "kotlin-scripting-compiler-impl-embeddable-2.4.10.pom",
+      "sha256": "a80b463dc4e3de57555c4e1b6e73658d40ac215b2788f4c193f56c91b3494ca9",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-scripting-jvm",
+      "version": "2.4.10",
+      "artifact": "kotlin-scripting-jvm-2.4.10.jar",
+      "sha256": "0b7518219da69b427e0b3f840f13e280db9e61a839c7d3ff094de4630ddbc9f5",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-scripting-jvm",
+      "version": "2.4.10",
+      "artifact": "kotlin-scripting-jvm-2.4.10.pom",
+      "sha256": "403a12911dc71b4fa4c2e3dc305cd98e0ef3fea1fabce72d0a656dcf890b3775",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib",
+      "version": "2.2.20",
+      "artifact": "kotlin-stdlib-2.2.20.module",
+      "sha256": "c918f5214d021a72e3767f2756e97d103a526e04f1423da3663efdfb5847db95",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib",
+      "version": "2.2.21",
+      "artifact": "kotlin-stdlib-2.2.21.jar",
+      "sha256": "6558a3d233da56a20934b32159f9db5f86ed5816ef098f78a2c223dc6abb79dd",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib",
+      "version": "2.2.21",
+      "artifact": "kotlin-stdlib-2.2.21.module",
+      "sha256": "bfbc657ddd3a8e37e4c8ad417968d5eb0b0b171c9fce48f962c2ad32ee434c21",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib",
+      "version": "2.3.20",
+      "artifact": "kotlin-stdlib-2.3.20.jar",
+      "sha256": "0ae12504a5040ebaf37703908483420d1a5624dd1d93f357665f8c77c848a01e",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib",
+      "version": "2.3.20",
+      "artifact": "kotlin-stdlib-2.3.20.module",
+      "sha256": "f4eb344fc4d1e3a28ae16c086ec3e42f52373b466d4308182fb386e392c0efa3",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib",
+      "version": "2.4.0",
+      "artifact": "kotlin-stdlib-2.4.0.jar",
+      "sha256": "ccb14ff83fabcb11458b798dbc9824748ccdffeec79c9aba789e6ed1cda86b1c",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib",
+      "version": "2.4.0",
+      "artifact": "kotlin-stdlib-2.4.0.module",
+      "sha256": "c24a47dcbd9295d776f443be41d77ac245309601ed053711dee2b0254be02db6",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib",
+      "version": "2.4.10",
+      "artifact": "kotlin-stdlib-2.4.10.jar",
+      "sha256": "4ec0293bc3751423b203f1d8493251c57c42e73eb6377a6b8560d0974ff0a6df",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib",
+      "version": "2.4.10",
+      "artifact": "kotlin-stdlib-2.4.10.module",
+      "sha256": "1c04a98f1200c8705d015df08977211589eecbc87cf1c4c6d28a92682fe8446e",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib-jdk7",
+      "version": "2.2.20",
+      "artifact": "kotlin-stdlib-jdk7-2.2.20.jar",
+      "sha256": "3bd26ecb6d12978c5c4e0b41f76c9ff551fac2a5e6268427a9d2a0cdf8a5ad91",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib-jdk7",
+      "version": "2.2.20",
+      "artifact": "kotlin-stdlib-jdk7-2.2.20.pom",
+      "sha256": "0ae91e6afff0660efda2cf028c5bdb9e7a1e867e19dc2c8ebae89a82571438e2",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib-jdk7",
+      "version": "2.4.10",
+      "artifact": "kotlin-stdlib-jdk7-2.4.10.jar",
+      "sha256": "e7a8fe7cacf3b9c838f6b3fcb26dfdd41f844551a3ba67fd3f959a0d9d5c0bef",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib-jdk7",
+      "version": "2.4.10",
+      "artifact": "kotlin-stdlib-jdk7-2.4.10.pom",
+      "sha256": "924d4d5d53bc09bc8d03c262319dd01b7fd876d41f4cfe3096f585c42ff6aa48",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib-jdk8",
+      "version": "2.2.20",
+      "artifact": "kotlin-stdlib-jdk8-2.2.20.jar",
+      "sha256": "c314177935d8dc2eda879507117f25d6de56f6c57ede99416b14cd622bb9e09d",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib-jdk8",
+      "version": "2.2.20",
+      "artifact": "kotlin-stdlib-jdk8-2.2.20.pom",
+      "sha256": "35d8ad6c19da57ab74d21ed81ddc58499b7c1b002511b5e852000dbb0c58abae",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib-jdk8",
+      "version": "2.4.10",
+      "artifact": "kotlin-stdlib-jdk8-2.4.10.jar",
+      "sha256": "08346b7f4cfba40c1139161c9f30b68199f425cecf3b63de67838063f34a05c7",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib-jdk8",
+      "version": "2.4.10",
+      "artifact": "kotlin-stdlib-jdk8-2.4.10.pom",
+      "sha256": "3b4fd7c04d7395cafe7e1e1dee849261bfe03c68d05459418cb35605750cda27",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-tooling-core",
+      "version": "2.4.10",
+      "artifact": "kotlin-tooling-core-2.4.10.jar",
+      "sha256": "59ea305372e3a2b7417764dcfecf645066a0d9b1792ab40afd15c1cc8535b58a",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-tooling-core",
+      "version": "2.4.10",
+      "artifact": "kotlin-tooling-core-2.4.10.pom",
+      "sha256": "590248328a863d8f000ef063ac0ee8b4483f52d3e22fa51ca243ce7f6a78c75c",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-util-io",
+      "version": "2.4.10",
+      "artifact": "kotlin-util-io-2.4.10.jar",
+      "sha256": "06a9a0f89884c1c1a86baa96260238d927fb027077ba67bb5d2958af6fd776d7",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-util-io",
+      "version": "2.4.10",
+      "artifact": "kotlin-util-io-2.4.10.pom",
+      "sha256": "3c9ca43ebff84366e7ff28742b7475553619c5f0f8acc2d7a979a6f4b437c81a",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-util-klib",
+      "version": "2.4.10",
+      "artifact": "kotlin-util-klib-2.4.10.jar",
+      "sha256": "408d3bd16e0f513ac2f4f04a78871701924836081c2cc774aa2b3f739278e430",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-util-klib",
+      "version": "2.4.10",
+      "artifact": "kotlin-util-klib-2.4.10.pom",
+      "sha256": "631dbfefce3aefea1de3573d8dc1e54919be9af88c142505d3352127d84abb84",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-util-klib-metadata",
+      "version": "2.4.10",
+      "artifact": "kotlin-util-klib-metadata-2.4.10.jar",
+      "sha256": "f9b0cc33542c53d83004ab4aeff6f6515d509d26e14e78f420eeae2a459f4927",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-util-klib-metadata",
+      "version": "2.4.10",
+      "artifact": "kotlin-util-klib-metadata-2.4.10.pom",
+      "sha256": "606f70d8788a23f9b017039107d005248d0887481f0815e6284ba9a6933a7b7b",
+      "pgp": "6F538074CCEBF35F28AF9B066A0975F8B1127B83"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-bom",
+      "version": "1.10.2",
+      "artifact": "kotlinx-coroutines-bom-1.10.2.pom",
+      "sha256": "faf0c6538e53ddc0499a63664d8e763c216580b2e18e722ccbdf1b431a6afe26",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-bom",
+      "version": "1.11.0",
+      "artifact": "kotlinx-coroutines-bom-1.11.0.pom",
+      "sha256": "f65860bce58a2bfadf05fdc516d38333421f0e387fef87e24449c0394c80d254",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-core",
+      "version": "1.10.2",
+      "artifact": "kotlinx-coroutines-core-1.10.2.module",
+      "sha256": "8fe254177e711a7cd18a3c06d8242fce945f41c2cca13dc19b33ae42a5435016",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-core",
+      "version": "1.11.0",
+      "artifact": "kotlinx-coroutines-core-1.11.0.module",
+      "sha256": "1e19785d34728b7525d7a77ff32ead4547d51cc7a45d4ac44d4de608169b0c0d",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-core-jvm",
+      "version": "1.10.2",
+      "artifact": "kotlinx-coroutines-core-jvm-1.10.2.jar",
+      "sha256": "5ca175b38df331fd64155b35cd8cae1251fa9ee369709b36d42e0a288ccce3fd",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-core-jvm",
+      "version": "1.10.2",
+      "artifact": "kotlinx-coroutines-core-jvm-1.10.2.module",
+      "sha256": "e9e4a74b4dbfe0f5ebeed88d49f3546c3ec3089419b20e5250403135c2c64c53",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-core-jvm",
+      "version": "1.11.0",
+      "artifact": "kotlinx-coroutines-core-jvm-1.11.0.jar",
+      "sha256": "d1d75aa01dffbb4d1c520e67e4c4e7f5f6174718e7cb4632412503f2f0e604fa",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-core-jvm",
+      "version": "1.11.0",
+      "artifact": "kotlinx-coroutines-core-jvm-1.11.0.module",
+      "sha256": "5b255653ad6b1f21e0c46108605f129e3aa56ed9414849cc9f5b436441517528",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-core-jvm",
+      "version": "1.8.0",
+      "artifact": "kotlinx-coroutines-core-jvm-1.8.0.jar",
+      "sha256": "9860906a1937490bf5f3b06d2f0e10ef451e65b95b269f22daf68a3d1f5065c5",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-core-jvm",
+      "version": "1.8.0",
+      "artifact": "kotlinx-coroutines-core-jvm-1.8.0.module",
+      "sha256": "ff6a22da40040938751db0ae21177e76517dbf126a76796f5426727bf76c1228",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-bom",
+      "version": "1.9.0",
+      "artifact": "kotlinx-serialization-bom-1.9.0.pom",
+      "sha256": "6d7ff365c0ef1cd376fb54b1a16c80a21ed58feb46c33f3450b6cf22e2b1353d",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-core",
+      "version": "1.9.0",
+      "artifact": "kotlinx-serialization-core-1.9.0.module",
+      "sha256": "8cd118130bf220802029e239974a33d272f4d023a5610f557ece6b0f8995f89f",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-core-jvm",
+      "version": "1.9.0",
+      "artifact": "kotlinx-serialization-core-jvm-1.9.0.jar",
+      "sha256": "1f0afa172110e45a7231ef1b44ae8fd84c1ebaff96f3fc3ad68ef8c48120b59c",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-core-jvm",
+      "version": "1.9.0",
+      "artifact": "kotlinx-serialization-core-jvm-1.9.0.module",
+      "sha256": "70c87e316192ab7729aa6399220290f7c8d9fdd4d9342dc9f9c0e42856ab346d",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-json",
+      "version": "1.9.0",
+      "artifact": "kotlinx-serialization-json-1.9.0.module",
+      "sha256": "4fc13ec412b7b9a213a17dfdaa336457801be16fc165ad86b0b7314fd096e70c",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-json-jvm",
+      "version": "1.9.0",
+      "artifact": "kotlinx-serialization-json-jvm-1.9.0.jar",
+      "sha256": "d94cc34cae39246a1af74fda63f9c4812ce12216ef641d5fa3bbbb539a6922d8",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-json-jvm",
+      "version": "1.9.0",
+      "artifact": "kotlinx-serialization-json-jvm-1.9.0.module",
+      "sha256": "bbadf8c76bab3fcd88fce45b3bbb63dfb1487f38021e1bdd83bfb9310ef7e69a",
+      "pgp": "E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB"
+    },
+    {
+      "group": "org.jspecify",
+      "name": "jspecify",
+      "version": "1.0.0",
+      "artifact": "jspecify-1.0.0.jar",
+      "sha256": "1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab",
+      "pgp": "41CD49B4EF5876F9E9F691DABAC30622339994C4"
+    },
+    {
+      "group": "org.jspecify",
+      "name": "jspecify",
+      "version": "1.0.0",
+      "artifact": "jspecify-1.0.0.module",
+      "sha256": "d307ca77a54e18ac1ef1aaed4e5bbe014bd2f49f29e1d2f813e47c278283195b",
+      "pgp": "41CD49B4EF5876F9E9F691DABAC30622339994C4"
+    },
+    {
+      "group": "org.junit",
+      "name": "junit-bom",
+      "version": "5.12.2",
+      "artifact": "junit-bom-5.12.2.module",
+      "sha256": "de70ac5d91a52656d8890a6d23b9e04d99b99b1a0402530decad71bf31b2735e",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit",
+      "name": "junit-bom",
+      "version": "5.12.2",
+      "artifact": "junit-bom-5.12.2.pom",
+      "sha256": "cef80fec86454f6806bfb0df24669b5c6f32e2cb728539ea859f47dfdc9bbc17",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit",
+      "name": "junit-bom",
+      "version": "5.14.3",
+      "artifact": "junit-bom-5.14.3.module",
+      "sha256": "f25c40bfa52c8b7b425d576a88f310f6432616d62ba5893203fa27dfbc9f025e",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit",
+      "name": "junit-bom",
+      "version": "5.14.3",
+      "artifact": "junit-bom-5.14.3.pom",
+      "sha256": "08a02856e487c9357f9b29e38745f8ae805848111e72d15aad0352338f1632e1",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit",
+      "name": "junit-bom",
+      "version": "5.14.4",
+      "artifact": "junit-bom-5.14.4.module",
+      "sha256": "8a5e98d131de7d7aadb1ee88bfd86d66e62a7c2e2a4074a3b2498b03d236eb64",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit",
+      "name": "junit-bom",
+      "version": "5.14.4",
+      "artifact": "junit-bom-5.14.4.pom",
+      "sha256": "5706e8f29a0a07f56efbbea4a0670793414194bb8d24d8143ba1e787a2f32856",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit",
+      "name": "junit-bom",
+      "version": "6.0.3",
+      "artifact": "junit-bom-6.0.3.module",
+      "sha256": "280e3c34855f2a13de24121937e4cf97e4b9eb9206e60f891e4f0a1cf0e7aba1",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit",
+      "name": "junit-bom",
+      "version": "6.0.3",
+      "artifact": "junit-bom-6.0.3.pom",
+      "sha256": "a655b6a5dc00d1bebc91fb2b15c0c7e8aeac9d6bdcf879595505370e27530287",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit",
+      "name": "junit-bom",
+      "version": "6.1.3",
+      "artifact": "junit-bom-6.1.3.module",
+      "sha256": "9f5d57dadcfa07f7b38efcfb22b052ece188922a1df76b5a98e44a1df7a7701b",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit",
+      "name": "junit-bom",
+      "version": "6.1.3",
+      "artifact": "junit-bom-6.1.3.pom",
+      "sha256": "a9000043610a3e90c852e779a6b1a8eb724a9f312cf5f7ddd57862b010c65dc8",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.jupiter",
+      "name": "junit-jupiter",
+      "version": "6.1.3",
+      "artifact": "junit-jupiter-6.1.3.jar",
+      "sha256": "6b0a14075c74221de53047e363860b7d19fce802bebc152df2c35c4089c6c379",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.jupiter",
+      "name": "junit-jupiter",
+      "version": "6.1.3",
+      "artifact": "junit-jupiter-6.1.3.module",
+      "sha256": "ca7b7dd4508d57a9dc105102aa93fb5bc960b2095601534b9311f951ffb39979",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.jupiter",
+      "name": "junit-jupiter-api",
+      "version": "6.1.3",
+      "artifact": "junit-jupiter-api-6.1.3.jar",
+      "sha256": "555d6cf20fa1710884dd01b86cc5785397ba73e21ada2d4b784f5f1a14dcafc4",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.jupiter",
+      "name": "junit-jupiter-api",
+      "version": "6.1.3",
+      "artifact": "junit-jupiter-api-6.1.3.module",
+      "sha256": "ad9909c1fa88a579b2821a091a196c45a84bcd0f4fc7357990fdc73d3801c8a5",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.jupiter",
+      "name": "junit-jupiter-engine",
+      "version": "6.1.3",
+      "artifact": "junit-jupiter-engine-6.1.3.jar",
+      "sha256": "414559e78bbfa3bdb2eab009ac3ab1e22369ac31117c270a0bd666da115c5c6c",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.jupiter",
+      "name": "junit-jupiter-engine",
+      "version": "6.1.3",
+      "artifact": "junit-jupiter-engine-6.1.3.module",
+      "sha256": "626a29f286c36d0f6f36409644371e12a3fe2bfcbb881e13f8265ac9de96bb77",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.jupiter",
+      "name": "junit-jupiter-params",
+      "version": "6.1.3",
+      "artifact": "junit-jupiter-params-6.1.3.jar",
+      "sha256": "05c51cedba2c06a9770707391e006cee825876937dea580b94a265ce145d4939",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.jupiter",
+      "name": "junit-jupiter-params",
+      "version": "6.1.3",
+      "artifact": "junit-jupiter-params-6.1.3.module",
+      "sha256": "9ec7795f4aeb92578fb4d43b6a73c324fff216ca971f3910335073882c78a167",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.platform",
+      "name": "junit-platform-commons",
+      "version": "6.1.3",
+      "artifact": "junit-platform-commons-6.1.3.jar",
+      "sha256": "a4774ae923c109544034aeae7c762cf017fbcdd1342403ba90e0921984b608c3",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.platform",
+      "name": "junit-platform-commons",
+      "version": "6.1.3",
+      "artifact": "junit-platform-commons-6.1.3.module",
+      "sha256": "a6f1218616341b599f6aa029a3768c6f956ab1d3216ed7250e4be5d79adfce7d",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.platform",
+      "name": "junit-platform-console",
+      "version": "6.1.3",
+      "artifact": "junit-platform-console-6.1.3.jar",
+      "sha256": "913554ad65b9420936822889a7268a6793a942e5f77ad8b653b8ec05068fa3be",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.platform",
+      "name": "junit-platform-console",
+      "version": "6.1.3",
+      "artifact": "junit-platform-console-6.1.3.module",
+      "sha256": "345a260f4c674f104775e33edcc79913db9d9e1b6b6626670ec4f1d77d3fc93f",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.platform",
+      "name": "junit-platform-engine",
+      "version": "6.1.3",
+      "artifact": "junit-platform-engine-6.1.3.jar",
+      "sha256": "21ad7ad3a35beda16387979317be1833a72a71d812f9a66ee4b9a7bafb56334c",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.platform",
+      "name": "junit-platform-engine",
+      "version": "6.1.3",
+      "artifact": "junit-platform-engine-6.1.3.module",
+      "sha256": "70f5020adb4c91575025499a804b266e8fc2d027aa6e78febfa372be3a88cef5",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.platform",
+      "name": "junit-platform-launcher",
+      "version": "6.1.3",
+      "artifact": "junit-platform-launcher-6.1.3.jar",
+      "sha256": "1dec64b1fc0b7c47a11302aa5b4d37d8160c041b396e27067709ce775601a7b6",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.platform",
+      "name": "junit-platform-launcher",
+      "version": "6.1.3",
+      "artifact": "junit-platform-launcher-6.1.3.module",
+      "sha256": "62d2198a3a779c54316bbe839e51623b3a6bd111e672d586dd9a3bbb222569e6",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.platform",
+      "name": "junit-platform-reporting",
+      "version": "6.1.3",
+      "artifact": "junit-platform-reporting-6.1.3.jar",
+      "sha256": "d584a16cd87da5609af5e35428ed4f40b192681a2487dc59d02ecb62f6c417c2",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.junit.platform",
+      "name": "junit-platform-reporting",
+      "version": "6.1.3",
+      "artifact": "junit-platform-reporting-6.1.3.module",
+      "sha256": "147df895234220944f13a16ebd2b102f8edf5fc65c34e549bc2c65e8828ea6e9",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.opentest4j",
+      "name": "opentest4j",
+      "version": "1.3.0",
+      "artifact": "opentest4j-1.3.0.jar",
+      "sha256": "48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.opentest4j",
+      "name": "opentest4j",
+      "version": "1.3.0",
+      "artifact": "opentest4j-1.3.0.module",
+      "sha256": "48bf1d6c8b5dc94f74652bd17900f654deb714350248cf5e8fca27b9090c8e0d",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.opentest4j.reporting",
+      "name": "open-test-reporting-tooling-spi",
+      "version": "0.2.5",
+      "artifact": "open-test-reporting-tooling-spi-0.2.5.jar",
+      "sha256": "df237b68847637747f0bfdb88fa9cdd9c72cc85550fad0c41ddb33869a5ca516",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.opentest4j.reporting",
+      "name": "open-test-reporting-tooling-spi",
+      "version": "0.2.5",
+      "artifact": "open-test-reporting-tooling-spi-0.2.5.module",
+      "sha256": "d60389e8414d298799bd30b455c1b1f387721fd0be3dbbd09745e580f2df574d",
+      "pgp": "FF6E2C001948C5F2F38B0CC385911F425EC61B51"
+    },
+    {
+      "group": "org.ow2",
+      "name": "ow2",
+      "version": "1.5.1",
+      "artifact": "ow2-1.5.1.pom",
+      "sha256": "321ddbb7ee6fe4f53dea6b4cd6db74154d6bfa42391c1f763b361b9f485acf05",
+      "pgp": "10F3C7A02ECA55E502BADCF3991EFB94DB91127D"
+    },
+    {
+      "group": "org.ow2.asm",
+      "name": "asm",
+      "version": "9.10.1",
+      "artifact": "asm-9.10.1.jar",
+      "sha256": "ed825d10ab1399c8c0cb669e688cf0c8c82629b4c8399b58352b68e92ca10fcb",
+      "pgp": "A5BD02B93E7A40482EB1D66A5F69AD087600B22C"
+    },
+    {
+      "group": "org.ow2.asm",
+      "name": "asm",
+      "version": "9.10.1",
+      "artifact": "asm-9.10.1.pom",
+      "sha256": "e1b1c3832ca3ac0a9e563c405f4c760118b5556a4920daee14058886197e094d",
+      "pgp": "A5BD02B93E7A40482EB1D66A5F69AD087600B22C"
+    },
+    {
+      "group": "org.ow2.asm",
+      "name": "asm-analysis",
+      "version": "9.10.1",
+      "artifact": "asm-analysis-9.10.1.jar",
+      "sha256": "dede75a21306b65974ecd8f87114ff6970f09fb794157a4ca09ab25c888c2bfc",
+      "pgp": "A5BD02B93E7A40482EB1D66A5F69AD087600B22C"
+    },
+    {
+      "group": "org.ow2.asm",
+      "name": "asm-analysis",
+      "version": "9.10.1",
+      "artifact": "asm-analysis-9.10.1.pom",
+      "sha256": "534fbb85f643c2330691e92652ec40dd497b4f279ef13d829d85858905d33ba3",
+      "pgp": "A5BD02B93E7A40482EB1D66A5F69AD087600B22C"
+    },
+    {
+      "group": "org.ow2.asm",
+      "name": "asm-commons",
+      "version": "9.10.1",
+      "artifact": "asm-commons-9.10.1.jar",
+      "sha256": "6d0abefb7cbf972ea16edb37ec14835372505063a45f976ab7ea889ed9497895",
+      "pgp": "A5BD02B93E7A40482EB1D66A5F69AD087600B22C"
+    },
+    {
+      "group": "org.ow2.asm",
+      "name": "asm-commons",
+      "version": "9.10.1",
+      "artifact": "asm-commons-9.10.1.pom",
+      "sha256": "ceb2c43f3a273db88af8652d89ed6312f3e91a1a1e0ffc6f7823169278cf795c",
+      "pgp": "A5BD02B93E7A40482EB1D66A5F69AD087600B22C"
+    },
+    {
+      "group": "org.ow2.asm",
+      "name": "asm-tree",
+      "version": "9.10.1",
+      "artifact": "asm-tree-9.10.1.jar",
+      "sha256": "3dfb0d5b6a106cd40b5b250e39935fbf2f927f4477546a5369a3ac609cf0506b",
+      "pgp": "A5BD02B93E7A40482EB1D66A5F69AD087600B22C"
+    },
+    {
+      "group": "org.ow2.asm",
+      "name": "asm-tree",
+      "version": "9.10.1",
+      "artifact": "asm-tree-9.10.1.pom",
+      "sha256": "963eebdea6e2e1ff25c9068b64a238e1585c99f8acd455595ac159a7f52b6c41",
+      "pgp": "A5BD02B93E7A40482EB1D66A5F69AD087600B22C"
+    },
+    {
+      "group": "org.ow2.asm",
+      "name": "asm-util",
+      "version": "9.10.1",
+      "artifact": "asm-util-9.10.1.jar",
+      "sha256": "1bb99d091fba2597dc6d51193e9bbcf0d8447e7ed96bd8f0198b18152f09655c",
+      "pgp": "A5BD02B93E7A40482EB1D66A5F69AD087600B22C"
+    },
+    {
+      "group": "org.ow2.asm",
+      "name": "asm-util",
+      "version": "9.10.1",
+      "artifact": "asm-util-9.10.1.pom",
+      "sha256": "fcea2bad7868ed18949a2e71c40cf26de1516d16440e63f585c3e05d285c0d2b",
+      "pgp": "A5BD02B93E7A40482EB1D66A5F69AD087600B22C"
+    },
+    {
+      "group": "org.reactivestreams",
+      "name": "reactive-streams",
+      "version": "1.0.4",
+      "artifact": "reactive-streams-1.0.4.jar",
+      "sha256": "f75ca597789b3dac58f61857b9ac2e1034a68fa672db35055a8fb4509e325f28",
+      "pgp": "50A628FFAF58480736B1079FD1031D14464180E0"
+    },
+    {
+      "group": "org.reactivestreams",
+      "name": "reactive-streams",
+      "version": "1.0.4",
+      "artifact": "reactive-streams-1.0.4.pom",
+      "sha256": "54ba23d87a2d438540c99ef8794a0856fc573a256b498678283c3c67ef18ada8",
+      "pgp": "50A628FFAF58480736B1079FD1031D14464180E0"
+    },
+    {
+      "group": "org.signal",
+      "name": "libsignal-client",
+      "version": "0.106.1",
+      "artifact": "libsignal-client-0.106.1.jar",
+      "sha256": "8a2da96b0bae7ae431fb871ea864e9219bf7d78eacb3e11c7e5986ad7f672274",
+      "pgp": "2F6EB0E577CA8474A2F9E676BB7EE61AD5989884",
+      "signatureVerifier": "Gradle"
+    },
+    {
+      "group": "org.signal",
+      "name": "libsignal-client",
+      "version": "0.106.1",
+      "artifact": "libsignal-client-0.106.1.module",
+      "sha256": "1d598cee8a9f88394651bbb2c2f19fae7ab00facec8de9f83197dc9c48890d39",
+      "pgp": "2F6EB0E577CA8474A2F9E676BB7EE61AD5989884",
+      "signatureVerifier": "Gradle"
+    },
+    {
+      "group": "org.slf4j",
+      "name": "jul-to-slf4j",
+      "version": "2.0.20",
+      "artifact": "jul-to-slf4j-2.0.20.jar",
+      "sha256": "062249d0677a0e08039120a2292a8db064c69d04282bf562af2e54c53ff06976",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "org.slf4j",
+      "name": "jul-to-slf4j",
+      "version": "2.0.20",
+      "artifact": "jul-to-slf4j-2.0.20.pom",
+      "sha256": "9bd18149b58303b4d843059d5b135b3b56fa0dd1c27a9db8898d4609cd338a27",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-api",
+      "version": "2.0.17",
+      "artifact": "slf4j-api-2.0.17.jar",
+      "sha256": "7b751d952061954d5abfed7181c1f645d336091b679891591d63329c622eb832",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-api",
+      "version": "2.0.17",
+      "artifact": "slf4j-api-2.0.17.pom",
+      "sha256": "150c40287f7cecdc21b9380caac98e928c4f33c023db6b348df1c5ac977026bf",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-api",
+      "version": "2.0.20",
+      "artifact": "slf4j-api-2.0.20.jar",
+      "sha256": "7e1446499b359675d8aabe6af2de86b85e72ae8a2a932c0b40d0e5ba57097439",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-api",
+      "version": "2.0.20",
+      "artifact": "slf4j-api-2.0.20.pom",
+      "sha256": "2e625c3f553cddd49f8554cea9926cbf70673b3d6833464f0c5a02f4d9130594",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-bom",
+      "version": "2.0.17",
+      "artifact": "slf4j-bom-2.0.17.pom",
+      "sha256": "f78d27b642b4b886eb839fc102b5cd9fe7f30f37599ffe68185be4e1609031e9",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-bom",
+      "version": "2.0.20",
+      "artifact": "slf4j-bom-2.0.20.pom",
+      "sha256": "351a3d34f0886942268efcf291708c48dfadce7f2643837efdb4a6954d4e6c62",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-parent",
+      "version": "2.0.17",
+      "artifact": "slf4j-parent-2.0.17.pom",
+      "sha256": "95cd71e852dfdb29126e58b7b939d57ec2b2e6024391852e0b545dee082bbf3b",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-parent",
+      "version": "2.0.20",
+      "artifact": "slf4j-parent-2.0.20.pom",
+      "sha256": "d931cf99cfd3554d322809df03c43ef897082cd480d6ff91b44d8f067ca324c8",
+      "pgp": "60200AC4AE761F1614D6C46766D68DAA073BE985"
+    },
+    {
+      "group": "org.sonatype.oss",
+      "name": "oss-parent",
+      "version": "7",
+      "artifact": "oss-parent-7.pom",
+      "sha256": "b51f8867c92b6a722499557fc3a1fdea77bdf9ef574722fe90ce436a29559454",
+      "signature": "not published/retrievable during Gradle generation; exact SHA256 required"
+    },
+    {
+      "group": "org.xerial",
+      "name": "sqlite-jdbc",
+      "version": "3.54.1.0",
+      "artifact": "sqlite-jdbc-3.54.1.0.jar",
+      "sha256": "f8dce420a6016278497f4f0560f65602b9db858de141b541cf91a4644ebe4639",
+      "pgp": "C1CBA75EC9BD0BAF8061935459E05CE618187ED4"
+    },
+    {
+      "group": "org.xerial",
+      "name": "sqlite-jdbc",
+      "version": "3.54.1.0",
+      "artifact": "sqlite-jdbc-3.54.1.0.pom",
+      "sha256": "7c6966b225aedf0110b11a68ccbe5d053a45074e4f45aa2e93a48901e31d677e",
+      "pgp": "C1CBA75EC9BD0BAF8061935459E05CE618187ED4"
+    },
+    {
+      "group": "tools.jackson",
+      "name": "jackson-bom",
+      "version": "3.2.3",
+      "artifact": "jackson-bom-3.2.3.pom",
+      "sha256": "ad181b150b3f22bcf8ead7227d51ccc09e610c457c8bcc97d8958d2439ef16ec",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "tools.jackson.core",
+      "name": "jackson-core",
+      "version": "3.2.3",
+      "artifact": "jackson-core-3.2.3.jar",
+      "sha256": "a0c17e7e665a5e95c82f5fb45c0fec2ae3dc556c80f0016452c9c84cd23f3817",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "tools.jackson.core",
+      "name": "jackson-core",
+      "version": "3.2.3",
+      "artifact": "jackson-core-3.2.3.module",
+      "sha256": "cdac5e5ac0110f41330ce4e1fa3f0bcdd6e795acd58b8458b702771472c5ea4a",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "tools.jackson.core",
+      "name": "jackson-databind",
+      "version": "3.2.3",
+      "artifact": "jackson-databind-3.2.3.jar",
+      "sha256": "235b72436af983857e44efa42449f4f0a2c571e69d6c5d9dd1253ae7d192dcf2",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    },
+    {
+      "group": "tools.jackson.core",
+      "name": "jackson-databind",
+      "version": "3.2.3",
+      "artifact": "jackson-databind-3.2.3.module",
+      "sha256": "6cada451bdcc655bb877050a1094b7aca3cf4edb5812b6c8f4a7e644b756dabf",
+      "pgp": "28118C070CB22A0175A2E8D43D12CA2AC19F3181"
+    }
+  ]
+}

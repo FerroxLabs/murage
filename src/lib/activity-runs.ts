@@ -18,6 +18,7 @@ import { settledTurnHelpers } from "../../shared/turn-helpers";
 import { t } from "@/lib/i18n";
 import { toolStepLabel } from "@/lib/tool-step-label";
 import { routineRunMarker } from "../../shared/routine-run-marker";
+import { hasDoneWhenLine } from "@/lib/done-when-line";
 
 export type ActivityTranscriptItem =
   | { kind: "message"; message: Message }
@@ -59,7 +60,7 @@ function isQuietNote(name: string, message?: Message): boolean {
   if (message && routineRunMarker(message)) return true;
   if (message?.folderPrompt) return true;
   // DELEGATION-HOLD F5: a reply that ran without remembered context is a notice, never folded into a run Tool calls off hides
-  if (message?.memoryNote === "without-memory") return true;
+  if (message?.memoryNote === "without-memory" || message?.memoryNote === "resend") return true;
   if (name === TURN_STOPPED_NOTE || isStoppedMidDesktopAction(name)) return true;
   return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name)) || imagesLeftOutCount(name) !== undefined || Boolean(imagesNotSent(name));
 }
@@ -165,6 +166,59 @@ function group(messages: Message[], foldAssistantTurns: boolean): TranscriptItem
   }
   flush();
   return items;
+}
+
+/** An engine's own tool step that the transcript can keep out of sight (Tool calls off, or folded into
+ * "Worked for"): not a bot⇄bot chip, a Murage line, an error, a Full access line or a quiet note, which all
+ * keep their own visible row. Running, finished and failed steps all count. */
+function interimStep(message: Message): boolean {
+  const tool = message.tool;
+  if (message.role !== "bot" || message.kind !== "activity" || !tool) return false;
+  if (message.comm || message.actorKind === "murage" || message.folderPrompt) return false;
+  if (Array.isArray(tool.steps) || tool.imageRecord || hasDoneWhenLine(tool.doneWhen)) return false;
+  if (isQuietNote(tool.name, message)) return false;
+  return !tool.name.startsWith("error:");
+}
+
+/** 1020 double answer: within ONE turn the bot says something, runs a step, and says more ("Let me verify the
+ * latest figure." -> web search -> the answer). With the step out of sight the two texts read as two separate
+ * answers. This names, for each such later text, the steps between it and the same turn's earlier text that
+ * would not be on screen there, so the chat draws one compact step row ("searched the web") between them.
+ * Every engine writes the same rows (an assistant_text item, then an engine tool item, then another assistant_text
+ * item of the same turn), so the rule is the same for each. Tool calls on: a running or unfolded step is already
+ * on screen as its own chip, and the "Worked for" row stands at the first stretch of its turn; only a later stretch
+ * that the fold took away is named. Any other row between the two texts (a card, an owner message, an error, another
+ * speaker or turn) is a visible boundary already, so nothing is added. No text is hidden or moved. */
+export function interimSteps(messages: Message[], toolCallsShown: boolean): Map<string, Message[]> {
+  const out = new Map<string, Message[]>();
+  const folds = toolCallsShown ? toolStepFolds(messages) : undefined;
+  let said: Message | undefined;
+  let steps: Message[] = [];
+  for (const message of messages) {
+    if (message.role === "bot" && message.kind === "text" && message.turnId) {
+      if (
+        said && steps.length && said.turnId === message.turnId && said.from?.botId === message.from?.botId &&
+        (!folds || steps.every((step) => folds.hiddenIds.has(step.id) && !folds.byAnchorId.has(step.id)))
+      ) out.set(message.id, steps);
+      said = message;
+      steps = [];
+      continue;
+    }
+    if (said && message.turnId === said.turnId && message.from?.botId === said.from?.botId && interimStep(message)) {
+      steps.push(message);
+      continue;
+    }
+    said = undefined;
+    steps = [];
+  }
+  return out;
+}
+
+/** The plain words for a stretch of steps between two texts: "searched the web", "read files, ran commands". */
+export function describeInterimSteps(messages: Message[]): string {
+  const names = [...new Set(messages.map((message) => toolStepLabel(message.tool?.name)))].filter(Boolean);
+  const shown = names.slice(0, MAX_NAMES).join(", ");
+  return names.length > MAX_NAMES ? `${shown} +${names.length - MAX_NAMES} more` : shown;
 }
 
 export function groupActivityRuns(messages: Message[]): ActivityTranscriptItem[];

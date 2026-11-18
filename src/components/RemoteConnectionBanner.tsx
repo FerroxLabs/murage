@@ -17,6 +17,9 @@
 import { useEffect, useRef, useState } from "react";
 import { WifiOff } from "lucide-react";
 
+import { uxCloud } from "@/lib/cloud-ux-copy";
+import { isCloudHome, isCloudOrigin } from "@/lib/cloud-workspace";
+
 export const REMOTE_OFFLINE_GRACE_MS = 3_000;
 export const REMOTE_FIRST_CONNECT_GRACE_MS = 15_000;
 
@@ -26,16 +29,25 @@ export function remoteConnectionNotice(input: {
   offlineSince: number | null;
   now: number;
   everConnected: boolean;
+  /** An owner's browser on a Cloud home: the words do not mention a computer, which a Cloud customer does not have. */
+  cloud?: boolean;
 }): string | null {
   if (input.connected || input.signedOut || input.offlineSince === null) return null;
   const grace = input.everConnected ? REMOTE_OFFLINE_GRACE_MS : REMOTE_FIRST_CONNECT_GRACE_MS;
   if (input.now - input.offlineSince < grace) return null;
   // Not "the server": nobody installed a server. And it answers the real
   // question, which is whether what they typed is lost.
+  //
+  // On a Cloud home it is true because a send goes through the persisted outbox (src/state/send-delivery.ts: kept in this
+  // browser, retried with the same id for up to ten minutes, then handed back to the box) and the live stream reopens by
+  // itself (src/lib/live-events.ts: backoff, and at once on the browser's "online" event, once the tab is showing).
+  if (input.cloud === true) return uxCloud("ux.cloud.firstRun.unreachable");
   return "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself once your computer is awake and online.";
 }
 
 export function RemoteConnectionBanner({ connected, signedOut }: { connected: boolean; signedOut: boolean }) {
+  // A browser on a Cloud home has no computer of its own to wake: it gets the Cloud words. The Cloud window has its own banner.
+  const cloud = isCloudHome() && !isCloudOrigin();
   // A ref, not state: it only ever flips false -> true, and reading it during
   // render (rather than from an effect) means the very render that learns
   // `connected` is true also knows this page has now connected at least once.
@@ -62,6 +74,7 @@ export function RemoteConnectionBanner({ connected, signedOut }: { connected: bo
     offlineSince,
     now,
     everConnected: everConnectedRef.current,
+    ...(cloud ? { cloud: true } : {}),
   });
   if (!text) return null;
   return (

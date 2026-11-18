@@ -72,7 +72,7 @@ describe("box relay", () => {
     expect(res.status).toBe(404);
     expect(res.body.toString()).toBe(JSON.stringify({ error: "not found" }));
     expect(r.upstream).not.toHaveBeenCalled();
-    expect(r.logs).toEqual(["box relay refused bot=bot-a reason=other-box"]);
+    expect(r.logs).toEqual(["box-relay refused=1"]);
     // the bot B token cannot reach bot A's box either
     expect((await r.call({ ...cmd(), authorization: `Bearer ${r.otherToken}` })).status).toBe(404);
   });

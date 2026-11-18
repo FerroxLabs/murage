@@ -196,7 +196,7 @@ describe("Android USB device bridge", () => {
     let settled = false;
     const settle = (finish) => { if (settled) return; settled = true; closeSync(fd); finish(); };
     const stdio = ["ignore", "pipe", "ignore", ...Array(INHERITED_FD - 3).fill("ignore"), fd];
-    const child = spawn(command, args, { stdio });
+    const child = spawn(command, args, { windowsHide: true, stdio });
     let output = "";
     child.stdout.on("data", (chunk) => { output += chunk; });
     child.once("error", (error) => settle(() => reject(error)));

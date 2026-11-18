@@ -195,6 +195,32 @@ describe("feedback request", () => {
       expect(scrubSecrets(input)).not.toContain("glp" + "at-");
     }
   });
+
+  it("removes a private-key block whole when a key=value name sits in front of it (PEM runs first)", () => {
+    const begin = "-----BEGIN " + "PRIVATE KEY-----", end = "-----END " + "PRIVATE KEY-----";
+    const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ";
+    for (const input of [`private_key=${begin}\n${body}\n${end}`, `private_key: ${begin}${body}${end} after`, `secret=${begin}\n${body}`]) {
+      const out = scrubSecrets(input);
+      expect(out, input).not.toContain(body);
+      expect(out, input).not.toContain("PRIVATE KEY");
+      expect(scrubSecrets(out), `idempotent: ${input}`).toBe(out);
+    }
+    expect(scrubSecrets(`private_key: ${begin}${body}${end} after`)).toBe(`private_key: ${REMOVED} after`);
+  });
+
+  it("removes SendGrid keys and PyPI tokens, and leaves look-alikes readable (SENDGRID-PYPI-MASK)", () => {
+    // Assembled at runtime so no scanner reads a fixture as a live key.
+    const sendgrid = "S" + "G." + "aB3dE5fG7hI9jK1lM3nO5p" + "." + "qR7sT9uV1wX3yZ5aB7cD9eF1gH3iJ5kL7mN9oP1q_-Z";
+    const pypi = "py" + "pi-AgE" + "IcHlwaS5vcmc".repeat(7) + "AbCdEf";
+    expect(sendgrid.length).toBe(69);
+    expect(scrubSecrets(`send with ${sendgrid} now`)).toBe(`send with ${REMOVED} now`);
+    expect(scrubSecrets(`upload with ${pypi}`)).toBe(`upload with ${REMOVED}`);
+    const nested = "S" + "G." + "s" + "k-" + "a".repeat(19) + "." + "b".repeat(43);
+    expect(scrubSecrets(nested)).toBe(REMOVED);
+    for (const ordinary of ["SG.example.com", "S" + "G." + "a".repeat(22) + "." + "b".repeat(20), sendgrid + "x" /* a 44th secret char is not a key */, "py" + "pi-AgE" + "a".repeat(40)]) {
+      expect(scrubSecrets(ordinary), ordinary).toBe(ordinary);
+    }
+  });
 });
 
 describe("feedback envelope: fixed tables only (1.0.12)", () => {

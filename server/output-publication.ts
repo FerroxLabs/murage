@@ -1,3 +1,4 @@
+import type { LineageRef } from "./memory/lineage-types.ts";
 import { managedOutputWorkspace } from "./execution-audience.ts";
 // Automatic publication of trusted outputs.
 //
@@ -17,7 +18,8 @@ import { managedOutputWorkspace } from "./execution-audience.ts";
 // Contract: shared/output-publication.ts and docs/plans/0152-CONTRACTS.md.
 import { murageTool } from "./murage-tool-surface.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, unlinkSync, type Stats } from "node:fs";
 import { rootsFor, WorkspaceTreeError } from "./data-roots.ts";
 import { basename, extname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -575,6 +577,9 @@ export interface CompleteImageOptions {
   /** The provider turn that produced the image (from the turn's capability or its receipt, never a request body); absent when no turn
    * produced it. With it the transcript row is that turn's engine output, so revoking the turn's inputs withholds it like its text reply. */
   turnId?: string;
+  /** Source inputs and position survive a restart that clears the provider-turn map. */
+  parents?: readonly LineageRef[];
+  began?: number;
   /** Asked again after the awaited attachment step, before anything is
    * attached or saved; throwing (a revoked caller) leaves the receipt as it was. */
   recheck?: () => void;
@@ -664,7 +669,7 @@ function finishImageCompletion(deps: ImageOutputDeps, start: LocalOutputReceipt,
     try {
       const existing = store.rowAttaching(receipt.threadId, saved.path);
       const row = { role: "bot" as const, kind: "text" as const, text: options.transcriptText, attachments: [{ kind: "image" as const, path: saved.path, mime: saved.mime }] };
-      const message = existing ?? store.appendMessage(receipt.threadId, imageOutputRow(row, options.turnId));
+      const message = existing ?? store.appendMessage(receipt.threadId, imageOutputRow(row, options.turnId), undefined, undefined, undefined, options.parents, options.began);
       receipt = updateOutputReceipt(db, receipt.id, { ...(receipt.stage === "registered" ? {} : { stage: "attached" as const }), attachmentId, messageId: message.id, errorCategory: null });
     } catch (error) {
       if (receipt.stage !== "registered") failReceipt(db, receipt.id, error instanceof OutputPublicationError ? error.category : "transcript");

@@ -1,0 +1,109 @@
+
+ RUN  v4.1.12 /work
+
+ × server/connector-reconnect-r3-preflight.test.ts > R1a failed probe still awaits EXPIRED inventory 29ms
+   → expected undefined to deeply equal [ { id: 'A', alias: 'work' } ]
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1b failed probe still awaits EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1c ACTIVE uncertainty is unverified
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1d ACTIVE uncertainty is unverified
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1g Flux kind=auth is an outage and still re-reads inventory
+ × server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after transport 1010ms
+   → expected +0 to be 1 // Object.is equality
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after http 63ms
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after brokerAuth 59ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth 57ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after toolError 57ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after ok 57ms
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; alias change preserves unverified
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch
+ × server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=false) cannot replace post-probe EXPIRED inventory 1061ms
+   → expected 1 to be 2 // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=true) cannot replace post-probe EXPIRED inventory 1061ms
+   → expected 1 to be 2 // Object.is equality
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3d preflight response.error.status 403 with ACTIVE creates an incident
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1f late timed-out inventory cannot clear or create incidents
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 durable unknown survives reopening and a status change clears it
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1e healthy recovery clears a durable unknown check
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope error-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-error-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3 broker diagnostic in a failed row only suppresses reconnect
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1a failed probe still awaits EXPIRED inventory
+AssertionError: expected undefined to deeply equal [ { id: 'A', alias: 'work' } ]
+
+- Expected:
+[
+  {
+    "alias": "work",
+    "id": "A",
+  },
+]
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:45:59
+     43| it.each([["R1a","transport"],["R1b","http"]])("%s failed probe still a…
+     44|   probe=mode!; afterProbe=()=>{accounts.gmail![0]!.status="EXPIRED";};…
+     45|   expect(composio.appsNeedingReconnect(cfg)[0]?.accounts).toEqual([{id…
+       |                                                           ^
+     46| });
+     47| it.each([["R1c","timeout"],["R1d","toolError"]])("%s ACTIVE uncertaint…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after transport
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:70:44
+     68|   afterProbe=()=>{holdInventory=new Promise<void>(resolve=>{release=re…
+     69|   const checking=check().then(()=>{resolved=true;});
+     70|   try { await vi.waitFor(()=>expect(reads).toBe(1)); expect(completed)…
+       |                                            ^
+     71|   finally { release?.(); await checking; }
+     72|   expect(completed).toBe(1); expect(reads).toBe(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=false) cannot replace post-probe EXPIRED inventory
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=true) cannot replace post-probe EXPIRED inventory
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:93:44
+     91|   // Cached inventory lets the probe start while the older fetch remai…
+     92|   const checking=check();
+     93|   try { await vi.waitFor(()=>expect(reads).toBe(2)); await checking; }…
+       |                                            ^
+     94|   expect(composio.appsNeedingReconnect(cfg)[0]?.accounts.map(a=>a.id))…
+     95| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 5 passed | 18 skipped (27)
+   Start at  05:09:17
+   Duration  12.97s (transform 7.47s, setup 8.50s, import 866ms, tests 3.46s, environment 0ms)
+

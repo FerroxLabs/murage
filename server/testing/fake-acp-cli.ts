@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// @ts-expect-error The isolated replay harness is JavaScript test support.
+import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
+import { withFixtureMountMetadata } from "./fixture-mount-metadata.ts";
+import { holdFixtureRelayClient } from "./relay-client-lifetime.ts";
 // Fake of an ACP (Agent Client Protocol) CLI's stdio surface, for driver
 // tests of acp/core.ts + its harness shims (grok, gemini). Speaks JSON-RPC
 // 2.0 over stdin/stdout: answers initialize / authenticate / session/new /
@@ -91,6 +95,7 @@
 //                     one JSON line per request and per raw reply.
 //                     FAKE_ACP_TRUST_DELAY_MS raises the V=2 request that long after
 //                     the session reply: a warm has parked by then.
+//                     FAKE_ACP_TRUST_FORCE_REQUEST=1 asks even with --trust, exercising a late native fallback.
 //                     FAKE_ACP_TRUST_ON_PROMPT=1 raises the V=2 request only when
 //                     session/prompt arrives, so the prompt is already written:
 //                     with FAKE_ACP_TRUST_PROMPT_FIRST the turn outruns the card.)
@@ -129,6 +134,7 @@
 //   FAKE_ACP_PERMISSION_COMMAND  the command a permission-mode ask names
 //                   (default "echo hi")
 //   FAKE_ACP_PERMISSION_TOOLCALL  JSON tool call a permission-mode ask sends
+//   FAKE_ACP_PERMISSION_TOOLCALL_NEXT  JSON tool call the second ask (TWICE=1) sends
 //   FAKE_ACP_PERMISSION_SESSION=1  the permission-mode ask names the live session
 //                   verbatim instead of the default shell command
 //   FAKE_ACP_PERMISSION_TIMING_FILE  append {askedAt, waitMs} per answered
@@ -206,6 +212,8 @@
 //                        servers actually changed
 //   FAKE_ACP_MCP_READY_DELAY_MS  announce that long after the servers were
 //                        handed over (a real engine announces once they settle)
+//   FAKE_ACP_MCP_READY_AFTER_LIST=1  with MCP_CONNECT, announce only after
+//                        every handed server answers a real tools/list
 //   FAKE_ACP_MCP_READY_GATE_FILE  also wait for this file before announcing
 //                        readiness, so a test can inspect the real process tree
 //                        before a reused turn reconciles its replacement servers
@@ -271,6 +279,8 @@
 //   FAKE_ACP_MODE=cancel-ack  hold session/prompt open; answer it with
 //                        stopReason "cancelled" on session/cancel and stay alive
 //   FAKE_ACP_PID_FILE    write this child's pid (after probe branches exit)
+//   FAKE_ACP_MODE=gated-result:text|empty|other|error|overflow  hold session/prompt until FAKE_ACP_PROMPT_GATE exists, then end_turn with a reply /
+//                        end_turn with nothing / stopReason max_tokens / a -32000 rejection / one oversized frame and no result
 //   FAKE_ACP_TERM        ignore | linger | gate: SIGTERM handling. POSIX-only
 //                        observation — Windows taskkill /F runs no handler
 //   FAKE_ACP_TERM_MS     linger delay before exiting (default 400, max 10 s)
@@ -306,16 +316,21 @@
 //                        an entry off, then the answer
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
+import { r3Barrier, r3Record, r3Root } from "./r3-engine-barrier.ts";
+import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
+import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fixtureCredentialFingerprint } from "./fixture-dump.ts";
 import { logProposalTurn, proposalFrom, proposalReply, proposeThroughMcp } from "./fake-mcp-propose.ts";
 import { fakeReviewByTool, fakeReviewReply, fakeReviewToolArgs } from "./fake-review.ts";
+import { replayWebRead, replayCommands } from "./fake-web-read.ts";
 import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
+import { fixtureRequested } from "./fixture-request.ts";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 // Separate cages may both call their engine PID 2. Files and session identities
@@ -326,6 +341,9 @@ const permissionCommand = process.env.FAKE_ACP_PERMISSION_COMMAND || "echo hi";
 // A whole tool call (JSON) for a permission-mode ask, verbatim, so a test can
 // replay the exact shape an engine sent (an MCP tool through use_tool).
 const permissionToolCall = process.env.FAKE_ACP_PERMISSION_TOOLCALL ? JSON.parse(process.env.FAKE_ACP_PERMISSION_TOOLCALL) : null;
+// FAKE_ACP_PERMISSION_TOOLCALL_NEXT: the tool call the second ask (FAKE_ACP_PERMISSION_TWICE=1) sends instead,
+// e.g. OpenCode's bash ask under the same toolCallId after its external_directory ask.
+const permissionToolCallNext = process.env.FAKE_ACP_PERMISSION_TOOLCALL_NEXT ? JSON.parse(process.env.FAKE_ACP_PERMISSION_TOOLCALL_NEXT) : null;
 const permissionFile = process.env.FAKE_ACP_PERMISSION_FILE || "/tmp/fake-acp-edit.md";
 const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 // A second, distinguishable 1x1 raster: the computer surface's frame.
@@ -334,7 +352,12 @@ const SCREEN_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 // model is chosen with session/set_config_option, because `opencode acp` takes
 // no -m. Off unless FAKE_ACP_MODELS is set, so every existing mode is byte-
 // identical to before.
-const models = (process.env.FAKE_ACP_MODELS ?? "").split(",").filter(Boolean);
+// JSON form preserves native model IDs that themselves contain commas.
+const modelValues: unknown = process.env.FAKE_ACP_MODELS_JSON === undefined
+  ? (process.env.FAKE_ACP_MODELS ?? "").split(",").filter(Boolean)
+  : JSON.parse(process.env.FAKE_ACP_MODELS_JSON);
+if (!Array.isArray(modelValues) || modelValues.some(value => typeof value !== "string")) throw new Error("invalid fixture model catalog");
+const models: string[] = modelValues;
 // OpenCode merges inline provider declarations into the session's catalog.
 try {
   const providers = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || "{}")?.provider ?? {};
@@ -390,6 +413,13 @@ const sessionModels = () => {
 const setModelAttempts: string[] = [];
 
 const argv = process.argv.slice(2);
+// The inert DeepSeek peer exposes the same bounded config query as its CLI.
+// Only an explicitly supplied fixture tree answers; missing data stays unknown.
+if (argv.length === 3 && argv[0] === "--profile" && argv[1] === "acp" && argv[2] === "--dump-config"
+  && process.env.FAKE_DSH_CONFIG !== undefined) {
+  process.stdout.write(process.env.FAKE_DSH_CONFIG);
+  process.exit(0);
+}
 if (argv[0] === "debug" && argv[1] === "config") {
   process.stdout.write(process.env.FAKE_OPENCODE_CONFIG ?? process.env.OPENCODE_CONFIG_CONTENT ?? "{}");
   process.exit(0);
@@ -477,7 +507,7 @@ const dumpEnv = Object.fromEntries(
     "GITHUB_TOKEN",
     ...dumpCredentials,
     // engine isolation switches (no secret): compat cells, memory, discovery off
-    ...Object.keys(process.env).filter((key) => /^(?:GROK|FUIGO)_[A-Z]+_[A-Z]+_ENABLED$|^(?:GROK|FUIGO)_MEMORY$|^OPENCODE_DISABLE_|^OPENCODE_PURE$|^(?:GEMINI_CLI|QWEN_CODE)_SYSTEM_SETTINGS_PATH$|^GEMINI_CLI_HOME$|^GROK_HOME$|^OPENCODE_CONFIG_DIR$|^FACTORY_HOME_OVERRIDE$/.test(key)),
+    ...Object.keys(process.env).filter((key) => /^(?:GROK|FUIGO)_[A-Z]+_[A-Z]+_ENABLED$|^(?:GROK|FUIGO)_MEMORY$|^OPENCODE_DISABLE_|^OPENCODE_PURE$|^(?:GEMINI_CLI|QWEN_CODE)_SYSTEM_SETTINGS_PATH$|^GEMINI_CLI_HOME$|^GEMINI_SANDBOX$|^GROK_HOME$|^OPENCODE_CONFIG_DIR$|^FACTORY_HOME_OVERRIDE$/.test(key)),
   ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, dumpCredentials.has(key) ? fixtureCredentialFingerprint(process.env[key]!) : process.env[key]]] as const)),
 );
 // Folder-trust readers must see a complete snapshot at each publication.
@@ -549,7 +579,11 @@ if (argv[0] === "models" || argv.includes("--list-models")) {
   );
 }
 
-const rawOut = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
+let outputBatch: unknown[] | undefined;
+const rawOut = (obj: unknown) => {
+  if (outputBatch) { outputBatch.push(obj); return true; }
+  return process.stdout.write(JSON.stringify(obj) + "\n");
+};
 // FAKE_ACP_NAMED_UPDATES=1: every session/update names the live session, as the
 // ACP spec has a real engine do (the fixture's own shorthand frames omit it).
 const out = (obj: unknown) => {
@@ -565,18 +599,7 @@ const out = (obj: unknown) => {
 const FIXTURE_FRAME_LIMIT = 32 * 1024 * 1024;
 const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
 const fixtureLargeImageBase64 = () => Buffer.alloc(10 * 1024 * 1024, 7).toString("base64");
-// Markers count only on the prompt's last line (the current request): the
-// harness replays earlier messages into a fresh process's prompt, and an old
-// marker there must not re-trigger a fixture on a later, ordinary turn.
-// A room turn's prompt is the room transcript followed by the harness's
-// "(Reply to the conversation above as NAME.)" trailer, so its current request
-// is the last transcript line before that trailer.
-const ROOM_REPLY_TRAILER = /^\(Reply to the conversation above as .+\.\)$/;
-const fixtureRequested = (text: string, marker: string) => {
-  const lines = text.trimEnd().split("\n");
-  if (lines.length > 1 && ROOM_REPLY_TRAILER.test(lines.at(-1) ?? "")) { lines.pop(); while (lines.length > 1 && !lines.at(-1)?.trim()) lines.pop(); }
-  return (lines.pop() ?? "").includes(marker);
-};
+// Markers count only on the prompt's last line (fixture-request.ts): old replayed markers must not re-trigger a fixture.
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
 
 // Fuigo 1.0.36+ launch policy (see FUIGO_POLICY_PATH above). Returns the error record, or null when the bytes match.
@@ -608,7 +631,7 @@ function sessionPolicy(msg: any): { _meta?: Record<string, unknown> } | true {
 // or session/load, so before any prompt: a load's history replay, or a tool frame an engine sends before it is asked.
 const preFrames = (sid: unknown) => {
   for (const frame of JSON.parse(process.env.FAKE_ACP_PRE_FRAMES ?? "[]")) {
-    out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: frame.update, ...(frame.meta ? { _meta: frame.meta } : {}) } });
+    out({ jsonrpc: "2.0", method: frame.rail ?? "session/update", params: { sessionId: sid, update: frame.update, ...(frame.meta ? { _meta: frame.meta } : {}) } });
   }
 };
 /** A test's own gate: `then` runs once the file exists. */
@@ -644,7 +667,7 @@ const runStrandedInterjection = () => {
 // session/prompt arrives (or after Murage answers request id `after`), doing one of: `update` (a session update, on
 // `rail`, default session/update, with optional `meta`), `notify` {method, params}, `request` {id, method, params}
 // (an engine request), `result` (the prompt's result; an accepted interjection then runs as a fallback turn) or
-// `error` (the prompt's RPC error). Each answer to a scripted request is appended to FAKE_ACP_SCRIPT_LOG.
+// `error` (the prompt's RPC error); a step with `gate`: <file> waits for the file first. Each answer to a scripted request is appended to FAKE_ACP_SCRIPT_LOG.
 const scriptRequestIds = new Set<unknown>();
 const scriptAnswerWaiters = new Map<unknown, Array<() => void>>();
 let scriptStartedAt = 0;
@@ -667,6 +690,9 @@ const runFuigoScript = (prompt: any) => {
       const waiting = scriptAnswerWaiters.get(step.after) ?? [];
       waiting.push(() => setTimeout(() => run(step), step.at ?? 0));
       scriptAnswerWaiters.set(step.after, waiting);
+    } else if (typeof step.gate === "string") {
+      // `gate`: <file>: the step runs `at` ms after the file exists (a test revokes the lease before the engine speaks).
+      const poll = setInterval(() => { if (existsSync(step.gate)) { clearInterval(poll); setTimeout(() => run(step), step.at ?? 0); } }, 10);
     } else setTimeout(() => run(step), step.at ?? 0);
   }
   setInterval(() => {}, 1_000);
@@ -829,9 +855,9 @@ const fakeWorkspaceKey = (): string => {
   const cwd = process.cwd();
   const canonical = (path: string) => { try { return realpathSync.native(path); } catch { return path; } };
   try {
-    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const common = resolve(cwd, execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
-    const gitDir = resolve(cwd, execFileSync("git", ["rev-parse", "--git-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const common = resolve(cwd, execFileSync("git", ["rev-parse", "--git-common-dir"], { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    const gitDir = resolve(cwd, execFileSync("git", ["rev-parse", "--git-dir"], { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
     if (top && realpathSync.native(common) !== realpathSync.native(gitDir) && basename(common) === ".git") return realpathSync.native(dirname(common));
     return top ? realpathSync.native(top) : canonical(cwd);
   } catch {
@@ -856,13 +882,17 @@ const storeTrustsCwd = (): boolean => {
 };
 const folderTrustedAtBuild = argv.includes("--trust") || (mode === "folder-trust" && (trustV2 ? trustVerdict() === "trusted" : storeTrustsCwd()));
 const agentsMdForReply = () => {
-  if (!folderTrustedAtBuild) return "withheld";
+  // Fuigo's first-turn grant check rediscovers withheld instructions after a
+  // process reply (acp_session_impl/withheld_instructions.rs). Keep a snapshot
+  // at prompt admission so a later reply cannot rewrite an already running turn.
+  if (!folderTrustedAtPrompt) return "withheld";
   try {
     return readFileSync("AGENTS.md", "utf8").trim();
   } catch {
     return "absent";
   }
 };
+let folderTrustedAtPrompt = folderTrustedAtBuild;
 
 // ask-peer mode: the "agents" MCP server entry from session/new's mcpServers
 type McpEntry = { name?: string; command: string; args?: string[]; env?: Array<{ name: string; value: string }> };
@@ -883,10 +913,16 @@ const startMcpChild = (servers: unknown) => {
   const log = process.env.FAKE_ACP_MCP_CHILD_LOG;
   if (!log) return;
   mcpChild?.kill("SIGKILL");
-  const first = Array.isArray(servers) ? servers[0] as { command?: unknown; args?: unknown } | undefined : undefined;
+  const first = Array.isArray(servers) ? servers[0] as { command?: unknown; args?: unknown; env?: Array<{ name: string; value: string }> } | undefined : undefined;
+  const nativeEnv = Object.fromEntries((first?.env ?? []).map(entry => [entry.name, entry.value]));
   mcpChild = typeof first?.command === "string"
-    ? spawn(first.command, Array.isArray(first.args) ? first.args.map(String) : [], { stdio: "ignore" })
-    : spawn("sleep", ["300"], { stdio: "ignore" });
+    ? spawn(first.command, Array.isArray(first.args) ? first.args.map(String) : [], { windowsHide: true, env: { ...process.env, ...nativeEnv }, stdio: nativeEnv.MURAGE_RELAY_TICKET ? ["pipe", "pipe", "pipe"] : "ignore" })
+    : spawn("sleep", ["300"], { windowsHide: true, stdio: "ignore" });
+  if (nativeEnv.MURAGE_RELAY_TICKET) {
+    mcpChild.stdout?.resume(); mcpChild.stderr?.resume();
+    mcpChild.stdin?.on("error", () => {});
+    mcpChild.stdin?.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "fixture", version: "1" } } }) + "\n");
+  }
   appendFileSync(log, `${mcpChild.pid}\n`);
 };
 /** The server names the last session/new or session/load carried (FAKE_ACP_MCP_LIST "all:<status>"). */
@@ -902,20 +938,30 @@ const announceMcpReady = (sessionId: string, servers: unknown) => {
   if (Array.isArray(servers)) lastMcpServerNames = servers.map((server) => String((server as { name?: unknown })?.name ?? "")).filter(Boolean);
   mcpHandedAt = Date.now();
   mcpListSettledLogged = false;
-  connectMcpServers(servers);
-  if (process.env.FAKE_ACP_MCP_READY !== "1" || !Array.isArray(servers) || !servers.length) return;
+  const afterListing = process.env.FAKE_ACP_MCP_READY_AFTER_LIST === "1";
+  const serverCount = Array.isArray(servers) ? servers.length : 0;
+  const canAnnounce = process.env.FAKE_ACP_MCP_READY === "1" && serverCount > 0;
+  let connectionGeneration = 0;
   // Grok Build announces the same thing under its own name (FAKE_ACP_MCP_READY_METHOD).
   const announce = () => {
+    if (afterListing && (connectionGeneration !== mcpConnectionGeneration || connectedMcp.some(child => child.exitCode !== null || child.signalCode !== null))) return;
     const gate = process.env.FAKE_ACP_MCP_READY_GATE_FILE;
     if (gate && !existsSync(gate)) {
       setTimeout(announce, 10).unref();
       return;
     }
     mcpTimeline("ready");
-    out({ jsonrpc: "2.0", method: process.env.FAKE_ACP_MCP_READY_METHOD || "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: servers.length, elapsedMs: 1 } });
+    for (const method of process.env.FAKE_ACP_MCP_READY_METHOD ? [process.env.FAKE_ACP_MCP_READY_METHOD] : ["_fuigo/mcp_initialized", "_x.ai/mcp_initialized"])
+      out({ jsonrpc: "2.0", method, params: { sessionId, mcpToolCount: serverCount, elapsedMs: 1 } });
   };
-  const delay = Number(process.env.FAKE_ACP_MCP_READY_DELAY_MS) || 0;
-  if (delay > 0) setTimeout(announce, delay); else announce();
+  const schedule = () => {
+    if (!canAnnounce) return;
+    const delay = Number(process.env.FAKE_ACP_MCP_READY_DELAY_MS) || 0;
+    if (delay > 0) setTimeout(announce, delay); else announce();
+  };
+  connectMcpServers(servers, afterListing ? schedule : undefined);
+  connectionGeneration = mcpConnectionGeneration;
+  if (!afterListing) schedule();
 };
 /** FAKE_ACP_MCP_CONNECT: the servers this engine holds open, as a real engine does. */
 let connectedMcp: Array<ReturnType<typeof spawn>> = [];
@@ -935,16 +981,20 @@ if (process.env.FAKE_ACP_MCP_CONNECT === "1" && !process.env.FAKE_ACP_TERM) {
     setTimeout(() => process.exit(0), 1_000).unref();
   });
 }
-function connectMcpServers(servers: unknown): void {
+let mcpConnectionGeneration = 0;
+function connectMcpServers(servers: unknown, listedAll?: () => void): void {
+  const generation = ++mcpConnectionGeneration;
   if (process.env.FAKE_ACP_MCP_CONNECT !== "1" || !Array.isArray(servers)) return;
   for (const child of connectedMcp) child.kill();
   connectedMcp = [];
+  const waiting = new Set(servers.map((_entry, index) => index));
   const start = () => {
-    for (const entry of servers as McpEntry[]) {
+    if (generation !== mcpConnectionGeneration) return;
+    for (const [index, entry] of (servers as McpEntry[]).entries()) {
       if (typeof entry?.command !== "string") continue;
       const env = { ...process.env };
       for (const { name, value } of entry.env ?? []) env[name] = value;
-      const child = spawn(entry.command, entry.args ?? [], { env, stdio: ["pipe", "pipe", "ignore"] });
+      const child = spawn(entry.command, entry.args ?? [], { windowsHide: true, env, stdio: ["pipe", "pipe", "ignore"] });
       connectedMcp.push(child);
       child.on("error", () => undefined);
       child.stdin.on("error", () => undefined);
@@ -961,7 +1011,10 @@ function connectMcpServers(servers: unknown): void {
           if (message?.id === 1 && message.result) {
             write({ jsonrpc: "2.0", method: "notifications/initialized" });
             write({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
-          } else if (message?.id === 2 && message.result) mcpTimeline("listed", entry.name);
+          } else if (message?.id === 2 && message.result) {
+            mcpTimeline("listed", entry.name);
+            if (Array.isArray(message.result.tools) && waiting.delete(index) && !waiting.size && generation === mcpConnectionGeneration) listedAll?.();
+          }
         }
       });
       write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "fake-acp", version: "0" } } });
@@ -992,11 +1045,11 @@ if (process.env.FAKE_ACP_SPAWN_LOG) appendFileSync(process.env.FAKE_ACP_SPAWN_LO
 
 /** Minimal one-shot MCP stdio client: initialize, call each tool in
  * sequence, return the text of the last result. Dependency-free. */
-function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: string) => object }>): Promise<string> {
+function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: string) => object }>, concurrent = false): Promise<string> {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     for (const { name, value } of entry.env ?? []) env[name] = value;
-    const child = spawn(entry.command, entry.args ?? [], { env, stdio: ["pipe", "pipe", "inherit"] });
+    const child = spawn(entry.command, entry.args ?? [], { windowsHide: true, env, stdio: ["pipe", "pipe", "inherit"] });
     child.on("error", reject);
     // FAKE_ACP_MCP_TIMEOUT_MS: the engine gives up on a tool call that long
     // after it started (the tool's own connection closes), as a real engine's
@@ -1009,18 +1062,29 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
       child.once("exit", () => done());
       child.kill();
     };
-    const timer = setTimeout(() => stopThen(() => reject(new Error("mcp timeout"))), Number(process.env.FAKE_ACP_MCP_TIMEOUT_MS) || 60_000);
+    // A relay shim is the engine's persistent connection: a tool timeout
+    // abandons the call and leaves the connection to the engine's own exit
+    // (closing it would seal the whole mount and end the turn in error).
+    // Once the call is given up, an answer that still arrives starts nothing: no later call of the script is sent.
+    let abandoned = false;
+    const timer = setTimeout(() => {
+      abandoned = true;
+      if (holdFixtureRelayClient(child, entry.args)) return reject(new Error("mcp timeout"));
+      stopThen(() => reject(new Error("mcp timeout")));
+    }, Number(process.env.FAKE_ACP_MCP_TIMEOUT_MS) || 60_000);
     let step = -1; // -1 = initialize in flight
     let last = "";
     const write = (obj: unknown) => child.stdin.write(JSON.stringify(obj) + "\n");
     const next = () => {
+      if (abandoned) return;
       step += 1;
       if (step >= calls.length) {
         clearTimeout(timer);
+        if (holdFixtureRelayClient(child, entry.args)) return resolve(last);
         return stopThen(() => resolve(last));
       }
-      const call = calls[step];
-      write({ jsonrpc: "2.0", id: step + 2, method: "tools/call", params: { name: call.name, arguments: call.args(last) } });
+      const send = (call: typeof calls[number], index: number) => write({ jsonrpc: "2.0", id: index + 2, method: "tools/call", params: { name: call.name, arguments: call.args(last) } });
+      if (!concurrent || step % 2 === 0) calls.slice(step, step + (concurrent ? 2 : 1)).forEach((call, index) => send(call, step + index));
     };
     let buf = "";
     child.stdout.on("data", (c) => {
@@ -1043,6 +1107,7 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
           continue;
         }
         last = String(msg.result?.content?.[0]?.text ?? "");
+        if (process.env.FAKE_REVIEW_REPLAY_LOG) appendFileSync(process.env.FAKE_REVIEW_REPLAY_LOG, JSON.stringify({ response: msg.id, reply: last, isError: msg.result?.isError === true }) + "\n");
         next();
       }
     });
@@ -1058,8 +1123,14 @@ function playReasoningTurn() {
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_thought_chunk", content: { text: " without ever producing an answer" } } } });
 }
 
-function playTurn() {
-  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "hello from fake acp" } } } });
+// Isolated recall fixtures can request a unique generated source reply, as the Claude fake does.
+function playTurn(promptText = "") {
+  const marker = process.env.FAKE_ACP_MENTION_MARKER;
+  const reply = marker && promptText.includes(marker) ? process.env.FAKE_ACP_MENTION_REPLY : undefined;
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: reply ?? "hello from fake acp" } } } });
+  // Permission-routing fixtures ask before any execution; the generic tool row is unrelated to that request.
+  // A text answer needs no tool. Permission fixtures can request a tool later.
+  if (process.env.FAKE_ACP_TEXT_ONLY === "1") return;
   // FAKE_ACP_TOOL_KIND: the ACP kind of this scripted tool row. Unset, the row has no kind (ACP reads it as `other`), which
   // the NOLIMITS-MEANS-IT outside mark (M2) rightly reads as an outside tool; a suite that needs a clean owner turn names a
   // local kind (`think`).
@@ -1152,6 +1223,12 @@ process.stdin.on("data", (c) => {
 // thread — resumed through its cursor — neither asked nor recorded
 // `folderTrust` in the dump, and a test reading it after such a turn was
 // timing-dependent.)
+/** FAKE_ACP_REQUEST_GATE=<file>: hold the trust request until the file exists (a test revokes the lease before the engine asks). */
+function gatedByFile(fn: () => void): () => void {
+  const gate = process.env.FAKE_ACP_REQUEST_GATE;
+  if (!gate) return fn;
+  return () => { const poll = setInterval(() => { if (existsSync(gate)) { clearInterval(poll); fn(); } }, 10); };
+}
 /** FAKE_ACP_TRUST_ON_PROMPT: the V=2 request waiting for session/prompt. */
 let trustRaiseOnPrompt: (() => void) | null = null;
 function afterSessionBuilt() {
@@ -1159,7 +1236,8 @@ function afterSessionBuilt() {
   if (trustV2) {
     const key = trustWorkspace();
     const verdict = trustVerdict();
-    const asks = (verdict === "new" || verdict === "upgrade") && folderTrustClientV2 && !trustRejected.has(key);
+    // Exercise a native ask that arrives despite a process-level launch grant.
+    const asks = (!argv.includes("--trust") || process.env.FAKE_ACP_TRUST_FORCE_REQUEST === "1") && (verdict === "new" || verdict === "upgrade") && folderTrustClientV2 && !trustRejected.has(key);
     let storeText: string | null = null;
     try { storeText = readFileSync(join(fuigoHomeDir(), "trusted_folders.toml"), "utf8"); } catch { /* no store */ }
     trustLog({ event: "start", key, verdict, asks, home: fuigoHomeDir(), store: storeText });
@@ -1170,10 +1248,11 @@ function afterSessionBuilt() {
     const scope = process.env.FAKE_ACP_TRUST_SCOPE ?? "configAndCommands";
     const kinds = process.env.FAKE_ACP_TRUST_KINDS ?? "instructions";
     const params = { sessionId: "fake-acp-session", cwd: process.cwd(), workspace: key, configKinds: kinds ? kinds.split(",") : [], ...(scope === "none" ? {} : { scope }), reason: verdict };
-    const raise = () => {
+    const raiseNow = () => {
       trustLog({ event: "request", params });
       out({ jsonrpc: "2.0", id: pendingPermissionId, method: "_fuigo/folder_trust/request", params });
     };
+    const raise = gatedByFile(raiseNow);
     const delay = Number(process.env.FAKE_ACP_TRUST_DELAY_MS) || 0;
     if (process.env.FAKE_ACP_TRUST_ON_PROMPT === "1") trustRaiseOnPrompt = raise;
     else if (delay) setTimeout(raise, delay);
@@ -1186,12 +1265,12 @@ function afterSessionBuilt() {
     (dumpState.folderTrust as { requested: boolean }).requested = true;
     if (process.env.FAKE_ACP_DUMP) writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
     pendingPermissionId = 9006;
-    out({
+    gatedByFile(() => out({
       jsonrpc: "2.0",
       id: pendingPermissionId,
       method: "_fuigo/folder_trust/request",
       params: { sessionId: "fake-acp-session", cwd: process.cwd(), workspace: process.cwd(), configKinds: ["instructions"] },
-    });
+    }))();
   }
 }
 
@@ -1255,7 +1334,57 @@ function scheduleLateFrames(sessionId: unknown) {
   }, ms);
 }
 
+// C11's ACP fixture consumes real paginated MCP responses. Only the MCP
+// responder owns publication, using the same flushed-output observer as proxies.
+const c11Served = new Map<string, string[]>();
+const c11Dirty: Array<() => Promise<void>> = [];
+async function c11List(server: any, spec: any) {
+  const names = spec.catalogs[server.name];
+  const env = Object.fromEntries(server.env.map((e: any) => [e.name, e.value]));
+  const relayed = server.args?.some((arg: string) => /cli-mount-shim/.test(arg));
+  if (!Array.isArray(names) && !relayed) { // Explicit legacy/unknown fixture, never exact zero.
+    writeFileSync(env.MURAGE_MCP_LISTED_FILE, String(Date.now())); return;
+  }
+  const child = spawn(relayed ? server.command : process.execPath, relayed ? server.args : [fileURLToPath(new URL("./fake-c11-mcp.mjs", import.meta.url))], {
+    env: { ...process.env, ...env, FIXTURE_TOOLS: JSON.stringify(names), FIXTURE_RESOURCES: spec.resources ? "1" : "0" },
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  if (relayed) connectedMcp.push(child);
+  // A relayed mount's shim env carries no listed-file path, only its lease's relay ticket: record a digest of it so each lease has its own real marker.
+  let marker = env.MURAGE_MCP_LISTED_FILE ?? (env.MURAGE_RELAY_TICKET ? createHash("sha256").update(env.MURAGE_RELAY_TICKET).digest("hex").slice(0, 16) : undefined);
+  let id = 0;
+  const pending = new Map<number, (value: any) => void>();
+  const lines = createInterface({ input: child.stdout });
+  lines.on("line", line => { const value = JSON.parse(line); pending.get(value.id)?.(value.result); pending.delete(value.id); });
+  const request = (method: string, params: object = {}) => new Promise<any>(resolve => {
+    pending.set(++id, resolve); child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+  });
+  try {
+    const initialized = await request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "c11-acp", version: "1" } });
+    marker = initialized._fixtureMarker ?? marker;
+    const served: string[] = []; let cursor: string | undefined;
+    do {
+      const page = await request("tools/list", cursor ? { cursor } : {});
+      served.push(...page.tools.map((tool: any) => tool.name)); cursor = page.nextCursor;
+    } while (cursor);
+    if (spec.catalogReadGate && !existsSync(spec.catalogReadGate)) {
+      writeFileSync(spec.catalogReadGate + ".waiting", "");
+      await new Promise<void>(resolve => whenFile(spec.catalogReadGate, resolve));
+    }
+    c11Served.set(server.name, [...new Set(served)]);
+    appendFileSync(process.env.FAKE_C11_LOG!, JSON.stringify({ launchId, event: "catalog", server: server.name, marker, names: served }) + "\n");
+    if (spec.dirtyAfterOutput) c11Dirty.push(async () => { await request("fixture/dirty"); if (!relayed) child.stdin.end(); });
+  } finally { if (!spec.dirtyAfterOutput && !relayed) {
+    const closed = spec.awaitCatalogExit ? new Promise<void>(resolve => child.once("close", () => resolve())) : undefined;
+    child.stdin.end(); await closed;
+  } }
+}
+
 function handle(msg: any) {
+  if (r3Root && !msg.method && [9390, 9391, 9392].includes(msg.id)) {
+    if (msg.id === 9390 && msg.result?.outcome?.optionId === "allow-once") r3Record("tool-ran");
+    return;
+  }
   if (mode === "fuigo-script" && msg.id !== undefined && !msg.method && scriptRequestIds.has(msg.id)) {
     scriptRequestIds.delete(msg.id);
     if (process.env.FAKE_ACP_SCRIPT_LOG) appendFileSync(process.env.FAKE_ACP_SCRIPT_LOG, JSON.stringify({ id: msg.id, at: Date.now() - scriptStartedAt, result: msg.result ?? null, error: msg.error ?? null }) + "\n");
@@ -1283,6 +1412,19 @@ function handle(msg: any) {
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
     pendingPermissionId = null;
     const chosen = msg.result?.outcome?.optionId;
+    // GH15 qualification: perform the synthetic report only after the real
+    // permission reply allows it. Never infer a file write from final prose.
+    if (process.env.FAKE_ACP_GH15_REPORT === "1" && process.env.FAKE_ACP_DUMP
+      && msg.result?.outcome?.outcome === "selected" && typeof chosen === "string" && chosen.startsWith("allow")) {
+      const report = join(dirname(process.env.FAKE_ACP_DUMP), "gh15-report.md");
+      const text = "GH15_SYNTHETIC_REPORT\n";
+      if (process.platform === "win32") {
+        const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+        const script = `[IO.File]::WriteAllText('${report.replaceAll("'", "''")}', '${text}', (New-Object Text.UTF8Encoding($false)))`;
+        execFileSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, timeout: 10000 });
+      } else writeFileSync(report, text);
+      out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `Report written: ${text.trim()}` } } } });
+    }
     bareRejectAnswered = typeof chosen === "string" && chosen.startsWith("reject")
       && (process.env.FAKE_ACP_BARE_REJECT_CANCELS === "always" || typeof msg.result?._meta?.followup_message !== "string");
     rejectFollowup = !bareRejectAnswered && typeof msg.result?._meta?.followup_message === "string" ? msg.result._meta.followup_message : null;
@@ -1319,6 +1461,7 @@ function handle(msg: any) {
     const agentsToken = agentsTokenOf(msg.params?.mcpServers);
     appendFileSync(process.env.FAKE_ACP_RPC_LOG, JSON.stringify({
       pid: process.pid, method: msg.method,
+      ...(msg.method === "initialize" ? { argv: process.argv.slice(2) } : {}),
       ...(msg.params?._meta?.noReplay === true ? { noReplay: true } : {}),
       ...(agentsToken !== undefined ? { agentsToken } : {}),
     }) + "\n");
@@ -1334,6 +1477,75 @@ function handle(msg: any) {
   }
   if (mode === "unknown-rpc-error" && msg.method === "session/prompt") {
     out({ jsonrpc: "2.0", id: -999, error: { code: -32603, message: "fake-secret-canary", data: { http_status: 500 } } });
+  }
+
+  if (mode === "c11-budget") {
+    const spec = JSON.parse(process.env.FAKE_C11_SPEC ?? "{}");
+    if (spec.catalogVariants || spec.resourceVariants) {
+      const prior = existsSync(process.env.FAKE_C11_LOG!) ? readFileSync(process.env.FAKE_C11_LOG!, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(row => row.event === "spawn") : [];
+      const own = prior.findIndex(row => row.launchId === launchId), ordinal = own < 0 ? prior.length : own;
+      if (spec.catalogVariants) spec.catalogs = spec.catalogVariants[Math.min(ordinal, spec.catalogVariants.length - 1)];
+      if (spec.resourceVariants) spec.resources = spec.resourceVariants[Math.min(ordinal, spec.resourceVariants.length - 1)];
+    }
+    const log = (value: unknown) => appendFileSync(process.env.FAKE_C11_LOG!, JSON.stringify({ launchId, ...value as object }) + "\n");
+    if (msg.method === "initialize" && spec.initialGate && !existsSync(spec.initialGate)) { writeFileSync(spec.initialGate + ".waiting", ""); whenFile(spec.initialGate, () => handle(msg)); return; }
+    if (msg.method === "initialize" && spec.recoveryGate && existsSync(process.env.FAKE_C11_LOG!) && readFileSync(process.env.FAKE_C11_LOG!, "utf8").includes('"event":"prompt"') && !existsSync(spec.recoveryGate)) {
+      writeFileSync(spec.recoveryGate + ".waiting", ""); whenFile(spec.recoveryGate, () => handle(msg)); return;
+    }
+    if (msg.method === "initialize" && spec.crashReplacement && existsSync(process.env.FAKE_C11_LOG!) && readFileSync(process.env.FAKE_C11_LOG!, "utf8").includes('"event":"prompt"')) { log({ event: "replacement-crash" }); process.exit(3); }
+    if (msg.method === "initialize") log({ event: "spawn", overlay: JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}"), argv: process.argv.slice(2) });
+    if (msg.method === "session/load" && spec.loadGate && !existsSync(spec.loadGate)) {
+      writeFileSync(spec.loadGate + ".waiting", ""); whenFile(spec.loadGate, () => handle(msg)); return;
+    }
+    if (msg.method === "session/new" || msg.method === "session/load") {
+      const servers = msg.params.mcpServers ?? [];
+      log({ event: msg.method, sessionId: msg.params.sessionId, servers: servers.map((s: any) => s.name) });
+      if (msg.method === "session/load" && spec.loadNull) { result(msg.id, null); return; }
+      if (msg.method === "session/load" && spec.loadError) { out({ jsonrpc: "2.0", id: msg.id, error: spec.loadError }); return; }
+      const listings: Promise<void>[] = [];
+      for (const server of servers) {
+        const path = server.env.find((e: any) => e.name === "MURAGE_MCP_LISTED_FILE")?.value;
+        if (!path && !server.args?.some((arg: string) => /cli-mount-shim/.test(arg))) continue;
+        const publish = () => c11List(server, spec).catch(error => { process.stderr.write(String(error)); process.exit(3); });
+        if (spec.skipMarker === server.name) continue;
+        if (spec.markerGate && server.name === spec.heldMount && !existsSync(spec.markerGate)) {
+          writeFileSync(spec.markerGate + ".waiting", "");
+          listings.push(new Promise<void>(resolve => whenFile(spec.markerGate, () => resolve(publish()))));
+        } else listings.push(publish());
+      }
+      const sessionReady = () => result(msg.id, { sessionId: msg.params.sessionId ?? "c11-session" });
+      // Early replies leave the driver's marker wait observable in this fixture.
+      if (spec.awaitCatalogExit) void Promise.all(listings).then(sessionReady); else sessionReady();
+      return;
+    }
+    if (msg.method === "session/prompt") {
+      const permission = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}").permission ?? {};
+      const ids = Array.from(c11Served).flatMap(([server, names]) => names.map(name => `${server}_${name}`.replace(/[^a-zA-Z0-9_-]/g, "_")));
+      const visible = ids.filter(id => {
+        let action = "ask";
+        for (const [pattern, rule] of Object.entries(permission)) {
+          const regex = new RegExp("^" + pattern.split("*").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
+          if (regex.test(id) && typeof rule === "string") action = rule;
+        }
+        return action !== "deny";
+      });
+      const count = visible.length + spec.native;
+      // The fixture models a provider limit change after the first completed
+      // turn; a new native process must observe the same lower provider limit.
+      const completedTurn = spec.limitAfterPrompt && readFileSync(process.env.FAKE_C11_LOG!, "utf8").includes('"event":"completed"');
+      const limit = completedTurn ? spec.limitAfterPrompt : spec.limit;
+      log({ event: "prompt", count, visible, prompt: msg.params.prompt });
+      if (spec.output) out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, ...(spec.replay ? { _meta: { isReplay: true } } : {}), update: spec.output } });
+      const finish = () => {
+      if (count > limit || spec.forceReject) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { errorName: "APIError", message: `tools: array too long. Expected an array with maximum length ${limit}, but got ${count}.` } } });
+      else { log({ event: "completed" }); out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Fixture complete" } } } }); result(msg.id, { stopReason: "end_turn" }); }
+      };
+      if (spec.dirtyAfterOutput) void Promise.all(c11Dirty.map(change => change())).then(finish);
+      else if (spec.promptGate && readFileSync(process.env.FAKE_C11_LOG!, "utf8").split('"event":"prompt"').length > 2 && !existsSync(spec.promptGate)) {
+        writeFileSync(spec.promptGate + ".waiting", ""); whenFile(spec.promptGate, finish);
+      } else finish();
+      return;
+    }
   }
 
   switch (msg.method) {
@@ -1353,7 +1565,7 @@ function handle(msg: any) {
         writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
       }
       const initDelay = Number(process.env.FAKE_ACP_INIT_DELAY_MS) || 0;
-      const answer = () => result(msg.id, { protocolVersion: 1, authMethods, ...(mode.startsWith("fuigo-retry:disc-") ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}), _meta: { modelState: { currentModelId: "fake-acp-model" } } });
+      const answer = () => result(msg.id, { protocolVersion: 1, authMethods, ...(process.env.FAKE_ACP_AGENT_VERSION ? { agentInfo: { name: "fixture", version: process.env.FAKE_ACP_AGENT_VERSION } } : {}), ...(mode.startsWith("fuigo-retry:disc-") ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}), _meta: { modelState: { currentModelId: "fake-acp-model" } } });
       if (initDelay > 0) setTimeout(answer, initDelay); else answer();
       break;
     }
@@ -1363,6 +1575,11 @@ function handle(msg: any) {
       result(msg.id, {});
       break;
     case "session/new": {
+      // N5: persistent engine-home witness, enabled only by this isolated fixture.
+      if (process.env.FAKE_ACP_HOME_SESSION === "1" && process.env.FUIGO_HOME) {
+        mkdirSync(join(process.env.FUIGO_HOME, "sessions"), { recursive: true });
+        writeFileSync(join(process.env.FUIGO_HOME, "sessions", "fake-session"), "Full access history");
+      }
       if (process.env.FAKE_ACP_NEW_ERROR) {
         out({ jsonrpc: "2.0", id: msg.id, error: JSON.parse(process.env.FAKE_ACP_NEW_ERROR) });
         break;
@@ -1393,7 +1610,7 @@ function handle(msg: any) {
         dumpState.mcpServers = dumpedServers(servers);
         writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
       }
-      agentsMcp = servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null;
+      agentsMcp = withFixtureMountMetadata(servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null);
       memoryMcp = memoryServerOf(servers);
       if (process.env.FAKE_ACP_DUMP) {
         writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(dumpedServers(servers), null, 2));
@@ -1452,6 +1669,10 @@ function handle(msg: any) {
       break;
     }
     case "session/load": {
+      if (process.env.FAKE_ACP_HOME_SESSION === "1" && (!process.env.FUIGO_HOME || !existsSync(join(process.env.FUIGO_HOME, "sessions", "fake-session")))) {
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32001, message: "session history missing from engine home" } });
+        break;
+      }
       const loadPolicy = sessionPolicy(msg);
       if (loadPolicy === true) break;
       const resident = liveSession !== null && msg.params?.sessionId === liveSession;
@@ -1462,12 +1683,12 @@ function handle(msg: any) {
       const loadServers = JSON.stringify(msg.params?.mcpServers ?? []);
       if (Array.isArray(msg.params?.mcpServers)) memoryMcp = memoryServerOf(msg.params.mcpServers) ?? memoryMcp;
       // a respawned agent loading its session gets the agents server there too (a real CLI mounts whatever session/load names)
-      if (Array.isArray(msg.params?.mcpServers)) agentsMcp = (msg.params.mcpServers as McpEntry[]).find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? agentsMcp;
+      if (Array.isArray(msg.params?.mcpServers)) agentsMcp = withFixtureMountMetadata((msg.params.mcpServers as McpEntry[]).find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? agentsMcp);
       const serversChanged = !resident || loadServers !== liveServers;
-      if (resident && Array.isArray(msg.params?.mcpServers)) {
-        // Fuigo's reconnect: the resident session takes the new servers
+      if (Array.isArray(msg.params?.mcpServers)) {
+        // Cold continuation and Fuigo's reconnect: the resident session takes the new servers
         const servers: McpEntry[] = msg.params.mcpServers;
-        agentsMcp = servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null;
+        agentsMcp = withFixtureMountMetadata(servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null);
         memoryMcp = memoryServerOf(servers);
         if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(dumpedServers(servers), null, 2));
         if (serversChanged) startMcpChild(servers);
@@ -1480,6 +1701,9 @@ function handle(msg: any) {
         result(msg.id, null);
         break;
       }
+      // A fresh CLI loading durable history still starts its configured MCP
+      // children. The resident reconnect branch above owns replacements only.
+      if (!resident && Array.isArray(msg.params?.mcpServers)) startMcpChild(msg.params.mcpServers);
       const opts = configOptions();
       const mdls = sessionModels();
       if (typeof msg.params?.sessionId === "string") liveSession = msg.params.sessionId;
@@ -1566,6 +1790,22 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (r3Root) {
+        void (async () => {
+          const hook = execFileSync(process.execPath, ["-e", process.env.FAKE_R3_HERMES_HOOK!], { encoding: "utf8" });
+          await r3Barrier(hook);
+          r3Record("accepted");
+          const ask = (id: number) => out({ jsonrpc: "2.0", id, method: "session/request_permission", params: {
+            sessionId: msg.params.sessionId, toolCall: { toolCallId: `r3-${id}`, kind: "execute", title: "fixture", rawInput: { command: "echo fixture" } },
+            options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "deny", kind: "reject_once" }] } });
+          ask(9390);
+          for (const id of [9391, 9392]) { r3Record("callback-attempt"); ask(id); }
+          r3Record("output-attempt");
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "R3-LATE-OUTPUT" } } } });
+          setTimeout(() => { result(msg.id, { stopReason: "end_turn" }); setTimeout(() => process.exit(0), 100); }, 300);
+        })();
+        break;
+      }
       if (mode === "opencode-private-stderr") {
         const error = JSON.stringify('AI_APICallError: invalid API key "fixturePrivateCredentialAlpha"');
         const line = `timestamp=2026-11-06T14:22:31.873Z level=ERROR run=fixture message="stream error" providerID=fixture modelID=mock session.id=${msg.params?.sessionId} small=false agent=build mode=primary error.error=${error}\n`;
@@ -1582,6 +1822,7 @@ function handle(msg: any) {
         return;
       }
       trustLog({ event: "prompt" });
+      folderTrustedAtPrompt = folderTrustedAtBuild || trustProcessOnly.has(trustWorkspace());
       mcpTimeline("prompt");
       if (mode === "fuigo-script") { runFuigoScript(msg); return; }
       if (mode === "parallel-card-retry" && process.env.FAKE_ACP_FAIL_ONCE_FILE && !existsSync(process.env.FAKE_ACP_FAIL_ONCE_FILE)) {
@@ -1597,6 +1838,34 @@ function handle(msg: any) {
       // FAKE_CUSTOM_TOOL_SERVER (fake-custom-tool.ts): call the first tool of
       // that owner server, started from the session's mcpServers entry.
       const customPrompt = (Array.isArray(msg.params?.prompt) ? msg.params.prompt : []).map((part: { text?: unknown }) => String(part?.text ?? "")).join("\n");
+      const browserReplay = customPrompt.includes("__fixture_browser_read__:");
+      const webReplay = /__fixture_(?:web|browser)_read__:(http:\/\/127\.0\.0\.1:\d+\/sales)/.exec(customPrompt);
+      if (webReplay) {
+        void (async () => {
+          const update = (value: object) => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, update: value } });
+          let seq = 0;
+          try {
+            const servers: McpEntry[] = JSON.parse(liveServers ?? "[]");
+            const entry = servers.find(s => s.name === (browserReplay ? "browser" : "agents")); if (!entry) throw Error("Replay tool mount missing");
+            await (browserReplay ? replayBrowserRead : replayWebRead)({ command: entry.command, args: entry.args ?? [], env: Object.fromEntries((entry.env ?? []).map(e => [e.name, e.value])) }, webReplay[1], (input: any, output: unknown) => {
+              const toolCallId = `web-${++seq}`;
+              update({ sessionUpdate: "tool_call", toolCallId, title: browserReplay ? `browser__${input.name}` : "agents__web_read", kind: "fetch", status: "in_progress", rawInput: input });
+              update({ sessionUpdate: "tool_call_update", toolCallId, status: "completed", rawOutput: output });
+            });
+            await replayCommands(customPrompt, async (command, i) => {
+              const answer: any = await new Promise(resolve => {
+                proposalAsks.set(9700 + i, resolve);
+                out({ jsonrpc: "2.0", id: 9700 + i, method: "session/request_permission", params: { sessionId: msg.params.sessionId,
+                  toolCall: { toolCallId: `shell-${i}`, title: command, kind: "execute", rawInput: { command } },
+                  options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject", kind: "reject_once" }] } });
+              });
+              if (answer?.outcome?.optionId !== "allow-once") throw Error("Replay shell refused");
+            }, (command, output, i) => update({ sessionUpdate: "tool_call", toolCallId: `shell-${i}`, title: command, kind: "execute", status: "completed", rawInput: { command }, rawOutput: output }));
+            update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Replay completed" } });
+          } catch (error) { update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: `Replay failed: ${String(error)}` } }); }
+          result(msg.id, { stopReason: "end_turn" });
+        })(); return;
+      }
       const customServer = customToolServer(customPrompt);
       if (customServer) {
         let servers: McpEntry[] = [];
@@ -1643,21 +1912,28 @@ function handle(msg: any) {
         process.stderr.write("STDERR_EARLY_CANARY\nsk-test-" + "SYNTHETICKEYCANARY".repeat(24) + "\n" + ("x".repeat(4000) + "\n").repeat(4) + "STDERR_VISIBLE_END\n", () => process.exit(4));
         return;
       }
-      if (mode === "fuigo-retry:restream" || mode === "fuigo-retry:tool") {
+      if (mode === "fuigo-retry:restream" || mode === "fuigo-retry:tool" || (mode === "fuigo-retry:tool-burst" || mode === "fuigo-retry:tool-batch") || mode === "fuigo-retry:tool-coalesced") {
         // Fuigo resends the request after a mid-stream failure: the same
         // answer streams again from the start, announced by retry_state.
+        if (mode === "fuigo-retry:tool-coalesced") outputBatch = [];
         const sid = msg.params.sessionId;
-        const chunk = (text: string) => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
-        const retrying = (n: number) => out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: sid, update: { sessionUpdate: "retry_state", type: "retrying", attempt: n }, _meta: { eventId: `retry-${n}`, agentTimestampMs: Date.now() } } });
+        const burst: unknown[] = [];
+        const frame = (value: unknown) => (mode === "fuigo-retry:tool-burst" || mode === "fuigo-retry:tool-batch") ? burst.push(value) : out(value);
+        const chunk = (text: string) => frame({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
+        const retrying = (n: number) => frame({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: sid, update: { sessionUpdate: "retry_state", type: "retrying", attempt: n }, _meta: { eventId: `retry-${n}`, agentTimestampMs: Date.now() } } });
         if (mode === "fuigo-retry:restream") {
           chunk("A1"); retrying(1); chunk("A2"); retrying(2); chunk("A3");
         } else {
           chunk("Before. ");
-          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "tool_call", toolCallId: "tc-retry", title: "run", kind: "execute" } } });
-          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "tool_call_update", toolCallId: "tc-retry", status: "completed", rawOutput: "done" } } });
+          frame({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "tool_call", toolCallId: "tc-retry", title: "run", kind: "execute" } } });
+          frame({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "tool_call_update", toolCallId: "tc-retry", status: "completed", rawOutput: "done" } } });
           chunk("After one. "); retrying(1); chunk("Final answer.");
         }
-        result(msg.id, { stopReason: "end_turn" });
+        if ((mode === "fuigo-retry:tool-burst" || mode === "fuigo-retry:tool-batch")) {
+          burst.push({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
+          process.stdout.write(burst.map(value => JSON.stringify(value)).join("\n") + "\n");
+        } else result(msg.id, { stopReason: "end_turn" });
+        if (outputBatch) { const frames = outputBatch; outputBatch = undefined; process.stdout.write(frames.map(frame => JSON.stringify(frame)).join("\n") + "\n"); }
         return;
       }
       if (mode.startsWith("fuigo-retry:disc-")) {
@@ -1669,6 +1945,7 @@ function handle(msg: any) {
         const retry = (update: any, method = "_fuigo/session_notification", meta: any = {}) => out({ jsonrpc: "2.0", method, params: { sessionId: sid, update: { sessionUpdate: "retry_state", type: "retrying", attempt: 1, ...update }, _meta: { eventId: `r-${Math.random().toString(36).slice(2)}`, agentTimestampMs: Date.now(), ...meta } } });
         const completed = () => out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: sid, update: { sessionUpdate: "response_completed", stop_reason: "end_turn" }, _meta: {} } });
         const variant = mode.slice("fuigo-retry:disc-".length);
+        if (variant === "hosted-burst") outputBatch = [];
         if (variant === "exact") {
           chunk("Earlier. ", 100); completed(); chunk("BAD", 200); retry({ discardEmitted: true, streamStartMs: 200 }); chunk("Final", 300);
         } else if (variant === "nodiscard") {
@@ -1696,7 +1973,7 @@ function handle(msg: any) {
             chunk("A2", 2); tool("ws-2", 2); done("ws-2", 2); completed();
           } else if (variant === "hosted-nodiscard") {
             chunk("A", 1); tool("ws-1", 1); retry({}); chunk("B", 1); done("ws-1", 1); completed();
-          } else if (variant === "hosted-ok") {
+          } else if (variant === "hosted-ok" || variant === "hosted-burst") {
             // an ordinary successful hosted search; the untagged thought after
             // response_completed marks when the text was saved
             chunk("Let me search.", 1); tool("ws-1", 1); done("ws-1", 1); chunk("Here is what I found.", 1); completed();
@@ -1736,6 +2013,21 @@ function handle(msg: any) {
           retry({ discardEmitted: true, streamStartMs: 5 }, "_fuigo/session/update");
         }
         result(msg.id, { stopReason: "end_turn" });
+        if (outputBatch) {
+          const frames = outputBatch; outputBatch = undefined;
+          process.stdout.write(frames.map(frame => JSON.stringify(frame)).join("\n") + "\n");
+        }
+        return;
+      }
+      // no-reason:<observed|bare|blank>: the 1.0.19 meetgreet failure. The engine's own retries end (retry_state failed, kind api),
+      // a stop notice says error/api, and session/prompt is rejected with -32603 and nothing that explains it.
+      if (mode.startsWith("no-reason:")) {
+        const variant = mode.slice("no-reason:".length);
+        if (variant === "observed") {
+          out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "retry_state", type: "failed", error_type: "api", creditLimit: false, hold: false }, _meta: { eventId: "fixture-no-reason-1", agentTimestampMs: Date.now() } } });
+          out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params.sessionId, stopReason: "error", errorKind: "api" } });
+        }
+        out({ jsonrpc: "2.0", id: msg.id, error: variant === "bare" ? { code: -32603 } : { code: -32603, message: "Internal error" } });
         return;
       }
       if (mode.startsWith("fuigo-diagnostic:")) {
@@ -1899,6 +2191,16 @@ function handle(msg: any) {
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { http_status: 402, body } } });
         return;
       }
+      if (mode === "flux-budget" || mode === "flux-hold") {
+        // A Cloud model-credits refusal as a router sends it: budget used (with the reset instant) or a service hold (header only).
+        // Held back a moment: the test switches the home role on while this waits (the role is read when the answer arrives).
+        setTimeout(() => out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: {
+          http_status: 402,
+          message: "Your credit balance is exhausted. key fk_id_fake manage at https://fluxrouter.ai/home/keys?token=fake-secret-canary",
+          ...(mode === "flux-budget" ? { provider_specific_fields: { error: "key_budget_reached", resets_at: "2030-03-05T00:00:00Z" } } : { headers: { "x-flux-hold-reason": "billing" } }),
+        } } }), 700);
+        return;
+      }
       if (["payment-required:missing","payment-required:private","payment-required:flux-url"].includes(mode)) {
         out({ jsonrpc:"2.0", id:msg.id, error:{code:-32603,message:"Internal error",data:{http_status:402,
           ...(mode==="payment-required:missing"?{}:{message:mode==="payment-required:flux-url"?"Account access unavailable. https://fluxrouter.ai/home/billing?token=fake-secret-canary":"private response fake-secret-canary https://billing.invalid/private"}),
@@ -1909,6 +2211,19 @@ function handle(msg: any) {
         markerCancelAck = true;
         pendingCancelAckPrompt = msg.id;
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture cancellation ready" } } } });
+        return;
+      }
+      // gated-result:<text|empty|other|error>: hold session/prompt until FAKE_ACP_PROMPT_GATE exists, then answer it that way.
+      if (mode.startsWith("gated-result:")) {
+        const kind = mode.slice("gated-result:".length);
+        setInterval(() => {}, 1_000);
+        whenFile(process.env.FAKE_ACP_PROMPT_GATE!, () => {
+          if (kind === "error") { out({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "The prompt failed" } }); return; }
+          // one valid frame over the limit and no result: the driver's overflow handler ends the turn
+          if (kind === "overflow") { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: fixtureOversizeText() } } } }); return; }
+          if (kind === "text") out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "late reply" } } } });
+          result(msg.id, { stopReason: kind === "other" ? "max_tokens" : "end_turn" });
+        });
         return;
       }
       if (mode === "hang") {
@@ -1992,6 +2307,20 @@ function handle(msg: any) {
       const reviewText = fakeReviewReply(promptText);
       if (reviewText !== null) {
         const say = (text: string) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text } } } }); complete(); };
+        if (fakeReviewByTool() && agentsMcp && (process.env.FAKE_REVIEW_TOOL === "double" || process.env.FAKE_REVIEW_TOOL === "concurrent")) {
+          const entry = agentsMcp;
+          const call = { name: "project_review_result", args: () => fakeReviewToolArgs(promptText) };
+          // Both calls share the admitted MCP connection, as concurrent calls from one real engine do.
+          // Replay on that same connection after both replies and the answer block, before ending the turn.
+          const replay = { name: call.name, args: () => {
+            out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: reviewText } } } });
+            if (process.env.FAKE_REVIEW_REPLAY_LOG) appendFileSync(process.env.FAKE_REVIEW_REPLAY_LOG, JSON.stringify({ sent: true }) + "\n");
+            return call.args();
+          } };
+          void driveMcp(entry, [call, call, replay], process.env.FAKE_REVIEW_TOOL === "concurrent")
+            .then(() => complete()).catch((e: Error) => say(`review tool error: ${e.message}`));
+          return;
+        }
         if (fakeReviewByTool() && agentsMcp) {
           void driveMcp(agentsMcp, [{ name: "project_review_result", args: () => fakeReviewToolArgs(promptText) }])
             .then(reply => say(`Reviewed with the tool: ${reply}`)).catch((e: Error) => say(`review tool error: ${e.message}`));
@@ -2109,14 +2438,14 @@ function handle(msg: any) {
         out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "a shell will start later" } } } });
         complete();
         setTimeout(() => {
-          const later = spawn("sleep", ["30"], { stdio: "ignore" });
+          const later = spawn("sleep", ["30"], { windowsHide: true, stdio: "ignore" });
           if (process.env.FAKE_ACP_CHILD_PID_FILE) writeFileSync(process.env.FAKE_ACP_CHILD_PID_FILE, String(later.pid));
         }, Number(process.env.FAKE_ACP_CHILD_DELAY_MS) || 800);
         return;
       }
       if (fixtureRequested(promptText, "__fixture_child_after_turn__")) {
         // a shell a tool started during the turn and left running past end_turn
-        const leftover = spawn("sleep", ["30"], { stdio: "ignore" });
+        const leftover = spawn("sleep", ["30"], { windowsHide: true, stdio: "ignore" });
         if (process.env.FAKE_ACP_CHILD_PID_FILE) writeFileSync(process.env.FAKE_ACP_CHILD_PID_FILE, String(leftover.pid));
         out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "left a shell running" } } } });
         complete();
@@ -2180,8 +2509,8 @@ function handle(msg: any) {
             out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: proposalReply(promptText) } } } });
             return;
           }
-          // an engine that searches the web on its own, no ask (not on Fuigo or Grok Build, where it stops the turn)
-          if (!agentsMcp) out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "tool_call", toolCallId: "t-search", title: "Web search", kind: "search", status: "completed", rawInput: { query: "quarterly report" } } } });
+          // Optional unapproved search: tripwire engines must reject it; ordinary proposal fixtures omit it.
+          if (!agentsMcp && process.env.FAKE_ACP_PROPOSE_NO_UNASKED !== "1") out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "tool_call", toolCallId: "t-search", title: "Web search", kind: "search", status: "completed", rawInput: { query: "quarterly report" } } } });
           out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: proposalReply(promptText) } } } });
           complete();
         });
@@ -2296,10 +2625,15 @@ function handle(msg: any) {
         }).catch(error => { note({ hits: null, error: String(error?.message ?? error).slice(0, 120) }); say("memory search failed"); });
         return;
       }
-      if ((mode === "ask-peer" || mode === "create-peer") && agentsMcp && Number(agentsMcp.env?.find(entry => entry.name === "MURAGE_TURN_DEPTH")?.value ?? "0") > 0) {
+      if ((mode === "ask-peer" || mode === "create-peer") && agentsMcp
+        && (Number(agentsMcp.env?.find(entry => entry.name === "MURAGE_TURN_DEPTH")?.value ?? "0") > 0
+          || /^\[(?:Message from|Delegated by) @/m.test(promptText))) {
         // A nested helper answers its assignment, while proving that the
         // actual injected MCP server still supplies its scoped directory.
-        const depth = agentsMcp.env?.find(entry => entry.name === "MURAGE_TURN_DEPTH")?.value;
+        // The native relay withholds private depth metadata. Script the peer
+        // response from its visible assignment; comms tests independently
+        // observe the real server-side depth and its absence on the wire.
+        const depth = agentsMcp.env?.find(entry => entry.name === "MURAGE_TURN_DEPTH")?.value ?? "1";
         void driveMcp(agentsMcp, [{ name: "list_bots", args: () => ({}) }]).then(list => {
           out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `hello from fake acp; agents tools available at depth ${depth}\n${list}` } } } });
           complete();
@@ -2307,6 +2641,15 @@ function handle(msg: any) {
         return;
       }
       if (mode === "batch-delegate" && agentsMcp) {
+        // Result wakes continue the assignment; they do not request another
+        // batch. Check them before the script below, including when a rebuilt
+        // prompt carries the original user assignment in its history. This
+        // must also work after session/load in a fresh fake process.
+        if (/^- @.+ (?:replied to|did not finish) the task you handed off \(task id /m.test(promptText)) {
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "BATCH RESUMED: read the teammates' replies" } } } });
+          complete();
+          return;
+        }
         let targets: string[] = [];
         void driveMcp(agentsMcp, [
           { name: "list_bots", args: () => ({}) },
@@ -2331,8 +2674,14 @@ function handle(msg: any) {
         ]).then(result => reply(`qualified MCP result: ${result}`)).catch(error => reply(`qualified MCP error: ${error.message}`));
         return;
       }
-      if ((mode === "ask-peer-resume" || mode === "delegate-peer") && /handed off/.test(promptText) && /replied|did not finish/.test(promptText)) {
+      const roomInstruction = promptText.lastIndexOf("(Reply to the conversation above as ");
+      const roomResultWake = mode === "delegate-peer" && roomInstruction >= 0
+        && promptText.slice(roomInstruction).includes("Results came back for work you handed over.");
+      if (roomResultWake || ((mode === "ask-peer-resume" || mode === "delegate-peer" || mode === "create-peer")
+        && /^\[Murage: while you were away, the teammate you asked finished\.\n- @.+ (?:replied to|did not finish) the task you handed off \(task id /m.test(promptText))) {
         // lane 0163-delegate-wake: the woken lead picks its work back up
+        // Only the control-plane wake resumes it. An ordinary room prompt
+        // can replay earlier handoff/reply words before a fresh assignment.
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "LEAD RESUMED: finished with the teammate's reply" } } } });
         complete();
         return;
@@ -2353,7 +2702,12 @@ function handle(msg: any) {
           { name: "list_bots", args: () => ({}) },
           {
             name: "ask_bot",
-            args: (list) => ({ bot_id: /id: ([\w-]+)/.exec(list)?.[1] ?? "", message: "ping from fake" }),
+            args: (list) => {
+              const requested = /Ask ([^\n]+) to reply\./.exec(promptText)?.[1];
+              const peer = requested ? list.split("\n").find(line => line.startsWith(`- ${requested} [`)
+                || line.startsWith(`- ${requested}:`) || line.startsWith(`- ${requested} (`)) ?? "" : list;
+              return { bot_id: /id: ([\w-]+)/.exec(peer)?.[1] ?? "", message: "ping from fake" };
+            },
           },
         ])
           .then((reply) => {
@@ -2366,6 +2720,30 @@ function handle(msg: any) {
           });
         return;
       }
+      if (mode === "delegate-staged-review" && agentsMcp) {
+        if (promptText.includes('SEED_ROUTINE_REVIEW') && !promptText.includes('Hand Run task to staged B.')) { out({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { text: 'Routine seed complete.' } } } }); complete(); return; }
+        const target = JSON.parse(readFileSync(process.env.FAKE_BOTCREATE_TARGET_FILE!, 'utf8')).id;
+        void driveMcp(agentsMcp, [{ name: 'delegate_bot', args: () => ({ bot_id: target, message: 'CFIX_ROUTINE_PEER Run task' }) }]).then(async reply => {
+          out({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { text: reply } } } });
+          while (!existsSync(process.env.FAKE_BOTCREATE_GATE!)) await new Promise(resolve => setTimeout(resolve, 50));
+          complete();
+        }).catch(error => { out({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { text: String(error) } } } }); complete(); });
+        return;
+      }
+      if(mode==="create-peer"&&promptText.includes("Results came back for work you handed over")) {
+        out({jsonrpc:"2.0",method:"session/update",params:{update:{sessionUpdate:"agent_message_chunk",content:{text:"Team handoff settled."}}}});complete();return;
+      }
+      if (mode === "create-peer" && agentsMcp && promptText.includes("Continue with Pixel and delegate the design review.")) {
+        // Creation changes the roster and retires the old consuming turn.
+        // On the person's fresh follow-up, discover the real created bot and
+        // submit the handoff through this new turn's actual agents mount.
+        void driveMcp(agentsMcp,[
+          {name:"list_bots",args:()=>({})},
+          {name:"delegate_bot",args:list=>({bot_id:/Pixel[^\n]*\bid: ([\w-]+)/.exec(list)?.[1]??(list.includes("Pixel")?"Pixel":""),message:"Review the new onboarding flow.",reason:"design review"})},
+        ]).then(reply=>{out({jsonrpc:"2.0",method:"session/update",params:{update:{sessionUpdate:"agent_message_chunk",content:{text:`team continued: ${reply}`}}}});complete();})
+          .catch(error=>{out({jsonrpc:"2.0",method:"session/update",params:{update:{sessionUpdate:"agent_message_chunk",content:{text:`team continuation error: ${String(error)}`}}}});complete();});
+        return;
+      }
       if (mode === "create-peer" && agentsMcp) {
         // a refused create surfaces its own words, not the empty delegate that follows it
         let createdReply = "";
@@ -2373,22 +2751,31 @@ function handle(msg: any) {
           {
             name: "create_bot",
             args: () => ({
-              name: "Pixel",
+              name: process.env.FAKE_BOTCREATE_NAME || "Pixel",
               role: "Product designer",
               instructions: "Design and review the user experience.",
             }),
           },
           {
-            name: "delegate_bot",
+            name: process.env.FAKE_BOTCREATE_TOOL || "delegate_bot",
             args: (created) => ({
               bot_id: /id: ([\w-]+)/.exec(createdReply = created)?.[1] ?? "",
               message: "Review the new onboarding flow.",
               reason: "design review",
             }),
           },
+          ...(process.env.FAKE_BOTCREATE_TWO === '1' ? [{
+            name: 'delegate_bot',
+            args: () => ({ bot_id: /id: ([\w-]+)/.exec(createdReply)?.[1] ?? '', message: 'Review the second onboarding flow.', reason: 'second review' }),
+          }] : []),
         ])
-          .then((reply) => {
+          .then(async (reply) => {
             out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: /id: [\w-]+/.test(createdReply) ? `team created: ${reply}` : `create error: ${createdReply}` } } } });
+            const gate = process.env.FAKE_BOTCREATE_GATE;
+            while (gate && !existsSync(gate)) await new Promise(resolve => setTimeout(resolve, 50));
+            if (process.env.FAKE_BOTCREATE_OUTSIDE === '1') {
+              out({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'tool_call', toolCallId: 'outside-after-hold', title: 'mcp__fixture__read_page', status: 'completed' } } });
+            }
             complete();
           })
           .catch((e) => {
@@ -2522,7 +2909,7 @@ function handle(msg: any) {
       else if (mode === "computer-exec-image") playComputerExecImageTurn();
       else if (mode === "wrapped-tool-image") playWrappedToolImageTurn();
       else if (mode === "reasoning-only") playReasoningTurn();
-      else if (mode !== "empty-reply") playTurn();
+      else if (mode !== "empty-reply") playTurn(promptText);
       if (mode === "fuigo-question") {
         // Fuigo's AskUserQuestion over ACP: `_fuigo/ask_user_question` with
         // the exact AskUserQuestionExtRequest shape (types.rs), two
@@ -2589,6 +2976,24 @@ function handle(msg: any) {
         });
         return;
       }
+      // unknown-request: a vendor method nothing knows; FAKE_ACP_REQUEST_GATE holds it until the file exists.
+      if (mode === "unknown-request") {
+        pendingPermissionId = 9005;
+        onPermissionAnswered = complete;
+        const raise = () => out({ jsonrpc: "2.0", id: pendingPermissionId, method: "_vendor/unheard_of", params: { sessionId: msg.params?.sessionId ?? "fake-acp-session" } });
+        const gate = process.env.FAKE_ACP_REQUEST_GATE;
+        if (gate) { const poll = setInterval(() => { if (existsSync(gate)) { clearInterval(poll); raise(); } }, 10); } else raise();
+        return;
+      }
+      // elicitation-malformed: a form whose schema the entry cannot read; FAKE_ACP_REQUEST_GATE holds the request until the file exists.
+      if (mode === "elicitation-malformed") {
+        pendingPermissionId = 9004;
+        onPermissionAnswered = complete;
+        const raise = () => out({ jsonrpc: "2.0", id: pendingPermissionId, method: "elicitation/create", params: { sessionId: msg.params?.sessionId ?? "fake-acp-session", mode: "form", message: "Bad form", requestedSchema: "not-a-schema" } });
+        const gate = process.env.FAKE_ACP_REQUEST_GATE;
+        if (gate) { const poll = setInterval(() => { if (existsSync(gate)) { clearInterval(poll); raise(); } }, 10); } else raise();
+        return;
+      }
       if (mode === "elicitation-form" || mode === "elicitation-legacy") {
         // ACP v1 elicitation/create in form mode (CreateElicitationRequest),
         // or the older Rust-crate spelling of the same request.
@@ -2641,7 +3046,8 @@ function handle(msg: any) {
         pendingPermissionId = 9001;
         permissionAskedAt = Date.now();
         onPermissionAnswered = complete;
-        // FAKE_ACP_PERMISSION_TWICE=1: the same ask again (id 9002) once the first is answered, then complete
+        // FAKE_ACP_PERMISSION_TWICE=1: a new request after the first answer.
+        // "replay": broken peer repeats the answered RPC with no intervening execution (GH-19).
         const ask = (askId: number) => out({
           jsonrpc: "2.0",
           id: askId,
@@ -2650,7 +3056,9 @@ function handle(msg: any) {
             // FAKE_ACP_PERMISSION_SESSION=1: name the live session, as the ACP
             // spec has a real engine do (the shorthand ask omits it)
             ...(process.env.FAKE_ACP_PERMISSION_SESSION === "1" && liveSession ? { sessionId: liveSession } : {}),
-            toolCall: permissionToolCall && mode === "permission"
+            toolCall: permissionToolCallNext && askId === 9002 && mode === "permission"
+              ? permissionToolCallNext
+              : permissionToolCall && mode === "permission"
               ? permissionToolCall
               : mode === "question-tool"
               ? {
@@ -2695,13 +3103,15 @@ function handle(msg: any) {
                 ],
           },
         });
-        ask(9001);
-        if (process.env.FAKE_ACP_PERMISSION_TWICE === "1") {
+        // FAKE_ACP_REQUEST_GATE=<file>: hold the first ask until the file exists (a test revokes the lease before the engine asks).
+        const requestGate = process.env.FAKE_ACP_REQUEST_GATE;
+        if (requestGate) { const poll = setInterval(() => { if (existsSync(requestGate)) { clearInterval(poll); ask(9001); } }, 10); } else ask(9001);
+        if (["1", "replay"].includes(process.env.FAKE_ACP_PERMISSION_TWICE ?? "")) {
           onPermissionAnswered = () => {
-            pendingPermissionId = 9002;
+            pendingPermissionId = process.env.FAKE_ACP_PERMISSION_TWICE === "replay" ? 9001 : 9002;
             permissionAskedAt = Date.now();
             onPermissionAnswered = complete;
-            ask(9002);
+            ask(pendingPermissionId);
           };
         }
         return;

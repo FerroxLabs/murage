@@ -1,0 +1,42 @@
+
+  dist-server/index.js                                    25.5mb ⚠️
+  dist-server/computer-proxy.js                            2.6mb ⚠️
+  dist-server/vps-container-mcp.js                         2.5mb ⚠️
+  dist-server/container-mcp.js                             2.5mb ⚠️
+  dist-server/memory/worker.js                             2.2mb ⚠️
+  dist-server/installation-windows-backup-transport.js     2.2mb ⚠️
+  dist-server/windows-backup-resources.js                  2.1mb ⚠️
+  dist-server/memory/restore.js                            2.1mb ⚠️
+  dist-server/health/host-boundary.js                   1012.3kb
+  dist-server/bot-package-guard-worker.js                958.9kb
+  dist-server/drivers/browser-proxy.js                   916.4kb
+  dist-server/backup-restic.js                           873.5kb
+  dist-server/backup-coordinator.js                      856.8kb
+  dist-server/drivers/memory-proxy.js                    803.5kb
+  dist-server/drivers/phone-jobs-proxy.js                803.3kb
+  dist-server/backup-remote-host.js                      794.2kb
+  dist-server/transcript-read-worker.js                  784.5kb
+  dist-server/incident-diagnostics.js                    759.3kb
+  dist-server/approval-notification-state.js             752.6kb
+  dist-server/drivers/agents-proxy.js                    687.7kb
+  ...and 18 more output files...
+
+⚡ Done in 1190ms
+
+  dist-server/channels/whatsapp/bridge.js       99.2kb
+  dist-server/channels/whatsapp/bridge-host.js  32.1kb
+
+⚡ Done in 31ms
+Staged WhatsApp runtime: 118 packages (linux/x64)
+Staged memory runtime: 41 packages (linux/x64); WebAssembly backend onnxruntime-web 1.24.3
+staged tree: 157 packages, 5651 files, longest path 122
+
+  dist-server/mcp-server.js  62.1kb
+
+⚡ Done in 8ms
+
+  dist-server/installation-recovery-worker.js    2.8mb ⚠️
+  dist-server/installation-recovery.js           2.8mb ⚠️
+  dist-server/backup-schedule-trigger.js       909.6kb
+
+⚡ Done in 100ms

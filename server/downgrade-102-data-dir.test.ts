@@ -5,6 +5,7 @@
 // name it does not classify (BACKUP_UNCLASSIFIED_COMPONENT), and a 1.0.3 desktop writes a few new derived notes at the root
 // (DATA_DIR_NAMES_AFTER_102: the memory repairs note, the model catch-up marker, the kept login-shell environment env/ and others). The
 // downgrade removes exactly those; the names 1.0.2 classifies are frozen in testing/data-dir-1.0.2-names.json (from afbf549ba).
+import { DATA_DIR_NAMES_AFTER_118 } from "./installation-decision-downgrade.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,8 +13,9 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
-import { classifyDataDirEntry, DATA_DIR_ENTRIES, DATA_DIR_PATTERNS } from "./data-dir-inventory.ts";
+import { classifyDataDirEntry, DATA_DIR_ENTRIES } from "./data-dir-inventory.ts";
 import { DataRoots } from "./data-roots.ts";
+import { SEARCH_FILES } from "./message-search-index.ts";
 import { DATA_DIR_DATABASES_AFTER_102, DATA_DIR_NAMES_AFTER_102, DATA_DIR_OWNER_NOTES_AFTER_102, DATA_DIR_RECORDS_AFTER_102, downgradeInstallationMemorySchema, removeDataDirNamesAfter102 } from "./installation-memory-downgrade.ts";
 import { readOwnerPrefs } from "./owner-prefs.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -25,33 +27,44 @@ const OUTPUT_PUBLICATIONS_102 = `CREATE TABLE output_publications (
     artifact_id TEXT, attachment_id TEXT, message_id TEXT, error_category TEXT,
     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
     UNIQUE(producer,bot_id,thread_id,run_id,path_token,sha256))`;
-const known102 = new Set((JSON.parse(readFileSync(join(import.meta.dirname, "testing", "data-dir-1.0.2-names.json"), "utf8")) as { names: string[] }).names);
+import { classifyDataDirEntry as frozen102 } from "./testing/frozen/inventory-102.ts";
+const CUSTODY_SOURCES = ["signal", "connector-health.json", "connector-notice-receipts.json"];
 /** Whether 1.0.2's backup classifies this top-level name (its patterns are 1.0.3's, unchanged). */
-const classifiedBy102 = (name: string) => known102.has(name) || DATA_DIR_PATTERNS.some(item => item.pattern.test(name));
+const classifiedBy102 = (name: string) => frozen102(name) !== undefined;
 /** 1.0.3 names only a Cloud home writes (server/cloud-home/, the cloud browser and timezone): a Cloud home never reinstalls desktop 1.0.2. */
-const CLOUD_ONLY = [".murage-health", ".murage-home-machine", "cloud-browser-profile-usage.json", "own-server", "owner.json", "proxy", "secrets", "server-home"];
+const CLOUD_ONLY = [".murage-events", ".murage-health", ".murage-home-machine", "cloud-browser-profile-usage.json", "cloud-signin-offers.json", "cloud-signin-offers.json.tmp", "own-server", "owner.json", "proxy", "restore-provenance.json", "secrets", "server-home"];
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
-afterEach(() => { closeDatabase(); });
+beforeEach(async () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+afterEach(async () => { closeDatabase(); });
 
 describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
-  it("the kept login-shell environment folder (env/) is classified: 1.0.3's own backup takes the folder and leaves it out", () => {
+  it("the kept login-shell environment folder (env/) is classified: 1.0.3's own backup takes the folder and leaves it out", async () => {
     expect(classifyDataDirEntry("env")).toMatchObject({ backup: "excluded" });
   });
 
-  it("every 1.0.3 name 1.0.2 does not know is removed by the downgrade or written only by a Cloud home", () => {
+  it("every 1.0.3 name 1.0.2 does not know is removed by the downgrade or written only by a Cloud home", async () => {
     const newer = Object.keys(DATA_DIR_ENTRIES).filter(name => !classifiedBy102(name)).sort();
-    expect(newer).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102, ...CLOUD_ONLY].sort());
+    expect(newer).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102, ...SEARCH_FILES, ...CLOUD_ONLY, ...CUSTODY_SOURCES, ...DATA_DIR_NAMES_AFTER_118].sort());
+    // Every listed derived name is actually removed; confinement keeps sibling files intact.
+    const scratch = mkdtempSync(join(tmpdir(), "downgrade-derived-"));
+    try {
+      for (const name of DATA_DIR_NAMES_AFTER_102) writeFileSync(join(scratch, name), "fixture");
+      expect(removeDataDirNamesAfter102(scratch).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102].sort());
+      expect(readdirSync(scratch)).toEqual([]);
+    } finally { removeTempDirSync(scratch); }
     // the S5 root record is backed up and restored by 1.0.18, and the downgrade still takes it away for 1.0.2
     for (const name of DATA_DIR_RECORDS_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("record");
     for (const name of DATA_DIR_NAMES_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("excluded");
+    // 2de8a7c65c removes the separate search family through removeMessageSearchFiles,
+    // outside the legacy name list. Keep the inventory and its real removal covered.
+    for (const name of SEARCH_FILES) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("excluded");
     // the follow-model marker is the owner's (backed up with bots.json), and the downgrade still takes it away for 1.0.2
     for (const name of DATA_DIR_OWNER_NOTES_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("owner-file");
     // the phone call history is a backed-up database (in every newer backup); only it and its own sidecars are on this list
     for (const name of DATA_DIR_DATABASES_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe(name.endsWith(".db") ? "database" : "sidecar");
   });
 
-  it("removes the 1.0.3 notes and env/, keeps the owner's files, and leaves only names 1.0.2's backup classifies", () => {
+  it("removes the 1.0.3 notes and env/, keeps the owner's files, and leaves only names 1.0.2's backup classifies", async () => {
     database();
     closeDatabase();
     writeFileSync(join(DATA_DIR, "about-me.md"), "owner words");
@@ -62,6 +75,8 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "learning-paused-left.json"), "{}");
     writeFileSync(join(DATA_DIR, "pending-grants.json"), "{}");
     writeFileSync(join(DATA_DIR, "setup-backup.json"), "{}");
+    // The Windows Signal permission bootstrap marker is installation-local and must be checked afresh after upgrade.
+    writeFileSync(join(DATA_DIR, ".signal-owner-only.json"), "{}", { mode: 0o600 });
     // the feedback id (1.0.12 feedback-relay.ts; random, made again when missing, 1.0.2 has no feedback form)
     writeFileSync(join(DATA_DIR, "feedback-install-id"), "00000000-0000-4000-8000-000000000000\n", { mode: 0o600 });
     writeFileSync(join(DATA_DIR, "frozen-replies-recovery.json"), JSON.stringify({ rowid: 42, done: true })); // written on every 1.0.3 start
@@ -103,27 +118,39 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "highlevel", "connection.json"), JSON.stringify({ locationId: "loc-1" }), { mode: 0o600 });
     // the bot phone call history and its sidecars (1.0.20 phone-calls/store.ts; 1.0.2 has no phone calls)
     for (const name of DATA_DIR_DATABASES_AFTER_102) writeFileSync(join(DATA_DIR, name), "", { mode: 0o600 });
+    // New browser choices and regenerable engine/browser caches do not exist in 1.0.2.
+    writeFileSync(join(DATA_DIR, "browser-modes.json"), "{}", { mode: 0o600 });
+    // Windows writes this derived permission-check marker; Linux fixtures seed it explicitly.
+    writeFileSync(join(DATA_DIR, ".signal-owner-only.json"), "{}", { mode: 0o600 });
+    mkdirSync(join(DATA_DIR, "browser-window"), { mode: 0o700 });
+    mkdirSync(join(DATA_DIR, "model-catalogs"), { mode: 0o700 });
+    mkdirSync(join(DATA_DIR, "sentinel-io"), { mode: 0o700 });
+    for (const suffix of ["-walstop", "-walok", "-walattempt"]) writeFileSync(join(DATA_DIR, "memory-index.db" + suffix), "fixture");
+    // 2de8a7c65c: the derived search database and sidecars leave on the separate lifecycle path.
+    for (const name of SEARCH_FILES) writeFileSync(join(DATA_DIR, name), "", { mode: 0o600 });
     // the S5 root record (1.0.18 data-roots.ts; 1.0.2 never reads it)
     writeFileSync(join(DATA_DIR, ".murage-root.json"), JSON.stringify({ schema: 1, root: DATA_DIR, previous: [] }), { mode: 0o600 });
-    expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102].sort());
+    // the data-version marker (1.0.20 shared/data-version-marker.mjs: the newest Murage that wrote the folder; 1.0.2 never reads it)
+    writeFileSync(join(DATA_DIR, "data-version.json"), JSON.stringify({ v: 1, newest: "1.0.20" }), { mode: 0o600 });
+    expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102, ...SEARCH_FILES].sort());
 
-    expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
+    expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
 
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name))).toEqual([]);
     expect(readFileSync(join(DATA_DIR, "about-me.md"), "utf8")).toBe("owner words");
     // a later upgrade reads the removed prefs as the defaults: the caution shows again, Today opens Calm, nothing throws
     expect(existsSync(join(DATA_DIR, "owner-prefs.json"))).toBe(false);
     expect(existsSync(join(DATA_DIR, "outside-state.jsonl"))).toBe(false);
-    expect(readOwnerPrefs(DATA_DIR)).toEqual({ approveAllCautionDismissed: false, todayView: "calm" });
+    expect(readOwnerPrefs(DATA_DIR)).toEqual({ approveAllCautionDismissed: false, todayView: "calm", firstRunJobs: { pending: [] } });
     expect(existsSync(join(DATA_DIR, "messages.db"))).toBe(true);
     // a second run (already v10) finds nothing more to remove and still succeeds
-    expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
+    expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
   });
 
-  it("takes output_publications.turn_id (1.0.3) away, so 1.0.2's database check finds the table exactly as 1.0.2 wrote it", () => {
+  it("takes output_publications.turn_id (1.0.3) away, so 1.0.2's database check finds the table exactly as 1.0.2 wrote it", async () => {
     database().prepare("INSERT INTO output_publications (id,producer,bot_id,thread_id,run_id,path_token,sha256,mime,bytes,stage,created_at,updated_at,turn_id) VALUES ('p1','shell-output','b','t','r','tok','00','text/plain',1,'registered',1,1,'turn-1')").run();
     closeDatabase();
-    expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
+    expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
     const db = new DatabaseSync(join(DATA_DIR, "messages.db"), { readOnly: true });
     try {
       const columns = (db.prepare("PRAGMA table_info(output_publications)").all() as Array<{ name: string }>).map(column => column.name);
@@ -135,23 +162,23 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
       expect(db.prepare("SELECT id, stage FROM output_publications").all()).toEqual([{ id: "p1", stage: "registered" }]);
     } finally { db.close(); }
     // a second run finds nothing to take away
-    expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
+    expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
   });
 });
 
-it("blocks the full downgrade before touching conversations when a vendor call is uncertain", () => {
+it("blocks the full downgrade before touching conversations when a vendor call is uncertain", async () => {
   database(); closeDatabase();
   const calls = new DatabaseSync(join(DATA_DIR, "phone-calls.db"));
   calls.exec("CREATE TABLE phone_calls (status TEXT NOT NULL); INSERT INTO phone_calls VALUES ('uncertain')");
   calls.close();
   const before = readFileSync(join(DATA_DIR, "messages.db"));
-  expect(() => downgradeInstallationMemorySchema(DATA_DIR, 10)).toThrow("PHONE_CALLS_PENDING");
+  await expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).rejects.toThrow("PHONE_CALLS_PENDING");
   expect(readFileSync(join(DATA_DIR, "messages.db"))).toEqual(before);
   expect(existsSync(join(DATA_DIR, "phone-calls.db"))).toBe(true);
 });
 
 describe("1.0.2 -> 1.0.18 after the downgrade starts like 1.0.17 -> 1.0.18 (S5 root record)", () => {
-  it("a missing root record is a first sight: the linked workspaces root is recorded silently, no card, nothing under it changes", () => {
+  it("a missing root record is a first sight: the linked workspaces root is recorded silently, no card, nothing under it changes", async () => {
     const base = realpathSync.native(mkdtempSync(join(tmpdir(), "s5-downgrade-")));
     try {
       const boot = (dataDir: string) => { const lines: string[] = []; const roots = new DataRoots(dataDir, line => lines.push(line)); roots.boot(); return { roots, lines }; };

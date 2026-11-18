@@ -2,7 +2,8 @@
 // same file layout the pinned model uses, so MemoryEmbeddings, the worker and the controller run their real verification and loading
 // code with no download. It stands in for the multilingual MiniLM only as data; no production path reads it.
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelManifest } from "./embeddings.ts";
 

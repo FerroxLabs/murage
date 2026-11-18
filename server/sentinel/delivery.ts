@@ -209,14 +209,18 @@ export class HealthDelivery {
   }
 
   /** Loads the ledger as a new delivery-owner generation. Claims left `attempted` by a previous generation become
-   *  `uncertain` (never resent). A missing or unusable ledger is replaced by a new one made now. */
+   *  `uncertain` (never resent). A missing or unusable ledger is replaced by a new one made now.
+   *  The file is written only when a start changes something other than the generation (a new ledger, a claim made uncertain): the new generation
+   *  is held in memory and reaches the file with the next write, which every claim makes before it sends. So a start with nothing to settle leaves
+   *  the file byte-equal, and two owners can share a number only when the earlier one wrote no claim under it. */
   start(): void {
     const loaded = this.read();
     this.ledger = loaded ?? this.fresh(0);
     this.ledger.generation += 1;
     const at = this.now();
-    for (const entry of this.ledger.entries) if (entry.state === "attempted") { entry.state = "uncertain"; entry.settledAt = at; }
-    this.persist();
+    let changed = loaded === null;
+    for (const entry of this.ledger.entries) if (entry.state === "attempted") { entry.state = "uncertain"; entry.settledAt = at; changed = true; }
+    if (changed) this.persist();
   }
 
   get generation(): number { return this.ledger.generation; }

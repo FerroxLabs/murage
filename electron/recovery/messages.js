@@ -24,6 +24,8 @@
   // sentence names the one on screen (audit IPC-L3).
   const OWNER = "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.";
   const OWNER_BACKUP_MODE = "Another copy of Murage may still be open. Quit every other Murage window, then choose Return to workspace.";
+  // "This is my computer, continue" found a record it could not rule out (lock files untouched).
+  const SET_ASIDE_REFUSED = "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.";
   const SLOW = "That took too long, so Murage stopped it and nothing was changed. Try again; a large backup can take several minutes.";
   const TOO_BIG = "This backup is larger than Murage can restore in one go. Contact support with the diagnostics folder.";
   const PLACE = "That location can't be used. Choose a new file name in a folder outside Murage's data folder.";
@@ -31,6 +33,7 @@
   const NOT_PAUSED = "Some work in the restored copy is still switched on, so it can't be opened yet. Open the diagnostics folder and contact support.";
   const NOTHING_TO_UNDO = "There is no restore on this computer to undo.";
   const UNDO_FIRST = "An earlier restore didn't finish. Choose Undo a restore first, then restore again.";
+  const UNDO_RETRY = "Murage couldn't finish undoing the restore because it couldn't update its conversations file, and nothing was changed. Close every other Murage window and anything else using Murage's data folder, then choose Undo a restore again.";
   const UNDO_FAILED = "The restore couldn't be undone, and your files were kept as they are. Open the diagnostics folder and contact support.";
   const VM = "Backups can't include a local VM's files yet, so the backup was not made. Open the diagnostics folder and contact support.";
   const PARTS = "Part of your workspace couldn't be read, so the backup was not made. Close anything else using Murage's data folder, then try again.";
@@ -67,7 +70,8 @@
     [REVIEW_CHANGED, ["REVIEW_STATE_CHANGED", "RESTORE_CANDIDATE_IDENTITY_CHANGED", "RESTORE_ORIGINAL_IDENTITY_CHANGED"]],
     [TOOL, ["BACKUP_UNAVAILABLE", "AGE_TOOL_PLATFORM_UNQUALIFIED", "AGE_TOOL_UNVERIFIED", "AGE_PROCESS_CLOSE_UNCONFIRMED"]],
     [BUSY, ["RECOVERY_BUSY", "SNAPSHOT_EPOCH_CLOSED", "BACKUP_BUSY", "BACKUP_WORK_ACTIVE", "BACKUP_ACTIVITY_UNAVAILABLE", "BACKUP_RELEASE_UNCONFIRMED", "BACKUP_PREPARE_UNCONFIRMED"]],
-    [OWNER, ["RECOVERY_OWNERSHIP_REQUIRED", "LEASE_FOREIGN_HOST", "UNTRUSTED_RECOVERY_SENDER", "RESTORE_ORIGINAL_UNAVAILABLE"]],
+    [OWNER, ["RECOVERY_OWNERSHIP_REQUIRED", "LEASE_FOREIGN_HOST", "LEASE_BUSY", "LEASE_CHILD_BUSY", "UNTRUSTED_RECOVERY_SENDER", "RESTORE_ORIGINAL_UNAVAILABLE"]],
+    [SET_ASIDE_REFUSED, ["LEASE_TAKEOVER_REFUSED", "LEASE_RECOVERY_BUSY", "LEASE_INVALID", "LEASE_UNREADABLE", "LEASE_OWNER_UNVERIFIED", "LEASE_IO"]],
     [SLOW, ["AGE_TOOL_TIMEOUT", "RECOVERY_WORKER_TIMEOUT", "RECOVERY_INPUT_TIMEOUT", "RECOVERY_CAPTURE_TIMEOUT"]],
     [LIMITS, ["INVALID_ARCHIVE_LIMITS", "INVALID_AGE_PROCESS_LIMITS", "INVALID_SNAPSHOT_LIMITS", "INVALID_BACKUP_LIMITS", "INVALID_BACKUP_BUDGET"]],
     [DEFAULT, ["BACKUP_CREDENTIAL_POLICY_REQUIRED", "INVALID_RECOVERY_REQUEST", "INVALID_RECOVERY_RESULT", "RECOVERY_OPERATION_FAILED"]],
@@ -95,10 +99,12 @@
     ["Some phone calls are unfinished or their status is unknown. Reopen this version of Murage, finish or cancel them in Phone calls settings, then try again.", ["PHONE_CALLS_PENDING"]],
     ["Murage could not read your phone call history. Keep this version installed and repair or restore the data before trying again.", ["PHONE_CALLS_UNREADABLE"]],
     ["Murage could not read the saved list of phone permissions you removed. Keep this version installed and repair or restore the data before trying again.", ["PHONE_REVOCATIONS_UNREADABLE"]],
+    ["Murage could not read the record of what it already delivered to your chat apps. Keep this version installed and repair or restore the data before trying again.", ["CHANNEL_RECEIPTS_UNREADABLE"]],
     ["This memory file was made by a newer version of Murage. Keep this version installed, open the newer Murage to use it, or restore a backup made before the update.", ["MEMORY_SCHEMA_UNSUPPORTED"]],
     // The same code refuses for messages and restore holds, a held or posting bot Post (296e04a04), a teammate's reply still
     // on its way and an edited conversation still being finished, so the sentence names every way out: act on it, or let it finish.
     ["Some messages, bot posts or other work are still waiting. Open Murage, send, post or decline what is waiting, let the rest finish, then try again.", ["DOWNGRADE_WORK_PENDING"]],
+    ["Murage stopped before removing your newer data. Your newer data is still in place. Keep using this version and keep any preserved copies before trying again.", ["DOWNGRADE_PRESERVATION_FAILED"]],
     ["Some hand-offs are waiting for you. Send again or dismiss them, then try going back to the earlier version.", ["DOWNGRADE_HANDOFFS_HELD"]],
     ["Murage could not finish clearing deleted conversations from search before going back to the earlier version. Your conversations are kept. Try going back to the earlier version again.", ["SEARCH_INDEX_NOT_SETTLED"]],
     ["Murage could not finish writing your conversations database before going back to the earlier version. Your conversations are kept. Close anything else using Murage's data, then try going back to the earlier version again.", ["WAL_CHECKPOINT_INCOMPLETE"]],
@@ -154,6 +160,7 @@
     // a voice reply still finishing (prepare-voice-finishing.mjs): the minutes left ride in the code
     const voice = typeof code === "string" ? /^DOWNGRADE_VOICE_FINISHING_([1-9][0-9]?)$/.exec(code) : null;
     if (voice) return `Murage is finishing a voice reply. Try again in about ${voice[1]} min. Your chats and memories are as they were.`;
+    if (code === "RESTORE_ROLLBACK_FAILED" && context.action === "rollback" && context.path === "messages.db") return UNDO_RETRY;
     const capture = CAPTURE_ACTIONS.has(context.action);
     let text = (capture && captureMessages[code]) || messages[code] || DEFAULT;
     if (code === "RECOVERY_OWNERSHIP_REQUIRED" && context.backupMode) text = OWNER_BACKUP_MODE;
@@ -191,5 +198,5 @@
     if (lines.length) lines.push("Everything else was backed up.");
     return lines;
   };
-  root.murageRecoveryMessages = { messages, captureMessages, fallback: DEFAULT, sentence, skippedLines };
+  root.murageRecoveryMessages = { messages, captureMessages, fallback: DEFAULT, sentence, skippedLines, undoRetry: UNDO_RETRY };
 })(globalThis);

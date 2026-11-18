@@ -1,3 +1,9 @@
+import { redactSecretsInText } from "./redact.ts";
+import { murageLine } from "./murage-line.ts";
+import { serviceNoLimits } from './service-no-limits.ts';
+import { readApproval } from "./decision/index.ts";
+import { producerTurnId } from "./decision/producer-bindings.ts";
+import { serviceQueue, waitForProducerApproval, answerProducerRequestSync, producerBase, type ServiceAuthority } from "./narrow-denials.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { Message, Store } from "./store.ts";
@@ -14,23 +20,26 @@ import { ImageGenerationError, imageApprovalSubtitle, imageDeliveredSentence, im
 import type { DecodedGeneratedImage } from "./generated-image.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import type { LocalOutputReceipt } from "../shared/output-publication.ts";
-import { completeImageOutput, outputReceipt, outputReceiptsForRun, retainImageOutput, type ImageOutputCompletion } from "./output-publication.ts";
+import { completeImageOutput, outputReceipt, outputReceiptsForRun, retainImageOutput, type ImageOutputCompletion, type CompleteImageOptions } from "./output-publication.ts";
 import { conversationImageAttachments } from "./image-reference-resolver.ts";
 import { recordRenderPrompt } from "./image-library.ts";
+import { turnOfProvider } from "./memory/lineage-write.ts";
 import { murageToolOnThisServer } from "./murage-tool-surface.ts";
-import { redactSecretsInText } from "./redact.ts";
-import { murageLine } from "./murage-line.ts";
 
-export interface ImageActor { botId: string; threadId: string; generation: string; assertActive: () => void; signal: AbortSignal;
+export interface ImageActor { authority?: ServiceAuthority; botId: string; threadId: string; generation: string; assertActive: () => void; signal: AbortSignal;
   /** The provider turn running this generation, read from the turn's capability (internal-capabilities.ts providerTurnOf), never from a
    * request body. Rows carrying what the model wrote (the image, its prompt) name it, so revoking the turn's inputs withholds them. */
   turnId?: string }
-interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean, source?: "user" | "system") => void; active: () => void;
-  /** Held open by a routine run: its tool call gave up (the turn ended) and
-   * the card is still the owner's to answer. */
-  detached?: boolean;
-  /** Its late Allow had nothing to carry it on, so it made no image. */
-  unused?: boolean }
+/** The turn this actor's card and image row rest on: the one its capability names, else the one running its generation, the same turn the
+ * approval queue stamps on the card, so a revoked turn withholds the prompt and the image alike. */
+const turnOf = (actor: ImageActor): string | undefined => actor.turnId ?? producerTurnId(actor.authority?.identity);
+type ImageSource = Pick<CompleteImageOptions, "turnId" | "parents" | "began">;
+const sourceOf = (actor: ImageActor): ImageSource => {
+  const turnId = turnOf(actor), source = turnOfProvider(actor.threadId, turnId);
+  return { turnId, parents: source?.parents, began: source?.turnLsn };
+};
+
+
 /* An image approval card waits for the owner until it is answered or its
  * turn ends (cards-wait 1.0.8, GROK-STOPPED F1): there is no expiry timer.
  * The generate_image MCP call in drivers/agents-proxy.ts keeps its HTTP
@@ -94,7 +103,7 @@ export interface PublishImageOptions {
 }
 /** Retained images waiting to be published. `receiptId` is the first (older
  * rows hold only it); `receiptIds` lists every image of a multi-image render. */
-interface PendingPublication { receiptId: string; receiptIds?: string[]; metadata: GeneratedImageMetadata;
+interface PendingPublication extends ImageSource { receiptId: string; receiptIds?: string[]; metadata: GeneratedImageMetadata;
   /** Each retained image's own metadata, aligned with receiptIds (absent on older rows). */
   items?: GeneratedImageMetadata[] }
 interface ImageOperationResult { artifact: ImageArtifact; artifacts?: ImageArtifact[]; metadata: GeneratedImageMetadata }
@@ -150,7 +159,7 @@ export async function publishImage(store: Store, actor: ImageActor, image: Decod
   const receipt = retainImageOutput(deps, { producer: "image-operation", botId: actor.botId, threadId: actor.threadId, runId: options.operationId ?? actor.generation,
     bytes: image.bytes, mime: image.mime, beforeCommit: () => { actor.assertActive(); if (actor.signal.aborted) throw error(409, "Image operation was cancelled."); } });
   options.onRetained?.(receipt);
-  return imageArtifact(await completeImageOutput(deps, receipt.id, { transcriptText: imageTranscriptText(metadata), artifactName: artifactName(metadata), turnId: actor.turnId,
+  return imageArtifact(await completeImageOutput(deps, receipt.id, { transcriptText: imageTranscriptText(metadata), artifactName: artifactName(metadata), ...sourceOf(actor),
     recheck: () => { actor.assertActive(); if (actor.signal.aborted) throw error(409, "Image operation was cancelled."); } }));
 }
 
@@ -174,8 +183,8 @@ export interface ImageWorkContext { operationId: string; resumeJob?: { id: strin
 /** One explicit count grant, one active operation per bot workspace. A turn gets one attempt where the card is shown; where the bot makes images without asking it may go on, once every earlier attempt of the turn is settled. */
 export class ImageOperations {
   private readonly store: Store;
-  private readonly waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void;
-  private readonly speaker?: (threadId: string, botId: string) => Message["from"] | undefined;
+  answeredApproval(requestId: string): boolean { return !this.pendingApprovals().some(item => item.ref === requestId); }
+  private readonly waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string, generation?: string, answered?: boolean) => void;
   private readonly routineCard?: RoutineCardHooks;
   private readonly holdProjectApproval?: (threadId:string)=>boolean;
   /** Whether this render needs no card. Null means ask; a throw means ask. */
@@ -187,20 +196,18 @@ export class ImageOperations {
   private readonly rendering?: (actor: Pick<ImageActor, "threadId" | "generation">) => () => void;
   /** An allow given after a routine run's turn had ended: the run's next
    * image in that conversation is already approved, once. */
-  private readonly lateAllows = new Set<string>();
-  private readonly pending = new Map<string, Pending>();
   private readonly jobs = new Map<string, Promise<unknown>>();
   private readonly startupUndispatched: Set<string>;
   private readonly workspaces = new Set<string>();
   /** `speaker` names the member who asked when the card lands in a channel:
    * without it the card has no sender, so neither the channel view nor the
    * native approval notification can tell whose request it is. */
-  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined; routineCard?: RoutineCardHooks; holdProjectApproval?: (threadId:string)=>boolean;
+  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string, generation?: string, answered?: boolean) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined; routineCard?: RoutineCardHooks; holdProjectApproval?: (threadId:string)=>boolean;
     rendering?: (actor: Pick<ImageActor, "threadId" | "generation">) => () => void;
     autoApproval?: (actor: ImageActor, ask: ImageAutoAsk) => ImageAutoApproval | null;
     autoApprovalLogged?: (actor: ImageActor, details: ImageOperationDetails, auto: ImageAutoApproval) => void }) {
-    this.autoApproval = options.autoApproval; this.autoApprovalLogged = options.autoApprovalLogged;
-    this.store = options.store; this.waiting = options.waiting; this.speaker = options.speaker; this.routineCard = options.routineCard; this.holdProjectApproval=options.holdProjectApproval; this.rendering = options.rendering;
+    this.autoApproval = options.autoApproval; this.autoApprovalLogged = options.autoApprovalLogged; this.speaker=options.speaker;
+    this.store = options.store; this.waiting = options.waiting; this.routineCard = options.routineCard; this.holdProjectApproval=options.holdProjectApproval; this.rendering = options.rendering;
     this.startupUndispatched = new Set((this.db().prepare("SELECT id FROM image_operations WHERE state='awaiting' AND result IS NULL").all() as Array<{ id: string }>).map(row => row.id));
   }
   private db() {
@@ -336,7 +343,7 @@ export class ImageOperations {
         retained.push(receipt.id); items.push(metadata);
         // The whole render's facts (every image's delivered pixels) plus each image's own.
         const whole: GeneratedImageMetadata = { ...items[0]!, delivered: items.flatMap(item => item.delivered ?? []) }; delete whole.imageIndex; delete whole.summary;
-        record("running", { pending: { receiptId: retained[0]!, receiptIds: [...retained], metadata: whole, items: [...items] } });
+        record("running", { pending: { receiptId: retained[0]!, receiptIds: [...retained], metadata: whole, items: [...items], ...sourceOf(actor) } });
       } });
     const reserve: ImageReserve = async (details, card) => {
       approvalStarted = true;
@@ -379,12 +386,12 @@ export class ImageOperations {
     this.jobs.set(id, job); return job;
   }
   /** Completes every retained image of one operation from its receipts. */
-  private async completeAll(receipts: Array<{ id: string }>, metadata: GeneratedImageMetadata, items?: GeneratedImageMetadata[], strict = false, recheck?: () => void, turnId?: string): Promise<ImageOperationResult> {
+  private async completeAll(receipts: Array<{ id: string }>, metadata: GeneratedImageMetadata, items?: GeneratedImageMetadata[], strict = false, recheck?: () => void, { turnId, parents, began }: ImageSource = {}): Promise<ImageOperationResult> {
     // One at a time, in order, as before: each image's transcript entry follows the one before it.
     const artifacts: ImageArtifact[] = [];
     for (const [index, receipt] of receipts.entries()) {
       const each: GeneratedImageMetadata = items?.[index] ?? (receipts.length > 1 ? { ...metadata, imageIndex: index, delivered: metadata.delivered?.[index] ? [metadata.delivered[index]!] : metadata.delivered } : metadata);
-      artifacts.push(imageArtifact(await completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(each), artifactName: artifactName(each), turnId, recheck })));
+      artifacts.push(imageArtifact(await completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(each), artifactName: artifactName(each), turnId, parents, began, recheck })));
     }
     // A held release needs the Files copy too; anything less throws so the caller keeps the hold.
     if (strict && artifacts.some(item => item.filesError || !item.artifactId)) throw error(409, imagePublishRecoveryMessage(artifacts.find(item => item.filesError)?.filesError));
@@ -401,7 +408,7 @@ export class ImageOperations {
       actor.assertActive();
       if (actor.signal.aborted) throw error(409, "Image operation was cancelled.");
       const value = await this.completeAll(receipts, pending.metadata, pending.items, releaseHold,
-        () => { actor.assertActive(); if (actor.signal.aborted) throw error(409, "Image operation was cancelled."); }, actor.turnId);
+        () => { actor.assertActive(); if (actor.signal.aborted) throw error(409, "Image operation was cancelled."); }, { ...sourceOf(actor), ...pending });
       this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=? AND state='publish-pending'").run(JSON.stringify(value), Date.now(), id);
       if (releaseHold) releaseHeldImageOperation(this.db(), id);
       return value as T;
@@ -431,7 +438,7 @@ export class ImageOperations {
       const refreshed: ImageArtifact[] = [];
       for (const artifact of artifacts) {
         const receipt = receipts.find(item => item.id === artifact.id);
-        refreshed.push(artifact.artifactId || !receipt ? artifact : imageArtifact(await completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(value.metadata), artifactName: artifactName(value.metadata), turnId: actor.turnId,
+        refreshed.push(artifact.artifactId || !receipt ? artifact : imageArtifact(await completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(value.metadata), artifactName: artifactName(value.metadata), ...sourceOf(actor),
           recheck: () => actor.assertActive() })));
       }
       const updated: ImageOperationResult = { ...value, artifact: refreshed[0]!, ...(value.artifacts ? { artifacts: refreshed } : {}) };
@@ -457,7 +464,7 @@ export class ImageOperations {
       const receipts = pending ? pending.receiptIds!.map(receiptId => outputReceipt(database(), receiptId)) : [];
       if (!pending || !receipts.length || receipts.some(receipt => !receipt || receipt.producer !== "image-operation" || receipt.runId !== row.id)) continue;
       try {
-        const value = await this.completeAll(receipts as Array<{ id: string }>, pending.metadata, pending.items);
+        const value = await this.completeAll(receipts as Array<{ id: string }>, pending.metadata, pending.items, false, undefined, pending);
         this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=? AND state=?").run(JSON.stringify(value), Date.now(), row.id, row.state);
         completed++;
       } catch { /* stays pending with the receipt's recorded category */ }
@@ -509,102 +516,67 @@ export class ImageOperations {
   }
   /** The no-card decision for this turn, or null (ask). A decision that cannot be read asks. */
   private autoDecision(actor: ImageActor, ask: { count: number; madeThisTurn: number }): ImageAutoApproval | null {
-    try { return this.autoApproval?.(actor, ask) ?? null; } catch { return null; }
+    if (serviceNoLimits(actor.generation, actor.threadId, actor.botId)) return { basis: "No limits" };
+    let base: ImageAutoApproval | null = null;
+    try { base = this.autoApproval?.(actor, ask) ?? null; } catch { /* a policy failure is an observation */ }
+    return base;
   }
-  private approve(actor: ImageActor, details: ImageOperationDetails, request: unknown, input?: ImageApprovalCardInput): Promise<ApprovalAnswer> {
-    if (this.lateAllows.delete(actor.threadId)) return Promise.resolve("allow");
+  private readonly lateAllows=new Set<string>();
+  private readonly approvalActors=new Map<string,ImageActor>();
+  private readonly speaker?: (threadId:string,botId:string)=>Message["from"]|undefined;
+  pendingApprovals() { return serviceQueue('image').pendingApprovals(); }
+  approvalQueue() { return serviceQueue('image'); }
+  private async approve(actor: ImageActor, details: ImageOperationDetails, request: unknown, input?: ImageApprovalCardInput): Promise<ApprovalAnswer> {
     const requestId = `image-${randomUUID()}`;
-    // `held` is the full assembled prompt: exactly what the provider is sent.
-    const prompt = (input?.prompt ?? (request && typeof request === "object" && "prompt" in request ? String(request.prompt) : ""))
-      + (input?.negativePrompt ? `\n\nNegative prompt (sent in its own field): ${input.negativePrompt}` : "");
-    const from = this.speaker?.(actor.threadId, actor.botId);
-    // No card when the bot's level or its Images setting says so for this
-    // turn's audience (server/image-approval.ts). A decision that cannot be
-    // read asks, as it always has. The turn's Stop still ends the render.
-    const auto = this.autoDecision(actor, { count: details.count, madeThisTurn: this.madeThisTurn(actor) });
-    if (auto) {
-      if (actor.signal.aborted) return Promise.resolve("gone");
-      // logged only now: a Stop before this point must not log an image that was never made
-      try { this.autoApprovalLogged?.(actor, details, auto); } catch { /* the log never changes the render */ }
-      // Murage's line, but it quotes the model's prompt: it names the producing turn, so it rests on that turn's inputs (murage-line.ts)
-      // and is withheld when they are revoked. With no turn named it rests on none.
-      this.store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "activity", turnId: actor.turnId, ...(from ? { from } : {}), tool: {
-        name: `Making an image without asking (${auto.basis})`, ok: true,
-        imageRecord: { summary: imageApprovalSubtitle(details), prompt: redactSecretsInText(prompt) },
-      } }));
-      return Promise.resolve("allow");
+    const prompt = (input?.prompt ?? (request && typeof request === 'object' && 'prompt' in request ? String(request.prompt) : ''))
+      + (input?.negativePrompt ? `\n\nNegative prompt (sent in its own field): ${input.negativePrompt}` : '');
+    const lateKey=hash(JSON.stringify([actor.botId,actor.threadId,details,request]));
+    const late=this.lateAllows.delete(lateKey);
+    const base = this.autoDecision(actor,{count:details.count,madeThisTurn:this.madeThisTurn(actor)});
+    actor.assertActive();
+    let held=false, presented=false;
+    this.approvalActors.set(requestId,actor);
+    let result:'allow'|'deny'|'cancelled';
+    try { result = await waitForProducerApproval(serviceQueue('image'),{
+      authority:actor.authority,ref:requestId,tool:'generate_image',input:request,
+      action:{requestId,tool:'generate_image',held:prompt,options:['Allow','Deny']},
+      view:{title:details.operation==='edit'?'Approve image edit':'Approve image generation',subtitle:imageApprovalSubtitle(details),turnId:turnOf(actor)},base:producerBase(!late&&base===null),
+    },{handedOff:answer=>{
+      const resumed=this.routineCard?.closed(actor.threadId,requestId,answer.behavior==='allow'?'allow':'deny')===true;
+      if(answer.behavior==='allow'){
+        if(!resumed)throw new Error('approval-queue-delivery-unavailable');
+        this.lateAllows.add(lateKey);
+      }
+    },signal:actor.signal,handoff:()=>held||this.holdProjectApproval?.(actor.threadId)===true,settled:answer=>this.routineCard?.closed(actor.threadId,requestId,answer.behavior==='allow'?'allow':'deny'),presented:(_item,messageId)=>{
+      presented=true;
+      const from=this.speaker?.(actor.threadId,actor.botId);
+      this.store.patchMessagePoint(actor.threadId,messageId,{murageLine:true,...(turnOf(actor)?{turnId:turnOf(actor)}:{}),...(from?{from}:{})});
+      this.waiting(actor.threadId,true,requestId,messageId,actor.botId,actor.generation);
+      held=this.routineCard?.opened(actor.threadId,requestId,details.operation==='edit'?'Approve image edit':'Approve image generation')===true;
+    }}); } finally {this.approvalActors.delete(requestId);}
+    this.waiting(actor.threadId,false,requestId,undefined,actor.botId,actor.generation,result !== "cancelled" && !actor.signal.aborted);
+    if(result==='allow'&&!presented&&base&&!actor.signal.aborted) {
+      actor.assertActive();
+      try { this.autoApprovalLogged?.(actor,details,base); } catch { console.warn('image-auto-approval-audit-failed'); }
+      const from=this.speaker?.(actor.threadId,actor.botId);
+      this.store.appendMessage(actor.threadId,murageLine({role:'bot',kind:'activity',...(turnOf(actor)?{turnId:turnOf(actor)}:{}),...(from?{from}:{}),tool:{name:`Making an image without asking (${base.basis})`,ok:true,imageRecord:{summary:imageApprovalSubtitle(details),prompt:redactSecretsInText(prompt)}}}));
     }
-    // `held` is the model's prompt: the card names the producing turn so it is withheld with that turn's inputs, as the line above
-    const card = this.store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "options", turnId: actor.turnId, ...(from ? { from } : {}), card: {
-      title: details.operation === "edit" ? "Approve image edit" : "Approve image generation",
-      // F1-T4: the owner approves the exact upstream that will bill them. An
-      // OpenRouter edit names its pinned endpoint; nothing else is routed.
-      // No cost on the card: it states the engine, sizes, count, references
-      // and prompt the owner is approving (image-generation.ts).
-      subtitle: imageApprovalSubtitle(details),
-      held: prompt, options: ["Allow", "Deny"], requestId, tool: "generate_image",
-    } }));
-    this.waiting(actor.threadId, true, requestId, card.id, actor.botId);
-    let held = false;
-    try { held = this.routineCard?.opened(actor.threadId, requestId, card.card?.title ?? "Approve image") === true; } catch { /* delivery never changes authority */ }
-    const projectHeld = this.holdProjectApproval?.(actor.threadId) === true;
-    return new Promise<ApprovalAnswer>(resolve => {
-      let settled = false;
-      let answered = false;
-      // Only the owner's own answer is recorded as allow/deny. A card nobody
-      // answered (turn cancelled, request revoked)
-      // settles as "unavailable", the same closing the harness gives every
-      // other approval its turn abandoned, so it never reads as a denial.
-      const finish = (allow: boolean, source: "user" | "system" = "system") => {
-        const entry = this.pending.get(requestId);
-        if (entry?.detached) {
-          // the tool call already gave up; this is the owner's late answer
-          if (answered) return; answered = true; this.pending.delete(requestId);
-          let resumed = false;
-          try { resumed = this.routineCard?.closed(actor.threadId, requestId, source === "user" ? (allow ? "allow" : "deny") : "none") === true; } catch { /* delivery never changes authority */ }
-          // an Allow that nothing carries on (a project card whose call
-          // ended, a routine that does not resume) makes no image: the card
-          // closes as expired and the answer returns unavailable (the answer
-          // route then says the request is no longer open), never "allowed"
-          const unused = source === "user" && allow && !resumed;
-          const current = this.store.messageById(actor.threadId, card.id);
-          if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: source === "user" && !unused ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" || unused } });
-          if (unused && entry) entry.unused = true;
-          if (resumed && allow && source === "user") this.lateAllows.add(actor.threadId);
-          return;
-        }
-        if (settled) return; settled = true; actor.signal.removeEventListener("abort", abort); this.pending.delete(requestId);
-        if (held) { try { this.routineCard?.closed(actor.threadId, requestId, source === "user" ? (allow ? "allow" : "deny") : "none"); } catch { /* delivery never changes authority */ } }
-        const current = this.store.messageById(actor.threadId, card.id);
-        if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
-        this.waiting(actor.threadId, false, requestId, undefined, actor.botId);
-        resolve(source === "user" ? (allow ? "allow" : "deny") : "gone");
-      };
-      const abort = () => {
-        // A routine run holds the card: the tool call gave up (its turn is
-        // over), but the card stays the owner's to answer and the run waits.
-        const entry = this.pending.get(requestId);
-        if ((held || projectHeld) && entry && !settled) {
-          settled = true; actor.signal.removeEventListener("abort", abort);
-          entry.detached = true;
-          this.waiting(actor.threadId, false, requestId, undefined, actor.botId); resolve("gone");
-          return;
-        }
-        finish(false);
-      };
-      this.pending.set(requestId, { threadId: actor.threadId, botId: actor.botId, messageId: card.id, settle: finish, active: actor.assertActive });
-      actor.signal.addEventListener("abort", abort, { once: true });
-      if (actor.signal.aborted) abort();
-    });
+    return result==='cancelled'?'gone':result;
   }
   resolve(threadId: string, requestId: string, behavior: "allow" | "deny" | "answer"): "allowed-once" | "rejected" | "unavailable" | null {
-    if (!requestId.startsWith("image-")) return null;
-    const pending = this.pending.get(requestId);
-    if (!pending || pending.threadId !== threadId || behavior === "answer") return "unavailable";
-    if (!pending.detached) { try { pending.active(); } catch { pending.settle(false); return "unavailable"; } }
-    pending.settle(behavior === "allow", "user");
-    if (pending.unused) return "unavailable";
-    return behavior === "allow" ? "allowed-once" : "rejected";
+    if(!requestId.startsWith('image-'))return null;
+    try {this.approvalActors.get(requestId)?.assertActive();}catch{
+      const item=this.pendingApprovals().find(item=>item.ref===requestId);
+      if(item)void serviceQueue('image').stop(item.approvalId);
+      return 'unavailable';
+    }
+    return answerProducerRequestSync(serviceQueue('image'),threadId,requestId,behavior)?behavior==='allow'?'allowed-once':'rejected':'unavailable';
   }
-  cancelThread(threadId: string) { for (const pending of this.pending.values()) if (pending.threadId === threadId) pending.settle(false); }
+  cancelThread(threadId: string) {
+    for(const item of this.pendingApprovals()) {
+      const record=readApproval(item.approvalId);
+      if(record?.threadId===threadId)void serviceQueue('image').stop(item.approvalId);
+    }
+  }
+
 }

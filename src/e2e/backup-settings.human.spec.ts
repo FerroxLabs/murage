@@ -1,7 +1,7 @@
 import {test,expect,type Page,type TestInfo} from "./page-error-guard";
 import {createServer,type ViteDevServer} from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import {mkdtempSync,readFileSync,writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
@@ -14,7 +14,7 @@ const axe=readFileSync(axeScriptPath,"utf8");
 test.beforeAll(async()=>{
  cache=mkdtempSync(join(tmpdir(),"murage-backup-ui-"));
  vite=await createServer({configFile:false,envFile:false,root,cacheDir:cache,resolve:{alias:{"@":join(root,"src")}},server:{host:"127.0.0.1",watch:null,hmr:false},plugins:[react(),tailwindcss(),{
-  name:"backup-ui-fixture",resolveId(id){if(id==="/__backup.js")return "\0backup-ui";},load(id){if(id!=="\0backup-ui")return;return `import React from'react';import{createRoot}from'react-dom/client';import{BackupSettings}from'/src/components/BackupSettings.tsx';import'/src/styles.css';createRoot(document.getElementById('root')).render(React.createElement(BackupSettings));`;},
+  name:"backup-ui-fixture",resolveId(id){if(id==="/__backup.js")return "\0backup-ui";},load(id){if(id!=="\0backup-ui")return;return `import React from'react';import{createRoot}from'react-dom/client';import{BackupSettings}from'/src/components/BackupSettings.tsx';import{StoreProvider}from'/src/state/store.tsx';import'/src/styles.css';createRoot(document.getElementById('root')).render(React.createElement(StoreProvider,null,React.createElement(BackupSettings)));`;},
   configureServer(server){server.middlewares.use((req,res,next)=>{
    const path=new URL(req.url??"/","http://fixture").pathname;
    if(path.startsWith("/__recovery/")){const name=path.slice("/__recovery/".length);if(!["index.html","recovery.css","renderer.js"].includes(name)){res.statusCode=404;res.end();return;}res.setHeader("content-type",name.endsWith("html")?"text/html":name.endsWith("css")?"text/css":"text/javascript");res.end(readFileSync(join(root,"electron/recovery",name)));return;}
@@ -47,8 +47,8 @@ test("BackupSettings exposes truthful states and only zero-argument host actions
  await page.goto(origin+"/__backup?supported=false");await openRestore();await expect(restart).toBeDisabled();
  // The schedule and remote panels now render their own status lines beside
  // this one, so the encrypted-backup status is picked out by its subject. Was:
- //   await expect(page.getByRole("status")).toContainText("verified backup tool");
- await expect(page.getByRole("status").filter({hasText:"Encrypted backup requires"})).toContainText("verified backup tool");
+ //   await expect(page.getByRole("status")).toContainText("Murage desktop app");
+ await expect(page.getByRole("status").filter({hasText:"Encrypted backups work"})).toContainText("Murage desktop app");
 });
 // The recovery page speaks plainly since b7741f1a: "Projected recovery ZIP" is
 // "Older recovery files (.zip)", "Create encrypted backup" is "Make a backup now",

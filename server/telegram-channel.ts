@@ -1,3 +1,4 @@
+import { channelSigninCodeRefusal } from "./channels/signin-code.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -173,7 +174,8 @@ export class TelegramChannel {
         if (message.senderName || message.senderUsername) this.options.onVerifiedSender?.(message.senderId,{name:message.senderName,username:message.senderUsername});
         // The owner tapped "Reply with text" on a question: this message is
         // that answer (0.1.52 ASK3), never a new prompt for the bot.
-        if (this.approvals && await this.approvals.captureText(message, this.state.binding, active, signal)) {
+        const signinRefusal = channelSigninCodeRefusal(message.text);
+        if (!signinRefusal && this.approvals && await this.approvals.captureText(message, this.state.binding, active, signal)) {
           if (!active()) return;
           this.mutate(state => { state.offset = update.updateId + 1; });
           continue;
@@ -181,7 +183,7 @@ export class TelegramChannel {
         const records = this.state.records.filter(record => !["sent", "cancelled"].includes(record.state));
         if (records.length >= 200) { this.pollError = "pending-limit"; return false; }
         const approval = /^\/(?:approve|deny|allow|reject|pair)(?:\s|$)/i.test(message.text) || /^(?:approve|deny|allow|reject|yes|no)$/i.test(message.text.trim());
-        this.mutate(state => { state.records = records; state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: approval ? "" : `[UNTRUSTED TELEGRAM CHANNEL MESSAGE]\n${message.text}\n[/UNTRUSTED TELEGRAM CHANNEL MESSAGE]`, state: "accepted", ...(approval ? { response: channelReply("channelReply.approvalsInApp", { channel: "Telegram" }) } : {}) }); });
+        this.mutate(state => { state.records = records; state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: approval || signinRefusal ? "" : `[UNTRUSTED TELEGRAM CHANNEL MESSAGE]\n${message.text}\n[/UNTRUSTED TELEGRAM CHANNEL MESSAGE]`, state: "accepted", ...(signinRefusal ? { response: signinRefusal } : approval ? { response: channelReply("channelReply.approvalsInApp", { channel: "Telegram" }) } : {}) }); });
       }
       this.mutate(state => { state.offset = update.updateId + 1; });
     }

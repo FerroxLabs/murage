@@ -2,6 +2,7 @@
 import { createInterface } from "node:readline";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 const [scenario, dump, tool = "memory_search"] = process.argv.slice(2);
+const { createFixtureMcpClient } = await import(process.argv[5] ?? new URL("./fake-mcp-client.mjs", import.meta.url).href);
 const previous = existsSync(dump) ? JSON.parse(readFileSync(dump, "utf8")) : [];
 const observed = { scenario, definitions: [], decisions: [], alias: null };
 const save = () => writeFileSync(dump, JSON.stringify([...previous, observed]));
@@ -21,7 +22,7 @@ function permission() {
     ...(scenario === "missing-session" ? {} : { sessionId: scenario === "wrong-session" ? "other-session" : session }), toolCall, options,
   } };
 }
-createInterface({ input: process.stdin }).on("line", line => {
+createInterface({ input: process.stdin }).on("line", async line => {
   const message = JSON.parse(line);
   if (message.id === "memory-permission" && (message.result || message.error)) {
     observed.decisions.push(message.result ?? { error: message.error }); save();
@@ -31,6 +32,11 @@ createInterface({ input: process.stdin }).on("line", line => {
   else if (message.method === "session/load" || message.method === "session/new") {
     observed.definitions.push({ method: message.method, servers: message.params.mcpServers });
     observed.alias = message.params.mcpServers.find(server => server.name.startsWith("murage-memory"))?.name ?? null;
+    if (message.method !== "session/load" || scenario !== "load-fallback") {
+      const servers = Object.fromEntries(message.params.mcpServers.map(({ name, command, args, env }) => [name, { command, args, env: Object.fromEntries(env.map(({ name, value }) => [name, value])) }]));
+      const client = createFixtureMcpClient(servers);
+      await Promise.all(Object.keys(servers).map(name => client.reconnect(name)));
+    }
     if (message.method === "session/load") {
       session = message.params.sessionId; save();
       send(result(message.id, scenario === "load-fallback" ? null : {}));

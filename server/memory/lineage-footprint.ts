@@ -24,7 +24,7 @@ export const FOOTPRINT_MISS_KINDS: readonly FootprintMissKind[] = ["APPENDED-cha
 export interface LineageFootprint {
   botId: string; threadId: string; accessStamp: string;
   userKind?: UserKind; userMessageId?: string; exclude: string[]; projectCardRun?: boolean;
-  routeHasTools: boolean; externalUpdates: string; maxBytes: number; minLines?: number;
+  routeHasTools: boolean; externalUpdates: string; maxBytes: number; minLines?: number; maxLines?: number;
   cursor: { instanceId: string; nativeSession: string; incarnation: number } | null;
 }
 
@@ -33,7 +33,7 @@ export interface LineageFootprint {
  * deletion move does not. */
 export function accessStamp(access: MemoryAccess): string {
   return JSON.stringify([access.threadId, access.botId, access.humanPrincipal, memoryAccessNotOwnerAudience(access), access.policyRevision,
-    access.deletionEpoch, [...access.scopeIds].sort()]);
+    access.deletionEpoch, access.scopeDigest ? [access.view,access.scopeDigest] : access.view ?? [...access.scopeIds].sort()]);
 }
 
 /** The externalUpdates field: the task's queued external-update ids (promptRows' pending list), sorted, as one string. */

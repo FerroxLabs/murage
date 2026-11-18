@@ -21,7 +21,12 @@ import { isFilteredMail, isHeldForOwner } from "./inbound.ts";
 export const RECEIVING_STATES: ReadonlySet<BindingState> = new Set<BindingState>(["active", "paused", "billing_hold", "grace"]);
 export const EVENT_CURSOR_SCOPE = "events";
 export const EVENT_LAST_SEEN_SCOPE = "events-last-seen";
-const OWNER = { kind: "owner" } as const;
+/** EMAIL-ACCOUNT-CHANGE: an account change not yet reconciled ({cursor, at}). `cursor`: Flux refused the event cursor for the new owner
+ *  key, so the account check, the adoption and the re-list run, and only then is the dead cursor dropped. Without it only the adoption
+ *  runs. Kept in the store, so the tick and the next boot finish what an outage or a crash cut short, with or without polling. */
+export const ACCOUNT_RECONCILE_SCOPE = "account-reconcile";
+/** r6 F1: an account-scope owner call (the event long-poll, the account-wide approvals list) names ownerRef() read at the call's start (site 6). */
+const ownerNow = (client: { currentOwnerRef(): string | null }) => ({ kind: "owner", expectOwnerRef: client.currentOwnerRef() ?? "" } as const);
 const BACKOFF_BASE_MS = 2_000;
 export const BACKOFF_CEILING_MS = 300_000;
 const IDLE_MS = 30_000;
@@ -52,6 +57,9 @@ export class EmailEventReader {
   private running = false;
   private failures = 0;
   private wakeIdle: (() => void) | null = null;
+  private reconciling: Promise<boolean> | null = null;
+  private reconcileFailures = 0;
+  private reconcileNextAt = 0;
   constructor(options: EventReaderOptions) { this.options = options; }
   private now(): number { return (this.options.now ?? Date.now)(); }
 
@@ -70,7 +78,7 @@ export class EmailEventReader {
     if (!this.shouldPoll()) return "idle";
     const { store, client } = this.options;
     const cursor = store.getCursor(EVENT_CURSOR_SCOPE) ?? undefined;
-    const answer = await client.events(OWNER, { cursor, wait: 25, limit: 50 });
+    const answer = await client.events(ownerNow(client), { cursor, wait: 25, limit: 50 });
     if (answer.kind === "refused" && answer.status === 410 && answer.code === "cursor_expired") {
       const latest = typeof answer.error.fields.latest_cursor === "string" ? answer.error.fields.latest_cursor : null;
       const ok = await this.relist();
@@ -79,6 +87,15 @@ export class EmailEventReader {
       store.setCursor(EVENT_CURSOR_SCOPE, latest, this.now());
       this.failures = 0;
       return "expired";
+    }
+    // EMAIL-ACCOUNT-CHANGE: cursors are bound to the account and key, so a new owner key (a sign-in again, or another Flux account) gets
+    // 400 for the saved one. Check which inboxes this account still holds, re-list the gap for those, then go on from the head.
+    // The pending mark is written first, so an outage, a failed adoption or a crash here is finished later by the tick or the next boot.
+    if (answer.kind === "refused" && answer.status === 400 && answer.error.fields.param === "cursor" && cursor !== undefined) {
+      this.markAccountChange(true);
+      if (!await this.reconcileAccount(true)) { this.failures++; return "backoff"; }
+      this.failures = 0;
+      return "ok";
     }
     if (answer.kind !== "ok") {
       if (answer.kind === "refused") this.options.onRefusal?.(answer.code);
@@ -90,7 +107,12 @@ export class EmailEventReader {
     const lifecycle = this.applyBatch(events, next);
     // section 8: the account the events belong to; a binding made under another account waits for Reconnect
     const account = events.map(event => (event as { account_id?: unknown }).account_id).find((id): id is string => typeof id === "string" && /^[\w.:-]{1,120}$/.test(id));
-    if (account) { try { this.options.bindings.noteAccount(account); } catch { /* the next batch says it again */ } }
+    if (account) {
+      let moved = 0;
+      // the moves and the pending mark commit together, so a crash between them never strands a binding with nothing to retry it
+      try { moved = store.tx(() => { const count = this.options.bindings.noteAccount(account, answer.usedOwnerRef).length; if (count) this.markAccountChange(false); return count; }); } catch { /* the next batch says it again */ }
+      if (moved) await this.reconcileAccount(true);
+    }
     for (const event of lifecycle) {
       try { await this.options.bindings.applyLifecycle(event); } catch (error) { this.options.log?.(`[email] lifecycle: ${(error as Error)?.message ?? error}`); }
     }
@@ -146,7 +168,10 @@ export class EmailEventReader {
       const inboxId = row.inboxId!;
       let pageCursor: string | undefined;
       for (let page = 0; page < 20; page++) {
-        const listed = await client.listMessages(OWNER, inboxId, { since, limit: 100, ...(pageCursor ? { cursor: pageCursor } : {}) });
+        // r6: an owner read of one inbox carries the binding's proven record; a held inbox is skipped (and read again once proved)
+        const ownerRef = bindings.ownerRefFor(row.botId);
+        if (!ownerRef) { complete = false; break; }
+        const listed = await client.listMessages({ kind: "owner", expectOwnerRef: ownerRef }, inboxId, { since, limit: 100, ...(pageCursor ? { cursor: pageCursor } : {}) });
         if (listed.kind !== "ok") { complete = false; break; }
         const synthetic: EmailEvent[] = [];
         for (const message of listed.body.data ?? []) {
@@ -166,12 +191,58 @@ export class EmailEventReader {
       if (!inbox) complete = false;
     }
     // #19: a hold whose approval left the pending list (approved, expired or cancelled while the cursor was dead) is re-read
-    const approvals = await client.listApprovals(OWNER, { state: "pending" });
+    const approvals = await client.listApprovals(ownerNow(client), { state: "pending" });
     if (approvals.kind === "ok") {
       const pending = new Set((approvals.body.data ?? []).map(item => item.id));
       await send.afterEventGap(pending);
     } else complete = false;
     return complete;
+  }
+
+  /** EMAIL-ACCOUNT-CHANGE: records that an account change waits to be reconciled (a `cursor` mark is never lowered to an adoption-only one). */
+  markAccountChange(cursor: boolean): void {
+    const saved = readReconcileMark(this.options.store.getCursor(ACCOUNT_RECONCILE_SCOPE));
+    if (saved && (saved.cursor || !cursor)) return;
+    this.options.store.setCursor(ACCOUNT_RECONCILE_SCOPE, JSON.stringify({ cursor: cursor || Boolean(saved?.cursor), at: this.now() }), this.now());
+    this.reconcileFailures = 0;
+    this.reconcileNextAt = 0;
+  }
+
+  /** EMAIL-ACCOUNT-CHANGE: runs a pending account change to the end. With a `cursor` mark: the account check (#5 per inbox), the adoption
+   *  (#4, a new key per adopted bot) and the re-list; the dead event cursor and the mark go together, only when all of it answered.
+   *  Without: the adoption alone. True when nothing is pending afterwards. The tick calls it paced by its own backoff (`now` skips the
+   *  wait: the reader's own poll and boot). One run at a time; never throws. */
+  reconcileAccount(now = false): Promise<boolean> {
+    if (this.reconciling) return this.reconciling;
+    const raw = this.options.store.getCursor(ACCOUNT_RECONCILE_SCOPE);
+    const mark = readReconcileMark(raw);
+    if (!mark) return Promise.resolve(true);
+    if (!this.options.enabled() || (!now && this.now() < this.reconcileNextAt)) return Promise.resolve(false);
+    const run = (async () => {
+      let ok = false;
+      try {
+        ok = mark.cursor
+          ? await this.options.bindings.checkAccount() && await this.relist()
+          : await this.options.bindings.adoptAccountChanged();
+      } catch (error) { this.options.log?.(`[email] account change: ${(error as Error)?.message ?? error}`); ok = false; }
+      if (!ok) {
+        this.reconcileFailures++;
+        this.reconcileNextAt = this.now() + EmailEventReader.backoffMs(this.reconcileFailures);
+        return false;
+      }
+      const { store } = this.options;
+      store.tx(() => {
+        // a mark raised again while this ran (another change) stays for the next run
+        if (store.getCursor(ACCOUNT_RECONCILE_SCOPE) !== raw) return;
+        if (mark.cursor) store.clearCursor(EVENT_CURSOR_SCOPE);
+        store.clearCursor(ACCOUNT_RECONCILE_SCOPE);
+      });
+      this.reconcileFailures = 0;
+      this.reconcileNextAt = 0;
+      return store.getCursor(ACCOUNT_RECONCILE_SCOPE) === null;
+    })().finally(() => { this.reconciling = null; });
+    this.reconciling = run;
+    return run;
   }
 
   /** The loop: polls while it should, idles while it should not, backs off after an outage. */
@@ -198,6 +269,15 @@ export class EmailEventReader {
       this.wakeIdle = null;
     }
   }
+}
+
+/** The pending account-change mark; any unreadable value still counts as pending with the full (cursor) run, never as nothing to do. */
+function readReconcileMark(raw: string | null): { cursor: boolean } | null {
+  if (raw === null) return null;
+  try {
+    const value = JSON.parse(raw) as { cursor?: unknown } | null;
+    return { cursor: !(value && typeof value === "object" && value.cursor === false) };
+  } catch { return { cursor: true }; }
 }
 
 function isEvent(value: unknown): value is EmailEvent {

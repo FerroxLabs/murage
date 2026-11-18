@@ -14,6 +14,7 @@ import { gunzipSync } from "node:zlib";
 import { beforeEach, expect, it, onTestFinished } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
+import { settleTestHandles } from "../test-handle-registry.ts";
 import { downgradeInstallationMemorySchema } from "../installation-memory-downgrade.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { memoryLearningV2Schema, memoryLearningV3Schema } from "./learning-policy.ts";
@@ -105,18 +106,24 @@ function olderReaderResumes(thread: string, instance: string, session: string): 
 }
 
 for (const to of [10, 11] as const) {
-  it(`12 -> ${to}: a raw cursor whose later incarnation was revoked is cleared, so the older reader never judges it by the earlier clean session`, () => {
+  it(`12 -> ${to}: a raw cursor whose later incarnation was revoked is cleared, so the older reader never judges it by the earlier clean session`, async () => {
     setMemoryMode("capture"); // the real current-version file: every application and memory table
     database().exec(`INSERT INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) VALUES('th','drv','sess-1',1,2,1),('th','drv','sess-1#2',3,4,1),('th2','drv','sess-9',1,2,1);
       INSERT INTO memory_session_incarnation VALUES('th','drv','sess-1',1),('th','drv','sess-1',2),('th2','drv','sess-9',1);
       INSERT INTO memory_deny_session VALUES('th','drv','sess-1#2',7);`);
-    closeDatabase();
+    closeDatabase(); await settleTestHandles(DATA_DIR);
+    // This incarnation fixture models the pre-proof release. Newer positive
+    // replay proofs deliberately clear every retained holder on downgrade;
+    // that independent fail-closed boundary has its own current-file control below.
+    const historical = new DatabaseSync(join(DATA_DIR, "messages.db"));
+    try { historical.exec("DROP TABLE send_replay_session_nodes; DROP TABLE send_replay_sessions"); }
+    finally { historical.close(); }
     writeFileSync(join(DATA_DIR, "bots.json"), JSON.stringify([{ id: "b1", threadId: "th", resumeCursors: { drv: "sess-1" }, tasks: [
       { threadId: "th", resumeCursors: { drv: "sess-1" }, resumeIncarnations: { drv: 2 } }, { threadId: "th2", resumeCursors: { drv: "sess-9" } }] }]));
     // the engine session behind "sess-1" is incarnation 2 (revoked), but the raw key is incarnation 1's clean row
     expect(olderReaderResumes("th", "drv", "sess-1")).toBe(true);
 
-    downgradeInstallationMemorySchema(DATA_DIR, to);
+    await downgradeInstallationMemorySchema(DATA_DIR, to);
 
     expect(olderReaderResumes("th", "drv", "sess-1")).toBe(false);
     const bots = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
@@ -155,6 +162,31 @@ for (const to of [11, 10] as const) {
       // an id no later incarnation used is as before: its raw row counts as 1
       expect(allocateIncarnation(db, "t", "d", "u")).toBe(2);
       expect(() => validateMemorySchema(db)).not.toThrow();
+    } finally { db.close(); }
+  });
+}
+
+for (const to of [10, 11] as const) {
+  it(`current positive replay proofs -> ${to}: even a clean raw cursor cannot survive removal of its proof`, async () => {
+    setMemoryMode("capture");
+    expect(database().prepare("SELECT 1 FROM sqlite_schema WHERE name='send_replay_sessions'").get()).toBeTruthy();
+    closeDatabase(); await settleTestHandles(DATA_DIR);
+    writeFileSync(join(DATA_DIR, "bots.json"), JSON.stringify([{ id: "b1", threadId: "th", resumeCursors: { drv: "clean" }, tasks: [
+      { threadId: "th", resumeCursors: { drv: "clean" }, resumeIncarnations: { drv: 1 } }] }]));
+    expect(olderReaderResumes("th", "drv", "clean")).toBe(true);
+    await downgradeInstallationMemorySchema(DATA_DIR, to);
+    expect(olderReaderResumes("th", "drv", "clean")).toBe(false);
+    const bots = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    for (const holder of [bots[0], bots[0].tasks[0]]) {
+      for (const field of ["resumeCursors", "resumePolicies", "replayPending", "resumeSeals", "resumeIncarnations"]) {
+        expect(Object.hasOwn(holder, field), field).toBe(false);
+      }
+    }
+    const db = new DatabaseSync(join(DATA_DIR, "messages.db"));
+    try {
+      expect(version(db)).toBe(to);
+      expect(db.prepare("SELECT name FROM sqlite_schema WHERE name IN ('send_replay_sessions','send_replay_session_nodes')").all()).toEqual([]);
+      if (to === 10) expectOpensIn102(db); else expect(() => validateMemorySchema(db)).not.toThrow();
     } finally { db.close(); }
   });
 }

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -6,7 +7,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   APP_LANGUAGES, cancelScheduledCall, dashboardLink, defaultPhoneSettings, editLanguage, findNumbers, keyErrorKey, lengthText, minutesToSeconds,
   PHONE_PACK_LOADERS, phoneCallsAvailable, phoneErrorKey, phoneText, readPhoneStatus, savePhoneSettings, shareTranscript, withLineWords,
@@ -180,10 +181,13 @@ describe("phone calls and the first paint", () => {
   const src = (file: string) => readFileSync(join(ROOT, "src", file), "utf8");
 
   it("loads the screen only behind import(), and its words only with it", () => {
-    const modal = src("components/SettingsModal.tsx");
-    expect(modal).toContain('retryableLazy(() => import("./PhoneCallsSettings"))');
-    expect(modal).not.toMatch(/^import[^\n]*PhoneCallsSettings/m);
-    expect(modal).not.toMatch(/^import[^\n]*lib\/phone-calls/m);
+    // The screen loads from the Connections page now that the settings pages live outside SettingsModal.
+    expect(src("components/settings/pages/ConnectionsPage.tsx")).toContain('retryableLazy(() => import("../../PhoneCallsSettings"))');
+    for (const file of ["components/SettingsModal.tsx", "components/settings/pages/ConnectionsPage.tsx"]) {
+      const page = src(file);
+      expect(page, file).not.toMatch(/^import[^\n]*PhoneCallsSettings/m);
+      expect(page, file).not.toMatch(/^import[^\n]*lib\/phone-calls/m);
+    }
     for (const file of ["main.tsx", "App.tsx", "locales/index.ts", "state/store.tsx"]) {
       expect(src(file), file).not.toMatch(/phone-calls|PhoneCallsSettings/);
     }
@@ -202,4 +206,98 @@ it("maps unconfirmed calls to plain localized copy with accepted source hashes",
     expect(read(lang + ".json")[key]).toBeTruthy();
     expect(hashes.locales[lang][key]).toBe(createHash("sha256").update(en[key]).digest("hex"));
   }
+});
+
+
+// Exercise the mounted Settings screen with owner API fixtures, never a live server.
+const screenMocks = vi.hoisted(() => ({ api: vi.fn(), dispatch: vi.fn() }));
+vi.mock("@/state/store", () => ({ api: screenMocks.api, useStore: () => ({ state: { bots: [], config: {} }, dispatch: screenMocks.dispatch }) }));
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
+import PhoneCallsSettings from "../components/PhoneCallsSettings";
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+let screenRoot: ReturnType<typeof createRoot> | undefined;
+afterEach(async () => {
+  if (screenRoot) await act(async () => screenRoot!.unmount());
+  screenRoot = undefined;
+  document.body.innerHTML = "";
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  screenMocks.api.mockReset();
+});
+async function mountPhoneScreen(read: (init?: RequestInit) => Promise<unknown>) {
+  Object.defineProperty(window, "muragebox", { configurable: true, value: { phoneKey: { save: vi.fn(), remove: vi.fn() } } });
+  screenMocks.api.mockImplementation((path: string, init?: RequestInit) => path === "/api/phone-calls"
+    ? read(init) : Promise.resolve({ supported: true, keyPresent: true, active: null, olderScheduled: [] }));
+  const node = document.createElement("div");
+  document.body.append(node);
+  screenRoot = createRoot(node);
+  await act(async () => screenRoot!.render(createElement(PhoneCallsSettings)));
+}
+const liveCard = { id: "c-1", status: "ringing", to: "+15550123456", dashboard: "https://dashboard.vapi.ai/calls/v-1" };
+
+it("mounted cards refresh completion and transcript at a bounded cadence", async () => {
+  vi.useFakeTimers();
+  const read = vi.fn().mockResolvedValueOnce({ calls: [liveCard] }).mockResolvedValue({ calls: [{ ...liveCard, status: "ended", outcome: "done", transcript: "Table booked." }] });
+  await mountPhoneScreen(read);
+  expect(document.querySelector('[data-testid="phone-result-card"]')?.textContent).toContain(en["phoneCalls.status.ringing"]);
+  await act(async () => { await vi.advanceTimersByTimeAsync(4999); });
+  expect(read).toHaveBeenCalledTimes(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(document.querySelector('[data-testid="phone-result-card"]')?.textContent).toContain(en["phoneCalls.outcome.done"]);
+  const show = [...document.querySelectorAll("button")].find(b => b.textContent === en["phoneCalls.calls.showTranscript"]);
+  await act(async () => show!.click());
+  expect(document.querySelector("pre")?.textContent).toBe("Table booked.");
+  await act(async () => screenRoot!.unmount());
+  screenRoot = undefined;
+  const reads = read.mock.calls.length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(read).toHaveBeenCalledTimes(reads);
+});
+
+it("mounted refresh never overlaps, keeps cards on failure, and aborts pending work on unmount", async () => {
+  vi.useFakeTimers();
+  let settle!: (value: unknown) => void;
+  let signal: AbortSignal | undefined;
+  const read = vi.fn().mockResolvedValueOnce({ calls: [liveCard] }).mockRejectedValueOnce(new Error("offline"))
+    .mockImplementation((init?: RequestInit) => { signal = init?.signal ?? undefined; return new Promise(resolve => { settle = resolve; }); });
+  await mountPhoneScreen(read);
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(document.querySelector('[data-testid="phone-result-card"]')).not.toBeNull();
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(read).toHaveBeenCalledTimes(3);
+  await act(async () => screenRoot!.unmount());
+  screenRoot = undefined;
+  expect(signal?.aborted).toBe(true);
+  await act(async () => { settle({ calls: [] }); await vi.advanceTimersByTimeAsync(30000); });
+  expect(read).toHaveBeenCalledTimes(3);
+});
+
+
+it("initially mounted cards survive a stalled vendor read and the next poll recovers", async () => {
+  vi.useFakeTimers();
+  const { MemoryCallStore, PhoneCallService } = await import("../../server/phone-calls/service.ts");
+  const { RevisionStore } = await import("../../server/phone-calls/settings.ts");
+  const { phoneOwnerRoute } = await import("../../server/phone-calls/owner-routes.ts");
+  const secrets = await import("../../server/phone-calls/phone-secrets.ts");
+  secrets.loadPhoneSecretsFromEnv({ [secrets.PHONE_SECRETS_ENV]: JSON.stringify({ key: "fake", origin: "https://api.vapi.ai" }) });
+  try {
+    const rows = new MemoryCallStore();
+    rows.put({ id: "c-1", vendorId: "v-1", revision: 1, assistantId: "a", createdAt: 1, status: "ringing", language: "en", to: "+15550123456", goal: "Book", details: "", limits: "" });
+    const result = vi.fn().mockImplementationOnce(() => new Promise(() => {})).mockResolvedValue({ vendorId: "v-1", status: "ended", transcript: "Table booked.", structured: { outcome: "done" } });
+    const service = new PhoneCallService({ result } as unknown as import("../../server/phone-calls/vapi-adapter.ts").PhoneAdapter, new RevisionStore(), () => "en", () => {}, rows);
+    const read = vi.fn(async () => (await phoneOwnerRoute(() => service, { method: "GET", path: "/api/phone-calls", desktop: true, botCredential: false }))!.body);
+    await mountPhoneScreen(read);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(document.querySelector('[data-testid="phone-result-card"]')?.textContent).toContain(en["phoneCalls.status.ringing"]);
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(result).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('[data-testid="phone-result-card"]')?.textContent).toContain(en["phoneCalls.outcome.done"]);
+    await act(async () => screenRoot!.unmount());
+    screenRoot = undefined;
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { secrets._resetPhoneSecretsForTest(); }
 });

@@ -13,7 +13,7 @@ import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { restoreEncryptedInstallationNew, writeEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys, optionalBackupAgeUnavailable } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
@@ -21,7 +21,7 @@ const selection = { scope: "application-data", credentialPolicy: "preserve-in-en
 const folders = Number(process.env.MURAGE_TEST_MANY_FILE_FOLDERS ?? 60);
 const count = (folder: string): number => readdirSync(folder, { withFileTypes: true }).reduce((total, entry) => total + (entry.isDirectory() ? count(join(folder, entry.name)) : 1), 0);
 
-it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("backs up and restores 60,000 files of real work beside 100,000 rebuildable ones", { tags: ["nightly"], timeout: 900_000 }, async () => {
+it.skipIf(optionalBackupAgeUnavailable())("backs up and restores 60,000 files of real work beside 100,000 rebuildable ones", { tags: ["nightly"], timeout: 900_000 }, async () => {
   const f = backupFixture(), keys = testAgeKeys();
   const desk = join(f.data, "workspaces", "bot", "threads", "thread");
   // Two node_modules trees: left out, never counted.

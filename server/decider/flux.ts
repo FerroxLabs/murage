@@ -1,3 +1,4 @@
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Copyright OpenMausBot contributors
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -15,6 +16,7 @@ import { FLUX_OPENAI_BASE } from "../flux-routing.ts";
 import { fluxCallHeaders, isFluxUrl } from "../flux-memory-headers.ts";
 import { parseDecideResponse } from "./parse.ts";
 import type { BackendRequest, BackendResult, DeciderBackend, DeciderQuestion } from "./types.ts";
+import { authorizeFluxDispatch } from "../flux-start-gate.ts";
 
 export const FLUX_DECIDE_BASE_URL = FLUX_OPENAI_BASE;
 export const FLUX_DECIDE_MODEL = "flux-decide";
@@ -126,7 +128,7 @@ async function isPlanRefusal(response: Response): Promise<boolean> {
       if (depth > 3 || !value || typeof value !== "object") return false;
       return Object.values(value).some((inner) => find(inner, depth + 1));
     };
-    return find(JSON.parse(raw), 0);
+    return find(registerBusyloopPayloadSite("read", JSON.parse(raw)), 0);
   } catch {
     return false;
   }
@@ -163,7 +165,8 @@ const PRIVACY_FAILED: BackendResult = { ok: false, reason: "privacy_contract_fai
 /** A request with no room content at all: it only asks whether the echo is back. */
 async function probePrivacyContract(endpoint: URL, request: BackendRequest): Promise<boolean> {
   try {
-    const response = await request.fetch(endpoint, {
+    await authorizeFluxDispatch(request.key); // spend gate
+    const response = await request.fetch(fluxRouteFor(endpoint).requestUrl, {
       method: "POST",
       headers: { authorization: `Bearer ${request.key}`, "content-type": "application/json", accept: "application/json", ...decideHeaders(endpoint) },
       body: JSON.stringify(decideRequestBody({ probe: "privacy-contract" }, { answer: { type: "choice", instructions: "Which option is first?", options: { a: "Option A.", b: "Option B." } } })),
@@ -192,7 +195,8 @@ async function decide(request: BackendRequest): Promise<BackendResult> {
   }
   let response: Response;
   try {
-    response = await request.fetch(endpoint, {
+    await authorizeFluxDispatch(request.key); // spend gate
+    response = await request.fetch(fluxRouteFor(endpoint).requestUrl, {
       method: "POST",
       headers: { authorization: `Bearer ${request.key}`, "content-type": "application/json", accept: "application/json", ...decideHeaders(endpoint) },
       body: JSON.stringify(decideRequestBody(request.state, request.questions)),
@@ -217,7 +221,7 @@ async function decide(request: BackendRequest): Promise<BackendResult> {
   }
   let body: unknown;
   try {
-    body = await response.json();
+    body = await registerBusyloopPayloadSite("read", response.json());
   } catch {
     return { ok: false, reason: "malformed" };
   }

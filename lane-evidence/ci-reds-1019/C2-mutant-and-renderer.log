@@ -1,0 +1,109 @@
+it-remote: ci-reds on murage-build3 (load here 32)
+
+ RUN  v4.1.12 /work
+
+ ❯ server/channels/signal/storage.test.ts (67 tests | 1 failed | 66 skipped) 18ms
+     ↓ fails closed on missing SID; kills optional qualification
+     ↓ fails closed on empty SID; kills optional qualification
+     ↓ fails closed on malformed SID; kills optional qualification
+     ↓ fails closed on current user; kills optional qualification
+     ↓ fails closed on accepted SYSTEM owner; kills optional qualification
+     ↓ fails closed on accepted Administrators owner; kills optional qualification
+     ↓ fails closed on non-Windows host; kills optional qualification
+     ↓ fails closed on unknown current owner; kills unchecked identity
+     ↓ requires a real Windows host when MURAGE_TEST_WINDOWS_QUALIFICATION=1
+     ↓ T-MODES repairs broad folders and files once; kills skipped mode checks
+     ↓ T-MODES blocks a failed repair, then permits an explicit retry
+     ↓ T-POSIX-OWNER blocks foreign key before opening or repairing; kills chown-and-continue
+     ↓ T-POSIX-OWNER blocks foreign auth before opening or repairing; kills chown-and-continue
+     ↓ T-POSIX-OWNER blocks foreign signal before opening or repairing; kills chown-and-continue
+     ↓ T-POSIX-OWNER blocks foreign data before opening or repairing; kills chown-and-continue
+     ↓ T-POSIX-OWNER blocks foreign ledger before opening or repairing; kills chown-and-continue
+     ↓ T-MODES refuses a symlink at key; kills following links
+     ↓ T-MODES refuses a symlink at auth; kills following links
+     ↓ T-MODES refuses a symlink at channels; kills following links
+     ↓ T-MODES never repairs DATA_DIR
+     ↓ T-POSIX-OWNER permits root only on DATA_DIR; kills root ownership everywhere
+     ↓ T-MODES rejects a swapped inode before chmod; kills path-only repairs
+     ↓ T-MODES checks new files after exit and uses O_NOFOLLOW for repair
+     × fixture protection removes explicit broad grants that grant:r alone preserves 17ms
+     ↓ T-WIN-OWNER checks key owner before its accepted DACL; kills DACL-only checks
+     ↓ T-WIN-OWNER checks auth owner before its accepted DACL; kills DACL-only checks
+     ↓ T-WIN-OWNER checks signal owner before its accepted DACL; kills DACL-only checks
+     ↓ T-WIN-OWNER checks data owner before its accepted DACL; kills DACL-only checks
+     ↓ T-WIN-OWNER accepts BA and SYSTEM owners
+     ↓ T-WIN-REPARSE rejects the attribute on key despite ordinary lstat; kills symlink-only checks
+     ↓ T-WIN-REPARSE rejects the attribute on auth despite ordinary lstat; kills symlink-only checks
+     ↓ T-WIN-REPARSE rejects the attribute on data despite ordinary lstat; kills symlink-only checks
+     ↓ T-WIN-REPARSE rejects the attribute on channels despite ordinary lstat; kills symlink-only checks
+     ↓ T-WIN-INHERIT repairs broad DACL D:(A;ID;FA;;; once and rereads
+     ↓ T-WIN-INHERIT repairs broad DACL D:P(A;;FA;;;WD)(A;;FA;;; once and rereads
+     ↓ T-WIN-INHERIT blocks an unrepairable DACL without looping
+     ↓ T-WIN-INHERIT never repairs DATA_DIR with a broad WD grant
+     ↓ T-WIN-INHERIT never repairs DATA_DIR with a broad BU grant
+     ↓ T-WIN-INHERIT never repairs DATA_DIR with a broad AU grant
+     ↓ T-WIN-INHERIT never repairs DATA_DIR with a broad S-1-1-0 grant
+     ↓ T-WIN-INHERIT never repairs DATA_DIR with a broad S-1-5-32-545 grant
+     ↓ T-WIN-INHERIT never repairs DATA_DIR with a broad S-1-5-11 grant
+     ↓ T-WIN-INHERIT fails closed on missing-owner without a blind repair
+     ↓ T-WIN-INHERIT fails closed on bad-dacl without a blind repair
+     ↓ T-WIN-INHERIT fails closed on missing-row without a blind repair
+     ↓ T-WIN-MANY reads 500 auth files in one call with only six roots in the environment
+     ↓ refuses connection path ../outside before any filesystem access
+     ↓ refuses connection path a/b before any filesystem access
+     ↓ refuses connection path a\b before any filesystem access
+     ↓ refuses connection path  before any filesystem access
+     ↓ refuses connection path . before any filesystem access
+     ↓ refuses connection path .. before any filesystem access
+     ↓ T-WIN-CLM fake preserves plain JSON roots with Unicode and a quote, never script interpolation
+     ↓ T-WIN-CLM fake rejects malformed output not json; kills partial reader acceptance
+     ↓ T-WIN-CLM fake rejects malformed output {"path":"/fixture","attributes":0}; kills partial reader acceptance
+     ↓ T-WIN-CLM fake rejects malformed output {"path":"/fixture","attributes":"1024","sddl":"O:SY"}; kills partial reader acceptance
+     ↓ T-WIN-CLM fake fails closed on reader failure
+     ↓ T-WIN-CLM returns identical owner, attributes and DACL in full and constrained language
+     ↓ T-WIN-INHERIT repairs a real explicit Everyone grant and an inherited key DACL
+     ↓ T-WIN-REPARSE refuses a real junction link without enumerating its target
+     ↓ T-WIN-REPARSE refuses a real dir link without enumerating its target
+     ↓ T-WIN-REPARSE refuses a real file link without enumerating its target
+     ↓ T-WIN-REPARSE refuses a real non-link reparse tag with ordinary lstat; kills symlink-only checks
+     ↓ T-WIN-OWNER rejects real foreign-owned key with an accepted DACL; kills DACL-only checks and setowner repair
+     ↓ T-WIN-OWNER rejects real foreign-owned auth with an accepted DACL; kills DACL-only checks and setowner repair
+     ↓ T-WIN-OWNER rejects real foreign-owned signal with an accepted DACL; kills DACL-only checks and setowner repair
+     ↓ T-WIN-OWNER rejects real foreign-owned data with an accepted DACL; kills DACL-only checks and setowner repair
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/channels/signal/storage.test.ts > Windows policy with an isolated fake reader > fixture protection removes explicit broad grants that grant:r alone preserves
+AssertionError: expected 'broad' to be 'owner-only' // Object.is equality
+
+Expected: "owner-only"
+Received: "broad"
+
+ ❯ server/channels/signal/storage.test.ts:257:47
+    255|     expect(await f.guard.check()).toEqual(blocked("storage-permissions…
+    256|     protectWindowsFixtureEntry(f.dataDir, (file, args) => f.run(file, …
+    257|     expect(ownerOnlyVerdict(root.sddl!, sid)).toBe("owner-only");
+       |                                               ^
+    258|     expect(await f.guard.check()).toEqual({ state: "ok" });
+    259|   });
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 66 skipped (67)
+   Start at  15:49:06
+   Duration  320ms (transform 136ms, setup 0ms, import 175ms, tests 18ms, environment 0ms)
+
+KILLED: dropping fixture ACL reset leaves explicit broad DATA_DIR access blocked
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ RUN  v4.1.12 /work
+
+ ✓ src/components/settings/settings-shell.dom.test.ts (9 tests) 32ms
+ ✓ src/components/ConnectedAppsLock.test.ts (5 tests) 32ms
+ ✓ src/components/NotificationSettings.test.ts (2 tests) 8ms
+
+ Test Files  3 passed (3)
+      Tests  16 passed (16)
+   Start at  15:49:07
+   Duration  9.46s (transform 5.30s, setup 8.63s, import 374ms, tests 71ms, environment 0ms)

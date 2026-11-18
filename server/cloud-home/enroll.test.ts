@@ -78,7 +78,7 @@ afterEach(async () => { server.closeAllConnections(); await new Promise<void>(re
 // before 4.4 cannot do (`wait` answers 127, "not a child"). macOS ships bash 3.2 as /bin/bash, so
 // the boot run uses a bash 4.4+ from the host (Homebrew's on the macOS runners) and is skipped when there is none.
 const modernBash = ["bash", "/opt/homebrew/bin/bash", "/usr/local/bin/bash"].find(candidate => {
-  const probe = spawnSync(candidate, ["-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'], { encoding: "utf8" });
+  const probe = spawnSync(candidate, ["-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'], { windowsHide: true, encoding: "utf8" });
   const [major, minor] = (probe.stdout ?? "").trim().split(" ").map(Number);
   return probe.status === 0 && (major > 4 || (major === 4 && minor >= 4));
 });
@@ -92,10 +92,10 @@ ${wrapper}
 `, { mode: 0o700 });
     writeFileSync(node, "#!/bin/bash\necho supervisor-entered\n", { mode: 0o700 });
   }
-  const script = readFileSync(new URL("../../deploy/cloud-home/start-home.sh", import.meta.url), "utf8").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", join(config, "home.env")).replaceAll("/usr/local/bin/node", node);
+  const script = readFileSync(new URL("../../deploy/cloud-home/start-home.sh", import.meta.url), "utf8").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", join(config, "home.env")).replaceAll("/usr/bin/python3 -I /usr/local/libexec/murage-home-launch", node);
 
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = mode === "boot" ? spawn(modernBash!, ["-c", script], { stdio: ["ignore", "pipe", "pipe"] }) : spawn("python3", ["-I", "-c", wrapper, program, state, config, userData, mode], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = mode === "boot" ? spawn(modernBash!, ["-c", script], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }) : spawn("python3", ["-I", "-c", wrapper, program, state, config, userData, mode], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = ""; child.stdout.on("data", data => stdout += data); child.stderr.on("data", data => stderr += data);
     const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
     child.once("error", error => { clearTimeout(timer); reject(error); });

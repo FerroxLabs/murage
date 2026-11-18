@@ -2,12 +2,39 @@ import {createHash} from "node:crypto";
 import {constants,openSync,closeSync,fstatSync,lstatSync,readSync,realpathSync} from "node:fs";
 import {spawnSync} from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { loadWindowsBackupSignedPins } from "../shared/windows-backup-signed-pins.mjs";
+import { verifySignedWindowsPe } from "../shared/windows-signed-pe.mjs";
 import {normalizedAgePayloadHash,backupToolIdentity,asyncBackupCodesign,readBackupToolBytes} from "./backup-age-attestation.mjs";
 import {resticPinForTarget} from "../shared/backup-restic-pin.mjs";
-const runCodesign=args=>spawnSync("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});
+const runCodesign=args=>spawnSync("/usr/bin/codesign",[...args],{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});
 const windows=()=>process.platform==="win32";
 /** The pin for the platform and arch this app is running on, or null. */
 const currentPin=()=>resticPinForTarget(process.platform,process.arch);
+
+/** Windows release pins describe the signed image. The compiled source pin
+ * still authenticates every original byte, while WinVerifyTrust authenticates
+ * the embedded production signature. Only the owning installed app admits it.
+ */
+export async function verifySignedWindowsRestic(file,bytes,{currentExecutable=process.execPath,arch=process.arch,originalSha256=resticPinForTarget("win32",arch)?.originalSha256,verifySignature}={}) {
+ try {
+  const resources=path.dirname(path.dirname(path.dirname(file)));
+  const equal=(a,b)=>a.toLowerCase()===b.toLowerCase();
+  if(arch!=="x64"||path.basename(resources).toLowerCase()!=="resources"||!equal(file,path.join(resources,"backup-tools",arch,"restic.exe"))
+    ||!equal(realpathSync(file),file)||!equal(realpathSync(currentExecutable),path.join(path.dirname(resources),"Murage.exe")))return false;
+  const pins=loadWindowsBackupSignedPins(path.dirname(file));
+  // Option A (Sean 2026-11-18T06:42Z): a package signed the 1.0.18 way ships raw restic and no signed-byte pins; the exact raw hash is its trust.
+  if(!pins)return createHash("sha256").update(bytes).digest("hex")===originalSha256;
+  const pin=pins["restic.exe"];
+  if(!pin||pin.originalSha256!==originalSha256||createHash("sha256").update(bytes).digest("hex")!==pin.sha256)return false;
+  if(pin.sha256!==originalSha256){if(pin.unsigned?.sha256!==originalSha256)return false;verifySignedWindowsPe(bytes,pin.unsigned);}
+  verifySignature??=async(file,resources)=>{
+   const {verifyWindowsBackupPublisher}=await import(pathToFileURL(path.join(resources,"server/windows-backup-resources.js")).href);
+   await verifyWindowsBackupPublisher(file,resources);
+  };
+  await verifySignature(file,resources);return true;
+ }catch{return false;}
+}
 /** The packaged location a restic for this arch must resolve to on macOS. */
 function macBundle(file,currentExecutable,arch){
  const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents),executable=realpathSync(currentExecutable);
@@ -58,7 +85,7 @@ export async function trustedBackupResticExecutableAsync(file,{currentExecutable
  try{
   const identity=backupToolIdentity(file,currentExecutable);if(!identity||signal?.aborted)return false;
   const bytes=await readBackupToolBytes(file,{strictMode:!windows()});if(!bytes||signal?.aborted||backupToolIdentity(file,currentExecutable)!==identity)return false;
-  const trusted=createHash("sha256").update(bytes).digest("hex")===pin.originalSha256||process.platform==="darwin"&&await signedResticOwnedByCurrentAppAsync(file,bytes,{currentExecutable,run,signal,timeoutMs});
+  const trusted=windows()?await verifySignedWindowsRestic(file,bytes,{currentExecutable}):createHash("sha256").update(bytes).digest("hex")===pin.originalSha256||process.platform==="darwin"&&await signedResticOwnedByCurrentAppAsync(file,bytes,{currentExecutable,run,signal,timeoutMs});
   return Boolean(trusted&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity);
  }catch{return false;}
 }

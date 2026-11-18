@@ -37,7 +37,9 @@
 //     ERROR "tool call denied by pre-tool hook: <reason>", as agy 1.4.4 does.
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
+import { r3Barrier, r3HoldRetirement, r3Record, r3Root } from "./r3-engine-barrier.ts";
 import { fixtureDumpEnvironment } from "./fixture-dump.ts";
+import { holdFixtureRelayClient } from "./relay-client-lifetime.ts";
 import { execSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -82,6 +84,7 @@ function driveMcp(
   return new Promise((resolve, reject) => {
     const env = { ...process.env, ...entry.env };
     const child = spawn(entry.command, entry.args ?? [], {
+      windowsHide: true,
       env,
       stdio: ["pipe", "pipe", "inherit"],
     });
@@ -93,6 +96,7 @@ function driveMcp(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (!error && holdFixtureRelayClient(child, entry.args)) { resolve(last); return; }
       child.kill();
       if (error) reject(error);
       else resolve(last);
@@ -269,12 +273,21 @@ if (streamInput) {
   prompt = printIdx !== -1 ? argv[printIdx + 1] : undefined;
 }
 if (!prompt) process.exit(0);
+// FAKE_AGY_HOLD_CLOSE=<gate file>: a held close. The turn process writes its pid to <gate>.pid, ignores SIGTERM and keeps running
+// until the gate file exists; only then does it exit. A test holds the child open across a Stop and releases it by writing the gate.
+if (process.env.FAKE_AGY_HOLD_CLOSE) {
+  const holdGate = process.env.FAKE_AGY_HOLD_CLOSE;
+  writeFileSync(`${holdGate}.pid`, String(process.pid));
+  process.on("SIGTERM", () => {});
+  setInterval(() => { if (existsSync(holdGate)) process.exit(0); }, 25);
+}
 if (process.env.FAKE_AGY_DUMP) {
   writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: fixtureDumpEnvironment(), prompt }, null, 2));
 }
 
 const toolName = process.env.FAKE_AGY_TOOL || (mode === "ask-peer" ? "ask_bot" : "write_to_file");
 /** agy's PreToolUse hooks for this tool: the first deny (or failed hook) wins. */
+let r3HookFrame = "";
 function hookDenial(name: string, args: unknown = {}, stepIdx = 0, always = false): string | null {
   if ((!always && process.env.FAKE_AGY_RUN_HOOKS !== "1") || process.env.FAKE_AGY_SKIP_HOOKS === "1") return null;
   const home = process.env.FAKE_AGY_HOME_OVERRIDE || process.env.HOME || process.env.USERPROFILE || "";
@@ -294,14 +307,15 @@ function hookDenial(name: string, args: unknown = {}, stepIdx = 0, always = fals
           // (cmd drops the outer pair of quotes Murage adds). execSync would run `cmd /d /s /c "<command>"`, which
           // wraps it in one more pair, so the Windows form is spelled out here.
           if (process.platform === "win32") {
-            const run = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/c", handler.command], { input, cwd, encoding: "utf8", timeout: 15_000, windowsVerbatimArguments: true });
+            const run = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/c", handler.command], { windowsHide: true, input, cwd, encoding: "utf8", timeout: r3Root ? 200 : 15_000, windowsVerbatimArguments: true });
             if (run.error) throw run.error;
             if (run.status !== 0) throw new Error(`Command failed: ${handler.command} (exit ${run.status}) ${String(run.stderr ?? "").trim()}`.replace(/\n/g, " "));
             answer = run.stdout;
-          } else answer = execSync(handler.command, { input, cwd, encoding: "utf8", timeout: 15_000 });
+          } else answer = execSync(handler.command, { windowsHide: true, input, cwd, encoding: "utf8", timeout: r3Root ? 200 : 15_000 });
         } catch (error) {
           return `hook failed (${(error as Error).message.split("\n")[0]})`;
         }
+        r3HookFrame = answer.trim();
         const decision = JSON.parse(answer || "{}") as { decision?: string; reason?: string };
         if (decision.decision === "deny") return decision.reason ?? "denied";
       }
@@ -310,6 +324,20 @@ function hookDenial(name: string, args: unknown = {}, stepIdx = 0, always = fals
   return null;
 }
 out({ event: "init", conversation_id: CONV, init: { cwd: process.cwd(), tools: ["run_command", "write_to_file", ...(mode === "ask-peer" ? ["list_bots", "ask_bot"] : [])], permission_mode: "accept-edits" } });
+if (r3Root) {
+  const denied = hookDenial("read_file", { file_path: join(process.cwd(), "ordinary.txt") }, 0, true);
+  if (denied !== null) throw new Error(denied);
+  await r3Barrier(r3HookFrame);
+  r3Record("accepted"); r3Record("tool-ran");
+  for (const step of [2, 3]) {
+    r3Record("callback-attempt");
+    const denial = hookDenial("read_file", { file_path: join(process.cwd(), "ordinary.txt") }, step, true);
+    r3Record("callback", denial === null ? r3HookFrame : denial);
+  }
+  r3Record("output-attempt");
+  out({ event: "result", conversation_id: CONV, result: { conversation_id: CONV, status: "SUCCESS", response: "R3-LATE-OUTPUT", duration_seconds: 1, num_turns: 1 } });
+  process.exit(0);
+}
 if (mode === "big-frame") out({ event: "fake_big_frame", conversation_id: CONV, fake_big_frame: { text: `BIGFRAME-CANARY ${"x".repeat(70_000)}` } });
 // A relayed ask-peer turn's tools are its MCP calls (call_mcp_tool steps, below): no step of its own.
 const toolCalls: Array<{ name: string; args: Record<string, unknown> }> | null = process.env.FAKE_AGY_TOOL_CALLS
@@ -335,7 +363,7 @@ if (process.env.FAKE_AGY_EXTRA_STEPS === "1") {
 // A genuine crash: the child dies mid-turn with no `result` and nobody
 // asked it to stop (STOP1 pins this as exit_before_result, unlike a Stop).
 if (process.env.FAKE_AGY_CRASH_BEFORE_RESULT === "1") {
-  process.stderr.write("fake agy: simulated crash\n");
+  process.stderr.write(`${process.env.FAKE_AGY_CRASH_STDERR ?? "fake agy: simulated crash"}\n`);
   process.exit(3);
 }
 
@@ -390,6 +418,11 @@ for (const [index, call] of calls.entries()) {
     continue;
   }
   const refused = hookDenial(call.name, call.args, index);
+  // An adversarial engine can report execution even after its hook denied it.
+  if (process.env.FAKE_AGY_REPORT_STATE === "DONE" || process.env.FAKE_AGY_REPORT_STATE === "ERROR") {
+    step(process.env.FAKE_AGY_REPORT_STATE);
+    continue;
+  }
   if (refused !== null) {
     step("ERROR", { error: { type: "TOOL_ERROR", message: `tool call denied by pre-tool hook: ${refused}` } });
     continue;
@@ -398,7 +431,7 @@ for (const [index, call] of calls.entries()) {
     // The platform's own command shell: there is no /bin/sh on Windows, so a run_command there must go through cmd.exe
     // (ComSpec), or the step "ran" without running anything and a test's file never appears.
     const shell = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "/bin/sh";
-    try { execSync(call.args.CommandLine, { cwd: process.cwd(), stdio: "ignore", shell }); } catch { /* the step still ran */ }
+    try { execSync(call.args.CommandLine, { windowsHide: true, cwd: process.cwd(), stdio: "ignore", shell }); } catch { /* the step still ran */ }
   }
   step("DONE");
 }
@@ -406,8 +439,11 @@ if (process.env.FAKE_AGY_DUMP && toolCalls) writeFileSync(`${process.env.FAKE_AG
 const denial = toolCalls ? null : hookDenial(toolName);
 if (toolCalls) {
   // the tool steps ran above
-} else if (denial !== null) {
-  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ERROR", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {}, error: { type: "TOOL_ERROR", message: `tool call denied by pre-tool hook: ${denial}` } } } });
+} else if (denial !== null || process.env.FAKE_AGY_DENIED_COMMAND === "1") {
+  // A native permission denial did not execute the tool. Reporting DONE
+  // here fabricates an unapproved execution before the denied_actions result.
+  const message = denial !== null ? `tool call denied by pre-tool hook: ${denial}` : "command denied by native permissions";
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ERROR", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {}, error: { type: "TOOL_ERROR", message } } } });
   if (process.env.FAKE_AGY_DUMP) writeFileSync(`${process.env.FAKE_AGY_DUMP}.hook.json`, JSON.stringify({ tool: toolName, denial }));
 } else {
   if (process.env.FAKE_AGY_DUMP && process.env.FAKE_AGY_RUN_HOOKS === "1") writeFileSync(`${process.env.FAKE_AGY_DUMP}.hook.json`, JSON.stringify({ tool: toolName, denial: null }));
@@ -422,6 +458,11 @@ if (process.env.FAKE_AGY_CRASH_AFTER_USAGE === "1") {
 }
 // FAKE_AGY_HOLD_AFTER_USAGE=1: the per-step usage is out, then the child waits with no result (a Stop or a dispose lands mid-turn)
 if (process.env.FAKE_AGY_HOLD_AFTER_USAGE === "1") await new Promise((resolve) => setTimeout(resolve, 30_000));
+// FAKE_AGY_RESULT_FAILED=<json>: a non-SUCCESS result carrying these fields (a structured `error`, or only a `message`).
+if (process.env.FAKE_AGY_RESULT_FAILED) {
+  out({ event: "result", conversation_id: CONV, result: { conversation_id: CONV, status: "FAILED", ...JSON.parse(process.env.FAKE_AGY_RESULT_FAILED), duration_seconds: 1, num_turns: 1 } });
+  process.exit(0);
+}
 // FAKE_AGY_DENIED_COMMAND=1: accept-edits denied run_command and agy wrote no reply (agy result.denied_actions).
 const deniedCommand = process.env.FAKE_AGY_DENIED_COMMAND === "1";
 if (deniedCommand) response = "";
@@ -431,8 +472,9 @@ out({ event: "result", conversation_id: CONV, result: { conversation_id: CONV, s
 if (process.env.FAKE_AGY_POST_RESULT_STEP === "1") {
   out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 9, state: "ACTIVE", step_type: "planner_response" } });
 }
+if (r3HoldRetirement()) await new Promise(() => {});
 const postResultDelayMs = Number(process.env.FAKE_AGY_POST_RESULT_DELAY_MS ?? 0);
 if (Number.isFinite(postResultDelayMs) && postResultDelayMs > 0) {
   await new Promise((resolve) => setTimeout(resolve, postResultDelayMs));
 }
-process.exit(0);
+if (!r3HoldRetirement()) process.exit(0);

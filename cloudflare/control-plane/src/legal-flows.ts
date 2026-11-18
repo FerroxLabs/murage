@@ -11,16 +11,17 @@
 import { fencedBatch, fencedRun, q, type HomeLease, type Q } from "./billing-lease";
 import { z } from "zod";
 import { LEGAL_DOCS, type LegalDoc } from "./legal-docs.generated";
-import { DAY_MS, PLAN_MONTHLY_USD, PLANS, RETENTION_MS, type Plan } from "./b5-config";
+import { DAY_MS, FLUX_TERMS_URL, FLUX_TERMS_VERSION, PLAN_MONTHLY_USD, PLANS, RETENTION_MS, type Plan } from "./b5-config";
 import { b3Config, b3Enabled } from "./b3-config";
 import { HTTPError } from "./http";
 import { DISPUTE_RETURNED_SQL } from "./dispute-sql";
 import type { StripeClient } from "./b5-stripe";
-import { firstPaymentCheck, refundLimitAccepted, retentionCutoff } from "./refund-identity";
+import { firstPaymentCheck, identityHintPlan, refundLimitAccepted, refundLimitVersions, retentionCutoff } from "./refund-identity";
 import { MANAGED_PATH, MANAGED_QUOTE_SOURCE, DIRECT_PATH, NOT_REGISTERED_REASONS, sellerOfConsent, SUBMIT_TEXT_VARIANT, type SellerKind } from "./seller";
 import { buttonWordsFor, checkoutLocale, isConsumerWithdrawalCountry } from "./checkout-policy";
 import { aoeDate, aoeEnd, readyAnchorSql, refundWindow } from "./checkout-moments";
 import { REPLACEMENT_WORDS } from "./checkout-replacement";
+import { topupOffered } from "./held-until-item9-highs";
 import { langOf, renderDisclosure, stringsFor, stripePageOf, topupTotalPhrase, topupWording, type Lang } from "./checkout-strings";
 
 /** Bump when any wording below changes; it is logged with every consent so the exact screen can be reconstructed. */
@@ -29,7 +30,14 @@ import { langOf, renderDisclosure, stringsFor, stripePageOf, topupTotalPhrase, t
 // .5 (2026-10-12, owner-approved): the 7-day first-month refund wording is now "full refund, nothing deducted for used credits"; every earlier consent is stale.
 // .6 (2026-10-12, B3 refund clock): the refund line counts from "the day your server is ready" (was "starts"), and the renewal text's refund
 //    sentence with it (REFUND-CLOCK-AND-DOWNGRADE-WORDING.md (b), (e)); every earlier consent is stale.
-export const SCREEN_VERSION = "checkout-clickwrap-2026-10-11.6";
+// .7 (2026-10-30, browser-owner design section 11): the acceptance sentence, the Stripe submit sentence and the re-accept words now carry the
+//    age confirmation ("You confirm you are 18 or older"); every earlier consent is stale (409 disclosure_stale) and carries no age proof.
+// .8 (2026-10-31): the acceptance sentence, the Stripe submit sentence and the re-accept words also name the Flux Router Terms of Service
+//    (one acceptance, no second screen; FLUX_TERMS_VERSION is stored with it); every earlier consent is stale (409 disclosure_stale).
+export const SCREEN_VERSION = "checkout-clickwrap-2026-10-30.8";
+/** The checkout screens whose words carried the age confirmation. A checkout acceptance proves age only through one of these (the age is
+ *  proven by the words shown, kept in checkout_consents.wording and terms_acceptances.wording, never by a new column). */
+export const AGE_SCREENS: readonly string[] = ["checkout-clickwrap-2026-10-30.7", SCREEN_VERSION];
 export const WITHDRAWAL_WINDOW_MS = 14 * DAY_MS;
 export const REFUND_WINDOW_MS = 7 * DAY_MS;
 export const EXPORT_PAUSE_MAX_MS = 7 * DAY_MS;
@@ -60,8 +68,10 @@ const sha256Hex = async (s: string) => [...new Uint8Array(await crypto.subtle.di
 // ---- Wording (CHECKOUT.md, verbatim) -------------------------------------------------------------------------------------
 
 export const WORDING = {
+  // The pre-r13 checkbox screen's words, kept exactly: recordAcceptanceAtCompletion archives them for a consent from that screen, which did not
+  // ask for the age. They are a record of what was shown, so they never gain the age words (AGE_SCREENS says which screens had them).
   terms: "I have read and agree to the Murage Cloud terms, the Terms of Service and the Privacy Policy",
-  reaccept: "I have read and agree to the updated Murage Cloud terms, the Terms of Service and the Privacy Policy",
+  reaccept: "I confirm I am 18 or older, and I have read and agree to the updated Murage Cloud terms, the Terms of Service, the Flux Router Terms of Service and the Privacy Policy",
   authorization: "I authorize Ferrox Labs, LLC to charge my payment method for this monthly subscription until I cancel.",
   arbitration: "Disputes go to individual arbitration, not class actions, unless you are a consumer in the EU, EEA, UK or Switzerland. "
     + "You can opt out within 30 days of ticking this box: email privacy@murage.ai.",
@@ -165,6 +175,9 @@ export function topupNumbers(amountUsd: number, siteLocale: string | null | unde
   return { amount: amountUsd, threshold: TOPUP_DEFAULTS.thresholdUsd, cap: Math.max(TOPUP_DEFAULTS.capUsd, amountUsd), totalText: topupTotalPhrase(siteLocale, amountUsd) };
 }
 
+/** The re-accept words that carried the age confirmation (the stored `wording` of a 'reaccept' row is exactly one of these). The screen before the Flux line (.7) and today's: a row written then still proves the age. */
+export const AGE_REACCEPT_WORDINGS: readonly string[] = ["I confirm I am 18 or older, and I have read and agree to the updated Murage Cloud terms, the Terms of Service and the Privacy Policy", WORDING.reaccept];
+
 export const currentVersions = () => ({ cloudTerms: LEGAL_DOCS.cloudTerms.versionId, termsOfService: LEGAL_DOCS.termsOfService.versionId,
   privacyPolicy: LEGAL_DOCS.privacyPolicy.versionId });
 
@@ -182,13 +195,15 @@ export function buildDisclosure(plan: Plan, now: number, quote: TaxQuoteRow | nu
   return {
     screenVersion: SCREEN_VERSION,
     versions: currentVersions(),
+    // Flux Router's terms, named in the acceptance line: not a document of ours, so not part of `versions` (the stale check on documentVersions).
+    fluxTerms: { version: FLUX_TERMS_VERSION, url: FLUX_TERMS_URL },
     plan, planName: PLAN_NAMES[plan], priceUsd: PLAN_MONTHLY_USD[plan],
     euCountries: EU_REGION_COUNTRIES,
     variants: { immediate: variant() },
     wording: { ...WORDING, authorization: authorizationFor(seller), ...(opts ? topupWording(opts.siteLocale, topupNumbers(opts.topupAmountUsd ?? TOPUP_DEFAULTS.amountUsd, opts.siteLocale)) : {}) },
     // Who sells (seller.ts). A Link buyer sees the merchant-of-record line, and automatic top-up is not offered: a Managed Payments
     // subscription only authorizes Link to charge it, so Ferrox cannot charge that payment method for top-ups.
-    seller, sellerLine: managed ? LINK_SELLER_LINE : null, topupAvailable: !managed,
+    seller, sellerLine: managed ? LINK_SELLER_LINE : null, topupAvailable: !managed && topupOffered(),
     topupDefaults: { ...TOPUP_DEFAULTS, capPeriod: TOPUP_CAP_PERIOD, capResets: TOPUP_CAP_RESETS },
     tax: quote ? { quoteId: quote.id, source: quote.source, country: quote.country, postalCode: quote.postal_code, priceCents: quote.price_cents,
       taxCents: quote.tax_cents, totalCents: quote.total_cents, topupAmountCents: quote.topup_amount_cents, topupTaxCents: quote.topup_tax_cents,
@@ -356,7 +371,8 @@ export function prepareConsent(input: ConsentInput, plan: Plan, now: number, met
   const shown = renderDisclosure(plan, country, siteLanguage, ctx.seller, input.checkoutLanguage);
   if (shown.renewalText !== input.renewalText) throw new HTTPError(409, "disclosure_stale");
   // Automatic top-up is a Ferrox charge on the saved card; a Managed Payments subscription only authorizes Link to charge it.
-  if (ctx.seller === "link" && input.topup?.enabled) throw new HTTPError(409, "topup_not_available");
+  // The same refusal while the item 9 hold is on: top-up is neither offered nor accepted, so no enabled topup_settings row can be written.
+  if (input.topup?.enabled && (ctx.seller === "link" || !topupOffered())) throw new HTTPError(409, "topup_not_available");
   let topup: PreparedConsent["topup"] = { enabled: false, amountCents: TOPUP_DEFAULTS.amountUsd * 100, thresholdCents: TOPUP_DEFAULTS.thresholdUsd * 100,
     capCents: TOPUP_DEFAULTS.capUsd * 100, totalCents: null, text: null };
   // The words the customer actually saw, in the site language and page order: the disclosure lines (price, renewal, refund, mp, eu, deat,
@@ -379,7 +395,7 @@ export function prepareConsent(input: ConsentInput, plan: Plan, now: number, met
   const startRequestText = stringsFor(siteLanguage).disclosure.button;
   const schedule = scheduleFor(now);
   // Everything the screen showed, frozen with the record (the exact consent wording, the lines, the documents).
-  const disclosure = JSON.stringify({ screenVersion: SCREEN_VERSION, documentVersions: cur, plan, priceCents: PLAN_MONTHLY_USD[plan] * 100,
+  const disclosure = JSON.stringify({ screenVersion: SCREEN_VERSION, documentVersions: cur, fluxTermsVersion: FLUX_TERMS_VERSION, plan, priceCents: PLAN_MONTHLY_USD[plan] * 100,
     declaredCountry: country, billingCountry: country, postalCode: postal, locale, siteLanguage, path: shown.path, lines: shown.lines, renewalText: input.renewalText,
     buttonText, startRequestText, policyVersion: ctx.policyVersion, wording, topup,
     // Which Stripe-page variant this customer is sent to, with its version and exact words (plan §3.2, owner decision 2026-10-14; Astra
@@ -453,10 +469,10 @@ export async function recordAcceptanceAtCompletion(env: Env, consentId: string, 
   // final at once, and a pre-r1 row is normalised exactly once, even when the completion time equals the consent's created_at (a replay
   // can then never rewrite it; WP4 closing pass, P3).
   const [ins] = await env.DB.batch([
-    env.DB.prepare(`INSERT OR IGNORE INTO terms_acceptances (id,user_id,cloud_terms_version,tos_version,privacy_version,source,consent_id,wording,accepted_at,client_meta,normalised_at)
-      SELECT ?,user_id,cloud_terms_version,tos_version,privacy_version,'checkout',id,?,?,COALESCE(client_meta,'{}'),? FROM checkout_consents
+    env.DB.prepare(`INSERT OR IGNORE INTO terms_acceptances (id,user_id,cloud_terms_version,tos_version,privacy_version,source,consent_id,wording,accepted_at,client_meta,normalised_at,flux_terms_version)
+      SELECT ?,user_id,cloud_terms_version,tos_version,privacy_version,'checkout',id,?,?,COALESCE(client_meta,'{}'),?,CASE WHEN screen_version=? THEN ? END FROM checkout_consents
       WHERE id=? AND NOT EXISTS (SELECT 1 FROM terms_acceptances WHERE consent_id=?)`)
-      .bind(`accept-${crypto.randomUUID()}`, wording, completedAt, completedAt, consentId, consentId),
+      .bind(`accept-${crypto.randomUUID()}`, wording, completedAt, completedAt, SCREEN_VERSION, FLUX_TERMS_VERSION, consentId, consentId),
     env.DB.prepare(`UPDATE terms_acceptances SET accepted_at=?, wording=?, normalised_at=? WHERE consent_id=? AND source='checkout' AND normalised_at IS NULL
       AND accepted_at=(SELECT created_at FROM checkout_consents WHERE id=? AND start_request_at IS NOT NULL)`)
       .bind(completedAt, wording, completedAt, consentId, consentId),
@@ -489,7 +505,7 @@ export interface ConsentRow {
   paid_at: number | null;
   /** Migration 0061: the completion could not record the acceptance (no acceptance line on record); parked until repaired and replayed. */
   acceptance_parked_at?: number | null; statutory_withdraw_until: number | null; guarantee_withdraw_until: number | null; refund7_until: number | null;
-  payment_failed_at: number | null; rejected_at: number | null; rejected_reason: string | null;
+  payment_failed_at: number | null; rejected_at: number | null; rejected_reason: string | null; rejected_collected_country: string | null;
   /** Migration 0068: our button label as pressed, in the site language. NULL on a consent from before r1. */
   start_request_text?: string | null;
   /** The frozen screen (JSON: lines, renewalText, siteLanguage, startRequestText from r1, ...). Read through archivedSnapshot. */
@@ -766,6 +782,48 @@ export async function queueServerReady(env: Env, lease: HomeLease, homeId: strin
       AND id=(SELECT consent_id FROM billing_subscriptions WHERE home_id=?)`, readyEnd, homeId),
   ]);
 }
+/** The welcome email's subject (billing_notices server_ready); b5-billing's subject table reads it from here. */
+export const SERVER_READY_SUBJECT = "Welcome to Murage Cloud: your server is ready";
+/** Where the welcome email sends a customer for the desktop app: the public download page, the same in every environment. */
+const DESKTOP_DOWNLOAD_URL = "https://murage.ai/download";
+/** The site origin the welcome email links to: this environment's BILLING_RETURN_ORIGIN, the same origin every other customer email links to
+ *  (prod murage.ai, staging the preview site). Never a default: a missing or invalid value leaves the link out rather than point staging at prod. */
+function readyEmailOrigin(env: Env): string | null {
+  try {
+    const u = new URL(env.BILLING_RETURN_ORIGIN ?? "");
+    return u.protocol === "https:" && u.pathname === "/" && !u.search && !u.hash && !u.username ? u.origin : null;
+  } catch { return null; }
+}
+/** The welcome email, one builder for subject, text and HTML. `siteLink` is the full link to the customer's Cloud page for THIS environment
+ *  (null: the link, the button and the step that needs them are left out). Sections are {heading?, paragraphs}; the one button follows the
+ *  first section. The email states no refund deadline: the deadline is still generated by serverReadyData (refundWindowEndsAt) and enforced
+ *  by the refund rules. */
+export function buildServerReadyEmail(o: { siteLink: string | null; homeId: string }): RenderedEmail {
+  const steps = [
+    ...(o.siteLink ? [`Click Open Murage. It opens your own Murage page: ${o.siteLink}`] : []),
+    "The first time you open it in a browser, we email you a 6-digit code. Type it in. After that, that browser opens straight in, no code.",
+    "Bookmark the page. It is the way back to your server from any computer, any day.",
+  ].map((step, i) => `${i + 1}. ${step}`);
+  const sections: { heading?: string; paragraphs: string[] }[] = [
+    { paragraphs: ["Welcome to Murage Cloud.", "Your private server is ready, and Ember, your assistant, has moved in. It is yours and only yours, and it runs day and night."] },
+    { heading: "Three steps and you're in", paragraphs: steps },
+    { heading: "Want Murage on your computer too?", paragraphs: [`Download the app: ${DESKTOP_DOWNLOAD_URL}`,
+      "Open it, press Cloud home, then Connect to your Cloud home. Your browser opens. Sign in with this same email and press Connect the Murage app."] },
+    { heading: "Your first few minutes with Ember", paragraphs: ["Ember starts by asking what to call you. Then you see a short list of things Ember can start on today, like a short briefing every morning, planning your day, or looking into something for you. Pick one and see what comes back."] },
+    { heading: "Good to know", paragraphs: ["Your server keeps working when your computer is off. Close the laptop, go about your day, and Ember is still there when you come back.",
+      "Your plan, billing and settings are on that same page.",
+      "Now and then, before a bigger change, we email you a 6-digit code the same way. That is just us checking it is really you."] },
+    { paragraphs: ["Questions? Email support@murage.ai and we reply within 2 working days. Include the reference below if you can.", "Glad you're here."] },
+  ];
+  const text = [...sections.flatMap((x, i) => [...(x.heading ? [x.heading] : []), ...x.paragraphs,
+      ...(i === 0 && o.siteLink ? [`Open Murage: ${o.siteLink}`] : [])]), `Reference: ${o.homeId}`].join("\n\n");
+  const preview = `<div style="display:none;max-height:0;overflow:hidden">Your own private server, with Ember on it. One link gets you in. Keep this email.</div>`;
+  const button = o.siteLink ? `<p style="margin:20px 0"><a href="${esc(o.siteLink)}" style="display:inline-block;background:#111;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600">Open Murage</a></p>` : "";
+  const body = sections.map((x, i) => `${x.heading ? `<h2 style="font-size:16px;margin:22px 0 6px">${esc(x.heading)}</h2>` : ""}${x.paragraphs.map((p) => `<p style="margin:0 0 12px">${esc(p).replace(esc(DESKTOP_DOWNLOAD_URL), `<a href="${esc(DESKTOP_DOWNLOAD_URL)}">${esc(DESKTOP_DOWNLOAD_URL)}</a>`)}</p>`).join("")}`
+    + (i === 0 ? button : "")).join("");
+  const html = `<!doctype html><html><body style="font-family:inherit;font-size:14px;line-height:1.5;max-width:560px">${preview}${body}<p style="color:#666;font-size:12px">Reference: ${esc(o.homeId)}</p></body></html>`;
+  return { subject: SERVER_READY_SUBJECT, text, html };
+}
 /** The "your server is ready" email (Astra JOURNEY-B-3 #5): its refund deadline is generated with the SAME clock as eligibility. `handoffAt`
  *  is the moment the email is handed to the sender (billing_notices sent_at, readyAnchorSql: the refund window's ready moment), so the
  *  deadline is the later of the consent's frozen deadline, the payment rule and 7 days from that handoff (refundWindow, refund7Deadline),
@@ -775,10 +833,8 @@ export async function serverReadyData(env: Env, homeId: string, readyAt: number,
   const sub = await env.DB.prepare(`SELECT b.first_paid_at AS paid, c.refund7_until AS frozen FROM billing_subscriptions b LEFT JOIN checkout_consents c ON c.id=b.consent_id
     WHERE b.home_id=?`).bind(homeId).first<{ paid: number | null; frozen: number | null }>();
   const deadline = sub?.paid != null ? Math.max(sub.frozen ?? 0, aoeEnd(sub.paid, 7), aoeEnd(handoffAt, 7)) : null;
-  const text = "Your Murage Cloud server is ready. Sign in to your account page to open it.\n\n"
-    + (deadline !== null ? `Not right for you? Ask by the end of ${aoeDate(deadline)} (anywhere on Earth), 7 days from the day your server is ready, and we refund your first month in full.\n\n` : "")
-    + `Reference: ${homeId}`;
-  return { readyAt, refundWindowEndsAt: deadline, emailSubject: "Murage Cloud: your server is ready", emailText: text, emailHtml: htmlOf(text) };
+  const mail = buildServerReadyEmail({ siteLink: readyEmailOrigin(env) === null ? null : cloudUrl(readyEmailOrigin(env)!), homeId });
+  return { readyAt, refundWindowEndsAt: deadline, emailSubject: mail.subject, emailText: mail.text, emailHtml: mail.html };
 }
 /** How long a suspended server's data is kept before deletion, as customer wording ("30 days"): the deletion schedule's own
  *  config.retentionMs (CLOUD_B3_CONFIG), in whole days rounded DOWN, so the wording never promises more than the schedule keeps
@@ -805,6 +861,9 @@ export interface TopupRow { home_id: string; user_id: string; enabled: number; a
 export async function saveTopup(env: Env, lease: HomeLease, a: { homeId: string; userId: string; enabled: boolean; amountCents: number; thresholdCents: number; capCents: number;
   consentId: string | null; source: string; ip: string | null; userAgent: string | null }, now: number): Promise<void> {
   await fencedBatch(env, lease, [
+    // Switching top-up off, or on again after it was off, lifts a pause and the backoff: the owner has acted. Editing an enabled setting does not.
+    q(`UPDATE topup_state SET paused_at=NULL, pause_reason=NULL, paused_method=NULL, declines=0, retry_after=NULL, retry_fails=0, notified_reason=NULL
+      WHERE home_id=? AND (?=0 OR NOT EXISTS (SELECT 1 FROM topup_settings WHERE home_id=? AND enabled=1))`, a.homeId, a.enabled ? 1 : 0, a.homeId),
     q(`INSERT INTO topup_settings (home_id,user_id,enabled,amount_cents,threshold_cents,cap_cents,cap_period,cap_resets,consent_id,updated_at,revision)
       VALUES (?,?,?,?,?,?,?,?,?,?,1) ON CONFLICT(home_id) DO UPDATE SET enabled=excluded.enabled,amount_cents=excluded.amount_cents,
         threshold_cents=excluded.threshold_cents,cap_cents=excluded.cap_cents,consent_id=COALESCE(excluded.consent_id,consent_id),updated_at=excluded.updated_at,
@@ -991,6 +1050,54 @@ export async function quoteFirstMonthRefund(env: Env, homeId: string, now: numbe
   const reason = owed === 0 && !disputeOnly ? "already_refunded" : null;
   return { ...blank, ...base, eligible: owed > 0 || disputeOnly, reason, feeCents: fee, taxCents: tax, usedCreditCents: 0, refundNetCents: refundNet,
     refundTaxCents: refundTax, refundCents: owed, creditMeasured: true, oncePerPerson, ...(identityExpired ? { identityExpired } : {}) };
+}
+
+/** GET /v1/account/cloud: can the 7-day first-month offer still be granted for this subscription's first payment? false only when it would be
+ *  refused for a reason asking cannot change (no first payment, window expired, already refunded, abuse closure, not the customer's first
+ *  payment); true when nothing refuses it; undefined when D1 alone cannot decide (never hides the button on uncertainty). Reads only, no Stripe.
+ *
+ *  refundEligible concerns ONLY the voluntary 7-day first-month offer; it never gates the EU/UK statutory withdrawal (summary.withdrawal),
+ *  which consumers must show independently.
+ *
+ *  The route reads from a replica, where a stale `false` could hide the button while the primary has an objection or a new payment. So ALL of
+ *  this hint's reads run on the PRIMARY (a "first-primary" session; a binding without sessions has no replicas and is the primary), in ONE
+ *  batch (one round trip), and the decision is made in JS from the rows: the same rules as quoteFirstMonthRefund in the same order, with
+ *  the identity part (and the same keyring validation as the quote) from identityHintPlan. If the primary cannot be read: undefined. */
+export async function firstMonthOfferHint(env: Env, i: { homeId: string; userId: string }, now: number): Promise<boolean | undefined> {
+  try {
+    // Only identifiers come from the caller (its summary was read from a replica). The subscription, the home's ready time and the frozen
+    // consent deadline are read here, in the same primary batch as everything else, and the window is recomputed with refundWindow.
+    const raw = (env.DB as unknown as { primary?: D1Database }).primary ?? env.DB;
+    const db: D1Database | D1DatabaseSession = typeof raw.withSession === "function" ? raw.withSession("first-primary") : raw;
+    const versions = refundLimitVersions(env);
+    const statements = [
+      db.prepare(`SELECT h.ready_at,h.ready_legacy,${readyAnchorSql("h")} AS ready_anchor FROM cloud_homes h WHERE h.id=?`).bind(i.homeId),
+      db.prepare("SELECT first_invoice_id,first_paid_at,first_invoice_cents,abuse_closed_at FROM billing_subscriptions WHERE home_id=?").bind(i.homeId),
+      db.prepare("SELECT c.refund7_until AS r FROM billing_subscriptions b JOIN checkout_consents c ON c.id=b.consent_id WHERE b.home_id=?").bind(i.homeId),
+      db.prepare("SELECT 1 AS x FROM first_month_refunds WHERE user_id=? AND stripe_refund_id IS NOT NULL").bind(i.userId),
+      db.prepare("SELECT 1 AS x FROM abuse_closures WHERE home_id=?").bind(i.homeId),
+      // refundLimitAccepted, as one statement over the same primary snapshot (no versions: the terms carry no limit).
+      versions.length === 0 ? db.prepare("SELECT 1 AS x WHERE 0") : db.prepare(`SELECT 1 AS x FROM terms_acceptances WHERE user_id=? AND cloud_terms_version IN (${versions.map(() => "?").join(",")})
+        AND (consent_id IS NULL OR EXISTS (SELECT 1 FROM checkout_consents ac WHERE ac.id=terms_acceptances.consent_id AND ac.completed_at IS NOT NULL))
+        AND (accepted_at<=(SELECT first_paid_at FROM billing_subscriptions WHERE home_id=?)
+          OR (consent_id IS NOT NULL AND consent_id=(SELECT consent_id FROM billing_subscriptions WHERE home_id=?))) LIMIT 1`).bind(i.userId, ...versions, i.homeId, i.homeId),
+    ];
+    const plan = identityHintPlan(env, db, i, now);
+    const r = (await db.batch([...statements, ...(plan?.statements ?? [])])).map((x) => (x.results ?? []) as Record<string, unknown>[]);
+    const home = r[0][0] as { ready_at: number | null; ready_legacy: number | null; ready_anchor: number | null } | undefined;
+    const sub = r[1][0] as { first_invoice_id: string | null; first_paid_at: number | null; first_invoice_cents: number | null; abuse_closed_at: number | null } | undefined;
+    if (!home || !sub) return undefined;
+    if (!sub.first_invoice_id || sub.first_paid_at === null || !sub.first_invoice_cents) return false;
+    const endsAt = refundWindow((r[2][0]?.r as number | null | undefined) ?? null, sub.first_paid_at, home).endsAt;
+    if (endsAt !== null && now > endsAt) return false;
+    if (r[3].length > 0) return false;
+    if (sub.abuse_closed_at !== null || r[4].length > 0) return false;
+    // Terms that do not carry the limit: the offer is given as those terms say, with no identity check.
+    if (r[5].length === 0) return true;
+    if (!plan) return undefined;
+    const hint = await plan.decide(r.slice(6), sub.first_paid_at);
+    return hint === undefined ? undefined : hint === "granted";
+  } catch { return undefined; }
 }
 
 // ---- Document versions and re-acceptance ---------------------------------------------------------------------------------------

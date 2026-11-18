@@ -38,13 +38,13 @@ describe.skipIf(!built || !windows)("the real addon on Windows", () => {
 
   it("loads, says its version, and offers the handle functions", () => {
     const addon = loadExclusionAddon()!;
-    expect(addon.version()).toBe(10);
+    expect(addon.version()).toBe(11);
     for (const name of ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "renameNoReplace", "processes"] as const) expect(typeof addon[name], name).toBe("function");
   });
 
   it("removes shutdown privileges and accepts an already stripped token in a disposable process", () => {
     const code = "const a=require(process.argv[1]);process.stdout.write(JSON.stringify([a.dropShutdownPrivileges(),a.dropShutdownPrivileges()]));";
-    const child = spawnSync(process.execPath, ["-e", code, built!], { encoding: "utf8", timeout: 15000 });
+    const child = spawnSync(process.execPath, ["-e", code, built!], { windowsHide: true, encoding: "utf8", timeout: 15000 });
     expect(child.status, child.stderr).toBe(0);
     expect(JSON.parse(child.stdout)).toEqual([{ ok: true }, { ok: true }]);
   });
@@ -174,7 +174,7 @@ describe.skipIf(!built || !windows)("the real addon on Windows", () => {
     const copy = join(dir, "qqq-named-engine.exe");
     copyFileSync(process.execPath, copy);
     chmodSync(copy, 0o755);
-    const child = spawn(copy, ["-e", "setTimeout(()=>{},30000)", "a b", 'c"d', "--x"], { stdio: "ignore" });
+    const child = spawn(copy, ["-e", "setTimeout(()=>{},30000)", "a b", 'c"d', "--x"], { windowsHide: true, stdio: "ignore" });
     children.push(child);
     expect(waitFor(() => addon.processes().some((item) => item.pid === child.pid && item.argv !== null))).toBe(true);
     const item = addon.processes().find((entry) => entry.pid === child.pid)!;
@@ -193,7 +193,7 @@ describe.skipIf(!built || !windows)("the real addon on Windows", () => {
     const done = join(dir, "done");
     // A node that writes a file and ends. This thread is then blocked, so its loop cannot close the handle it holds to the ended
     // process: Windows keeps that process in the list until the handle closes, with its memory (and command line) gone.
-    const child = spawn(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(done)}, "x")`], { stdio: "ignore" });
+    const child = spawn(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(done)}, "x")`], { windowsHide: true, stdio: "ignore" });
     children.push(child);
     expect(waitFor(() => existsSync(done))).toBe(true);
     sleepMs(1_000);
@@ -232,7 +232,7 @@ const wait=()=>new Promise(r=>setTimeout(r,5));
     catch(e){if(first===null){first=e.code;fs.writeFileSync(E.R_TRIED,"refused "+e.code);}await wait();}
   }
   fs.writeFileSync(E.R_DONE,"1");
-})();`], { env: { ...process.env, R_GO: go, R_TRIED: tried, R_DONE: done, R_INDEX: index, R_ROW: row }, stdio: "ignore" });
+})();`], { windowsHide: true, env: { ...process.env, R_GO: go, R_TRIED: tried, R_DONE: done, R_INDEX: index, R_ROW: row }, stdio: "ignore" });
     children.push(codex);
     const planned = planEngineHistory({ homes: fx.homes, folders: fx.folders, memoryFolders: fx.memoryFolders, sessions: fx.sessions, kind: "plan" });
     const inode = lstatSync(index, { bigint: true }).ino;

@@ -60,11 +60,13 @@ describe("NL-CARD-1018 the exact turn: owner-clean No limits, bash ./build.sh in
   it("runs with no card when the turn is clean", () => {
     expect(turn({}).approve).toBe("auto-approved Bash (no limits)");
   });
-  it("still cards when the turn is marked (a real outside source), unattended, not the owner's start, or cut", () => {
-    expect(turn({ outsideRead: ["outside tool"] }).approve).toBeNull();
-    expect(turn({ outsideRead: ["web page"] }).approve).toBeNull();
+  // NOLIM 1.0.19 (N1, N2.4): the owner's work runs whether or not the turn is marked or cut; the finalizer reads the STORED origin only.
+  // Only work no longer provably the owner's (unattended here) keeps its card.
+  it("runs on a marked turn (a real outside source), the owner's work without a start proof, or a cut input; unattended work still cards", () => {
+    expect(turn({ outsideRead: ["outside tool"] }).approve).toBeTruthy();
+    expect(turn({ outsideRead: ["web page"] }).approve).toBeTruthy();
+    expect(turn({ ownerStarted: false }).approve).toBeTruthy();
+    expect(turn({ inputTruncated: true }).approve).toBeTruthy();
     expect(turn({ unattended: true }).approve).toBeNull();
-    expect(turn({ ownerStarted: false }).approve).toBeNull();
-    expect(turn({ inputTruncated: true }).approve).toBeNull();
   });
 });

@@ -1,3 +1,5 @@
+import { recallNoticeText } from '@/lib/recall-copy';
+import { toolBudgetLabel } from "@/lib/tool-budget-copy";
 import { useId, type ReactNode } from "react";
 import { AlertTriangle, Hourglass, MonitorX, RefreshCw, Settings2 } from "lucide-react";
 import { isWordedLocalFailure, classifyLocalResourceConflict, classifyLocalSetupFailure, engineErrorCategory, type LocalResourceConflict, type LocalSetupFailure } from "../../shared/provider-error";
@@ -24,6 +26,7 @@ export function RuntimeErrorCard({ message: rawMessage, details, errorKind, loca
   const local = setup ? undefined : classifyLocalSetupFailure(message, details, localFailure);
   if (local) return <LocalSetupFailureCard failure={local} engine={localFailureEngine} message={message} details={details} diagnostic={tracking} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} />;
   const safetyBlocked = !setup && (isProviderSafetyBlock(message) || isProviderSafetyBlock(details ?? ""));
+  // meetgreet 1.0.19: such a line still gets a plain reason and the next step (below), never "no explanation".
   const generic = /^(?:internal error|unknown error|ACP request failed|request failed)[.!]?$/i.test(message.trim());
   // Fixed copy for the kind the driver reported (Fuigo's error_kind), led
   // before the engine's own message; an unknown kind keeps the plain card.
@@ -39,7 +42,7 @@ export function RuntimeErrorCard({ message: rawMessage, details, errorKind, loca
   // The sentence names Retry only when this card shows that button (below).
   const canRetry = !!onRetry && !setup && !safetyBlocked;
   const coded = setup ? undefined : describeTurnError(message, botName, { canRetry });
-  const plain = (!setup && botName ? plainEngineError(message, botName) : undefined) ?? coded?.text;
+  const plain = recallNoticeText(message) ?? toolBudgetLabel(message) ?? (!setup && botName ? plainEngineError(message, botName) : undefined) ?? coded?.text;
   const diagnostic = plain && details && !details.includes(message) ? `${message}\n${details}` : details || message;
   return <div className="flex justify-start">
     <section role="alert" aria-labelledby={titleId} className="w-full max-w-[42rem] rounded-xl border border-danger/30 bg-card p-4 text-ink shadow-sm sm:p-5">
@@ -48,7 +51,7 @@ export function RuntimeErrorCard({ message: rawMessage, details, errorKind, loca
         <div className="min-w-0 flex-1">
           <h3 id={titleId} className="break-words text-[16px] font-semibold leading-snug">{setup ? "This engine needs setup" : safetyBlocked ? t("ux.lcopyb.runtimeError.blockedTitle") : "This request hit a problem"}</h3>
           <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{explanation ?? (generic
-            ? "The engine reported an error without explaining what went wrong. Any available diagnostic information is below."
+            ? `${botName ? `${botName}'s AI service` : "The AI service"} returned an error. Try again, or switch engine.`
             : plain ?? message)}</p>
           {explanation && !generic && <p className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{plain ?? message}</p>}
         </div>

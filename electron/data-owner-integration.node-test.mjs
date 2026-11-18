@@ -2,6 +2,7 @@ import {createReturnAuthority,revokeReturn,joinExplicitQuit} from "./backup-offl
 import {backupStartupDispatch} from "./backup-startup.mjs";
 // Node runner: included by package.json test:electron, not Vitest discovery.
 import assert from "node:assert/strict";
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -10,13 +11,19 @@ import { settleDesktopStartup, terminalDesktopStartup, startupFailureCode } from
 import { BACKUP_MODE_ARGUMENT } from "./backup-mode.mjs";
 import { awaitOwnedWork, SERVER_CHILD_STOP_TIMEOUT_MS } from "./server-child-lifecycle.mjs";
 import { dataDirLeasePaths } from "./data-dir-lease.mjs";
-import { deriveManagedComposioCredentials, MANAGED_COMPOSIO_UPDATE_OPTIONS } from "./managed-composio.mjs";
+import { MANAGED_COMPOSIO_UPDATE_OPTIONS } from "./managed-composio.mjs";
+import { deriveManagedComposioCredentials } from "./testing/composio-fixture.mjs";
+import { createComposioLifecycle } from "./composio-lifecycle.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
 import { trackedCredentialUpdate } from "./secure-credentials.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
 import { launchSecretVia, sendLaunchSecretParent } from "./launch-secret.mjs";
 import { closedControlDirectory } from "./backup-closed-controller.mjs";
 import { desktopFluxEnvironment } from "./workspace-credentials.mjs";
+import * as upgradeStatus from "./memory-upgrade-status.mjs";
+const { memoryUpgradeBlockedSentence } = upgradeStatus;
+const MEMORY_INDEX_STOPPED = "MEMORY_INDEX_STOPPED";
+const upgradeTimeoutCode = upgradeStatus.upgradeTimeoutCode ?? (() => "MEMORY_MIGRATION_TIMEOUT");
 
 const rawSource = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 // Test-only negative controls execute the actual main function with exactly
@@ -56,9 +63,11 @@ function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
   const inert = () => { throw new Error("backup branch must stay inert in an ordinary launch"); };
   return {
     backupStartupDispatch, createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive,
-    createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, firstStartOfVersion: () => false, FIRST_AFTER_UPDATE_NOTE: "", noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null,
+    createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, readStartupPicture: () => null, splashMode: () => "tip", startupIpc: { requestWhatsNew() {} }, noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null,
     // The Sentinel host (sentinel-host.mjs) starts right after ownership; tests that care about its order override it.
-    initializeSentinelHost: async () => {}, sentinelHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
+    initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost: async () => {}, sentinelHost: null,
+    // The jobs a previous install paused (update-launch-pause.mjs) are put back at ready; that touches no data.
+    desktopUpdateLaunchPause: () => ({ resume() {} }), desktopRecoveryMode: false, desktopShutdownStarted: false,
     // The live gate is a top-level const in main.mjs, declared before app.whenReady; the startup block only schedules its probe.
     cloudLive: { start() {}, probeOnFocus() {} },
     // A cold-start Cloud link handoff (cloud-link-handoff.mjs) runs first at ready; an ordinary launch has none.
@@ -105,7 +114,7 @@ test("packaged bootstrap claims canonical ownership before credential reads or m
     app:{isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"}, process:{platform:"linux"}, APP_ICON:null,
     loadSecureCredentials:async()=>{events.push("read");return{};}, secureComposioConfig:async()=>events.push("composio"), secureWorkspaceConfig:async()=>events.push("workspace"),
     acquireDesktopDataOwner:()=>{events.push("lease");assert.deepEqual(menu,[["Server"]],"server menu is installed before ownership");}, assertDesktopStartupActive:()=>{},
-    initializeBackupScheduleHost:async()=>events.push("backup-host"), initializeSentinelHost:async()=>events.push("sentinel-host"),
+    initializeBackupScheduleHost:async()=>events.push("backup-host"), initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost:async()=>events.push("sentinel-host"),
   }, `${bootstrapDependencies} let secureCredentials;`, { menu });
   assert.deepEqual(events, ["lease", "sentinel-host", "backup-host", "read", "composio", "workspace"]);
   assert.deepEqual(menu, [["Server"]]);
@@ -213,10 +222,12 @@ test("actual bootstrap selects fresh connection storage after ownership and befo
   assert.deepEqual(events, ["lease","/fixture/owned",{settingsDirectory:"/fresh/settings",stateDirectory:"/fresh/devices"},"/fresh/credentials.bin"]);
 });
 
-function serverLauncher({ proc, poll, track, environment = {}, portAvailable = async () => true }) {
+function serverLauncher({ proc, poll, track, environment = {}, portAvailable = async () => true, overrides = {} }) {
   const text = between("async function startServerOn(port) {", "async function startServerPackaged()");
   const owner = { utilityServerLeaseEnvironment:()=>({MURAGE_INTERNAL_DATA_DIR_LEASE:"private-fixture-capability"}) };
   const scope = {
+    // c27f55e312: the extracted launcher also inherits the Windows child preload.
+    withHideInherit,
     path, process:{env:environment,resourcesPath:"/fixture/resources"},restoredConnections:null,restoredHarnessEnvironment:env=>env,
     app:{isPackaged:true,getVersion:()=>"1.0.0",getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/resources/app.asar"}, companionToken:"private-companion",
     modelProviderCommitToken:"private-model-provider-commit",
@@ -232,9 +243,52 @@ function serverLauncher({ proc, poll, track, environment = {}, portAvailable = a
     trackOwnedServerChild:(child)=>({exit:new Promise(()=>{}),...track(child)}),
     // The app locale handed to the server for channel replies (U25); none in this fixture.
     systemLanguage:()=>undefined,
+    memoryUpgradeBlocked:null,serverStartSlow:false,slog:()=>{},
+    ...overrides,
   };
   return new Function(...Object.keys(scope), `${text};return startServerOn;`)(...Object.values(scope));
 }
+
+// BOOT-INDEX: a one-time index whose beat really stopped gets its own code, so the page says the step starts over and offers no backup first; a migration keeps its
+// timeout, whose "carries on from the last step" is true of it. A note left by an earlier launch goes before the fork. A note never written ends as any slow start.
+test("a timeout names the one-time index, a migration or nothing, and a note left behind goes before the fork", async () => {
+  const run = async (note) => {
+    const proc = new EventEmitter();
+    proc.pid = 123; proc.kill = () => {}; proc.postMessage = () => {};
+    const seen = [];
+    let stops = 0, blocked = null;
+    const launch = serverLauncher({ proc, poll: async () => { seen.push("poll"); return { outcome: "timeout" }; }, track: () => ({ exited: false, stop: async () => { stops++; } }),
+      overrides: { utilityProcess: { fork: (_entry, _args, options) => { seen.push("fork"); proc.environment = options.env; return proc; } }, readMemoryUpgradeStatus: () => note, clearMemoryUpgradeStatus: () => { seen.push("clear"); }, upgradeTimeoutCode: (status) => { blocked = upgradeTimeoutCode(status); return blocked; } } });
+    return { result: await launch(8799), stops, seen, blocked };
+  };
+  const indexNote = { state: "upgrading", phase: "indexing", step: "backfill", upgrade: { ok: true, state: { phase: "indexing" } } };
+  const index = await run(indexNote);
+  assert.deepEqual(index.result, { proc: null, reason: "memory-blocked" });
+  assert.equal(index.blocked, MEMORY_INDEX_STOPPED);
+  assert.equal(index.stops, 1);
+  assert.deepEqual(index.seen, ["clear", "fork", "poll", "clear"]);
+  // the same beat on a migrating launch: its board says migrating
+  const migration = await run({ state: "upgrading", phase: "indexing", step: "backfill", upgrade: { ok: true, state: { phase: "migrating" } } });
+  assert.deepEqual(migration.result, { proc: null, reason: "memory-blocked" });
+  assert.equal(migration.blocked, "MEMORY_MIGRATION_TIMEOUT");
+  const none = await run(null);
+  assert.deepEqual(none.result, { proc: null, reason: "timeout" });
+  assert.deepEqual(none.seen, ["clear", "fork", "poll", "clear"]);
+});
+
+test("the one-time step's page says the step starts over, in every language, and promises no finished step", () => {
+  for (const language of ["en", "de", "es", "fr", "hi", "ja", "pt", "zh"]) {
+    const sentence = memoryUpgradeBlockedSentence({ code: MEMORY_INDEX_STOPPED }, language, { logPath: "/logs/server.log" });
+    assert.ok(sentence.includes("/logs/server.log"), language);
+    assert.notEqual(sentence, memoryUpgradeBlockedSentence({ code: "MEMORY_MIGRATION_TIMEOUT" }, language, { logPath: "/logs/server.log" }), language);
+  }
+  const english = memoryUpgradeBlockedSentence({ code: MEMORY_INDEX_STOPPED }, "en");
+  assert.match(english, /one-time step/);
+  assert.match(english, /starts over/);
+  assert.doesNotMatch(english, /last step|backup/i);
+  const page = readFileSync(new URL("./recovery/index.html", import.meta.url), "utf8");
+  assert.ok(page.indexOf('id="one-time-step"') < page.indexOf('id="encrypted-backup"'), "the way on comes before any backup");
+});
 
 test("actual utility launch overrides ambient root/delegation only in the owned child", async () => {
   const proc = new EventEmitter();
@@ -316,7 +370,7 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     stopAutomaticRemoteBackups:()=>{},backupScheduleHost:null,closedBackupRequested:false,internalBackupQuit:false,
     // The Sentinel host flushes its desktop producer on exit; it is never a release barrier.
     sentinelHost:{shutdown:async()=>{}},
-    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},modelSignIn:{dispose(){}},localEngineLogin:{shutdown:async()=>{}},mcpServers:{dispose(){}},
+    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},bannerNative:{dispose(){}},attentionSurfaces:{dispose(){}},modelSignIn:{dispose(){}},localEngineLogin:{shutdown:async()=>{}},mcpServers:{dispose(){}},
     desktopBackupTool:{invalidate(){},settled:()=>Promise.resolve()},backupToolCheck:Promise.resolve(),desktopResticTool:null,remoteBackupAttestation:{abort(){}},
     // The bundled adb daemon is not an owned child: it forks itself off the
     // first adb command and stays, so quitting has to stop it by name.
@@ -386,14 +440,19 @@ test("actual quit cancels stalled optional registration but drains its credentia
       writes.push(write);
       return write;
     },
-    deriveManagedComposioCredentials: (options) => deriveManagedComposioCredentials({
-      ...options,
-      fetchImpl: (url, { signal }) => url.endsWith("/v1/me") ? Promise.resolve({ ok: false, status: 401 }) : new Promise((_resolve, reject) => {
-        signal.addEventListener("abort", () => { requestAborted = true; reject(signal.reason); }, { once: true });
-        requested.resolve();
-      }),
-    }),
+
   };
+  const authority = createComposioLifecycle({
+    getConfiguration: () => ({ legacyBrokerUrl: scope.composioBrokerUrl(), registrationAllowed: true,
+      timeoutSignal: ms => AbortSignal.any([controller.signal, AbortSignal.timeout(ms)]) }),
+    getCredentials: () => credentials.read(),
+    saveCredentials: async next => { await scope.updateSecureCredentialDocument(() => next, undefined, MANAGED_COMPOSIO_UPDATE_OPTIONS); return true; },
+    trackRequest: work => writes.push(work),
+    transport: (url, { signal }) => url.endsWith("/v1/me") ? Promise.resolve(new Response(null, { status: 401 })) : new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => { requestAborted = true; reject(signal.reason); }, { once: true }); requested.resolve();
+    }),
+  });
+  scope.connectedAppsAuthority = () => authority;
   new Function(...Object.keys(scope), between('  if (app.isPackaged && composioBrokerUrl() && !credentialStoreUnavailable) {', '  // in-app auto-update'))(...Object.values(scope));
   await requested.promise;
   const f = shutdownFixture({ writes, managedComposioShutdown: controller, release: () => { released++; } });
@@ -407,6 +466,7 @@ test("actual quit cancels stalled optional registration but drains its credentia
   assert.equal(released, 1);
   assert.equal(f.quit(), 1);
   assert.deepEqual(f.messages, []);
+  authority.dispose();
 });
 
 test("actual before-quit retains ownership until admitted browser cleanup settles", async () => {
@@ -567,7 +627,7 @@ for(const winner of ["old","candidate"])test(`F11 T18 production startup exclude
   const host={internalStatus:()=>({phase:'install-requested'}),reconcileStartup:()=>({blocked:false}),publishCommitted(){},pendingUpgrade:instrument(operations.pendingUpgrade.name,{phase:'install-requested',candidate:{version:'2.0.0'}}),completeUpgrade:instrument('completeUpgrade')};
   host.settleRequestedInstall=instrument(operations.settleRequestedInstall.name,{kind:'review'});
   const scope={closedBackupRequested:false,console:{log(){}},app:{requestSingleInstanceLock:()=>won,isPackaged:true,getVersion:()=>version,getLocale:()=> 'en'},process:{exit:()=>{throw exit;},platform:"darwin",argv:[]},backupStartupDispatch,BACKUP_MODE_ARGUMENT,
-   acquireDesktopDataOwner:instrument(operations.acquireDesktopDataOwner.name),initializeSentinelHost:async()=>{},initializeBackupScheduleHost:async()=>{},desktopMark(){},announceLastBackupFailure(){},announceLastBackupResult(){},backupScheduleHost:host,ensureDesktopUpdater:()=>({}),backupToolCheck:Promise.resolve(),desktopStartup:Promise.resolve(),startupSplash:{set(){}},updateRecoveryWords:()=>({}),startUpdateGate:()=>host.settleRequestedInstall(),pauseForReview(){}};
+   acquireDesktopDataOwner:instrument(operations.acquireDesktopDataOwner.name),initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost:async()=>{},initializeBackupScheduleHost:async()=>{},desktopMark(){},announceLastBackupFailure(){},announceLastBackupResult(){},backupScheduleHost:host,ensureDesktopUpdater:()=>({}),backupToolCheck:Promise.resolve(),desktopStartup:Promise.resolve(),startupSplash:{set(){}},updateRecoveryWords:()=>({}),startUpdateGate:()=>host.settleRequestedInstall(),pauseForReview(){}};
   try{await runStartupBoundary(source,scope);}catch(error){assert.equal(error,exit);}
   assert.equal(counts[operations.acquireDesktopDataOwner.name]??0,won?1:0);
   // The winner reads the pending upgrade twice: backupStartupDispatch routes on it, then startup acts on it.

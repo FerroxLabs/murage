@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeRun, describeRunRaw, groupActivityRuns, groupTranscript } from "./activity-runs";
+import { describeInterimSteps, describeRun, describeRunRaw, groupActivityRuns, groupTranscript, interimSteps } from "./activity-runs";
 import type { Message } from "@/state/store";
 import { STOPPED_MID_DESKTOP_ACTION } from "../../shared/host-stop";
 import { browserUnavailableActivityName } from "../../shared/browser-unavailable";
@@ -289,5 +289,37 @@ describe("groupTranscript keeps what the bot handed over out of the fold", () =>
     const reply = row("r2", 3_000, "Sent you a voice note.", { turnTerminal: true });
     const items = groupTranscript([user, delivered, reply]);
     expect(items.map((item) => item.kind)).toEqual(["message", "message", "message"]);
+  });
+});
+
+describe("interimSteps (1020 double answer)", () => {
+  const said = (id: string, turnId: string, terminal = false): Message => ({ id, at: ++seq, role: "bot", kind: "text", text: id, turnId, ...(terminal ? { turnTerminal: true } : {}) });
+  const step = (name: string, turnId: string, extra: Partial<Message> = {}): Message => ({ id: `s${++seq}`, at: seq, role: "bot", kind: "activity", turnId, tool: { name, ok: true }, ...extra });
+
+  it("names the steps between two texts of one turn, keyed by the later text, with Tool calls off", () => {
+    const search = step("web_search", "a");
+    const map = interimSteps([said("first", "a"), search, said("answer", "a", true)], false);
+    expect([...map.keys()]).toEqual(["answer"]);
+    expect(map.get("answer")).toEqual([search]);
+    expect(describeInterimSteps([search, step("Read", "a"), step("read_file", "a")])).toBe("searched the web, read files");
+  });
+
+  it("joins nothing across turns, speakers or a visible row between", () => {
+    expect(interimSteps([said("x", "a", true), step("web_search", "b"), said("y", "b", true)], false).size).toBe(0);
+    // a turn's last step, then the NEXT turn's first text (a queued prompt, no owner row between)
+    expect(interimSteps([said("x", "a"), step("web_search", "a"), said("y", "b", true)], false).size).toBe(0);
+    const other = step("web_search", "a", { from: { botId: "other", name: "Other" } as Message["from"] });
+    expect(interimSteps([said("x", "a"), other, said("y", "a", true)], false).size).toBe(0);
+    const user: Message = { id: "u", at: ++seq, role: "user", kind: "text", text: "wait" };
+    expect(interimSteps([said("x", "a"), step("web_search", "a"), user, said("y", "a", true)], false).size).toBe(0);
+    expect(interimSteps([said("x", "a"), step("error: the CLI exited", "a"), said("y", "a", true)], false).size).toBe(0);
+    expect(interimSteps([said("x", "a"), step("notice", "a", { actorKind: "murage" }), said("y", "a", true)], false).size).toBe(0);
+  });
+
+  it("with Tool calls on names only a stretch the turn's fold took away from its place", () => {
+    const rows = [said("x", "a"), step("web_search", "a"), said("y", "a"), step("WebFetch", "a"), said("z", "a", true)];
+    expect([...interimSteps(rows, true).keys()]).toEqual(["z"]);
+    // a live turn has no fold: every chip is on screen already
+    expect(interimSteps(rows.slice(0, 3), true).size).toBe(0);
   });
 });

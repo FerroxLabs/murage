@@ -79,6 +79,17 @@ live("live Flux contract", () => {
     expect(refused.status).toBe(401);
   });
 
+  probe("memory.capture", async () => {
+    // server/flux-memory-capture.ts: POST /v1/memory/spaces/{space}/events. Probed without writing: a bad key
+    // must get a handled refusal from the route (it exists and checks the key), never 404/405/5xx.
+    const response = await fetch(`${url("memory.capture")}/spaces/bot:murage-contract-probe/events`, {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(45_000),
+      headers: { "content-type": "application/json", authorization: "Bearer sk-flux-contract-not-a-key", "idempotency-key": "murage-contract-probe" },
+      body: JSON.stringify({ client_event_id: "murage-contract-probe", text: "probe" }),
+    });
+    await response.body?.cancel();
+    served(response.status, "memory.capture");
+  });
   probe("chat.completions", async () => {
     const { status, body } = await call("chat.completions", { method: "POST", headers: json, body: JSON.stringify({ model: MODEL, max_tokens: 4, stream: false, messages: [{ role: "user", content: "Say ok." }] }) });
     expect(status).toBe(200);

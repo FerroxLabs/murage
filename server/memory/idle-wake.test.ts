@@ -107,13 +107,14 @@ it("bounds waiting queries by cancellation and the query cap",async()=>{
   expect(helper.send.mock.calls.some(([message])=>message.type==="query")).toBe(false);
 });
 
-it("lease recovery sweep kept",async()=>{
+// C6 (releaseDeadProcessLeases in jobs.ts): a lease a previous process held is released at start, not after its lease_until.
+it("lease recovery: a previous process's lease is released at start and the job is claimed at once",async()=>{
   enqueue();
   database().prepare("UPDATE memory_jobs SET status='leased',lease_owner='previous',lease_until=?").run(Date.now()+30_000);
   controller.start();
-  await vi.advanceTimersByTimeAsync(29_000);expect(fork).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(2000);
-  expect(database().prepare("SELECT status,lease_owner,lease_generation FROM memory_jobs").get()).toMatchObject({status:"leased",lease_generation:1});
+  // released (generation 1) and claimed again by this process (generation 2), 28 s before the dead lease would have expired
+  expect(database().prepare("SELECT status,lease_owner,lease_generation FROM memory_jobs").get()).toMatchObject({status:"leased",lease_generation:2});
   expect(database().prepare("SELECT lease_owner FROM memory_jobs").get()?.lease_owner).not.toBe("previous");
   expect(fork).toHaveBeenCalledTimes(1);
 });
@@ -145,6 +146,29 @@ it("an arrival inside the one-second consolidation deadline is looked at when it
   await vi.advanceTimersByTimeAsync(950);expect(idle).toHaveBeenCalledTimes(2);
   // Owed once: no further pass without another arrival before the sweep.
   await vi.advanceTimersByTimeAsync(5000);expect(idle).toHaveBeenCalledTimes(2);
+});
+
+it("a derived completion during indexing keeps the consolidation deadline owed", async () => {
+  const idle = vi.fn(async () => false);
+  controller = new MemoryWorkerController({ onIdleConsolidation: idle, onCompletedSource: async () => {} });
+  controller.start(); controller.wake();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(idle).toHaveBeenCalledTimes(1);
+  // An empty scan just ran. Indexing remains in flight while a captured
+  // source's derived work finishes (for example, an extractor-busy deferral).
+  const live = controller as unknown as {
+    child: unknown; ready: boolean; indexing: boolean; indexRequestId: string;
+    onWorkerMessage(child: unknown, event: unknown): void;
+  };
+  live.child = helper; live.ready = true; live.indexing = true; live.indexRequestId = "fixture-index";
+  await vi.advanceTimersByTimeAsync(99);
+  controller.completedSource("captured");
+  await vi.advanceTimersByTimeAsync(1);
+  live.onWorkerMessage(helper, { type: "index-result", requestId: "fixture-index", records: [], embeddingStatus: "unavailable" });
+  await vi.advanceTimersByTimeAsync(950);
+  expect(idle).toHaveBeenCalledTimes(2); // the one-second deadline, not the 30-second idle sweep
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(idle).toHaveBeenCalledTimes(2);
 });
 
 it("defers periodic memory work while explicit arrivals keep their priority",async()=>{
@@ -188,4 +212,16 @@ it("a helper that fails or hangs during initialisation is replaced, so queued wo
   expect(helpers.length).toBeGreaterThanOrEqual(3);
   expect(jobs.claimMemoryJob).toHaveBeenCalled();
   expect(helpers[2].send).toHaveBeenCalledWith(expect.objectContaining({id:expect.any(String)}));
+});
+
+it("owner-selected notebook tracking runs on its bounded schedule despite unrelated idle debt, and stops with the controller", async () => {
+  const seen: Array<string | undefined> = [];
+  controller = new MemoryWorkerController({ onNotebookSync: () => { seen.push(ioBudget.currentSource()); } });
+  vi.spyOn(ioBudget, "shouldDefer").mockImplementation(source => source === "memory-idle" || source === "memory-worker" || source === "memory-notebook");
+  controller.start();
+  await vi.advanceTimersByTimeAsync(20_001);
+  expect(seen).toEqual(["owner-notebook", "owner-notebook"]);
+  await controller.stop();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(seen).toHaveLength(2);
 });

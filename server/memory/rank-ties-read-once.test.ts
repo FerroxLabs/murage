@@ -4,13 +4,13 @@
 // 1.0.3 lane 2, item 2.5 (r3.6): the recall walk's ceiling counts stepped rows (index-reader.ts lexicalPageSliced: `stepped` moves per
 // row pulled from the ranked batch, emitted or not), and a run of equal ranks is read once per search within the kept window: the
 // pages that follow the first inside the window run no statement at all.
+import { openTestIndex } from "./testing/open-index.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
-import { MemoryIndex } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPageSliced, recallWork } from "./index-reader.ts";
 
 import { removeTempDirSync } from "../testing/cleanup.ts";
@@ -19,11 +19,12 @@ beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(
 afterEach(() => { closeMemoryIndexReader(); });
 
 /** 40,000 entries in groups of 500 with the same text (the same rank), a rare word in every group. */
-function tiedIndex() {
-  const index = new MemoryIndex(INDEX_PATH());
+async function tiedIndex() {
+  const index = await openTestIndex(INDEX_PATH());
   index.prepareModel("model");
   index.close();
   const db = new DatabaseSync(INDEX_PATH());
+  db.exec("INSERT INTO lexical(lexical,rank) VALUES('automerge',4)");
   db.exec("BEGIN");
   const entry = db.prepare("INSERT INTO entries VALUES(?,1,'s',?)"), word = db.prepare("INSERT INTO lexical(id,version,text) VALUES(?,1,?)");
   for (let n = 0; n < 40_000; n++) {
@@ -32,12 +33,13 @@ function tiedIndex() {
     entry.run(id, text); word.run(id, text);
   }
   db.exec("COMMIT");
+  db.exec("INSERT INTO lexical(lexical,rank) VALUES('automerge',0); INSERT INTO lexical(lexical,rank) VALUES('crisismerge',1999)");
   db.close();
 }
 
 describe("recall over 500-row tie groups", () => {
   it("reads a tie run once per search inside the window: the next pages cost no statement, and no row is repeated or skipped", { timeout: 300_000 }, async () => {
-    tiedIndex();
+    await tiedIndex();
     const seen: string[] = [];
     const statements: number[] = [];
     for (const offset of [0, 50, 100]) {

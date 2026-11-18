@@ -1,6 +1,15 @@
+import { homedir } from "node:os";
+import { C1_DEFAULT, HERMES_C2, HERMES_VERSION_PIN } from "../../../shared/tool-identity.ts";
+import { HOOK_LOADER, type CanonSet } from "../../hook-canon.ts";
+import { shellArg } from "../../hook-shell-arg.ts";
+import { canonFile, prepareHookCanon } from "../../hook-safety.ts";
+import { highlevelHandlerTools } from "../../highlevel/engine-policy.ts";
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 import { probeFolder } from "../../probe-folder.ts";
 import { cloudEngineHome } from "../../cloud-home/turn-process.ts";
 import { cloudHomeCopy } from "../../cloud-home/copy.ts";
+import { assertFluxNotPaused } from "../../cloud-home/flux-home-gate.ts";
 // Hermes Agent — Nous Research's `hermes acp` CLI. Custom-only: Hermes is
 // a BYOK/local harness. ACP ignores `hermes -m` (cmd_acp does not forward
 // it), and setting OPENAI_API_KEY makes provider:auto resolve to OpenRouter
@@ -8,7 +17,8 @@ import { cloudHomeCopy } from "../../cloud-home/copy.ts";
 // header" failure. Inject writes providers.<host> and session/set_model
 // `custom:<host>:<model>` instead.
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../../counted-fs.ts";
+import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
@@ -21,6 +31,7 @@ import { fluxKey } from "../../flux-config.ts";
 import { FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
 import { FLUX_HEADER_REFUSAL, type FluxMemoryDecision } from "../../flux-memory-headers.ts";
 import { isFluxUsageHeader } from "../../flux-usage-tags.ts";
+import { FLUX_MEMORY_APP, FLUX_MEMORY_APP_HEADER, FLUX_MEMORY_CAPTURE_HEADER } from "../../flux-memory-wire.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
@@ -36,6 +47,7 @@ import {
 } from "../../hermes-profiles.ts";
 import { OWN_BUILTINS, OWN_UNASKED, ownToolListedOnTurn, type OwnBuiltin } from "../../../shared/own-servers.ts";
 import { EMAIL_TOOLS_ENV } from "../email-tool-schemas.ts";
+import { engineReach } from "../../flux-engine-reach.ts";
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
 
@@ -91,16 +103,13 @@ function murageRoutedHome(env: Record<string, string | undefined> | undefined): 
  * Murage's own OWN_UNASKED tools (HERMES_OWN_UNASKED_TOOLS); and, on a host-computer turn only, Murage's own `computer` MCP tools, which
  * Murage's computer service asks for per action (hostComputerAskedByMurage).
  */
-export const HERMES_ASK_FREE_TOOLS = [
-  "read_file", "search_files", "tool_describe", "skills_list", "skill_view", "session_search", "todo_list", "clarify",
-  "web_search", "web_extract", "vision_analyze", "video_analyze", "show_tip", "read_terminal", "read_window_below",
-  "x_search", "memory", "write_file", "patch",
-] as const;
+export const HERMES_ASK_FREE_TOOLS = C1_DEFAULT;
 
 /** Murage's own tools that run with no card on every engine (shared/own-servers.ts OWN_UNASKED), as the exact
  *  names Hermes gives them: `mcp__<server, - as _>__<tool>`. Each is one whole name, so a third-party server
  *  whose name only starts like an own one (`murage_memory_evil`) still asks, and so does every OWN_ALWAYS_ASK tool. */
 export const HERMES_OWN_UNASKED_TOOLS: readonly string[] = OWN_UNASKED.flatMap((row) => {
+  if (row.mount === "own:highlevel") return highlevelHandlerTools.map(tool => `mcp__highlevel__${tool}`);
   const server = OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin].replace(/-/g, "_");
   return row.tools.map((tool) => `mcp__${server}__${tool}`);
 });
@@ -108,10 +117,13 @@ export const HERMES_OWN_UNASKED_TOOLS: readonly string[] = OWN_UNASKED.flatMap((
 const regexLiteral = (name: string) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The hook's `matcher`: Hermes full-matches it against the tool name. */
+export function hermesOwnUnasked(phoneJobs = false, emailMode?: string, highlevel = false): string[] {
+  return HERMES_OWN_UNASKED_TOOLS.filter((name) => (phoneJobs || !name.startsWith("mcp__phoneJobs__")) && (highlevel || !name.startsWith("mcp__highlevel__")) && ownToolListedOnTurn(name.slice(name.lastIndexOf("__") + 2), emailMode));
+}
 export function hermesAskMatcher(hostComputer: boolean, phoneJobs = false, emailMode?: string, highlevel = false): string {
   // the email tools are ask-free only on a turn whose email mount listed them (dark launch: no mode, the matcher of the build without email)
-  const own = HERMES_OWN_UNASKED_TOOLS.filter((name) => (phoneJobs || !name.startsWith("mcp__phoneJobs__")) && (highlevel || !name.startsWith("mcp__highlevel__")) && ownToolListedOnTurn(name.slice(name.lastIndexOf("__") + 2), emailMode)).map(regexLiteral);
-  const free = hostComputer ? [...HERMES_ASK_FREE_TOOLS, ...own, "mcp__computer__.*"] : [...HERMES_ASK_FREE_TOOLS, ...own];
+  const own = hermesOwnUnasked(phoneJobs, emailMode, highlevel).map(regexLiteral);
+  const free = hostComputer ? [...HERMES_ASK_FREE_TOOLS, ...HERMES_C2, ...own, "mcp__computer__[A-Za-z0-9_]+"] : [...HERMES_ASK_FREE_TOOLS, ...HERMES_C2, ...own];
   return `(?!(?:${free.join("|")})$).+`;
 }
 
@@ -125,8 +137,8 @@ const HERMES_OWNER_HOOK_EVENTS = [
   "subagent_start", "subagent_stop", "on_stream_start", "on_stream_delta", "on_stream_end", "on_interim_message",
 ] as const;
 
-/** The most the hook's message carries. A call whose arguments do not fit is sent as `truncated: true` with no
- *  arguments, and Murage holds it as a call it could not read (a card), never judging a cut command. */
+/** Previous hook message cap, retained as a regression boundary. The hook
+ * carries complete arguments so an oversized command's wipe tail is checked. */
 export const HERMES_ASK_MESSAGE_CAP = 16 * 1024;
 
 /** The hook program: whatever tool it is told about, it answers "ask". Hermes only runs it for the tools the
@@ -135,7 +147,6 @@ export const HERMES_ASK_MESSAGE_CAP = 16 * 1024;
  *  `rawInput.description` (tools/approval.py request_tool_approval; acp_adapter/permissions.py), so the message is
  *  the call's whole arguments as one JSON object, which `normalizeHermesAsk` reads back on Murage's side. */
 export const HERMES_ASK_HOOK_SOURCE = `"use strict";
-const CAP = ${HERMES_ASK_MESSAGE_CAP};
 let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { raw += chunk; });
@@ -144,10 +155,20 @@ process.stdin.on("end", () => {
   try { call = JSON.parse(raw) || {}; } catch { call = {}; }
   const tool = typeof call.tool_name === "string" && call.tool_name ? call.tool_name : "tool";
   const input = call.tool_input && typeof call.tool_input === "object" && !Array.isArray(call.tool_input) ? call.tool_input : {};
-  let message = JSON.stringify({ murage: 1, v: 1, tool, input, truncated: false });
-  if (message.length > CAP) message = JSON.stringify({ murage: 1, v: 1, tool, input: null, truncated: true });
+  const message = JSON.stringify({ murage: 1, v: 1, tool, input, truncated: false });
   process.stdout.write(JSON.stringify({ action: "approve", message }));
 });
+`;
+
+export const HERMES_BOUND_ASK_FRAME = '{"action":"approve","message":"{\\"murage\\":1,\\"v\\":1,\\"bound\\":true}"}';
+export const HERMES_BOUND_ASK_NOTE = "This request's details stay out of this card. Allow it only if you expect this tool now; otherwise deny it.";
+export const HERMES_ADMIN_HOOK_REFUSAL = "This bot runs Hermes with an administrator hook, so Murage keeps its memory out of this chat. Remove that hook in Hermes, or switch this bot to another engine.";
+export const HERMES_BOUND_ASK_HOOK_SOURCE = `"use strict";
+const { writeSync } = require("node:fs");
+const bytes = Buffer.from(${JSON.stringify(HERMES_BOUND_ASK_FRAME)}, "utf8");
+try {
+  for (let at = 0; at < bytes.length;) at += writeSync(1, bytes, at, bytes.length - at);
+} catch { process.exit(2); }
 `;
 
 /** Hermes's placeholder command on a hook-escalated ask (approval.py request_tool_approval `display_target`). */
@@ -157,7 +178,8 @@ const plainObject = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
 export type HermesAskNormal =
-  | { ok: true; tool: string; rawInput: Record<string, unknown>; summary: string }
+  | { ok: true; bound: true; tool: string }
+  | { ok: true; bound?: false; tool: string; rawInput: Record<string, unknown>; summary: string; execution: { identity: string; input: Record<string, unknown> } }
   | { ok: false; why: "hermes-hook"; summary: string; cut?: true };
 
 /**
@@ -181,7 +203,9 @@ export function normalizeHermesAsk(rawInput: unknown): HermesAskNormal | undefin
   const bad = { ok: false, why: "hermes-hook", summary: `${tool}: ${typeof rawInput.description === "string" ? rawInput.description : "(no description)"}` } as const;
   if (typeof rawInput.description !== "string") return bad;
   let message: unknown;
-  try { message = JSON.parse(rawInput.description); } catch { return bad; }
+  try { message = registerBusyloopPayloadSite("read", JSON.parse(rawInput.description)); } catch { return bad; }
+  if (plainObject(message) && message.murage === 1 && message.v === 1 && message.bound === true
+    && Object.keys(message).length === 3) return { ok: true, bound: true, tool };
   if (!plainObject(message) || message.murage !== 1 || message.v !== 1 || message.tool !== tool) return bad;
   // the hook cut a message past its cap: the call did not arrive whole
   if (message.truncated === true) return { ...bad, cut: true };
@@ -191,16 +215,17 @@ export function normalizeHermesAsk(rawInput: unknown): HermesAskNormal | undefin
   if (tool === "terminal" && (typeof input.command !== "string" || !input.command.trim())) return bad;
   // The request's own fields stay, and the decoded arguments beside them, so a scan of every string sees all.
   const kept = { description: rawInput.description, hermesAsk: { tool, placeholder: rawInput.command, input } };
+  const execution = { identity: tool, input };
   if (tool === "terminal") {
     // Only the fields Hermes's terminal tool runs by (terminal_tool.py, the handler's args) are read at the top:
     // a `cwd` the model added would be ignored by Hermes but taken as the command's folder by Murage.
     const workdir = input.workdir;
-    return { ok: true, tool, rawInput: { command: input.command, ...(workdir !== undefined && workdir !== null ? { workdir } : {}), ...kept }, summary: input.command as string };
+    return { ok: true, tool, rawInput: { command: input.command, ...(workdir !== undefined && workdir !== null ? { workdir } : {}), ...kept }, summary: input.command as string, execution };
   }
   // Another tool (execute_code, an MCP tool): its arguments are kept and shown, but nothing of them is read as a
   // shell command or a folder, so the placeholder stays the command and the call is judged as before.
   const detail = typeof input.code === "string" ? input.code : JSON.stringify(input);
-  return { ok: true, tool, rawInput: { command: rawInput.command, ...kept }, summary: `${tool}: ${detail}` };
+  return { ok: true, tool, rawInput: { command: rawInput.command, ...kept }, summary: `${tool}: ${detail}`, execution };
 }
 
 function hermesAskDir(env: Record<string, string | undefined>): string {
@@ -218,47 +243,62 @@ function hermesAskDir(env: Record<string, string | undefined>): string {
  *  HERMES_ACP_AUTO_APPROVE). An owner's shell export of one would skip the hook gate, so the child never sees them. */
 export const HERMES_AUTO_APPROVE_ENV = ["HERMES_YOLO_MODE", "HERMES_ACP_AUTO_APPROVE"] as const;
 
-export function applyHermesAskHook(env: Record<string, string | undefined>, opts: { hostComputer: boolean; phoneJobs?: boolean; emailMode?: string; highlevel?: boolean }): void {
+export const HERMES_D5_POLICY: "drop" | "refuse" = "drop";
+export function applyHermesAskHook(env: Record<string, string | undefined>, opts: { hostComputer: boolean; phoneJobs?: boolean; emailMode?: string; highlevel?: boolean; bound?: boolean; webRead?: boolean; d5Policy?: "drop" | "refuse" }): CanonSet {
   for (const name of HERMES_AUTO_APPROVE_ENV) delete env[name];
   const dir = hermesAskDir(env);
   const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
-  const script = join(dir, `ask-hook-${hash(HERMES_ASK_HOOK_SOURCE)}.cjs`);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  let existing: string | null = null;
-  try { existing = readFileSync(script, "utf8"); } catch { existing = null; }
-  if (existing !== HERMES_ASK_HOOK_SOURCE) writeFileAtomic(script, HERMES_ASK_HOOK_SOURCE, { mode: 0o600 });
+  const source = opts.bound !== false ? HERMES_BOUND_ASK_HOOK_SOURCE : HERMES_ASK_HOOK_SOURCE;
+  const script = join(dir, `ask-hook-${hash(source)}.cjs`);
   const named = (env.HERMES_MANAGED_DIR ?? "").trim();
   const baseDir = named || (process.platform === "win32" ? "" : HERMES_DEFAULT_MANAGED_DIR);
   let base: Record<string, unknown> = {};
   if (baseDir) {
     try {
-      const parsed: unknown = parseYaml(readFileSync(join(baseDir, "config.yaml"), "utf8"));
+      // YAML 1.1 both ways: Hermes reads PyYAML, so the base reads as Hermes reads it and a quoted "off" header stays quoted
+      const parsed: unknown = parseYaml(readFileSync(join(baseDir, "config.yaml"), "utf8"), { version: "1.1" });
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed as Record<string, unknown>;
-    } catch { base = {}; }
+    } catch (error) {
+      if (opts.bound !== false && (error as NodeJS.ErrnoException)?.code !== "ENOENT") throw new Error(HERMES_ADMIN_HOOK_REFUSAL);
+      base = {};
+    }
   }
   const held = base.hooks && typeof base.hooks === "object" && !Array.isArray(base.hooks) ? base.hooks as Record<string, unknown> : {};
-  const forward = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
-  const command = `"${forward(process.execPath)}" "${forward(script)}"`;
+  if (opts.bound !== false || (opts.d5Policy ?? HERMES_D5_POLICY) === "refuse") {
+    let homeHooks: unknown;
+    try {
+      const own = parseYaml(readFileSync(join(hermesHome(env), "config.yaml"), "utf8"));
+      homeHooks = own?.hooks?.pre_tool_call;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw new Error(HERMES_ADMIN_HOOK_REFUSAL);
+    }
+    const present = (value: unknown) => value !== undefined && value !== null && (!Array.isArray(value) || value.length > 0);
+    if (present(held.pre_tool_call) || present(homeHooks)) throw new Error(HERMES_ADMIN_HOOK_REFUSAL);
+  }
+  const layer = process.platform === "win32" ? "cmd" : "posix";
+  const command = `${shellArg(process.execPath, layer, "Hermes")} -e "${HOOK_LOADER.hermes}" ${shellArg(script, layer, "Hermes")} ${createHash("sha256").update(source).digest("hex")}`;
   const hooks = {
     ...held,
     ...Object.fromEntries(HERMES_OWNER_HOOK_EVENTS.map((event) => [event, []])),
-    // an administrator's own pre_tool_call hooks stay, after this one
-    pre_tool_call: [{ matcher: hermesAskMatcher(opts.hostComputer, opts.phoneJobs === true, opts.emailMode, opts.highlevel === true), command, timeout: 10, fail_closed: true }, ...(Array.isArray(held.pre_tool_call) ? held.pre_tool_call as unknown[] : [])],
+    // r1.2 D5: bot turns drop administrator pre_tool_call hooks.
+    pre_tool_call: [{ matcher: hermesAskMatcher(opts.hostComputer, opts.phoneJobs === true, opts.emailMode, opts.highlevel === true), command, timeout: 10, fail_closed: true }],
   };
-  const overlay = stringifyYaml({ ...base, hooks });
+  // Page readers use the saved Murage transport; the managed config wins over
+  // platform toolsets, including ACP. Keep hook/card policy exactly as before.
+  const agent = asRecord(base.agent);
+  const disabled = Array.isArray(agent.disabled_toolsets) ? agent.disabled_toolsets : [];
+  const overlay = stringifyYaml({ ...base, ...(opts.webRead ? { agent: { ...agent, disabled_toolsets: [...new Set([...disabled, "web", "browser"])] } } : {}), hooks }, { version: "1.1" });
   const overlayDir = join(dir, `overlay-${hash(overlay)}`);
   const file = join(overlayDir, "config.yaml");
-  let current: string | null = null;
-  try { current = readFileSync(file, "utf8"); } catch { current = null; }
-  if (current !== overlay) {
-    mkdirSync(overlayDir, { recursive: true, mode: 0o700 });
-    try { chmodSync(overlayDir, 0o700); } catch { /* Windows ignores POSIX modes */ }
-    writeFileAtomic(file, overlay, { mode: 0o600 });
-  }
+  const canon = prepareHookCanon([
+    canonFile(script, source, "script", "hermes", join(env.MURAGE_DATA_DIR || DATA_DIR, "native")),
+    canonFile(file, overlay, "config", "hermes", join(env.MURAGE_DATA_DIR || DATA_DIR, "native")),
+  ], "V-H1", "Hermes");
   env.HERMES_MANAGED_DIR = overlayDir;
   env.HERMES_ACCEPT_HOOKS = "1";
   // the hook runs as `<this program> <script>`; a packaged app is its own node only with this set
   env.ELECTRON_RUN_AS_NODE = "1";
+  return canon;
 }
 
 /** argv for a Hermes child: every spawn names its profile, so a sticky
@@ -333,6 +373,13 @@ export function materializeFluxHermesHome(
     `  base_url: ${quoteYaml(FLUX_OPENAI_BASE)}`,
     "  api_mode: chat_completions",
     `  api_key: ${quoteYaml(key)}`,
+    // Explicit-only capture: Flux captures a proxied request unless told off, so Murage's own home says capture
+    // off for every request it sends, whatever the turn's overlay holds (the same bytes for every bot and turn,
+    // so no concurrent turn can change what a running child reads). The overlay repeats it per turn.
+    "  extra_headers:",
+    // Quoted: Hermes reads YAML 1.1 (PyYAML), where a bare `off` is the boolean false.
+    `    ${FLUX_MEMORY_APP_HEADER}: ${JSON.stringify(FLUX_MEMORY_APP)}`,
+    `    ${FLUX_MEMORY_CAPTURE_HEADER}: ${JSON.stringify("off")}`,
     "providers: {}",
     // The scoped home is shared by every Flux Hermes bot, so Hermes's own memory stays off in it.
     "memory:",
@@ -369,6 +416,7 @@ export function applyHermesFluxHome(
   // No key degrades to native rather than to a half-written home that 401s —
   // the same choice `applyFluxSurface` makes for the env engines.
   if (!key) return null;
+  assertFluxNotPaused();
   // Wayland accepts "a profile spawn silently stays native"
   // (AcpAgentManager.ts:707-713). We refuse instead. The persona lives in
   // `<HERMES_HOME>/profiles/<name>` and the scoped home has none, so the
@@ -410,7 +458,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 function overlayBase(env: Record<string, string | undefined>): Record<string, unknown> {
   const own = ownOverlay(env);
   if (!own) return adminManagedConfig(env);
-  try { return asRecord(parseYaml(readFileSync(join(own, "config.yaml"), "utf8"))); } catch { return {}; }
+  try { return asRecord(parseYaml(readFileSync(join(own, "config.yaml"), "utf8"), { version: "1.1" })); } catch { return {}; }
 }
 
 /**
@@ -428,7 +476,9 @@ function writeHermesTurnOverlay(
   patch: { model: Record<string, unknown> },
 ): void {
   const base = overlayBase(env);
-  const overlay = stringifyYaml({ ...base, model: { ...asRecord(base.model), ...patch.model } });
+  // YAML 1.1 output: Hermes parses with PyYAML, where a bare `off` (the capture/inject header value) is the boolean
+  // false; the 1.1 schema quotes such strings so they stay strings.
+  const overlay = stringifyYaml({ ...base, model: { ...asRecord(base.model), ...patch.model } }, { version: "1.1" });
   const dir = join(hermesOverlayRoot(env), `hermes-${createHash("sha256").update(overlay).digest("hex").slice(0, 16)}`);
   const file = join(dir, "config.yaml");
   let current: string | null = null;
@@ -450,7 +500,7 @@ const HERMES_DEFAULT_MANAGED_DIR = "/etc/hermes";
  *
  * Every Flux Hermes child shares ONE home (state.db, sessions/), so native
  * history, resume and conversation deletion all see one store. The headers
- * cannot live in that home's config.yaml: Hermes re-reads it lazily (an
+ * vary by turn and cannot live in that home's config.yaml: Hermes re-reads it lazily (an
  * mtime-keyed cache in hermes_cli/config.py `load_config`, called again by
  * agent/auxiliary_client.py `_apply_user_default_headers` whenever a main or
  * side-task client is built), so a concurrent turn's rewrite would reach a
@@ -460,20 +510,26 @@ const HERMES_DEFAULT_MANAGED_DIR = "/etc/hermes";
  * `_merge_managed_overlay`). The overlay is content-addressed and written
  * once, so a child only ever reads its own turn's headers, and the pool key
  * (a digest of the child env) never reuses a warm child across contracts.
- * It holds no key and no history. An administrator's own managed config, if
+ * The shared home carries the constant capture-off header too. The overlay
+ * holds no key and no history. An administrator's own managed config, if
  * the machine has one, is carried into the overlay so its policy still holds.
  */
 export function applyHermesFluxMemory(env: Record<string, string | undefined>, decision: FluxMemoryDecision): void {
-  // Only Murage's own scoped home is on Flux. A native Hermes turn (no key, or
-  // the user's own home) is not, so there is nothing to carry.
-  if (!murageRoutedHome(env)) return;
+  // A native Hermes turn (no key, or the user's own home) is not Murage's to
+  // write. If that home does not reach Flux there is nothing to carry; if it
+  // does (or Murage cannot tell), the user's own config.yaml would send the
+  // request without capture off, and Murage never writes the user's file, so
+  // the turn is refused (explicit-only capture, fail closed).
+  if (!murageRoutedHome(env)) {
+    if (engineReach(env, { configFiles: hermesHostConfigFiles(env), compiledDefault: "https://openrouter.ai/api/v1" }) === "elsewhere") return;
+    throw new Error(FLUX_HEADER_REFUSAL);
+  }
   const home = env.HERMES_HOME;
   let text: string | null = null;
   try { text = home ? readFileSync(join(home, "config.yaml"), "utf8") : null; } catch { text = null; }
-  if (!text || !/\nproviders:/.test(text) || !text.startsWith("model:\n")) {
-    if (decision.capture === "off" || decision.inject === "off") throw new Error(FLUX_HEADER_REFUSAL);
-    return;
-  }
+  // Every Flux request says capture off, the owner's included, so a home that is
+  // not Murage's own shape cannot be trusted to carry the overlay: refused.
+  if (!text || !/\nproviders:/.test(text) || !text.startsWith("model:\n")) throw new Error(FLUX_HEADER_REFUSAL);
   const base = overlayBase(env);
   const held = asRecord(asRecord(base.model).extra_headers);
   const kept = Object.fromEntries(Object.entries(held).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory") && !isFluxUsageHeader(name)));
@@ -498,33 +554,29 @@ let unknownVersionLogged = false;
 /** Test hook: lets the once-per-process unknown-version log fire again. */
 export function resetHermesUnknownVersionLog(): void { unknownVersionLogged = false; }
 
-/** A turn whose Flux Memory headers say "off" rides only the managed-scope
- * overlay. On a Hermes older than the first managed-scope build, or one whose
- * version is unknown, that overlay would be ignored and the turn would go out
- * without its "off" headers, so the turn is refused.
- *
- * The Flux tier rides the same overlay on Murage's shared Flux home (not on a
- * provider-connection home, which is per turn and names its own model), so a
- * Hermes KNOWN to predate it is refused for every tier: it would ignore the
- * overlay and run without the tier the bot picked. An unknown version runs
- * (the turn path fails open on a version it could not read), and the overlay
- * still carries the tier for any Hermes that reads it. */
+/** Every Flux turn needs the managed-scope overlay for its headers and model.
+ * Refuse a pre-0.17 or unknown version, including on the owner's turn. */
 export function hermesFluxHeaderGate(cliVersion: string, decision: FluxMemoryDecision, ctx?: { providerRoute?: boolean }): string | null {
+  void ctx;
   const v = parseHermesVersion(cliVersion);
   const managed = v ? (() => {
     const [a, b, c] = v;
     const [x, y, z] = HERMES_MIN_MANAGED_SCOPE;
     return a !== x ? a > x : b !== y ? b > y : c >= z;
   })() : null;
-  if (decision.capture === "off" || decision.inject === "off") return managed === true ? null : FLUX_HEADER_REFUSAL;
-  if (!ctx?.providerRoute && managed === false) return HERMES_FLUX_UPDATE_COPY;
-  if (!ctx?.providerRoute && managed === null && !unknownVersionLogged) {
-    // The turn runs, but a Hermes that ignores the overlay would answer on some
-    // other model; say so once, with the version text only, so it can be diagnosed.
-    unknownVersionLogged = true;
-    console.warn(`[acp] hermes version not readable (${JSON.stringify(cliVersion.trim().slice(0, 80))}); running the Flux tier on the managed-scope overlay unverified`);
+  if (managed === true) return null;
+  // Explicit-only capture: every Flux request carries capture off (the owner's
+  // too), and the per-turn headers ride the overlay, so a Hermes that is known to
+  // predate it, or whose version is unknown, is refused on every Flux turn.
+  if (managed === null) {
+    if (!unknownVersionLogged) {
+      // Say so once, with the version text only, so it can be diagnosed.
+      unknownVersionLogged = true;
+      console.warn(`[acp] hermes version not readable (${JSON.stringify(cliVersion.trim().slice(0, 80))}); refusing the Flux turn: the managed-scope overlay cannot be verified`);
+    }
+    return FLUX_HEADER_REFUSAL;
   }
-  return null;
+  return decision.capture === "on" && decision.inject === "on" ? HERMES_FLUX_UPDATE_COPY : FLUX_HEADER_REFUSAL;
 }
 
 /** The managed config Hermes would have applied on its own: `HERMES_MANAGED_DIR`
@@ -536,7 +588,7 @@ function adminManagedConfig(env: Record<string, string | undefined>): Record<str
   const dir = named || (process.platform === "win32" ? "" : HERMES_DEFAULT_MANAGED_DIR);
   if (!dir) return {};
   try {
-    const parsed: unknown = parseYaml(readFileSync(join(dir, "config.yaml"), "utf8"));
+    const parsed: unknown = parseYaml(readFileSync(join(dir, "config.yaml"), "utf8"), { version: "1.1" });
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
   } catch {
     return {};
@@ -832,9 +884,9 @@ export async function fetchHermesAcpModels(
           done([]);
           return 0;
         }
-        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`, (error) => {
+        NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`, (error) => {
           if (error) done([]);
-        });
+        }));
       } catch {
         done([]);
         return 0;
@@ -851,13 +903,13 @@ export async function fetchHermesAcpModels(
         buf = buf.slice(nl + 1);
         let msg: any;
         try {
-          msg = JSON.parse(line);
+          msg = registerBusyloopPayloadSite("read", JSON.parse(line));
         } catch {
           continue;
         }
         if (msg?.id === initId) {
           if (!msg.result) return done([]);
-          sessionId = send("session/new", { cwd: probeFolder(), mcpServers: [] });
+          sessionId = NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", send("session/new", { cwd: probeFolder(), mcpServers: [] }));
         } else if (sessionId && msg?.id === sessionId) {
           const list = Array.isArray(msg.result?.models?.availableModels)
             ? msg.result.models.availableModels
@@ -875,10 +927,10 @@ export async function fetchHermesAcpModels(
         }
       }
     });
-    initId = send("initialize", {
+    initId = NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", send("initialize", {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-    });
+    }));
   });
 }
 
@@ -923,14 +975,23 @@ async function applySetting(
   what: string,
 ) {
   try {
-    await request(method, params);
+    await NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", request(method, params));
   } catch (e) {
     throw new Error(`Hermes rejected ${what} via ${method}: ${(e as Error).message}`);
   }
 }
 
+/** U05: the config files Hermes reads its provider base_url from: HERMES_HOME (or ~/.hermes), then the managed one. */
+function hermesHostConfigFiles(env: Record<string, string | undefined>): string[] {
+  const home = env.HERMES_HOME || join(env.HOME || env.USERPROFILE || homedir(), ".hermes");
+  const managed = (env.HERMES_MANAGED_DIR ?? "").trim() || (process.platform === "win32" ? "" : HERMES_DEFAULT_MANAGED_DIR);
+  return [join(home, "config.yaml"), ...(managed ? [join(managed, "config.yaml")] : [])];
+}
+
 const support: AcpSupport = {
   driverKind: DRIVER_KIND,
+  // U05: Hermes reads its provider base_url from HERMES_HOME (or ~/.hermes) config.yaml and the managed config.
+  fluxReach: (env) => engineReach(env, { configFiles: hermesHostConfigFiles(env), compiledDefault: "https://openrouter.ai/api/v1" }),
   displayName: "Hermes",
   access: "custom",
   models: EMPTY,
@@ -956,6 +1017,7 @@ const support: AcpSupport = {
     ...(raw.profileOrigin === "sticky" ? { profileOrigin: "sticky" as const } : {}),
   }),
   boundProfile: (config) => (hermesProfileOwnsIdentity(config) ? hermesProfileOf(config) : null),
+  requestBaseUrl: (_model, env) => murageRoutedHome(env) ? FLUX_OPENAI_BASE : undefined,
   resolveTurnModel: (model, env, config) => {
     // Never inherit a broad or stale compatibility grant from the parent.
     // Only this Murage driver binds one concrete local model; Hermes still
@@ -986,16 +1048,40 @@ const support: AcpSupport = {
   // turn only (localComputer.scope === "local-computer", as core.ts controlsHost); Murage's computer service asks per
   // action instead. A Local VM or VPS computer carries no scope, so its tools stay on the ask hook and get a card.
   hostComputerAskedByMurage: true,
+  toolTripwire: true,
+  // Use the existing executable version probe on every route, including BYOK.
+  // A bare version number (or ACP agentInfo) is not install evidence. Hermes's
+  // pinned --version banner carries the upstream commit as well as the release.
+  spawnNeedsCliVersion: true,
+  toolIdentityContext: (cliVersion) => {
+    const banner = cliVersion.trim().split(/\r\n|\n|\r/, 1)[0] ?? "";
+    const build = /^Hermes Agent v0\.22\.2 \(\d{4}\.\d{1,2}\.\d{1,2}\) · upstream ([a-f0-9]{8}|[a-f0-9]{40})$/.exec(banner);
+    const pin = HERMES_VERSION_PIN["0.22.2"];
+    return build && (build[1] === pin || build[1] === pin.slice(0, 8)) ? { hermesInstallSha: pin } : {};
+  },
+  toolCorrelationContext: (turn) => ({
+    c3: hermesOwnUnasked(Boolean(turn.integrations?.phoneJobs), turn.integrations?.agents?.env?.[EMAIL_TOOLS_ENV], Boolean(turn.integrations?.highlevel)),
+    host_computer: turn.integrations?.localComputer?.scope === "local-computer",
+    d5_policy: HERMES_D5_POLICY,
+  }),
+  toolTripwireMatcher: (turn) => hermesAskMatcher(turn.integrations?.localComputer?.scope === "local-computer", Boolean(turn.integrations?.phoneJobs), turn.integrations?.agents?.env?.[EMAIL_TOOLS_ENV], Boolean(turn.integrations?.highlevel)),
   // An ask the ask hook escalated is read from the hook's message: the real command, whole (normalizeHermesAsk).
   normalizeAsk: (rawInput) => {
     const normal = normalizeHermesAsk(rawInput);
-    return normal?.ok ? { ok: true, rawInput: normal.rawInput, summary: normal.summary } : normal && { ok: false, why: normal.why, summary: normal.summary, ...(normal.cut ? { cut: true } : {}) };
+    if (normal?.ok && normal.bound) return { ok: true, bound: true as const, tool: normal.tool, summary: HERMES_BOUND_ASK_NOTE };
+    return normal?.ok ? { ok: true, rawInput: normal.rawInput, summary: normal.summary, execution: normal.execution } : normal && { ok: false, why: normal.why, summary: normal.summary, ...(normal.cut ? { cut: true } : {}) };
   },
   // U2 C7: with reasoning on, Hermes re-sends its streamed reply whole under the same messageId, after its
   // reasoning block; that chunk is dropped so the reply shows once (upstream 40deb33ce).
   resendsReasoningReply: true,
   spawnArgs: (config, turn, ctx) => {
-    if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), highlevel: Boolean(turn?.integrations?.highlevel), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });
+    // held pending addendum, MurageMain
+    try {
+      if (ctx?.env) ctx.hookCanon = applyHermesAskHook(ctx.env, { webRead: Boolean(turn?.integrations?.agents), bound: (turn?.releaseBinding ?? null) !== null, hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), highlevel: Boolean(turn?.integrations?.highlevel), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });
+    } catch (error) {
+      if ((error as Error)?.message === HERMES_ADMIN_HOOK_REFUSAL) turn?.admissionNotLaunched?.("toolTurnRefused");
+      throw error;
+    }
     return hermesSpawnArgs(config, ctx?.env);
   },
   /**

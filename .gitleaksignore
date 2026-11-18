@@ -1,0 +1,8 @@
+# gitleaks allowlist by fingerprint (commit:file:rule:line). Reviewed 2026-11-18, values not printed.
+# Test fixture: a 16-char counting hex run repeated to fill the desktop surface-secret header in a
+# fake-CLI server test. Made up in the test; nothing authenticates with it outside that test process.
+f82fb658358b6f00675d8445475d3d2b22e8df47:server/approval-attention-race.test.ts:generic-api-key:19
+# Test fixture: a hyphenated placeholder key handed to the OpenAI-compatible driver config against a
+# reserved .invalid host with a stubbed transport. Not a credential for any service.
+b9eb4626babdc40a53fa454454a5e1f15dbff688:server/drivers/nativecrash-openai-1019.test.ts:generic-api-key:63
+b9eb4626babdc40a53fa454454a5e1f15dbff688:server/drivers/nativecrash-openai-1019.test.ts:generic-api-key:85

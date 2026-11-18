@@ -59,7 +59,7 @@ When: home destroyed, volume lost or corrupt, or customer asks to roll back.
 1. **Get the old home id** (`HOME_ID`) from the control plane / portal. Do not delete its row or key rows yet: the repository password derives from its data key.
 2. **Provision a fresh home** the normal way (new server and volume, enroll). It gets a NEW home id `NEW_ID` and new keys.
 3. **Derive the repository password**: `curl -s -X POST https://<cp>/v1/machines/$HOME_ID/backup-password -H "authorization: Bearer $CLOUD_ADMIN_TOKEN"` and store the answer in `/etc/murage-home/backup.pass` on the fresh home (root 0600). Never print it in chat or logs.
-4. **Give the fresh home read access** to the old repository: a temporary read credential for the old home's Storage Box sub-account, in `/root/restore.json` style env (`RESTIC_REPOSITORY=sftp:...`, `RESTIC_PASSWORD_FILE`). Remove it after.
+4. **Give the fresh home read access** to the old repository: a temporary read credential for the old home's Storage Box sub-account, in `/work/restore.json` style env (`RESTIC_REPOSITORY=sftp:...`, `RESTIC_PASSWORD_FILE`). Remove it after.
 5. **Stop the home** (`systemctl stop murage-home murage-proxy murage-egress-proxy`), keep `/data` mounted.
 6. **Pick the snapshot**: `restic snapshots` (latest is last night; weekly ones go back 4 weeks).
 7. **Restore**: `restic restore <snapshot> --target /restore-tmp`, check, then `rsync -a /restore-tmp/data/ /data/` and `chown` per the image's ownership (engine homes `root:engine 2770` are re-created by the launcher on first start).

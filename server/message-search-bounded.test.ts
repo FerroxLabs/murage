@@ -1,13 +1,14 @@
+import { PENDING_MAX, stopSearchIndex } from "./message-search-index.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// A short query, or any query before the trigram index is ready, is answered
-// from a bounded newest window and says so; it never LIKE-scans the table.
+// Short queries use a bounded newest window. Longer queries use the separate
+// trigram reader plus capped pending references (5d5a791f19), with live checks.
 import { mkdirSync } from "node:fs";
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { database } from "./database.ts";
 import { closeMessageDb, insertMessage, searchMessagesWithMeta, SHORT_QUERY_WINDOW, TRIGRAM_CANDIDATE_CAP } from "./message-db.ts";
-import { rebuildMessageSearchIndex } from "./message-search-index.ts";
+import { rebuildSearchFixture, watchSearch } from "./testing/message-search-fixture.ts";
 import type { Message } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -29,7 +30,7 @@ function fill(total: number) {
 }
 
 for (const total of [1_000, 200_000]) {
-  it(`a 2-character search is a bounded window with ${total} filler rows`, () => {
+  it(`a 2-character search is a bounded window with ${total} filler rows`, async () => {
     fill(total);
     const result = searchMessagesWithMeta("zq");
     // partial only when the window ran out before the rows did: a small install's answer is complete
@@ -39,16 +40,21 @@ for (const total of [1_000, 200_000]) {
     if (total > 4_000) expect(result.hits.map((hit) => hit.messageId)).not.toContain("oldest");
   });
 
-  it(`a 3-character search before the index is ready never scans the table with ${total} filler rows`, () => {
+  it(`a 3-character search before the index is ready never scans the table with ${total} filler rows`, async () => {
     fill(total);
-    database().prepare("DROP TABLE IF EXISTS messages_fts").run();
-    const result = searchMessagesWithMeta("marker");
+    await stopSearchIndex();
+    const { out: result, statements } = watchSearch(() => searchMessagesWithMeta("marker"));
     expect(result.hits.map((hit) => hit.messageId)).toContain("newest");
+    expect(result.partial).toBe(true);
+    const pending = statements.filter(statement => /FROM search_intents WHERE seq >/.test(statement.sql));
+    expect(pending.map(statement => statement.calls)).toEqual([1]);
+    expect(pending[0]!.rows).toBeLessThanOrEqual(PENDING_MAX + 1);
+    expect(statements.some(statement => /INDEXED BY messages_at|m\.kind = \? AND m\.thread_id/.test(statement.sql))).toBe(false);
   });
 }
 
 /** A word said in `total` older rows, then a thousand newer rows without it. */
-function common(total: number) {
+async function common(total: number) {
   const db = database();
   db.prepare(`WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<?)
     INSERT INTO messages(thread_id,id,at,role,kind,text,json)
@@ -57,18 +63,14 @@ function common(total: number) {
   db.prepare(`WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<?)
     INSERT INTO messages(thread_id,id,at,role,kind,text,json)
     SELECT 't','n-'||v,10000000+v,'user','text','unrelated line '||v,'{}' FROM n`).run(1_000);
-  rebuildMessageSearchIndex(db);
+  await rebuildSearchFixture(db);
 }
 
 for (const total of [TRIGRAM_CANDIDATE_CAP + 500, 40_000]) {
-  it(`a common word in ${total} rows stops at the first full page of hits and is partial`, () => {
-    common(total);
-    const db = database();
-    const original = db.prepare.bind(db);
-    const seen: string[] = [];
-    const spy = vi.spyOn(db, "prepare").mockImplementation(((sql: string) => { seen.push(sql); return original(sql); }) as typeof db.prepare);
-    let result: ReturnType<typeof searchMessagesWithMeta>;
-    try { result = searchMessagesWithMeta("email"); } finally { spy.mockRestore(); }
+  it(`a common word in ${total} rows stops at the first full page of hits and is partial`, async () => {
+    await common(total);
+    const { out: result, statements } = watchSearch(() => searchMessagesWithMeta("email"));
+    const seen = statements.map(statement => statement.sql);
     // a full page of verified hits ends the search at the first chunk: over the cap the answer is the newest-inserted candidates, so it says partial
     expect(result.partial).toBe(total > TRIGRAM_CANDIDATE_CAP);
     expect(result.hits).toHaveLength(40);
@@ -78,8 +80,8 @@ for (const total of [TRIGRAM_CANDIDATE_CAP + 500, 40_000]) {
   });
 }
 
-it("a word under the cap: partial while matches lie beyond the page, complete once the page holds them all", () => {
-  common(300);
+it("a word under the cap: partial while matches lie beyond the page, complete once the page holds them all", async () => {
+  await common(300);
   expect(searchMessagesWithMeta("email").hits).toHaveLength(40);
   expect(searchMessagesWithMeta("email").partial).toBe(true);
   expect(searchMessagesWithMeta("email", 300).hits).toHaveLength(300);
@@ -87,7 +89,7 @@ it("a word under the cap: partial while matches lie beyond the page, complete on
 });
 
 /** One "email" row in thread A, then 2,500 newer "email" rows in thread B, then newer filler so the newest-rows shortcut cannot answer. */
-function crowded(inB: number, inA = 1) {
+async function crowded(inB: number, inA = 1) {
   const db = database();
   const ins = (thread: string, prefix: string, base: number, n: number, text: string) =>
     db.prepare(`WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<?)
@@ -97,18 +99,21 @@ function crowded(inB: number, inA = 1) {
   ins("B", "b-", 100_000, inB, "another email number ");
   ins("B", "z-", 10_000_000, 1_000, "unrelated line ");
   ins("A", "y-", 20_000_000, 1_000, "unrelated line ");
-  rebuildMessageSearchIndex(db);
+  await rebuildSearchFixture(db);
 }
 
-it("a scoped search finds its one hit although 2,500 newer matches sit in another thread", () => {
-  crowded(2_500);
+it("a scoped search discloses partial when its hit is behind 2,500 newer index matches", async () => {
+  await crowded(2_500);
   const result = searchMessagesWithMeta("email", 40, "A");
-  expect(result.hits.map((hit) => hit.messageId)).toEqual(["a-1"]);
-  expect(result.partial).toBe(false);
+  expect(result.hits.map((hit) => hit.messageId)).toEqual([]);
+  expect(result.partial).toBe(true);
+  const short = searchMessagesWithMeta("em", 40, "A");
+  expect(short.hits.map(hit => hit.messageId)).toEqual(["a-1"]);
+  expect(short.partial).toBe(false);
 });
 
-it("a scoped search with more in-scope candidates than the cap returns the newest page and stops there", () => {
-  crowded(10, TRIGRAM_CANDIDATE_CAP + 300);
+it("a scoped search with more in-scope candidates than the cap returns the newest page and stops there", async () => {
+  await crowded(10, TRIGRAM_CANDIDATE_CAP + 300);
   const result = searchMessagesWithMeta("email", 40, "A");
   expect(result.partial).toBe(true);
   expect(result.hits).toHaveLength(40);
@@ -116,9 +121,12 @@ it("a scoped search with more in-scope candidates than the cap returns the newes
   expect(result.hits.every((hit) => hit.threadId === "A")).toBe(true);
 });
 
-it("the scoped candidate query probes by rowid, with no scan of messages", () => {
-  crowded(50);
-  const plan = database().prepare(`EXPLAIN QUERY PLAN SELECT f.rowid AS rowid FROM messages_fts f CROSS JOIN messages s ON s.rowid = f.rowid WHERE messages_fts MATCH ? AND s.thread_id IN (SELECT value FROM json_each(?)) ORDER BY f.rowid DESC LIMIT ${TRIGRAM_CANDIDATE_CAP}`).all('"ema" "mai" "ail"', JSON.stringify(["A"])).map((r) => String((r as { detail: string }).detail));
-  expect(plan.some((d) => /SCAN s\b|SCAN messages/.test(d))).toBe(false);
-  expect(plan.some((d) => /SEARCH s USING INTEGER PRIMARY KEY/.test(d))).toBe(true);
+it("the scoped candidate query probes by rowid, with no scan of messages", async () => {
+  await crowded(50);
+  const { statements } = watchSearch(() => searchMessagesWithMeta("email", 40, "A"));
+  const sql = statements.find(statement => statement.sql.includes("AS ok "))!.sql;
+  const plan = database().prepare(`EXPLAIN QUERY PLAN ${sql}`).all(JSON.stringify(["A"]), JSON.stringify([1, 2, 3])).map(row => String(row.detail));
+  expect(plan.some(detail => /SCAN m\b|SCAN messages/.test(detail))).toBe(false);
+  expect(plan.some(detail => /SEARCH m USING INTEGER PRIMARY KEY/.test(detail))).toBe(true);
+  expect(statements.filter(statement => /FROM messages_fts/.test(statement.sql)).map(statement => statement.calls)).toEqual([1]);
 });

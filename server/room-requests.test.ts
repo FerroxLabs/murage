@@ -7,8 +7,14 @@
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { settleProjectUsage } from "./usage-ledger.ts";
-import { initializeProjectTables } from "./project-tables.ts";
-import { assignCardReview } from "./project-cards.ts";
+import { initializeProjectTables, prepareProjectTablesForRestore } from "./project-tables.ts";
+import { readyTeams } from "./shared-ready.ts";
+import { assignCardReview, cancelProjectCard, createProjectCard } from "./project-cards.ts";
+import { channelToProjectRows, endProjectRows } from "./project-settings.ts";
+import { changeProjectPlan, createProjectGoal } from "./project-goals.ts";
+import { handleProjectRoute } from "./project-routes.ts";
+import { endAllLivePairedRequests, endLiveRequestsOfThread } from "./handoff-pair.ts";
+import { initializePendingDelegations } from "./pending-delegations-schema.ts";
 import {
   askWouldDeadlock,
   cancelRoomRequest,
@@ -21,7 +27,15 @@ import {
   markRequestDispatched,
   openAskChildren,
   pruneTerminalRoomRequests,
+  dueRetainedRoomRequests,
+  deferRetainedRoomRequest,
+  clearRetainedRoomRequest,
+  recordRoomRequestRefusal,
+  runnableRoomRequestIds,
+  runnableRoomRequestIdsSql,
   queuedRoomRequests,
+  requeueSpendHeldRoomRequest,
+  scrubOwnerSendsOfThread,
   reconcileRoomRequestsAtBoot,
   recoverCommittedAskResults,
   requestReplyTarget,
@@ -512,5 +526,259 @@ describe("requestReplyTarget", () => {
     // another thread never borrows the room's message: lineage stays in requestId
     expect(requestReplyTarget(db, wake, () => false)).toBeUndefined();
     expect(requestReplyTarget(db, null, () => true)).toBeUndefined();
+  });
+});
+
+// fprod4 C: a start the spend gate refused after admission let it through must not cycle queued -> start -> requeue on every pump.
+describe("spend-held requeue", () => {
+  const selected = (now: number) => [...queuedRoomRequests(db), ...dueRetainedRoomRequests(db, now)].map(r => r.id);
+  /** Every pump: the dispatcher selects the request, marks it running, the gate refuses, the start requeues. */
+  const cycle = (id: string, now: number, admissionSeesHold: boolean): number => {
+    let starts = 0;
+    for (let pump = 0; pump < 50; pump++) {
+      if (!selected(now).includes(id)) continue;
+      if (!markRequestDispatched(db, id, { now, targetThreadId: "room-t" })) continue;
+      starts++;
+      requeueSpendHeldRoomRequest(db, id, now, admissionSeesHold);
+    }
+    return starts;
+  };
+  it("admission sees no hold but the gate refuses: one start in 50 pumps, then parked 30 s, visible as queued", () => {
+    const request = turn(root().id, "b", "spend:1");
+    expect(cycle(request.id, 5_000, false)).toBe(1);
+    expect(roomRequest(db, request.id)!.state).toBe("queued");
+    expect(selected(5_000 + 29_999)).not.toContain(request.id);
+    expect(selected(5_000 + 30_000)).toContain(request.id);
+  });
+  it("admission sees the hold: the request stays queued with its refusal line, admission step 5a refuses it before any start", () => {
+    const request = turn(root().id, "b", "spend:2");
+    markRequestDispatched(db, request.id, { now: 5_000, targetThreadId: "room-t" });
+    expect(requeueSpendHeldRoomRequest(db, request.id, 5_000, true)).toBe(true);
+    expect(roomRequest(db, request.id)).toMatchObject({ state: "queued", refusal: "spend_limit" });
+    expect(selected(5_001)).toContain(request.id);
+  });
+  it("a request that is not running is left alone", () => {
+    const request = turn(root().id, "b", "spend:3");
+    expect(requeueSpendHeldRoomRequest(db, request.id, 5_000, false)).toBe(false);
+    expect(selected(5_000)).toContain(request.id);
+  });
+});
+
+// fprod4 C (r3 section 9 + M3): a spend park leaves the runnable index; its reason stays visible.
+describe("spend park out of the runnable index", () => {
+  const COLUMNS = "id,root_id,parent_id,group_id,verb,from_kind,to_bot_id,target_thread_id,state,payload_text,refusal,created_at,deadline_at,finished_at,root_thread_id,return_thread_id,origin,audience_fingerprint,not_owner_audience,unattended,admission_key,execution_audience";
+  function fill(rows: number, prefix: string, bot = "b0", audience: string | null = null): string[] {
+    const insert = db.prepare(`INSERT INTO room_requests(${COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'desktop','fp',0,0,?,?)`);
+    const ids: string[] = [];
+    db.exec("BEGIN");
+    for (let i = 0; i < rows; i++) {
+      const id = `${prefix}-${i}`;
+      ids.push(id);
+      insert.run(id, id, null, "g1", "room_turn", "owner", bot, "t", "queued", null, null, 1_000 + i, null, null, "t", null, `key-${id}`, audience);
+    }
+    db.exec("COMMIT");
+    return ids;
+  }
+  const park = (ids: string[], at: number) => { db.exec("BEGIN"); for (const id of ids) deferRetainedRoomRequest(db, id, at, "spend_limit"); db.exec("COMMIT"); };
+  function rowsVisited(sql: string, args: unknown[]): number {
+    let visited = 0;
+    db.function("visit", (_rowid: unknown) => { visited++; return 1; });
+    db.prepare(sql.replace(/\bWHERE /, "WHERE visit(rowid) AND ")).all(...(args as never[]));
+    return visited;
+  }
+  const plan = (sql: string, args: unknown[]) => (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...(args as never[])) as Array<{ detail: string }>).map((row) => row.detail).join(" | ");
+  const R = 5;
+  for (const parked of [0, 1000, 10_000]) {
+    it(`C-W1 the runnable statements visit only the runnable rows with ${parked} spend parks`, () => {
+      fill(R, "run");
+      park(fill(parked, "park"), 5_000);
+      const variants: Array<[string, Parameters<typeof runnableRoomRequestIdsSql>[0], unknown[]]> = [["all", {}, []], ["group", { groupId: "g1" }, ["g1"]], ["bot", { toBotId: "b0" }, ["b0"]]];
+      for (const [name, filter, args] of variants) {
+        const sql = runnableRoomRequestIdsSql(filter);
+        expect(rowsVisited(sql, args), name).toBe(R);
+        expect(runnableRoomRequestIds(db, filter), name).toHaveLength(R);
+        expect(plan(sql, args), name).toMatch(/room_requests_runnable/);
+        expect(plan(sql, args), name).not.toMatch(/CORRELATED|SCALAR SUBQUERY|room_request_retry/);
+      }
+    });
+  }
+  it("C-W2 the reason stays visible: a parked row reads spend_limit, a cleared one keeps it, a dispatched one has none", () => {
+    const r = turn(root().id, "b", "park:1");
+    deferRetainedRoomRequest(db, r.id, 5_000, "spend_limit");
+    expect(roomRequest(db, r.id)).toMatchObject({ state: "queued", refusal: "spend_limit" });
+    expect(listRoomRequests(db, {}).find((row) => row.id === r.id)).toMatchObject({ refusal: "spend_limit" });
+    expect(db.prepare("SELECT refusal, parked_refusal FROM room_requests WHERE id=?").get(r.id)).toEqual({ refusal: "retained_unresolved", parked_refusal: "spend_limit" });
+    expect(queuedRoomRequests(db).map((row) => row.id)).not.toContain(r.id);
+    expect(clearRetainedRoomRequest(db, r.id)).toBe(true);
+    expect(roomRequest(db, r.id)).toMatchObject({ refusal: "spend_limit" });
+    expect(db.prepare("SELECT parked_refusal FROM room_requests WHERE id=?").get(r.id)).toEqual({ parked_refusal: null });
+    deferRetainedRoomRequest(db, r.id, 6_000, "spend_limit");
+    expect(markRequestDispatched(db, r.id, { now: 40_000, targetThreadId: "room-t" })).toBe(true);
+    expect(roomRequest(db, r.id)!.refusal).toBeNull();
+    expect(db.prepare("SELECT parked_refusal FROM room_requests WHERE id=?").get(r.id)).toEqual({ parked_refusal: null });
+    // the history a dispatch keeps for a spend park, so the backoff keeps doubling
+    expect(db.prepare("SELECT attempts FROM room_request_retry WHERE request_id=?").get(r.id)).toEqual({ attempts: 1 });
+  });
+  it("C-W2b an unresolved park keeps no parked reason, and completion clears the marker: an unresolved park ends with no reason, a spend park with spend_limit as on base", () => {
+    const r = turn(root().id, "b", "park:2");
+    deferRetainedRoomRequest(db, r.id, 5_000);
+    expect(db.prepare("SELECT refusal, parked_refusal FROM room_requests WHERE id=?").get(r.id)).toEqual({ refusal: "retained_unresolved", parked_refusal: null });
+    deferRetainedRoomRequest(db, r.id, 6_000, "spend_limit");
+    completeRequest(db, r.id, { state: "cancelled", now: 7_000 });
+    expect(db.prepare("SELECT refusal, parked_refusal FROM room_requests WHERE id=?").get(r.id)).toEqual({ refusal: "spend_limit", parked_refusal: null });
+    const u = turn(root().id, "b", "park:2u");
+    deferRetainedRoomRequest(db, u.id, 5_000);
+    completeRequest(db, u.id, { state: "cancelled", now: 7_000 });
+    expect(db.prepare("SELECT refusal, parked_refusal FROM room_requests WHERE id=?").get(u.id)).toEqual({ refusal: null, parked_refusal: null });
+  });
+  it("C-W4 the upgrade backfill takes a base-shaped spend park out of the runnable index, and a spend refusal without a retry row stays runnable", () => {
+    const [parked, loose] = fill(2, "up");
+    fill(R, "run");
+    db.prepare("UPDATE room_requests SET refusal='spend_limit' WHERE id IN (?,?)").run(parked, loose);
+    db.prepare("INSERT INTO room_request_retry(request_id,retry_at,attempts) VALUES(?,?,?)").run(parked, 99_000, 3);
+    expect(rowsVisited(runnableRoomRequestIdsSql(), [])).toBe(R + 2);
+    initializeProjectTables(db);
+    initializeProjectTables(db);
+    expect(rowsVisited(runnableRoomRequestIdsSql(), [])).toBe(R + 1);
+    expect(runnableRoomRequestIds(db)).toContain(loose);
+    expect(roomRequest(db, parked)).toMatchObject({ refusal: "spend_limit" });
+    expect(db.prepare("SELECT retry_at, attempts FROM room_request_retry WHERE request_id=?").get(parked)).toEqual({ retry_at: 99_000, attempts: 3 });
+  });
+  it("C-I1 every writer that takes a spend park out of the queue leaves no park behind: the reason is back on the row and the column is empty", () => {
+    const broken = () => db.prepare(`SELECT id, state, refusal, parked_refusal FROM room_requests WHERE parked_refusal IS NOT NULL
+      AND NOT (state='queued' AND refusal='retained_unresolved' AND EXISTS (SELECT 1 FROM room_request_retry WHERE request_id=room_requests.id))`).all();
+    const park = (id: string) => { deferRetainedRoomRequest(db, id, 5_000, "spend_limit"); return id; };
+    const stored = (id: string) => db.prepare("SELECT state, refusal, parked_refusal FROM room_requests WHERE id=?").get(id);
+    const retry = (id: string) => db.prepare("SELECT 1 AS x FROM room_request_retry WHERE request_id=?").get(id);
+    // a deleted conversation closes its waiting owner send (the production caller)
+    const send = park(root(2000).id);
+    expect(stored(send)).toEqual({ state: "queued", refusal: "retained_unresolved", parked_refusal: "spend_limit" });
+    expect(scrubOwnerSendsOfThread(db, "room-t", 9_000)).toBeGreaterThan(0);
+    expect(stored(send)).toEqual({ state: "cancelled", refusal: "spend_limit", parked_refusal: null });
+    expect(retry(send)).toBeUndefined();
+    expect(broken()).toEqual([]);
+    // an expiry (the production caller)
+    const late = park(insertRoomRequest(db, { groupId: "g1", verb: "room_turn", fromKind: "owner", toBotId: "b", targetThreadId: "room-t", parentId: root(2100).id, admissionKey: "ci1:late", now: 2200, priority: "coordinator", deadlineAt: 3_000 }).request.id);
+    expireOverdueRoomRequests(db, 10_000, ledgerHooks);
+    expect(stored(late)).toMatchObject({ state: "expired", parked_refusal: null });
+    expect(broken()).toEqual([]);
+    // the statements the project writers run (project ended, plan changed, a card cancelled, a hand-off's conversation deleted, a group removed)
+    for (const [n, sql] of [
+      "UPDATE room_requests SET state='cancelled', finished_at=1, waiting_since=NULL, outcome_note='project ended' WHERE id=? AND state IN ('queued','running','waiting_owner','waiting_bot')",
+      "UPDATE room_requests SET state='cancelled', finished_at=1, waiting_since=NULL, outcome_note='plan changed' WHERE id=? AND state='queued'",
+      "UPDATE room_requests SET state='cancelled', finished_at=1, outcome_note='x', waiting_since=NULL WHERE id=?",
+      "UPDATE room_requests SET state='failed', finished_at=1 WHERE id=?",
+    ].entries()) {
+      const id = park(turn(root(3000 + n).id, "b", `ci1:${n}`).id);
+      db.prepare(sql).run(id);
+      expect(stored(id)).toMatchObject({ refusal: "spend_limit", parked_refusal: null });
+      expect(retry(id)).toBeUndefined();
+      expect(roomRequest(db, id)).toMatchObject({ refusal: "spend_limit" });
+    }
+    expect(broken()).toEqual([]);
+    // the lifecycle writers keep their own endings: a dispatch and a completion leave no park and no stale reason
+    const run = park(turn(root(4000).id, "b", "ci1:run").id);
+    expect(markRequestDispatched(db, run, { now: 40_000, targetThreadId: "room-t" })).toBe(true);
+    expect(stored(run)).toEqual({ state: "running", refusal: null, parked_refusal: null });
+    expect(broken()).toEqual([]);
+  });
+  it("C-I1 through the writers themselves: a cancelled request and an ended project leave no park behind", () => {
+    const stored = (id: string) => db.prepare("SELECT state, refusal, parked_refusal FROM room_requests WHERE id=?").get(id);
+    const retry = (id: string) => db.prepare("SELECT 1 AS x FROM room_request_retry WHERE request_id=?").get(id);
+    const park = (id: string) => { deferRetainedRoomRequest(db, id, 5_000, "spend_limit"); expect(stored(id)).toMatchObject({ refusal: "retained_unresolved", parked_refusal: "spend_limit" }); return id; };
+    const one = park(turn(root(5000).id, "b", "ci1w:cancel").id);
+    expect(cancelRoomRequest(db, one, { now: 50_000 })).not.toBeNull();
+    expect(stored(one)).toEqual({ state: "cancelled", refusal: "spend_limit", parked_refusal: null });
+    expect(retry(one)).toBeUndefined();
+    channelToProjectRows(db, { groupId: "g1", bulletin: "", leadBotId: null, now: 1 });
+    const ended = park(turn(root(5100).id, "b", "ci1w:end").id);
+    expect(endProjectRows(db, { groupId: "g1", now: 51_000 })).toMatchObject({ ok: true });
+    expect(stored(ended)).toEqual({ state: "cancelled", refusal: "spend_limit", parked_refusal: null });
+    expect(retry(ended)).toBeUndefined();
+    expect(db.prepare("SELECT id FROM room_requests WHERE parked_refusal IS NOT NULL").all()).toEqual([]);
+  });
+  it.each(["plan", "card", "interrupt", "handoff-thread", "handoff-all", "restore"])("C-I1 real %s writer clears a spend park and its retry, keeping the reason", (writer) => {
+    channelToProjectRows(db, { groupId: "g1", bulletin: "", leadBotId: null, now: 1 });
+    const parent = root(5200);
+    const created = createProjectCard(db, { groupId: "g1", title: "Work", actor: { kind: "owner" }, memberIds: ["b"], now: 2 });
+    if (!created.ok) throw new Error(created.reason);
+    const card = created.card;
+    const request = insertRoomRequest(db, { groupId: "g1", verb: "room_turn", fromKind: "owner", toBotId: "b", targetThreadId: "room-t", parentId: parent.id,
+      admissionKey: "ci1:writer", workItemId: card.id, cardGeneration: card.generation, now: 3 }).request;
+    deferRetainedRoomRequest(db, request.id, 5000, "spend_limit");
+    expect(db.prepare("SELECT state, refusal, parked_refusal FROM room_requests WHERE id=?").get(request.id))
+      .toEqual({ state: "queued", refusal: "retained_unresolved", parked_refusal: "spend_limit" });
+    expect(db.prepare("SELECT 1 FROM room_request_retry WHERE request_id=?").get(request.id)).toBeDefined();
+    if (writer === "plan") {
+      const goal = createProjectGoal(db, { groupId: "g1", title: "Goal", now: 4 });
+      if (!goal.ok) throw new Error(goal.reason);
+      db.prepare("UPDATE project_goals SET state='awaiting_plan_ok' WHERE id=?").run(goal.goal.id);
+      db.prepare("UPDATE room_requests SET project_goal_id=? WHERE id=?").run(goal.goal.id, request.id);
+      expect(changeProjectPlan(db, { goalId: goal.goal.id, note: "Change the plan", now: 6000 }).ok).toBe(true);
+    } else if (writer === "card") {
+      expect(cancelProjectCard(db, { cardId: card.id, actor: { kind: "owner" }, now: 6000 }).ok).toBe(true);
+    } else if (writer === "interrupt") {
+      db.prepare("UPDATE project_work_items SET state='doing', request_id=? WHERE id=?").run(request.id, card.id);
+      expect(handleProjectRoute(db, { method: "PATCH", path: `/api/groups/g1/board/cards/${card.id}`, query: new URLSearchParams(),
+        body: { expectedRevision: card.revision, action: "interrupt" }, group: { id: "g1", memberIds: ["b"], threadId: "room-t" }, now: 6000 }))
+        .toMatchObject({ status: 200 });
+    } else if (writer === "restore") {
+      prepareProjectTablesForRestore(db, { groups: [{ id: "g1", channelProject: {} }], botIds: new Set(["b"]), now: 6000 });
+    } else {
+      initializePendingDelegations(db);
+      db.prepare("INSERT INTO pending_delegations(id,source_thread_id,to_bot_id,phase,item,origin) VALUES (?,'room-t','b','fresh','{}','room')").run(request.id);
+      if (writer === "handoff-thread") endLiveRequestsOfThread(db, "room-t", "Conversation deleted", 6000);
+      else endAllLivePairedRequests(db, "Restore", 6000);
+    }
+    expect(db.prepare("SELECT state, refusal, parked_refusal FROM room_requests WHERE id=?").get(request.id))
+      .toEqual({ state: writer === "restore" ? "expired" : "cancelled", refusal: "spend_limit", parked_refusal: null });
+    expect(db.prepare("SELECT 1 FROM room_request_retry WHERE request_id=?").get(request.id)).toBeUndefined();
+    expect(roomRequest(db, request.id)).toMatchObject({ refusal: "spend_limit" });
+  });
+  it("C-W5 a spend-parked shared row no longer counts as ready for its team, and returns when cleared", () => {
+    db.prepare("INSERT INTO shared_request_provenance(request_id, origin) VALUES('sh-0', 'none')").run();
+    const [id] = fill(1, "sh", "b0", JSON.stringify({ kind: "team", team: "T1" }));
+    expect(readyTeams(db, "b0", 10)).toContain("T1");
+    deferRetainedRoomRequest(db, id!, 5_000, "spend_limit");
+    expect(readyTeams(db, "b0", 10)).not.toContain("T1");
+    clearRetainedRoomRequest(db, id!);
+    expect(readyTeams(db, "b0", 10)).toContain("T1");
+  });
+  it("parity: a spend refusal seen by admission parks a row that has retry history in place, and not one without", () => {
+    const withHistory = turn(root().id, "b", "parity:1");
+    const without = turn(root().id, "b", "parity:2");
+    deferRetainedRoomRequest(db, withHistory.id, 5_000, "spend_limit");
+    markRequestDispatched(db, withHistory.id, { now: 40_000, targetThreadId: "room-t" });
+    markRequestDispatched(db, without.id, { now: 40_000, targetThreadId: "room-t" });
+    const before = db.prepare("SELECT retry_at, attempts FROM room_request_retry WHERE request_id=?").get(withHistory.id);
+    expect(requeueSpendHeldRoomRequest(db, withHistory.id, 40_000, true)).toBe(true);
+    expect(requeueSpendHeldRoomRequest(db, without.id, 40_000, true)).toBe(true);
+    expect(db.prepare("SELECT retry_at, attempts FROM room_request_retry WHERE request_id=?").get(withHistory.id)).toEqual(before);
+    expect(db.prepare("SELECT refusal, parked_refusal FROM room_requests WHERE id=?").get(withHistory.id)).toEqual({ refusal: "retained_unresolved", parked_refusal: "spend_limit" });
+    expect(roomRequest(db, withHistory.id)).toMatchObject({ refusal: "spend_limit" });
+    expect(runnableRoomRequestIds(db)).not.toContain(withHistory.id);
+    expect(runnableRoomRequestIds(db)).toContain(without.id);
+    expect(db.prepare("SELECT parked_refusal FROM room_requests WHERE id=?").get(without.id)).toEqual({ parked_refusal: null });
+  });
+  it("M3 a spend park that meets another refusal becomes an ordinary queued row; an unresolved park keeps its marker", () => {
+    const spend = turn(root().id, "b", "m3:1");
+    const unresolved = turn(root().id, "b", "m3:2");
+    deferRetainedRoomRequest(db, spend.id, 5_000, "spend_limit");
+    deferRetainedRoomRequest(db, unresolved.id, 5_000);
+    recordRoomRequestRefusal(db, spend.id, "spend_limit");
+    expect(db.prepare("SELECT refusal, parked_refusal FROM room_requests WHERE id=?").get(spend.id)).toEqual({ refusal: "retained_unresolved", parked_refusal: "spend_limit" });
+    expect(db.prepare("SELECT 1 AS x FROM room_request_retry WHERE request_id=?").get(spend.id)).toBeDefined();
+    recordRoomRequestRefusal(db, spend.id, "speaking_in_room");
+    recordRoomRequestRefusal(db, unresolved.id, "speaking_in_room");
+    expect(db.prepare("SELECT refusal, parked_refusal FROM room_requests WHERE id=?").get(spend.id)).toEqual({ refusal: "speaking_in_room", parked_refusal: null });
+    expect(db.prepare("SELECT 1 AS x FROM room_request_retry WHERE request_id=?").get(spend.id)).toBeUndefined();
+    expect(runnableRoomRequestIds(db)).toContain(spend.id);
+    expect(dueRetainedRoomRequests(db, 10 ** 9).map((row) => row.id)).not.toContain(spend.id);
+    expect(db.prepare("SELECT refusal FROM room_requests WHERE id=?").get(unresolved.id)).toEqual({ refusal: "retained_unresolved" });
+    // the spend hold returns after the other refusal: parked again from attempt 1
+    markRequestDispatched(db, spend.id, { now: 50_000, targetThreadId: "room-t" });
+    requeueSpendHeldRoomRequest(db, spend.id, 50_000, false);
+    expect(db.prepare("SELECT attempts FROM room_request_retry WHERE request_id=?").get(spend.id)).toEqual({ attempts: 1 });
+    expect(roomRequest(db, spend.id)).toMatchObject({ refusal: "spend_limit" });
   });
 });
