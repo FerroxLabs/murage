@@ -124,7 +124,12 @@ try {
   createPolicy = module.createTurnTextPolicy;
 } catch { /* no input text is included in the missing-policy diagnostic */ }
 
-type AdmissionRecord = { host: TrustedSendContext; generation: number; active: boolean; masked: boolean; items: Map<string, string>; regions: Set<string>; snapshots: Map<string, { text: string; regionId: string; revision: number; speech: 'append' | 'none' }>; streamed: Set<string>; anonymousAssistant: number };
+const TURN_ITEM_LIMIT = 1024;
+const DISPLAY_STREAM_LIMIT = 256;
+const SNAPSHOT_SCALAR_LIMIT = 262_144;
+const TURN_SNAPSHOT_SCALAR_LIMIT = 64 * SNAPSHOT_SCALAR_LIMIT;
+
+type AdmissionRecord = { host: TrustedSendContext; generation: number; active: boolean; masked: boolean; secret: boolean; items: Map<string, string>; regions: Set<string>; snapshotScalars: number; snapshots: Map<string, { text: string; regionId: string; revision: number; speech: 'append' | 'none' }>; streamed: Set<string>; anonymousAssistant: number };
 type AttachmentRecord = { instanceId: string; active: boolean; admissions: Set<TurnAdmission> };
 const variants: Record<ExecutionEvent['type'], ManifestVariant | ((event: ExecutionEvent) => ManifestVariant)> = {
   'turn.diagnostic': 'M01', 'session.started': 'M02', 'turn.subtask': 'M03', 'session.exited': 'M04', 'turn.started': 'M05', 'turn.retrying': 'M06', 'turn.completed': 'M07',
@@ -151,6 +156,79 @@ function toolResultDirDisplay(entry: string): string {
   if (!key || !parts.slice(0, n - 4).join('/') || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(session)) return entry;
   const at = entry.length - leaf.length - 1 - session.length;
   return entry.slice(0, at) + SESSION_TOKEN + entry.slice(at + session.length);
+}
+
+/** Oversized tool and image payloads are SHORTENED for display, never masked
+ * (owner rule, 1.0.20): one big tool input or result (a file written whole, a
+ * long web page, a base64 screenshot) or an image's bytes used to exhaust the
+ * per-event budgets and latch the rest of the turn «redacted», and that marker
+ * was stored as the reply. Only the display copy is shortened; execution keeps
+ * the original event. Each string is cut back to a word boundary (no part of a
+ * cut token is ever shown) and ends with a plain note. Only own plain data is
+ * copied: a proxy, accessor or foreign prototype is passed through untouched
+ * so extract() still refuses it, as before. */
+export const SHOWN_STRING_CHARS = 4_096;
+// SHOWN_LEAVES: one event's fields must fit one policy batch (TURN_TEXT_LIMITS.streams = 64 fields). A preview is
+// two fields per leaf (key, value) beside the event's own (title, summary, spoken, toolKind, three identity fields,
+// detail), so 24 leaves and the note are at most 57. At 200 a record-shaped tool result (an ACP rawOutput or MCP
+// structuredContent with more than about 30 leaves) passed the batch cap and masked the whole clean turn.
+const SHOWN_TOTAL_CHARS = 32_768, SHOWN_LEAVES = 24, SHOWN_TOP_CHARS = 65_536;
+export const shortenedNote = (omitted: number) => `[shortened: ${omitted} more characters not shown]`;
+function plainData(value: object): boolean {
+  if (types.isProxy(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === Array.prototype || proto === null;
+}
+function shortenString(raw: string, limit: number): string {
+  if (raw.length <= limit) return raw;
+  const head = raw.slice(0, limit);
+  const cut = Math.max(head.lastIndexOf(' '), head.lastIndexOf('\n'), head.lastIndexOf('\t'));
+  const kept = cut > 0 ? head.slice(0, cut) : '';
+  return `${kept}${kept ? '\n' : ''}${shortenedNote(raw.length - kept.length)}`;
+}
+function shortenTree(input: unknown): unknown {
+  let total = 0, leaves = 0, dropped = 0;
+  const walk = (raw: unknown, depth: number): unknown => {
+    if (typeof raw === 'string') { leaves++; const shown = shortenString(raw, Math.max(0, Math.min(SHOWN_STRING_CHARS, SHOWN_TOTAL_CHARS - total))); total += shown.length; return shown; }
+    if (raw === null || typeof raw !== 'object') { leaves++; return raw; }
+    if (depth > 40 || !plainData(raw)) return raw;
+    const out: Record<string, unknown> = Array.isArray(raw) ? [] as unknown as Record<string, unknown> : Object.getPrototypeOf(raw) === null ? Object.create(null) : {};
+    for (const k in raw) {
+      const d = Object.getOwnPropertyDescriptor(raw, k);
+      if (!d?.enumerable) continue;
+      if (!('value' in d)) return raw;
+      if (leaves >= SHOWN_LEAVES || total >= SHOWN_TOTAL_CHARS) { dropped++; continue; }
+      out[k] = walk(d.value, depth + 1);
+    }
+    return out;
+  };
+  try {
+    const shown = walk(input, 0);
+    if (dropped && shown && typeof shown === 'object' && !Array.isArray(shown)) (shown as Record<string, unknown>)['…'] = `[shortened: ${dropped} more fields not shown]`;
+    return shown;
+  } catch { return input; }
+}
+/** The display copy of one event (the event itself when nothing is too big). */
+export function shortenForDisplay(event: ExecutionEvent): ExecutionEvent {
+  if (!event || typeof event !== 'object' || !plainData(event)) return event;
+  try {
+    const entries: [string, unknown][] = [];
+    let changed = false;
+    for (const key of Object.keys(event)) {
+      const d = Object.getOwnPropertyDescriptor(event, key);
+      if (!d || !('value' in d)) return event; // an accessor stays for extract() to refuse
+      const v: unknown = d.value;
+      let shown: unknown = v;
+      if ((key === 'input' || key === 'result') && v !== null && typeof v === 'object') shown = shortenTree(v);
+      else if ((key === 'input' || key === 'result') && typeof v === 'string') shown = shortenString(v, SHOWN_STRING_CHARS);
+      // An image's bytes are never displayed as text. Any other single field is the reply or a host field: cut only when huge.
+      else if (key === 'data' && typeof v === 'string' && v.length > SHOWN_STRING_CHARS) shown = '';
+      else if (typeof v === 'string' && key !== 'text' && key !== 'delta' && v.length > SHOWN_TOP_CHARS) shown = shortenString(v, SHOWN_TOP_CHARS);
+      changed ||= shown !== v;
+      entries.push([key, shown]);
+    }
+    return changed ? Object.fromEntries(entries) as unknown as ExecutionEvent : event;
+  } catch { return event; }
 }
 
 /** Explicit manifest extractor. Fixed schema reads never evaluate an accessor
@@ -262,9 +340,13 @@ function extract(event: ExecutionEvent, envelope: HostEnvelope, stream: string):
     case 'content.reset': shape.streamKind = value(event, 'streamKind'); break;
     case 'plan.updated': shape.entries = array(event, 'entries', 256, (entry, i) => { const out = {}; text(entry, 'content', out, `entries.${i}.content`); enumeration(entry, 'status', out, ['pending', 'in_progress', 'completed']); return out; }) ?? []; break;
     // Command handles depend on the authoritative bot cache. Intake never invents
-    // a command handle from a provider name; the cache API constructs the menu.
+    // a command handle from a provider name; the cache API constructs the menu
+    // and scans the whole report itself (displayEngineCommands). The report is
+    // shape-checked here but carries no text into the turn policy: it displays
+    // nothing in this turn, and a fresh session reports every command inside
+    // the owner's first turn, whose per-field streams exhausted the turn budget.
     case 'engine.commands': {
-      array(event, 'commands', 300, (command, i) => { for (const key of ['name', 'description', 'hint']) text(command, key, {}, `commands.${i}.${key}`); });
+      array(event, 'commands', 300, command => { for (const key of ['name', 'description', 'hint']) { const raw = value(command, key); if (raw !== undefined && typeof raw !== 'string') throw new Error('text_shape'); } });
       shape.commands = []; break;
     }
     case 'steer.confirmed': break;
@@ -320,7 +402,7 @@ export class RuntimeAudienceCollector implements AudienceCollector {
     if (!attachment?.active || attachment.instanceId !== host.instanceId) throw new Error('invalid_attachment');
     const cap = Object.freeze({}) as TurnAdmission;
     const active = this.liveAdmissions < 256;
-    this.admissions.set(cap, { host: Object.freeze({ ...host }), generation: ++this.generation, active, masked: false, items: new Map(), regions: new Set(), snapshots: new Map(), streamed: new Set(), anonymousAssistant: 0 });
+    this.admissions.set(cap, { host: Object.freeze({ ...host }), generation: ++this.generation, active, masked: false, secret: false, items: new Map(), regions: new Set(), snapshotScalars: 0, snapshots: new Map(), streamed: new Set(), anonymousAssistant: 0 });
     if (active) { this.liveAdmissions++; attachment.admissions.add(cap); this.policy.admit(cap); }
     return cap;
   }
@@ -331,16 +413,22 @@ export class RuntimeAudienceCollector implements AudienceCollector {
   private retire(cap: TurnAdmission) {
     const state = this.admissions.get(cap); if (!state) return;
     if (state.active) this.liveAdmissions--;
-    state.active = false; state.items.clear(); state.regions.clear(); state.snapshots.clear(); state.streamed.clear(); this.attachments.get(state.host.attachment)?.admissions.delete(cap); this.policy.retire(cap);
+    state.active = false; state.items.clear(); state.regions.clear(); state.snapshotScalars = 0; state.snapshots.clear(); state.streamed.clear(); this.attachments.get(state.host.attachment)?.admissions.delete(cap); this.policy.retire(cap);
   }
   masked(source: SourceContext | undefined): boolean { return source?.admission ? this.admissions.get(source.admission)?.masked ?? true : true; }
+  /** Whether the policy's own scan latched this turn (a hit, or a scan it could not finish). False for a
+   * fence or budget mask (no admission, a stale attachment, a cap): those say nothing about the words. */
+  maskedBySecret(source: SourceContext | undefined): boolean { return source?.admission ? this.admissions.get(source.admission)?.secret === true : false; }
   cancel(cap: TurnAdmission): readonly AudienceEmission[] { this.policy.finish(cap, 'cancel'); this.retire(cap); return []; }
   detach(attachment: AttachmentCapability): readonly AudienceEmission[] {
     const state = this.attachments.get(attachment); if (!state) return [];
     state.active = false; for (const cap of state.admissions) this.cancel(cap); state.admissions.clear(); return [];
   }
   intake(event: ExecutionEvent, source: SourceContext | undefined): IntakeResult {
-    const charge = chargeExecutionEvent(event);
+    const original = chargeExecutionEvent(event);
+    // Budgets below read the display copy: a payload that is only too BIG is shortened, not a reason to mask the turn.
+    const shown = shortenForDisplay(event);
+    const charge = shown === event ? original : boundedEventCharge(shown);
     const admission = source?.admission;
     const admitted = admission ? this.admissions.get(admission) : undefined;
     const attachment = source ? this.attachments.get(source.attachment) : undefined;
@@ -378,7 +466,7 @@ export class RuntimeAudienceCollector implements AudienceCollector {
       if (typeof rawItem === 'string' && rawItem.length > 0 && rawItem.length <= 1024) {
         item = admitted!.items.get(rawItem) ?? '';
         if (!item) {
-          if (admitted!.items.size >= 64) { admitted!.masked = true; this.policy.retire(admission!); return { execution: event, audience: [omitted(), ...pendingControl()] }; }
+          if (admitted!.items.size >= TURN_ITEM_LIMIT) { admitted!.masked = true; this.policy.retire(admission!); return { execution: event, audience: [omitted(), ...pendingControl()] }; }
           item = `${admitted!.generation}-${admitted!.items.size}`; admitted!.items.set(rawItem, item);
         }
       }
@@ -391,24 +479,30 @@ export class RuntimeAudienceCollector implements AudienceCollector {
       if (!item && type === 'item.completed' && kind === 'assistant_text') {
         // The retired policy needs no new anonymous region. Other event types
         // still project their control shape, including opaque question choices.
-        if (admitted!.masked || admitted!.anonymousAssistant >= 64) {
+        if (admitted!.masked || admitted!.anonymousAssistant >= TURN_ITEM_LIMIT) {
           admitted!.masked = true; this.policy.retire(admission!);
           return { execution: event, audience: [omitted(), ...pendingControl()] };
         }
         admitted!.anonymousAssistant++;
       }
-      const { batch, shape } = extract(event, envelope, stream);
+      const { batch, shape } = extract(shown, envelope, stream);
       if (type === 'content.delta') {
-        if (!admitted!.streamed.has(stream) && admitted!.streamed.size >= 64) throw new Error('stream budget');
+        if (!admitted!.streamed.has(stream) && admitted!.streamed.size >= DISPLAY_STREAM_LIMIT) throw new Error('stream budget');
         admitted!.streamed.add(stream);
       }
       const decisions: PolicyDecision[] = [];
-      if (type === 'content.reset') admitted!.snapshots.delete(stream);
+      if (type === 'content.reset') {
+        admitted!.snapshotScalars -= admitted!.snapshots.get(stream)?.text.length ?? 0;
+        admitted!.snapshots.delete(stream);
+      }
       if (type === 'content.reset') decisions.push(this.policy.reset(admission, stream));
       decisions.push(this.policy.consume(admission, batch));
       // F2 consumes a terminal batch atomically, including its buffered tail.
       // Calling finish again here would turn an already retired CLEAN result into MASKED.
       if (decisions.some(d => d.exhausted)) { admitted!.masked = true; return { execution: event, audience: [omitted(), ...pendingControl(), ...(terminal ? [emit({ ...skeleton, type } as AudienceEvent)] : [])] }; }
+      // Only a live turn's own Latch or unfinished scan (masked, not exhausted) is a finding about
+      // its words; a decision on a turn an earlier fence already retired is that fence again.
+      if (!admitted!.masked && decisions.some(decision => decision.masked && !decision.exhausted)) admitted!.secret = true;
       admitted!.masked ||= decisions.some(decision => decision.masked || decision.exhausted);
       const operations = decisions.flatMap(d => d.operations);
       const audience: AudienceEmission[] = [];
@@ -418,7 +512,12 @@ export class RuntimeAudienceCollector implements AudienceCollector {
         if (op.path !== 'delta' && op.path !== 'text') { fill(shape, op.path, op.text); continue; }
         const previous = admitted!.snapshots.get(op.stream)?.text ?? '';
         const cumulative = op.op === 'replace' || op.op === 'omit' ? op.text : previous + op.text;
-        if (cumulative.length > 262_144 || (!admitted!.snapshots.has(op.stream) && admitted!.snapshots.size >= 64)) { admitted!.masked = true; this.policy.retire(admission!); return { execution: event, audience: [omitted(), ...pendingControl()] }; }
+        const snapshotScalars = admitted!.snapshotScalars - previous.length + cumulative.length;
+        if (cumulative.length > SNAPSHOT_SCALAR_LIMIT || snapshotScalars > TURN_SNAPSHOT_SCALAR_LIMIT ||
+            (!admitted!.snapshots.has(op.stream) && admitted!.snapshots.size >= DISPLAY_STREAM_LIMIT)) {
+          admitted!.masked = true; this.policy.retire(admission!); return { execution: event, audience: [omitted(), ...pendingControl()] };
+        }
+        admitted!.snapshotScalars = snapshotScalars;
         admitted!.snapshots.set(op.stream, { text: cumulative, regionId: op.regionId, revision: op.revision, speech: op.speech });
         const same = batch.carriers.some(c => c.path === op.path && c.stream === op.stream);
         if (same && type !== 'content.delta') {

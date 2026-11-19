@@ -23,10 +23,12 @@ import { randomUUID } from "node:crypto";
 import { DATA_DIR } from "./config.ts";
 import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_PRE_V3_SNAPSHOT, MEMORY_PRE_V4_SNAPSHOT, MEMORY_SCHEMA_VERSION, lineageRepairPending, migrateMemorySchema, repairOutputRootBackfill } from "./memory/schema.ts";
 import type { BlockingHeartbeat } from "./memory/blocking-heartbeat.ts";
-import { buildEagerIndexesBeforeListen, buildPreListenIndexes, optionalIndexReady, preListenIndexMissing } from "./memory/optional-index.ts";
+import { setBootStep } from "./boot-progress.ts";
+import { buildEagerIndexesBeforeListen, buildPreListenIndexes, optionalIndexReady, preListenIndexDeferred, preListenIndexMissing } from "./memory/optional-index.ts";
 import { createProgressBoard, preListenHealthPort, setActivePreListenHealth, startPreListenHealth, type PreListenHealth, type ProgressBoard } from "./memory/upgrade-health.ts";
 import { UpgradeProgressTracker, nextUpgradeSeq, restampedUpgrade, upgradeCounts } from "./memory/upgrade-progress.ts";
 import { unknownUpgradeState } from "../shared/upgrade-contract.mjs";
+import { noteDataVersion } from "../shared/data-version-marker.mjs";
 import { bootLaunchId } from "./memory/boot-nonce.ts";
 import { bumpWriteEpoch, ensureWriteRevision, installWriteRevisionTriggers } from "./app-write-revision.ts";
 import { integrityPending, setIntegrityFlags } from "./memory/integrity-flags.ts";
@@ -313,6 +315,8 @@ export function database(): DatabaseSync {
     // vacuum, root-set-compaction.ts); it can only be chosen before the first table.
     // The wait comes before the first statement that reads the file: another connection still leaving it (a worker that opened it by
     // path, a checkpointer) may hold it for a moment, and without the wait even this first pragma fails at once with "database is locked".
+    // the start-up note names the open: a large write-ahead log is replayed by the first statements below (boot-progress.ts)
+    if (firstOpen) setBootStep("database.wal");
     db.exec("PRAGMA busy_timeout=1000");
     if (freshInstallation) db.exec("PRAGMA auto_vacuum=INCREMENTAL");
     if (!isReadOnly()) db.exec("PRAGMA journal_mode=WAL");
@@ -373,10 +377,15 @@ export function database(): DatabaseSync {
     // branch move is still being flipped: counted once here (one seek), known after
     verifyDerivedRows(db);
     pendingBranchChanges(db);
+    if (firstOpen) setBootStep("database.memory");
     try {
       migrateMemorySchema(db, freshInstallation ? "active" : "off", { snapshotPath: join(DATA_DIR, MEMORY_PRE_V2_SNAPSHOT), snapshotV2Path: join(DATA_DIR, MEMORY_PRE_V3_SNAPSHOT), snapshotV3Path: join(DATA_DIR, MEMORY_PRE_V4_SNAPSHOT), onPhase: event => upgrade.phase(event), onValidating: () => upgrade.checking(), onBlocking: (first, from) => upgrade.blocking(first, from) });
       // A migration rewrites memory tables: whatever figures an earlier launch cached are void.
       if (migrating) { try { bumpWriteEpoch(db); } catch { /* as above */ } }
+      // This release accepted the memory tables (and migrated them if it had to): the data folder records it as the newest writer, so an
+      // older build that later refuses this data can name the version to install (shared/data-version-marker.mjs). Only ever raised; a
+      // source run (no released MURAGE_APP_VERSION) and a read-only start write nothing.
+      if (!isReadOnly()) noteDataVersion(DATA_DIR, process.env.MURAGE_APP_VERSION);
       // What the connection holds back until the background work has finished.
       loadBackgroundFlags(db); if (firstOpen) startupMark("database.flags");
       // The search index tail is noted here (a seek), filled in the background; the log's high-water mark is cut back while the note is
@@ -429,7 +438,7 @@ export function database(): DatabaseSync {
           if (!optionalIndexReady(db, TURN_INDEX)) { console.error("[startup] read-only start: required index missing"); throw new TurnIndexNotReadyError(); }
           skippedAtStart.push("database.preListenIndexes");
         } else {
-          try { buildPreListenIndexes(db, { log: firstOpen }); if (!optionalIndexReady(db, TURN_INDEX)) throw new TurnIndexNotReadyError(); } finally { try { beat?.end(); } catch { /* as above */ } }
+          try { buildPreListenIndexes(db, { log: firstOpen }); if (!optionalIndexReady(db, TURN_INDEX) && !preListenIndexDeferred(db, TURN_INDEX)) throw new TurnIndexNotReadyError(); } finally { try { beat?.end(); } catch { /* as above */ } }
         }
       }
       {
@@ -447,6 +456,7 @@ export function database(): DatabaseSync {
       if (isLowDisk(error)) upgrade.done(); else upgrade.blocked(error);
       void responder?.close(); setActivePreListenHealth(null); throw error;
     } if (firstOpen) startupMark("database.noteDone");
+    if (firstOpen) setBootStep("database.initializers");
     if (isReadOnly() && !readOnlyEmpty) {
       initializeOwnerSends(db); initializeOwnWriteHolds(db);
     } else {

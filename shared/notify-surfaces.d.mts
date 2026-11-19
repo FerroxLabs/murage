@@ -4,7 +4,7 @@ export type NotifyChooserState = "unseen" | "done" | "kept-inside";
 export interface NotifySurfaces {
   v: 1; origin: NotifyOrigin;
   surfaces: Record<NotifySurfaceId, boolean>;
-  notifyActions: boolean; quietSummary: boolean; badgeMenu: boolean; badgeCount: "needs-you" | "unread";
+  notifyActions: boolean; quietSummary: boolean; badgeCount: "needs-you" | "unread";
   receiptMinMinutes: 0 | 2 | 5; nudgeMinutes: 0 | 5 | 15; hideFullscreen: boolean; respectFocus: boolean;
   pinnedBotId: string | null; shortcut: string | null; chooser: NotifyChooserState;
   asks: { backgroundApproval: boolean; longJob: boolean };

@@ -18,7 +18,7 @@ const STORE_MAPS = ["verdicts", "sessionSound", "threadGroupStore", "sessionHold
 const ALLOWED = new Set(["sharedHandles", "partialWalks", "chains", "audienceHolds", "proving",
   // MAIN RULING INT-CONFLICT-DEFAULT 845dabbd4f / e98bb792a54: connection-owned fresh-session replay evidence is revalidated against durable epochs, outside the four VerdictStore maps.
   "replaySessions",
-  "statements", "warned", "wantedThreads", "threadForgetsCache", "threadForgetsPass", "dependents", "epochReady", "foreignSeen", "judging", "prepared", "chainedTable", "chainWriters"]);
+  "statements", "warned", "wantedThreads", "threadForgetsCache", "threadForgetsPass", "dependents", "epochReady", "epochRetry", "foreignSeen", "judging", "prepared", "chainedTable", "chainWriters"]);
 
 describe("T11(a) four private maps in the VerdictStore", () => {
   it("verdict-store.ts exists and holds verdicts, sessionSound, threadGroupStore and sessionHolds as # fields", () => {

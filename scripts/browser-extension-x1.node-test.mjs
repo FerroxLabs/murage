@@ -496,6 +496,19 @@ test('GATE: a download from a new tab the bot tab opened is blocked even after t
     await f.runtime.navigationTarget({ tabId: 52, sourceTabId: 999, url: 'https://private.test/own.zip' });
     assert.equal(await f.runtime.downloadDetermining(item(13, 'https://private.test/own.zip')), false, 'a tab the owner opened elsewhere is never the bot\'s');
     assert.deepEqual(f.cancelled, [11]);
+    // Only the evidence of the popup that showed the page, under its own first address, is released. Before that popup
+    // navigates: a second bot popup announces a file, the bot's own tab announces the page address, and the navigating popup
+    // was first re-announced under a file address of its own. All three stay the bot's after the page shows.
+    const second = 'https://files.test/second.bin', third = 'https://files.test/third.bin', later = 'https://allowed.test/later';
+    await f.runtime.navigationTarget({ tabId: 53, sourceTabId: 1, url: second });
+    await f.runtime.debuggerEvent({ tabId: 1 }, 'Page.downloadWillBegin', { url: later, suggestedFilename: 'later.html' });
+    await f.runtime.navigationTarget({ tabId: 54, sourceTabId: 1, url: third });
+    await f.runtime.navigationTarget({ tabId: 54, sourceTabId: 1, url: later });
+    await f.runtime.navigation({ tabId: 54, frameId: 0, url: later });
+    assert.equal(await f.runtime.downloadDetermining(item(14, second)), true, 'another bot popup\'s file stays blocked (no tab-wide or global release)');
+    assert.equal(await f.runtime.downloadDetermining(item(15, later)), true, 'the bot tab\'s own announcement of the same address stays (the release is this tab\'s only)');
+    assert.equal(await f.runtime.downloadDetermining(item(16, third)), true, 'this popup\'s announcement under another address stays (the release is this address only)');
+    assert.deepEqual(f.cancelled, [11, 14, 15, 16]);
   } finally { Date.now = realNow; }
 });
 

@@ -2,7 +2,6 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/analytics", () => ({ track: () => {}, analyticsEnabled: () => false }));
 // The store's import graph reads `window` at module scope; this suite runs in node.
 (globalThis as unknown as { window?: unknown }).window ??= {};
 const { NewTeamDialogBody, newTeamBotDetail } = await import("./NewTeamDialog");

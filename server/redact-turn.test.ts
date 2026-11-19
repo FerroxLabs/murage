@@ -74,7 +74,10 @@ describe("redact-turn", () => {
   it("redact-turn.streams-64-global4096", () => {
     const { p, a } = fresh(); for (let i = 0; i < 64; i++) expect(p.consume(a, batch("", `s${i}`)).masked).toBe(false); expect(p.stats().streams).toBe(64); expect(p.consume(a, batch("", "s64")).masked).toBe(true);
     const q = make(); for (let i = 0; i < 64; i++) { const c = cap(); q.admit(c); for (let j = 0; j < 64; j++) q.consume(c, batch("", `s${j}`)); }
-    expect(q.stats().streams).toBe(4096); const c = cap(); q.admit(c); expect(q.consume(c, batch("", "overflow")).masked).toBe(true);
+    // 1.0.20 redact-acp (owner rule): a full process table no longer masks the next turn. Every entry here is an open
+    // text item (never let go), so the one new carrier is withheld alone and the table stays at its limit.
+    expect(q.stats().streams).toBe(4096); const c = cap(); q.admit(c); const over = q.consume(c, batch("", "overflow"));
+    expect(over.masked).toBe(false); expect(over.operations.map(o => o.op)).toEqual(["omit"]); expect(text(over)).toBe("«redacted»"); expect(q.stats().streams).toBe(4096);
   });
   it("redact-turn.empty-id-flood", () => { const { p, a } = fresh(); for (let i = 0; i < 5000; i++) p.consume(a, batch("", "")); expect(p.stats().streams).toBe(1); });
   it("redact-turn.no-tombstones", () => { const p = make(); for (let i = 0; i < 10000; i++) p.consume(cap(), batch("secret")); expect(p.stats()).toMatchObject({ clean: 0, streams: 0, pending: 0 }); });

@@ -1,13 +1,14 @@
-import { Check, ExternalLink, Loader2 } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/cn";
-import { announceTranscriptionStatus } from "@/lib/transcription-status";
+import { showOwnTranscriptionKey } from "@/lib/own-transcription-key";
+import { TRANSCRIPTION_STATUS_EVENT, announceTranscriptionStatus } from "@/lib/transcription-status";
 import { t } from "@/lib/i18n";
 import { useStore } from "@/state/store";
 
 function useTranscriptionKey() {
-  const bridge = window.muragebox?.transcription;
+  const bridge = typeof window === "undefined" ? undefined : window.muragebox?.transcription;
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -41,8 +42,8 @@ function useTranscriptionKey() {
   return { bridge, configured, value, setValue, saving, error, clearing, save };
 }
 
-/** The voice card on Search, images and dictation: where transcription stands, and where its key lives. The key itself is
- *  one field on the Skills page (TranscriptionKey), next to Teach a skill, and is mounted nowhere else. */
+/** The voice card on Search, images and dictation: where transcription stands. It names no vendor and asks for no key
+ *  (Sean 11-06); a key saved by an older version is its own Advanced card (OwnTranscriptionKeyCard), shown only when used. */
 export function VoiceNotesStatus({ route }: { route?: string | null }) {
   // /api/config -> tts.describeVoice -> describeVoiceRoutes uses the same
   // connection selection as POST /api/voice/transcribe. This is configuration,
@@ -58,51 +59,52 @@ export function VoiceNotesStatus({ route }: { route?: string | null }) {
 }
 
 export function TranscriptionSettings() {
-  const { configured } = useTranscriptionKey();
-  const { state, dispatch } = useStore();
-  return (
-    <div>
-      <VoiceNotesStatus route={state.config?.tts?.routes?.transcribe} />
-      <div className="mb-1.5 flex items-center gap-2 text-[13px] text-ink-secondary">
-        <span className={cn("size-1.5 rounded-full", configured ? "bg-success" : "bg-raised-hover")} />
-        <span>AssemblyAI transcription</span>
-        {configured && <span className="text-[11px] text-success">Connected</span>}
-      </div>
-      <p className="mb-2 text-[12px] leading-relaxed text-ink-secondary">
-        Live narration for recorded skills. Audio is sent to AssemblyAI while recording; the API key is protected by your operating system.
-      </p>
-      <p className="mb-2 text-[12px] leading-relaxed text-ink-secondary">
-        {configured ? t("settings.l4.voiceKey.change") : t("settings.l4.voiceKey.where")}
-        {" "}
-        <button
-          type="button"
-          data-setting-control="voice-settings-heading"
-          onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "skills", anchor: "voice-key-heading" })}
-          className="font-medium text-accent underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-        >
-          {t("settings.l4.voiceKey.open")}
-        </button>
-      </p>
-    </div>
-  );
+  const { state } = useStore();
+  return <div data-setting-control="voice-settings-heading" tabIndex={-1} className="outline-none"><VoiceNotesStatus route={state.config?.tts?.routes?.transcribe} /></div>;
 }
 
-/** The one AssemblyAI key field (Skills page, next to Teach a skill). Same credential and the same Save, Clear and Enter
- *  behaviour as before; it only moved. */
-export function TranscriptionKey() {
+/** Whether a key is saved in this computer's protected store; follows Save and Clear. Null until known. */
+function useTranscriptionKeySaved(): boolean | null {
+  const bridge = typeof window === "undefined" ? undefined : window.muragebox?.transcription;
+  const [saved, setSaved] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const onStatus = (event: CustomEvent<{ configured: boolean }>) => setSaved(event.detail.configured);
+    window.addEventListener(TRANSCRIPTION_STATUS_EVENT, onStatus);
+    bridge?.status()
+      .then((status) => alive && setSaved(status.configured))
+      .catch(() => alive && setSaved(false));
+    return () => { alive = false; window.removeEventListener(TRANSCRIPTION_STATUS_EVENT, onStatus); };
+  }, [bridge]);
+  return saved;
+}
+
+/** The Advanced card on Search, images and dictation. Renders nothing unless a key saved earlier is in use. */
+export function OwnTranscriptionKeyCard() {
+  const { state } = useStore();
+  return <OwnTranscriptionKey route={state.config?.tts?.routes?.transcribe} keySaved={useTranscriptionKeySaved()} />;
+}
+
+/** Nothing when Flux or any engine transcribes, while unknown, or with no saved key; otherwise the plain field. The stored
+ *  key is never touched here; only the person's own Clear removes it. */
+export function OwnTranscriptionKey({ route, keySaved }: { route?: string | null; keySaved: boolean | null }) {
+  return showOwnTranscriptionKey(route, keySaved) ? <OwnTranscriptionKeyField /> : null;
+}
+
+function OwnTranscriptionKeyField() {
   const { bridge, configured, value, setValue, saving, error, clearing, save } = useTranscriptionKey();
   return (
     <div tabIndex={-1} className="rounded-xl bg-card p-4 outline-none">
-      <div className="mb-2 text-[15px] font-medium text-ink">{t("settings.l4.voiceKey.title")}</div>
+      <div className="mb-2 text-[15px] font-medium text-ink">Your own transcription key, optional</div>
       <div className="flex gap-2">
         <input
           type="password"
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => event.key === "Enter" && void save()}
-          placeholder={configured ? "••••••••  (paste to replace)" : "Paste your AssemblyAI API key"}
+          placeholder="••••••••  (paste to replace)"
           data-setting-control="voice-key-heading"
-          aria-label="AssemblyAI API key"
+          aria-label="Your own transcription key"
           autoComplete="off"
           disabled={!bridge}
           className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none disabled:opacity-50"
@@ -120,16 +122,7 @@ export function TranscriptionKey() {
           {saving ? <Loader2 size={13} className="animate-spin" /> : clearing ? "Clear" : <><Check size={13} />Save</>}
         </button>
       </div>
-      <a
-        href="https://www.assemblyai.com/dashboard"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium text-accent hover:underline"
-      >
-        Open AssemblyAI dashboard <ExternalLink size={12} />
-      </a>
       {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
-      {!bridge && <div className="mt-1 text-[12px] text-warning">Available in the installed desktop app.</div>}
     </div>
   );
 }

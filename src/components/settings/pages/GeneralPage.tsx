@@ -24,7 +24,7 @@ import { StartupSettings } from "../../StartupSettings";
 import { TimeZoneSettings } from "../../TimeZoneSettings";
 import { AdvancedModeCard } from "../AdvancedModeCard";
 import { PageCards } from "../PageCards";
-import { AnalyticsRow, FontRow, LanguageRow, ProfileFields, SendKeyRow, SidebarDensityRow } from "../rows/GeneralRows";
+import { FontRow, LanguageRow, ProfileFields, SendKeyRow, SidebarDensityRow } from "../rows/GeneralRows";
 import { Card } from "../../SettingsPrimitives";
 import type { ReactNode } from "react";
 import type { Bot } from "@/state/store";
@@ -50,7 +50,6 @@ export function generalCards({ desktop, cloud }: Pick<SettingsPageProps, "deskto
     // A phone has its own push controls; the computer has the desktop ones.
     card("notifications", "notifications-heading", () => (desktop === false ? <PhoneNotifications /> : deviceGate(desktop, "notifications-heading", () => <NotificationSettings />))),
     card("startup", "startup-heading", on("startup-heading", () => (cloudCardHidden("startup-heading", cloud) ? stub("startup-heading") : <StartupSettings />))),
-    card("analytics", "analytics-heading", () => (inNativeShell() ? stub("analytics-heading") : <AnalyticsRow />)),
     card("bring-your-ai", "bring-your-ai-heading", on("bring-your-ai-heading", () => <div tabIndex={-1} data-setting-control="bring-your-ai-heading" className="outline-none"><BringYourAi /></div>)),
   ];
 }

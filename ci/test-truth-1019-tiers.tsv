@@ -149,13 +149,6 @@ server/email/restore-job-j3.test.ts	gate	all	Email secrets, backup and restore p
 server/email/restore-job-j5.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
 server/email/restore-marks-roundtrip.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
 server/email/rotation-durable.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
-server/highlevel/approval-journal-native.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
-server/highlevel/credential-commit.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
-server/highlevel/s0-baseline-contract.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
-server/highlevel/s0-batch-contract.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
-server/highlevel/s0-planning-contract.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
-server/highlevel/s0-privacy-contract.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
-server/highlevel/scope-policy.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
 server/installation-boot-wait-schema.test.ts	gate	all	Approval and execution policy stays enforced in production
 server/installation-downgrade-restore-holds.test.ts	gate	all	Recovery and downgrade preserve data and fence pending work
 server/installation-downgrade-restore-tables.test.ts	gate	all	Recovery and downgrade preserve data and fence pending work
@@ -241,3 +234,4 @@ src/components/cloud/cloud-banner-waiting.test.ts	extended	linux	Presentation co
 src/components/setup-feedback.dom.test.ts	extended	linux	Presentation coverage; no data or authority boundary
 server/drivers/antigravity-relay-hooks-cap.test.ts	gate	all	a hostile workspace hooks.json over 1 MiB is refused, never parsed, so a growing file cannot stall or bypass the Antigravity hook-load check
 server/announcements-unreachable.test.ts	gate	all	an unreachable announcements host never shows an error, logs, retries early or delays start-up
+server/message-write-statements.test.ts	gate	all	Streamed message writes reuse one compiled statement per connection instead of recompiling every messages trigger per line

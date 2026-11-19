@@ -23,6 +23,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { ioBudget } from "../io-budget.ts";
+import { checkpointLedger } from "../admission-shared.ts";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { closeDatabase, database } from "../database.ts";
 import { appendMessage } from "../message-db.ts";
@@ -506,12 +507,14 @@ describe("old checkpoint versions leave the word index", () => {
    * step under ~26 ms). */
   async function purgeAll(index: MemoryIndex) {
     const walk: number[] = [], merge: number[] = [];
-    let removed = 0, examined = 0, maxExamined = 0;
+    let removed = 0, examined = 0, maxExamined = 0, reported = 0;
     const started = performance.now();
     for (;;) {
       const at = performance.now(), step = await index.purgeRolledCheckpoints(), ms = performance.now() - at;
+      if(index.writerStopped()!==false)throw new Error("purge writer stopped");
       (step.merged ? merge : walk).push(ms);
       removed += step.removed; examined += step.examined; maxExamined = Math.max(maxExamined, step.examined);
+      if (removed - reported >= 100_000) { console.log(`[msearch] progress removed=${removed} walk=${walk.length} merge=${merge.length} ms=${(performance.now() - started).toFixed(0)}`); reported = removed; }
       if (step.done) break;
     }
     const stat = (values: number[]) => { const sorted = [...values].sort((a, b) => a - b); return { n: values.length, p50: sorted[Math.floor(sorted.length * 0.5)] ?? 0, p95: sorted[Math.floor(sorted.length * 0.95)] ?? 0, max: sorted.at(-1) ?? 0 }; };
@@ -533,13 +536,16 @@ describe("old checkpoint versions leave the word index", () => {
   }
 
   it("P2: an index holding 500,000 versions of one checkpoint is purged in short steps, merged in short steps, then the word query is fast and current", { tags: ["perf-budget"], timeout: 600_000 }, async () => {
-    const scope = "s", path = join(DATA_DIR, "memory-index.db"), versions = 500_000;
+    const scope = "s", path = join(DATA_DIR, "memory-index.db"), versions = 500_000, started = performance.now();
     const raw = await seedIndex(path, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${versions})
       INSERT INTO entries SELECT 'checkpoint:long',i,'${scope}','Working evidence: the launch review status, version '||i FROM n`);
+    console.log(`[msearch] seed500k ms=${(performance.now() - started).toFixed(0)}`);
     const timeQuery = (db: DatabaseSync) => { const started = performance.now(); db.prepare(RECALL_SEARCH_SQL).all("\"launch\" OR \"review\"", JSON.stringify([scope]), RECALL_FIRST_PAGE + 1, 0); return performance.now() - started; };
     const before = timeQuery(raw);
+    console.log(`[msearch] prepurge query ms=${before.toFixed(0)}`);
     raw.close();
     const index = await openTestIndex(path);
+    console.log(`[msearch] open500k elapsed=${(performance.now() - started).toFixed(0)}`);
     const run = await purgeAll(index);
     index.close();
     console.log(`[msearch] purge 500k versions: removed=${run.removed}; walk ${fmt(run.walk)}; merge ${fmt(run.merge)}; total ${run.ms.toFixed(0)}ms`);
@@ -626,6 +632,55 @@ describe("index acknowledgements are fenced against the record's current state",
       await settle();
       expect(db.prepare("SELECT lexical_status FROM memory_projection_receipts WHERE record_id=? AND record_version=?").get(id, last)?.lexical_status).toBe("indexed");
     } finally {
+      await controller.stop().catch(() => {});
+      Reflect.set(ioBudget, "read", realRead); Reflect.set(ioBudget, "admissionRead", realAdmissionRead); ioBudget.resetAdmissionForFixture();
+    }
+  }, 60_000);
+});
+
+describe("a late ack that meets a held admission ledger lock", () => {
+  // The checkpointer thread shares the admission ledger. The owner thread never waits for its lock: a reading taken while
+  // the thread holds it comes back closed. That is contention, not a spent minute: the receipts are due a moment later.
+  it.each([
+    ["at the room reading", false],
+    ["between the room reading and the transaction's grant", true],
+  ] as const)("held %s: the receipts land once it is released, within the same second, not at the next admission minute", async (_where, afterRoom) => {
+    const scope = ensureScope("bot", "a"), db = database(), id = "checkpoint:thread-a";
+    const realRead = Reflect.get(ioBudget, "read"), realAdmissionRead = Reflect.get(ioBudget, "admissionRead");
+    const read = () => ({ at: 0, fsWriteBlocks: 0, cpuMicros: 0 });
+    Reflect.set(ioBudget, "read", read); Reflect.set(ioBudget, "admissionRead", read); ioBudget.resetAdmissionForFixture();
+    const controller = new MemoryWorkerController();
+    const internals = controller as unknown as { child: unknown; ready: boolean; indexing: boolean; indexRequestId: string | null; indexSent: Map<string, string>; onWorkerMessage(child: unknown, message: unknown): void };
+    internals.child = { kill() {}, on() {}, send() {} };
+    internals.ready = true;
+    // the same lock word the checkpointer thread takes, under a thread's owner number
+    const thread = checkpointLedger(ioBudget.checkpointAdmissionBuffer(), 7);
+    let held = false;
+    const hold = () => { thread.lock(); held = true; };
+    const room = vi.spyOn(ioBudget, "backgroundRoom");
+    try {
+      db.prepare("INSERT INTO memory_records VALUES(?,?,?,'checkpoint',?,'assistant-inference','active',0,0,NULL,NULL,0)").run(id, 1, scope, "checkpoint 1");
+      db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL)").run(id, 1);
+      const before = ioBudget.admissionHealth().lockTimeouts;
+      internals.indexing = true; internals.indexRequestId = "req-1"; internals.indexSent = new Map([[`${id}\u0000${1}`, "active"]]);
+      if (afterRoom) {
+        // the room is read free; the thread takes the lock before the transaction asks for its grant
+        room.mockImplementationOnce(() => { room.mockRestore(); const bytes = ioBudget.backgroundRoom(); hold(); return bytes; });
+      } else hold();
+      internals.onWorkerMessage(internals.child, { type: "index-result", requestId: "req-1", records: [{ id, version: 1, deleted: false }], embeddingStatus: "indexed" });
+      // the receipt write met the held lock...
+      await vi.waitFor(() => expect(ioBudget.admissionHealth().lockTimeouts).toBeGreaterThan(before), { interval: 1 });
+      expect(held).toBe(true);
+      expect(internals.indexing).toBe(true);
+      expect(db.prepare("SELECT lexical_status FROM memory_projection_receipts WHERE record_id=? AND record_version=?").get(id, 1)?.lexical_status).toBe("pending");
+      // ...the thread lets go...
+      thread.unlock(); held = false;
+      // ...and the receipts are written within the second
+      await vi.waitFor(() => expect(internals.indexing).toBe(false), { interval: 1 });
+      expect(db.prepare("SELECT lexical_status FROM memory_projection_receipts WHERE record_id=? AND record_version=?").get(id, 1)?.lexical_status).toBe("indexed");
+    } finally {
+      if (held) thread.unlock();
+      room.mockRestore();
       await controller.stop().catch(() => {});
       Reflect.set(ioBudget, "read", realRead); Reflect.set(ioBudget, "admissionRead", realAdmissionRead); ioBudget.resetAdmissionForFixture();
     }

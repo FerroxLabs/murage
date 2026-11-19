@@ -335,7 +335,7 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     expect(all.filter(isReply)).toHaveLength(4);
     expect(all.filter(message => message.role === "bot" && message.kind === "activity" && /remembered context left out/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
     expect(errorLines(all)).toEqual([]);
-    expect(all.some(message => /could not start this reply|MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
+    expect(all.some(message => /could not start this reply|couldn't start this reply|MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
   }, 300000);
 
@@ -405,7 +405,7 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     expect(afterEdit.filter(isReply)).toHaveLength(1);
     expect(afterEdit.filter(message => message.role === "bot" && message.kind === "activity" && /remembered context left out/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
     expect(errorLines(all)).toEqual([]);
-    expect(all.some(message => /could not start this reply|MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
+    expect(all.some(message => /could not start this reply|couldn't start this reply|MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
   }, 300000);
 

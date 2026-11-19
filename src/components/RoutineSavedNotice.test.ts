@@ -2,10 +2,9 @@
 //
 // Saving a 7 AM daily routine at 1 PM used to leave the grid at 1 PM with
 // the new routine off screen and nothing said about it.
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { routineFocusAt, savedScheduleNotice } = await import("./RoutineCalendarPage");
 
 /** Local noon on a Wednesday, so a weekday rule has somewhere to land. */
