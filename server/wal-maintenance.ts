@@ -93,6 +93,16 @@ export function assertWalWriteAdmission(file: string | null = portsFile): void {
     throw new DatabaseBusyError("wal-recovery", 0);
   }
 }
+/** recalldesign-1020-n1 (owner: recallcap-1020-n3c, the recall reclaimer's WAL yield): the log's size and the bytes the off-thread pass has not
+ *  copied yet, by the same reading assertWalWriteAdmission uses. Null when no log is open. */
+export function walBacklog(file: string | null = portsFile): { size: number; backlog: number } | null {
+  if (!file) return null;
+  let size: number;
+  try { size = statSync(file + "-wal").size; } catch { return { size: 0, backlog: 0 }; }
+  const current = active?.file === file && active.ready && !active.failed ? active : null;
+  const copied = current ? Atomics.load(current.copied, 0) : 0n;
+  return { size, backlog: copied < 0n ? size : Math.max(0, size - Number(copied)) };
+}
 /** The worker's live disk verdict: true while free space is under the floor and every guarded write is refused (shown to the owner as diskLow "refusing"). */
 export function diskFloorRefusing(): boolean {
   const current = active?.ready && !active.failed ? active : null;

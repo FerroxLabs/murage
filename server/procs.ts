@@ -196,8 +196,11 @@ interface CliOwnership {
 // Evidence belongs to this exact spawn/handle, never a PID recovered after a
 // server restart. A retained live session is not stopped until requested.
 const cliOwnership = new WeakMap<ChildProcess, CliOwnership>();
-/** One diagnostic per failing Seatbelt executable until a successful launch; polling is not a new incident. */
+/** One diagnostic per failing Seatbelt launch (executable and its first argument) until that launch succeeds; polling is not a new
+ *  incident. Keyed by the first argument too: a `muse --version` probe that exits 0 says nothing about a refused `muse serve`, and
+ *  re-arming on it logged the same refusal at every status poll (1.0.19 macOS, once a minute). */
 const seatbeltRefusalLogged = new Set<string>();
+const seatbeltLaunchKey = (cli: string, args: readonly string[]): string => `${cli}\0${args[0] ?? ""}`;
 
 /** The Windows job a CLI runs in (PIP: Local\\murage-pip-<id>; an engine turn: Local\\murage-pip-eng-<uuid>, the PIP naming the
  *  addon accepts). U24 design R2/R3: on Windows a turn with a job runs on the job route or not at all. The job is created first,
@@ -638,9 +641,10 @@ export function spawnCli(
       if (prefix.length >= 1024) child.stderr.off("data", take);
     };
     child.stderr.on("data", take);
+    const refusalKey = seatbeltLaunchKey(cli, args);
     child.once("close", (code) => {
       child.stderr.off("data", take);
-      if (code === 0) seatbeltRefusalLogged.delete(cli);
+      if (code === 0) seatbeltRefusalLogged.delete(refusalKey);
       if (code !== 0 && wrapperEngineMissingText(prefix)) {
         ownership.engineMissing = true;
         noteEngineMissing(cli, opts.env, String(opts.cwd));
@@ -648,8 +652,8 @@ export function spawnCli(
         ownership.hostPowerRefused = true;
         if (job?.noLimitsSession) {
           recordNoLimitsMacPowerRefusal(job.noLimitsSession, `launch exit ${String(code)}: ${prefix}`);
-        } else if (!seatbeltRefusalLogged.has(cli)) {
-          seatbeltRefusalLogged.add(cli);
+        } else if (!seatbeltRefusalLogged.has(refusalKey)) {
+          seatbeltRefusalLogged.add(refusalKey);
           const detail = redactSecretsInText(prefix).replace(/[\r\n\x00-\x1f]+/g, " ").trim();
           console.warn(`[procs] engine launch refused for ${cli}: sandbox-exec could not apply the power block: ${detail}`);
         }

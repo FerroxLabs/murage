@@ -113,7 +113,11 @@ describe("server wiring", () => {
     const admit = source.indexOf("const run=directRuns.admit(bot.id,threadId,{...routingBot,tasks:[task]},[]");
     expect(admit).toBeGreaterThan(0);
     // the admission line carries the rebuild takeover (DELETION-DRAIN-V2: takeOver), so the window reaches past it
-    expect(source.slice(admit, admit + 900)).toMatch(/void startAdmittedTurn\(async \(\) => \{/);
+    // 1.0.20 (ctxstop-lease 60b8718354, 47d2ac6f53): directHumanInput and the lease checks now sit between the admission and the start,
+    // so the start is found after the admission, in the same top-level function, instead of inside a byte count
+    const start = source.indexOf("void startAdmittedTurn(async () => {", admit);
+    expect(start).toBeGreaterThan(admit);
+    expect(source.slice(admit, start)).not.toMatch(/\n(?:async )?function \w+/);
     expect(source).toMatch(/\}, \(error, phase\) => \{ allowance\.close\(\); giveBackAdmittedTurn\(run, bot\.id, threadId, admitted, phase, error, opts\?\.onDispatchError\); \}\);/);
     // the unconfirmed-stop branch marks the thread kept before anything in it can throw, and each report is remembered
     expect(source).toMatch(/if\(acceptedTurnCleanupFailed\) \{\s*admitted\.keepThread = true;/);

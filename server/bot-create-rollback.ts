@@ -70,6 +70,7 @@ export function prepareBotCreateRollback(root: string, receipt?: { run: { id: st
     db.prepare("DELETE FROM bot_create_commits WHERE id=?").run(id);
   });
   writeFileAtomic(path, JSON.stringify(journal), { mode: 0o600, syncDir: true });
+  // Keep this text identical to BOT_CREATE_COMMITS_DDL in installation-database-snapshot.ts: every snapshot holds the table to it.
   db.exec("CREATE TABLE IF NOT EXISTS bot_create_commits(id TEXT PRIMARY KEY NOT NULL)");
   db.prepare("INSERT INTO bot_create_commits(id) VALUES(?)").run(id);
 }

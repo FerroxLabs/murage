@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parse } from 'yaml';
-import { budgets, checkPeak, heapCap, root } from './typecheck-budget.mjs';
+import { budgets, checkPeak, effectiveCap, heapCap, root } from './typecheck-budget.mjs';
 import { inventory, programsIn, validateAllocation } from './typecheck-inventory.mjs';
 
 test('all measured compiler peaks and workflow allocations have headroom', () => {
@@ -20,6 +20,34 @@ test('memory growth and lowered workflow caps fail closed', () => {
   assert.ok(row, 'full server check is wired');
   assert.throws(() => validateAllocation([{ ...row, configuredCapMiB: 6144 }]), /requires/);
   assert.equal(heapCap('--max-old-space-size=4096'), 4096);
+});
+
+test('1.0.20: large release runners declare the ubuntu compiler cap; the 70% rule holds against it', () => {
+  const entry = budgets.programs['server-build'];
+  // The rehearsal peak on macos-15-xlarge failed the recorded cap and passes the declared one.
+  assert.throws(() => checkPeak(3022.7, entry.capMiB), /exceeds/);
+  const cap = effectiveCap(entry, { MURAGE_TYPECHECK_CAP_MIB: '8192', NODE_OPTIONS: '--max-old-space-size=8192' });
+  assert.equal(cap, 8192);
+  checkPeak(3022.7, cap);
+  assert.throws(() => checkPeak(5735, cap), /exceeds/);
+  assert.equal(effectiveCap(entry, {}), entry.capMiB);
+  assert.throws(() => effectiveCap(entry, { MURAGE_TYPECHECK_CAP_MIB: '4096', NODE_OPTIONS: '--max-old-space-size=8192' }), /below the recorded/);
+  assert.throws(() => effectiveCap(entry, { MURAGE_TYPECHECK_CAP_MIB: '8192', NODE_OPTIONS: '--max-old-space-size=4300' }), /needs NODE_OPTIONS/);
+  assert.throws(() => effectiveCap(entry, { MURAGE_TYPECHECK_CAP_MIB: '8192' }), /needs NODE_OPTIONS/);
+  const rows = inventory().filter(row => row.program === 'server-build');
+  for (const [file, job] of [['release.yml', 'mac'], ['release.yml', 'windows'], ['release.yml', 'linux'], ['ci.yml', 'package-linux']]) {
+    const row = rows.find(row => row.file.endsWith(file) && row.job === job);
+    assert.ok(row, `${file}:${job} runs server-build`);
+    assert.equal(row.declaredCapMiB, 8192, `${file}:${job}`);
+    assert.equal(row.configuredCapMiB, 8192, `${file}:${job}`);
+  }
+  const mac = rows.find(row => row.file.endsWith('release.yml') && row.job === 'mac');
+  assert.equal(mac.ramMiB, 14 * 1024);
+  // A declared cap on a 7 GB macOS runner, or without the heap to back it, fails the static check.
+  assert.throws(() => validateAllocation([{ ...mac, ramMiB: 7 * 1024 }]), /60% of runner RAM/);
+  assert.throws(() => validateAllocation([{ ...mac, configuredCapMiB: 4300 }]), /requires 8192/);
+  assert.throws(() => validateAllocation([{ ...mac, configuredCapMiB: null }]), /without a NODE_OPTIONS/);
+  assert.throws(() => validateAllocation([{ ...mac, declaredCapMiB: 4096 }]), /below the recorded/);
 });
 
 test('package indirection inventories all production compilers', () => {

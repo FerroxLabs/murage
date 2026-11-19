@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EVENTS_DIR, ensureDirs } from "../config.ts";
-import type { RuntimeEvent } from "../contracts.ts";
+import type { RuntimeEvent, RuntimeEventListener } from "../contracts.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { EventBus } from "./bus.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
@@ -319,4 +319,22 @@ describe('R4 execution queue accounting', () => {
     rig.release(); await vi.waitFor(() => expect(rig.bus.pendingDurable()).toBe(0));
     expect(rig.seen.map(e => e.type)).toEqual(['turn.completed', 'session.exited']);
   });
+});
+
+it("reattaching the same provider keeps a live admission and one listener", async () => {
+  const { instance } = await liveInstance();
+  const listeners = new Set<RuntimeEventListener>();
+  instance.adapter.onEvent = listener => { listeners.add(listener); return () => { listeners.delete(listener); }; };
+  const bus = new EventBus(); bus.omitLog(() => true); bus.attach([instance]);
+  try {
+    const source = bus.admitNewTurn("inst-1", "thread-1");
+    const events: RuntimeEvent[] = [];
+    bus.subscribeExecution(event => events.push(event));
+    bus.attach([instance]);
+    const text = "A short owner reply.";
+    for (const listener of listeners) listener(testEvent({ type: "item.completed", itemType: "assistant_text", text }), source);
+    expect(events).toHaveLength(1);
+    expect(bus.sourceForExecution(events[0]!)).toBe(source);
+    expect(bus.audienceFor(events[0]!).map(entry => entry.event)).toContainEqual(expect.objectContaining({ type: "item.completed", text }));
+  } finally { bus.detachAll(); }
 });

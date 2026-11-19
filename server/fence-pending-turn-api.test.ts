@@ -35,6 +35,10 @@ const messages = async (thread: string) => (await api("GET", `/api/threads/${thr
 const scenario = (thread: string, input: object) => writeFileSync(join(fixture.info.dataDir, `fence-${thread}.json`), JSON.stringify(input));
 const importUrl = (file: string) => JSON.stringify(pathToFileURL(join(process.cwd(), file)).href);
 
+/** Cases whose pending check never settles in the fixture (its backlog is parked): the owner's turn continues at the wait's deadline (MAIN
+ * ruling C1 + MAIN Q2: the exact wait does no foreground work, so only the deadline ends it). They run with a 200 ms bound instead of
+ * the shipped 65 s; the bound changes how long the case takes, not what it asserts. */
+const shortPendingWait = (name: string) => /owner continues after pending prefix deadline|R10 direct owner turn with|B4 R11 room with|B4 M8 retained|native replay accounts for fallback transcript|R11 a room without its rendered view|Q1 kept for outside input|T3 /.test(name);
 describe("pending fence turns in an isolated server", () => {
   beforeEach(async ({ task }) => {
     const route = task.name.match(/\['?(claudeAgent|codex|customAcp)'?\]/)?.[1];
@@ -74,6 +78,12 @@ describe("pending fence turns in an isolated server", () => {
           if(source.split(anchor).length!==2)throw new Error('missing recall upkeep anchor');
           return {format:'module-typescript',shortCircuit:true,source:source.replace(anchor,anchor+' if(globalThis.__fenceParkRecallUpkeep){upkeep=setTimeout(tick,50);upkeep.unref();return;} globalThis.__fenceUpkeepTick?.();')};
         }
+        if(url.endsWith('/memory/fence-pending.ts') && ${JSON.stringify(shortPendingWait(task.name))}){
+          // Both waits (settleRefusedFence and MAIN Q2's awaitExactPendingCheck, the one index.ts binds) take the short bound.
+          const source=fs.readFileSync(new URL(url),'utf8'),anchor='maxMs = PENDING_FENCE_WAIT_MS';
+          if(source.split(anchor).length!==3)throw new Error('missing pending wait anchors');
+          return {format:'module-typescript',shortCircuit:true,source:source.replaceAll(anchor,'maxMs = 200')};
+        }
         if(url.endsWith('/memory/memory-revocation.ts')){
           let source=fs.readFileSync(new URL(url),'utf8');
           for(const name of ['settleRevokesForTurn','drainRevokeMarkerBounded']){
@@ -90,10 +100,25 @@ describe("pending fence turns in an isolated server", () => {
         if(url.endsWith('/testing/fake-late-terminal-driver.ts'))return {format:'module-typescript',shortCircuit:true,source:fs.readFileSync(new URL(url),'utf8').replaceAll('text: "Hello from late"', "text: 'REVOKED_SENTINEL-' + turn.threadId").replaceAll('{ prompt: true, turnId', '{ prompt: true, payload: {text:turn.text,transcript:turn.transcript,system:turn.system,memoryContext:turn.memoryContext,images:turn.images}, turnId').replace('if (!twoFences && input.environment.FAKE_LATE_UNKNOWN_ACTION !== "1") beforeHandback();', 'if (!twoFences && input.environment.FAKE_LATE_UNKNOWN_ACTION !== "1") { beforeHandback(); if(dump)appendFileSync(dump,JSON.stringify({prompt:true,payload:{text:turn.text,transcript:turn.transcript,system:turn.system,memoryContext:turn.memoryContext,images:turn.images},turnId,threadId:turn.threadId})+String.fromCharCode(10)); }').replaceAll('emit({ type: "item.completed", itemType: "assistant_text"', 'turn.onEngineWrite?.(); emit({ type: "item.completed", itemType: "assistant_text"')};
         if(url.endsWith('/server/turn-context.ts'))return {format:'module-typescript',shortCircuit:true,source:fs.readFileSync(new URL(url),'utf8').replace('  return driverKind === "museCode" || TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);','  return globalThis.__fenceNativeReplay?.() || driverKind === "museCode" || TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);')};
         if(url.endsWith('/server/working-context.ts'))return {format:'module-typescript',shortCircuit:true,source:fs.readFileSync(new URL(url),'utf8').replace('  let quoted: WorkingContextQuote[] = [];', '  input = globalThis.__fenceWorking?.(input) ?? input; let quoted: WorkingContextQuote[] = [];').replace('  return { text, quoted: text ? quoted : [], part:', '  const fixtureContext=globalThis.__fenceContext?.(input); if(fixtureContext)return fixtureContext; return { text, quoted: text ? quoted : [], part:')};
+        if(url.endsWith('/server/ledger-refusal.ts')){
+          // Passive: every "not launched" close of a refused lease (REVIEW H1 negative witness).
+          const source=fs.readFileSync(new URL(url),'utf8'),anchor='    admissionNotLaunched(notice?: NativeTurnNoticeCode): void {';
+          if(source.split(anchor).length!==2)throw new Error('missing not-launched observer anchor');
+          return {format:'module-typescript',shortCircuit:true,source:source.replace(anchor,anchor+' globalThis.__fenceNotLaunched?.();')};
+        }
         if(!url.endsWith('/server/index.ts'))return next(url,context);
         let source=fs.readFileSync(new URL(url),'utf8');
         source=source.replace('  const trace = beginTurnTrace(threadId);', '  const fixtureTier=globalThis.__routeTier?.(threadId),historyId=globalThis.__seedRouteHistory?.(threadId); if(historyId)store.appendMessage(threadId,{id:historyId,role:"user",kind:"text",text:"EARLIER_CONVERSATION_LINE"}); if(fixtureTier){const fixtureMessage=store.appendMessage(threadId,{role:"user",kind:"text",text});opts={...opts,memoryRedispatch:fixtureTier,userMessage:fixtureMessage};} if(globalThis.__seedVisible?.(threadId)){store.appendMessage(threadId,{id:"ctx-visible",role:"bot",kind:"text",text:"VISIBLE_CONVERSATION_LINE",at:Date.now(),from:{botId,name:"fixture",color:"blue"}});} if(globalThis.__seedPrivate?.(threadId)){store.appendMessage(threadId,{id:"ctx-withheld",role:"bot",kind:"text",text:"WITHHELD_CONVERSATION_LINE",at:Date.now(),withheldFromBots:"forgotten",from:{botId,name:"fixture",color:"blue"}});} const trace = beginTurnTrace(threadId);');
         { const wait='    if (!projection || Number(projection.watermark) >= Number(projection.latest)) {'; if(source.split(wait).length!==2)throw new Error('missing bundle wait observer anchor'); source=source.replace(wait,'    globalThis.__fenceBundleWait?.(projection,remaining);'+wait); }
+        { // A routine run handed to startTurn as webhook-triggered (outside input) when its scenario says so; a real webhook needs the ingress stack.
+          const hand='startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError'; if(source.split(hand).length!==2)throw new Error('missing routine hand-off anchor');
+          source=source.replace(hand,'startTurn(botId, prompt, { threadId, runOn, automationSource: globalThis.__outsideTrigger?.(threadId) ? "webhook" : triggerSource, onDispatchError'); }
+        { // T3: a revoke window that never settles (the live start-up storm) appears just before the direct turn's continuation check.
+          const early='    let earlyContinuityKey: string | undefined;'; if(source.split(early).length!==2)throw new Error('missing continuation check anchor');
+          source=source.replace(early,'    globalThis.__fenceStorm?.(threadId);'+early); }
+        { // T3 guard: a direct turn on the bot's own thread handed in as webhook-triggered (outside input), when its scenario says so.
+          const entry='  const threadId = opts?.threadId ?? defaultThreadId(profile);'; if(source.split(entry).length!==2)throw new Error('missing turn entry anchor');
+          source=source.replace(entry,entry+' if(globalThis.__outsideDirect?.(threadId))opts={...opts,automationSource:"webhook"};'); }
         source=source.replace('const memoryLastResort = (opts?.memoryRedispatch', 'const memoryLastResort = globalThis.__routeTier?.(threadId)===2 || (opts?.memoryRedispatch');
         source=source.replace('if (rootsApply && isMessageOnlyDispatch(lineage)) return;', 'if (rootsApply && isMessageOnlyDispatch(lineage) && !globalThis.__legacyCursor?.(event.threadId)) return;');
         source=source.replace('recordDefaultLearningConnection(database(),memoryExtractorInstanceId(),Boolean(fluxKey()));','globalThis.__pauseFenceMemory=()=>memoryWorker.stop(); globalThis.__resumeFenceMemory=()=>memoryWorker.start(); recordDefaultLearningConnection(database(),memoryExtractorInstanceId(),Boolean(fluxKey()));');
@@ -122,6 +147,7 @@ describe("pending fence turns in an isolated server", () => {
         return {format:'module-typescript',shortCircuit:true,source};
       }});
       globalThis.__fenceQueueCall=name=>log('queue-calls',{name});
+      globalThis.__fenceNotLaunched=()=>log('not-launched',{});
       const configFor=thread=>{const file=path.join(root,'fence-'+thread+'.json');return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{}};
       globalThis.__noticeFail=site=>{
         const file=path.join(root,'notice-faults');if(!fs.existsSync(file))return;
@@ -130,6 +156,23 @@ describe("pending fence turns in an isolated server", () => {
       };
       globalThis.__dropContext=refs=>refs.some(ref=>ref.kind==='line'&&ref.threadId==='OMITTED_THREAD_ID_SENTINEL')&&fs.readdirSync(root).some(name=>name.startsWith('fence-')&&name.endsWith('.json')&&JSON.parse(fs.readFileSync(path.join(root,name),'utf8')).dropContext&&JSON.parse(fs.readFileSync(path.join(root,name),'utf8')).attempt>0);
       globalThis.__retainedOnly=thread=>configFor(thread).retainedOnly&&!(configFor(thread).attempt??0);
+      globalThis.__outsideTrigger=thread=>configFor(thread).outsideTrigger===true;
+      globalThis.__outsideDirect=thread=>configFor(thread).outsideDirect===true;
+      // T3 storm: a bulk revoke seed still waiting for background admission (it cannot be walked, so no hurry settles it) holds a
+      // pending window over the whole thread. settledDeny also marks the retained session itself denied (a settled revoke).
+      globalThis.__fenceStorm=thread=>{
+        const file=path.join(root,'fence-'+thread+'.json'),cfg=configFor(thread);if(!cfg.storm||cfg.stormed)return;
+        cfg.stormed=true;fs.writeFileSync(file,JSON.stringify(cfg));
+        const db=database();db.exec('BEGIN IMMEDIATE');
+        try{
+          const id=openBulkRevoke(db,'fixture-storm',false);db.prepare('INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,1,?)').run(thread,id);
+          const key=db.prepare('SELECT * FROM memory_session_lineage WHERE thread_id=? ORDER BY last_lsn DESC LIMIT 1').get(thread);
+          if(cfg.settledDeny)db.prepare('INSERT INTO memory_deny_session(thread_id,driver_instance,native_session,revoke_id) VALUES(?,?,?,999998)').run(key.thread_id,key.driver_instance,key.native_session);
+          db.exec('COMMIT');
+          log('storm',{thread,session:Boolean(key)});
+        }catch(error){db.exec('ROLLBACK');throw error;}
+        db.prepare("UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'").run();
+      };
       globalThis.__finalLineage=(thread,turn,running)=>log('final-lineage',{thread,parents:turn.parents,roots:[...(running?.roots.roots??[])],sources:running?.sources});
       globalThis.__fenceNativeReplay=()=>fs.existsSync(path.join(root,'native-replay'));
       globalThis.__fenceMissingView=thread=>configFor(thread).missingView===true;
@@ -173,8 +216,14 @@ describe("pending fence turns in an isolated server", () => {
           const db=database();db.exec('BEGIN IMMEDIATE');
           let id;
           const delay=configFor(thread).pendingDelay??0;
-          try{id=openBulkRevoke(db,'fixture-pending',false);db.prepare('INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,1,?)').run(thread,id);if(!delay)activateBulkRevoke(db,id);db.exec('COMMIT');}
+          try{id=openBulkRevoke(db,'fixture-pending',false);db.prepare('INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,1,?)').run(thread,id);if(!delay&&!configFor(thread).pendingDeadline)activateBulkRevoke(db,id);db.exec('COMMIT');}
           catch(error){db.exec('ROLLBACK');throw error;}
+          if(configFor(thread).pendingDeadline){
+            // A bulk seed still waiting for background admission cannot be walked.
+            db.prepare("UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'").run();
+            log('pending-checks',{thread,phase:'owed',at:Date.now()});
+            return; // The actual dispatch prompt must hit the send fence.
+          }
           if(delay){log('pending-checks',{thread,phase:'owed',at:Date.now()});setTimeout(()=>{activateBulkRevoke(db,id);log('pending-checks',{thread,phase:'runnable',at:Date.now()});},delay);}
           const head=Number(db.prepare('SELECT next FROM memory_lsn WHERE id=1').get().next);
           assertSendFence(buildPrompt(undefined,[promptPart('fixture carried prefix',[{kind:'prefix',threadId:thread,headLsn:head}])]),{audience:null},db);
@@ -269,11 +318,12 @@ describe("pending fence turns in an isolated server", () => {
           }
           log('attempts',{thread:turn.threadId,attempt,text:turn.text,transcript:turn.transcript,system:turn.system,resumed:turn.resumeCursor!==undefined,cursor:turn.resumeCursor,refs:builtRefs.get(turn.threadId),reset:turn.sessionReset,integrationKeys:Object.keys(turn.integrations??{}),threadRecall:turn.threadRecall===true,memory:turn.memoryContext!==undefined});
           const before=turn.beforeSubmit;
-          turn.beforeSubmit=()=>{try { before?.(); } catch(error) { console.warn("fence fixture submission refused", error?.stack ?? error); throw error; } log('writes',{thread:turn.threadId,attempt,text:turn.text,transcript:turn.transcript,fallback:cfg.fallbackReplay?renderDriverReplay(turn.transcript??[],turn.replayMetadata):undefined,context:turn.memoryContext,system:turn.system,images:turn.images,integrationKeys:Object.keys(turn.integrations??{}),threadRecall:turn.threadRecall===true,memory:turn.memoryContext!==undefined,...beforeQueue?{queueBefore:beforeQueue,queueAfter:queueSnapshot(),work:denyReadMeter().statements,sqlWork:Object.fromEntries(sqlWork),sqlStacks:Object.fromEntries(sqlStacks),recordGraphBefore:beforeRecordGraph,recordGraphAfter:recordGraph()}:{}});if(cfg.releaseThenRefuse&&!attempt){fs.writeFileSync(path.join(root,'fake-transport-write'),turn.text);turn.onEngineWrite?.();pending.set(turn.threadId,'pending');before?.();}if(cfg.crashAtWrite&&attempt===1&&!fs.existsSync(path.join(root,'crashed'))){fs.writeFileSync(path.join(root,'fake-transport-write'),turn.text);log('reset-disk',{thread:turn.threadId,bots:JSON.parse(fs.readFileSync(path.join(root,'bots.json'),'utf8'))});fs.writeFileSync(path.join(root,'crashed'),'1');process.kill(process.pid,'SIGKILL');}};
+          turn.beforeSubmit=()=>{try { before?.(); } catch(error) { console.warn("fence fixture submission refused", error?.stack ?? error); log('refused-submits',{thread:turn.threadId,attempt,text:turn.text,...beforeQueue?{queueBefore:beforeQueue,queueAfter:queueSnapshot(),work:denyReadMeter().statements,sqlWork:Object.fromEntries(sqlWork),recordGraphBefore:beforeRecordGraph,recordGraphAfter:recordGraph()}:{}}); throw error; } log('writes',{thread:turn.threadId,attempt,text:turn.text,transcript:turn.transcript,fallback:cfg.fallbackReplay?renderDriverReplay(turn.transcript??[],turn.replayMetadata):undefined,context:turn.memoryContext,system:turn.system,images:turn.images,integrationKeys:Object.keys(turn.integrations??{}),threadRecall:turn.threadRecall===true,memory:turn.memoryContext!==undefined,...beforeQueue?{queueBefore:beforeQueue,queueAfter:queueSnapshot(),work:denyReadMeter().statements,sqlWork:Object.fromEntries(sqlWork),sqlStacks:Object.fromEntries(sqlStacks),recordGraphBefore:beforeRecordGraph,recordGraphAfter:recordGraph()}:{}});if(cfg.releaseThenRefuse&&!attempt){fs.writeFileSync(path.join(root,'fake-transport-write'),turn.text);turn.onEngineWrite?.();pending.set(turn.threadId,'pending');before?.();}if(cfg.crashAtWrite&&attempt===1&&!fs.existsSync(path.join(root,'crashed'))){fs.writeFileSync(path.join(root,'fake-transport-write'),turn.text);log('reset-disk',{thread:turn.threadId,bots:JSON.parse(fs.readFileSync(path.join(root,'bots.json'),'utf8'))});fs.writeFileSync(path.join(root,'crashed'),'1');process.kill(process.pid,'SIGKILL');}};
           if(cfg.crashAtRecovery&&attempt===1&&!fs.existsSync(path.join(root,'crashed'))){
             log('reset-disk',{thread:turn.threadId,bots:JSON.parse(fs.readFileSync(path.join(root,'bots.json'),'utf8'))});
             fs.writeFileSync(path.join(root,'crashed'),'1');process.kill(process.pid,'SIGKILL');
           }
+          if(cfg.pendingDeadline&&!attempt)globalThis.__fenceRefuse(turn.threadId);
           return send(turn);
         };
         const subscribe=instance.adapter.onEvent.bind(instance.adapter);
@@ -298,6 +348,7 @@ describe("pending fence turns in an isolated server", () => {
       cfg.instances.fence={driver:route||'fakeLateTerminal',...(route?{config:{cli},environment:{FAKE_CLAUDE_MODE:'happy',FAKE_CLAUDE_DUMP:path.join(root,'wire-claude'),FAKE_CLAUDE_DUMP_EACH_TURN:'1',FAKE_CLAUDE_DUMP_HISTORY:path.join(root,'wire-history'),FAKE_CODEX_WARM:'1',FAKE_CODEX_DUMP:path.join(root,'wire-codex'),FAKE_ACP_TEXT_ONLY:'1',FAKE_ACP_PROMPT_DUMP:path.join(root,'wire-acp')}}:{environment:{FAKE_LATE_DUMP:path.join(root,'wire-late'),FAKE_LATE_FENCED_WRITES:'1',FAKE_LATE_PLAIN_SESSION:'1',FAKE_LATE_PRE_HANDBACK_GATE:pre}})};
       cfg.instances.handoff={...cfg.instances.verification,environment:{FAKE_CLAUDE_MODE:'hang'}};
       if (${JSON.stringify(task.name.includes('memory recovery retains authorized integrations'))}) cfg.instances.fence.environment.FAKE_LATE_MEMORY_MCP='1';
+      if (${JSON.stringify(task.name.includes('UNFENCED adapter'))}) cfg.instances.fence.environment.FAKE_LATE_FENCED_WRITES='0';
       fs.writeFileSync(file,JSON.stringify(cfg));
       // Quiescence witness holds. A held checkpoint returns the product's own
       // deferred outcome, so its debt row stays owed and the worker's debt
@@ -369,6 +420,11 @@ describe("pending fence turns in an isolated server", () => {
     await expect.poll(() => rows("terminal-replies").filter(row => row.thread === thread && row.text === "REVOKED_SENTINEL-" + thread).length >= want, { timeout: 60000 }).toBe(true);
     await expect.poll(async () => (await messages(thread)).filter(m => m.role === "bot" && m.kind === "text" && m.text === "REVOKED_SENTINEL-" + thread).length >= want, { timeout: 60000 }).toBe(true);
   };
+  const LEDGER_REFUSAL_LINE = "I stopped this turn because some of its context is no longer available.";
+  const busy = async (f: { bot: { id: string }; thread: string }, room: boolean) => room
+    ? Boolean((await api("GET", "/api/bots?messages=0")).groups.find((g: any) => g.threadId === f.thread)?.busyBotId)
+    : (await api("GET", `/api/bots/${f.bot.id}/tasks/${f.thread}`)).task?.busy === true;
+  const ids = async (thread: string) => new Set((await messages(thread)).map(m => m.id as string));
   it.each([false, true])("pending check settles before one rebuild and one write (room=%s)", async room => {
     const f = await make(room);
     scenario(f.thread, { refusals: 1, pendingDelay: 6000 });
@@ -385,17 +441,81 @@ describe("pending fence turns in an isolated server", () => {
     expect(rows("writes").filter(r => r.thread === f.thread)).toHaveLength(1);
     expect((await messages(f.thread)).filter(m => m.tool?.ok === false)).toHaveLength(0);
   }, 90000);
+  it.each([false, true])("owner continues after pending prefix deadline (room=%s)", async room => {
+    const f = await make(room);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" });
+    await finished(f.thread);
+    const previousNotes = new Set((await messages(f.thread)).map(m => m.id));
+    scenario(f.thread, { refusals: 1, pendingDeadline: true });
+    await api("POST", f.route, { threadId: f.thread, text: "New owner message" });
+    await expect.poll(() => readFileSync(fixture.info.logPath, "utf8"), { timeout: 15000 }).toContain("pending fence settle outcome=deadline");
+    const log = readFileSync(fixture.info.logPath, "utf8");
+    expect(log).toMatch(/send fence refused \(checking:pending,.+refused refs: (?:own-)?prefix(?:-shown)? 1/);
+    await expect.poll(() => rows("writes").filter(r => r.thread === f.thread && r.text.includes("New owner message")).length, { timeout: 6000 }).toBe(1);
+    const write = rows("writes").find(r => r.thread === f.thread && r.text.includes("New owner message"));
+    expect(write.attempt).toBe(1);
+    expect(write.transcript ?? []).toEqual([]);
+    expect(JSON.stringify(write)).not.toContain("Previous fixture message");
+    expect(JSON.stringify(write)).not.toContain("REVOKED_SENTINEL-" + f.thread);
+    await finished(f.thread, 2);
+    const shown = await messages(f.thread);
+    expect(shown.filter(m => m.text === "New owner message")).toHaveLength(1);
+    expect(shown.filter(m => m.memoryNote === "without-memory" && !previousNotes.has(m.id))).toHaveLength(1);
+    expect(shown.filter(m => m.tool?.ok === false)).toEqual([]);
+  }, 90000);
+  // 1.0.20 A-3: the owner's routine is owner-originated work, not a fresh line: at the same pending deadline it takes the same message-only
+  // last resort (the server frame, no stored context, no earlier text), never the refusal line.
+  it("owner continues after pending prefix deadline: routine run", async () => {
+    const f = await make(false);
+    const made = await api("POST", "/api/routines", { botId: f.bot.id, name: "Fixture routine", prompt: "Routine fixture prompt", schedule: { type: "once", at: Date.now() + 3_600_000 } });
+    const routine = made.routine;
+    await api("POST", `/api/routines/${routine.id}/run`, {});
+    await expect.poll(() => rows("writes").filter(r => r.text.includes("Routine fixture prompt")).length, { timeout: 30000 }).toBeGreaterThanOrEqual(1);
+    const thread = rows("writes").find(r => r.text.includes("Routine fixture prompt")).thread;
+    await finished(thread);
+    const previousNotes = new Set((await messages(thread)).map(m => m.id));
+    const before = rows("writes").filter(r => r.thread === thread).length;
+    scenario(thread, { refusals: 1, pendingDeadline: true });
+    await api("POST", `/api/routines/${routine.id}/run`, {});
+    await expect.poll(() => readFileSync(fixture.info.logPath, "utf8"), { timeout: 20000 }).toContain("pending fence settle outcome=deadline");
+    await expect.poll(() => rows("writes").filter(r => r.thread === thread).length, { timeout: 10000 }).toBe(before + 1);
+    const write = rows("writes").filter(r => r.thread === thread).at(-1);
+    expect(write.attempt).toBe(1);
+    expect(write.transcript ?? []).toEqual([]);
+    expect(JSON.stringify(write)).not.toContain("REVOKED_SENTINEL-" + thread);
+    // MAIN RULING 2026-11-19: the routine's last resort carries its own task line, never only the static instruction (a run that did nothing)
+    expect(write.text).toContain("Routine fixture prompt");
+    expect(write.text).not.toContain("Stored context is unavailable for this turn");
+    await finished(thread, 2);
+    const shown = (await messages(thread)).filter(m => !previousNotes.has(m.id));
+    expect(shown.filter(m => m.tool?.ok === false)).toEqual([]);
+    expect(shown.filter(m => /could not start this reply|couldn't start this reply|context is no longer available/.test(`${m.text ?? ""} ${m.tool?.name ?? ""}`))).toEqual([]);
+  }, 90000);
   it.each([false, true])("Stop ends a pending check wait with no rebuild or engine write (room=%s)", async room => {
     const f = await make(room);
     scenario(f.thread, { refusals: 1, pendingDelay: 6000 });
     await api("POST", f.route, { threadId: f.thread, text: "Stop the pending fixture report" });
     await expect.poll(() => rows("pending-checks").some(r => r.thread === f.thread && r.phase === "owed"), { timeout: 15000 }).toBe(true);
-    await api("POST", f.route.replace(/\/messages$/, "/interrupt"), { threadId: f.thread });
+    const before = await ids(f.thread);
+    const stop = await api("POST", f.route.replace(/\/messages$/, "/interrupt"), { threadId: f.thread });
+    // the Stop itself is answered as done (nothing is left HELD on this path)
+    expect(stop).toMatchObject({ ok: true });
     await expect.poll(() => readFileSync(fixture.info.logPath, "utf8").includes("pending fence settle outcome=stopped"), { timeout: 15000 }).toBe(true);
+    // JOINT RULING STOP-VS-REFUSAL: the refused first attempt handed no engine turn back, so this Stop has nothing left to close and is
+    // confirmed. The turn ends released and silent: no refusal row, no error card, no rebuild and no write.
+    await expect.poll(() => busy(f, room), { timeout: 15000 }).toBe(false);
+    const fresh = (await messages(f.thread)).filter(m => !before.has(m.id));
+    console.warn("pending Stop " + JSON.stringify({ room, stop, rows: fresh.map(m => ({ role: m.role, kind: m.kind, text: m.text, tool: m.tool?.name, ok: m.tool?.ok })) }));
+    expect(fresh.filter(m => m.text === LEDGER_REFUSAL_LINE)).toEqual([]);
+    expect(fresh.filter(m => m.role === "bot" && m.tool?.ok === false)).toEqual([]);
     expect(rows("attempts").filter(r => r.thread === f.thread)).toHaveLength(1);
     expect(rows("writes").filter(r => r.thread === f.thread)).toHaveLength(0);
     expect((await messages(f.thread)).filter(m => m.tool?.ok === false)).toHaveLength(0);
-  }, 60000);
+    // released for real: the owner's next message is admitted and dispatched
+    scenario(f.thread, {});
+    await api("POST", f.route, { threadId: f.thread, text: "after the stopped wait" });
+    await expect.poll(() => rows("attempts").filter(r => r.thread === f.thread).at(-1)?.text ?? "", { timeout: 30000 }).toContain("after the stopped wait");
+  }, 90000);
   it("a real bot handoff with outside history waits for its carried prefix check", async () => {
     const f = await make();
     scenario(f.thread, { outside: true });
@@ -477,6 +597,8 @@ describe("pending fence turns in an isolated server", () => {
     expect(rows("checkpoints").filter(row => row.status === "updated").length).toBeGreaterThan(updatedBefore);
     if (hold === "hold-capture") expect(rows("capture-hold").map(row => row.held)).toEqual([true, false]);
   }, 150000);
+  // MAIN ruling C1 (1.0.20, reverses MAIN Q1 option A for the owner): these five cases send fresh owner text, so a retained refusal that is
+  // only checking:pending is sealed unwritten and rebuilt. Their f8f3 oracles are restored verbatim: one write, one without-memory note.
   it.each([10, 1000])("R10 direct owner turn with %i active jobs releases once without walking the queue", async backlog => {
     await api("POST", "/api/memory/action", { action: "configure", mode: "capture" });
     const f = await make(); scenario(f.thread, { fixedGraph: true });
@@ -508,7 +630,12 @@ describe("pending fence turns in an isolated server", () => {
     console.warn("revokefence view waits " + JSON.stringify({ backlog, frozen, behind: rows("view-behind") }));
     pendingTurnWaits.set(backlog, rows("view-behind"));
     if (pendingTurnWaits.size === 2) expect(pendingTurnWaits.get(1000)).toEqual(pendingTurnWaits.get(10));
-    pendingTurnWork.set(backlog, release.work); pendingTurnSql.set(backlog, release.sqlWork);
+    // MAIN Q2: the turn waits passively for its pending check before its one write, and that wait's probes are counted by time, not by
+    // backlog (268 v 252 statements for 10 v 1000 jobs in c1-fp2). The constant-work oracle is read at the refused submission, the
+    // turn's own work before the wait (the measure the tip used); the write keeps every other f8f3 oracle.
+    const refused = rows("refused-submits").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"))[0];
+    expect(refused?.work, "the fixture measured the refused submission").toBeTypeOf("number");
+    pendingTurnWork.set(backlog, refused.work); pendingTurnSql.set(backlog, refused.sqlWork);
     if (pendingTurnWork.size === 2) expect(pendingTurnWork.get(1000), JSON.stringify(Object.fromEntries(pendingTurnSql))).toBe(pendingTurnWork.get(10));
     if (pendingTurnGraphs.size === 2) expect(pendingTurnGraphs.get(1000)).toEqual(pendingTurnGraphs.get(10));
     expect((await messages(f.thread)).filter(m => m.memoryNote === "without-memory" && !notesBefore.has(m.id))).toHaveLength(1);
@@ -541,7 +668,10 @@ describe("pending fence turns in an isolated server", () => {
     console.warn("room view waits " + JSON.stringify({ backlog, frozen, behind: rows("view-behind") }));
     roomTurnWaits.set(backlog, rows("view-behind"));
     if (roomTurnWaits.size === 2) expect(roomTurnWaits.get(1000)).toEqual(roomTurnWaits.get(10));
-    roomTurnWork.set(backlog, writes[0].work);
+    // MAIN Q2, as in the direct case above: constant work is read at the refused submission, before the passive wait.
+    const refused = rows("refused-submits").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"))[0];
+    expect(refused?.work, "the fixture measured the refused submission").toBeTypeOf("number");
+    roomTurnWork.set(backlog, refused.work);
     console.warn("room operation profile " + JSON.stringify({ backlog, work: writes[0].work, sql: writes[0].sqlWork }));
     if (roomTurnWork.size === 2) expect(roomTurnWork.get(1000)).toBe(roomTurnWork.get(10));
     if (roomTurnGraphs.size === 2) expect(roomTurnGraphs.get(1000)).toEqual(roomTurnGraphs.get(10));
@@ -562,6 +692,22 @@ describe("pending fence turns in an isolated server", () => {
     expect(writes).toHaveLength(1);
     expect(JSON.stringify(writes)).not.toContain("REVOKED_SENTINEL-" + f.thread);
   }, 90000);
+  it("Q1 negative: an UNFENCED adapter refused before hand-back is not closed as not launched (fail closed)", async () => {
+    // REVIEW H1: the "not launched" close needs the boundary's own proof (fencedWrites, nothing released or confirmed, no unfenced
+    // invocation). The same retained pending refusal as B4 M8, on an adapter that does not declare fencedWrites: an invoked engine is
+    // never proven to have done nothing, so the lease is not closed as not launched and the thread stays held (the pre-Q1 behaviour).
+    const f = await make();
+    await api("POST", f.route, { threadId: f.thread, text: "earlier human input" }); await finished(f.thread);
+    await expect.poll(async () => (await api("GET", `/api/bots/${f.bot.id}/tasks/${f.thread}`)).task?.busy).not.toBe(true);
+    scenario(f.thread, { backlog: 10, retainedOnly: true });
+    await api("POST", f.route, { threadId: f.thread, text: "RAW_HUMAN_INPUT" });
+    await expect.poll(() => rows("refused-submits").some(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT")), { timeout: 30000 }).toBe(true);
+    // The fenced cases release the thread within one poll of the refused submission; give the unfenced one well over that.
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    expect(rows("not-launched"), "an unfenced invoked engine is never closed as not launched").toEqual([]);
+    expect(await busy(f, false), "the refused turn stays held: its close is not proven").toBe(true);
+    expect(rows("writes").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"))).toEqual([]);
+  }, 120000);
   it.each([false, true])("B2 dropped tier-one context leaves no output roots or turn/session parents (room=%s)", async room => {
     await api("POST", "/api/memory/action", { action: "configure", mode: "off" });
     const f = await make(room); scenario(f.thread, { refusals: 1, dropContext: true });
@@ -701,21 +847,63 @@ describe("pending fence turns in an isolated server", () => {
     expect(JSON.stringify(writes)).not.toContain("REVOKED_SENTINEL-" + f.thread);
     expect(writes[0].queueBefore).toEqual(writes[0].queueAfter);
   }, 90000);
-  it("R11 a room without its rendered view keeps a legacy prefix until a fenced recovery", async () => {
+  const missingViewRoomTurn = async () => {
     const f = await make(true);
     await api("POST", f.route, { threadId: f.thread, text: "ROOM_STORED_SENTINEL" }); await finished(f.thread);
     await expect.poll(async () => !!(await api("GET", "/api/bots?messages=0")).groups.find((g: any) => g.threadId === f.thread)?.busyBotId).toBe(false);
     scenario(f.thread, { backlog: 10, missingView: true });
     await api("POST", f.route, { threadId: f.thread, text: "RAW_HUMAN_INPUT" }); await finished(f.thread, 2);
+    return f;
+  };
+  // MAIN ruling C1: the owner's room turn is rebuilt (fenced recovery), never ended on checking:pending. These are the f8f3 assertions of
+  // "R11 a room without its rendered view keeps a legacy prefix until a fenced recovery", all but its `held` line, which stays below under
+  // the original name: that one line fails the same way on dev/1019-frozen 3ead2c9023 and on f8f3 (the room prefix carries `held`).
+  it("R11 a room without its rendered view is recovered by one fenced rebuild for the owner (MAIN C1)", async () => {
+    const f = await missingViewRoomTurn();
     const attempts = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"));
     expect(attempts.length).toBeGreaterThan(1);
-    expect(attempts[0].refs.find((r: any) => r.kind === "prefix")).not.toHaveProperty("held");
     const writes = rows("writes").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"));
     expect(writes).toHaveLength(1);
     expect(JSON.stringify(writes)).not.toContain("REVOKED_SENTINEL-" + f.thread);
     expect(writes[0].queueBefore).toEqual(writes[0].queueAfter);
+    expect((await messages(f.thread)).filter(m => m.text === LEDGER_REFUSAL_LINE)).toEqual([]);
   }, 90000);
-
+  it("R11 a room without its rendered view keeps a legacy prefix until a fenced recovery", async () => {
+    const f = await missingViewRoomTurn();
+    const attempts = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"));
+    expect(attempts.length).toBeGreaterThan(1);
+    expect(attempts[0].refs.find((r: any) => r.kind === "prefix")).not.toHaveProperty("held");
+  }, 90000);
+  // MAIN ruling C1 keeps MAIN Q1 (option A) for everything that is neither fresh owner text nor the owner's own work. Outside input stays
+  // refused: a routine run that arrives as webhook-triggered (the fixture marks the hand-off; the routine, thread and fence are real), with
+  // its retained history still checking:pending, ends terminal (one attempt, no engine write, exactly one stopped-context line).
+  it("Q1 kept for outside input: a webhook-triggered routine run with retained history still checking:pending ends terminal", async () => {
+    const f = await make(false);
+    const made = await api("POST", "/api/routines", { botId: f.bot.id, name: "Retained routine", prompt: "ROUTINE_RETAINED_PROMPT", schedule: { type: "once", at: Date.now() + 3_600_000 } });
+    await api("POST", `/api/routines/${made.routine.id}/run`, {});
+    await expect.poll(() => rows("writes").filter(r => r.text.includes("ROUTINE_RETAINED_PROMPT")).length, { timeout: 30000 }).toBeGreaterThanOrEqual(1);
+    const thread = rows("writes").find(r => r.text.includes("ROUTINE_RETAINED_PROMPT")).thread as string;
+    await finished(thread);
+    await expect.poll(() => busy({ bot: f.bot, thread }, false), { timeout: 30000 }).toBe(false);
+    const before = await ids(thread);
+    const writesBefore = rows("writes").filter(r => r.thread === thread).length, attemptsBefore = rows("attempts").filter(r => r.thread === thread).length;
+    scenario(thread, { backlog: 10, outsideTrigger: true });
+    await api("POST", `/api/routines/${made.routine.id}/run`, {});
+    // first the refused submission itself, so an idle thread read before the run even started cannot pass
+    await expect.poll(() => rows("refused-submits").filter(r => r.thread === thread).length, { timeout: 30000 }).toBe(1);
+    await expect.poll(() => busy({ bot: f.bot, thread }, false), { timeout: 30000 }).toBe(false);
+    await expect.poll(async () => (await messages(thread)).filter(m => !before.has(m.id) && m.text === LEDGER_REFUSAL_LINE).length, { timeout: 30000 }).toBe(1);
+    const fresh = (await messages(thread)).filter(m => !before.has(m.id));
+    console.warn("Q1 outside-input terminal " + JSON.stringify({ attempts: rows("attempts").filter(r => r.thread === thread).length - attemptsBefore, rows: fresh.map(m => ({ role: m.role, kind: m.kind, text: m.text, note: m.memoryNote, tool: m.tool?.name })) }));
+    expect(rows("attempts").filter(r => r.thread === thread)).toHaveLength(attemptsBefore + 1);
+    expect(rows("writes").filter(r => r.thread === thread)).toHaveLength(writesBefore);
+    expect(rows("refused-submits").filter(r => r.thread === thread)).toHaveLength(1);
+    // the run's own activity rows (its marker and the outside prompt, shown masked) and the one line: no reply, no second card, no note
+    expect(fresh.filter(m => m.role === "bot" && m.kind !== "activity" && m.text !== LEDGER_REFUSAL_LINE)).toEqual([]);
+    expect(fresh.filter(m => m.role === "bot" && m.kind === "activity" && m.tool?.ok === false)).toEqual([]);
+    expect(fresh.filter(m => m.memoryNote === "without-memory")).toEqual([]);
+    expect(JSON.stringify(fresh)).not.toContain("REVOKED_SENTINEL-" + thread);
+  }, 120000);
   it.each([false, true])("A7 tier 0 working-context omission in room=%s gets one counts-only note without recovery", async room => {
     // Recall is outside this oracle. With it disabled, the only observed
     // omission is the working-context quote, so a missing count cannot be
@@ -881,6 +1069,63 @@ describe("pending fence turns in an isolated server", () => {
     expect(healthy).toHaveLength(1);
     expect(healthy[0].resumed).toBe(true);
   }, 150000);
+  // T3 (DESIGN-T3.md, MAIN approved): the live shape is a revoke window that does not settle inside 3 x 5 s. An owner's resumed direct turn
+  // whose continuation check is exactly checking:pending keeps its session: no "continuation reset", no rebuild, one write on the SAME
+  // session, nothing remembered added, one left-out note. A settled deny and outside input keep today's reset.
+  const resets = (thread: string) => readFileSync(fixture.info.logPath, "utf8").split("\n").filter(line => line.includes(`memory continuation reset thread=${thread} `));
+  it("T3 an owner's resumed turn keeps its session while the continuation check stays checking:pending", async () => {
+    const f = await make(false);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" });
+    await finished(f.thread);
+    const first = rows("writes").filter(r => r.thread === f.thread);
+    expect(first).toHaveLength(1);
+    const previousNotes = new Set((await messages(f.thread)).map(m => m.id));
+    scenario(f.thread, { storm: true });
+    await api("POST", f.route, { threadId: f.thread, text: "New owner message" });
+    await expect.poll(() => rows("writes").filter(r => r.thread === f.thread && r.text.includes("New owner message")).length, { timeout: 45000 }).toBe(1);
+    await finished(f.thread, 2);
+    expect(rows("storm").filter(r => r.thread === f.thread), "the fixture must plant its window over a retained session").toEqual([{ thread: f.thread, session: true }]);
+    expect(resets(f.thread)).toEqual([]);
+    const attempts = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("New owner message"));
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].resumed).toBe(true);
+    expect(attempts[0].reset).not.toBe(true);
+    expect(attempts[0].memory).toBe(false);
+    const write = rows("writes").find(r => r.thread === f.thread && r.text.includes("New owner message"));
+    expect(write.attempt).toBe(0);
+    expect(write.transcript ?? []).toEqual([]);
+    expect(JSON.stringify(write)).not.toContain("Previous fixture message");
+    expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain(`context revoked during dispatch on thread ${f.thread}; re-preparing`);
+    expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain(`context revoked at a late submission on thread ${f.thread}; re-preparing`);
+    const shown = (await messages(f.thread)).filter(m => !previousNotes.has(m.id));
+    expect(shown.filter(m => m.text === "New owner message")).toHaveLength(1);
+    expect(shown.filter(m => m.memoryNote === "without-memory")).toHaveLength(1);
+    expect(shown.filter(m => m.tool?.ok === false)).toEqual([]);
+    expect(shown.filter(m => m.text === LEDGER_REFUSAL_LINE)).toEqual([]);
+  }, 120000);
+  it("T3 guard: a settled deny of the retained session still resets it under the same window", async () => {
+    const f = await make(false);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" });
+    await finished(f.thread);
+    scenario(f.thread, { storm: true, settledDeny: true });
+    await api("POST", f.route, { threadId: f.thread, text: "Denied owner message" });
+    await expect.poll(() => resets(f.thread).length, { timeout: 45000 }).toBeGreaterThanOrEqual(1);
+    expect(rows("storm").filter(r => r.thread === f.thread)).toEqual([{ thread: f.thread, session: true }]);
+    expect(resets(f.thread)[0]).not.toMatch(/reason=checking:pending$/);
+    await expect.poll(() => rows("attempts").filter(r => r.thread === f.thread && r.text.includes("Denied owner message")).length, { timeout: 45000 }).toBeGreaterThanOrEqual(1);
+    expect(rows("attempts").filter(r => r.thread === f.thread && r.text.includes("Denied owner message")).every(r => r.resumed === false)).toBe(true);
+  }, 120000);
+  it("T3 guard: outside input (a webhook-triggered direct turn) on a retained session still resets on checking:pending", async () => {
+    const f = await make(false);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" });
+    await finished(f.thread);
+    scenario(f.thread, { storm: true, outsideDirect: true });
+    await api("POST", f.route, { threadId: f.thread, text: "OUTSIDE_STORM_INPUT" });
+    await expect.poll(() => resets(f.thread).length, { timeout: 45000 }).toBeGreaterThanOrEqual(1);
+    expect(rows("storm").filter(r => r.thread === f.thread), "the fixture must plant its window over a retained session").toEqual([{ thread: f.thread, session: true }]);
+    expect(resets(f.thread)[0]).toMatch(/reason=checking:pending$/);
+    expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain(`memory continuation kept thread=${f.thread} `);
+  }, 120000);
   it("CTX-HEAL keeps a healthy tier-one cursor after restart", async () => {
     await api("POST", "/api/memory/action", { action: "configure", mode: "off" });
     const f = await make();

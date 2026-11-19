@@ -78,7 +78,13 @@ export const report = (label: string, a: Counts, b: Counts) => {
  * read by id): each is one keyed read for one message id, and how many run
  * depends on what its verdict cache already holds, which varies from run to
  * run whatever the thread's length. They are held to a bound, not an equality. */
-export const lineageRead = (sql: string) => /\bmemory_|\$\.copyOf|\brecord_versions\b|\bdeletion_epoch\b|\$\.withheldFromBots|\bFROM owner_sends\b/.test(sql);
+export const lineageRead = (sql: string) => /\bmemory_|\$\.copyOf|\brecord_versions\b|\bdeletion_epoch\b|\$\.withheldFromBots|\bFROM owner_sends\b/.test(sql) || ownerBindingRead(sql);
+/** The owner recall view's read of the bindings it names (memory/recall-membership.ts ownerBindings, since a207e968c8 "an owner recall view reads only the
+ * bindings it names"): one indexed read of memory_scope_bindings per named thread, per view rebuild. How many rebuilds land inside a counting window follows
+ * background view maintenance, not the thread's length (measured on 47ed188a6d: 9 at 1,000 messages against 7 at 200,000, and 1 against 2), so it is held to
+ * the lineage bound like every other memory_* read. It needs its own pattern only because the counter cuts a statement's text at 160 characters, which ends
+ * this one before its `FROM memory_scope_bindings`. The index check (no scan) still applies to it. */
+const ownerBindingRead = (sql: string) => sql.startsWith("SELECT rowid AS position,id,scope_id,subject_type,subject_id,state,CASE WHEN subject_type='human-thread' THEN json_extract(intent,'$.personId') END AS person FR");
 /** A message read by its id: how many run follows what recall named for this turn. */
 /** Both spellings of it are one statement shape: the store writes `thread_id = ? AND id = ?`, a background learning/outcome read `thread_id=? AND id=?`. */
 const keyedMessageRead = (sql: string) => /^SELECT json(, rowid AS position)? FROM messages WHERE thread_id\s*=\s*\? AND id\s*=\s*\?/.test(sql)

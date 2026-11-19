@@ -28,10 +28,6 @@ beforeAll(async () => {
     const file = path.join(process.env.MURAGE_DATA_DIR, 'config.json');
     const cfg = JSON.parse(fs.readFileSync(file, 'utf8')); cfg.features = { browser: true };
     fs.writeFileSync(file, JSON.stringify(cfg));
-    // This fixture supplies only its own question, never a HighLevel operation.
-    // The base's provisional HighLevel ledger cannot classify a raw broker ask.
-    const { installHighlevelEngineLedger } = await import(${JSON.stringify(new URL('./highlevel/engine-policy.ts', import.meta.url).href)});
-    installHighlevelEngineLedger({ classOf: (_thread, _generation, id) => id === 'owner-question' ? 'other' : 'inert' });
     const { registerHooks } = await import('node:module');
     registerHooks({ load(url, context, next) {
       if (url.endsWith('/browser-extension-approvals.ts')) {
@@ -64,6 +60,16 @@ beforeAll(async () => {
         const end = source.indexOf('export async function ensureChrome(', start);
         if (start < 0 || end < 0) throw new Error('fixture anchor changed');
         return { format: 'module-typescript', shortCircuit: true, source: source.slice(0, start) + 'export async function verifyAgentBrowserBinary() {}\\n' + source.slice(end) };
+      }
+      if (url.endsWith('/drivers/claude.ts')) {
+        // BROWSERQ-1020: while the marker files exist this engine never confirms a turn's close, then says it holds no child of it.
+        const mark = name => "globalThis.process.getBuiltinModule('node:fs').existsSync(globalThis.process.env.MURAGE_DATA_DIR + '/" + name + "')";
+        let source = fs.readFileSync(new URL(url), 'utf8');
+        const swap = (from, to) => { if (!source.includes(from)) throw new Error('fixture anchor changed: ' + from); source = source.replace(from, to); };
+        swap('awaitTurnTeardown: async (threadId, turnId) => {', 'awaitTurnTeardown: async (threadId, turnId) => { if (' + mark('teardown-hold') + ') return { closeConfirmed: false, reason: "timeout" };');
+        swap('awaitTurnClose: (threadId, turnId) => {', 'awaitTurnClose: (threadId, turnId) => { if (' + mark('teardown-hold') + ') return new Promise(() => {});');
+        swap('knowsTurnClose: (threadId, turnId) => {', 'knowsTurnClose: (threadId, turnId) => { if (' + mark('teardown-hold') + ') return ' + mark('engine-no-child') + ' ? false : true;');
+        return { format: 'module-typescript', shortCircuit: true, source };
       }
       return next(url, context);
     } });
@@ -363,3 +369,38 @@ it.each(["site", "action"].flatMap(kind => ["answer", "cancel", "restart", "stop
     await pending;
   }
 }, 60_000);
+
+// BROWSERQ-1020 (customer-seen on 1.0.19: "1st in line for the browser profile ... About 252 min."), through the real HTTP routes:
+// index.ts asks the holder's own engine and the store whether a finished turn is gone (browserExecutions.gone -> turnGone).
+// User failure: my turn sat first in line for the browser behind a turn that had ended and whose engine had nothing left of it.
+it("BROWSERQ-1020 API: an ended holder keeps the browser while its engine cannot confirm the close, and the turn in line gets it once the engine says it holds no child", async () => {
+  const { bot, second } = await create();
+  const held = join(fixture.info.dataDir, "teardown-hold"), noChild = join(fixture.info.dataDir, "engine-no-child");
+  const waiting = async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id).tasks.find((t: any) => t.threadId === second).waitingFor;
+  try {
+    const first = await hold(bot.id, bot.threadId, "gone-holder");
+    expect((await rpc(mount(first))).status).toBe(200);
+    writeFileSync(held, "");
+    const label = `gone-sibling-${second}`;
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: second, text: `__fixture_hold_authority__ ${label} Open https://fixture.test/` })).status).toBe(202);
+    await expect.poll(async () => (await waiting())?.resource, { timeout: 15_000 }).toBe("browser");
+    // The holder's turn ends (its engine process dies); the engine never confirms the close, so the run is retained.
+    process.kill(first.pid, "SIGKILL"); // Only this fixture's fake provider.
+    await new Promise(resolve => setTimeout(resolve, 4_000));
+    // Unknown: the holder is kept, first in line with no minutes.
+    const kept = await waiting();
+    expect(kept).toMatchObject({ resource: "browser", position: 1 });
+    expect(kept.estimateMs).toBeUndefined();
+    // Positive evidence: the engine now says it holds no child of that turn. The next 30 s look hands the browser on.
+    writeFileSync(noChild, "");
+    await expect.poll(async () => (await waiting())?.resource, { timeout: 45_000, interval: 500 }).toBeUndefined();
+    let dump: any;
+    await expect.poll(() => { try { dump = withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))); return JSON.stringify(dump.prompt).includes(label); } catch { return false; } }, { timeout: 20_000 }).toBe(true);
+    const b = mount(dump); expect(b).toBeTruthy();
+    expect((await rpc(b)).status).toBe(200);
+    evidence.push({ gone: true, holder: await messages(bot.threadId), sibling: await messages(second) });
+  } finally {
+    for (const marker of [held, noChild]) if (existsSync(marker)) unlinkSync(marker);
+    for (const threadId of [bot.threadId, second]) await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+  }
+}, 120_000);

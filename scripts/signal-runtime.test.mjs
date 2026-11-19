@@ -11,6 +11,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { parse } from "yaml";
 import { build } from "esbuild";
+import { windowsHideBundlePlugin } from "./windows-hide-bundle-plugin.mjs";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 import { assertReleasePin, generateInventory, verifyInventory, treeDigest, TARGETS, runInventoryCommand } from "./signal-inventory.mjs";
 import { stageRuntime, runStageCommand } from "./stage-signal-runtime.mjs";
@@ -228,7 +229,10 @@ it("T-PIN: bundled startup shares the staging digest without checkout files or C
   const outfile = join(f.root, "packaged-server.mjs");
   await build({ stdin: { contents: 'export { verifyRuntimePin } from "./server/channels/signal/process-host.ts";', resolveDir: process.cwd() },
     bundle: true, platform: "node", format: "esm", outfile,
-    banner: { js: 'import { createRequire as requireForBundle } from "node:module"; const require = requireForBundle(import.meta.url);' } });
+    // As scripts/bundle-server.mjs ships it: process-host.ts reaches the sentinel through server/sqlite-open.ts, whose CommonJS
+    // leaves read require/__filename/__dirname, and the Windows hide installer stays external and relocatable.
+    banner: { js: 'import { createRequire as requireForBundle } from "node:module"; import { fileURLToPath as pathForBundle } from "node:url"; import { dirname as dirForBundle } from "node:path"; const require = requireForBundle(import.meta.url); const __filename = pathForBundle(import.meta.url); const __dirname = dirForBundle(__filename);' },
+    plugins: [windowsHideBundlePlugin()] });
   const argv = process.argv, exitCode = process.exitCode;
   try {
     process.argv = [process.execPath, outfile];

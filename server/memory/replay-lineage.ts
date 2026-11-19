@@ -35,7 +35,9 @@ import { ancestryUnrepaired, connectionId, database } from "../database.ts";
 import { memoryGate } from "./memory-gate.ts";
 import { setMemoryCheckingSource } from "./integrity-flags.ts";
 import { authorityParts } from "./authority-epoch.ts";
-import { statementReusePassId, withStatementReuse, writeStamp } from "../io-budget.ts";
+import { ioBudget, statementReusePassId, withStatementReuse, writeStamp } from "../io-budget.ts";
+import { isDatabaseBusy } from "../db-busy.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { supersededThreadCheckpoint, threadCheckpointId } from "./checkpoints.ts";
 import { ancestryThreadRepaired, TOMBSTONE_FORGETS_INDEX } from "./schema.ts";
 import { allowanceHooks, LineageAllowance, ROWS_PER_NODE, TURN_LINEAGE_NODES, setTurnLineageNodesForTest } from "./lineage-allowance.ts";
@@ -2545,17 +2547,60 @@ function invalidationSet(schema: string): readonly InvalidationRow[] {
 /** What every lineage cache trigger invalidates (see InvalidationRow). */
 export const INVALIDATION_SET: readonly InvalidationRow[] = invalidationSet(EPOCH_SCHEMA);
 const epochReady = new WeakMap<object, boolean>();
+/** (LINTRIG 1.0.20) A refusal that is only "not now" (the background write budget deferred the caller, BG_DEFERRED, or a lock wait ran out)
+ * is never kept as the answer: the install is tried again, on the next look from outside a transaction and on a timer of its own, until it
+ * succeeds or the connection is gone. Other errors keep the per-write fallback. The temp triggers write no page of the main file. */
+interface EpochRetry { at: number; delayMs: number; timer: ReturnType<typeof setTimeout> | null; attempts: number }
+const epochRetry = new WeakMap<object, EpochRetry>();
+/** The bounds of the timer's retry: first after the floor, doubling, never more than the ceiling apart. */
+export const EPOCH_RETRY_FLOOR_MS = 250, EPOCH_RETRY_CEILING_MS = 60_000;
+/** Runs a function in the context this module was loaded in: the timer's retry is no background source's write (a timer keeps the
+ * context it was set in, so one set inside a deferred capture would be deferred again). */
+const outsideSource: <R>(fn: () => R) => R = AsyncLocalStorage.snapshot();
+function scheduleEpochRetry(db: ReturnType<typeof database>, retry: EpochRetry): void {
+  if (retry.timer) return;
+  retry.timer = setTimeout(() => outsideSource(() => {
+    retry.timer = null;
+    // a closed connection is not retried (its successor makes its own first look); the shared handle is never opened from here
+    if (!db.isOpen || epochReady.get(db) !== undefined || epochRetry.get(db) !== retry) return;
+    if (db.isTransaction) { scheduleEpochRetry(db, retry); return; }
+    retry.at = 0;
+    try { installEpoch(db); } catch { /* a connection closed under the look: nothing to retry */ }
+  }), Math.max(EPOCH_RETRY_FLOOR_MS, retry.at - Date.now()));
+  retry.timer.unref?.();
+}
+const budgetedSource = (): boolean => { const source = ioBudget.currentSource(); return Boolean(source?.startsWith("memory-") || source === "owner-notebook"); };
 function installEpoch(db: ReturnType<typeof database>): boolean {
-  let ready = epochReady.get(db);
-  if (ready === undefined) {
-    try { db.exec(withoutDroppedTableTriggers(db, EPOCH_SCHEMA)); ready = true; }
-    catch (error) {
-      ready = false;
-      if (!epochWarned) { epochWarned = true; console.warn(`[memory] lineage cache triggers could not be installed; every write drops the verdict cache (${error instanceof Error ? error.message : String(error)})`); }
+  const ready = epochReady.get(db);
+  if (ready !== undefined) return ready;
+  // A rollback would undo the triggers but leave a cached success.
+  if (db.isTransaction) return false;
+  const retry = epochRetry.get(db);
+  if (retry && retry.at > Date.now() && budgetedSource()) return false;
+  try {
+    db.exec(withoutDroppedTableTriggers(db, EPOCH_SCHEMA));
+    epochReady.set(db, true);
+    if (retry) {
+      if (retry.timer) clearTimeout(retry.timer);
+      epochRetry.delete(db);
+      console.info(`[memory] lineage cache triggers installed after ${retry.attempts} deferred attempt(s)`);
     }
-    epochReady.set(db, ready);
+    return true;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (!isDatabaseBusy(error)) epochReady.set(db, false);
+    else {
+      const next = retry ?? { at: 0, delayMs: 0, timer: null, attempts: 0 };
+      next.attempts++;
+      // the timer's look is outside the deferred source, so it need not wait out the budget's minute: floor, doubling, ceiling
+      next.delayMs = Math.min(EPOCH_RETRY_CEILING_MS, Math.max(EPOCH_RETRY_FLOOR_MS, next.delayMs * 2));
+      next.at = Date.now() + next.delayMs;
+      epochRetry.set(db, next);
+      scheduleEpochRetry(db, next);
+    }
+    if (!epochWarned) { epochWarned = true; console.warn(`[memory] lineage cache triggers could not be installed; every write drops the verdict cache (${reason})${epochReady.get(db) === undefined ? "; retrying" : ""}`); }
+    return false;
   }
-  return ready;
 }
 let epochWarned = false;
 /** Whether the lineage cache triggers are installed on the shared connection (installs them if not tried yet). */
@@ -3375,6 +3420,8 @@ function requestProof(id: string, reader: ProofReader | null = null): string {
  * (CONFIRM_TRIES + RECOVER_SLICES_MAX per send); null outside. */
 let proofActivation: { record: string; budget: number } | null = null;
 export function setProofActivationContext(context: { record: string; budget: number } | null): void { proofActivation = context; }
+/** A warmer confirm is running: the checks it reads are the ones the next real entry will find, so they are settled rather than coalesced. */
+export const warmConfirmActive = (): boolean => proofActivation !== null;
 let activationsExhausted: (record: string) => void = () => {};
 /** Told when a proof stops because its record's activations ran out (the record reads RECOVERING-exhausted, "checking"). */
 export function onProofActivationsExhausted(hook: ((record: string) => void) | null): void { activationsExhausted = hook ?? (() => {}); }

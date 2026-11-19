@@ -7,6 +7,7 @@ import { checkedOpenTurns, proposeTurnParents } from "./memory/lineage-write.ts"
 import type { LineageRef } from "./memory/lineage-types.ts";
 import { UPSTREAM_COLLECTION_MAX, checkReleaseAvailable, reserveRelease, withReleaseBudgets } from "./memory/release-budget.ts";
 import { assertRetainedFence } from "./memory/send-fence.ts";
+import { logSwallowedConsumingError } from "./consuming-error-log.ts";
 import { assertConsumingBinding, assertConsumingDescriptor, emitConsumingTurnResponse, type ConsumingDescriptor, type ConsumingTurnBinding } from "./consuming-turn-response.ts";
 
 export type ProtocolId = string | number;
@@ -42,14 +43,14 @@ export interface IngressDestination {
 /** One server-owned instance, one outstanding permit. Neither stdout nor a verdict
  * is engine authority. All errors permanently seal, even when a caller catches. */
 export function createConsumingIngress(binding: ConsumingTurnBinding, instanceId: string) {
-  let issued = 0, delivered = 0, sealed = false, retired = false;
+  let issued = 0, delivered = 0, sealed = false, retired = false, ledgerRefused = false;
   const requests = new Set<string>();
   const serverRequests = new Set<string>();
   const key = (id: ProtocolId) => JSON.stringify([typeof id, id]);
   let pending: { permit: string; sequence: number; digest: string; revisions: readonly number[]; refs: readonly LineageRef[]; descriptor: ConsumingDescriptor; rpc: RpcFrame; deadline: ReturnType<typeof setTimeout> } | undefined;
   const seal = (memoryRefusal = true) => {
     if (sealed || retired) return;
-    sealed = true;
+    sealed = true; ledgerRefused = memoryRefusal;
     if (pending) clearTimeout(pending.deadline);
     pending = undefined; requests.clear(); serverRequests.clear();
     if (memoryRefusal) {
@@ -57,9 +58,12 @@ export function createConsumingIngress(binding: ConsumingTurnBinding, instanceId
     }
   };
   const reject = (): never => { seal(); throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" }); };
-  const guarded = <T>(work: () => T, entered: () => boolean = () => false): T => {
+  const guarded = <T>(work: () => T, entered: () => boolean = () => false, site = "ingress"): T => {
+    const open = !sealed && !retired;
     try { if (sealed || retired) reject(); assertConsumingBinding(binding); return work(); }
     catch (error) {
+      // The first error that seals this instance is the only evidence of why a turn sealed.
+      if (open) logSwallowedConsumingError(`${site}${entered() ? ":entered" : ""}`, error);
       if (entered()) { seal(false); throw error; }
       return reject();
     }
@@ -67,6 +71,7 @@ export function createConsumingIngress(binding: ConsumingTurnBinding, instanceId
   const api = Object.freeze({
     identity: Object.freeze({ ...binding.identity, lineageTurnIds: Object.freeze([...binding.identity.lineageTurnIds]), proxyInstanceId: instanceId }),
     get sealed() { return sealed; },
+    get ledgerRefused() { return ledgerRefused; },
     get retired() { return retired; },
     retire(): void {
       retired = true;
@@ -74,7 +79,7 @@ export function createConsumingIngress(binding: ConsumingTurnBinding, instanceId
       pending = undefined; requests.clear(); serverRequests.clear();
     },
     upstream(bytes: number): void {
-      guarded(() => reserveRelease(checkedOpenTurns(binding.turn).map(member => member.budget!), { bytes, work: bytes + 1 }));
+      guarded(() => reserveRelease(checkedOpenTurns(binding.turn).map(member => member.budget!), { bytes, work: bytes + 1 }), undefined, "ingress.upstream");
     },
     /** The sole application-level bypass: seal first, then name only a request
      * this exact instance already owns. No reason, input, approval or success. */
@@ -98,7 +103,7 @@ export function createConsumingIngress(binding: ConsumingTurnBinding, instanceId
         // The request destination has its own concrete descriptor; this check
         // never authorizes the eventual reply or a queued write.
         emitConsumingTurnResponse(binding, requestDescriptor, { bytes: Buffer.byteLength(text + delimiter), refs: [], write: () => { entered = true; return write(); } });
-      }, () => entered);
+      }, () => entered, "ingress.request");
     },
     issue(frame: ProxyFrame): ReleaseEnvelope {
       return guarded(() => {
@@ -126,7 +131,7 @@ export function createConsumingIngress(binding: ConsumingTurnBinding, instanceId
             refs, revisions: checkedOpenTurns(binding.turn).map(member => member.revision) };
           return Object.freeze({ permit, instanceId, sequence: issued, frame: frame.frame });
         });
-      });
+      }, undefined, "ingress.issue");
     },
     /** No await, capacity wait or queue may occur inside write. */
     deliver(envelope: ReleaseEnvelope, write: (frame: string) => void, delimiter: "" | "\n" = ""): void {
@@ -149,7 +154,7 @@ export function createConsumingIngress(binding: ConsumingTurnBinding, instanceId
           else if (accepted.rpc.id !== undefined) serverRequests.add(key(accepted.rpc.id));
           return write(envelope.frame + delimiter);
         } });
-      }, () => entered);
+      }, () => entered, "ingress.deliver");
     },
     async accept(envelope: ReleaseEnvelope, destination: IngressDestination): Promise<void> {
       try { await destination.capacity(); }
@@ -162,7 +167,7 @@ export function createConsumingIngress(binding: ConsumingTurnBinding, instanceId
         if (sealed || retired) return;
         // A displaced generation is still a real refusal. A valid generation's
         // native transport loss only invalidates this channel's pending authority.
-        try { assertConsumingBinding(binding); } catch { seal(false); return; }
+        try { assertConsumingBinding(binding); } catch (error) { logSwallowedConsumingError("ingress.supervise", error); seal(false); return; }
         seal(false);
       });
     },
@@ -205,7 +210,10 @@ export function createProxyReleaseAuthority(capabilities: InternalCapabilities) 
         // One unit per raw byte pays for delimiter scanning as well as every
         // possible parsed event, before the child examines buffered bytes.
         reserveRelease(checkedOpenTurns(instance.binding.turn).map(member => member.budget!), { bytes: value.bytes as number, work: (value.bytes as number) + 1 });
-      } catch { instance.ingress.seal(); throw new Error("MEMORY_CONTEXT_REVOKED"); }
+      } catch (error) {
+        if (!instance.ingress.sealed) logSwallowedConsumingError("release.reserveUpstream", error);
+        instance.ingress.seal(); throw new Error("MEMORY_CONTEXT_REVOKED");
+      }
     },
     seal(claim: InternalCapability): void {
       const control = capabilities.releaseControl(claim);
@@ -240,7 +248,10 @@ export function createProxyReleaseAuthority(capabilities: InternalCapabilities) 
         if (value.requestId !== (rpc.id ?? null)) throw new Error("MEMORY_CONTEXT_REVOKED");
         return instance.ingress.issue({ instanceId: control.instanceId, sequence: value.sequence as number,
           frame: value.frame, descriptor: instance.descriptor, refs: instance.provenance(rpc) });
-      } catch { instance.ingress.seal(); throw new Error("MEMORY_CONTEXT_REVOKED"); }
+      } catch (error) {
+        if (!instance.ingress.sealed) logSwallowedConsumingError("release.verdict", error);
+        instance.ingress.seal(); throw new Error("MEMORY_CONTEXT_REVOKED");
+      }
     },
   });
 }

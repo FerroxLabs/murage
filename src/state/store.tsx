@@ -1,5 +1,3 @@
-import { receiveLearningNoticeFrame } from "@/lib/live-events";
-import { forgetHighLevelReview, highlevelReviewId } from "@/components/HighLevelReviewValues";
 import type { TurnStateCapabilities, TurnStateEnvelope, ResendAction, ResendActionResult, SendActionTarget } from "../../shared/help-turn-state";
 import { chatsGenHello, chatsGenFrame, chatsGenUnproven, registerChatsGenReplacement } from "@/lib/chats-gen";
 import { createStoreSubscriptions } from "./store-subscriptions";
@@ -23,7 +21,7 @@ import { EMAIL_STATUS_EVENT } from "@/lib/email-status-event";
 // stream from the harness server into local state. The reducer stays
 // pure; everything async lives in the wrapped dispatch + SSE fold.
 import type { SharedRow, SharedWorkMarker } from "@/lib/shared-teams";
-import { requestFailedSentence } from "@/lib/request-failed";
+import { RECONNECTING_SENTENCE, requestFailedSentence } from "@/lib/request-failed";
 import type { TaskResourceWait } from "@/lib/resource-wait";
 import type { BotSettingsSection } from "@/components/bot-settings-sections";
 import {
@@ -100,7 +98,7 @@ import { persistCardPatch } from "./card-persist";
 import { noteTurnEvent } from "./turn-status";
 import { applyTranscriptInput, hydrateTranscript, legacyTranscriptInput, transcriptState, vouches, type InputKind, type SeqTranscript } from "./transcript-seq";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
-import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
+import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents, responderIsOurs } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
 import { busyRetriesFor, busyRetryDelayMs, createOutbox, createSendDelivery, sendActionRequest, terminalSendReceipt, deliverEdit, isDatabaseBusyAnswer, retryWhileBusy, venuePostBody, type OutboxDraft, type OutboxEntry, type VenuePostPick } from "./send-delivery";
 import { checkPinnedDrafts, draftJournal, forgetDeletedDrafts, migrateLegacyDrafts, noteRefusedChips, releaseRecoveredSend, setDraftOwnerCheck, setDraftSendLookup, settleDraftSend, type DraftSendLookupResult } from "@/lib/drafts";
@@ -1784,8 +1782,6 @@ export type Action =
       message?: string;
       /** Exact proposal hash displayed by a current learned-skill client. */
       reviewedSha256?: string;
-      /** HighLevel: the digest of the open review whose values this surface showed (HL-S2-WRITES (a)4). */
-      reviewDigest?: string;
       seen?: { renderer: string; digest: string };
       /** remember this exact grant (the server's allowKey) for the bot, or a
        * several-action card's whole set (its allowKeys, Rule 78c) */
@@ -4615,7 +4611,11 @@ export const initialState: AppState = {
 };
 
 // ── API client ─────────────────────────────────────────────────────────
-export async function api(path: string, init?: RequestInit, busyTries: number = busyRetriesFor(init?.method)): Promise<any> {
+/** Reads asked again while another responder answers, one second apart. */
+const RECONNECT_TRIES = 8;
+const RECONNECT_RETRY_MS = 1000;
+
+export async function api(path: string, init?: RequestInit, busyTries: number = busyRetriesFor(init?.method), reconnectTries: number = RECONNECT_TRIES): Promise<any> {
   // Resolve the desktop proof before the first call rather than racing it.
   // Already known in the packaged app (the preload answered synchronously),
   // so this costs a microtask; in dev it is one loopback fetch, memoized.
@@ -4655,6 +4655,17 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
     // redirect would hand the launch secret to whatever it points at.
     redirect: "error",
   });
+  if (!responderIsOurs(res)) {
+    // Not our engine answering (another program on this port, or a launch this page has no proof for): its words are never shown and its body
+    // never applied. A read asks again while main moves the window to the engine (electron/server-follow.mjs); a write is not repeated, because
+    // it may have reached an engine that did not answer as ours.
+    const method = (init?.method ?? "GET").toUpperCase();
+    if ((method === "GET" || method === "HEAD") && reconnectTries > 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, RECONNECT_RETRY_MS));
+      return api(path, init, busyTries, reconnectTries - 1);
+    }
+    throw Object.assign(new Error(RECONNECTING_SENTENCE), { status: 503, reconnecting: true, body: { error: RECONNECTING_SENTENCE } });
+  }
   const body = normalizeAudienceWire(await res.json().catch(() => ({})));
   // Not proof on its own: a harness route answers 401 for a provider it
   // could not sign in to. The door's /session decides (lib/session-check.ts).
@@ -4682,7 +4693,7 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
     // Only that answer: any other 503 is a real failure and reaches the caller on the first try.
     if (busyTries > 1 && isDatabaseBusyAnswer(error)) {
       await new Promise<void>((resolve) => setTimeout(resolve, busyRetryDelayMs(error)));
-      return api(path, init, busyTries - 1);
+      return api(path, init, busyTries - 1, reconnectTries);
     }
     throw error;
   }
@@ -5628,7 +5639,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             behavior: action.behavior,
             message: action.message,
             reviewedSha256: action.reviewedSha256,
-            ...(action.reviewDigest ? { reviewDigest: action.reviewDigest } : {}),
             ...(action.seen ? { seen: action.seen } : {}),
             ...(action.allowForTask ? { allowForTask: true } : {}),
           };
@@ -5640,8 +5650,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             decideWithFreshAuth(
               async (extra) => {
                 const body = await api(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) });
-                const highlevelId = highlevelReviewId(action.requestId);
-                if (highlevelId && (body?.outcome === "allowed-once" || body?.outcome === "rejected")) forgetHighLevelReview(highlevelId);
                 // UX-TRUST-MOMENTS-1012 1.3: the allowance this answer added, for the card's Undo
                 if (allowForTask && body?.outcome === "allowed-once") onTaskAdded?.(stringList(body.taskAdded));
                 return body;
@@ -6451,7 +6459,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         key: "config",
         request: async () => {
           const config = configReply<ConfigStatus>(await api("/api/config"));
-          return () => { receiveLearningNoticeFrame({ kind: "config", learningFluxSent: config.learningFluxSent }); rawDispatch({ type: "configStatus", config }); };
+          return () => { rawDispatch({ type: "configStatus", config }); };
         },
       },
       {
@@ -6645,7 +6653,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // server replays what we missed when it can, and re-downloading every
     // transcript on a reconnect it already covered is pure waste.
     handleFrame = (frame, replayed = false) => {
-      receiveLearningNoticeFrame(frame);
       frame = normalizeAudienceWire(frame);
       if (frame.kind === "inbox.changed") { emitInboxChanged(frame.pollScale); return; }
       if (frame.kind === "attention.settled") { forwardAttentionSettled(frame); return; }
@@ -6709,10 +6716,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "message.patch":
           conversationCache()?.applyFrame(frame);
-          if (frame.message?.card?.answered || frame.message?.card?.dismissed) {
-            const reviewId = highlevelReviewId(frame.message.card.requestId);
-            if (reviewId) forgetHighLevelReview(reviewId);
-          }
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message, ...seqEnvelope(frame) });
           break;
         case "thread":

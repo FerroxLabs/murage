@@ -9,6 +9,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DiskFloorRefusal, isLowDisk } from "./db-busy.ts";
 import { readOnly, setReadOnly, type ReadOnlyState } from "./read-only-state.ts";
+import { setBootStep } from "./boot-progress.ts";
 export { isReadOnly } from "./read-only-state.ts";
 
 /** The worker's runtime floor: below it every guarded write is refused. The worker program (wal-maintenance.ts, owned by scperf-p1) carries the
@@ -169,6 +170,7 @@ export function lowDiskStep(name: string, error: unknown): boolean {
 /** A boot recovery. Read-only: not run, named in skippedAtStart, `fallback` returned. Normal: run; a low-disk failure turns the start read-only and
  * returns `fallback`; any other failure is rethrown. */
 export function bootStep<T>(name: string, run: () => T, fallback: T): T {
+  setBootStep(name);
   if (readOnly) { skippedAtStart.push(name); return fallback; }
   try { return run(); } catch (error) {
     if (!lowDiskStep(name, error)) throw error;
@@ -184,6 +186,7 @@ export function afterListenSteps<T extends { name: string }>(steps: readonly T[]
 }
 /** bootStep for an async recovery. */
 export async function bootStepAsync<T>(name: string, run: () => Promise<T>, fallback: T): Promise<T> {
+  setBootStep(name);
   if (readOnly) { skippedAtStart.push(name); return fallback; }
   try { return await run(); } catch (error) {
     if (!lowDiskStep(name, error)) throw error;

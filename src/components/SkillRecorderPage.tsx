@@ -33,9 +33,11 @@ import {
   type RecordedSkillEvent,
 } from "@/lib/skill-recorder";
 import { requestScreenPreview, stopScreenPreview } from "@/lib/screen-preview";
+import { recorderTranscription } from "@/lib/own-transcription-key";
 import { TRANSCRIPTION_STATUS_EVENT } from "@/lib/transcription-status";
 import { useStore } from "@/state/store";
 import { OpenBotListButton } from "./OpenBotListButton";
+import { postClip } from "./PushToTalk";
 
 type Phase = "idle" | "starting" | "recording" | "review" | "saving" | "saved";
 
@@ -67,7 +69,7 @@ function blobDataUrl(blob: Blob): Promise<string> {
 }
 
 export function SkillRecorderPage() {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const bridge = window.muragebox?.skillRecorder;
   const [phase, setPhase] = useState<Phase>("idle");
   const phaseRef = useRef<Phase>("idle");
@@ -78,6 +80,10 @@ export function SkillRecorderPage() {
   const transcriptRef = useRef("");
   const [partialTranscript, setPartialTranscript] = useState("");
   const [transcriptionConfigured, setTranscriptionConfigured] = useState<boolean | null>(null);
+  // Flux (or any engine that transcribes) takes the narration when you stop, with no extra key (Sean 11-06); a key saved
+  // by an older version keeps live narration working when no engine transcribes.
+  const transcribeWith = recorderTranscription(state.config?.tts?.routes?.transcribe, transcriptionConfigured);
+  const transcribeWithRef = useRef(transcribeWith);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
@@ -184,10 +190,12 @@ export function SkillRecorderPage() {
       setError("Skill recording requires the Murage desktop app on macOS.");
       return;
     }
-    if (!transcriptionConfigured || !window.muragebox.transcription) {
-      setError("Add your AssemblyAI key under Cloud transcription before recording.");
+    const using = transcribeWith === "own-key" && !window.muragebox.transcription ? "none" : transcribeWith;
+    if (using === "none") {
+      setError("Connect Flux Router in Settings to transcribe your narration before recording.");
       return;
     }
+    transcribeWithRef.current = using;
     const nextPermission = await bridge.permissions();
     if (!nextPermission.supported) {
       setError("Skill recording is currently available in the macOS desktop app.");
@@ -227,7 +235,7 @@ export function SkillRecorderPage() {
       setTranscript("");
       setPartialTranscript("");
       cloudTranscriptRef.current = { turns: new Map(), finalText: "", partialText: "" };
-      transcriptionSessionRef.current = await startAssemblyAITranscription({
+      if (using === "own-key") transcriptionSessionRef.current = await startAssemblyAITranscription({
         stream: mic,
         getToken: () => window.muragebox!.transcription!.streamingToken(),
         onTurn: (turn) => {
@@ -281,7 +289,17 @@ export function SkillRecorderPage() {
       mediaRecorderRef.current = null;
       if (audioChunksRef.current.length) {
         const mime = recorder?.mimeType.split(";")[0] || "audio/webm";
-        audioDataRef.current = await blobDataUrl(new Blob(audioChunksRef.current, { type: mime }));
+        const audio = new Blob(audioChunksRef.current, { type: mime });
+        audioDataRef.current = await blobDataUrl(audio);
+        if (transcribeWithRef.current === "engine") {
+          // The same route dictation uses (POST /api/voice/transcribe); a failure keeps the audio and says so.
+          const heard = await postClip(audio, 120_000).then((result) => result.text.trim(), () => {
+            setError("Your narration could not be transcribed; the original audio is still saved with the skill.");
+            return "";
+          });
+          transcriptRef.current = heard;
+          setTranscript(heard);
+        }
       }
       releaseStreams();
       updatePhase("review");
@@ -332,7 +350,7 @@ export function SkillRecorderPage() {
         description,
         durationMs: elapsed,
         transcript: transcriptRef.current,
-        transcription: { provider: "assemblyai", model: "u3-rt-pro" },
+        transcription: transcribeWithRef.current === "own-key" ? { provider: "assemblyai", model: "u3-rt-pro" } : undefined,
         audio: audioDataRef.current || undefined,
         events: eventsRef.current,
       });
@@ -396,7 +414,7 @@ export function SkillRecorderPage() {
                 <div className="mt-6 flex items-start gap-3 rounded-2xl bg-inset px-4 py-3">
                   <EyeOff size={17} className="mt-0.5 shrink-0 text-success" />
                   <p className="text-[12px] leading-5 text-ink-secondary">
-                    Raw keystrokes and clipboard contents are never stored. Screen frames can contain visible text and stay on this computer; microphone audio is streamed to AssemblyAI for transcription. You review everything before creating the skill.
+                    Raw keystrokes and clipboard contents are never stored. Screen frames can contain visible text and stay on this computer; microphone audio is sent to your transcription service to turn it into text. You review everything before creating the skill.
                   </p>
                 </div>
 
@@ -405,10 +423,10 @@ export function SkillRecorderPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-[13px] font-medium">
                       Cloud transcription
-                      {transcriptionConfigured && <span className="text-[10px] font-medium text-success">Saved</span>}
+                      {transcribeWith !== "none" && <span className="text-[10px] font-medium text-success">Ready</span>}
                     </div>
                     <p className="mt-0.5 text-[11px] leading-4 text-ink-secondary">
-                      {transcriptionConfigured ? "AssemblyAI is ready for live narration." : "Add an AssemblyAI key in Settings before recording."}
+                      {transcribeWith === "engine" ? "Your narration is turned into text when you stop." : transcribeWith === "own-key" ? "Your narration is turned into text as you speak." : "Connect Flux Router in Settings to turn your narration into text."}
                     </p>
                   </div>
                   <button
@@ -416,11 +434,11 @@ export function SkillRecorderPage() {
                     onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "voice" })}
                     className="shrink-0 rounded-xl bg-control px-3 py-2 text-[12px] font-medium text-ink hover:bg-raised-hover"
                   >
-                    {transcriptionConfigured ? "Manage" : "Open Settings"}
+                    {transcribeWith !== "none" ? "Manage" : "Open Settings"}
                   </button>
                 </div>
 
-                <button type="button" disabled={phase === "starting" || !transcriptionConfigured} onClick={() => void start()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3.5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-40">
+                <button type="button" disabled={phase === "starting" || transcribeWith === "none"} onClick={() => void start()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3.5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-40">
                   {phase === "starting" ? <><Circle size={15} className="animate-pulse" /> Getting ready…</> : <><Circle size={14} fill="currentColor" /> Start recording</>}
                 </button>
                 <p className="mt-3 text-center text-[11px] text-ink-secondary">macOS will ask for screen, microphone, and action-recording access the first time.</p>
@@ -436,11 +454,11 @@ export function SkillRecorderPage() {
                 <p className="mt-2 text-[14px] text-ink-secondary">Move through the task and explain the why as you go.</p>
                 <div className="mx-auto mt-6 max-w-lg rounded-2xl bg-inset p-4 text-left">
                   <div className="flex items-center justify-between text-[11px] font-medium uppercase tracking-[0.12em] text-ink-secondary">
-                    <span className="flex items-center gap-2"><Volume2 size={14} /> Live narration · AssemblyAI</span>
+                    <span className="flex items-center gap-2"><Volume2 size={14} /> {transcribeWithRef.current === "engine" ? "Narration" : "Live narration"}</span>
                     <span>{events.length} moments</span>
                   </div>
                   <p className="mt-3 min-h-12 text-[13px] leading-5 text-ink">
-                    {[transcript, partialTranscript].filter(Boolean).join(" ") || "Start speaking; your transcript will appear here."}
+                    {[transcript, partialTranscript].filter(Boolean).join(" ") || (transcribeWithRef.current === "engine" ? "Start speaking; your transcript will appear when you stop." : "Start speaking; your transcript will appear here.")}
                   </p>
                 </div>
                 <button type="button" onClick={() => void stop()} className="mx-auto mt-7 flex items-center gap-2 rounded-2xl bg-danger px-6 py-3 text-[14px] font-semibold text-white">
