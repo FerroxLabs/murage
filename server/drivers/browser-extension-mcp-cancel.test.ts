@@ -1,9 +1,16 @@
+// control: legacy cases retain their assertions unless individually labelled red-at-4df086541 below.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // U37 (audit 05-3): the browser MCP proxy runs requests side by side and passes the client's notifications/cancelled to the
 // request it names (its HTTP call is aborted and no reply is written for it, as MCP asks).
 import { PassThrough, Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runBrowserExtensionMcp } from "./browser-extension-mcp.ts";
+// control migration: preserve parallelism/cancellation assertions at the shared destination.
+const releaseSink = vi.hoisted(() => ({ write: (_frame: string) => {} }));
+vi.mock("../proxy-turn-release.ts", () => ({
+  releaseProxyFrame: async (_role: string, frame: string) => { releaseSink.write(frame + "\n"); },
+  reserveProxyUpstream: async () => {}, proxyUpstreamResponse: (_role: string, response: Response) => response, proxyTransportLost: () => {},
+}));
 
 const config = { endpoint: "http://127.0.0.1:12345/api/browser-extension/mcp", clientId: "paired_client", token: "a".repeat(43) };
 const call = (id: number | string) => JSON.stringify({ id, method: "tools/call", params: { name: "agent_browser_snapshot", arguments: {} } }) + "\n";
@@ -14,6 +21,7 @@ function proxy() {
   const replies: Array<{ id: unknown; result?: unknown; error?: unknown }> = [];
   let buffered = "";
   const output = new Writable({ write(chunk, _encoding, callback) { buffered += chunk.toString(); for (let i; (i = buffered.indexOf("\n")) >= 0;) { replies.push(JSON.parse(buffered.slice(0, i))); buffered = buffered.slice(i + 1); } callback(); } });
+  releaseSink.write = frame => { output.write(frame); };
   const signals: AbortSignal[] = [];
   const releases: Array<() => void> = [];
   const fetcher = async (_url: unknown, init?: RequestInit) => {

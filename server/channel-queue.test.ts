@@ -1,3 +1,4 @@
+import { sendStore } from "./send-store.ts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -79,4 +80,56 @@ describe("channel queue: authoritative pending list", () => {
       setChannelQueueObserver(null);
     }
   });
+});
+
+// R1: room queue lifecycle shares durable receipts, including question answers.
+it("F7-ML1-CHANNEL-DRAIN: thrown channel startup settles its attempt and excludes its linked line", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { initializeSendAttempts } = await import("./send-attempt-state.ts");
+  const db = new DatabaseSync(":memory:"); initializeSendAttempts(db);
+  sendStore.use(() => db);
+  try {
+    queueChannelMessage("g", "t", "question", { sendId: "send" });
+    drainChannelMessages(() => false, item => {
+      const row = sendStore.bySendId("t", "send")!;
+      sendStore.settle(row.seq, "started", "line");
+      expect(item.binding?.attemptId).toBeTruthy();
+      throw new Error("setup failed after acceptance");
+    });
+    const row = sendStore.bySendId("t", "send")!;
+    expect(sendStore.attemptFor(row)).toMatchObject({ phase: "terminal", delivery: "uncertain", replayPolicy: "exclude" });
+    expect(sendStore.attempts()!.replayEligibility("t", ["line"]).excludedIds.has("line")).toBe(true);
+  } finally { sendStore.reset(); db.close(); }
+});
+
+it("F7-ML5-ANON-RETURNS-ID: room acceptance exposes its minted send identity", () => {
+  const queued = queueChannelMessage("anonymous-group", "anonymous-thread", "question");
+  expect((queued as { sendId?: string }).sendId).toMatch(/^srv-/);
+});
+
+it("DOOR-1 GUARD: a foreign group cannot read or remove another room's queued send", () => {
+  const queued = queueChannelMessage("l8-room", "l8-room-thread", "owner question", {sendId:"l8-room-send"});
+  expect(queuedChannelMessage("foreign-room", "l8-room-thread", "l8-room-send")).toBeNull();
+  expect(cancelChannelMessage("foreign-room", queued.id)).toBe(false);
+  expect(queuedChannelMessage("l8-room", "l8-room-thread", "l8-room-send")?.id).toBe(queued.id);
+  expect(cancelChannelMessage("l8-room", queued.id)).toBe(true);
+  expect(queuedChannelMessage("l8-room", "l8-room-thread", "l8-room-send")).toBeNull();
+});
+
+it("a pinned provider handoff carries its binding without claiming an unfenced invocation", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { initializeSendAttempts } = await import("./send-attempt-state.ts");
+  const db = new DatabaseSync(":memory:"); initializeSendAttempts(db);
+  sendStore.use(() => db);
+  try {
+    queueChannelMessage("receipt-room", "receipt-thread", "answer", { sendId: "receipt-send", responderBotId: "receipt-member", origin: "desktop" });
+    drainChannelMessages(() => false, item => {
+      const row = sendStore.bySendId("receipt-thread", "receipt-send")!;
+      expect(item.binding?.attemptId).toBe(sendStore.attemptFor(row)!.attemptId);
+      expect(sendStore.attemptFor(row)).toMatchObject({ delivery: "not_submitted", replayPolicy: "exclude" });
+      expect(db.prepare("SELECT invocation_released, released_writes FROM send_attempt_bindings WHERE attempt_id=?").get(item.binding!.attemptId)).toEqual({ invocation_released: 0, released_writes: 0 });
+      return { messageId: "receipt-line" };
+    }, true);
+    expect(sendStore.attemptFor(sendStore.bySendId("receipt-thread", "receipt-send")!)!.delivery).toBe("not_submitted");
+  } finally { sendStore.use(null); db.close(); }
 });

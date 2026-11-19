@@ -25,6 +25,7 @@ const CLOSED = engineClosedLine("Muse Code", null);
 
 /** `holdModels`: the first model/list is never answered, so `initialModels` stays pending (ensureSession holds at its first await). */
 const fixture = async (opts: { holdModels?: boolean; intercept?: Intercept } = {}) => {
+  vi.spyOn(procs, "resolveEngineExecutable").mockReturnValue({ command: "/stop-nonacp-fixture", args: [] });
   const children: any[] = [];
   const events: RuntimeEvent[] = [];
   const stopped: any[] = [];

@@ -1,10 +1,13 @@
+// MAIN RULING RULINGS-1019-RECALL-1116 R7-11.
+// MAIN RULING RULINGS-1019-RECALL-1116 R7-6.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { buildMemoryBundle, assertMemoryBundle, MEMORY_FRAME_TOKENS } from "./bundle.ts";
 import { threadCheckpointId } from "./checkpoints.ts";
 import { bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, filterMemoryReplay, linkMemoryDisclosureOutput, prepareMemoryDisclosure } from "./disclosures.ts";
@@ -14,6 +17,11 @@ import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { markSessionKnown } from "./testing/legacy-file-model.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { captureSource } from "./capture.ts";
+import { captureWork } from "./chunks.ts";
+import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
+import { refreshMemoryCheckpoint } from "./consolidate.ts";
+import { storeLiveAnchor } from "./testing/live-session-fixture.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
@@ -97,7 +105,11 @@ it("hydrates optional search hits from authority with scoped evidence references
   const f=fixture(),scope=ensureScope("bot","bot");
   record("recall",scope,"Actual source-backed outcome",false,"observed-message");
   const bridge:MemorySearchBridge={search:async input=>{
-    expect(input.scopeIds).toContain(scope);
+    expect(input.scopeIds).toEqual([]);
+    expect(input.view).toEqual(f.access.view);
+    expect(input.reader).toMatchObject({botId:"bot",threadId:"private"});
+    const scopes = database().prepare("SELECT scope_id FROM memory_recall_view_scopes WHERE view_id=? AND generation=? AND lineage_only=0").all(input.view!.viewId,input.view!.generation).map(row=>String(row.scope_id));
+    if (!scopes.includes(scope)) throw new Error("MEMORY_SCOPE_DENIED");
     return {hits:[{id:"recall",version:1,score:100}],vectorRows:0,degradedReason:"model-missing"};
   }};
   const bundle=await buildMemoryBundle("outcome",f.access,bridge, {allowance: LineageAllowance.tool()});
@@ -257,8 +269,19 @@ it("carries one small pinned room checkpoint for a room member on a large contex
   expect(bundle.pinned.map(r=>r.id)).toEqual([checkpoint]);
 });
 it("recalls a relevant room reply beside the room checkpoint for a room member",async()=>{
-  const f=fixture("room-thread"),checkpoint=threadCheckpointId(ensureScope("conversation","room-thread"),"room-thread");roomRecord(checkpoint,"checkpoint",HARBOR_CHECKPOINT,false);
-  roomRecord("reply","source","Round 3: a seal-themed face-painting stall where kids get whiskers and nose designs fits the 900 dollar budget for Saturday the 14th, with paint, brushes and two helpers.",false);
+  const f=fixture("room-thread");
+  storeLiveAnchor(database(),"room-thread","checkpoint-message",HARBOR_CHECKPOINT,"bot");
+  captureSource(database(),{id:"checkpoint-source",threadId:"room-thread",messageId:"checkpoint-message",kind:"text",speaker:"bot:bot",outcome:"recorded",text:HARBOR_CHECKPOINT});
+  const work=claimMemoryJob("room-checkpoint-fixture");
+  if(!work) throw new Error("Expected room checkpoint capture job");
+  publishMemoryWork(work,"room-checkpoint-fixture",captureWork(work));
+  const head=refreshMemoryCheckpoint(work.id);
+  expect(head.status).toBe("updated");
+  if(head.status!=="updated") throw new Error("Expected room checkpoint publication");
+  const checkpoint=head.checkpointId;
+  const replyText="Round 3: a seal-themed face-painting stall where kids get whiskers and nose designs fits the 900 dollar budget for Saturday the 14th, with paint, brushes and two helpers.";
+  roomRecord("reply","source",replyText,false);
+  storeLiveAnchor(database(),"room-thread","message-reply",replyText,"bot");
   const bridge:MemorySearchBridge={search:async()=>({hits:[{id:"reply",version:1,score:100}],vectorRows:0})};
   const bundle=await buildMemoryBundle("Round 6: which date and budget are we planning for?",f.renew(),bridge,{ allowance: LineageAllowance.tool(),availableContextTokens:200000});
   expect(bundle.checkpoint.map(r=>r.id)).toEqual([checkpoint]);

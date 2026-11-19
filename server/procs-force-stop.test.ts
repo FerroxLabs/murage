@@ -158,7 +158,7 @@ describe("the root's close after a confirmed stop", () => {
   }, 15_000);
 
   it("a handle Murage does not own reads false at once", async () => {
-    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { windowsHide: true, stdio: "ignore" });
     try {
       expect(await awaitCliRootClose(child)).toBe(false);
     } finally {

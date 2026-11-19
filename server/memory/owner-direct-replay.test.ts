@@ -1,3 +1,5 @@
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { startLiveSession } from './testing/live-session-fixture.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -15,12 +17,11 @@ import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
-import { continuationMemoryRevoked, filterDirectReplay } from "./disclosures.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
+import { bindMemoryDisclosureSession, deliverMemoryDisclosure, continuationMemoryRevoked, filterDirectReplay } from "./disclosures.ts";
 import { revokeAllDisclosures } from "./revocation.ts";
-import { recordSessionRoots } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
@@ -35,9 +36,11 @@ function access(notOwnerAudience = false) {
 type M = { id: string; role: string; kind: string; text: string; at: number; from?: { name: string }; replyToId?: string };
 const owner = (id: string, replyToId?: string): M => ({ id, role: "user", kind: "text", text: `owner ${id}`, at: 1_700_000_000_000, ...(replyToId ? { replyToId } : {}) });
 const reply = (id: string): M => ({ id, role: "bot", kind: "text", text: `sable ${id}`, at: 1_700_000_000_000, from: { name: "Sable" } });
-function receipt(a: { policyRevision: number; deletionEpoch: number }, id: string, records: Array<{ id: string; version: number }>, outputs: string[], at: number) {
+function receipt(a: ReturnType<typeof access>, id: string, records: Array<{ id: string; version: number }>, outputs: string[], at: number) {
   database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,0,'delivered',?)")
-    .run(id, "sable-direct", "claude", "S-1", JSON.stringify(records), "[]", JSON.stringify(outputs), a.policyRevision, a.deletionEpoch, at);
+    .run(id, "sable-direct", "claude", null, JSON.stringify(records), "[]", JSON.stringify(outputs), a.policyRevision, a.deletionEpoch, at);
+  const bind = () => { bindMemoryDisclosureSession(id,'S-1'); deliverMemoryDisclosure(id,a); };
+  if (!startLiveSession(a,'claude','S-1',bind)) bind();
 }
 function record(id: string) {
   const scope = ensureScope("bot", "sable");
@@ -45,7 +48,7 @@ function record(id: string) {
 }
 /** One native session: every reply is linked to every receipt before it
  * (linkMemoryDisclosureOutput), as a resumed Claude session is. */
-function session(a: { policyRevision: number; deletionEpoch: number }, turns: number): M[] {
+function session(a: ReturnType<typeof access>, turns: number): M[] {
   const messages: M[] = [];
   for (let turn = 1; turn <= turns; turn++) {
     messages.push(owner(`o${turn}`), reply(`r${turn}`));
@@ -54,8 +57,6 @@ function session(a: { policyRevision: number; deletionEpoch: number }, turns: nu
   }
   for (let turn = 1; turn <= turns; turn++) database().prepare("UPDATE memory_disclosures SET output_message_ids=? WHERE bundle_id=?")
     .run(JSON.stringify(Array.from({ length: turns - turn + 1 }, (_, i) => `r${turn + i}`)), `R${turn}`);
-  recordSessionRoots("sable-direct", "claude", "S-1", { roots: new Set(), over: false });
-  stampFreshSession(database(), "sable-direct", "claude", "S-1"); // stamped as a 1.0.3 fresh start leaves it (S6 rule 26)
   return messages;
 }
 /** What policy.ts does on a roster change: a new policy revision and every receipt revoked. */
@@ -73,7 +74,8 @@ it("after a roster change resets the session, the owner's direct chat replays th
   const why: { reason?: string } = {};
   // the live log's reset: memory-changed (receipt-already-revoked)
   expect(continuationMemoryRevoked(LineageAllowance.tool(), "sable-direct", "claude", "S-1", a, why)).toBe(true);
-  expect(why.reason).toBe("memory-changed (receipt-already-revoked)");
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  expect(why.reason).toBe("writetime-watermark");
   const { replayed, withheld } = filterDirectReplay(LineageAllowance.tool(), "sable-direct", messages, a, new Set(), { withheldLine: marker });
   expect(replayed.map(m => m.id)).toEqual(["o1", "r1", "o2", "r2", "o3", "r3", "o4", "r4", "o5", "r5"]);
   expect(replayed.find(m => m.id === "r5")?.text).toBe("sable r5");

@@ -1,3 +1,4 @@
+import { insertFixtureMessage } from '../testing/approval-card.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -9,7 +10,6 @@ import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
-import { insertMessage } from "../message-db.ts";
 import { ensureOpenCardIndex, isOpenCardJson } from "../transcript-backfill.ts";
 import { SCOPE_OWNER_INDEX, ensureScopeOwnerIndex, validateMemorySchema } from "./schema.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
@@ -54,7 +54,7 @@ it("r7-P2-3: a retired (orphaned) approval is not an open card, so the list stay
     ensureOpenCardIndex(db);
     expect(Number(db.prepare("SELECT count(*) AS n FROM open_card").get()!.n)).toBe(0);
     // a live card is listed, and leaves the list when the start retires it
-    insertMessage("t", { id: "live", at: n + 1, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "live", tool: "Bash" } } as never);
+    insertFixtureMessage("t", { id: "live", at: n + 1, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "live", tool: "Bash" } } as never);
     expect(Number(db.prepare("SELECT count(*) AS n FROM open_card").get()!.n)).toBe(1);
   }
 });

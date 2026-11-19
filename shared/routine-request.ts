@@ -58,6 +58,9 @@ export interface RoutineRequestCardData {
   botId: string;
   threadId: string;
   createdAt: number;
+  /** Server-owned filing mark. Marked requests always need an explicit owner answer. */
+  outsideRead?: boolean;
+  outsideSource?: string;
   operation: RoutineRequestOperation;
   /** Written after a successful confirmation. Useful for support/debugging. */
   appliedAt?: number;

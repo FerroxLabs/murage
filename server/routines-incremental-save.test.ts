@@ -14,11 +14,18 @@ vi.mock("node:fs", async (importOriginal) => {
   const size = (data: unknown) => typeof data === "string" ? Buffer.byteLength(data) : (data as Uint8Array)?.byteLength ?? 0;
   const wrapped = {
     ...real,
-    writeSync: ((fd: number, data: unknown, ...rest: unknown[]) => { if (io.on) io.bytes += size(data); return (real.writeSync as (...args: unknown[]) => number)(fd, data, ...rest); }) as typeof real.writeSync,
     writeFileSync: ((path: unknown, data: unknown, ...rest: unknown[]) => { if (io.on) io.bytes += size(data); return (real.writeFileSync as (...args: unknown[]) => void)(path, data, ...rest); }) as typeof real.writeFileSync,
     fsyncSync: ((fd: number) => { if (io.on) io.fsyncs++; return real.fsyncSync(fd); }) as typeof real.fsyncSync,
   };
   return { ...wrapped, default: wrapped };
+});
+
+// MAIN RULING INT-CONFLICT-DEFAULT (c4-misc-d application, "Routine write fault fixtures"): the counted-fs pristine native capture
+// bypasses node:fs writeSync mocks, so the journal's physical writes are metered at the real counted write entry.
+vi.mock("./counted-fs.ts", async (importOriginal) => {
+  const counted = await importOriginal<typeof import("./counted-fs.ts")>();
+  const size = (data: unknown) => typeof data === "string" ? Buffer.byteLength(data) : (data as Uint8Array)?.byteLength ?? 0;
+  return { ...counted, writeSync: ((fd: number, data: unknown, ...rest: unknown[]) => { if (io.on) io.bytes += size(data); return (counted.writeSync as (...args: unknown[]) => number)(fd, data, ...rest); }) as typeof counted.writeSync };
 });
 
 const { RoutineManager } = await import("./routines.ts");

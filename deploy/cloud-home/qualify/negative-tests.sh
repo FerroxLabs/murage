@@ -472,5 +472,80 @@ PY
   rm -f "$FDLOCK"
 else fail systemd.fd.passage "inheritable flock descriptor is open and locked inside a systemd-run scope" "systemd-run not installed"; fi
 
+
+# ---- LANE-G r3: no release-slot byte as uid 0 (T-P1, T-P3, T-P4, T-G5, T-L1') -------------------------------
+# T-P1: for the life of this run, no process in murage-home.service's cgroup or the turn/browser slices runs with uid 0 and an
+# executable or a mapped file under /opt/murage-releases (the image's root launchers in /usr/local/libexec are the only root code).
+P1_HITS=$(python3 -I - <<'PY'
+import os, re
+hits = []
+for pid in [p for p in os.listdir("/proc") if p.isdigit()]:
+    try:
+        with open("/proc/%s/cgroup" % pid) as stream:
+            cgroup = stream.read()
+        if "murage-home.service" not in cgroup and "murage-turns.slice" not in cgroup and "murage-browsers.slice" not in cgroup:
+            continue
+        with open("/proc/%s/status" % pid) as stream:
+            uid = [l.split()[1] for l in stream if l.startswith("Uid:")][0]
+        if uid != "0":
+            continue
+        exe = os.path.realpath("/proc/%s/exe" % pid)
+        with open("/proc/%s/maps" % pid) as stream:
+            mapped = [l.split()[-1] for l in stream if "/opt/murage" in l]
+        if exe.startswith("/opt/murage") or mapped:
+            hits.append((pid, exe, mapped[:3]))
+    except OSError:
+        continue
+print(hits)
+PY
+)
+case "$P1_HITS" in "[]") pass laneg.p1.no_root_slot_code "no uid-0 process in the home unit or the slices runs or maps release-slot bytes";;
+  *) fail laneg.p1.no_root_slot_code "no uid-0 process in the home unit or the slices runs or maps release-slot bytes" "$P1_HITS";; esac
+# T-P3: slot code (murage, murage-browser, murage-turn) cannot ask PID 1 for a transient unit; none is in an admin group.
+for u in murage murage-browser murage-turn; do
+  r=$(asu "$u" systemd-run --system --quiet --collect true 2>&1 | tail -1)
+  case "$r" in *"Access denied"*|*"Interactive authentication required"*|*"Permission denied"*|*"not permitted"*|*"Failed to"*) pass "laneg.p3.systemd_run.$u" "$u cannot start a transient unit";;
+    "") fail "laneg.p3.systemd_run.$u" "$u cannot start a transient unit" "systemd-run succeeded";;
+    *) fail "laneg.p3.systemd_run.$u" "$u cannot start a transient unit" "result=$r";; esac
+  g=$(id -Gn "$u" 2>/dev/null | tr ' ' '\n' | grep -Ex 'sudo|wheel|admin|adm' | tr '\n' ' ')
+  if [ -z "$g" ]; then pass "laneg.p3.groups.$u" "$u is in no admin group"; else fail "laneg.p3.groups.$u" "$u is in no admin group" "groups: $g"; fi
+done
+# T-P4: the live slot is FS_IMMUTABLE_FL root inodes: write, chattr -i, rename and unlink are refused for the service user.
+LIVE=/opt/murage-releases/$(readlink /opt/murage-releases/current 2>/dev/null)
+if [ -d "$LIVE" ]; then
+  denied laneg.p4.write "murage cannot open a live-slot file for writing" murage rdwr "$LIVE/dist-server/index.js"
+  denied laneg.p4.unlink "murage cannot unlink a live-slot file" murage unlink "$LIVE/dist-server/index.js"
+  r=$(asu murage chattr -i "$LIVE/dist-server/index.js" 2>&1 | tail -1)
+  case "$r" in *"Operation not permitted"*|*"Permission denied"*) pass laneg.p4.chattr "murage cannot clear +i on a live-slot file";;
+    *) fail laneg.p4.chattr "murage cannot clear +i on a live-slot file" "result=$r";; esac
+  r=$(asu murage python3 -I -c 'import os,sys,errno
+try:
+    os.rename(sys.argv[1], sys.argv[1] + ".moved"); print("OK")
+except OSError as e:
+    print(errno.errorcode.get(e.errno, str(e.errno)))' "$LIVE/dist-server/index.js" 2>&1 | tail -1)
+  case "$r" in EPERM|EACCES|EROFS) pass laneg.p4.rename "murage cannot rename a live-slot file ($r)";;
+    *) fail laneg.p4.rename "murage cannot rename a live-slot file" "result=$r";; esac
+  flags=$(lsattr -d "$LIVE" 2>/dev/null | cut -d' ' -f1)
+  case "$flags" in *i*) pass laneg.p4.sealed "the live slot root carries +i";; *) fail laneg.p4.sealed "the live slot root carries +i" "flags=$flags";; esac
+else skip laneg.p4.write "murage cannot write the live slot" "no /opt/murage-releases/current"; fi
+# T-L1': the four root launchers are image-owned regular files, root 0755, +i; a copy of murage-turn-launch refuses to run.
+for l in murage-turn-launch murage-browser-namespace murage-browser-network murage-home-launch; do
+  f=/usr/local/libexec/$l
+  if [ -f "$f" ] && [ ! -L "$f" ] && [ "$(stat -c %u:%a "$f")" = 0:755 ] && lsattr -d "$f" | cut -d' ' -f1 | grep -q i; then pass "laneg.l1.$l" "$l is an immutable root 0755 regular file"
+  else fail "laneg.l1.$l" "$l is an immutable root 0755 regular file" "$(stat -c '%F %u:%a' "$f" 2>&1) $(lsattr -d "$f" 2>&1 | cut -d' ' -f1)"; fi
+done
+COPY="$OUT/murage-turn-launch.copy"; cp /usr/local/libexec/murage-turn-launch "$COPY" 2>/dev/null
+r=$(SUDO_UID=$(id -u murage) python3 -I "$COPY" </dev/null 2>&1 | tail -1); rm -f "$COPY"
+case "$r" in *"refused"*|*"must run from the image"*) pass laneg.l1.copy "a copy of murage-turn-launch refuses to run (self-inode check)";;
+  *) fail laneg.l1.copy "a copy of murage-turn-launch refuses to run (self-inode check)" "result=$r";; esac
+# T-G5: Wants=, not Requires=: restarting the updater while the home is idle and running does not restart the home.
+if systemctl is-active --quiet murage-home.service && systemctl is-active --quiet murage-commands.service; then
+  HOME_START=$(systemctl show -p ExecMainStartTimestampMonotonic --value murage-home.service)
+  systemctl restart murage-commands.service; sleep 3
+  if systemctl is-active --quiet murage-home.service && [ "$(systemctl show -p ExecMainStartTimestampMonotonic --value murage-home.service)" = "$HOME_START" ]; then
+    pass laneg.g5.wants "restarting murage-commands leaves the running home alone (Wants=, not Requires=)"
+  else fail laneg.g5.wants "restarting murage-commands leaves the running home alone (Wants=, not Requires=)" "home restarted or stopped"; fi
+else skip laneg.g5.wants "restarting murage-commands leaves the running home alone" "home or updater not active"; fi
+
 emit "SUMMARY pass=$PASS fail=$FAIL skip=$SKIP"
 [ "$FAIL" -eq 0 ] && [ "$SKIP" -eq 0 ]

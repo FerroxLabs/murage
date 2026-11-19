@@ -101,9 +101,16 @@ it("P-private success, refusal and abort leave no speech or credentials in metad
   const { mkdtempSync, readdirSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join, resolve } = await import("node:path");
-  const priorTmp = process.env.TMPDIR, isolated = mkdtempSync(join(tmpdir(), "p-private-"));
-  process.env.TMPDIR = isolated;
-  onTestFinished(() => { if (priorTmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = priorTmp; removeTempDirSync(isolated); });
+  const isolated = mkdtempSync(join(tmpdir(), "p-private-"));
+  // Node uses TEMP, then TMP on Windows; TMPDIR, TMP, then TEMP on POSIX.
+  const priorTmp = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
+  for (const key of Object.keys(priorTmp)) process.env[key] = isolated;
+  onTestFinished(() => {
+    for (const [key, value] of Object.entries(priorTmp)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    removeTempDirSync(isolated);
+  });
   expect(resolve(tmpdir())).toBe(resolve(isolated));
   const f = fixture(), before = new Set(readdirSync(tmpdir(), { recursive: true, encoding: "utf8" }));
   const logs: unknown[][] = [];

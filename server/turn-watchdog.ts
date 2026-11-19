@@ -258,9 +258,13 @@ export class TurnWatchdog {
    * they take); request.resolved → false (the clock restarts once no card
    * is left open). Keyed by the card's request id; a caller without one
    * shares a single anonymous key. */
-  setWaitingOnHuman(threadId: string, waiting: boolean, requestId = ""): void {
+  setWaitingOnHuman(threadId: string, waiting: boolean, requestId = "", generation?: string): void {
     const turn = this.turns.get(threadId);
     if (!turn) return;
+    // A generation-owned wait (approval attention) touches only its own turn's watch, and a repeated release is inert: it
+    // neither removes a successor's same-id request nor restarts a successor's clock.
+    if (generation !== undefined && turn.generation !== undefined && turn.generation !== generation) return;
+    if (generation !== undefined && !waiting && !turn.openRequests.has(requestId)) return;
     if (waiting) turn.openRequests.add(requestId);
     else turn.openRequests.delete(requestId);
     turn.waitingOnHuman = turn.openRequests.size > 0;

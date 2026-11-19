@@ -22,7 +22,7 @@
 //   started      a turn began from it (the transcript holds the line)
 //   delivered    folded into the running turn (a steer the engine accepted)
 //   unconfirmed  the engine may or may not have the words; never re-sent
-//   failed       refused before anything ran; the same sendId may be tried again
+//   failed       refused before anything ran; same-ID retries return its immutable receipt
 //   refused      accepted, then the bot or room could not start it. The words are kept and shown
 //                (a chip with "Send again" and "Dismiss"), until the person does one of them
 //   cancelled    the owner cancelled it while it waited; a retry stays cancelled
@@ -93,14 +93,18 @@
 // line's id, and the startup reconciliation (completeUnresolved) finishes any
 // "dispatched" or "unconfirmed" row that has no line yet.
 
+import { SendAttemptStore, attemptError, type AttemptSnapshot, type BindingKey, resendAttempt, type AttemptResendRequest, type AuthorizedAttemptScope } from "./send-attempt-state.ts";
 import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
+import { schemaStep } from "./read-only-start.ts";
 import { murageLine } from "./murage-line.ts";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-open.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { afterCommit, txScopeBegin, txScopeEnd } from "./tx-scope.ts";
 import { RESTORE_HOLDS_DDL } from "./restore-fence.ts";
+import { deleteSpeechSendMarkers } from "./tts/reply-schema.ts";
 import { groupDeletionKey, ownerDeletedThread, OWNER_DELETIONS_DDL } from "./owner-deletions.ts";
 import { SEND_NOTICE_ENGLISH, sendNoticeActivityName, type SendNoticeCode } from "../shared/send-notice.ts";
+import { askProofRecordSchema, type AskProofRecord } from "../shared/phone-ask-contract.ts";
 
 export type SendStatus = "sending" | "queued" | "dispatched" | "started" | "delivered" | "unconfirmed" | "failed" | "refused" | "cancelled";
 export type SendKind = "bot" | "group";
@@ -150,8 +154,11 @@ export interface SendRow {
   via: SendVia | null;
   /** Waiting words that never run as an owner turn by themselves; re-read at the drain, not only at admission. */
   queueOnly: boolean;
+  isolated: boolean;
   /** The phone that made a via row. */
   viaDevice: string | null;
+  /** Admission proof for this ask and device; null when absent or malformed. Never itself grants authority. */
+  viaProof: AskProofRecord | null;
   /** Files a via row carries; null when none or when the stored column is malformed (such a row is refused at the drain, never run with a guess). */
   attachments: SendAttachment[] | null;
   /** True when the stored attachments column holds something that does not parse: the drain refuses such a row. */
@@ -161,6 +168,9 @@ export interface SendRow {
 }
 
 export interface AcceptInput {
+  /** PROVISIONAL INTERFACE: legacy ownerId is the bot/group ID. I passes the
+   * authorized account scope here when registering the F4 routes. */
+  attemptScope?: AuthorizedAttemptScope;
   kind: SendKind;
   ownerId: string;
   threadId: string;
@@ -189,10 +199,13 @@ export interface AcceptInput {
   actionId?: string;
   /** This chip was made from work a restore expired (a room request): it is held like a neutralized send. */
   restoreHeld?: boolean;
-  /** A share or ask-intent row. Needs `queueOnly` and origin "unproven" (a programming error otherwise); a replaced via row carries all of it forward. */
+  /** A share or ask-intent row. Needs `queueOnly` and origin "unproven" (a programming error otherwise); a replacement keeps its standing but drops proof. */
   via?: SendVia;
   queueOnly?: true;
+  isolated?: boolean;
   viaDevice?: string;
+  /** Server-owned admission evidence from commitPhoneLine after verification, never from an HTTP body. */
+  viaProof?: AskProofRecord | null;
   attachments?: SendRow["attachments"];
   now?: number;
 }
@@ -268,7 +281,10 @@ const DDL = `CREATE TABLE IF NOT EXISTS owner_sends (
   via TEXT,
   queue_only INTEGER NOT NULL DEFAULT 0,
   via_device TEXT,
-  attachments TEXT
+  attachments TEXT,
+  via_proof TEXT,
+  isolated INTEGER NOT NULL DEFAULT 0,
+  late_refused INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS owner_sends_send ON owner_sends(thread_id, send_id);
 CREATE INDEX IF NOT EXISTS owner_sends_open ON owner_sends(thread_id, status, seq);
@@ -283,6 +299,12 @@ CREATE INDEX IF NOT EXISTS owner_sends_age ON owner_sends(status, updated_at);`;
  * has nothing to offer and is closed. Returns how many rows were neutralized.
  */
 export function neutralizeRestoredSends(db: DatabaseSync, restoreGeneration?: string): number {
+  // A native provider can hold turns newer than this restored database. The
+  // old positive proof must never certify that unknown retained context.
+  if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='send_replay_sessions'").get())
+    db.exec("DELETE FROM send_replay_sessions");
+  if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='send_replay_session_nodes'").get())
+    db.exec("DELETE FROM send_replay_session_nodes");
   // Every restore starts a new generation, even one with no waiting send: a Send again pressed before it (and any
   // automatic retry of that press) carries the older token and can no longer run anything.
   const generation = issueRestoreGeneration(db, restoreGeneration);
@@ -296,6 +318,18 @@ export function neutralizeRestoredSends(db: DatabaseSync, restoreGeneration?: st
   db.prepare("UPDATE owner_sends SET restore_held=1 WHERE status IN ('failed','refused') AND restore_held=0").run();
   // chips an earlier restore held take the new token as well
   db.prepare("UPDATE owner_sends SET restore_gen=? WHERE restore_held=1").run(generation);
+  // Holding a queue projection also closes its unsubmitted receipt. Otherwise
+  // an explicit Send again reaches a nonterminal attempt and cannot replace it.
+  // A bound or possibly submitted attempt still needs its provider's closure
+  // proof; restore must never manufacture that proof or rewrite a final receipt.
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='send_attempts'").get()) {
+    const sends = new SendStore(() => db);
+    const rows = db.prepare(`SELECT s.seq FROM owner_sends s JOIN send_attempts a
+      ON a.thread_id=s.thread_id AND a.send_id=s.send_id AND a.queue_id=s.queue_id
+      WHERE s.restore_held=1 AND s.status='refused' AND a.phase='queued' AND a.binding_epoch=0 AND a.delivery='not_submitted'
+      AND NOT EXISTS (SELECT 1 FROM send_attempt_bindings b WHERE b.attempt_id=a.attempt_id AND b.active=1)`).all();
+    for (const row of rows) sends.settle(Number(row.seq), "refused", undefined, "refused");
+  }
   const empty = db.prepare("UPDATE owner_sends SET status='cancelled', dispatched=0, prompt=NULL, updated_at=? WHERE status IN ('sending','queued')").run(now);
   return Number(kept.changes) + Number(empty.changes);
 }
@@ -336,7 +370,10 @@ function addMissingColumns(db: DatabaseSync): void {
   if (!columns.some((column) => column.name === "via")) db.exec("ALTER TABLE owner_sends ADD COLUMN via TEXT");
   if (!columns.some((column) => column.name === "queue_only")) db.exec("ALTER TABLE owner_sends ADD COLUMN queue_only INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "via_device")) db.exec("ALTER TABLE owner_sends ADD COLUMN via_device TEXT");
+  if (!columns.some((column) => column.name === "isolated")) db.exec("ALTER TABLE owner_sends ADD COLUMN isolated INTEGER NOT NULL DEFAULT 0");
+  if (!columns.some((column) => column.name === "late_refused")) db.exec("ALTER TABLE owner_sends ADD COLUMN late_refused INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "attachments")) db.exec("ALTER TABLE owner_sends ADD COLUMN attachments TEXT");
+  if (!columns.some((column) => column.name === "via_proof")) db.exec("ALTER TABLE owner_sends ADD COLUMN via_proof TEXT");
 }
 
 /**
@@ -361,13 +398,17 @@ export function recoveredSteerLine(row: SendRow, steerId: string) {
     queueId: row.queueId,
     // a phone's line keeps its standing: without `via` the owner could edit it into an owner turn
     ...(row.via ? { via: row.via } : {}),
+    // the live steer line carries the send's origin (index.ts); a recovered one keeps it too, so the owner's words stay the owner's
+    ...(row.origin === "desktop" || row.origin === "companion" || row.origin === "unproven" ? { origin: row.origin as "desktop" | "companion" | "unproven" } : {}),
     steered: true, steerUnconfirmed: true, steerId,
     ...(row.turnId ? { dispatchedIn: row.turnId } : {}),
   };
 }
 
 /** Created by the database initializer (and by a test's own handle); safe to run again. */
-export function initializeOwnerSends(db: DatabaseSync): void {
+export function initializeOwnerSends(db: DatabaseSync): void { schemaStep(db, "owner_sends", initializeOwnerSendsNow); }
+/** The statements themselves. A read-only start never runs them on its file: a missing table reads as empty (schemaStep, read-only-start.ts). */
+function initializeOwnerSendsNow(db: DatabaseSync): void {
   // A table made by an earlier build lacks the notice column; the indexes need the table first.
   const existing = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='owner_sends'").get();
   if (existing) {
@@ -403,6 +444,14 @@ function parseAttachments(raw: unknown): SendAttachment[] | null {
   } catch { return null; }
 }
 
+function parseViaProof(raw: unknown, via: unknown, deviceId: unknown): AskProofRecord | null {
+  if (via !== "ask-intent" || typeof raw !== "string") return null;
+  try {
+    const parsed = askProofRecordSchema.safeParse(JSON.parse(raw));
+    return parsed.success && parsed.data.deviceId === deviceId ? parsed.data : null;
+  } catch { return null; }
+}
+
 function toRow(r: Record<string, unknown>): SendRow {
   return {
     seq: Number(r.seq),
@@ -430,8 +479,10 @@ function toRow(r: Record<string, unknown>): SendRow {
     actionId: (r.action_id as string | null) ?? null,
     turnId: (r.turn_id as string | null) ?? null,
     via: r.via === "share" || r.via === "ask-intent" ? r.via : null,
+    isolated: r.isolated === 1,
     queueOnly: Number(r.queue_only) === 1,
     viaDevice: (r.via_device as string | null) ?? null,
+    viaProof: parseViaProof(r.via_proof, r.via, r.via_device),
     attachments: parseAttachments(r.attachments),
     attachmentsMalformed: typeof r.attachments === "string" && r.attachments !== "" && parseAttachments(r.attachments) === null,
     createdAt: Number(r.created_at),
@@ -497,7 +548,9 @@ export class SendStore {
         // The thread's own record, or (for a channel's threads) the channel's: a crash between the registry write and the
         // per-thread cleanup leaves only the channel's record.
         if (live(t, o, k) || !(ownerDeletedThread(tx, t) || (k === "group" && ownerDeletedThread(tx, groupDeletionKey(o))))) continue;
-        tx.prepare("DELETE FROM owner_sends WHERE thread_id=? AND owner_id=? AND kind=?").run(t, o, k);
+        const gone = tx.prepare("DELETE FROM owner_sends WHERE thread_id=? AND owner_id=? AND kind=? RETURNING send_id").all(t, o, k);
+        // each speech send: marker goes with its owner row (D24-SPEECH-RETENTION design r5.1 P)
+        deleteSpeechSendMarkers(tx, t, gone.map((row) => row.send_id as string | null));
         touched.add(t);
       }
     });
@@ -513,6 +566,20 @@ export class SendStore {
 
   /** The connection the store writes on: the phone receipts table shares it, so a receipt and its row commit together. */
   database(): DatabaseSync { return this.db(); }
+
+  /** I0 registers receipts before enabling the route contract. Old databases
+   * keep their legacy projection until that atomic migration is installed. */
+  attempts(): SendAttemptStore | undefined {
+    const db = this.db();
+    return db.prepare("SELECT 1 FROM sqlite_master WHERE name='send_attempts' AND type='table'").get() ? new SendAttemptStore(db) : undefined;
+  }
+  attemptFor(row: SendRow): AttemptSnapshot | undefined {
+    if (!row.sendId) return undefined;
+    const attempts = this.attempts(); if (!attempts) return undefined;
+    const identity = this.db().prepare("SELECT attempt_id FROM send_attempts WHERE thread_id=? AND send_id=?").get(row.threadId, row.sendId);
+    const receipt = identity ? attempts.byId(String(identity.attempt_id)) : undefined;
+    return receipt?.botId === row.ownerId ? receipt : undefined;
+  }
 
   private db(): DatabaseSync {
     const db = this.getDb();
@@ -571,7 +638,13 @@ export class SendStore {
   retire(seq: number): void {
     const row = this.bySeq(seq);
     if (!row || (row.status !== "failed" && row.status !== "refused")) return;
-    this.db().prepare("DELETE FROM owner_sends WHERE seq=?").run(seq);
+    // Receipt-backed resends have a separate replacement identity. Keep the
+    // original chip and receipt so another restore can fence a retried press.
+    if (row.messageId || this.attemptFor(row)) return;
+    this.atomically((db) => {
+      db.prepare("DELETE FROM owner_sends WHERE seq=?").run(seq);
+      deleteSpeechSendMarkers(db, row.threadId, [row.sendId]);
+    });
     this.notify(row.threadId);
   }
 
@@ -581,26 +654,38 @@ export class SendStore {
   /**
    * Acceptance: ONE transaction. Throws when the row cannot be written, and
    * then nothing may be submitted. A repeat of a sendId returns the row it
-   * already has (a `failed` one is re-admitted as a fresh row at the end of
-   * the line: the person asked again, deliberately).
+   * already has after receipt-schema activation. Only a fresh explicit action
+   * creates a replacement identity there; legacy refused chips retain their
+   * pre-migration replacement contract.
    */
   accept(input: AcceptInput): AcceptResult {
     const now = input.now ?? Date.now();
     const fingerprint = fingerprintHash(input.fingerprint);
     let typedAt = now;
+    let legacyNextSeq: number | null = null;
     if (input.via && (input.queueOnly !== true || input.origin !== "unproven")) throw new Error("a via send is queue-only and unproven");
     let via: SendVia | null = input.via ?? null;
-    let queueOnly = input.queueOnly === true;
+    let queueOnly = input.queueOnly === true || input.isolated === true;
     let viaDevice: string | null = input.viaDevice ?? null;
+    let viaProof = input.viaProof && !input.resend ? parseViaProof(JSON.stringify(input.viaProof), via, viaDevice) : null;
     let attachments: SendRow["attachments"] = input.attachments ?? null;
     let origin: string | null = input.origin ?? null;
+    let priorGone = false;
     const result = this.atomically((db): AcceptResult => {
+      input = { ...input, sendId: input.sendId ?? `srv-${randomUUID()}` };
+      const receiptScope = input.attemptScope ?? { ownerId: input.ownerId, botId: input.ownerId, threadId: input.threadId };
+      if (receiptScope.threadId !== input.threadId || receiptScope.botId !== input.ownerId) throw attemptError("send_id_conflict");
+      const attempts = this.attempts();
+      if (attempts?.isRetired(receiptScope, "send", input.sendId!)) throw attemptError("retired_send_id");
+      const out = ((): AcceptResult => {
       // The check and the insert share this transaction: no chip for a conversation that is gone.
       if (input.status === "refused" && this.gate && !this.gate(input.threadId, input.ownerId, input.kind)) throw new ThreadGoneError();
       if (input.sendId) {
         const prior = this.one(db, "SELECT * FROM owner_sends WHERE thread_id=? AND send_id=?", input.threadId, input.sendId);
         if (prior) {
-          if (prior.fingerprint !== fingerprint) return { kind: "conflict", row: prior };
+          if (prior.fingerprint !== fingerprint || prior.kind !== input.kind || prior.ownerId !== input.ownerId) return { kind: "conflict", row: prior };
+          const scopedReceipt = this.attemptFor(prior);
+          if (input.attemptScope && scopedReceipt && scopedReceipt.ownerId !== input.attemptScope.ownerId) return { kind: "conflict", row: prior };
           // A send held by a restore is run only by the owner's explicit Send again, never by an automatic retry of the same id.
           // ...and only with the token of the NEWEST restore: a press (or its retry) from before a later restore is stale.
           if (prior.restoreHeld && !(input.resend && prior.restoreGen !== null && input.restoreGen === prior.restoreGen && restoreGenerationCurrent(db, input.restoreGen))) return { kind: "existing", row: prior };
@@ -611,14 +696,66 @@ export class SendStore {
           if (!stoppedResendRuns(prior, input)) return { kind: "existing", row: prior };
           // A replay of the very press that made this row (its acknowledgement was lost) never runs it a second time.
           if (input.resend && input.actionId && prior.actionId === input.actionId) return { kind: "existing", row: prior };
-          if (prior.via !== null) {
-            // A via row keeps its standing and its files across the replacement, whatever the press says: third-party words never become an owner turn here.
-            if (input.via && input.via !== prior.via) throw new Error("a resend cannot change a send's via");
-            via = prior.via; queueOnly = true; viaDevice = prior.viaDevice; attachments = prior.attachments; origin = "unproven";
+          // Before receipt-schema activation, retain the existing refused-chip
+          // admission contract in this same transaction. Scoped/receipt-backed
+          // sends always use the immutable identity and explicit action below.
+          // A definitive legacy late refusal is retryable even if the turn's
+          // end already scrubbed its words. An ordinary linked terminal failure
+          // remains immutable; payload retention is not evidence of delivery.
+          const legacyRetry = !attempts && !input.attemptScope && (!prior.messageId || prior.text !== ""
+            || !!db.prepare("SELECT 1 FROM owner_sends WHERE seq=? AND late_refused=1").get(prior.seq));
+          if (legacyRetry && (prior.status === "refused" || prior.status === "failed") && !input.resend && !input.actionId) {
+            viaProof = null;
+            input = { ...input, isolated: prior.isolated || input.isolated };
+            queueOnly ||= prior.queueOnly || prior.isolated;
+            if (prior.via) {
+              if (input.via && input.via !== prior.via) throw new Error("a resend cannot change a send's via");
+              via = prior.via; queueOnly = true; viaDevice = prior.viaDevice; attachments = prior.attachments; origin = "unproven";
+            }
+            // Reserve the new row's order before deleting the old maximum.
+            // MAX(rowid) is an indexed right-edge lookup, independent of history.
+            legacyNextSeq = Number((db.prepare("SELECT COALESCE(MAX(seq),0)+1 AS next FROM owner_sends").get() as { next: number }).next);
+            db.prepare("DELETE FROM owner_sends WHERE seq=?").run(prior.seq);
+            priorGone = true;
+            typedAt = prior.createdAt;
+          } else {
+          // Every explicit press has a new deterministic replacement identity;
+          // the old receipt never disappears and a lost response reuses this one.
+          if (!input.resend || !input.actionId) return { kind: "existing", row: prior };
+          if (input.via && prior.via && input.via !== prior.via) throw new Error("a resend cannot change a send's via");
+          const originalReceipt = this.attemptFor(prior);
+          if (originalReceipt) {
+            const result = this.resendAction(originalReceipt, { contract: 1, kind: "resend", actionId: input.actionId,
+              threadId: input.threadId, sendId: input.sendId!, attemptId: originalReceipt.attemptId,
+              receiptRevision: originalReceipt.revision, bindingEpoch: originalReceipt.bindingEpoch,
+              replacementSendId: `r-${input.actionId}`, stopGen: input.stopGen, restoreGen: input.restoreGen, confirmDuplicate: false },
+              () => ({ ...input, viaProof: undefined, text: prior.text || input.text, prompt: prior.prompt ?? input.prompt,
+                replyToId: prior.replyToId ?? undefined, via: prior.via ?? undefined, viaDevice: prior.viaDevice ?? undefined,
+                attachments: prior.attachments, origin: prior.via ? "unproven" : prior.origin ?? undefined }));
+            return { kind: result.existing ? "existing" : "new", row: this.bySendId(input.threadId, result.replacementSendId)! };
           }
-          db.prepare("DELETE FROM owner_sends WHERE seq=?").run(prior.seq);
-          // Send again on a chip: the message is still the one the owner typed, at the time they typed it
-          typedAt = prior.createdAt;
+          const replacement = this.accept({ ...input, sendId: `r-${input.actionId}`, queueId: undefined,
+            resend: false, viaProof: undefined, isolated: prior.isolated, queueOnly: prior.queueOnly ? true : undefined,
+            via: prior.via ?? undefined, viaDevice: prior.viaDevice ?? undefined,
+            attachments: prior.attachments, origin: prior.origin ?? undefined,
+            text: prior.text || input.text, prompt: prior.prompt ?? input.prompt,
+            replyToId: prior.replyToId ?? undefined });
+          if (replacement.kind === "new") {
+            db.prepare("UPDATE owner_sends SET action_id=?, created_at=? WHERE seq=?").run(input.actionId, prior.createdAt, replacement.row.seq);
+            replacement.row.createdAt = prior.createdAt;
+            db.prepare("UPDATE owner_sends SET via_proof=NULL WHERE seq=?").run(prior.seq);
+          }
+          return replacement;
+          }
+        }
+      }
+      if (attempts) {
+        const receipt = attempts.readAttempt(receiptScope, input.sendId!);
+        if ("kind" in receipt && receipt.kind === "retired") throw attemptError("retired_send_id");
+        if (!("kind" in receipt)) {
+          if (receipt.fingerprint !== fingerprint) throw attemptError("send_id_conflict");
+          // Pruning may drop the queue projection, never the immutable receipt.
+          return { kind: "existing", row: receiptProjection(receipt, input.kind) };
         }
       }
       if (input.queueId) {
@@ -627,16 +764,34 @@ export class SendStore {
       }
       const queueId = input.queueId ?? randomUUID();
       const heldGeneration = input.restoreHeld ? (currentRestoreGeneration(db) ?? issueRestoreGeneration(db)) : null;
-      db.prepare(`INSERT INTO owner_sends (kind, owner_id, thread_id, send_id, queue_id, fingerprint, text, prompt, reply_to_id, origin, mode, responder_id, status, notice, dispatched, created_at, updated_at, restore_held, restore_gen, action_id, via, queue_only, via_device, attachments)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?)`).run(
-        input.kind, input.ownerId, input.threadId, input.sendId ?? null, queueId, fingerprint, input.text, input.prompt ?? null,
+      db.prepare(`INSERT INTO owner_sends (seq, kind, owner_id, thread_id, send_id, queue_id, fingerprint, text, prompt, reply_to_id, origin, mode, responder_id, status, notice, dispatched, created_at, updated_at, restore_held, restore_gen, action_id, via, queue_only, via_device, attachments, via_proof, isolated)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        legacyNextSeq, input.kind, input.ownerId, input.threadId, input.sendId ?? null, queueId, fingerprint, input.text, input.prompt ?? null,
         input.replyToId ?? null, origin, input.mode ?? null, input.responderId ?? null,
         input.status ?? "sending", input.status === "refused" ? (input.notice ?? "refused") : null, typedAt, now,
         input.restoreHeld ? 1 : 0, heldGeneration, input.resend && input.actionId ? input.actionId : null,
         via, queueOnly ? 1 : 0, viaDevice, attachments ? JSON.stringify(attachments) : null,
+        viaProof ? JSON.stringify(viaProof) : null,
+        input.isolated ? 1 : 0,
       );
+      const receipt = attempts?.create({ ...receiptScope,
+        sendId: input.sendId, fingerprint, isolated: input.isolated, queueOnly, queueId,
+        restoreGen: heldGeneration ?? undefined });
+      if (receipt && (input.status === "refused" || input.status === "cancelled")) {
+        const key = attempts!.bind([receipt.attemptId], { generation: `accept-${receipt.attemptId}`, providerInstanceId: "server" })[0]!;
+        attempts!.settleAttempt(key, attempts!.byId(receipt.attemptId)!.revision, input.status === "cancelled" ? "removed" : "refused", { binding: key, delivery: "not_submitted" });
+        // This synthetic admission never owned provider resources. Complete
+        // its empty effects so a later queued send is not held behind it.
+        if (!attempts!.flushEffects(key.threadId, key.generation, () => {})) throw attemptError("cleanup_incomplete");
+      }
       this.speechAccepted?.({ ...input, origin: origin ?? undefined });
       return { kind: "new", row: this.one(db, "SELECT * FROM owner_sends WHERE queue_id=?", queueId)! };
+      })();
+      // a replaced row keeps its speech send: marker while a row with its send id stands; it goes only if this accept left none
+      // (D24-SPEECH-RETENTION design r5.2 Δ3: a refused or excluded-origin replacement never re-writes the marker)
+      if (priorGone && input.sendId && !db.prepare("SELECT 1 FROM owner_sends WHERE thread_id=? AND send_id=?").get(input.threadId, input.sendId))
+        deleteSpeechSendMarkers(db, input.threadId, [input.sendId]);
+      return out;
     });
     if (result.kind === "new") this.notify(input.threadId);
     return result;
@@ -661,6 +816,44 @@ export class SendStore {
     if (Number(info.changes) !== 1) throw new Error("send record is gone");
     const tid = threadId ?? this.bySeq(seq)?.threadId;
     if (tid) this.notify(tid);
+  }
+
+  /** PROVISIONAL INTERFACE: captured sequence IDs are the queue-to-F1 bridge;
+   * callers never reconstruct batch membership from transcript sendId. */
+  bindBatch(seqs: number[], generation: string, providerInstanceId: string): BindingKey[] {
+    const attempts = this.attempts();
+    if (!attempts) throw new Error("attempt schema not registered");
+    const ids = seqs.map(seq => { const row = this.bySeq(seq); const receipt = row && this.attemptFor(row); if (!receipt) throw new Error("missing attempt"); return receipt.attemptId; });
+    return attempts.bind(ids, { generation, providerInstanceId });
+  }
+  /** The route resolves original transcript/outbox payload only after scope
+   * authorization. Acceptance and action result share one notifications scope. */
+  resendAction(scope: AuthorizedAttemptScope, request: AttemptResendRequest, original: (receipt: AttemptSnapshot) => AcceptInput) {
+    return this.within(() => {
+      const attempts = this.attempts();
+      if (!attempts) throw new Error("attempt schema not registered");
+      const result = resendAttempt(attempts, scope, request, (old, sendId) => {
+        const input = original(old);
+        const typedAt = this.bySendId(old.threadId, old.sendId)?.createdAt;
+        const result = this.accept({ ...input, attemptScope: scope, sendId, queueId: undefined, resend: false, actionId: undefined,
+          status: "queued", isolated: old.isolated, queueOnly: old.queueOnly ? true : undefined });
+        if (result.kind !== "new") throw attemptError("send_id_conflict");
+        // The new immutable receipt dates the fresh action. Its pending chip
+        // still dates the owner's original words, including repeated resends.
+        if (typedAt !== undefined) this.db().prepare("UPDATE owner_sends SET created_at=? WHERE seq=?").run(typedAt, result.row.seq);
+        return this.attemptFor(result.row)!;
+      });
+      // The replacement is a fresh admission. Retain the immutable receipt,
+      // but consume the old projection's private phone proof in this commit.
+      this.db().prepare("UPDATE owner_sends SET via_proof=NULL WHERE thread_id=? AND send_id=?").run(request.threadId, request.sendId);
+      return result;
+    });
+  }
+
+  bindingFor(row: SendRow): BindingKey | undefined {
+    const receipt = this.attemptFor(row); if (!receipt) return undefined;
+    const binding = this.db().prepare("SELECT * FROM send_attempt_bindings WHERE attempt_id=? AND binding_epoch=?").get(receipt.attemptId, receipt.bindingEpoch);
+    return binding ? { ...receipt, generation: String(binding.generation), providerInstanceId: String(binding.provider_instance_id), ...(binding.provider_turn_id ? { providerTurnId: String(binding.provider_turn_id) } : {}) } : undefined;
   }
 
   /** The marker, written before anything reaches the engine. Throws if it cannot be made durable. */
@@ -711,6 +904,12 @@ export class SendStore {
   settle(seq: number, status: "started" | "delivered" | "unconfirmed" | "failed" | "refused" | "cancelled", messageId?: string, notice?: SendNoticeCode): void {
     if ((status === "started" || status === "delivered") && !messageId) throw new Error(`a ${status} send needs its transcript line`);
     if (status === "refused" && !notice) throw new Error("a refused send needs its notice");
+    this.atomically(() => {
+    const before = this.bySeq(seq);
+    const final = before && this.attemptFor(before);
+    // Dismissal may change only the queue projection; the historical failure
+    // receipt remains immutable. Every other late projection update is ignored.
+    if (final?.phase === "terminal" && status !== "cancelled") return;
     // An unconfirmed steer may still be refused by the engine and put back in line, running from
     // its words and prompt: those stay until it is answered, the turn ends, or Murage restarts.
     // A failed send keeps its words unless a transcript line holds them (a late refusal passed by a
@@ -718,10 +917,28 @@ export class SendStore {
     const hold = status === "refused" || status === "unconfirmed" || (status === "failed" && !messageId);
     this.update(
       seq,
-      `status=?, notice=COALESCE(?, notice), message_id=COALESCE(?, message_id)${status === "refused" ? ", dispatched=0, prompt=NULL" : ""}${hold ? "" : ", prompt=NULL, text=''"}`,
+      `status=?, notice=COALESCE(?, notice), message_id=COALESCE(?, message_id)${status === "failed" && before?.status === "unconfirmed" && !final ? ", late_refused=1" : ""}${status === "refused" ? ", dispatched=0, prompt=NULL" : ""}${hold ? "" : ", prompt=NULL, text=''"}`,
       [status, notice ?? null, messageId ?? null],
     );
+    const row = this.bySeq(seq)!;
+    const attempts = this.attempts();
+    let receipt = this.attemptFor(row);
+    if (attempts && receipt) {
+      if (messageId) receipt = attempts.link(receipt.attemptId, messageId);
+      if (receipt.phase !== "terminal" && (status === "failed" || status === "refused" || status === "cancelled")) {
+        let key = this.bindingFor(row);
+        const unboundQueue = !key;
+        if (!key) key = attempts.bind([receipt.attemptId], { generation: `queue-${receipt.attemptId}`, providerInstanceId: "server" })[0]!;
+        const latest = attempts.byId(receipt.attemptId)!;
+        const result = attempts.settleAttempt(key, latest.revision, status === "cancelled" ? "removed" : status, { binding: key, delivery: latest.delivery });
+        if (result.kind === "stale") throw attemptError("stale_action");
+        // Only the binding minted above is resource-free. A real admitted
+        // generation retains all its cleanup ownership until its owner ends it.
+        if (unboundQueue && !attempts.flushEffects(key.threadId, key.generation, () => {})) throw attemptError("cleanup_incomplete");
+      }
+    }
     if (status !== "unconfirmed") this.lateOpen.delete(seq);
+    });
   }
 
   /**
@@ -733,11 +950,16 @@ export class SendStore {
   settleWithLine<T>(seq: number, status: "started" | "delivered" | "unconfirmed", lineId: string, append: () => T, notice?: SendNoticeCode): T {
     const threadId = this.bySeq(seq)?.threadId;
     const out = this.atomically(() => {
-      this.settle(seq, status, lineId, notice);
+      const prior = this.bySeq(seq);
+      if (prior && this.attemptFor(prior)?.phase === "terminal") throw attemptError("stale_action");
+      // Recovery's append callback may scrub an unconfirmed queue payload.
+      // Its projection must already name the line, but receipt linkage waits
+      // for the actual appended identity; the enclosing transaction owns both.
+      this.db().prepare("UPDATE owner_sends SET status=?,message_id=? WHERE seq=?").run(status, lineId, seq);
       const written = append();
       // A store that assigned its own id for the line: the row names the line that exists.
       const actual = (written as { id?: unknown } | null | undefined)?.id;
-      if (typeof actual === "string" && actual !== lineId) this.db().prepare("UPDATE owner_sends SET message_id=? WHERE seq=?").run(actual, seq);
+      this.settle(seq, status, typeof actual === "string" ? actual : lineId, notice);
       return written;
     });
     if (threadId) this.notify(threadId);
@@ -761,7 +983,12 @@ export class SendStore {
    */
   markStopped(threadId: string): number {
     // Each Stop mints its own token: only a Send again pressed after it (on the held chip that carries it) can present it.
-    return Number(this.db().prepare("UPDATE owner_sends SET stopped=1, stop_gen=? WHERE thread_id=? AND status IN ('sending','queued') AND dispatched=0 AND stopped=0").run(randomUUID(), threadId).changes);
+    return this.atomically(db => {
+      const token = randomUUID();
+      const changed = Number(db.prepare("UPDATE owner_sends SET stopped=1, stop_gen=? WHERE thread_id=? AND status IN ('sending','queued') AND dispatched=0 AND stopped=0").run(token, threadId).changes);
+      if (this.attempts()) db.prepare("UPDATE send_attempts SET stop_gen=?,revision=revision+1 WHERE phase<>'terminal' AND queue_id IN (SELECT queue_id FROM owner_sends WHERE thread_id=? AND stop_gen=?)").run(token, threadId, token);
+      return changed;
+    });
   }
 
   /** An unconfirmed steer whose real answer can still arrive: later sends wait behind it. */
@@ -828,6 +1055,7 @@ export class SendStore {
    * earlier row that has not resolved, so nothing ever overtakes it.
    */
   drainable(threadId: string, kind: SendKind): SendRow[] {
+    if (this.attempts() && this.db().prepare("SELECT 1 FROM turn_cleanup_owed WHERE thread_id=? AND kind='release' AND status='pending' LIMIT 1").get(threadId)) return [];
     const rows = this.db().prepare("SELECT * FROM owner_sends WHERE thread_id=? AND kind=? AND status IN ('sending','queued','dispatched','unconfirmed') ORDER BY seq").all(threadId, kind) as Array<Record<string, unknown>>;
     const out: SendRow[] = [];
     for (const raw of rows) {
@@ -933,7 +1161,12 @@ export class SendStore {
     const run = (sql: string, ...args: number[]): number => {
       const barrier = [...this.lateOpen].filter((seq) => Number.isInteger(seq));
       const exclude = barrier.length ? ` AND seq NOT IN (${barrier.join(",")})` : "";
-      return Number(this.db().prepare(sql.replace("{X}", exclude)).run(...args).changes);
+      // one transaction per batch: the owner rows and their speech send: markers go together (D24-SPEECH-RETENTION design r5.1 P)
+      return this.atomically((db) => {
+        const gone = db.prepare(`${sql.replace("{X}", exclude)} RETURNING thread_id, send_id`).all(...args) as Array<{ thread_id: string; send_id: string | null }>;
+        for (const row of gone) if (row.send_id) deleteSpeechSendMarkers(db, row.thread_id, [row.send_id]);
+        return gone.length;
+      });
     };
     const cutoff = now - olderThanMs;
     for (;;) {
@@ -1020,4 +1253,23 @@ export class ThreadAdmission {
     void tail.then(() => { if (this.tails.get(threadId) === tail) this.tails.delete(threadId); });
     return current;
   }
+}
+
+/** Payload-free fallback after projection pruning. No text is reconstructed. */
+function receiptProjection(receipt: AttemptSnapshot, kind: SendKind): SendRow {
+  return { seq: 0, kind, ownerId: receipt.ownerId, threadId: receipt.threadId, sendId: receipt.sendId,
+    queueId: receipt.queueId ?? receipt.attemptId, fingerprint: receipt.fingerprint, text: "", prompt: null,
+    replyToId: null, origin: null, mode: null, responderId: null, existingMessageId: null, messageId: receipt.messageId,
+    status: receipt.terminalOutcome === "removed" ? "cancelled" : receipt.terminalOutcome === "completed" ? "delivered" : receipt.phase === "terminal" ? "failed" : "unconfirmed",
+    notice: null, dispatched: receipt.delivery !== "not_submitted", restoreHeld: Boolean(receipt.restoreGen), restoreGen: receipt.restoreGen,
+    stopped: Boolean(receipt.stopGen), stopGen: receipt.stopGen, actionId: null, turnId: null, via: null,
+    queueOnly: receipt.queueOnly, isolated: receipt.isolated, viaDevice: null, viaProof: null, attachments: null, attachmentsMalformed: false,
+    createdAt: receipt.createdAt, updatedAt: receipt.updatedAt };
+}
+
+/** R1/ML3 exact server response, including the terminal non-success receipt. */
+export function existingAttemptResponse(receipt: AttemptSnapshot): { ok: boolean; existing: true; threadId: string; receipt: { state: string; attemptId: string; receiptRevision: number } } {
+  const state = receipt.terminalOutcome === "removed" ? "removed" : receipt.delivery === "uncertain" || receipt.terminalOutcome === "abandoned_uncertain" ? "unknown" : receipt.terminalOutcome === "completed" ? "ended" : receipt.terminalOutcome ?? (receipt.phase === "queued" ? "queued" : "sending");
+  return { ok: receipt.phase !== "terminal" || receipt.terminalOutcome === "completed", existing: true, threadId: receipt.threadId,
+    receipt: { state, attemptId: receipt.attemptId, receiptRevision: receipt.revision } };
 }

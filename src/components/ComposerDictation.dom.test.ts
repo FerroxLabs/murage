@@ -101,7 +101,8 @@ beforeEach(() => {
   box = fakeMuragebox();
   window.muragebox = box.bridge as unknown as typeof window.muragebox;
   fetchCalls.length = 0;
-  vi.stubGlobal('fetch', vi.fn(() => {
+  vi.stubGlobal('fetch', vi.fn((url) => {
+    if (url !== '/api/voice/cleanup') return Promise.resolve({ ok: true, json: async () => ({}) });
     const d = deferred();
     fetchCalls.push(d);
     return d.promise.then(() => ({ ok: true, json: async () => ({ text: 'Tidied words', cleaned: true }) }));
@@ -170,7 +171,55 @@ function openWindowLayer() {
 }
 const approval = () => ({ message: { id: 'm1', from: { name: 'Fixture' } } });
 
+const CLEANUP_NOTICE = "Dictation is tidied by your AI model (Flux or your connected account) before you send. Turn this off in Settings > Voice.";
+
 describe('composer dictation, real component and store', () => {
+  it('clean-up notice is inline on the first clean-up, without waiting, then never again on this device', async () => {
+    expect(text()).not.toContain(CLEANUP_NOTICE);
+    await listen();
+    await say('um please tidy these words');
+    expect(text()).not.toContain(CLEANUP_NOTICE);
+    box.emitEnd({ code: 0, reason: 'completed', session: box.token() });
+    await flush();
+    expect(fetchCalls).toHaveLength(1);
+    expect(document.querySelector('[data-composer] [data-cleanup-notice]')?.textContent).toBe(CLEANUP_NOTICE);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(textarea().disabled).toBe(false);
+    await settleD(fetchCalls[0]);
+    expect(textarea().value).toBe('Tidied words');
+    expect(text()).toContain(CLEANUP_NOTICE);
+
+    // Remount the composer and reset session memory, keeping this device's store.
+    cleanup(); resetDictationForTests();
+    current = bot({ threadId: 'notice-remount' });
+    app = mount(tree());
+    expect(text()).not.toContain(CLEANUP_NOTICE);
+    await clickMic();
+    await settleD(box.starts[1]);
+    await say('um another dictation goes here');
+    box.emitEnd({ code: 0, reason: 'completed', session: box.token() });
+    await flush();
+    expect(fetchCalls).toHaveLength(2);
+    expect(text()).not.toContain(CLEANUP_NOTICE);
+    await settleD(fetchCalls[1]);
+    expect(textarea().value).toBe('Tidied words');
+  });
+
+  it('unreadable device storage still shows the notice and never blocks dictation', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => { throw new Error('blocked'); },
+      setItem: () => { throw new Error('blocked'); },
+    });
+    await listen();
+    await say('um please tidy these words');
+    box.emitEnd({ code: 0, reason: 'completed', session: box.token() });
+    await flush();
+    expect(text()).toContain(CLEANUP_NOTICE);
+    expect(fetchCalls).toHaveLength(1);
+    await settleD(fetchCalls[0]);
+    expect(textarea().value).toBe('Tidied words');
+  });
+
   it('1. words stream, the mic stays "Stop dictation", and a press finishes, then stops, then clears the control', async () => {
     expect(startButton()).not.toBeNull();
     await listen();

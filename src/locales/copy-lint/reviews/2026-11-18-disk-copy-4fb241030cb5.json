@@ -1,0 +1,215 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "ci",
+  "date": "2026-11-18",
+  "base": "12670e1b9e~1",
+  "scope": "source: commit 12670e1b9e (diskLow copy ux.l2b.disk.*, 5 keys x 8 languages, shipped without review)",
+  "strings": {
+    "en:ux.l2b.disk.section": {
+      "text": "Disk space",
+      "en": "Disk space",
+      "verdict": "pass"
+    },
+    "en:ux.l2b.disk.readOnly": {
+      "text": "Your disk is almost full. Chats are read-only. Free some space, then restart Murage.",
+      "en": "Your disk is almost full. Chats are read-only. Free some space, then restart Murage.",
+      "verdict": "pass"
+    },
+    "en:ux.l2b.disk.refusing": {
+      "text": "Your disk is almost full. Free some space to make changes again.",
+      "en": "Your disk is almost full. Free some space to make changes again.",
+      "verdict": "pass"
+    },
+    "en:ux.l2b.disk.restart": {
+      "text": "Restart Murage",
+      "en": "Restart Murage",
+      "verdict": "pass"
+    },
+    "en:ux.l2b.disk.restartFallback": {
+      "text": "Quit Murage and open it again.",
+      "en": "Quit Murage and open it again.",
+      "verdict": "pass"
+    },
+    "de:ux.l2b.disk.section": {
+      "text": "Speicherplatz",
+      "en": "Disk space",
+      "verdict": "pass"
+    },
+    "de:ux.l2b.disk.readOnly": {
+      "text": "Dein Speicherplatz ist fast voll. Chats sind schreibgeschützt. Gib etwas Platz frei und starte Murage dann neu.",
+      "en": "Your disk is almost full. Chats are read-only. Free some space, then restart Murage.",
+      "verdict": "pass"
+    },
+    "de:ux.l2b.disk.refusing": {
+      "text": "Dein Speicherplatz ist fast voll. Gib etwas Platz frei, um wieder Änderungen vorzunehmen.",
+      "en": "Your disk is almost full. Free some space to make changes again.",
+      "verdict": "pass"
+    },
+    "de:ux.l2b.disk.restart": {
+      "text": "Murage neu starten",
+      "en": "Restart Murage",
+      "verdict": "pass"
+    },
+    "de:ux.l2b.disk.restartFallback": {
+      "text": "Beende Murage und öffne es erneut.",
+      "en": "Quit Murage and open it again.",
+      "verdict": "pass"
+    },
+    "es:ux.l2b.disk.section": {
+      "text": "Espacio en disco",
+      "en": "Disk space",
+      "verdict": "pass"
+    },
+    "es:ux.l2b.disk.readOnly": {
+      "text": "Tu disco está casi lleno. Los chats son de solo lectura. Libera espacio y reinicia Murage.",
+      "en": "Your disk is almost full. Chats are read-only. Free some space, then restart Murage.",
+      "verdict": "pass"
+    },
+    "es:ux.l2b.disk.refusing": {
+      "text": "Tu disco está casi lleno. Libera espacio para volver a hacer cambios.",
+      "en": "Your disk is almost full. Free some space to make changes again.",
+      "verdict": "pass"
+    },
+    "es:ux.l2b.disk.restart": {
+      "text": "Reiniciar Murage",
+      "en": "Restart Murage",
+      "verdict": "pass"
+    },
+    "es:ux.l2b.disk.restartFallback": {
+      "text": "Cierra Murage y ábrelo de nuevo.",
+      "en": "Quit Murage and open it again.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2b.disk.section": {
+      "text": "Espace disque",
+      "en": "Disk space",
+      "verdict": "pass"
+    },
+    "fr:ux.l2b.disk.readOnly": {
+      "text": "Ton disque est presque plein. Les chats sont en lecture seule. Libère de l’espace, puis redémarre Murage.",
+      "en": "Your disk is almost full. Chats are read-only. Free some space, then restart Murage.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2b.disk.refusing": {
+      "text": "Ton disque est presque plein. Libère de l’espace pour pouvoir modifier à nouveau.",
+      "en": "Your disk is almost full. Free some space to make changes again.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2b.disk.restart": {
+      "text": "Redémarrer Murage",
+      "en": "Restart Murage",
+      "verdict": "pass"
+    },
+    "fr:ux.l2b.disk.restartFallback": {
+      "text": "Quitte Murage, puis rouvre-le.",
+      "en": "Quit Murage and open it again.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2b.disk.section": {
+      "text": "डिस्क स्थान",
+      "en": "Disk space",
+      "verdict": "pass"
+    },
+    "hi:ux.l2b.disk.readOnly": {
+      "text": "आपकी डिस्क लगभग भर गई है। चैट केवल पढ़ने के लिए हैं। कुछ जगह खाली करें, फिर Murage को फिर से शुरू करें।",
+      "en": "Your disk is almost full. Chats are read-only. Free some space, then restart Murage.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2b.disk.refusing": {
+      "text": "आपकी डिस्क लगभग भर गई है। बदलाव फिर से करने के लिए कुछ जगह खाली करें।",
+      "en": "Your disk is almost full. Free some space to make changes again.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2b.disk.restart": {
+      "text": "Murage को फिर से शुरू करें",
+      "en": "Restart Murage",
+      "verdict": "pass"
+    },
+    "hi:ux.l2b.disk.restartFallback": {
+      "text": "Murage को बंद करके फिर से खोलें।",
+      "en": "Quit Murage and open it again.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2b.disk.section": {
+      "text": "ディスク容量",
+      "en": "Disk space",
+      "verdict": "pass"
+    },
+    "ja:ux.l2b.disk.readOnly": {
+      "text": "ディスクの空き容量がほとんどありません。チャットは読み取り専用です。空き容量を増やしてから、Murageを再起動してください。",
+      "en": "Your disk is almost full. Chats are read-only. Free some space, then restart Murage.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2b.disk.refusing": {
+      "text": "ディスクの空き容量がほとんどありません。空き容量を増やすと、変更できるようになります。",
+      "en": "Your disk is almost full. Free some space to make changes again.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2b.disk.restart": {
+      "text": "Murageを再起動",
+      "en": "Restart Murage",
+      "verdict": "pass"
+    },
+    "ja:ux.l2b.disk.restartFallback": {
+      "text": "Murageを終了して、もう一度開いてください。",
+      "en": "Quit Murage and open it again.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2b.disk.section": {
+      "text": "Espaço em disco",
+      "en": "Disk space",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2b.disk.readOnly": {
+      "text": "Seu disco está quase cheio. Os chats estão somente para leitura. Libere espaço e reinicie o Murage.",
+      "en": "Your disk is almost full. Chats are read-only. Free some space, then restart Murage.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2b.disk.refusing": {
+      "text": "Seu disco está quase cheio. Libere espaço para voltar a fazer alterações.",
+      "en": "Your disk is almost full. Free some space to make changes again.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2b.disk.restart": {
+      "text": "Reiniciar o Murage",
+      "en": "Restart Murage",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2b.disk.restartFallback": {
+      "text": "Feche o Murage e abra-o novamente.",
+      "en": "Quit Murage and open it again.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2b.disk.section": {
+      "text": "磁盘空间",
+      "en": "Disk space",
+      "verdict": "pass"
+    },
+    "zh:ux.l2b.disk.readOnly": {
+      "text": "你的磁盘快满了。聊天为只读。请释放一些空间，然后重启 Murage。",
+      "en": "Your disk is almost full. Chats are read-only. Free some space, then restart Murage.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2b.disk.refusing": {
+      "text": "你的磁盘快满了。释放一些空间后即可再次更改。",
+      "en": "Your disk is almost full. Free some space to make changes again.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2b.disk.restart": {
+      "text": "重启 Murage",
+      "en": "Restart Murage",
+      "verdict": "pass"
+    },
+    "zh:ux.l2b.disk.restartFallback": {
+      "text": "请退出 Murage，然后重新打开。",
+      "en": "Quit Murage and open it again.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

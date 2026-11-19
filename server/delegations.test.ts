@@ -53,6 +53,9 @@ import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 import { insertRoomRequest, roomRequest } from "./room-requests.ts";
 import { botDeletionKey, recordOwnerDeletion } from "./owner-deletions.ts";
 import { released } from "./testing/released.ts";
+import { serviceQueueFixture } from "./testing/service-queue-fixture.ts";
+import { serviceQueue } from "./narrow-denials.ts";
+import type { ApprovalBus } from "./peer-approval.ts";
 import type { ReleasedActivityRow } from "./delegations.ts";
 import { status, outboundWords } from "./murage-status.ts";
 
@@ -62,7 +65,7 @@ const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-mo
 
 interface BusPair {
   commsBus: CommsBus;
-  approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  approvalBus: ApprovalBus;
   broadcasts: unknown[];
 }
 
@@ -79,7 +82,11 @@ function setupBuses(store: Store): BusPair {
     }
   });
   const commsBus: CommsBus = { store, broadcast };
-  const approvalBus = { store, broadcast };
+  // Peer approvals use the same authenticated producer and durable delivery
+  // queue as the server. A bare bus never opens a decision to answer.
+  const producer = serviceQueueFixture(store);
+  producer.queue(serviceQueue("peer"));
+  const approvalBus = { store, broadcast, authorityFor: producer.authorityFor };
   return { commsBus, approvalBus, broadcasts };
 }
 
@@ -229,7 +236,7 @@ describe("drainDelegations", () => {
   let from: BotRecord;
   let target: BotRecord;
   let commsBus: CommsBus;
-  let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  let approvalBus: ApprovalBus;
   let runTargetCalls: Array<{ toBotId: string; message: string; commsDepth: number; sourceThreadId?: string }>;
 
   beforeEach(() => {
@@ -908,7 +915,7 @@ describe("busy retries and receipts", () => {
   let from: BotRecord;
   let target: BotRecord;
   let commsBus: CommsBus;
-  let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  let approvalBus: ApprovalBus;
 
   beforeEach(() => {
     removeTempDirSync(DATA_DIR);
@@ -1453,7 +1460,7 @@ describe("a busy teammate with a free thread", () => {
   let store: Store;
   let from: BotRecord;
   let target: BotRecord;
-  let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  let approvalBus: ApprovalBus;
   let broadcastOnly: CommsBus["broadcast"];
 
   beforeEach(() => {
@@ -1718,7 +1725,7 @@ describe("a parked handoff whose wake-up already passed", () => {
   let store: Store;
   let from: BotRecord;
   let target: BotRecord;
-  let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  let approvalBus: ApprovalBus;
   let broadcastOnly: CommsBus["broadcast"];
   let canStart: boolean;
   let bus: CommsBus;

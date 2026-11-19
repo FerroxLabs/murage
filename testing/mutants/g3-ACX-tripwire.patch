@@ -1,0 +1,11 @@
+--- a/server/drivers/acp/core.ts	2026-11-17 02:42:43.903382106 +0000
++++ b/server/drivers/acp/core.ts	2026-11-17 02:44:36.491289582 +0000
+@@ -3536,7 +3536,7 @@
+           toolIncident = true;
+           emit({ ...base(threadId, turnId), type: "runtime.error", message: "Hermes ran a tool without Murage’s check, so Murage stopped this turn." });
+           const cancelProcess = proc;
+-          if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } }, error => { if (error) acpFenced(error, "acp.cancel.tripwire", cancelProcess, { method: "session/cancel" }); });
++          if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+           settle(false, "gate_incident");
+         };
+         const checkTool = (u: any, facts: CallFacts, reportedSession: unknown) => {

@@ -1,3 +1,4 @@
+// MAIN RULING RULINGS-1019-RECALL-1116 R7-2.
 import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -30,7 +31,8 @@ import { buildMemoryBundle } from "./memory/bundle.ts";
 import { captureBranchChange, captureSource } from "./memory/capture.ts";
 import { MemoryDispatchReceipt } from "./memory/dispatch.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "./testing/recall-access-fixture.ts";
 import { readableMemoryRecord } from "./memory/readable.ts";
 import {
   BundleList, capturedMessageVerdict, capturedMessageWithheld, foreignLineageWrite, forgetKeptLineageForTest, keptVerdictCount, prepareLineageCache, recordOutputRoots,
@@ -43,7 +45,7 @@ import { setMemoryMode } from "./memory/repository.ts";
 import { bumpLineageWarm, guaranteeLineageWarmSlice, lineageWarmStep, onLineageThreadWarmed, resetLineageWarmForTest } from "./memory/lineage-warm.ts";
 import { chainStore } from "./memory/schema.ts";
 import { shownLinesRoots } from "./steer-lineage.ts";
-import { stampFreshSession } from "./memory/testing/writetime-fixture.ts";
+import { startLiveSession, storeLiveAnchor } from "./memory/testing/live-session-fixture.ts";
 import { storeAnchorMessage } from "./memory/testing/anchor-message.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -354,15 +356,16 @@ it("rig 2: the allowance bounds wall-clock time as well as nodes: past its time 
 
 it("rig 3: a continuation check that runs out writes nothing down as revoked, so the next turn does not reset again on 'receipt-already-revoked'", async () => {
   await replyFromDoc();
+  storeLiveAnchor(database(), "older", "m1", "secret from doc");
   // session s2 rests on reply-1 (a record whose evidence is reply-1's own words)
   const words = "secret from doc";
-  storeAnchorMessage(database(), "chat", "reply-1", words); captureSource(database(), { id: "message:chat:reply-1", threadId: "chat", messageId: "reply-1", kind: "text", speaker: "bot:bot", outcome: "recorded", text: words });
+  storeLiveAnchor(database(), "chat", "reply-1", words, "bot"); captureSource(database(), { id: "message:chat:reply-1", threadId: "chat", messageId: "reply-1", kind: "text", speaker: "bot:bot", outcome: "recorded", text: words });
   const turn = access();
   const record = saveMemoryCandidate(words, [{ sourceId: "message:chat:reply-1", revision: 1, startByte: 0, endByte: Buffer.byteLength(words) }], "k2", turn);
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(record);
   const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty, { allowance: LineageAllowance.tool() }), turn, "engine");
-  receipt.sessionStarted("s2");
-  stampFreshSession(database(), "chat", "engine", "s2"); // a 1.0.3 fresh start (S6 rule 26)
+  const confirmation = startLiveSession(turn, "engine", "s2");
+  receipt.sessionStarted("s2", Boolean(confirmation), confirmation);
   receipt.noteLookup([{ id: record, version: 1, evidence: [{ sourceId: "message:chat:reply-1", revision: 1 }] }], turn);
   receipt.accepted();
   receipt.output("reply-2");

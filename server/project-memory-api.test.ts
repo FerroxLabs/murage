@@ -13,6 +13,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { turnSecret } from "./turn-credential.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -71,7 +72,8 @@ posixOnly("project memory and a member's working context", () => {
     await expect.poll(async () => {
       const scope = (await api("GET", "/api/memory/status")).scopes?.find((item: any) => item.kind === "room" && item.ownerKey === project.id);
       if (!scope) return 0;
-      return ((await api("POST", "/api/memory/action", { action: "list", scopeId: scope.id, state: "active" })).records ?? []).length;
+      // every kind the memory screen can list (MEMORY-UI-BUILD-SPEC r3 1.1: `kinds` absent is the five default kinds; a session is a checkpoint)
+      return ((await api("POST", "/api/memory/action", { action: "list", scopeId: scope.id, state: "active", kinds: ["fact", "self-trait", "relation", "commitment", "concern", "checkpoint", "episode", "evidence"] })).records ?? []).length;
     }, { timeout: 20000 }).toBeGreaterThan(0);
 
     // The member's direct chat knows its project, once per session.
@@ -109,7 +111,18 @@ posixOnly("project memory and a member's working context", () => {
         for (const child of Object.values(value)) { const found = find(child); if (found) return found; }
         return undefined;
       };
-      const env = find(dump.mcpConfig);
+      // MAIN RULING INT-CONFLICT-DEFAULT cf750a3803 70cd2e7457
+      // (c3-memory field replay mount observation): preserve both wire and admission evidence.
+      // Observe the actual admitted mount with the existing fixture reader;
+      // the engine's wire stanza contains only its supervised relay shim.
+      // Producer: sc-safety mount evidence; consumer: r2-owner-limit-projects.
+      for (const wire of Object.values(dump.mcpConfig.mcpServers) as Array<{ env?: Record<string, string> }>) {
+        expect(wire.env?.MURAGE_PROJECT_ROLE).toBeUndefined();
+        expect(wire.env?.MURAGE_BOT_ID).toBeUndefined();
+        expect(wire.env?.MURAGE_THREAD_ID).toBeUndefined();
+        expect(wire.env?.MURAGE_COMMS_TOKEN).toBeUndefined();
+      }
+      const env = find(withTurnSecrets(dump).mcpConfig);
       expect(env?.MURAGE_PROJECT_ROLE).toBe("lead");
       const call = async (name: string, body: unknown) => {
         const response = await fetch(new URL(`/api/internal/project/${name}`, env!.MURAGE_HARNESS_URL), { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${turnSecret("MURAGE_COMMS_TOKEN", env!)}` }, body: JSON.stringify(body) });

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   createLifecycleRecorder,
   LIFECYCLE_MAX_EVENT_BYTES,
+  lifecycleVersion,
   type LifecycleRecord,
   type LifecycleSink,
 } from "./lifecycle-diagnostic.ts";
@@ -225,5 +226,22 @@ describe("engine lifecycle recorder", () => {
     expect(() => recorder.observeStopRoute({ route: "posix_group_sigterm", result: "requested" })).not.toThrow();
     expect(() => recorder.record("closed", { code: 0, signal: null })).not.toThrow();
     expect(calls).toBe(3);
+  });
+});
+
+describe("lifecycle identity versions (meetgreet 1.0.19)", () => {
+  it("carries the engine version once learned, ignores a malformed one, and never voids events for a dev build", () => {
+    const { rows, sink } = capture();
+    const recorder = createLifecycleRecorder({ ...identity, sink, appVersion: lifecycleVersion("1.0.19"), engineVersion: null });
+    recorder.record("spawn_requested");
+    recorder.setEngineVersion("1.0.42");
+    recorder.record("spawned", { pid: 42 });
+    recorder.setEngineVersion("sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"); // secret-scan: fixture
+    recorder.record("mcp_ready");
+    expect(rows.map((row) => [row.msg.appVersion, row.msg.engineVersion])).toEqual([["1.0.19", null], ["1.0.19", "1.0.42"], ["1.0.19", "1.0.42"]]);
+    expect(lifecycleVersion("dev")).toBeNull();
+    const dev = capture();
+    createLifecycleRecorder({ ...identity, sink: dev.sink, appVersion: lifecycleVersion("dev") }).record("spawn_requested");
+    expect(dev.rows).toHaveLength(1);
   });
 });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { bindHumanThread, humanTask, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding, threadHumanPrincipal } from "./human-principals.ts";
 import { internalRouteRefusal } from "./internal-route-authority.ts";
@@ -14,7 +14,7 @@ import {
   relayAudienceRefusal,
   relayTurnIsOwner,
   relayFailure,
-  relayMcpCall,
+  relayMcpCall as relayCall,
   relayTimeoutFor,
   rewriteInitializeCapabilities,
   safeProtocolVersion,
@@ -30,6 +30,11 @@ import { RemoteSseSessions } from "./remote-mcp-sse-sessions.ts";
 import { LIMITS } from "../shared/remote-mcp-url.mjs";
 import { startFakeRemoteMcp, type FakeRemoteMcp } from "./testing/fake-remote-mcp.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { upstreamOwnerFixture } from "./testing/upstream-owner-fixture.ts";
+
+let upstream: ReturnType<typeof upstreamOwnerFixture>;
+beforeEach(() => { upstream = upstreamOwnerFixture(); });
+const relayMcpCall = (ctx: RelayContext) => upstream.run(ctx.generation, () => relayCall(ctx));
 
 let fake: FakeRemoteMcp | undefined;
 const sessions = new RemoteSseSessions();
@@ -156,7 +161,8 @@ describe("L-b: the relay route's audience decision is one named rule, and index.
     expect(route.indexOf("relayAudienceRefusal(")).toBeLessThan(route.indexOf("readInternalBody"));
     expect(route).not.toContain("relayTurnIsOwner(");
     // internalOwner is the record for this claim's own generation, checked earlier on every internal route
-    expect(source).toContain("if (!internalOwner || internalOwner.generation !== internalClaim.generation) return json(res, 401");
+    // MAIN RULING INT-CONFLICT-DEFAULT a25427950d 5be0eafbea: explicit local response provenance retains the generation refusal.
+    expect(source).toContain("if (!internalOwner || internalOwner.generation !== internalClaim.generation) return localJson(res, 401");
   });
 });
 
@@ -173,7 +179,7 @@ describe("L-c: the mount predicate for the owner's own servers", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     const mounts = source.split("\n").filter((line) => line.includes("instance.adapter.capabilities.customMcp === true"));
     expect(mounts).toHaveLength(2);
-    for (const line of mounts) expect(line).toContain("&& ownServersAllowedFor(bot)");
+    for (const line of mounts) expect(line).toMatch(/&& ownServersAllowedFor\(bot, serviceNoLimits\((dispatchClaimId|internalGeneration), threadId, bot.id\)\)/);
     expect(source).not.toMatch(/function ownServersAllowedFor/);
   });
 });

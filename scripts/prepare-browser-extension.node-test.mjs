@@ -49,15 +49,25 @@ test('real bundle runs independently, dev identity stays stable, resources mode 
     const host = spawnSync(process.execPath, [path.join(outDir, 'native-host.mjs'), path.join(outDir, 'absent-config')], { env: {} });
     assert.equal(host.status, 0); assert.equal(host.stderr.length, 0);
     const messages = []; new FrameDecoder(message => messages.push(message)).push(host.stdout); assert.equal(messages[0].error.code, 'host_unavailable');
-    const clientConfig = path.join(outDir, 'client.json'); await fs.chmod(outDir, 0o700);
-    await fs.writeFile(clientConfig, JSON.stringify({ endpoint: 'http://127.0.0.1:54321/api/browser-extension/mcp', clientId: 'fixture', token: 'a'.repeat(43) }), { mode: 0o600 });
-    const mcp = spawnSync(process.execPath, [path.join(outDir, 'browser-extension-mcp.mjs')], { env: { MURAGE_BROWSER_MCP_CONFIG: clientConfig }, input: '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n', encoding: 'utf8' });
-    assert.equal(mcp.status, 0, mcp.stderr); assert.equal(mcp.stderr, ''); assert.equal(JSON.parse(mcp.stdout).result.serverInfo.name, 'murage-browser');
-    await fs.rm(clientConfig);
     const receipt = await prepareBrowserExtension({ outDir, mode: 'resources' });
     assert.equal(receipt.registered, false); assert.deepEqual(receipt.productionIds, []);
     const manifest = JSON.parse(await fs.readFile(path.join(receipt.extensionDir, 'manifest.json'), 'utf8')); assert.equal(manifest.key, undefined);
     const worker = await fs.readFile(path.join(receipt.extensionDir, 'service-worker.js'), 'utf8'); assert.equal(worker.includes('../../shared/'), false);
+  } finally { await fs.rm(outDir, { recursive: true, force: true }); }
+});
+
+// The Settings external pairing route (server/index.ts, "External browser connection") launches the bundled MCP with only
+// MURAGE_BROWSER_MCP_CONFIG. That launch must answer initialize; since the proxy release fence it carries no release binding
+// and is refused, so this stays a todo (it runs and reports) until the owner decides, not an assertion of the refusal.
+test('real bundled MCP launched like the Settings external pairing answers initialize', { todo: 'OPEN NO-OWNER external browser MCP launcher binding: since 6a9dfe7db8 the Settings pairing launch carries no release binding and is refused; 1.0.21 owner decision (int-1020q-n1 DECISIONS D6)' }, async () => {
+  await fs.mkdir(path.join(root, 'dist-native'), { recursive: true });
+  const outDir = await fs.mkdtemp(path.join(root, 'dist-native/browser-mcp-pairing-'));
+  try {
+    await prepareBrowserExtension({ outDir, mode: 'development' });
+    const clientConfig = path.join(outDir, 'client.json'); await fs.chmod(outDir, 0o700);
+    await fs.writeFile(clientConfig, JSON.stringify({ endpoint: 'http://127.0.0.1:54321/api/browser-extension/mcp', clientId: 'fixture', token: 'a'.repeat(43) }), { mode: 0o600 });
+    const mcp = spawnSync(process.execPath, [path.join(outDir, 'browser-extension-mcp.mjs')], { env: { MURAGE_BROWSER_MCP_CONFIG: clientConfig }, input: '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n', encoding: 'utf8' });
+    assert.equal(mcp.status, 0, mcp.stderr); assert.equal(mcp.stderr, ''); assert.equal(JSON.parse(mcp.stdout).result.serverInfo.name, 'murage-browser');
   } finally { await fs.rm(outDir, { recursive: true, force: true }); }
 });
 

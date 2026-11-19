@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "recall-s1s2b",
+  "date": "2026-11-14",
+  "base": "3af68514a7d34525dff9b8295936567f65eaa8fb",
+  "scope": "MAIN RULING 1114-RECALL-S1-TYPED-AVAILABILITY independent review of predecessor recall notices",
+  "strings": {
+    "en:memoryRecall.held": {
+      "text": "Memory is still catching up, so this reply did not use recalled memories.",
+      "en": "Memory is still catching up, so this reply did not use recalled memories.",
+      "verdict": "pass",
+      "note": "Accurately describes an accepted reply without recall, with no unsupported claim of lost data."
+    },
+    "en:memoryRecall.withheldPin": {
+      "text": "Bots were not given a pinned note because its supporting replies could not be used or fully checked. Unpin it in Memory, then pin a newer one if you still want it.",
+      "en": "Bots were not given a pinned note because its supporting replies could not be used or fully checked. Unpin it in Memory, then pin a newer one if you still want it.",
+      "verdict": "pass",
+      "note": "Covers unavailable and unfinished evidence checks, gives a concrete owner action, and does not expose a private refusal cause."
+    },
+    "en:memoryRecall.pinOverflow": {
+      "text": "{subject} has more pinned memories than Murage can check before a reply, so this message was not sent. Unpin some in Memory.",
+      "en": "{subject} has more pinned memories than Murage can check before a reply, so this message was not sent. Unpin some in Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder and the unsent-message state; gives the same unpin action."
+    },
+    "en:memoryRecall.pinPending": {
+      "text": "{subject} pinned memory is still being prepared, so this message was not sent. Send it again in a moment. If this keeps happening, open Memory.",
+      "en": "{subject} pinned memory is still being prepared, so this message was not sent. Send it again in a moment. If this keeps happening, open Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder, unsent-message state and explicit resend; no automatic retry promised."
+    },
+    "en:memoryRecall.dispatchPending": {
+      "text": "This reply is still being prepared, so this message was not sent. Send it again in a moment.",
+      "en": "This reply is still being prepared, so this message was not sent. Send it again in a moment.",
+      "verdict": "pass",
+      "note": "Plain preparing/refusal state with an explicit resend action."
+    },
+    "en:memoryRecall.generic": {
+      "text": "Could not start this reply. Send it again.",
+      "en": "Could not start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Audience-safe refusal with no pin or scope details."
+    },
+    "de:memoryRecall.held": {
+      "text": "Memory wird noch vorbereitet. Diese Antwort hat daher keine abgerufenen Erinnerungen verwendet.",
+      "en": "Memory is still catching up, so this reply did not use recalled memories.",
+      "verdict": "pass",
+      "note": "Accurately describes an accepted reply without recall, with no unsupported claim of lost data."
+    },
+    "de:memoryRecall.withheldPin": {
+      "text": "Bots haben eine angeheftete Notiz nicht erhalten, weil die zugehörigen Antworten nicht verwendet oder vollständig geprüft werden konnten. Löse sie in Memory und hefte bei Bedarf eine neuere an.",
+      "en": "Bots were not given a pinned note because its supporting replies could not be used or fully checked. Unpin it in Memory, then pin a newer one if you still want it.",
+      "verdict": "pass",
+      "note": "Covers unavailable and unfinished evidence checks, gives a concrete owner action, and does not expose a private refusal cause."
+    },
+    "de:memoryRecall.pinOverflow": {
+      "text": "{subject} hat mehr angeheftete Erinnerungen, als Murage vor einer Antwort prüfen kann. Diese Nachricht wurde daher nicht gesendet. Löse einige in Memory.",
+      "en": "{subject} has more pinned memories than Murage can check before a reply, so this message was not sent. Unpin some in Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder and the unsent-message state; gives the same unpin action."
+    },
+    "de:memoryRecall.pinPending": {
+      "text": "Die angehefteten Erinnerungen von {subject} werden noch vorbereitet. Diese Nachricht wurde daher nicht gesendet. Sende sie gleich noch einmal. Wenn das weiterhin passiert, öffne Memory.",
+      "en": "{subject} pinned memory is still being prepared, so this message was not sent. Send it again in a moment. If this keeps happening, open Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder, unsent-message state and explicit resend; no automatic retry promised."
+    },
+    "de:memoryRecall.dispatchPending": {
+      "text": "Diese Antwort wird noch vorbereitet. Die Nachricht wurde daher nicht gesendet. Sende sie gleich noch einmal.",
+      "en": "This reply is still being prepared, so this message was not sent. Send it again in a moment.",
+      "verdict": "pass",
+      "note": "Plain preparing/refusal state with an explicit resend action."
+    },
+    "de:memoryRecall.generic": {
+      "text": "Diese Antwort konnte nicht gestartet werden. Sende die Nachricht noch einmal.",
+      "en": "Could not start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Audience-safe refusal with no pin or scope details."
+    },
+    "es:memoryRecall.held": {
+      "text": "Memory sigue poniéndose al día, así que esta respuesta no usó recuerdos recuperados.",
+      "en": "Memory is still catching up, so this reply did not use recalled memories.",
+      "verdict": "pass",
+      "note": "Accurately describes an accepted reply without recall, with no unsupported claim of lost data."
+    },
+    "es:memoryRecall.withheldPin": {
+      "text": "Los bots no recibieron una nota fijada porque sus respuestas de apoyo no se pudieron usar o comprobar por completo. Desfíjala en Memoria y fija una más reciente si aún la necesitas.",
+      "en": "Bots were not given a pinned note because its supporting replies could not be used or fully checked. Unpin it in Memory, then pin a newer one if you still want it.",
+      "verdict": "pass",
+      "note": "Covers unavailable and unfinished evidence checks, gives a concrete owner action, and does not expose a private refusal cause."
+    },
+    "es:memoryRecall.pinOverflow": {
+      "text": "{subject} tiene más recuerdos fijados de los que Murage puede comprobar antes de responder, por lo que este mensaje no se envió. Desfija algunos en Memoria.",
+      "en": "{subject} has more pinned memories than Murage can check before a reply, so this message was not sent. Unpin some in Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder and the unsent-message state; gives the same unpin action."
+    },
+    "es:memoryRecall.pinPending": {
+      "text": "Los recuerdos fijados de {subject} aún se están preparando, así que este mensaje no se envió. Vuelve a enviarlo en un momento. Si sigue ocurriendo, abre Memory.",
+      "en": "{subject} pinned memory is still being prepared, so this message was not sent. Send it again in a moment. If this keeps happening, open Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder, unsent-message state and explicit resend; no automatic retry promised."
+    },
+    "es:memoryRecall.dispatchPending": {
+      "text": "Esta respuesta aún se está preparando, así que este mensaje no se envió. Vuelve a enviarlo en un momento.",
+      "en": "This reply is still being prepared, so this message was not sent. Send it again in a moment.",
+      "verdict": "pass",
+      "note": "Plain preparing/refusal state with an explicit resend action."
+    },
+    "es:memoryRecall.generic": {
+      "text": "No se pudo iniciar esta respuesta. Vuelve a enviar el mensaje.",
+      "en": "Could not start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Audience-safe refusal with no pin or scope details."
+    },
+    "fr:memoryRecall.held": {
+      "text": "Memory est encore en cours de préparation. Cette réponse n’a donc pas utilisé de souvenirs retrouvés.",
+      "en": "Memory is still catching up, so this reply did not use recalled memories.",
+      "verdict": "pass",
+      "note": "Accurately describes an accepted reply without recall, with no unsupported claim of lost data."
+    },
+    "fr:memoryRecall.withheldPin": {
+      "text": "Les bots n’ont pas reçu une note épinglée, car ses réponses sources ne pouvaient pas être utilisées ou entièrement vérifiées. Détache-la dans Mémoire, puis épingle une note plus récente si tu en as encore besoin.",
+      "en": "Bots were not given a pinned note because its supporting replies could not be used or fully checked. Unpin it in Memory, then pin a newer one if you still want it.",
+      "verdict": "pass",
+      "note": "Covers unavailable and unfinished evidence checks, gives a concrete owner action, and does not expose a private refusal cause."
+    },
+    "fr:memoryRecall.pinOverflow": {
+      "text": "{subject} a plus de souvenirs épinglés que Murage ne peut en vérifier avant une réponse. Ce message n’a donc pas été envoyé. Détache-en dans Mémoire.",
+      "en": "{subject} has more pinned memories than Murage can check before a reply, so this message was not sent. Unpin some in Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder and the unsent-message state; gives the same unpin action."
+    },
+    "fr:memoryRecall.pinPending": {
+      "text": "Les souvenirs épinglés de {subject} sont encore en cours de préparation. Ce message n’a donc pas été envoyé. Renvoie-le dans un instant. Si cela continue, ouvre Memory.",
+      "en": "{subject} pinned memory is still being prepared, so this message was not sent. Send it again in a moment. If this keeps happening, open Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder, unsent-message state and explicit resend; no automatic retry promised."
+    },
+    "fr:memoryRecall.dispatchPending": {
+      "text": "Cette réponse est encore en cours de préparation. Ce message n’a donc pas été envoyé. Renvoie-le dans un instant.",
+      "en": "This reply is still being prepared, so this message was not sent. Send it again in a moment.",
+      "verdict": "pass",
+      "note": "Plain preparing/refusal state with an explicit resend action."
+    },
+    "fr:memoryRecall.generic": {
+      "text": "Cette réponse n’a pas pu démarrer. Renvoie le message.",
+      "en": "Could not start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Audience-safe refusal with no pin or scope details."
+    },
+    "hi:memoryRecall.held": {
+      "text": "Memory अभी तैयार हो रही है, इसलिए इस जवाब में खोजी गई यादों का उपयोग नहीं हुआ।",
+      "en": "Memory is still catching up, so this reply did not use recalled memories.",
+      "verdict": "pass",
+      "note": "Accurately describes an accepted reply without recall, with no unsupported claim of lost data."
+    },
+    "hi:memoryRecall.withheldPin": {
+      "text": "बॉट को पिन किया गया नोट नहीं दिया गया क्योंकि उसके आधार वाले जवाब इस्तेमाल नहीं किए जा सके या पूरी तरह जाँचे नहीं जा सके। Memory में उसे अनपिन करें और ज़रूरत हो तो नया नोट पिन करें।",
+      "en": "Bots were not given a pinned note because its supporting replies could not be used or fully checked. Unpin it in Memory, then pin a newer one if you still want it.",
+      "verdict": "pass",
+      "note": "Covers unavailable and unfinished evidence checks, gives a concrete owner action, and does not expose a private refusal cause."
+    },
+    "hi:memoryRecall.pinOverflow": {
+      "text": "{subject} की पिन की गई यादें इतनी हैं कि Murage जवाब देने से पहले सभी की जाँच नहीं कर सकता, इसलिए यह संदेश नहीं भेजा गया। Memory में कुछ यादें अनपिन करें।",
+      "en": "{subject} has more pinned memories than Murage can check before a reply, so this message was not sent. Unpin some in Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder and the unsent-message state; gives the same unpin action."
+    },
+    "hi:memoryRecall.pinPending": {
+      "text": "{subject} की पिन की गई यादें अभी तैयार हो रही हैं, इसलिए यह संदेश नहीं भेजा गया। कुछ देर बाद फिर भेजें। अगर ऐसा बार-बार होता है, तो Memory खोलें।",
+      "en": "{subject} pinned memory is still being prepared, so this message was not sent. Send it again in a moment. If this keeps happening, open Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder, unsent-message state and explicit resend; no automatic retry promised."
+    },
+    "hi:memoryRecall.dispatchPending": {
+      "text": "यह जवाब अभी तैयार हो रहा है, इसलिए यह संदेश नहीं भेजा गया। कुछ देर बाद फिर भेजें।",
+      "en": "This reply is still being prepared, so this message was not sent. Send it again in a moment.",
+      "verdict": "pass",
+      "note": "Plain preparing/refusal state with an explicit resend action."
+    },
+    "hi:memoryRecall.generic": {
+      "text": "यह जवाब शुरू नहीं हो सका। संदेश फिर भेजें।",
+      "en": "Could not start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Audience-safe refusal with no pin or scope details."
+    },
+    "ja:memoryRecall.held": {
+      "text": "Memory は準備中のため、この返信では検索した記憶を使いませんでした。",
+      "en": "Memory is still catching up, so this reply did not use recalled memories.",
+      "verdict": "pass",
+      "note": "Accurately describes an accepted reply without recall, with no unsupported claim of lost data."
+    },
+    "ja:memoryRecall.withheldPin": {
+      "text": "参照元の返信を使えなかったか、十分に確認できなかったため、ピン留めされたメモはボットに渡されませんでした。メモリでピン留めを解除し、必要なら新しいメモをピン留めしてください。",
+      "en": "Bots were not given a pinned note because its supporting replies could not be used or fully checked. Unpin it in Memory, then pin a newer one if you still want it.",
+      "verdict": "pass",
+      "note": "Covers unavailable and unfinished evidence checks, gives a concrete owner action, and does not expose a private refusal cause."
+    },
+    "ja:memoryRecall.pinOverflow": {
+      "text": "{subject} のピン留めされたメモリが多く、返信前に確認しきれないため、このメッセージは送信されませんでした。メモリで一部のピン留めを解除してください。",
+      "en": "{subject} has more pinned memories than Murage can check before a reply, so this message was not sent. Unpin some in Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder and the unsent-message state; gives the same unpin action."
+    },
+    "ja:memoryRecall.pinPending": {
+      "text": "{subject} の固定した記憶は準備中のため、このメッセージは送信されませんでした。少し待ってからもう一度送信してください。繰り返す場合は Memory を開いてください。",
+      "en": "{subject} pinned memory is still being prepared, so this message was not sent. Send it again in a moment. If this keeps happening, open Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder, unsent-message state and explicit resend; no automatic retry promised."
+    },
+    "ja:memoryRecall.dispatchPending": {
+      "text": "この返信は準備中のため、このメッセージは送信されませんでした。少し待ってからもう一度送信してください。",
+      "en": "This reply is still being prepared, so this message was not sent. Send it again in a moment.",
+      "verdict": "pass",
+      "note": "Plain preparing/refusal state with an explicit resend action."
+    },
+    "ja:memoryRecall.generic": {
+      "text": "返信を開始できませんでした。もう一度送信してください。",
+      "en": "Could not start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Audience-safe refusal with no pin or scope details."
+    },
+    "pt-br:memoryRecall.held": {
+      "text": "O Memory ainda está se atualizando, então esta resposta não usou memórias recuperadas.",
+      "en": "Memory is still catching up, so this reply did not use recalled memories.",
+      "verdict": "pass",
+      "note": "Accurately describes an accepted reply without recall, with no unsupported claim of lost data."
+    },
+    "pt-br:memoryRecall.withheldPin": {
+      "text": "Os bots não receberam uma nota fixada porque as respostas de apoio não puderam ser usadas ou verificadas por completo. Desafixe a nota em Memória e fixe uma mais recente se ainda precisar dela.",
+      "en": "Bots were not given a pinned note because its supporting replies could not be used or fully checked. Unpin it in Memory, then pin a newer one if you still want it.",
+      "verdict": "pass",
+      "note": "Covers unavailable and unfinished evidence checks, gives a concrete owner action, and does not expose a private refusal cause."
+    },
+    "pt-br:memoryRecall.pinOverflow": {
+      "text": "{subject} tem mais memórias fixadas do que o Murage pode verificar antes de responder, por isso esta mensagem não foi enviada. Desafixe algumas em Memória.",
+      "en": "{subject} has more pinned memories than Murage can check before a reply, so this message was not sent. Unpin some in Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder and the unsent-message state; gives the same unpin action."
+    },
+    "pt-br:memoryRecall.pinPending": {
+      "text": "As memórias fixadas de {subject} ainda estão sendo preparadas, então esta mensagem não foi enviada. Envie novamente em instantes. Se isso continuar, abra o Memory.",
+      "en": "{subject} pinned memory is still being prepared, so this message was not sent. Send it again in a moment. If this keeps happening, open Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder, unsent-message state and explicit resend; no automatic retry promised."
+    },
+    "pt-br:memoryRecall.dispatchPending": {
+      "text": "Esta resposta ainda está sendo preparada, então esta mensagem não foi enviada. Envie novamente em instantes.",
+      "en": "This reply is still being prepared, so this message was not sent. Send it again in a moment.",
+      "verdict": "pass",
+      "note": "Plain preparing/refusal state with an explicit resend action."
+    },
+    "pt-br:memoryRecall.generic": {
+      "text": "Não foi possível iniciar esta resposta. Envie a mensagem novamente.",
+      "en": "Could not start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Audience-safe refusal with no pin or scope details."
+    },
+    "zh:memoryRecall.held": {
+      "text": "Memory 仍在准备中，因此此回复未使用检索到的记忆。",
+      "en": "Memory is still catching up, so this reply did not use recalled memories.",
+      "verdict": "pass",
+      "note": "Accurately describes an accepted reply without recall, with no unsupported claim of lost data."
+    },
+    "zh:memoryRecall.withheldPin": {
+      "text": "固定便笺所依据的回复无法使用或无法完整核查，因此没有交给机器人。请在记忆中取消固定，如仍需要，可固定一条更新的便笺。",
+      "en": "Bots were not given a pinned note because its supporting replies could not be used or fully checked. Unpin it in Memory, then pin a newer one if you still want it.",
+      "verdict": "pass",
+      "note": "Covers unavailable and unfinished evidence checks, gives a concrete owner action, and does not expose a private refusal cause."
+    },
+    "zh:memoryRecall.pinOverflow": {
+      "text": "{subject} 固定的记忆过多，Murage 无法在回复前检查完，因此未发送此消息。请在记忆中取消固定一些记忆。",
+      "en": "{subject} has more pinned memories than Murage can check before a reply, so this message was not sent. Unpin some in Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder and the unsent-message state; gives the same unpin action."
+    },
+    "zh:memoryRecall.pinPending": {
+      "text": "{subject} 的置顶记忆仍在准备中，因此此消息未发送。请稍后重新发送。如果持续出现此情况，请打开 Memory。",
+      "en": "{subject} pinned memory is still being prepared, so this message was not sent. Send it again in a moment. If this keeps happening, open Memory.",
+      "verdict": "pass",
+      "note": "Preserves the subject placeholder, unsent-message state and explicit resend; no automatic retry promised."
+    },
+    "zh:memoryRecall.dispatchPending": {
+      "text": "此回复仍在准备中，因此此消息未发送。请稍后重新发送。",
+      "en": "This reply is still being prepared, so this message was not sent. Send it again in a moment.",
+      "verdict": "pass",
+      "note": "Plain preparing/refusal state with an explicit resend action."
+    },
+    "zh:memoryRecall.generic": {
+      "text": "无法开始此回复。请重新发送。",
+      "en": "Could not start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Audience-safe refusal with no pin or scope details."
+    }
+  },
+  "files": {}
+}

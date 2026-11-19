@@ -1,3 +1,4 @@
+import { openFixtureApproval } from './testing/approval-card.ts';
 // The derived transcript tables of an upgraded database are filled resumably and
 // in bounded chunks: the open-card index as one pass, and every thread's branch
 // index, line index, turn_first and message_image thread by thread, in slices that
@@ -13,13 +14,23 @@ import { initializeMessageTables } from "./message-tables.ts";
 import { branchOracle, threadKey } from "./branch-index.ts";
 import { BACKFILL_UPGRADE_RECHECK_MS, BACKFILL_UPGRADE_YIELD_MAX_MS, holdTranscriptBackfillUntil, indexAttachmentNamesChunk, readIndexState, runTranscriptBackfill, transcriptBackfillWaitingOn, turnFirstRowid } from "./transcript-backfill.ts";
 
+/** One prepared INSERT per handle: an INSERT into messages compiles its triggers (about 200 KB native each) and V8 never sees that memory,
+ * so a statement per row (90,000 in the slice test) grew the worker past 13 GB before any GC and the pool killed it on every box. */
+const statements = new WeakMap<DatabaseSync, Map<string, ReturnType<DatabaseSync["prepare"]>>>();
+const prepared = (db: DatabaseSync, sql: string) => {
+  let cache = statements.get(db);
+  if (!cache) statements.set(db, (cache = new Map()));
+  let statement = cache.get(sql);
+  if (!statement) cache.set(sql, (statement = db.prepare(sql)));
+  return statement;
+};
 const put = (db: DatabaseSync, thread: string, id: string, parentId: string | null, extra: object = {}) =>
-  db.prepare("INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, 1, 'bot', ?, 'x', ?)").run(
-    thread, id, (extra as { kind?: string }).kind ?? "text", JSON.stringify({ id, parentId, role: "bot", kind: "text", at: 1, ...extra }),
+  prepared(db, "INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, 1, 'bot', ?, 'x', ?)").run(
+    thread, id, (extra as { kind?: string }).kind ?? "text", JSON.stringify(openFixtureApproval(db, thread, { id, parentId, role: "bot", kind: "text", at: 1, ...extra })),
   );
 const insert = (db: DatabaseSync, id: string, parentId: string | null, extra: object = {}) =>
-  db.prepare("INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-    "t", id, 1, "bot", (extra as { kind?: string }).kind ?? "text", "x", JSON.stringify({ id, parentId, role: "bot", kind: "text", at: 1, ...extra }),
+  prepared(db, "INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    "t", id, 1, "bot", (extra as { kind?: string }).kind ?? "text", "x", JSON.stringify(openFixtureApproval(db, "t", { id, parentId, role: "bot", kind: "text", at: 1, ...extra })),
   );
 const openCard = (requestId: string) => ({ kind: "options", card: { title: "May I?", options: [], requestId, tool: "Bash" } });
 /** A database as an older release left it: transcript rows, none of the derived tables. */
@@ -131,6 +142,7 @@ describe("the background pass prepares every thread", () => {
     settleHeap();
     const { worst, ticks } = await loopGaps(() => runTranscriptBackfill(db, () => true, { gate: always }));
     // at least one turn of the loop per thread (a slice, then a yield), and none waited more than ten slice budgets
+    console.log(`BACKFILL-SLICES worst_gap_ms=${worst.toFixed(1)} ticks=${ticks} platform=${process.platform}`);
     expect(ticks).toBeGreaterThanOrEqual(100);
     expect(worst).toBeLessThan(GAP_BOUND_MS);
     expect(db.prepare("SELECT COUNT(*) AS n FROM thread_key WHERE state = 2").get()).toEqual({ n: 100 });

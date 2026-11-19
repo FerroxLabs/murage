@@ -1,6 +1,7 @@
 import { executionStore, isHomePartition, threadPartition, partitionScopeKey } from "./execution-audience.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { LocalSetupError } from "./local-setup-failure.ts";
 import { DATA_DIR } from "./config.ts";

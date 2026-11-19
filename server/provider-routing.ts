@@ -2,14 +2,19 @@ import { cloudEngineHome, cloudTurnRender, cloudTurnScratch } from "./cloud-home
 import { cloudRouteUrl } from "./cloud-home/engine-render.ts";
 import { cloudHomeCopy } from "./cloud-home/copy.ts";
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DATA_DIR, deleteEnvNames } from "./config.ts";
 import type { ProviderPreset, ProviderProtocol } from "../shared/provider-connections.ts";
 import { providerEngineProtocol } from "../shared/provider-engine.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { keepFuigoTurnLogs } from "./fuigo-turn-logs.ts";
+import { isFluxUrl } from "./flux-memory-headers.ts";
+import { FLUX_MEMORY_APP, FLUX_MEMORY_APP_HEADER, FLUX_MEMORY_CAPTURE_HEADER } from "./flux-memory-wire.ts";
 import { z } from "zod";
+import { looksLikeFlux } from "./cloud-home/engine-flux-guard.ts";
+import { fluxKeyPolicyError } from "./cloud-home/flux-key-policy.ts";
 /** Server-only, resolved from encrypted custody at admission. */
 export interface ProviderTurnRoute { connectionId: string; preset: ProviderPreset; protocol: ProviderProtocol; baseUrl: string; apiKey: string; model: string; revision: string }
 export interface ProviderRouteBinding { model: string; args: string[]; modelProvider?: string; identity?: string; cleanup: () => void;
@@ -106,6 +111,9 @@ export function routeEndpoint(driver: string, route: ProviderTurnRoute): string 
 }
 export function validateProviderTurnRoute(driver: string, route: ProviderTurnRoute): void {
   if (process.env.MURAGE_CLOUD_ROLE === "home" && driver === "claudeAgent") throw new Error(cloudHomeCopy.claudeFluxOnHome);
+  if (process.env.MURAGE_CLOUD_ROLE === "home" && driver === "codex" && (route.preset === "flux" || looksLikeFlux(route.baseUrl) || looksLikeFlux(route.apiKey))) throw new Error(cloudHomeCopy.signInEnginesNoFlux);
+  // Hole 7: on a home, a provider/Fuigo route never carries the owner's primary Flux key, and the home key goes only to Flux.
+  if (process.env.MURAGE_CLOUD_ROLE === "home") { const policy = fluxKeyPolicyError(route.apiKey, route.baseUrl); if (policy) throw new Error(policy); }
   if (!route.apiKey || !route.connectionId || !route.revision || !route.model || route.model.length > 512 || !/^[A-Za-z0-9][A-Za-z0-9_./:@+-]*$/.test(route.model)) throw new Error("Selected provider connection is incomplete");
   if (!providerEngineProtocol(driver, route.preset, route.protocol)) throw new Error("This engine does not support the selected provider protocol");
   const url = new URL(route.baseUrl);
@@ -194,7 +202,10 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
       env.HERMES_HOME = home;
       // explicit, so the driver passes `-p default` for this home only
       env.MURAGE_HERMES_ROUTED_HOME = resolve(home);
-      const config = `model:\n  default: ${JSON.stringify(route.model)}\n  provider: custom\n  base_url: ${JSON.stringify(route.baseUrl)}\n  api_mode: chat_completions\n  api_key: ${JSON.stringify(route.apiKey)}\nproviders: {}\n`;
+      // A Flux connection's own home says capture off on every request (explicit-only capture; the turn overlay repeats
+      // it with the turn's other headers). Quoted: Hermes reads YAML 1.1, where a bare off is the boolean false.
+      const captureOff = isFluxUrl(route.baseUrl) ? `  extra_headers:\n    ${FLUX_MEMORY_APP_HEADER}: ${JSON.stringify(FLUX_MEMORY_APP)}\n    ${FLUX_MEMORY_CAPTURE_HEADER}: "off"\n` : "";
+      const config = `model:\n  default: ${JSON.stringify(route.model)}\n  provider: custom\n  base_url: ${JSON.stringify(route.baseUrl)}\n  api_mode: chat_completions\n  api_key: ${JSON.stringify(route.apiKey)}\n${captureOff}providers: {}\n`;
       writeFileSync(join(home, "config.yaml"), config, { mode: 0o600 });
     } else {
       const name = routedProviderId(route), protocol = { openai: "chat_completions", anthropic: "messages", responses: "responses" }[route.protocol];

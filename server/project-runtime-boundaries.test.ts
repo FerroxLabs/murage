@@ -7,6 +7,7 @@ import { projectThreads } from "./project-memory-tools.ts";
 import { ProjectLateWrites } from "./project-run-events.ts";
 import { accountPresentedProjectEvent } from "./project-usage-dispatch.ts";
 import { noteStartupFileEvent } from "./engine-env.ts";
+import { Ledger } from "./turn-settle.ts";
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
 function nodes(test: (node: ts.Node) => boolean) {
@@ -31,21 +32,28 @@ it("brief route resolves project task threads and retained former-member desks",
 it("the watchdog waits only after folder-held approval presentation, including retries", () => {
   type Event = { type: string; threadId: string; turnId: string; requestId: string };
   const raw: Array<(e: Event) => void> = [], presented: Array<(e: Event) => void> = [];
-  const bus = { subscribe: (fn: (e: Event) => void) => { raw.push(fn); return () => {}; } };
-  const presentedRequests = { subscribe: (fn: (e: Event) => void) => { presented.push(fn); return () => {}; }, publish: (e: Event) => presented.forEach(fn => fn(e)) };
+  // the fold reads each event's audience from the real bus; no audience is under test here
+  const bus = { subscribeExecution: (fn: (e: Event) => void) => { raw.push(fn); return () => {}; }, audienceFor: () => [], audienceMaskedFor: () => true };
+  const presentedRequests = { subscribeExecution: (fn: (e: Event) => void) => { presented.push(fn); return () => {}; }, publish: (e: Event) => presented.forEach(fn => fn(e)) };
   const watchdog = { setWaitingOnHuman: vi.fn(), touch: vi.fn() };
-  const calls = nodes(n => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "subscribe"
+  // index.ts routes a presented card through this helper, which also tells the run's browser execution it is waiting; the real declaration is extracted
+  const helper = nodes(n => ts.isFunctionDeclaration(n) && n.name?.text === "setWaitingOnHuman")[0];
+  expect(helper).toBeDefined();
+  const browserExecutions = { waiting: vi.fn() };
+  const directRuns = { get: () => undefined };
+  const setWaitingOnHuman = evaluate(`${helper.getText(ast)}; return setWaitingOnHuman;`, { directRuns, browserExecutions, watchdog }) as (threadId: string, waiting: boolean, requestId?: string) => void;
+  const calls = nodes(n => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "subscribeExecution"
     && (n.arguments[0]?.getText(ast).includes("watchdog.setWaitingOnHuman") || n.arguments[0]?.getText(ast).includes("deadline.setWaitingOnHuman")));
   expect(calls).toHaveLength(1);
-  const deps = { bus, presentedRequests, watchdog, shouldIgnoreProviderEvent: () => false, memoryDispatches: new Map(), lateProjectWrites: { complete: vi.fn() }, threadId: "room", providerTurnId: "turn" };
+  const deps = { bus, presentedRequests, watchdog, setWaitingOnHuman, browserExecutions, admittedLedgerLeases: new Map(), directRuns, terminalDispatchFor: () => undefined, terminalPreparations: new WeakMap(), shouldIgnoreProviderEvent: () => false, memoryDispatches: new Map(), lateProjectWrites: { complete: vi.fn() }, threadId: "room", providerTurnId: "turn" };
   calls.forEach(call => evaluate(call.getText(ast), deps));
-  const begin = source.indexOf("const foldRuntimeEvent = (event: RuntimeEvent) => {");
+  const begin = source.indexOf("const foldRuntimeEvent = (executionEvent: RuntimeEvent) => {");
   const end = source.indexOf("  const localVmTarget", begin);
   let held = true;
   const account = vi.fn();
   // callSpeech: D24's call speech coordinator; no call is live, so no provider turn feeds call speech here
-  const fold = evaluate(`${source.slice(begin, end)} }; return foldRuntimeEvent;`, { ...deps, fluxFirstTokenProbe: { observe() {}, begin() {} }, replyGuardContext: () => null, accountProjectEvent: account,
-    callSpeech: { provider: () => undefined },
+  const fold = evaluate(`${source.slice(begin, end)} }; return foldRuntimeEvent;`, { ...deps, fluxMemoryCapture: { begin() {}, observe() {} }, fluxFirstTokenProbe: { observe() {}, begin() {} }, replyGuardContext: () => null, accountProjectEvent: account,
+    callSpeech: { provider: () => undefined }, shellPrepared: new WeakMap(), shellPreparedRecord: new WeakMap(),
     // the real Rule 74a hook index.ts imports from engine-env.ts and calls for every permission event
     accountPresentedProjectEvent, holdProjectWriteApproval: () => held, noteStartupFileEvent });
   const approval = { type: "request.opened", threadId: "room", turnId: "turn", requestId: "approval" };
@@ -66,14 +74,22 @@ it("retired provider output still releases only its matching late-write resource
     const identity = { threadId: "room", generation: "retired-generation", turnId: "retired-turn" };
     lateProjectWrites.add(identity, release); lateProjectWrites.retry(identity, "ask", retry);
     lateProjectWrites.add({ ...identity, generation: "new-generation", turnId: "new-turn" }, newerRelease);
-    const callback = nodes(n => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.getText(ast) === "bus.subscribe"
+    const callback = nodes(n => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.getText(ast) === "bus.subscribeExecution"
       && !!n.arguments[0]?.getText(ast).includes("lateProjectWrites.complete"))[0] as ts.CallExpression;
     expect(callback).toBeDefined();
-    const event = { type: "turn.completed", threadId: "room", turnId: "retired-turn" };
+    const event = { type: "turn.completed", threadId: "room", turnId: "retired-turn", providerInstanceId: "fixture-instance" };
+    const completionSource = { admission: {}, attachment: {} };
+    const lease = { identity: { threadId: "room", dispatchGeneration: identity.generation }, providerTurnId: identity.turnId };
+    const dispatch = nodes(n => ts.isFunctionDeclaration(n) && n.name?.text === "terminalDispatchFor")[0]!;
     const endHeldWriteWaits = vi.fn();
-    evaluate(`const receive = ${callback.arguments[0].getText(ast)}; receive(event); receive(event);`, {
-      event, lateProjectWrites, endHeldWriteWaits, memoryDispatches: new Map(), shouldIgnoreProviderEvent: () => true,
-      pendingRoomStops: new Map(), projectTurnLeases: { complete: vi.fn() }, internalCapabilities: { completeProviderTurn: vi.fn() }, internalTurnOwners: new Map(),
+    const ledger = new Ledger();
+    evaluate(`${dispatch.getText(ast)}; const receive = ${callback.arguments[0].getText(ast)}; receive(event); receive(event);`, {
+      observeOwnerLimitProvider: () => {}, isLedgerEventRefused: () => false,
+      bus: { sourceForExecution: () => completionSource }, ledgerLeasesByAdmission: new WeakMap([[completionSource.admission, lease]]),
+      ledgerCompletionSources: new WeakMap([[lease, completionSource]]), ledgerProviderInstances: new WeakMap([[lease, "fixture-instance"]]),
+      registry: { get: () => undefined }, terminalPreparations: new WeakMap(),
+      event, lateProjectWrites, endHeldWriteWaits, botOutsideWrites: { ledger }, memoryDispatches: new Map(), shouldIgnoreProviderEvent: () => true,
+      pendingRoomStops: new Map(), projectTurnLeases: { bind: vi.fn(), heldByStop: () => false, complete: vi.fn() }, internalCapabilities: { activeGeneration: () => "new-generation", completeProviderTurn: vi.fn() }, internalTurnOwners: new Map(),
     });
     vi.advanceTimersByTime(250);
     expect(release).toHaveBeenCalledTimes(1);

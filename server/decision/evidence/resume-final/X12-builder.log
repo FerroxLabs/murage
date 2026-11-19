@@ -1,0 +1,44 @@
+COMMAND node_modules/.bin/vitest run server/decision/engine-action.test.ts -t "BASE engine builder receives"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/engine-action.test.ts > BASE engine builder receives frozen authority/verdict and binds grant keys and options once
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/engine-action.test.ts (11 tests | 1 failed | 10 skipped) 337ms
+   × BASE engine builder receives frozen authority/verdict and binds grant keys and options once 334ms
+   ↓ owner RUN never calls the engine builder or BASE callback
+   ↓ reserved engine action identities cannot create an approval
+   ↓ cleared deny before engine presentation runs and leaves no card
+   ↓ a cleared service deny after queue persistence executes once without a new permission row
+   ↓ native posture retirement supersedes an answered identity without sending another answer
+   ↓ structured question parts keep their native choices and settle with one complete answer
+   ↓ BASE native questions retain their original card path at ask
+   ↓ BASE native questions retain their original card path at auto
+   ↓ BASE native questions retain their original card path at full
+   ↓ BASE native questions retain the guest card at No limits
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 skipped (11)
+   Start at  08:15:46
+   Duration  4.53s (transform 3.26s, setup 3.85s, import 224ms, tests 337ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/engine-action.test.ts > BASE engine builder receives frozen authority/verdict and binds grant keys and options once
+AssertionError: expected undefined to be 'fixture-task-key' // Object.is equality
+
+- Expected:
+"fixture-task-key"
+
++ Received:
+undefined
+
+ ❯ server/decision/engine-action.test.ts:5:210
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

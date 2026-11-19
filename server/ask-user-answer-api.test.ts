@@ -11,12 +11,13 @@
 // kill right after Stop marks the waiting sends) and on beginInternalTurn (a turn forced to a not-owner audience).
 // Each case names the failure it prevents; each fails without the QW change (no ask_user route, no fence fold, or the old
 // late-answer flow that sent first and recorded second).
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { fixtureDisplayReply, fixtureMessageEvidence } from "./testing/display-fixture.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -37,6 +38,7 @@ const fenceReply = (body: unknown, before = "Before I post it:") => `${before}\n
 
 const askDir = () => join(fixture.info.dataDir, "ask");
 const api = async (method: string, path: string, body?: unknown, proven = true) => {
+  if (method === "POST" && path.endsWith("/respond")) body = fixtureDisplayReply(join(fixture.info.dataDir, "messages.db"), body);
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...(proven ? headers : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await response.text();
   return { status: response.status, body: (text ? JSON.parse(text) : {}) as any };
@@ -47,7 +49,8 @@ const connect = async () => {
 };
 const botState = async (id: string) => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === id);
 const idle = async (id: string) => { await expect.poll(async () => (await botState(id))?.busy, { timeout: 20000 }).toBe(false); };
-const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
+// MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: assert durable execution evidence and the actual display handles separately.
+const messages = async (threadId: string) => fixtureMessageEvidence(join(fixture.info.dataDir, "messages.db"), (await api("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages);
 const questionCards = async (threadId: string) => (await messages(threadId)).filter((message) => message.kind === "options" && message.card?.questions?.length);
 const cardById = async (threadId: string, id: string) => (await messages(threadId)).find((message) => message.id === id);
 type DumpRow = { turnId: string; threadId: string; text: string; steer?: true };
@@ -59,8 +62,23 @@ const sendRows = (threadId: string) => {
   try { return db.prepare("SELECT send_id AS sendId, status, notice, stopped FROM owner_sends WHERE thread_id=? AND send_id LIKE 'ask-%' ORDER BY seq").all(threadId) as Array<{ sendId: string; status: string; notice: string | null; stopped: number }>; }
   finally { db.close(); }
 };
+const expectDeliveredSend = (threadId: string, sendId: string) => {
+  const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
+  try {
+    const receipt = db.prepare("SELECT delivery, replay_policy, terminal_outcome, attempt_id FROM send_attempts WHERE thread_id=? AND send_id=?").get(threadId, sendId);
+    expect(receipt).toMatchObject({ delivery: "submitted", replay_policy: "allow", terminal_outcome: "completed" });
+    const bindings = db.prepare("SELECT provider_turn_id, provider_instance_id FROM send_attempt_bindings WHERE attempt_id=? AND provider_turn_id IS NOT NULL").all(receipt!.attempt_id!);
+    expect(bindings).toEqual([{ provider_turn_id: expect.any(String), provider_instance_id: expect.any(String) }]);
+    expect(bindings[0]!.provider_instance_id).not.toBe("channel");
+    const ingress = dump().filter(row => !row.steer && row.threadId === threadId && row.turnId === bindings[0]!.provider_turn_id && row.text.includes(ANSWER_TEXT));
+    expect(ingress).toHaveLength(1);
+    expect(ingress[0]!.text).toContain(ANSWER_TEXT);
+  } finally { db.close(); }
+};
 const arm = (name: string) => writeFileSync(join(askDir(), name), "");
-const release = () => writeFileSync(join(askDir(), "release"), "");
+// A prior failed case may still own a held turn. Release only this turn;
+// another waiter's cleanup must never consume its successor's signal.
+const release = () => writeFileSync(join(askDir(), "release"), readFileSync(join(askDir(), "live"), "utf8"));
 const reset = () => { for (const name of ["hold", "agents-env.json", "live", "release", "reply.txt", "fail-accept", "fail-queue", "crash-before-dispatch", "crash-after-dispatch", "crash-after-stop", "not-owner.json"]) rmSync(join(askDir(), name), { force: true }); };
 const roomSendRows = (threadId: string) => {
   const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
@@ -110,7 +128,10 @@ const restartAfterKill = async () => {
 };
 
 posixOnly("a bot's question is answered by the owner's next message (QW Q1, Q1b, Q2)", () => {
-  beforeAll(async () => {
+  // The driver's hold/release files belong to one case. A failed assertion
+  // can leave a held bot polling release; sharing that process lets it consume
+  // a later case's signal. Close the whole isolated fixture between cases.
+  beforeEach(async () => {
     fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
       const fs=await import('node:fs');const path=await import('node:path');
       const dataDir=process.env.MURAGE_DATA_DIR;
@@ -154,7 +175,22 @@ SendStore.prototype.markStopped=function(threadId){const out=__stopped.call(this
     mkdirSync(join(fixture.info.dataDir, "ask"), { recursive: true });
     await connect();
   }, 60000);
-  afterAll(async () => { await fixture?.close(); });
+  afterEach(async (context) => {
+    const evidence = process.env.ASK_USER_EVIDENCE;
+    if (!evidence || !fixture) { await fixture?.close(); return; }
+    const prefix = join(evidence, context.task.name.replace(/[^a-z0-9]+/gi, "_").slice(0, 120));
+    copyFileSync(fixture.info.logPath, prefix + ".server.log");
+    writeFileSync(prefix + ".dump.json", JSON.stringify(dump(), null, 2));
+    const bots = (await api("GET", "/api/bots?messages=0")).body.bots;
+    writeFileSync(prefix + ".bots.json", JSON.stringify(bots, null, 2));
+    const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
+    try {
+      writeFileSync(prefix + ".sends.json", JSON.stringify(db.prepare("SELECT * FROM owner_sends").all(), null, 2));
+      writeFileSync(prefix + ".attempts.json", JSON.stringify(db.prepare("SELECT * FROM send_attempts").all(), null, 2));
+      writeFileSync(prefix + ".messages.json", JSON.stringify(db.prepare("SELECT thread_id,json FROM messages").all(), null, 2));
+    }
+    finally { db.close(); await fixture?.close(); }
+  });
 
   it("ask_user is refused for an unattended turn and a not-owner audience; the owner's own turn opens the card", async () => {
     // the owner's turn: the card is the existing options row, marked as answered by a send, naming the turn that asked
@@ -225,7 +261,9 @@ SendStore.prototype.markStopped=function(threadId){const out=__stopped.call(this
     await expect.poll(() => turnsWith(room.threadId, ANSWER_TEXT).length, { timeout: 20000 }).toBe(1);
     await idle(member.id);
     expect(JSON.parse(readFileSync(join(askDir(), "agents-env.json"), "utf8")).MURAGE_BOT_ID).toBe(member.id);
-    expect(roomSendRows(room.threadId)).toEqual([expect.objectContaining({ sendId, status: "started" })]);
+    // MAIN RULING INT-CONFLICT-DEFAULT 5b51448693e 2a58070211c: confirmed native completion is delivered; failed never qualifies.
+    expect(roomSendRows(room.threadId)).toEqual([expect.objectContaining({ sendId, status: "delivered" })]);
+    expectDeliveredSend(room.threadId, sendId);
     const line = (await messages(room.threadId)).find((message) => message.role === "user" && message.sendId === sendId);
     expect(line).toMatchObject({ kind: "text", text: ANSWER_TEXT });
     await quiet(500);
@@ -251,7 +289,9 @@ SendStore.prototype.markStopped=function(threadId){const out=__stopped.call(this
     expect((await cardById(room.threadId, card.id)).card).toMatchObject({ expired: true, sentAsMessage: true, sendId });
     await expect.poll(() => turnsWith(room.threadId, "A: Email, Slack").length, { timeout: 20000 }).toBe(1);
     await idle(member.id);
-    expect(roomSendRows(room.threadId)).toEqual([expect.objectContaining({ sendId, kind: "group", responderId: member.id, status: "started" })]);
+    // MAIN RULING INT-CONFLICT-DEFAULT 5b51448693e 2a58070211c: confirmed native completion is delivered; failed never qualifies.
+    expect(roomSendRows(room.threadId)).toEqual([expect.objectContaining({ sendId, kind: "group", responderId: member.id, status: "delivered" })]);
+    expectDeliveredSend(room.threadId, sendId);
     expect(steersOn(room.threadId)).toEqual([]);
   }, 120000);
 
@@ -445,7 +485,9 @@ SendStore.prototype.markStopped=function(threadId){const out=__stopped.call(this
     await restartAfterKill();
     await expect.poll(() => turnsWith(bot.threadId, ANSWER_TEXT).length, { timeout: 20000 }).toBe(1);
     await idle(bot.id);
-    expect(sendRows(bot.threadId)).toEqual([expect.objectContaining({ sendId, status: "started" })]);
+    // MAIN RULING INT-CONFLICT-DEFAULT 5b51448693e 2a58070211c: confirmed native completion is delivered; failed never qualifies.
+    expect(sendRows(bot.threadId)).toEqual([expect.objectContaining({ sendId, status: "delivered" })]);
+    expectDeliveredSend(bot.threadId, sendId);
     await quiet(500);
     expect(turnsWith(bot.threadId, ANSWER_TEXT)).toHaveLength(1);
   }, 90000);
@@ -490,6 +532,23 @@ SendStore.prototype.markStopped=function(threadId){const out=__stopped.call(this
     await idle(bot.id);
   }, 90000);
 
+  it("Stop after a pinned answer write retains submission proof and never completes or resends it", async () => {
+    const { member, room, requestId, sendId } = await roomAsk("receipt-stop");
+    expect((await answer(room.threadId, requestId)).status).toBe(200);
+    arm("hold");
+    release();
+    await expect.poll(() => turnsWith(room.threadId, ANSWER_TEXT).length, { timeout: 20000 }).toBe(1);
+    expect((await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId })).status).toBe(200);
+    await idle(member.id);
+    const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
+    try {
+      expect(db.prepare("SELECT delivery, replay_policy, terminal_outcome FROM send_attempts WHERE thread_id=? AND send_id=?").get(room.threadId, sendId))
+        .toEqual({ delivery: "submitted", replay_policy: "allow", terminal_outcome: "stopped" });
+    } finally { db.close(); }
+    await fixture.restart(); await connect(); await quiet(600);
+    expect(turnsWith(room.threadId, ANSWER_TEXT)).toHaveLength(1);
+  }, 120000);
+
   it("B-165 QW rooms: a member's murage-question fence becomes a room card stamped with that member; answered once, queued, never steered", async () => {
     const member = await createBot("Ask room fence member", "text"), other = await createBot("Ask room fence other", "text");
     const room = (await api("POST", "/api/groups", { name: "Ask room fence", memberIds: [member.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: other.id } } })).body.group as { id: string; threadId: string };
@@ -509,5 +568,6 @@ SendStore.prototype.markStopped=function(threadId){const out=__stopped.call(this
     await quiet(400);
     expect(turnsWith(room.threadId, ANSWER_TEXT)).toHaveLength(1);
     expect(steersOn(room.threadId)).toEqual([]);
+    expectDeliveredSend(room.threadId, `ask-${card.id}`);
   }, 120000);
 });

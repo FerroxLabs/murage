@@ -220,10 +220,18 @@ async function main() {
     // Fixture setup only: the authoritative memory schema, bundled from this checkout into one module, creates the
     // authority database. The tsc copy under server/server imports modules the server resources do not carry. The
     // worker under test is still the packaged, bundled one.
-    const schemaModule = join(root, "fixture-schema.mjs");
+    // Built the way scripts/bundle-server.mjs builds the packaged server: schema.ts reaches the sentinel through
+    // ../sqlite-open.ts, so CommonJS leaves read require/__filename/__dirname (banner), the Windows hide installer
+    // stays external and relocatable (plugin), and drivers/murage-exec.ts reads its wrapper beside the bundle at load.
+    const fixtureDir = join(root, "fixture-schema");
+    const schemaModule = join(fixtureDir, "schema.mjs");
     const { build } = await import("esbuild");
-    await build({ stdin: { contents: 'export { migrateMemorySchema, validateMemorySchema } from "./server/memory/schema.ts"; export { BRANCH_TABLES_SQL } from "./server/branch-index.ts";', resolveDir: resolve(dirname(self), ".."), loader: "ts" }, bundle: true, platform: "node", target: "node20", format: "esm", outfile: schemaModule, logLevel: "error",
-      banner: { js: 'import { createRequire as __fixtureRequire } from "node:module"; const require = __fixtureRequire(import.meta.url);' } });
+    const { windowsHideBundlePlugin } = await import(pathToFileURL(join(dirname(self), "windows-hide-bundle-plugin.mjs")).href);
+    const checkout = resolve(dirname(self), "..");
+    await build({ stdin: { contents: 'export { migrateMemorySchema, validateMemorySchema } from "./server/memory/schema.ts"; export { BRANCH_TABLES_SQL } from "./server/branch-index.ts";', resolveDir: checkout, loader: "ts" }, bundle: true, platform: "node", target: "node20", format: "esm", outfile: schemaModule, logLevel: "error",
+      banner: { js: 'import { createRequire as __fixtureRequire } from "node:module"; import { fileURLToPath as __fixturePath } from "node:url"; import { dirname as __fixtureDir } from "node:path"; const require = __fixtureRequire(import.meta.url); const __filename = __fixturePath(import.meta.url); const __dirname = __fixtureDir(__filename);' },
+      plugins: [windowsHideBundlePlugin()] });
+    for (const sibling of ["murage-exec", "murage-exec.shapes"]) cpSync(join(checkout, "server/drivers", sibling), join(fixtureDir, sibling));
     const model = join(root, "model");
     for (const asset of manifest.files) {
       const source = resolve(modelArgument, asset.path), target = resolve(model, asset.path);

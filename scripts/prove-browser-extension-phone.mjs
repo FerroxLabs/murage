@@ -11,7 +11,7 @@ import { launchVerificationServer } from './control-murage.ts';
 const root=resolve(import.meta.dirname,'..');
 const round=Number(process.env.MURAGE_PHONE_ROUND||5);
 const output=resolve(root,'../.planning/browser-extension/evidence/phone-ui-r'+round);mkdirSync(output,{recursive:true});
-assert(tmpdir().startsWith('/Volumes/Scratch/'),'Set task-owned scratch-volume TMPDIR before launch');
+assert(tmpdir().startsWith('/Volumes/Fixture/'),'Set task-owned scratch-volume TMPDIR before launch');
 assert(existsSync(join(root,'dist/index.html')),'Built app required');
 const registryRoot=mkdtempSync(join(tmpdir(),'phone-registry-'));process.env.MURAGE_COMPANION_DIR=registryRoot;
 const {DATA_DIR}=await import('../companion/src/state.ts');
@@ -52,3 +52,5 @@ try{
  await api('/api/browser-extension/clients',{action:'revoke',clientId});assert((await blocked).status>=400);receipt.result='PASS';
 }catch(e){receipt.result='FAIL';receipt.failure=String(e.stack??e);if(page){await shot('failure').catch(()=>{});writeFileSync(join(output,'failure-body.txt'),await page.locator('body').innerText().catch(()=>''));}process.exitCode=1;}
 finally{if(fixture&&clientId)await api('/api/browser-extension/clients',{action:'revoke',clientId}).catch(()=>{});await Promise.allSettled(pending);await context?.close();if(door){door.closeAllConnections();await new Promise(r=>door.close(r));}if(fixture){writeFileSync(join(output,'server.log'),readFileSync(fixture.info.logPath));await fixture.close();}rmSync(registryRoot,{recursive:true,force:true});writeFileSync(join(output,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');console.log(JSON.stringify({result:receipt.result,checks,errors,failure:receipt.failure,output},null,2));}
+
+// secret-scan: fixture (generic /Volumes/Fixture and /Users/fixture paths only; no host data)

@@ -16,7 +16,7 @@ import type { LocaleKey } from "../locales";
 import { t } from "./i18n";
 
 // Light on purpose: Today's rows and the rail read this file, so it pulls in no digest or device code (first paint).
-export const BULK_REASON_KEYS = ["always-ask", "pay", "message", "delete", "needs-look", "held", "unattended", "truncated", "local-computer", "routine", "origin", "not-approval", "not-open", "sensitive"] as const;
+export const BULK_REASON_KEYS = ["always-ask", "pay", "message", "delete", "needs-look", "held", "unattended", "truncated", "local-computer", "routine", "origin", "not-approval", "not-open", "sensitive", "orphaned"] as const;
 export type BulkReasonKey = typeof BULK_REASON_KEYS[number];
 
 /** The short words for each reason the server can send. An unknown key reads as "needs its own look", never as nothing. */

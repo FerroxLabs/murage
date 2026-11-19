@@ -13,6 +13,7 @@ import type { InboundEnvelope } from "./core/protocol.ts";
 import { VOICE_REPLIES, WhatsAppService, chatKeyOf, type WhatsAppSettings } from "./service.ts";
 import type { HealthEvent, TransportHandlers, WhatsAppTransport } from "./transport.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
+import { fault } from "../delivery-ledger-test-support.ts";
 
 const T = 1_700_000_000_000;
 const OWNER = "15550001111@s.whatsapp.net";
@@ -188,7 +189,7 @@ it("retains a transcribed recording until its receipt can be committed", async (
   r = rig({ transcribeVoice: async () => {
     // Force the receipt write to fail after transcription, before durable admission.
     const file = join(r.dir, "channels", "whatsapp", r.connectionId(), `${chatKeyOf(OWNER)}.json`);
-    mkdirSync(file);
+    fault(file);
     return { ok: true, text: "keep this transcript" };
   } });
   await r.connect(); const path = r.mediaFile("PENDING.ogg");

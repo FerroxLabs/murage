@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -26,5 +26,6 @@ it("never forwards CI to the browser child", () => {
   expect(spec.env).not.toHaveProperty("CI");
   expect(spec.env).not.toHaveProperty("AGENT_BROWSER_NO_SANDBOX");
   expect(spec.args).not.toContain("--no-sandbox");
-  removeTempDirSync(spec.env.AGENT_BROWSER_SOCKET_DIR);
+  // No browser starts here: remove only the empty runtime directory we created.
+  rmdirSync(spec.env.AGENT_BROWSER_SOCKET_DIR);
 });

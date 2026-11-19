@@ -630,3 +630,32 @@ describe("Pi MCP extension registration", () => {
     await handlers.get("session_shutdown")?.();
   });
 });
+
+// The non-consuming extension has no server release counters. A consuming
+// mount must still be refused before a peer can start, including direct clients.
+it.each(["process", "mount"] as const)("refuses a consuming %s admission before starting the MCP peer", where => {
+  const previous = process.env.MURAGE_RELEASE_INSTANCE;
+  try {
+    if (where === "process") process.env.MURAGE_RELEASE_INSTANCE = "fixture-instance";
+    expect(() => new StdioMcp({ command: "fixture-peer-must-never-start", ...(where === "mount" ? { env: { MURAGE_RELEASE_INSTANCE: "fixture-instance" } } : {}) })).toThrow("MEMORY_CONTEXT_REVOKED");
+  } finally {
+    if (previous === undefined) delete process.env.MURAGE_RELEASE_INSTANCE;
+    else process.env.MURAGE_RELEASE_INSTANCE = previous;
+  }
+});
+
+it("a consuming external Pi extension is refused before registering any tools", async () => {
+  const oldInstance = process.env.MURAGE_RELEASE_INSTANCE;
+  const config = join(tempDir(), "mcp.json");
+  writeFileSync(config, JSON.stringify({ mcpServers: {} }));
+  process.env.MURAGE_MCP_CONFIG = config;
+  process.env.MURAGE_RELEASE_INSTANCE = "fixture-generation";
+  const registerTool = vi.fn();
+  try {
+    await expect(extension({ registerTool, on: vi.fn() })).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(registerTool).not.toHaveBeenCalled();
+  } finally {
+    if (oldInstance === undefined) delete process.env.MURAGE_RELEASE_INSTANCE;
+    else process.env.MURAGE_RELEASE_INSTANCE = oldInstance;
+  }
+});

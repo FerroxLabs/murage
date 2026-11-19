@@ -22,6 +22,8 @@ import { createUpdateDownloadVerifier } from "./update-build-version.mjs";
 import { createGithubFallbackFeed } from "./updater-fallback.mjs";
 import { installWindowsUpdateVerifier } from "./windows-update-signature.mjs";
 
+import { createUpdateNotifications, updateNotificationsEnabled } from "./update-notifications.mjs";
+
 const require = createRequire(import.meta.url);
 
 let autoUpdater = null;
@@ -30,6 +32,13 @@ let win = null;
 let state = { status: "idle" };
 let updaterCoordinator = null;
 let checksScheduled = false;
+let notifications = null;
+const onWindowFocus = () => {
+  try { win?.webContents?.send("update:state", publicState()); } catch { /* window gone */ }
+  notifications?.focus();
+};
+
+const onWindowBackground = () => { void notifications?.stateChanged(); };
 
 function updaterLogger() {
   const directory = app.getPath("logs");
@@ -93,6 +102,7 @@ function setState(patch) {
   if (patch.status && patch.action === undefined) delete state.action;
   if (patch.status && patch.downloadUrl === undefined) delete state.downloadUrl;
   if ("staleCheckSince" in patch && patch.staleCheckSince === undefined) delete state.staleCheckSince;
+  void notifications?.stateChanged();
   try {
     win?.webContents?.send("update:state", publicState());
   } catch {
@@ -101,6 +111,8 @@ function setState(patch) {
 }
 
 // main.mjs passes its owned-main-window gate (main-ipc-trust.mjs, B6).
+export function reportUpdateNotice(value) { return notifications?.report(value); }
+
 export function registerUpdaterIpc(ipcMain = electronIpcMain) {
   ipcMain.handle("update:get-state", () => publicState());
   ipcMain.handle("update:check", () => updaterCoordinator?.check(true));
@@ -120,12 +132,20 @@ export function checkForUpdatesNow() {
 }
 
 export function attachUpdaterWindow(mainWindow) {
+  win?.removeListener?.("focus", onWindowFocus);
+  for (const event of ["blur", "hide", "minimize"]) win?.removeListener?.(event, onWindowBackground);
   win = mainWindow;
+  win?.on?.("focus", onWindowFocus);
+  for (const event of ["blur", "hide", "minimize"]) win?.on?.(event, onWindowBackground);
 }
 
 // `installerFallback` (macOS only, from main.mjs: electron/mac-install-guard.mjs) offers the dmg when Squirrel.Mac
 // cannot replace this copy, and brings the app back if an install stalls after the server stopped.
-export function startUpdater({ beforeInstall = null, scheduleChecks = true, installerFallback = null, returnAuthority = null } = {}) {
+// The packaged app's launch pause (electron/update-launch-pause.mjs), set by main.mjs at startup before any install.
+let launchPause = null;
+export function useUpdateLaunchPause(pause) { launchPause = pause; }
+
+export function startUpdater({ beforeInstall = null, scheduleChecks = true, installerFallback = null, returnAuthority = null, notificationServices = null } = {}) {
   const publishOffer = () => {
     if (!scheduleChecks || !installerFallback || !updaterCoordinator) return;
     const pending = installerFallback.peekPendingOffer?.(runningVersion());
@@ -143,7 +163,7 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true, inst
     return updaterCoordinator;
   }
   // dev / unsigned builds can't auto-update — leave the banner dormant
-  if (!app.isPackaged) {
+  if (!updateNotificationsEnabled({ packaged: app.isPackaged, mas: process.mas, windowsStore: process.windowsStore })) {
     updaterCoordinator = null;
     setState({ status: "idle" });
     return;
@@ -178,6 +198,7 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true, inst
     nativeUpdater: autoUpdater.autoInstallOnAppQuit ? autoUpdater.nativeUpdater : null,
     handOffInstall: handOff ? handOffDownloadedPackage(packageType) : null,
     beforeInstall,
+    launchPause,
     returnAuthority,
     fallbackFeed: createGithubFallbackFeed(autoUpdater, { log: (line) => autoUpdater.logger.info(line) }),
     // Every platform checks the download against something signed, whichever feed (the normal one or the latest-release
@@ -186,6 +207,25 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true, inst
     ...(installerFallback ? { installerFallback: { ...installerFallback, events: autoUpdater.nativeUpdater ?? null } } : {}),
   });
   publishOffer();
+
+  if (notificationServices) {
+    const { Notification, authorization, powerMonitor, ensureWindow } = notificationServices;
+    notifications = createUpdateNotifications({
+      Notification, authorization, ensureWindow, recordPath: join(app.getPath("userData"), "update-notifications.json"),
+      getWindow: () => win, getState: publicState,
+      refreshState: () => {
+        try { win?.webContents?.send("update:state", publicState()); } catch { /* window gone */ }
+      },
+      requestNotice: (version) => {
+        try {
+          win?.webContents?.send("update:state", publicState());
+          win?.webContents?.send("update:notice", version);
+        } catch { /* window gone; next focus retries */ }
+      },
+      check: () => updaterCoordinator?.check(),
+    });
+    powerMonitor.on("resume", () => notifications?.resume());
+  }
 
   // first check ~15s after launch (let the app settle), then hourly — both
   // silent on failure, hence the arrow: a bare `check` would receive the

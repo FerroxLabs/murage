@@ -7,6 +7,7 @@
 // withheld, DESIGN-WRITETIME 1). It is not the real predicate: it answers only what these tests need, and it never answers "shown" for a
 // ref it does not know how to judge.
 import { memoryRefKey, type LineageReader, type LineageRef, type LineageVerdict, type MemoryRef, type TurnLineage } from "../lineage-types.ts";
+import type { TurnParentsProposal } from "../lineage-write.ts";
 
 type MutableTurn = TurnLineage & { parents: LineageRef[] };
 export const fakeLineage = {
@@ -52,6 +53,7 @@ function recordDenied(ref: MemoryRef, depth = 0): boolean {
 }
 
 /** Overrides for lineage-write.ts (S1's names). */
+const parentProposals = new WeakMap<TurnParentsProposal, { turn: TurnLineage; refs: readonly LineageRef[] }>();
 export const fakeWrite = {
   currentTurnLineage: (threadId: string): TurnLineage | undefined => fakeLineage.turns.get(threadId),
   runningTurnFor: (threadId: string, _botId?: string): TurnLineage | undefined => fakeLineage.turns.get(threadId),
@@ -60,6 +62,18 @@ export const fakeWrite = {
     const running = fakeLineage.turns.get(turn.threadId);
     if (running === turn) running.parents.push(...refs);
     fakeLineage.added.push({ thread: turn.threadId, refs: [...refs] });
+  },
+  proposeTurnParents: (turn: TurnLineage, refs: readonly LineageRef[]): TurnParentsProposal => {
+    if (fakeLineage.turns.get(turn.threadId) !== turn) throw new Error("MEMORY_CONTEXT_REVOKED");
+    const proposal: TurnParentsProposal = { turn, entries: [] };
+    parentProposals.set(proposal, { turn, refs: [...refs] });
+    return proposal;
+  },
+  commitTurnParents: (proposal: TurnParentsProposal): void => {
+    const staged = parentProposals.get(proposal);
+    if (!staged || fakeLineage.turns.get(staged.turn.threadId) !== staged.turn) throw new Error("MEMORY_CONTEXT_REVOKED");
+    parentProposals.delete(proposal);
+    fakeWrite.addTurnParents(staged.turn, staged.refs);
   },
   writeRecordLineage: (_tx: unknown, record: MemoryRef, turn: TurnLineage): void => {
     fakeLineage.records.set(memoryRefKey(record), { thread: turn.threadId, lsn: turn.turnLsn, parents: [...turn.parents] });

@@ -1,10 +1,15 @@
 name: CI
+run-name: ${{ inputs.invocation_id && format('ci {0}', inputs.invocation_id) || 'CI' }}
 
 on:
   # Branches created by GITHUB_TOKEN do not emit their own push event, so the
   # release-prep workflow dispatches this one explicitly for the version PR.
   workflow_dispatch:
     inputs:
+      invocation_id:
+        description: "CITRY invocation id"
+        required: false
+        type: string
       windows_only:
         description: "Confirm Windows-only fixture changes; reuse unaffected platform evidence"
         type: boolean
@@ -13,6 +18,10 @@ on:
         description: "Scoped confirmation: existing test files/directories, one per line; other Vitest evidence reused"
         required: false
         type: string
+      full:
+        description: "Full run (RC candidates): also macOS shards, human specs and extended shards. Without it a dispatch (ci/try) runs the gate tiers on Ubuntu and Windows plus broker:test and test:electron."
+        type: boolean
+        default: false
       human_files:
         description: "Ubuntu human-only confirmation: existing src/e2e/*.human.spec.ts files, one per line; prior CI evidence reused"
         required: false
@@ -30,6 +39,67 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Owners: wg-ci owns invocation/artifacts; wg-proof owns fixture safety;
+  # wg-int owns the real callback recipe; wg-winproof owns Windows text cases.
+  # Every invocation includes all three hosts, including scoped confirmations.
+  wipe-proof:
+    name: wipe proof (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04, windows-latest]
+    # Same trust boundary and JSON-label convention as quality's Windows gate.
+    # Trusted runs use the dedicated native gate pools. Fork/PR code stays on
+    # hosted machines. Runner identities and installation paths stay in infra.
+    runs-on: ${{ github.repository == 'FerroxLabs/murage' && github.event_name != 'pull_request' && fromJSON(matrix.os == 'macos-latest' && (vars.MURAGE_MAC_RUNNER || '["self-hosted","macOS","ARM64"]') || matrix.os == 'windows-latest' && (vars.MURAGE_WIN_RUNNER || '["self-hosted","Windows","X64"]') || (vars.MURAGE_LINUX_RUNNER || '["self-hosted","Linux","X64"]')) || matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Assert fixture root guard and run real Linux POSIX proof
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Native temp block metadata needs mknod; all disk backends are inert.
+          sudo -E "$(command -v node)" ci/wipe-proof.mjs posix "$RUNNER_TEMP/wipe-proof"
+      - name: Assert fixture root guard and run real macOS shell proof
+        if: runner.os == 'macOS'
+        shell: bash
+        run: node ci/wipe-proof.mjs posix "$RUNNER_TEMP/wipe-proof"
+      - name: Assert fixture root guard and run real Git Bash proof
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node ci/wipe-proof.mjs posix "$RUNNER_TEMP/wipe-proof"
+      - name: Windows plain forms in Windows PowerShell 5.1
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          node ci/wipe-proof.mjs windows-text "$env:RUNNER_TEMP/wipe-proof" powershell
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Windows plain forms in PowerShell 7
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          node ci/wipe-proof.mjs windows-text "$env:RUNNER_TEMP/wipe-proof" pwsh
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain native wipe proof logs and JSON even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wipe-proof-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wipe-proof/PROOF-*
+          if-no-files-found: error
+          retention-days: 14
+
   # 2026-10-25: Linux runners are pinned to ubuntu-24.04. ubuntu-latest moved to 26.04, which stays pinned out until
   # Playwright supports chromium there and the electron no-desktop-session backup test passes on it (1.0.7 follow-up).
   quality:
@@ -40,15 +110,24 @@ jobs:
       matrix:
         # The harness and pure desktop capabilities stay portable across all
         # supported host platforms. POSIX-only process tests self-skip.
-        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
-    runs-on: ${{ matrix.os }}
+        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || !(github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full')) && '["ubuntu-24.04","windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
+    # MURAGE_WIN_RUNNER (repository variable) is a JSON label array for the self-hosted Windows runner, for example
+    # ["self-hosted","Windows","X64"]. Unset or empty = GitHub-hosted windows-latest (the fallback). pull_request runs (forks
+    # included) never use it.
+    runs-on: ${{ matrix.os == 'windows-latest' && github.repository == 'FerroxLabs/murage' && github.event_name != 'pull_request' && vars.MURAGE_WIN_RUNNER && fromJSON(vars.MURAGE_WIN_RUNNER) || matrix.os }}
     # Ubuntu also runs the complete desktop/mobile human suite after runtime
     # checks; the recorded 16-minute prelude left too little of the old 20m cap.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-24.04' && 55 || 20 }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-24.04' && 75 || 20 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - name: Reject private operational records in Git
         run: node scripts/check-repository-custody.mjs
+      - name: Every module the packaged main process imports is packaged
+        # Node built-ins only, so it runs before install and fails in seconds. 1.0.20 rehearsal: shared/data-version-marker.mjs
+        # was imported by electron/main.mjs but missing from electron-builder.yml, and the packaged app died on launch.
+        run: node scripts/check-packaged-shared-imports.mjs
       - name: Validate scoped CI confirmation input
         shell: bash
         env:
@@ -81,14 +160,35 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Wipe proof safety regressions on Linux
+        # These fixtures require /bin/sh and case-sensitive sibling directories.
+        # Native shell/text proofs above still run on every supported host.
+        if: runner.os == 'Linux'
+        run: node --test server/wipe-proof/regression.test.mjs server/wipe-proof/process.node-test.mjs
+      - name: WAL transform node:test adapter witnesses on Linux
+        # The witness compares the production WAL files with their git HEAD bytes (WAL_PROD_HEAD_DIR), made here.
+        if: runner.os == 'Linux'
+        env:
+          WAL_PROD_HEAD_DIR: ${{ runner.temp }}/wal-head
+        run: |
+          mkdir -p "$WAL_PROD_HEAD_DIR/server"
+          git show HEAD:server/wal-maintenance.ts > "$WAL_PROD_HEAD_DIR/server/wal-maintenance.ts"
+          git show HEAD:server/io-budget.ts > "$WAL_PROD_HEAD_DIR/server/io-budget.ts"
+          git show HEAD:server/admission-shared.ts > "$WAL_PROD_HEAD_DIR/server/admission-shared.ts"
+          node --import ./server/testing/wal-transform-preload.mjs --test server/wal-transform.node-test.mjs
+      - name: PowerShell prefix regressions
+        run: node --test server/wipe-guard/pwsh/tests/prefix.test.mjs
       - name: Validate locale catalogs
         if: matrix.os == 'ubuntu-24.04'
         run: pnpm i18n:check
-      - name: Every Vitest file is classified GATE or EXTENDED
+      - name: Every Vitest file is classified and every Node test is wired
         # A new test file must be added to ci/gate-tests.txt (with its OSes and the user failure it prevents) or
         # to ci/extended-tests.txt; docs/testing.md has the rule.
         if: matrix.os == 'ubuntu-24.04'
         run: node scripts/ci-test-tiers.mjs check
+      - name: Validate delegation pack surface inventory
+        if: matrix.os == 'ubuntu-24.04'
+        run: node scripts/delegation-pack-inventory.mjs --check
       - name: Validate the bundled model metadata snapshot
         # Offline on purpose: this compares the committed snapshot against what
         # scripts/build-model-metadata.mjs renders from it, and checks its
@@ -97,6 +197,11 @@ jobs:
         # that deliberately with `pnpm models:build`.
         if: matrix.os == 'ubuntu-24.04'
         run: pnpm models:check
+      - name: Check Signal surface declarations
+        run: node scripts/signal-inventory.mjs --check-surfaces
+      - name: Report Signal activation evidence
+        # Pending G0 blocks Signal activation and release, not unrelated quality gates.
+        run: node scripts/signal-inventory.mjs --pin-status
       - name: Prepare Electron test runtime
         # Electron 43 lazily downloads its runtime on first import. Resolve it
         # before Vitest starts so a cold download cannot consume the fixture
@@ -113,11 +218,25 @@ jobs:
           MURAGE_REQUIRE_ELECTRON_LINK_TEST: "1"
         run: pnpm exec vitest run server/link-removal.electron.test.ts
       - name: Typecheck
-        # The server project outgrew Node's default heap on the 7 GB macOS
-        # runner (tsc -p tsconfig.server.json aborted with exit 134).
+        # Full test types run on the 16 GB Linux runner. Other platforms check
+        # production programs within the 7 GB macOS memory envelope.
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          MURAGE_TYPECHECK_MODE: ${{ matrix.os == 'ubuntu-24.04' && 'full' || 'production' }}
+          NODE_OPTIONS: ${{ matrix.os == 'ubuntu-24.04' && '--max-old-space-size=8192' || '--max-old-space-size=4300' }}
         run: pnpm typecheck
+      - name: Keep Windows child processes windowless
+        run: node scripts/check-windows-hide.mjs
+      - name: Windows child entry ordering
+        run: node scripts/check-windows-hide-entries.mjs
+      - name: Windows child runtime defaults
+        run: node --test shared/win-hide-child-process.node-test.mjs shared/win-hide-overloads.node-test.mjs scripts/windows-hide-posix.node-test.mjs
+      - name: Windows hide generated and preload regressions
+        if: matrix.os == 'ubuntu-latest'
+        run: node --test shared/win-hide-generated.node-test.mjs shared/win-hide-inheritance.node-test.mjs shared/win-hide-preload-order.node-test.mjs shared/win-hide-mutants.node-test.mjs scripts/windows-hide-checker-generated.node-test.mjs scripts/windows-hide-references.node-test.mjs electron/os-shell.node-test.mjs scripts/windows-hide-gate.node-test.mjs scripts/windows-hide-package-manifest.node-test.mjs
+      - name: Windows desktop gate fail-closed checks and parsing
+        if: matrix.os == 'ubuntu-latest'
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: ./scripts/windows-hide-gate-checks.test.ps1
       - run: pnpm lint
       - name: Typecheck the Composio broker Worker
         # `pnpm test` runs the Worker's Vitest suite, but the suite does not
@@ -135,6 +254,9 @@ jobs:
         # the vitest chain caught it: a stale catalog reached the 0.1.55
         # candidate before the release verification pass found it.
         run: pnpm catalog:check
+      - name: Prepare pinned historical restore and downgrade inspectors
+        shell: bash
+        run: node scripts/prepare-historical-test-fixtures.mjs --allow-fetch
       - name: Stage pinned backup test fixtures
         # Test-only: hash-pinned upstream age/restic bytes that backup tests read
         # or execute, plus this host's age tools for MURAGE_BACKUP_TEST_AGE_DIR
@@ -143,7 +265,64 @@ jobs:
         run: node scripts/prepare-backup-test-fixtures.mjs --tool-directory "$RUNNER_TEMP/backup-test-age" >> "$GITHUB_ENV"
       - name: Build the server bundle that packaged-layout tests import
         run: pnpm build:server
+      - name: Prepare script-test archives and Chromium
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          node --input-type=module <<'EOF'
+          import { writeFileSync, appendFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { join } from 'node:path';
+          import { chromium } from '@playwright/test';
+          import { BACKUP_AGE_PINS } from './shared/backup-age-pins.mjs';
+          import { RESTIC_ARCHIVE_URL, RESTIC_ARCHIVE_SHA256 } from './shared/backup-restic-pin.mjs';
+          const pin = BACKUP_AGE_PINS['linux-x64'];
+          for (const [key, name, url, sha] of [
+            ['MURAGE_BACKUP_LINUX_TEST_ARCHIVE', 'age.tar.gz', pin.url, pin.archiveSha256],
+            ['MURAGE_RESTIC_TEST_ARCHIVE', 'restic.bz2', RESTIC_ARCHIVE_URL, RESTIC_ARCHIVE_SHA256],
+          ]) {
+            const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
+            if (!response.ok) throw new Error(`${url}: ${response.status}`);
+            const bytes = Buffer.from(await response.arrayBuffer());
+            if (createHash('sha256').update(bytes).digest('hex') !== sha) throw new Error(`${name}: digest mismatch`);
+            const path = join(process.env.RUNNER_TEMP, name);
+            writeFileSync(path, bytes);
+            appendFileSync(process.env.GITHUB_ENV, `${key}=${path}\n`);
+          }
+          for (const key of ['MURAGE_CFT_CHROME', 'CFT_PATH']) appendFileSync(process.env.GITHUB_ENV, `${key}=${chromium.executablePath()}\n`);
+          EOF
+      - name: Script and native protocol Node tests
+        if: runner.os == 'Linux'
+        env:
+          CHROME_NO_SANDBOX: "1"
+          T30A_OUT: ${{ runner.temp }}/presence-variants
+        run: pnpm test:scripts
+      - name: macOS backup and offline deliverable Node tests
+        # The readers use textutil/sips and the generated-code boundary uses Seatbelt.
+        if: runner.os == 'macOS'
+        run: pnpm test:scripts:mac
       - run: pnpm test:electron
+      - name: Smoothness rig launcher and prebuild regressions
+        if: matrix.os == 'ubuntu-24.04'
+        run: pnpm test:smoothness-rig
+      - name: Privileged fixture cleanup regressions with fake Docker
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: sudo -E "$(command -v node)" --test scripts/smoothness/g8-host.node-test.mjs
+      - name: Provision pinned No limits egress image
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          if ! command -v docker > /dev/null || ! docker info > /dev/null 2>&1; then
+            echo "Docker is required for the No limits egress self-test." >&2
+            exit 1
+          fi
+          docker pull node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
+      - name: No limits host egress self-test
+        # Linux Docker namespaces are the containment fixture; action-policy tests stay all-OS.
+        if: matrix.os == 'ubuntu-24.04'
+        run: node scripts/no-limits-live/egress/self-test.mjs --out "${{ runner.temp }}/nolim-host-egress"
       # Murage for Chrome build and registration scripts. Windows registration
       # has its own tests in electron/browser-extension-windows.node-test.mjs.
       - name: Murage for Chrome script tests
@@ -172,6 +351,31 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: node scripts/smoke-app-permissions.mjs
 
+  # The Signal B3 qualification creates a local account, so it needs an elevated session. The quality job can run on the
+  # self-hosted Windows runner (MURAGE_WIN_RUNNER), whose service user is not an administrator ("#Requires
+  # -RunAsAdministrator" failed there). This job always uses the GitHub-hosted windows-latest image, which
+  # runs elevated, and never reads MURAGE_WIN_RUNNER.
+  signal-windows-qualification:
+    if: ${{ !inputs.human_files }}
+    name: Signal Windows storage qualification (elevated)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Qualify Signal Windows storage ownership
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          ./scripts/ci-signal-windows.test.ps1
+          ./scripts/ci-signal-windows.ps1
+
   vitest:
     if: ${{ !inputs.human_files }}
     name: ${{ inputs.vitest_file && 'Scoped Vitest confirmation' || format('Vitest shard {0}/{1}', matrix.vitest_shard, matrix.os == 'windows-latest' && 12 || 10) }} (${{ matrix.os }})
@@ -180,7 +384,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
+        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || !(github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full')) && '["ubuntu-24.04","windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
         # Scoped dispatch keeps its existing single selected-file confirmation;
         # ordinary CI uses ten bounded shards: 1.0.0's suite outgrew three
         # (every 20-minute shard was cancelled mid-run, CI 37727970532) and
@@ -200,7 +404,10 @@ jobs:
             vitest_shard: 11
           - os: ubuntu-24.04
             vitest_shard: 12
-    runs-on: ${{ matrix.os }}
+    # MURAGE_WIN_RUNNER (repository variable) is a JSON label array for the self-hosted Windows runner, for example
+    # ["self-hosted","Windows","X64"]. Unset or empty = GitHub-hosted windows-latest (the fallback). pull_request runs (forks
+    # included) never use it.
+    runs-on: ${{ matrix.os == 'windows-latest' && github.repository == 'FerroxLabs/murage' && github.event_name != 'pull_request' && vars.MURAGE_WIN_RUNNER && fromJSON(vars.MURAGE_WIN_RUNNER) || matrix.os }}
     # Windows runners are the slowest per shard: a 20-minute cap cancelled
     # shard 3 mid-run (CI 36317693740) before any failure text was printed.
     # 1.0.2 outgrew 30/45 too (CI 38718877034 and its base 38682984430: 16 of
@@ -212,6 +419,8 @@ jobs:
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || matrix.os == 'macos-latest' && 45 || 90 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -254,15 +463,14 @@ jobs:
           { echo "TEMP=$win"; echo "TMP=$win"; } >> "$GITHUB_ENV"
       - name: Provision required Windows command fixtures
         if: matrix.os == 'windows-latest'
-        shell: powershell
+        shell: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $ErrorActionPreference = 'Stop'
           if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'Windows PowerShell 5.1 is required' }
           $fixtureVersion = '7.4.13'
+          # Reuse the hash-verified installation from windows-ci-tools. The
+          # pinned downloader creates its archive exclusively (flag: wx).
           $fixturePowerShell = Join-Path $env:RUNNER_TEMP "pwsh-$fixtureVersion"
-          $fixtureArchive = Join-Path $env:RUNNER_TEMP "pwsh-$fixtureVersion.zip"
-          Invoke-WebRequest "https://github.com/PowerShell/PowerShell/releases/download/v$fixtureVersion/PowerShell-$fixtureVersion-win-x64.zip" -OutFile $fixtureArchive
-          Expand-Archive $fixtureArchive $fixturePowerShell -Force
           $actual = & "$fixturePowerShell/pwsh.exe" -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
           if ($LASTEXITCODE -ne 0 -or $actual -ne $fixtureVersion) { throw 'Required pwsh version did not answer' }
           $fixtureBash = Join-Path $env:ProgramFiles 'Git/bin'
@@ -299,11 +507,44 @@ jobs:
           case "$RUNNER_OS_NAME" in ubuntu-*) os=linux ;; macos-*) os=mac ;; windows-*) os=windows ;; *) exit 1 ;; esac
           # The real Windows backup round trip runs as a standard user in its own step below, never in an elevated shard.
           node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" \
-            --skip server/installation-windows-backup-roundtrip.test.ts > "$RUNNER_TEMP/vitest-args.txt"
+            --skip server/installation-windows-backup-roundtrip.test.ts --skip server/cloud-home/placeholder-launcher-root.test.ts > "$RUNNER_TEMP/vitest-args.txt"
           args=(); while IFS= read -r arg; do args+=("${arg%$'\r'}"); done < "$RUNNER_TEMP/vitest-args.txt"
           test "${#args[@]}" -gt 0 || { echo "::error::no GATE files selected for $os shard $SHARD"; exit 1; }
           echo "GATE files for $os, shard $SHARD: ${#args[@]} arguments"
           node node_modules/vitest/vitest.mjs run --tags-filter='!nightly && !perf-budget' "${args[@]}"
+      - name: Run the root-only placeholder-launcher test as root
+        # server/cloud-home/placeholder-launcher-root.test.ts is left out of the shard run above and runs here as root: the launcher
+        # makes .agents a 0555 directory and then creates the mask targets inside it, which only root (the Cloud home launcher's
+        # user) can do, so its tests (the .agents placeholder and the freeze that lasts for the turn only) fail loudly for any other
+        # user. The rest of the launcher tests are in server/cloud-home/placeholder-launcher.test.ts, which runs in the shards as the
+        # runner user: as root the launcher refuses the runner-owned checkout as a root-owned executable path, and nothing about
+        # that check is weakened. Nothing skips either file. One shard carries this step; sudo -E keeps the environment and PATH is passed through.
+        if: ${{ !cancelled() && inputs.vitest_file == '' && matrix.os == 'ubuntu-24.04' && matrix.vitest_shard == 1 }}
+        shell: bash
+        run: sudo -E env "PATH=$PATH" "$(command -v node)" node_modules/vitest/vitest.mjs run server/cloud-home/placeholder-launcher-root.test.ts
+      - name: Run the GATE files that have their own Vitest config
+        # A file a root vitest.*.config.ts names (the WAL suites: their test-only source transform, forked workers and
+        # untransformed production worker) runs only through that config, never in a plain shard above. The WAL witnesses
+        # compare the production files with their git HEAD bytes (WAL_PROD_HEAD_DIR), made here. One shard per OS carries it.
+        if: ${{ !cancelled() && inputs.vitest_file == '' && matrix.vitest_shard == 1 }}
+        shell: bash
+        env:
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+          RUNNER_OS_NAME: ${{ matrix.os }}
+          WAL_PROD_HEAD_DIR: ${{ runner.temp }}/wal-head
+        run: |
+          case "$RUNNER_OS_NAME" in ubuntu-*) os=linux ;; macos-*) os=mac ;; windows-*) os=windows ;; *) exit 1 ;; esac
+          mkdir -p "$WAL_PROD_HEAD_DIR/server"
+          for f in server/wal-maintenance.ts server/io-budget.ts server/admission-shared.ts; do git show "HEAD:$f" > "$WAL_PROD_HEAD_DIR/$f"; done
+          for config in vitest.wal.config.ts vitest.walguard.config.ts vitest.walprod.config.ts vitest.walrecovery.config.ts; do
+            node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --config $config > "$RUNNER_TEMP/vitest-config-args.txt"
+            args=(); while IFS= read -r arg; do args+=("${arg%$'\r'}"); done < "$RUNNER_TEMP/vitest-config-args.txt"
+            if [ "${#args[@]}" -eq 0 ]; then echo "no GATE files for $os in $config"; continue; fi
+            echo "GATE files for $os through $config: ${#args[@]} arguments"
+            # Only a config built on vite.config.ts has the nightly and perf-budget tags; Vitest refuses a tag filter for a config without tags.
+            filter=(); if grep -q 'from "./vite.config.ts"' "$config"; then filter=(--tags-filter='!nightly && !perf-budget'); fi
+            node node_modules/vitest/vitest.mjs run --config $config "${filter[@]}" "${args[@]}"
+          done
       - name: Scoped Vitest confirmation
         if: inputs.vitest_file != ''
         shell: bash
@@ -330,7 +571,7 @@ jobs:
         # user is removed at the end. The file asserts the token is not elevated before anything else. Throwaway mutant
         # branches set MURAGE_TEST_RT_MUTANT on this step (see the file's header); the workflow never does.
         if: ${{ !cancelled() && matrix.os == 'windows-latest' && matrix.vitest_shard == 1 }}
-        shell: powershell
+        shell: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         timeout-minutes: 30
         run: |
           $ErrorActionPreference = 'Stop'
@@ -394,6 +635,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -419,7 +662,8 @@ jobs:
         run: pnpm exec vitest run server/host-power.test.ts server/procs.test.ts scripts/build-murage-cage.test.mjs scripts/power-seccomp.test.mjs
 
   human:
-    if: ${{ !inputs.windows_only && !inputs.human_files }}
+    # Full runs only (main, pull_request, RC dispatch with full=true, or a ci/try branch ending -full): 36-75 min x 6 shards.
+    if: ${{ !inputs.windows_only && !inputs.human_files && (github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full')) }}
     name: human specs ${{ matrix.human_shard }}/6 (Ubuntu)
     # One worker per process (the harness owns one store), so the suite is
     # split across runners instead: about 920 desktop+mobile tests need close
@@ -443,6 +687,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -491,11 +737,40 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  opencode-pinned:
+    if: ${{ !inputs.windows_only && !inputs.human_files && !inputs.vitest_file }}
+    name: OpenCode 1.19.5 engine gate (Ubuntu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/vitest-runtime
+      - name: Stage exact npm engine packages
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/opencode-pinned/linux"
+          node scripts/fetch-build-input.mjs D080 "$RUNNER_TEMP/opencode-pinned/opencode-ai-1.19.5.tgz"
+          node scripts/fetch-build-input.mjs D081 "$RUNNER_TEMP/opencode-pinned/opencode-linux-x64-1.19.5.tgz"
+          tar -xzf "$RUNNER_TEMP/opencode-pinned/opencode-linux-x64-1.19.5.tgz" -C "$RUNNER_TEMP/opencode-pinned/linux"
+          echo "MURAGE_OPENCODE_PINNED_BIN=$RUNNER_TEMP/opencode-pinned/linux/package/bin/opencode" >> "$GITHUB_ENV"
+      - name: Require real pinned ACP and local Zen captures
+        run: node scripts/ci-opencode-pinned.mjs
+
   extended:
     # EXTENDED tests (ci/extended-tests.txt): Linux only, visible, never blocking. Job-level continue-on-error keeps
     # a failed or timed-out shard from failing the run's conclusion, which is what scripts/release-ci-gate.mjs reads;
     # `required` does not list this job. Their failures are follow-up work, not release blockers.
-    if: ${{ !inputs.windows_only && !inputs.human_files && !inputs.vitest_file }}
+    if: ${{ !inputs.windows_only && !inputs.human_files && !inputs.vitest_file && (github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full')) }}
     name: extended (non-blocking) ${{ matrix.extended_shard }}/5 (Ubuntu)
     continue-on-error: true
     strategy:
@@ -508,6 +783,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -537,7 +814,7 @@ jobs:
   required:
     if: ${{ always() && !inputs.windows_only && !inputs.vitest_file && !inputs.human_files }}
     name: required CI completion
-    needs: [quality, vitest, host-power-arm64, human, control-plane, mobile, package-linux]
+    needs: [quality, signal-windows-qualification, vitest, host-power-arm64, human, control-plane, mobile, package-linux, opencode-pinned, push-relay, wipe-proof]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -545,20 +822,30 @@ jobs:
         shell: bash
         env:
           QUALITY: ${{ needs.quality.result }}
+          SIGNAL_WINDOWS: ${{ needs.signal-windows-qualification.result }}
+          WIPE_PROOF: ${{ needs.wipe-proof.result }}
           VITEST: ${{ needs.vitest.result }}
           HOST_POWER_ARM64: ${{ needs.host-power-arm64.result }}
           HUMAN: ${{ needs.human.result }}
+          FULL_RUN: ${{ (github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full')) }}
           CONTROL_PLANE: ${{ needs.control-plane.result }}
+          PUSH_RELAY: ${{ needs.push-relay.result }}
           MOBILE: ${{ needs.mobile.result }}
           PACKAGE_LINUX: ${{ needs.package-linux.result }}
+          OPENCODE_PINNED: ${{ needs.opencode-pinned.result }}
         run: |
           test "$QUALITY" = success
+          test "$SIGNAL_WINDOWS" = success
+          test "$WIPE_PROOF" = success
           test "$VITEST" = success
           test "$HOST_POWER_ARM64" = success
-          test "$HUMAN" = success
+          # human is skipped only on a light ci/try dispatch; release-ci-gate.mjs still demands every human job green (FULL_RUN_JOBS)
+          test "$HUMAN" = success || { test "$FULL_RUN" != true && test "$HUMAN" = skipped; }
           test "$CONTROL_PLANE" = success
+          test "$PUSH_RELAY" = success
           test "$MOBILE" = success
           test "$PACKAGE_LINUX" = success
+          test "$OPENCODE_PINNED" = success
 
   human-confirmation:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}
@@ -569,6 +856,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -641,6 +930,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -651,6 +942,29 @@ jobs:
       - uses: ./.github/actions/linux-cage
       - run: pnpm control-plane:test
       - run: pnpm control-plane:dry-run
+
+  push-relay:
+    if: ${{ !inputs.windows_only && !inputs.human_files }}
+    name: push-relay tests (isolated SQLite fixtures)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: cloudflare/push-relay/pnpm-lock.yaml
+      - working-directory: cloudflare/push-relay
+        run: pnpm install --frozen-lockfile --ignore-workspace
+      - uses: ./.github/actions/linux-cage
+      - working-directory: cloudflare/push-relay
+        run: pnpm test
 
   mobile:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
@@ -666,6 +980,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -692,6 +1008,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - name: Restore the pinned tool download cache
         # Primary source for age, restic, cloudflared and the other pinned helpers: served by the
         # Actions cache, not github.com release hosting. Files are named by their pinned sha256 and
@@ -748,7 +1066,9 @@ jobs:
           python3 -I native/gepa/build-linux.py "$RUNNER_TEMP/gepa-linux"
       - name: Package from the verified offline CUA stage
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          # Same compiler headroom as the release jobs (1.0.20; split is a 1.0.21 item).
+          NODE_OPTIONS: --max-old-space-size=8192
+          MURAGE_TYPECHECK_CAP_MIB: "8192"
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           pnpm package:linux:offline "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"
