@@ -40,6 +40,8 @@ export interface EngineClient {
   }) => Promise<unknown>;
   notify?: (method: string, params?: Record<string, unknown>) => Promise<void>;
   close: () => Promise<void>;
+  /** True once the engine process is gone (exit, spawn error, broken pipe, bad output): every later request refuses. */
+  ended?: () => boolean;
 }
 
 export async function boundedJson(response: Response, maxBytes: number): Promise<unknown> {
@@ -124,6 +126,9 @@ export function startHeadlessEngine(spec: AgentBrowserSpec, upstreamRole: "headl
     pending.clear();
   };
   const closed = new Promise<void>((resolve) => child.once("close", () => { fail(); resolve(); }));
+  // The engine's stderr is discarded; its exit code, signal or spawn error code (never output) is what names an early death.
+  child.once("exit", (code, signal) => { if (!closePromise) console.warn(`[browser-engine] engine process ended code=${code ?? "-"} signal=${signal ?? "-"}`); });
+  child.once("error", (error) => console.warn(`[browser-engine] engine process failed to start code=${String((error as { code?: unknown }).code ?? "error").slice(0, 32)}`));
   // 'close' also waits for every stdio pipe to end. The engine's daemon inherits those pipes and
   // outlives the MCP process until its idle timeout (60 s), so 'exit' is the real end of the child.
   const exited = new Promise<void>((resolve) => child.once("exit", () => { fail(); resolve(); }));
@@ -152,6 +157,7 @@ export function startHeadlessEngine(spec: AgentBrowserSpec, upstreamRole: "headl
   child.stdout.on("end", () => { void reads.then(() => splitter.flush()).catch(() => fail()); });
   return {
     engineTransport: true,
+    ended: () => stopped,
     async notify(method, params) {
       if (stopped) throw new Error(FAILURE);
       await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method, params })));

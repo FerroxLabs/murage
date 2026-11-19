@@ -8,7 +8,7 @@ import { closeDatabase, database, transaction } from "../database.ts";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { assertMemoryAccess, ensureScope, persistMemoryRoster, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { assertMemoryAccess, ensureScope, persistMemoryRoster, reconcileMemoryRoster, revalidateMemoryAccess, type MemoryRoster } from "./policy.ts";
 import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { MemoryDispatchReceipt } from "./dispatch.ts";
@@ -98,7 +98,12 @@ it("a peer receipt citing a deleted notebook refuses before cleanup, without rev
   expect(bundle.recordVersions.map(r => r.id)).toContain("shared-record");
   const receipt = new MemoryDispatchReceipt(bundle, access, "claude");
   transaction(db => captureBotDeletion(db, "gone"));
-  expect(() => assertMemoryAccess(access)).not.toThrow();
+  // MAIN RULING 2026-11-17T19:46Z Q3 (recall-adm DECISIONS A2): deleting the notebook's scope moved the authority epoch. The old handle
+  // refuses; the unrelated reader keeps its access by revalidating, and the receipt citing the deleted notebook still refuses.
+  expect(() => assertMemoryAccess(access)).toThrow("MEMORY_CONTEXT_REVOKED");
+  const renewed = revalidateMemoryAccess(access);
+  expect(() => assertMemoryAccess(renewed)).not.toThrow();
+  expect(renewed.scopeIds).not.toContain(scope);
   expect(() => receipt.assertCurrent()).toThrow();
   expect(() => receipt.accepted()).toThrow();
 });
@@ -186,6 +191,40 @@ it.each(["record", "source", "evidence"])("a resumed peer session citing a delet
   expect(() => receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");
   runRevocationJobsNow(db);
   expect(() => receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");
+});
+
+// Review arev-n7 High 2: an evidence-only footprint entry is watched for a deny, never asserted as a readable scope.
+it("an unrelated revocation keeps a resumed session whose record rests on another notebook's evidence", async () => {
+  const w = world(), scope = ensureScope("bot", "gone"), db = database();
+  db.prepare("INSERT INTO memory_scope_bindings VALUES('peer-grant',?,'bot','a',0,'granted','{}')").run(scope);
+  const fixture = new WritetimeFixture(db);
+  storeLiveAnchor(db, "t-gone", "peer-message", "words");
+  fixture.source("peer-source", scope, { thread: "t-gone", message: "peer-message" });
+  fixture.record("evidence-record", 1, ensureScope("bot", "a"), ["peer-source"], { assertion: "owner-statement" });
+  const access = w.access("a"), session = "evidence-session";
+  const confirmation = startLiveSession(access, "claude", session);
+  const old = new MemoryDispatchReceipt(await buildMemoryBundle("held", access, empty, { allowance: LineageAllowance.tool() }), access, "claude");
+  old.noteLookup([{ id: "evidence-record", version: 1, evidence: [] }], access);
+  old.sessionStarted(session, Boolean(confirmation), confirmation);
+  old.accepted();
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), access.threadId, "claude", session, access)).toBe(false);
+  // the checkpoint is the v2 envelope {v:2,s,dg} (DESIGN-B5-PROOF F1); s is its scope list
+  const footprint = () => (JSON.parse(String(db.prepare("SELECT footprint FROM memory_session_checks WHERE thread_id=? AND native_session=?").get(access.threadId, session)!.footprint)) as { s: string[] }).s;
+  expect(footprint().some(entry => entry.endsWith(scope) && entry !== scope)).toBe(true);
+  const generation = () => Number(db.prepare("SELECT value FROM memory_lineage_lsn_meta WHERE key='deny_generation'").get()!.value);
+  const before = generation();
+  // Another bot's notebook is deleted: the deny generation moves, but nothing this session holds or rests on is denied.
+  transaction(tx => captureBotDeletion(tx, "c"));
+  expect(generation()).toBeGreaterThan(before);
+  const why: { reason?: string } = {};
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), access.threadId, "claude", session, access, why)).toBe(false);
+  expect(why.reason).toBeUndefined();
+  runRevocationJobsNow(db);
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), access.threadId, "claude", session, access, why)).toBe(false);
+  // The watch still holds: a committed deny of the evidence's notebook refuses, even before its generation bump.
+  db.prepare("INSERT INTO memory_deny(kind,id,epoch,created_at) VALUES('scope',?,0,0)").run(scope);
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), access.threadId, "claude", session, access, why)).toBe(true);
+  expect(why.reason).toBe("changed:deny");
 });
 
 it("scope cleanup keeps unknown tombstones and record ids spanning notebooks on the hard fallback", () => {

@@ -8,18 +8,18 @@ import { useEffect, useState } from "react";
 import { Switch } from "./SettingsPrimitives";
 import { useStore } from "@/state/store";
 import { t } from "@/lib/i18n";
+import { chiefFor } from "@/lib/help-ask-chief";
 import { notifySurfacesBridge, type NotifyCapabilities, type NotifySurfaces } from "@/lib/notify-surfaces";
 import { chooserRows, surfacesOnCount } from "@/lib/notify-chooser";
 import { resolveNotificationPreferences } from "../../shared/notification-preferences";
 
 const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
-type FlagKey = "notifyActions" | "quietSummary" | "hideFullscreen" | "respectFocus" | "badgeMenu";
+type FlagKey = "notifyActions" | "quietSummary" | "hideFullscreen" | "respectFocus";
 const FLAGS: readonly { key: FlagKey; label: Parameters<typeof t>[0]; help: Parameters<typeof t>[0] }[] = [
   { key: "notifyActions", label: "notifyMe.notifyActions", help: "notifyMe.notifyActions.help" },
   { key: "quietSummary", label: "notifyMe.quietSummary", help: "notifyMe.quietSummary.help" },
   { key: "hideFullscreen", label: "notifyMe.hideFullscreen", help: "notifyMe.hideFullscreen.help" },
   { key: "respectFocus", label: "notifyMe.respectFocus", help: "notifyMe.respectFocus.help" },
-  { key: "badgeMenu", label: "notifyMe.badgeMenu", help: "notifyMe.badgeMenu.help" },
 ];
 
 export function NotifyMeSettings() {
@@ -29,11 +29,21 @@ export function NotifyMeSettings() {
   const [caps, setCaps] = useState<NotifyCapabilities | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pinPick, setPinPick] = useState("");
   useEffect(() => {
     if (!bridge) return;
-    let alive = true;
-    void Promise.all([bridge.get(), bridge.capabilities()]).then(([s, c]) => { if (alive) { setSurfaces(s); setCaps(c); } }).catch(() => { if (alive) setError(t("notifyMe.errorLoad")); });
-    return () => { alive = false; };
+    let alive = true, request = 0, platform: string | undefined;
+    const readCaps = async () => {
+      const ticket = ++request;
+      const next = await bridge.capabilities();
+      if (alive && ticket === request) { platform = next.platform; setCaps(next); }
+    };
+    void Promise.all([bridge.get().then(saved => { if (alive) setSurfaces(saved); }), readCaps()])
+      .catch(() => { if (alive) setError(t("notifyMe.errorLoad")); });
+    const refreshMac = () => { if (platform === "darwin") void readCaps().catch(() => {}); };
+    window.addEventListener("focus", refreshMac);
+    const unsubscribe = window.muragebox?.startup?.onChange(refreshMac);
+    return () => { alive = false; window.removeEventListener("focus", refreshMac); unsubscribe?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   if (!bridge || !surfaces || !caps) return error ? <p role="alert" className="text-[12px] text-danger">{error}</p> : null;
@@ -45,6 +55,9 @@ export function NotifyMeSettings() {
   };
   const rows = chooserRows(caps, { includePill: true });
   const { on, of } = surfacesOnCount(surfaces, caps);
+  const bots = state.bots.filter(bot => !bot.hidden);
+  const suggested = chiefFor(bots);
+  const pinChoice = bots.some(bot => bot.id === pinPick) ? pinPick : suggested?.id ?? "";
   const completionOn = resolveNotificationPreferences(state.config?.notifications).completion;
   return <section aria-labelledby="notify-me-title" className="mt-4 rounded-xl border border-hairline/40 bg-card p-4">
     <h3 id="notify-me-title" className="text-[15px] font-medium text-ink">{t("notifyMe.title")}</h3>
@@ -54,12 +67,29 @@ export function NotifyMeSettings() {
         const id = `notify-me-${row.id}`;
         const hidden = row.id === "receipt" && !completionOn;
         return <li key={row.id} className="flex min-h-11 items-start justify-between gap-3 py-1.5 text-[13px] text-ink">
-          <span id={id}>{t(row.label)}
-            <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">
-              {hidden ? t("notifyMe.finishedOff") : t(row.note)}
-              {row.reason ? <span className="block">{t("notifyChooser.notHere")} {t(row.reason)}</span> : null}
-              {row.needsSettings && surfaces.shortcut ? <span className="block">{t("notifyMe.shortcutSet", { key: surfaces.shortcut })}</span> : null}
-            </span></span>
+          <div className="min-w-0">
+            <span id={id}>{t(row.label)}
+              <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">
+                {hidden ? t("notifyMe.finishedOff") : t(row.note)}
+                {row.reason ? <span className="block">{t("notifyChooser.notHere")} {t(row.reason)}</span> : null}
+                {row.needsSettings && surfaces.shortcut ? <span className="block">{t("notifyMe.shortcutSet", { key: surfaces.shortcut })}</span> : null}
+              </span>
+            </span>
+            {row.id === "tray" && surfaces.surfaces.tray && caps.trayHidden &&
+              <p role="status" className="mt-1 text-[12px] text-ink-secondary">{t("notifyMe.trayHidden")}</p>}
+            {row.id === "bubble" && row.available && surfaces.surfaces.bubble && !bots.some(bot => bot.id === surfaces.pinnedBotId) &&
+              <div className="mt-2 flex flex-wrap items-end gap-2">
+                <label className="text-[12px]">{t("notifyMe.pickBot")}
+                  <select value={pinChoice} disabled={busy || !bots.length} onChange={event => setPinPick(event.target.value)}
+                    className={"mt-1 block min-h-11 w-full rounded-lg border border-hairline/50 bg-control px-2 text-[13px] " + focus}>
+                    {!bots.length && <option value="" />}
+                    {bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
+                  </select>
+                </label>
+                <button type="button" disabled={busy || !pinChoice} onClick={() => void change(() => bridge.set("pinnedBotId", pinChoice))}
+                  className={"min-h-11 rounded-lg border border-hairline/50 bg-control px-3 text-[13px] disabled:opacity-50 " + focus}>{t("float.pin")}</button>
+              </div>}
+          </div>
           <Switch aria-labelledby={id} checked={surfaces.surfaces[row.id] === true} disabled={busy || !row.available || hidden || (row.needsSettings && !surfaces.shortcut)}
             onClick={() => void change(() => bridge.set(`surfaces.${row.id}`, surfaces.surfaces[row.id] !== true))} className={focus} />
         </li>;

@@ -9,6 +9,7 @@ import { closeDatabase, database, databaseGeneration } from '../database.ts';
 import { InternalCapabilities } from '../internal-capabilities.ts';
 import { Store } from '../store.ts';
 import { removeTempDirSync } from '../testing/cleanup.ts';
+import * as policy from './policy.ts';
 import { assertMemoryAccess, ensureScope, memoryAccess, persistMemoryRoster, reconcileMemoryRoster, type MemoryRoster } from './policy.ts';
 import { prepareRecallContextSync, stopRecallViewMaintenance } from './recall-view.ts';
 import { sqlWork } from './testing/sql-work.ts';
@@ -161,4 +162,285 @@ it('boot and structural publications schedule certification off the caller path'
   expect(store.recallRosterCertificate()).toBeUndefined();
   for (let n = 0; n < 200 && !store.recallRosterCertificate(); n++) await new Promise<void>(resolve => setImmediate(resolve));
   expect(store.recallRosterCertificate()?.rosterRevision).toBe(store.memoryRosterRevision);
+});
+
+// MAIN RULING 2026-11-17T19:46Z: old handles never survive an epoch; live readers revalidate.
+it('a reconciled epoch refuses the old handle even after a live replacement is ready', () => {
+  const f = fixture(), old = f.issue();
+  database().exec("UPDATE memory_scope_bindings SET revision=revision+1 WHERE id='memory-roster-policy'");
+  reconcileMemoryRoster(f.roster);
+  expect(() => assertMemoryAccess(f.issue())).not.toThrow();
+  expect(() => assertMemoryAccess(old)).toThrow();
+  expect(policy.lineageReaderAudience(old).view).toEqual(f.issue().view);
+  expect(() => assertMemoryAccess(old)).toThrow();
+});
+it('a revalidated live reader continues at the new epoch and must revalidate again at the next', () => {
+  const f = fixture(), old = f.issue(), scope = ensureScope('bot', 'reader');
+  database().exec("UPDATE memory_scope_bindings SET revision=revision+1 WHERE id='memory-roster-policy'");
+  reconcileMemoryRoster(f.roster);
+  expect(typeof policy.revalidateMemoryAccess).toBe('function');
+  const live = policy.revalidateMemoryAccess(old);
+  expect(live).not.toBe(old);
+  expect(() => assertMemoryAccess(live)).not.toThrow();
+  expect(() => assertMemoryAccess(live, scope)).not.toThrow();
+  expect(() => assertMemoryAccess(old)).toThrow();
+  database().exec("UPDATE memory_scope_bindings SET revision=revision+1 WHERE id='memory-roster-policy'");
+  reconcileMemoryRoster(f.roster);
+  expect(() => assertMemoryAccess(live)).toThrow();
+  expect(() => assertMemoryAccess(policy.revalidateMemoryAccess(live), scope)).not.toThrow();
+});
+it('revalidation records the intersection and never grants a newly added scope', () => {
+  const f = fixture(), old = f.issue(), db = database();
+  const scope = ensureScope('project', 'new-project');
+  db.prepare("INSERT INTO memory_scope_bindings VALUES('new-grant',?,'bot','reader',0,'granted','{}')").run(scope);
+  prepareRecallContextSync('reader', 'direct', f.roster);
+  expect(typeof policy.revalidateMemoryAccess).toBe('function');
+  const live = policy.revalidateMemoryAccess(old);
+  expect(() => assertMemoryAccess(live)).not.toThrow();
+  expect(live.scopeIds).not.toContain(scope);
+  expect(() => assertMemoryAccess(live, scope)).toThrow('MEMORY_SCOPE_DENIED');
+  expect(() => assertMemoryAccess(f.issue(), scope)).not.toThrow();
+});
+it('revalidation refuses a reader removed by the new epoch and cannot revive a dead claim', () => {
+  const f = fixture(), registry = new InternalCapabilities();
+  registry.begin('reader', 'room-thread', 'room-generation');
+  const token = registry.mint({ botId: 'reader', threadId: 'room-thread', generation: 'room-generation', depth: 0, kind: 'memory', skillAuthoring: false });
+  prepareRecallContextSync('reader', 'room-thread', f.roster);
+  const old = memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => f.roster);
+  f.roster.groups[0].memberIds = []; f.roster.memoryRosterRevision!++;
+  reconcileMemoryRoster(f.roster);
+  expect(typeof policy.revalidateMemoryAccess).toBe('function');
+  expect(() => policy.revalidateMemoryAccess(old)).toThrow();
+  registry.revokeAll();
+  expect(() => policy.revalidateMemoryAccess(old)).toThrow('MEMORY_UNAUTHORIZED');
+});
+
+for (const watermark of ['policy_revision', 'deletion_epoch'] as const) it(`revalidation cannot bridge a changed ${watermark}`, () => {
+  const f = fixture(), old = f.issue();
+  database().exec(`UPDATE memory_meta SET ${watermark}=${watermark}+1 WHERE id=1`);
+  prepareRecallContextSync('reader', 'direct', f.roster);
+  expect(() => policy.revalidateMemoryAccess(old)).toThrow('MEMORY_CONTEXT_REVOKED');
+  expect(() => policy.revalidateMemoryAccess({ ...old })).toThrow('MEMORY_UNAUTHORIZED');
+});
+
+it('successive revalidation never regains a withdrawn scope after it is regranted', () => {
+  const f = fixture(), db = database(), scope = ensureScope('project', 'fixture-project');
+  db.prepare("INSERT INTO memory_scope_bindings VALUES('fixture-grant',?,'bot','reader',0,'granted','{}')").run(scope);
+  prepareRecallContextSync('reader', 'direct', f.roster);
+  const old = f.issue();
+  expect(() => assertMemoryAccess(old, scope)).not.toThrow();
+  db.exec("UPDATE memory_scope_bindings SET state='pending' WHERE id='fixture-grant'");
+  prepareRecallContextSync('reader', 'direct', f.roster);
+  const narrowed = policy.revalidateMemoryAccess(old);
+  expect(() => assertMemoryAccess(narrowed, scope)).toThrow('MEMORY_SCOPE_DENIED');
+  db.exec("UPDATE memory_scope_bindings SET state='granted' WHERE id='fixture-grant'");
+  prepareRecallContextSync('reader', 'direct', f.roster);
+  const live = policy.revalidateMemoryAccess(narrowed);
+  expect(() => assertMemoryAccess(live)).not.toThrow();
+  expect(live.scopeIds).not.toContain(scope);
+  expect(() => assertMemoryAccess(live, scope)).toThrow('MEMORY_SCOPE_DENIED');
+  expect(() => assertMemoryAccess(f.issue(), scope)).not.toThrow();
+  expect(() => assertMemoryAccess(policy.revalidateMemoryAccess(old), scope)).toThrow('MEMORY_SCOPE_DENIED');
+});
+it('S2 a revalidated live room reader continues its proven retained session', async () => {
+  const { setupProofFixture, receipts, proofModule } = await import('./session-proof-fixture.ts');
+  const { LineageAllowance } = await import('./lineage-allowance.ts');
+  const f = setupProofFixture('room-thread'), proof = await proofModule();
+  await receipts(f, 1);
+  expect(proof.proveRetainedSession(LineageAllowance.tool(), f.key, { access: f.access, disclosed: true })).toEqual({ kind: 'resume' });
+  database().exec("UPDATE memory_scope_bindings SET revision=revision+1 WHERE id='memory-roster-policy'");
+  reconcileMemoryRoster(f.roster);
+  expect(() => assertMemoryAccess(f.access)).toThrow();
+  const live = policy.revalidateMemoryAccess(f.access);
+  expect(proof.proveRetainedSession(LineageAllowance.tool(), f.key, { access: live, disclosed: true })).toEqual({ kind: 'resume' });
+});
+
+it('revalidation constrains lineage and a cached retained footprint to the recorded intersection', async () => {
+  const { setupProofFixture, receipts, proofModule } = await import('./session-proof-fixture.ts');
+  const { LineageAllowance } = await import('./lineage-allowance.ts');
+  const { refsLookup } = await import('./deny-read.ts');
+  const f = setupProofFixture('room-thread'), proof = await proofModule(), db = database();
+  const [bundleId] = await receipts(f, 1);
+  expect(proof.proveRetainedSession(LineageAllowance.tool(), f.key, { access: f.access, disclosed: true })).toEqual({ kind: 'resume' });
+  const scope = ensureScope('project', 'fixture-new-project');
+  db.prepare("INSERT INTO memory_scope_bindings VALUES('fixture-new-grant',?,'room','room',0,'granted','{}')").run(scope);
+  prepareRecallContextSync('reader', 'room-thread', f.roster);
+  const current = f.issue(), live = policy.revalidateMemoryAccess(f.access);
+  const lsn = Number(db.prepare("SELECT max(value) AS n FROM memory_lineage_lsn_meta WHERE key IN ('policy_bump_lsn','epoch_bump_lsn')").get()!.n);
+  const refs = [{ kind: 'receipt' as const, bundleId, lsn, scopeIds: [scope] }];
+  expect(refsLookup(db, refs, { audience: { ...policy.lineageReaderAudience(current), owner: false } }).state).toBe('shown');
+  expect(refsLookup(db, refs, { audience: { ...policy.lineageReaderAudience(live), owner: false } })).toMatchObject({ state: 'withheld', reason: 'footprint' });
+  // A durable prior checkpoint can already name the current full view; that shortcut cannot override this handle's narrower grant.
+  // The checkpoint is the v2 envelope {v:2,s,dg} (DESIGN-B5-PROOF F1): only its scope list is rewritten, the proved deny generation stays.
+  db.prepare("UPDATE memory_session_checks SET recall_epoch=?,view_id=?,view_generation=?,view_digest=?,footprint=json_set(footprint,'$.s',json(?)) WHERE thread_id=? AND driver_instance=? AND native_session=?")
+    .run(epoch(), current.view.viewId, current.view.generation, current.view.digest, JSON.stringify([scope]), f.key.threadId, f.key.driverInstance, f.key.nativeSession);
+  expect(JSON.parse(String(db.prepare('SELECT footprint FROM memory_session_checks WHERE thread_id=? AND driver_instance=? AND native_session=?').get(f.key.threadId, f.key.driverInstance, f.key.nativeSession)!.footprint))).toMatchObject({ v: 2, s: [scope] });
+  expect(proof.proveRetainedSession(LineageAllowance.tool(), f.key, { access: current, disclosed: true })).toEqual({ kind: 'resume' });
+  expect(proof.proveRetainedSession(LineageAllowance.tool(), f.key, { access: live, disclosed: true })).toMatchObject({ kind: 'fresh', reason: 'scope-left-view' });
+  db.prepare("UPDATE memory_session_checks SET footprint=json_set(footprint,'$.s',json(?)) WHERE thread_id=? AND driver_instance=? AND native_session=?")
+    .run(JSON.stringify('wide'), f.key.threadId, f.key.driverInstance, f.key.nativeSession);
+  expect(proof.proveRetainedSession(LineageAllowance.tool(), f.key, { access: live, disclosed: true })).toMatchObject({ kind: 'fresh', reason: 'footprint-wide', cause: 'checking' });
+  const { freezeLineageReader } = await import('./lineage-write.ts');
+  const room = ensureScope('room', 'room'), scopeCeiling = [room];
+  const frozen = freezeLineageReader({ audience: { ...policy.lineageReaderAudience(current), owner: false, scopeCeiling } });
+  scopeCeiling.push(scope);
+  expect(refsLookup(db, refs, frozen)).toMatchObject({ state: 'withheld', reason: 'footprint' });
+  const ownRefs = [{ ...refs[0], scopeIds: [room] }];
+  const narrowed = freezeLineageReader({ audience: { ...policy.lineageReaderAudience(live), owner: false } });
+  expect(refsLookup(db, ownRefs, narrowed).state).toBe('shown');
+  db.exec('UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1');
+  expect(refsLookup(db, ownRefs, narrowed).state).not.toBe('shown');
+});
+
+it('revalidation separates grant identities for cursors, replay caches and turn footprints', async () => {
+  const { sealMemoryCursor, openMemoryCursor } = await import('./cursor.ts');
+  const { accessStamp } = await import('./lineage-footprint.ts');
+  const { readerAudience } = await import('./disclosures.ts');
+  const { LineageAllowance } = await import('./lineage-allowance.ts');
+  const f = fixture(), old = f.issue(), db = database(), scope = ensureScope('project', 'fixture-cursor-project');
+  db.prepare("INSERT INTO memory_scope_bindings VALUES('fixture-cursor-grant',?,'bot','reader',0,'granted','{}')").run(scope);
+  prepareRecallContextSync('reader', 'direct', f.roster);
+  const current = f.issue(), live = policy.revalidateMemoryAccess(old), again = policy.revalidateMemoryAccess(old);
+  expect(typeof live.scopeDigest).toBe('string');
+  expect(accessStamp(live)).not.toBe(accessStamp(current));
+  expect(accessStamp(again)).toBe(accessStamp(live));
+  const cursor = sealMemoryCursor('["fixture",1]', live, false);
+  expect(openMemoryCursor(cursor, again, false)).toBe('["fixture",1]');
+  expect(() => openMemoryCursor(cursor, current, false)).toThrow('INVALID_MEMORY_CURSOR');
+  expect(readerAudience(LineageAllowance.tool(), live).cacheKey).not.toBe(readerAudience(LineageAllowance.tool(), current).cacheKey);
+  expect(readerAudience(LineageAllowance.tool(), again).cacheKey).toBe(readerAudience(LineageAllowance.tool(), live).cacheKey);
+});
+it('revalidation omits pins outside its ceiling even after the full view pin cache is warm', async () => {
+  const { buildMemoryBundle } = await import('./bundle.ts');
+  const { LineageAllowance } = await import('./lineage-allowance.ts');
+  const { setMemoryMode } = await import('./repository.ts');
+  const { OWNER_PIN } = await import('./schema.ts');
+  setMemoryMode('active');
+  const f = fixture(), old = f.issue(), db = database(), scope = ensureScope('project', 'fixture-pin-project');
+  db.prepare("INSERT INTO memory_scope_bindings VALUES('fixture-pin-grant',?,'bot','reader',0,'granted','{}')").run(scope);
+  db.prepare("INSERT INTO memory_records VALUES('fixture-new-pin',1,?,'constraint','A newly granted owner constraint.','owner-statement','active',0,1,NULL,NULL,1)").run(scope);
+  db.exec(OWNER_PIN.sql);
+  db.exec("UPDATE memory_records SET owner_pinned=1 WHERE id='fixture-new-pin'");
+  prepareRecallContextSync('reader', 'direct', f.roster);
+  const current = f.issue(), live = policy.revalidateMemoryAccess(old);
+  const empty = { async search() { return { hits: [], vectorRows: 0 }; } };
+  const full = await buildMemoryBundle('', current, empty, { allowance: LineageAllowance.tool(1_000_000_000) });
+  expect(full.pinned.map(pin => pin.id)).toContain('fixture-new-pin');
+  const narrowed = await buildMemoryBundle('', live, empty, { allowance: LineageAllowance.tool(1_000_000_000) });
+  expect(narrowed.pinned).toEqual([]);
+  expect(narrowed.text).not.toContain('A newly granted owner constraint.');
+  const { MemoryDispatchReceipt } = await import('./dispatch.ts');
+  const { assertMemoryBundle } = await import('./bundle.ts');
+  const receipt = new MemoryDispatchReceipt(full, current, 'engine');
+  db.exec("UPDATE memory_scope_bindings SET state='pending' WHERE id='fixture-pin-grant'");
+  prepareRecallContextSync('reader', 'direct', f.roster);
+  const withdrawn = policy.revalidateMemoryAccess(current);
+  expect(() => receipt.assertCurrent()).toThrow();
+  expect(() => assertMemoryBundle(full, withdrawn)).toThrow('MEMORY_BUNDLE_UNTRUSTED');
+});
+
+it('S2 a live receipt revalidates its frame at writes and refuses a removed reader', async () => {
+  const { setupProofFixture, receipts, proofModule } = await import('./session-proof-fixture.ts');
+  const { buildMemoryBundle } = await import('./bundle.ts');
+  const { MemoryDispatchReceipt } = await import('./dispatch.ts');
+  const { LineageAllowance } = await import('./lineage-allowance.ts');
+  const f = setupProofFixture('room-thread'), proof = await proofModule();
+  await receipts(f, 1);
+  expect(proof.proveRetainedSession(LineageAllowance.tool(), f.key, { access: f.access, disclosed: true })).toEqual({ kind: 'resume' });
+  const bundle = await buildMemoryBundle('', f.access, { async search() { return { hits: [], vectorRows: 0 }; } }, { allowance: LineageAllowance.tool() });
+  const receipt = new MemoryDispatchReceipt(bundle, f.access, f.key.driverInstance);
+  receipt.retains(f.key.nativeSession, { access: f.access, disclosed: true });
+  const move = () => { database().exec('UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1'); prepareRecallContextSync('reader', 'room-thread', f.roster); };
+  move();
+  expect(() => receipt.assertCurrent()).not.toThrow();
+  expect(receipt.access).not.toBe(f.access);
+  expect(() => assertMemoryAccess(receipt.access)).not.toThrow();
+  expect(() => assertMemoryAccess(f.access)).toThrow();
+  move(); expect(() => receipt.accepted()).not.toThrow();
+  move(); expect(receipt.steerable()).toBe(true);
+  f.roster.groups[0].memberIds = []; f.roster.memoryRosterRevision!++;
+  reconcileMemoryRoster(f.roster);
+  expect(() => receipt.assertCurrent()).toThrow();
+  expect(() => receipt.accepted()).toThrow();
+  expect(receipt.steerable()).toBe(false);
+});
+
+it('revalidation trusts certified view rows rather than poisoned compatibility snapshots', async () => {
+  const { poisonRecallScopeArraysForTest } = await import('./recall-view.ts');
+  const f = fixture(), old = f.issue(), db = database(), scope = ensureScope('project', 'fixture-poison-project');
+  db.prepare("INSERT INTO memory_scope_bindings VALUES('fixture-poison-grant',?,'bot','reader',0,'granted','{}')").run(scope);
+  prepareRecallContextSync('reader', 'direct', f.roster);
+  const fresh = f.issue();
+  // Keep frozen indexed properties intact; poison the compatibility filter without violating Proxy invariants.
+  const poison = (ids: readonly string[]) => Object.assign([...ids], { filter: () => [scope] });
+  poisonRecallScopeArraysForTest(old, poison(old.scopeIds));
+  poisonRecallScopeArraysForTest(fresh, poison(fresh.scopeIds));
+  const live = policy.revalidateMemoryAccess(old);
+  expect(() => assertMemoryAccess(live, scope)).toThrow('MEMORY_SCOPE_DENIED');
+  expect(() => assertMemoryAccess(live, ensureScope('bot', 'reader'))).not.toThrow();
+  expect(live.scopeIds).not.toContain(scope);
+});
+
+it('relabelled durable metadata cannot replace the cached epoch certificate', () => {
+  const f = fixture(), old = f.issue(), db = database();
+  db.exec('UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; UPDATE memory_recall_views SET authority_epoch=(SELECT epoch FROM memory_recall_epoch WHERE id=1)');
+  expect(() => f.issue()).toThrow();
+  expect(() => assertMemoryAccess(old)).toThrow();
+  prepareRecallContextSync('reader', 'direct', f.roster);
+  expect(() => assertMemoryAccess(f.issue())).not.toThrow();
+  expect(() => assertMemoryAccess(old)).toThrow();
+});
+it('a foreign epoch change cannot ride a scope memo in the same synchronous pass', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const f = fixture(), old = f.issue(), db = database();
+  const file = String(db.prepare('PRAGMA database_list').all().find(row => row.name === 'main')!.file);
+  policy.inMemoryAccessPass(() => {
+    expect(() => assertMemoryAccess(old)).not.toThrow();
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e',
+      "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync(process.argv[1]);db.exec('UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; UPDATE memory_recall_views SET authority_epoch=(SELECT epoch FROM memory_recall_epoch WHERE id=1)');db.close();", file], { encoding: 'utf8' });
+    expect(child.status, child.stderr).toBe(0);
+    expect(() => assertMemoryAccess(old)).toThrow();
+  });
+});
+
+// Producer owner: recall-s1s2g (receipt validation); consumer owner: recall-privacy-close-b-n6 (bounded live checks).
+for (const foreignChange of [false, true]) it(`receipt source validation shares one live pass (foreign epoch change=${foreignChange})`, async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { setupProofFixture, receipts } = await import('./session-proof-fixture.ts');
+  const { WritetimeFixture } = await import('./testing/writetime-fixture.ts');
+  const { assertMemoryDisclosureCurrent } = await import('./disclosures.ts');
+  const f = setupProofFixture('room-thread'), db = database(), scope = ensureScope('conversation', 'room-thread');
+  const refs = Array.from({length:16}, (_, n) => {
+    new WritetimeFixture(db).owner('room-thread', `receipt-line-${n}`, n+10).source(`receipt-source-${n}`, scope, {thread:'room-thread', message:`receipt-line-${n}`});
+    return {id:`receipt-source-${n}`,revision:1};
+  });
+  const [id] = await receipts(f, 1);
+  db.prepare('UPDATE memory_disclosures SET source_versions=? WHERE bundle_id=?').run(JSON.stringify(refs), id);
+  const foreign = new DatabaseSync(String(db.prepare('PRAGMA database_list').get()!.file));
+  const prepare = db.prepare; let sourceReads = 0;
+  db.prepare = function(sql: string) {
+    const statement = prepare.call(db, sql);
+    if (!foreignChange || !sql.startsWith('SELECT scope_id,state,revision FROM memory_sources')) return statement;
+    return new Proxy(statement, {get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === 'get') return (...args: unknown[]) => {
+        const row = value.apply(target, args);
+        if (++sourceReads === 3) foreign.exec('UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1');
+        return row;
+      };
+      return typeof value === 'function' ? value.bind(target) : value;
+    }});
+  };
+  try {
+    if (foreignChange) {
+      expect(() => assertMemoryDisclosureCurrent(id, f.access)).toThrow('MEMORY_CONTEXT_REVOKED');
+      expect(sourceReads).toBe(3);
+    } else {
+      const measured = sqlWork(db, () => assertMemoryDisclosureCurrent(id, f.access));
+      const validations = [...measured.work.sqls].filter(([sql]) => sql.includes('AS projection_floor')).reduce((n, [, count]) => n+count, 0);
+      expect(validations).toBe(2); // one initial check and one for the shared source scope
+      expect(measured.work.sqls.get('SELECT scope_id,state,revision FROM memory_sources WHERE id=?')).toBe(16);
+      expect(sourceReads).toBe(0);
+    }
+  } finally { db.prepare = prepare; foreign.close(); }
 });

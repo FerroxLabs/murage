@@ -273,6 +273,20 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
     expect(retainedSessionInvalid(LineageAllowance.tool(), "desk", "fuigo-steer", "s-desk")).toBe(false);
   }, 30_000);
 
+  // Real leg s5 (Fuigo, 1.0.20): the owner's next send arrived after three delegated replies had made the bot busy for
+  // their follow-up turn, but before that turn started, so no running turn existed to take the words. The steer rejected
+  // with no status and the send route answered 503 "Murage couldn't record that message"; the words were refused, not queued.
+  it("a send that finds the bot busy but no running turn yet waits in the queue: no rejection, nothing written", async () => {
+    const { adapter, methods } = await runningFuigo(300);
+    const before = methods().filter(method => method === "_fuigo/interject").length;
+    for (const allowed of [false, true]) {
+      const delivery = await steerWithQuoteLineage(adapter, "desk", "Run `sleep 150` in the shell, then reply SLEPT.", allowed, { holds: () => false, steerId: `steer-noturn-${allowed}`, lineage: undefined, turn: undefined });
+      expect(delivery).toBe("queue");
+    }
+    expect(methods().filter(method => method === "_fuigo/interject")).toHaveLength(before);
+    expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
+  }, 30_000);
+
   it("a quote whose source is revoked after its text was rendered, before the fence runs, is refused: nothing written, nothing recorded", async () => {
     await memoryDerivedReply();
     const { adapter, lineage, methods } = await runningFuigo(300);

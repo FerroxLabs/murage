@@ -233,3 +233,22 @@ it("historical status retains finite zero counts and excludes undeclared data", 
   expect(JSON.stringify(project({ get met() { reads++; return 1; }, total: 1 }))).not.toContain('criteria_claim_corrected');
   expect(reads).toBe(0);
 });
+
+it("an old marker keeps its field without blanking its owner-only row siblings", () => {
+  const store = new Store(selection), bot = store.createBot();
+  const old = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "Before upgrade." });
+  const marker = "«redacted»";
+  const legacy = { ...old, text: marker, removedText: "Earlier stored detail." };
+  database().prepare("UPDATE messages SET text=?, json=? WHERE id=?").run(marker, JSON.stringify(legacy), old.id);
+  const reader = new Store(selection);
+  const page = { messages: reader.messagesFor(bot.threadId) };
+  const owner = wireThread(reader, bot.threadId, page, { ownerOnly: true });
+  expect(owner.messages.find(row => row.id === old.id)).toMatchObject({ text: marker, removedText: legacy.removedText });
+  const shared = wireThread(reader, bot.threadId, page);
+  expect(shared.messages.find(row => row.id === old.id)).toMatchObject({ text: marker, removedText: marker });
+  const credential = "fixture" + "PrivateValue123";
+  const unsafe = { ...legacy, removedText: `password: ${credential}`, tool: { name: "A readable label." } };
+  const guarded = wireThread(reader, bot.threadId, { message: unsafe }, { ownerOnly: true });
+  expect(guarded.message.tool?.name).toBe(marker);
+  expect(guarded.message.removedText).not.toContain(credential);
+});

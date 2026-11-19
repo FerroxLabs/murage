@@ -59,3 +59,38 @@ export async function settleRefusedFence(db: DatabaseSync, error: unknown, cance
     catch { /* diagnostics never change a refusal or its settlement */ }
   }
 }
+
+/** MAIN Q2: the exact wait without foreground work. An input still checking:pending waits only for its own obligation: it never calls
+ * drainRevokeMarkerBounded or settleRevokesForTurn, so the global revoke queue stays background work. It only (re)wakes the scheduled
+ * runner (which keeps its own admission and pace) so a job that becomes runnable later is picked up. Any other refusal resolves at once.
+ * A timeout, Stop, read error or unresolved verdict never authorizes another attempt; durable jobs stay intact. */
+export async function awaitExactPendingCheck(db: DatabaseSync, error: unknown, cancelled: () => boolean = () => false,
+  maxMs = PENDING_FENCE_WAIT_MS, wake: () => void = () => wakeMemoryRevocation(() => db)): Promise<boolean> {
+  if (fenceRefusalDiagnosis(error).refused !== "checking:pending") return true;
+  const check = pendingFenceCheck(error);
+  const started = performance.now(), deadline = started + maxMs;
+  let outcome = "deadline", probes = 0, woke = started;
+  try {
+    if (cancelled()) { outcome = "stopped"; return false; }
+    wake();
+    for (;;) {
+      if (cancelled()) { outcome = "stopped"; return false; }
+      if (!db.isTransaction) {
+        const verdict = check?.(db);
+        probes++;
+        if (verdict && (verdict.state === "shown" || verdict.state === "withheld")) { outcome = verdict.state; return true; }
+        if (verdict && verdict.reason !== "pending") { outcome = "unresolved"; return false; }
+      }
+      const now = performance.now(), left = deadline - now;
+      if (left <= 0) return false;
+      // An idle runner is not restarted by a job that turns runnable later; wake it again at a coarse pace (never a drain here).
+      if (now - woke >= REWAKE_MS) { woke = now; wake(); }
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(POLL_MS, Math.max(1, deadline - performance.now()))));
+    }
+  } catch { outcome = "error"; return false; }
+  finally {
+    try { console.warn(`[memory] pending fence settle outcome=${outcome} ms=${Math.round(performance.now() - started)} probes=${probes} boundMs=${maxMs}`); }
+    catch { /* diagnostics never change a refusal or its settlement */ }
+  }
+}
+const REWAKE_MS = 1_000;

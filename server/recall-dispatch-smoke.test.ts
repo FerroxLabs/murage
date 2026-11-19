@@ -174,7 +174,7 @@ for (const { state, venue, cli } of cases) {
           expect(requests[1].recall).toBe("full");
           expect((log.match(/fixture held published/g)??[])).toHaveLength(1);
           const finalTranscript=await run(["messages",...destination,"--limit","30"]);
-          expect(finalTranscript.messages.filter((message:any)=>message.tool?.name==="Memory is still catching up, so this reply did not use recalled memories.")).toHaveLength(1);
+          expect(finalTranscript.messages.filter((message:any)=>message.tool?.name==="Memory wasn't ready, so this reply didn't use what I remember.")).toHaveLength(1);
         }
         expect(log).not.toContain("starting turn without recalled memory");
       }

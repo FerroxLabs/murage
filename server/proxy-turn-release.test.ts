@@ -286,7 +286,8 @@ it.each(proxyRoles)("T-PROXY-RELEASE %s upstream failure is terminal even with a
   const release = createProxyTurnRelease(role, { verdict: async () => { throw new Error("upstream"); }, envelope: async value => ingress.deliver(value, write),
     seal: ingress.seal, terminal, close: vi.fn() });
   await expect(release.release(1, frame)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
-  expect(f.refusals).toBe(1); expect(write).not.toHaveBeenCalled(); expect(terminal).toHaveBeenCalledExactlyOnceWith(terminalProxyRefusal(1));
+  // MACMOUNTS-1020: the terminal port also receives the code word of the refusing check (here the failed verdict call).
+  expect(f.refusals).toBe(1); expect(write).not.toHaveBeenCalled(); expect(terminal).toHaveBeenCalledExactlyOnceWith(terminalProxyRefusal(1), "verdict-failed");
 });
 // red-at-4df086541: cancellation previously carried text and preceded sealing.
 it("T-PROXY-SUPERVISOR-LOSS cancellation seals first and contains only a bound id", () => {

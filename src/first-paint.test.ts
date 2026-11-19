@@ -281,12 +281,8 @@ describe("the first paint", () => {
     }
   });
 
-  it("loads the analytics client when analytics start, never with the first paint (1.0.3)", () => {
-    const reached = staticallyReached(graph);
-    expect(reached).toContain("src/lib/analytics.ts");
-    expect(reached).not.toContain("posthog-js");
-    expect(reached).not.toContain("src/lib/analytics-active.ts");
-    expect(importsOf("src/lib/analytics.ts").filter((edge) => edge.path === "posthog-js").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
+  it("has no analytics client at all, first paint or later (1.0.20 re-cut: Murage sends no usage analytics)", () => {
+    expect(Object.keys(graph.inputs).filter((path) => /posthog|src\/lib\/analytics/i.test(path))).toEqual([]);
   });
 
   it("loads the bundled model price snapshot after the first paint, while the picker's rules stay (1.0.18)", () => {
