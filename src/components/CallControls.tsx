@@ -11,6 +11,7 @@ import { Phone, PhoneOff } from "lucide-react";
 import { useStore, viewedTaskBot, type Bot, type Group } from "@/state/store";
 import { useCallBudgetEnded, dismissCallBudgetEnded, endCall, startCall, takeCallRequest, useCallRequest, useOnCall } from "@/lib/call";
 import { useCallBarState } from "@/lib/call-bar";
+import { NOTICE_CORNER, useClearOfComposer, useNoticeTurn } from "@/lib/notice-lane";
 import { CallBarContent } from "./CallBarContent";
 import { cn } from "@/lib/cn";
 import { track } from "@/lib/analytics";
@@ -336,7 +337,7 @@ export function CallOverlaySlot({
   };
   return (
     <>
-      {budgetEnded && !activeCallId && <div role="status" className="fixed bottom-4 left-4 right-4 z-50 rounded-xl bg-card p-4 text-ink">{t("call.budgetStop")} <button type="button" onClick={dismissCallBudgetEnded}>{t("composer.dismissNotice")}</button></div>}
+      <CallBudgetNotice wants={Boolean(budgetEnded && !activeCallId)} />
       {activeCallBot && (
         <CallOverlay key={activeCallId} bot={activeCallBot} collapsed={!callIsSelected} onExpand={returnToCall} />
       )}
@@ -350,6 +351,21 @@ export function CallOverlaySlot({
         />
       )}
     </>
+  );
+}
+
+/** A call the Flux budget stopped: one of the corner notices (lib/notice-lane.ts), so it waits its turn instead of stacking on
+ * another one, keeps its own close, and never covers the composer. */
+export function CallBudgetNotice({ wants }: { wants: boolean }) {
+  const turn = useNoticeTurn("call-budget", wants);
+  const frame = useRef<HTMLDivElement>(null);
+  const clear = useClearOfComposer(frame, wants && turn);
+  if (!wants || !turn) return null;
+  return (
+    <div ref={frame} role="status" data-testid="call-budget-notice" style={clear} className={cn(NOTICE_CORNER, "flex items-center gap-3 rounded-xl border border-hairline/50 bg-card px-3.5 py-2.5 text-[13px] text-ink shadow-xl")}>
+      <span className="min-w-0 flex-1">{t("call.budgetStop")}</span>
+      <button type="button" onClick={dismissCallBudgetEnded} className="shrink-0 rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised">{t("composer.dismissNotice")}</button>
+    </div>
   );
 }
 

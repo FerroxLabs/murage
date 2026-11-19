@@ -61,9 +61,10 @@ const refLabel = (ref: LineageRef): string => ref.kind === "line" ? (ref.replay 
   : ref.kind === "prefix" ? (ref.shown !== undefined ? "prefix-shown" : ref.content ? "own-prefix" : "prefix") : ref.kind;
 
 /** Final reader and prospective validation belong to the concrete generation. */
-export function prepareRetainedFence(turn: TurnLineage, reader: LineageReader, onRefused: (verdict: LineageVerdict) => void, db?: DatabaseSync): LineageReader {
+export function prepareRetainedFence(turn: TurnLineage, reader: LineageReader, onRefused: (verdict: LineageVerdict) => void, db?: DatabaseSync,
+  continuePending?: () => boolean): LineageReader {
   const authority = retainedTurnDatabase(turn);
-  const frozen = bindRetainedTurn(turn, reader, onRefused, refs => assertRetainedFence(turn, db, 0, refs));
+  const frozen = bindRetainedTurn(turn, reader, onRefused, refs => assertRetainedFence(turn, db, 0, refs), continuePending);
   const file = db ?? authority;
   if (file !== authority) retainedRefusal(checkedOpenTurns(turn)[0]!, turn.parents, { state: "checking", reason: "not-built" });
   if (file) {
@@ -112,6 +113,10 @@ export function assertRetainedFence(turn: TurnLineage, db?: DatabaseSync, bytes 
         // the marker runner; settling it here would change the evidence checked.
         return refsLookup(file, refs, open.reader!, true, open.preparedWindow);
       }));
+      // 1.0.20 A-5: a release that re-checks only what the engine already holds (no prospective refs), still checking:pending (a revoke
+      // walk not finished, not a proven revoke), on an owner-audience direct turn: the running turn continues and the owner is told once
+      // that remembered details were left out. Nothing new is released by this decision; the next release is checked again.
+      if (verdict.state === "checking" && verdict.reason === "pending" && !prospective && open.continuePending?.() === true) continue;
       if (verdict.state !== "shown") withReleaseBudgets([open.budget!], () => retainedRefusal(open, refs, verdict));
     } catch (error) {
       if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;

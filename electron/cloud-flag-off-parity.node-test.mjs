@@ -24,7 +24,9 @@ const snapshot = JSON.parse(read("ipc-channels.flag-off.snapshot.json"));
 // MAIN RULING fd2e454356 (S1 browser pop-outs) and 5f4b635020 (main-only HighLevel
 // capability bank) deliberately extend the local desktop independently of Cloud.
 const localHandles = ["browser-popout:close", "browser-popout:open", "browser-popout:state-now", "highlevel:commit"];
-const localBridgeMembers = ["browserPopout", "browserPopout.close()", "browserPopout.currentState()", "browserPopout.onState()", "browserPopout.open()", "highlevel", "highlevel.commit()"];
+// The window follows a restarted engine (server-follow.mjs, 1.0.19 port fallback): two main-window-only listeners and two bridge members.
+const localOns = ["desktop:open-chat", "desktop:server-launch"];
+const localBridgeMembers = ["reportOpenChat()", "serverLaunch", "browserPopout", "browserPopout.close()", "browserPopout.currentState()", "browserPopout.onState()", "browserPopout.open()", "highlevel", "highlevel.commit()"];
 const MAIN_ORIGIN = "http://127.0.0.1:8799";
 
 function bridgeMembers({ cloud }) {
@@ -101,6 +103,6 @@ test("flag off: nothing turns the Cloud on by itself", () => {
 
 test("flag off: the registered channels are the snapshot's, none of them cloud-home:*", () => {
   const inventory = loadIpcInventory({ electronDir, env: { MURAGE_DESKTOP_CLOUD: "0" } });
-  assert.deepEqual({ handles: inventory.handles, ons: inventory.ons }, { handles: [...snapshot.handles, ...localHandles].sort(), ons: snapshot.ons });
+  assert.deepEqual({ handles: inventory.handles, ons: inventory.ons }, { handles: [...snapshot.handles, ...localHandles].sort(), ons: [...snapshot.ons, ...localOns].sort() });
   assert.deepEqual([...inventory.handles, ...inventory.ons].filter((channel) => channel.startsWith("cloud-home:")), []);
 });

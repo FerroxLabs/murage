@@ -142,6 +142,18 @@ const desktopSurfaceSecret = (() => {
   }
 })();
 
+/** The launch id this launch's engine puts in every answer (x-murage-launch):
+ * the renderer treats a responder without it as "Murage is reconnecting", never
+ * as an answer (src/lib/live-events.ts responderIsOurs). "" when main has none. */
+const serverLaunch = (() => {
+  try {
+    const value = ipcRenderer.sendSync("desktop:server-launch");
+    return typeof value === "string" ? value : "";
+  } catch {
+    return "";
+  }
+})();
+
 // A pop-out must be registered in main before it receives even the bridge.
 // Keep the main-window development fallback unchanged.
 if (new URL(globalThis.location?.search || "/", globalThis.location.origin).searchParams.get("surface") === "browser-popout" && !desktopSurfaceSecret) return;
@@ -282,6 +294,9 @@ contextBridge.exposeInMainWorld("muragebox", {
   },
   /** Proof, to this launch's harness, that this really is the renderer. */
   desktopSurfaceSecret,
+  serverLaunch,
+  /** The chat on screen, so a window that follows a restarted engine reopens it. */
+  reportOpenChat: (threadId) => ipcRenderer.send("desktop:open-chat", threadId),
   getCapabilities: () => ipcRenderer.invoke("desktop:capabilities"),
   onCapabilitiesChanged: (cb) => {
     const handler = (_event, capabilities) => cb(capabilities);

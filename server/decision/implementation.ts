@@ -1,4 +1,5 @@
 import { OWNER_PERMISSION_REPLY_TOO_LARGE } from '../permission-reply.ts';
+import {PERMISSION_UNDELIVERED_STOP_REASON} from './host-stop-interrupt.ts';
 import { sanitizeDisplayTextUnit } from '../transcript-page.ts';
 import { approveTextExecWipeOnce } from '../drivers/murage-exec-wipe.ts';
 import { wipeBreaker, nativeEffectsWipe, nativeWipeBreaker, wipeCheckFault } from '../wipe-breaker.ts';
@@ -565,7 +566,10 @@ async function send(row:records.RecordRow|undefined,e:Entry|undefined,answer:T.A
   if(e.row)e.row.state=state;
  }
  observe({type:'delivery',requestKey:e?.registration.key??row!.request_key,answerId,state:delivery});
- if(!accepted){if(target&&transport)await withDeadline(transport.interrupt(target),1000).catch(()=>{});if(q&&item){if(row)records.updateRecord(database(),row.id,{delivery:'failed'});await withDeadline(q.cancel(item,'delivery-failed'),5000);}requiredHost().store.appendMessage(e?.threadId??row!.thread_id,{role:'bot',kind:'text',text:e?.replyTooLargeShown?OWNER_PERMISSION_REPLY_TOO_LARGE:'The tool permission could not be delivered. Nothing was confirmed.'});}
+ // 1020 perm-deliver: at No limits an owner allow the engine already settled (failed, not unconfirmed) never ran and leaves
+ // nothing waiting, so the turn goes on; only an answer that may have landed (unconfirmed) or a card answer stops the turn.
+ if(!accepted&&deliveryFailed&&target&&!row&&e&&owner(e)&&!e.replyTooLargeShown&&answer.behavior==='allow'){console.warn('[decision] No limits allow not taken by the engine; the turn continues');}
+ else if(!accepted){if(target&&transport)await withDeadline(transport.interrupt(target,PERMISSION_UNDELIVERED_STOP_REASON),1000).catch(()=>{});if(q&&item){if(row)records.updateRecord(database(),row.id,{delivery:'failed'});await withDeadline(q.cancel(item,'delivery-failed'),5000);}requiredHost().store.appendMessage(e?.threadId??row!.thread_id,{role:'bot',kind:'text',text:e?.replyTooLargeShown?OWNER_PERMISSION_REPLY_TOO_LARGE:'The tool permission could not be delivered. Nothing was confirmed.'});}
  if(e&&(e.registration.source.kind==='service'||e.outcome?.kind!=='card'&&e.outcome?.kind!=='question'))e.terminal=true;
  shedCompletedRequests();
 }

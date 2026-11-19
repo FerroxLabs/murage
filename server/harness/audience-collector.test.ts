@@ -310,3 +310,35 @@ it.each(['masked', 'exhausted'] as const)('collector.post-latch-question-keeps-o
   ] }]);
   expect(JSON.stringify(result.audience)).not.toMatch(/private-question-id|fixture private|another private/);
 });
+
+it('collector.a rich startup command catalog does not mask a short answer', () => {
+  const bus = new EventBus(() => {}); bus.omitLog(() => true);
+  const attachment = bus.collector.attach('instance');
+  const source = bus.collector.source(bus.collector.admitNewTurn({ attachment, instanceId: 'instance', threadId: 'thread' }));
+  const commands = Array.from({ length: 40 }, (_, i) => ({ name: `command-${i}`, description: 'An ordinary menu entry.', hint: 'Optional input.' }));
+  const privateValue = 'fixture' + 'MenuValue123';
+  commands[0]!.description = `password: ${privateValue}`;
+  const report = rawEvent({ type: 'engine.commands', commands });
+  bus.publish(report, source);
+  expect(bus.audienceFor(report).map(row => row.event)).toContainEqual(expect.objectContaining({ type: 'engine.commands', commands: [] }));
+  expect(JSON.stringify(bus.audienceFor(report))).not.toContain(privateValue);
+  const reply = rawEvent({ type: 'item.completed', itemType: 'assistant_text', text: 'A short answer.' });
+  bus.publish(reply, source);
+  expect(bus.audienceMaskedFor(reply)).toBe(false);
+  expect(bus.audienceFor(reply).map(row => row.event)).toContainEqual(expect.objectContaining({ type: 'item.completed', text: 'A short answer.' }));
+});
+
+it('collector.a long ordinary tool turn keeps its final owner reply', () => {
+  const bus = new EventBus(() => {}); bus.omitLog(() => true);
+  const attachment = bus.collector.attach('instance');
+  const source = bus.collector.source(bus.collector.admitNewTurn({ attachment, instanceId: 'instance', threadId: 'thread' }));
+  for (let i = 0; i < 120; i++) {
+    const itemId = `step-${i}`;
+    bus.publish(rawEvent({ type: 'item.started', itemType: 'tool', itemId, title: 'Read', input: { path: 'fixture.txt' } }), source);
+    bus.publish(rawEvent({ type: 'item.completed', itemType: 'tool', itemId, ok: true, detail: 'Read a file.' }), source);
+  }
+  const reply = rawEvent({ type: 'item.completed', itemType: 'assistant_text', text: 'All files were read.' });
+  bus.publish(reply, source);
+  expect(bus.audienceMaskedFor(reply)).toBe(false);
+  expect(bus.audienceFor(reply).map(row => row.event)).toContainEqual(expect.objectContaining({ type: 'item.completed', text: 'All files were read.' }));
+});

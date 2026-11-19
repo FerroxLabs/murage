@@ -72,7 +72,8 @@ it("an interrupt never crosses a generation replacement during browser cleanup",
     // bot email (4.5): the Stop hands the stopped generation to email's own withdraw rule (off here)
     stopEmailForTurn: vi.fn(async () => undefined), emailRuntime: {}, emailGeneration: () => 0,
     sealDirectAttempts: vi.fn(), randomUUID: () => "stop-receipt", ownWriteHolds: { stop: vi.fn() }, bus: { cancelTurn: vi.fn() },
-    refusedTurnOf: () => undefined, stopInterrupts: new Map() }; // LLS: no ledger refusal here
+    refusedTurnOf: () => undefined, stopInterrupts: new Map(), // LLS: no ledger refusal here
+    stopWithoutEngineTurn: { arm: vi.fn(), noteArmed: vi.fn(), note: vi.fn(), dispatching: () => false } }; // 1.0.20 STOP-CHIP: the stop line of a run with no engine turn (its own witnesses: stop-chip-phases-1020-api)
   const interrupt = new Function(...Object.keys(deps), code + "return interruptDirectThread;")(...Object.values(deps));
   try { await interrupt("a", "desk", "first"); expect(interruptTurn).not.toHaveBeenCalled(); } finally { fixture.close(); }
 });

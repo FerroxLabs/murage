@@ -174,6 +174,23 @@ describe("S1 admitted relay", () => {
     const duplicate = await socketFor(relay); await once(duplicate, "close"); expect(x.f.refusals).toBe(1);
     // The actual Python mount plan is covered by T-S1-BROKER-BIND.
   });
+  it("T-SEALCAUSE-NAMES-MOUNT: every relay seal names the mount and the site, never a frame", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const x = fixture(); const relay = await x.create();
+      const socket = await socketFor(relay); const input = once(x.children[0]!.stdin!, "data");
+      socket.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { cursor: "fixture-marker" } }) + "\n"); await input;
+      const duplicate = await socketFor(relay); await once(duplicate, "close"); expect(x.f.refusals).toBe(1);
+      const lines = warning.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("[mount-relay]"));
+      expect(lines).toContain("[mount-relay] second engine connection for one mount seals the relay mount=one");
+      expect(lines.join("\n")).not.toMatch(/fixture-marker/);
+      warning.mockClear();
+      const y = fixture(); await y.create(); y.children[0]!.emit("exit", 1, null);
+      const exitLines = warning.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("[mount-relay]"));
+      expect(exitLines).toContain("[mount-relay] mount child exited code=1 signal=-");
+      expect(exitLines).toContain("[mount-relay] mount failure seals the relay mount=one cause=native");
+    } finally { warning.mockRestore(); }
+  });
   it("T-CLOUD-CODEX-ONE-TICKET: equal env, distinct names, unknown name cannot refuse", async () => {
     const x = fixture(); const relay = await x.create({ one: custom, two: custom });
     const ticket = JSON.parse(readFileSync(x.cred.path, "utf8"));

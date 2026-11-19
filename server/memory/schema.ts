@@ -1,7 +1,7 @@
 import { isReadOnly, schemaStep } from '../read-only-start.ts';
 import { ensureCheckpointSchema, checkpointSchemaObjects, assertCheckpointDowngradeSafe, dropEmptyCheckpointSchema } from './checkpoint-schema.ts';
-import { ensureSessionProofSchema, dropSessionProofSchema, sessionProofSchemaObjects, sessionProofOptionalGroups } from './session-proof-schema.ts';
-import { ensureRecallViewSchema, dropRecallViewSchema, recallSchemaObjects, recallExternalObjects } from './recall-view-schema.ts';
+import { ensureSessionProofSchema, dropSessionProofSchema, sessionProofSchemaObjects, sessionProofOptionalGroups, sessionChecksCandidateSql } from './session-proof-schema.ts';
+import { ensureRecallViewSchema, dropRecallViewSchema, recallSchemaObjects, recallExternalObjects, RECALL_PENDING_OBJECTS } from './recall-view-schema.ts';
 import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import { beginIntegrityPass } from "./integrity-state.ts";
 import { seedScrubPassDone } from "./scrub-state.ts";
@@ -2135,7 +2135,9 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   const externalRecall=recallExternalObjects(),externalRows=recallRows.filter(row=>externalRecall.has(row.name));
   if(externalRows.length && (externalRows.length!==externalRecall.size || externalRows.some(row=>{const expected=externalRecall.get(row.name)!;return row.type!==expected.type || row.tbl_name!==expected.tbl_name || row.sql!==expected.sql;})))throw new Error('MEMORY_SCHEMA_UNSUPPORTED');
   const coreRecallRows=recallRows.filter(row=>!externalRecall.has(row.name));
-  if (recallRows.length && (coreRecallRows.length !== recallObjects.size || coreRecallRows.some(row => {
+  // A 1.0.20 candidate build dropped the pending table: all four of its objects gone, everything else exact. ensureRecallViewSchema puts it back.
+  const pendingDropped=!coreRecallRows.some(row=>(RECALL_PENDING_OBJECTS as readonly string[]).includes(row.name));
+  if (recallRows.length && (coreRecallRows.length !== recallObjects.size-(pendingDropped?RECALL_PENDING_OBJECTS.length:0) || coreRecallRows.some(row => {
     const expected = recallObjects.get(row.name);
     return !expected || row.type !== expected.type || row.tbl_name !== expected.tbl_name || row.sql !== expected.sql;
   }))) throw new Error('MEMORY_SCHEMA_UNSUPPORTED');
@@ -2143,7 +2145,8 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   const proofRows = rows.filter(row => proofObjects.has(row.name));
   for (const row of proofRows) {
     const expected = proofObjects.get(row.name)!;
-    if(row.type!==expected.type || row.tbl_name!==expected.tbl_name || row.sql!==expected.sql)throw new Error('MEMORY_SCHEMA_UNSUPPORTED');
+    // The 1.0.20 candidate's table (one added column) is accepted with its exact text only; ensureSessionProofSchema hands the column back.
+    if(row.type!==expected.type || row.tbl_name!==expected.tbl_name || (row.sql!==expected.sql && !(row.name==='memory_session_checks' && row.sql===sessionChecksCandidateSql())))throw new Error('MEMORY_SCHEMA_UNSUPPORTED');
   }
   // Only a marked root-set hand-back excuses its two triggers; every remaining proof object must still match exactly.
   const rootless = !rows.some(row => row.type === 'table' && row.name === 'memory_session_roots')

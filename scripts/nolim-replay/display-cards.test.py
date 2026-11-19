@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Fabricated SQLite/card tests. Run only in the prescribed offline container."""
+"""Fabricated SQLite/card tests. Real input only in the prescribed offline container;
+these fabricated rows run anywhere with the container probe replaced, and
+OfflineGuardTests proves the real probe still blocks every entry point."""
 import importlib.util
 import json
 from pathlib import Path
@@ -8,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import display_cards
 from display_cards import ingest, load, load_bytes, offline, validate, FILES
 HERE=Path(__file__).resolve().parent
 spec=importlib.util.spec_from_file_location('extract',HERE/'extract.py');api=importlib.util.module_from_spec(spec);spec.loader.exec_module(api)
@@ -41,9 +45,24 @@ def fabricated(path):
     add(db,10,subtitle=json.dumps({'command':'printf fixture','password':'«redacted 12 chars»'}))
     emit(select(db),path);db.close()
 
+class OfflineGuardTests(unittest.TestCase):
+    def test_every_entry_point_refuses_before_reading_outside_the_container(self):
+        def refuse(): raise ValueError('OFFLINE-CONTAINER')
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(display_cards,'offline',refuse), mock.patch.object(api,'read_private',side_effect=AssertionError('read before guard')) as read:
+            for call in (lambda:ingest(Path(tmp)/'absent.jsonl',Path(tmp)/'out',api),lambda:load(Path(tmp),api),lambda:load_bytes(b'{}',{},api)):
+                with self.assertRaisesRegex(ValueError,'OFFLINE-CONTAINER'):call()
+            read.assert_not_called()
+    def test_real_probe_matches_this_host(self):
+        inside=Path('/.dockerenv').exists() and {p.name for p in Path('/sys/class/net').iterdir()}=={'lo'}
+        if inside: offline()
+        else:
+            with self.assertRaisesRegex(ValueError,'OFFLINE-CONTAINER'):offline()
+
 class DisplayTests(unittest.TestCase):
     def setUp(self):
-        offline();self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.db=database()
+        # Fabricated rows only: stand in for the container probe (see OfflineGuardTests).
+        guard=mock.patch.object(display_cards,'offline',lambda:None);guard.start();self.addCleanup(guard.stop)
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.db=database()
     def tearDown(self): self.db.close();self.tmp.cleanup()
     def input(self,records):
         p=self.root/'input.jsonl';emit(records,p);return p

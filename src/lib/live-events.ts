@@ -115,6 +115,26 @@ const bridgeSecret = (): string => {
 };
 
 let desktopSecret = bridgeSecret();
+
+/** The header every answer of this launch's engine carries (server/index.ts, electron/server-follow.mjs). */
+export const LAUNCH_HEADER = "x-murage-launch";
+
+/** The launch id main gave this page, or "" (a phone, a browser, dev, a Cloud window: nothing to check against). */
+export function expectedServerLaunch(): string {
+  const bridge = (globalThis as { muragebox?: { serverLaunch?: unknown } }).muragebox;
+  return typeof bridge?.serverLaunch === "string" ? bridge.serverLaunch : "";
+}
+
+/** Whether this answer came from OUR engine. On 2026-11-18 the engine restarted
+ * on another port while an unrelated program held the old one, and every chat
+ * showed that program's answers as a red "no such route". A desktop page with a
+ * launch id believes only answers carrying it; another responder (another
+ * program, or an engine launch this page holds no proof for) is "reconnecting". */
+export function responderIsOurs(res: { headers?: { get?: (name: string) => string | null } }): boolean {
+  const expected = expectedServerLaunch();
+  if (!expected) return true;
+  return res.headers?.get?.(LAUNCH_HEADER) === expected;
+}
 let pendingSecret: Promise<string> | null = null;
 let secretRetryable = false;
 /** The harness said 403/404: this renderer is not the desktop, and asking

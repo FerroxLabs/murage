@@ -1,5 +1,7 @@
 import "../shared/win-hide-child-process.mjs";
+import { setOwnWebSearchProviderProbe } from "../shared/own-servers.ts";
 import "./io-copy-bootstrap.ts";
+import "./boot-progress-start.ts";
 import { proveRetainedSession, type SessionProofContext } from './memory/session-proof.ts';
 import { forgoContinuationSettle } from './memory/continuation-settle.ts';
 import { deleteSessionChecks, sessionHadFrame, noteSessionFrame } from './memory/session-proof-schema.ts';
@@ -22,7 +24,9 @@ import {recordMcpWipeHints,retireMcpWipeThread,retireMcpWipeServer} from './no-l
 import { permissionsForNoLimitsOrigin, noLimitsAppliesTo, noLimitsChannelMessagesOff, type NoLimitsOrigin } from './no-limits-origin.ts';
 import { inheritedPermissions, permissionsForOrigin, installPermissionInheritance, explicitPermission, routineFollowsNoLimits } from "./permission-inheritance.ts";
 import { featureOffLine } from './feature-off.ts';
-import { settleRefusedFence } from "./memory/fence-pending.ts";
+// MAIN Q2: an input still checking:pending waits for its own obligation only (no foreground or global drain). The alias keeps the
+// direct rebuild's settlement boundary name, which its unit oracle (fence-pending-rebuild.test.ts) controls.
+import { awaitExactPendingCheck as settleRefusedFence } from "./memory/fence-pending.ts";
 import { watchApprovalRequest } from "./drivers/acp/approval-delivery.ts";
 import { recoverSignalPark, assertSignalLinkAllowed, enumerateSignalBundles, type ParkVerdict } from "./channels/signal/park.ts";
 import { signalReplacementHold, keepBothAndLinkAgain, replaySignalReplacements, type SignalLocalAuthority } from "./channels/signal/park-replacement.ts";
@@ -136,6 +140,7 @@ import { attachCloudUpgradeGate } from "./cloud-home/upgrade-gate.ts";
 import { createEngineLoginRelay } from "./cloud-home/engine-login.ts";
 import { createVpsMcpRelay } from "./cloud-home/vps-mcp-relay.ts";
 import { createProxyReleaseAuthority } from "./consuming-turn-ingress.ts";
+import { logSwallowedConsumingError } from "./consuming-error-log.ts";
 import { cardAttention, serviceCardWaiting, type AttentionKey, type AttentionOpen, type AttentionScope } from "./approval-attention.ts";
 import { reconcileDeadOwnerWaits } from "./approval-attention-boot.ts";
 import { TURN_RELEASE_VERDICT_PATH } from "./proxy-turn-release.ts";
@@ -374,12 +379,12 @@ import { attachContinuityCoverage, clearContinuityCoverage } from "./memory/iden
 import { isPipReflectThread, parseContinuityOptions } from "./memory/pip-types.ts";
 import { assertMemoryAccess, memoryAccess, backgroundMemoryAudience, preparationLineageAudience, personReadableScopes, recallThreadsAvailable, packLoan, type MemoryAccess } from "./memory/policy.ts";
 import { RecallHeld, RecallDispatchPending, RecallReadiness, RecallViewNotReady, assertRecallDispatch } from "./memory/recall-readiness.ts";
-import { recallPreparationFailure, RecallPreparationPending, MemoryPinProjectionPending, MemoryPinSetTooLarge } from "./memory/recall-recovery.ts";
+import { recallPreparationFailure, RecallPreparationPending, RecallViewLost, MemoryPinProjectionPending, MemoryPinSetTooLarge } from "./memory/recall-recovery.ts";
 import { MemoryDispatchReceipt, resumedSessionInvalidAfterRecall, writetimeSessionVerdict, memorySessionRevoked, buildMemoryBundleAfterReset, lateMemoryRefusalLine, turnRefusedLine, submissionRefusalKind, type TurnRefusedKind, MemoryRefusalCauses, memoryRefusalCause, mergeMemoryRefusalCause, type MemoryRefusalCause, pinnedMemoryFailure, withheldPinLine, droppedPinLine, MEMORY_REDISPATCH_ATTEMPTS, nextMemoryRebuild, sessionCheckRefusal, refusalCauseNote } from "./memory/dispatch.ts";
 import { memoryState } from "./memory/repository.ts";
 import { noteContinuationReset, noteResumedTurn, noteSealedTurn, sessionGauges } from "./memory/reset-watch.ts";
 import { turnAccepted, turnExhausted, turnRefused } from "./health/turn-observer.ts";
-import { continuationMemoryRevoked, filterDirectReplay, linkRetainedSessionOutput, replayBudgetBytes, replayWindow, readerWithheldMessage } from "./memory/disclosures.ts";
+import { continuationMemoryRevoked, continuationPendingProbe, filterDirectReplay, linkRetainedSessionOutput, replayBudgetBytes, replayWindow, readerWithheldMessage } from "./memory/disclosures.ts";
 import { roomTranscriptForTurn, roomTranscriptWithoutMemory, roomTranscriptWithoutMemory as readRoomTranscriptWithoutMemory } from "./room-transcript.ts";
 import { DIRECT_REPLAY_LINES_MAX, REPLAY_SLICE_LINES, turnReplayInputs } from "./memory/turn-replay-inputs.ts";
 import { accessStamp, compareLineageFootprint, externalUpdatesKey, noteLineageFootprint, noteWarmAllowanceHit, type LineageFootprint, type UserKind } from "./memory/lineage-footprint.ts";
@@ -416,7 +421,7 @@ import { PhoneJobs } from "./phones/jobs.ts";
 import { HighLevelTurnSignals, highlevelApprovalBasis, highlevelAttended } from "./highlevel/host.ts";
 import { deliverHighlevelEngineAsk, highlevelEngineRequest, trustedHighlevelCallIdentity, installHighlevelEngineLedger } from "./highlevel/engine-policy.ts";
 import { HighLevelCallLedger } from "./highlevel/call-ledger.ts";
-import { highlevelConnectionActiveFor, nativeHighLevelGranted, nativeWinsConnectorRequestRefused, nativeWinsFiltersReply, nativeWinsProxyGuard, nativeWinsRefusalText, stripComposioHighLevelBytes } from "./highlevel/native-wins.ts";
+import { connectorReplyBytes, connectorRequestHighLevelRefusal, highlevelConnectionActiveFor, nativeHighLevelGranted, nativeWinsConnectorRequestRefused, nativeWinsFiltersReply, nativeWinsProxyGuard, nativeWinsRefusalText } from "./highlevel/native-wins.ts";
 import { filterRelayToolListBytes, type HighLevelAccessBot } from "./highlevel/access.ts";
 import { createHighLevelRuntime, highlevelGrantUpdate, highlevelStatusBody, highlevelFamilyScopes, highlevelVerifiedScopes } from "./highlevel/runtime.ts";
 import { HighLevelReviewCards, HIGHLEVEL_REQUEST_PREFIX, HIGHLEVEL_ON_COMPUTER, highlevelReviewResponse, highlevelOutcomeLine, type HighLevelApproval } from "./highlevel/review-cards.ts";
@@ -516,7 +521,9 @@ import { createFreshStartOwner, loadFreshStartPolicy } from "./memory/gh18-fresh
 import { GH18_SCHEMA_DOWNGRADE_COMPATIBLE } from "./memory/schema.ts";
 import { createKeepAllRepairGate, joinKeepAllRepair, judgeKeepAllCursors, keepAllRepairBarrier, keepAllUnwedged, launchKeepAllRepair, ownerAudienceSessions, startKeepAllRepair, wakeAfterKeepAllRepair } from "./memory/keepall-unwedge.ts";
 import { bumpOpenTurnsBoot, startOpenTurnsReconcile } from "./memory/open-turns.ts";
-import { drainRevokeMarkerBounded, onRevocationIdle, revocationWorkPending, stopMemoryRevocation, wakeMemoryRevocation } from "./memory/memory-revocation.ts";
+import { drainRevokeMarkerBounded, onRevocationIdle, revocationWorkPending, settleRevokesForTurn, stopMemoryRevocation, wakeMemoryRevocation } from "./memory/memory-revocation.ts";
+/** T3: how long an owner's resumed turn hurries the revoke marker before its one continuation check, when that check would be checking:pending. */
+const OWNER_PENDING_HURRY_MS = 2_000;
 import { DELEGATED_REPLY_RECHECK_MS, DelegatedReplyChecks } from "./delegated-reply-check.ts";
 import { startOwnerTailIndexBuild } from "./memory/owner-tail-index.ts";
 import { startRecordKeysBuild } from "./memory/record-keys.ts";
@@ -558,7 +565,7 @@ import { memoryWaitingRows, withMemoryWaiting } from "./inbox-memory-waiting.ts"
 import { waitingSummary } from "./memory/review.ts";
 import { WaitingMonitor } from "./memory/waiting-monitor.ts";
 import { ioBudget, routeSource, startWriteTrace, stopWriteTrace, writeStatementCount } from "./io-budget.ts";
-import { configureScopes, engineState } from "./engine-closed.ts";
+import { probeDeletionHomes } from "./engine-closed.ts";
 import { ownerFirst, ownerFirst as ownerFirstGate } from "./owner-first.ts";
 import { systemLoad } from "./system-load.ts";
 import { inboxAccessFor, inboxDoor, inboxThreads, type InboxDoor } from "./inbox-access.ts";
@@ -863,8 +870,10 @@ import {
 } from "./mcp-relay.ts";
 import { RemoteSseSessions } from "./remote-mcp-sse-sessions.ts";
 import { connectorHealthStore } from "./connected-app-health.ts";
+import { reconnectApps } from "./reconnect-apps.ts";
 import { startConnectorHealthMonitor } from "./connector-health-monitor.ts";
-import { sanitizeBotDisplayMessage, storedRowDisplayMetadata, sanitizeDisplayTextUnit } from "./transcript-page.ts";
+import { sanitizeBotDisplayMessage, storedRowDisplayMetadata, storedRowReadMetadata, sanitizeDisplayTextUnit } from "./transcript-page.ts";
+import { ERROR_REASON_WITHHELD, ownerOnlyDisplay, ownerOnlyRead, shownErrorDetails, shownErrorReason } from "./owner-display.ts";
 import { buildNotification as buildRawNotification, turnFailureBuzzes, type Notification } from "./notify.ts";
 import { BACKUP_WHOLE_SENTENCE_CODES, captureFailureSentence, normalizeCaptureFailure } from "../shared/backup-capture-failure.mjs";
 import { createBackupRestartAdmission } from "./backup-restart-admission.ts";
@@ -1027,6 +1036,7 @@ import { addShownToRunningTurn, addSourcesToRunningTurn, beginTurnLineage, fresh
 import { memorySourceLines, type HeldRange } from "./turn-source-holds.ts";
 import { addTurnParents, bindProviderTurn, memberTurnId, openTurnLineage, runningTurnFor, supersedeMemberTurns, turnOfProvider, writerTurnFor, writeSessionLineage } from "./memory/lineage-write.ts";
 import { murageLine } from "./murage-line.ts";
+import { createOwnerStopTerminals } from "./owner-stop-terminal.ts";
 import { voiceRowsShown } from "./voice/voice-shown.ts";
 import { promoteLineageThread } from "./memory/lineage-backfill.ts";
 import { markerWorkPending, setScopeFlowEdgesRecorded } from "./memory/revoke-marker.ts";
@@ -1039,7 +1049,7 @@ import { createLedgerLease, LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
 import { captureSource } from "./memory/capture.ts";
 import { allocateIncarnation, latestIncarnation, resumeCursorOf, sessionKeyOf, startFreshSession } from "./memory/session-incarnation.ts";
 import { imageLibraryRef, shownPromptBlocks } from "./image-library-shown.ts";
-import { messageOnlyPrompt, recoveryFramePart, recoveryNote, NO_HUMAN_NOTE, type FenceTier } from "./memory/fence-recovery.ts";
+import { messageOnlyPrompt, recoveryFramePart, recoveryNote, handoffFramePart, assertHandoffRecoveryCarriesTask, NO_HUMAN_NOTE, type FenceTier } from "./memory/fence-recovery.ts";
 import { refsLookup } from "./memory/deny-read.ts";
 import { fenceRefusalDiagnosis, type FenceRefusalDiagnosis } from "./memory/send-fence.ts";
 import { buildPrompt, crossThreadLineageRefs, memoryRefs, noneRef, ownShownLineIds, promptPart, recordTurnObject, turnToolText } from "./memory/prompt-parts.ts";
@@ -1388,6 +1398,7 @@ import { BrowserCheckTurns, runBrowserCheck } from "./browser-check-state.ts";
 import { deniedTurnStopReason, turnAskStopped, turnEndedByClose, turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 import { emptyTurnLine, failedTurnLine, turnErrorShown, turnProducedSomething, turnWroteText, wantsEmptyTurnLine, wantsFailedTurnLine } from "./failed-turn-line.ts";
 import { hostStoppedActivityName, hostStoppedReason } from "../shared/host-stop.ts";
+import { decisionInterrupt } from "./decision/host-stop-interrupt.ts";
 import { isSendNoticeCode } from "../shared/send-notice.ts";
 import { browserUnavailableActivityName, USER_CHROME_ALLOW_REASON, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
 import { LOCAL_CONTROL_OFF_NOTICE, staleModelNotice, staleModelReplacement } from "./stale-engine-model.ts";
@@ -1562,6 +1573,8 @@ const serverSentinel = startServerSentinel({
 // runs the store is inert, so no engine writer can see a user address.
 configureLocalServerStore(DATA_DIR);
 const cfg = loadConfig();
+// CODEX-WEB-1020: own web_search runs with no card only on the free default provider; read live, as the handler reads it
+setOwnWebSearchProviderProbe(() => cfg.webSearch?.provider ?? "engine");
 // the catalog never shows a duplicate card in place of an app the owner has connected
 setConnectedSlugsSource(() => composio.rememberedConnectedSlugs(cfg));
 configureBrowserLocale(()=>cfg.language);
@@ -1758,6 +1771,16 @@ function hostStopNotedSinceLastUserMessage(threadId: string): boolean {
   });
   return noted;
 }
+/** 1.0.20 STOP-CHIP (JOINT RULING STOP-VS-REFUSAL): the one terminal line of an owner Stop, at most once per dispatch generation
+ * (owner-stop-terminal.ts). Its callers are the terminal fold (a stopped turn.completed: running, settling) through
+ * noteOwnerStopTerminal, and the Stop route and the guarded send's give-back (queued, dispatch preparation: no engine turn exists, so
+ * no turn.completed will ever come; the stale rejection that follows the Stop stays silent). */
+const stopWithoutEngineTurn = createOwnerStopTerminals({
+  hostStopNoted: threadId => hostStopNotedSinceLastUserMessage(threadId),
+  writeLine: threadId => { store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", tool: { name: TURN_STOPPED_NOTE, ok: true } })); },
+  warn: (message, error) => console.warn(message, error),
+});
+const noteOwnerStopTerminal = stopWithoutEngineTurn.once;
 /** Desktop actions (host computer tools/call) the harness is awaiting, and
  * threads whose stop withdrew one the driver had already been sent. Read once
  * when the thread's turn settles, so a stop mid-action says to check the
@@ -3357,7 +3380,7 @@ const ledgerCompletionSources = new WeakMap<ReturnType<typeof createLedgerLease>
 const ledgerLeasesByAdmission = new WeakMap<import("./contracts.ts").TurnAdmission, ReturnType<typeof createLedgerLease>>();
 const ledgerProviderInstances = new WeakMap<ReturnType<typeof createLedgerLease>, string>();
 function admitLedgerLease(botId: string, threadId: string, generation: string, turn: TurnLineage,
-  instance: ProviderInstance, boundary: TurnSubmissionBoundary, retryUnwritten = false,
+  instance: ProviderInstance, boundary: TurnSubmissionBoundary, retryUnwritten: boolean | "ledger" = false,
   interruptProvider: (id: string) => ReturnType<ProviderAdapter["interruptTurn"]> = id => instance.adapter.interruptTurn(threadId, id),
   observeProvider: ((id: string) => Promise<ProviderStopResult>) | undefined = instance.adapter.awaitTurnTeardown
     ? id => instance.adapter.awaitTurnTeardown!(threadId, id) : undefined) {
@@ -3365,6 +3388,11 @@ function admitLedgerLease(botId: string, threadId: string, generation: string, t
   let refusedReceipt: MemoryDispatchReceipt | undefined;
   /** The refusal was raised while the harness wrote into the engine's own input (a submission), not on a running turn's request. */
   let engineInputRefusal = false;
+  /** JOINT RULING STOP-VS-REFUSAL: read once, at the freeze (seal). True only when this generation's owner Stop was already CONFIRMED and had
+   *  released the run as stopped: the turn then ends silent (the card shows the Stop). A HELD, rejected or unconfirmed Stop leaves it false. */
+  let stopConfirmedAtFreeze = false;
+  /** 1.0.20 A-1: the seal proved the accepted turn unwritten and left it rebuildable (sealFencedUnwritten). */
+  let sealedUnwritten = false;
   const ledgerDb = database();
   const pendingWrites: Promise<void>[] = [];
   const persist = (work: () => void): Promise<void> => {
@@ -3382,14 +3410,15 @@ function admitLedgerLease(botId: string, threadId: string, generation: string, t
   };
   /** Q2: the one deferred refusal row of a released attempt, told at the engine's teardown unless a ticket or pending terminal decision owes
    *  it, and not at all when the owner stopped first (the lease's own interrupt is never one). True when the row is being written. */
-  const tellDeferredRefusal = (): boolean => {
+  const tellDeferredRefusal = (joinedStopCounts = true): boolean => {
     const turnId = lease.providerTurnId;
     const deferred = turnId ? deferredRefusalNotes.get(turnId) : undefined;
     if (!turnId || !deferred || refusedTerminalDecisions.has(turnId) || lateMemoryRedispatches.get(turnId)?.owed) return false;
     deferredRefusalNotes.delete(turnId);
     const stopping = directRuns.get(threadId);
     // an owner Stop that joined this refusal's close (LLS S1: no second engine interrupt) is the owner's Stop all the same
-    if (takeReleasedStoppedTurn(threadId, turnId) || refusalStopJoins.has(`${threadId}\0${turnId}`) || refusalStopGenerations.has(`${threadId}\0${generation}`)
+    // JOINT RULING STOP-VS-REFUSAL: a joined Stop whose close was not confirmed is not a fact, so it never hides this row
+    if (takeReleasedStoppedTurn(threadId, turnId) || (joinedStopCounts && (refusalStopJoins.has(`${threadId}\0${turnId}`) || refusalStopGenerations.has(`${threadId}\0${generation}`)))
       || (stopping?.generation === generation && stopping.phase === "stopping")) return false;
     // through R.write and the retrying persisted sink like every other refusal row: a busy database delays it, never drops it
     persistNote(() => transaction(() => { deferred.note(deferred.classify()); }, { busyMs: 50, op: "ledger-refusal-note" }));
@@ -3404,10 +3433,23 @@ function admitLedgerLease(botId: string, threadId: string, generation: string, t
   const lease = createLedgerLease({ botId, threadId, dispatchGeneration: generation,
     lineageTurnIds: [turn.turnId], adapterLeaseId: generation }, {
     seal() {
+      stopConfirmedAtFreeze = confirmedStopGenerations.has(generation);
       engineInputRefusal = releasingEngineInput(generation);
       const revoked = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
-      // Only rooms rebuild here; direct refusals keep their terminal settlement path.
-      if (!retryUnwritten || !boundary.sealFencedUnwritten(revoked, instance.adapter.capabilities.fencedWrites)) boundary.seal(revoked);
+      // A proven unwritten fenced turn (room or direct) stays rebuildable and its rebuild is fenced again; every other refusal is terminal.
+      // 1.0.20 busy ("ledger", the direct turn): a refusal the ledger raised is rebuilt (A-1). One the engine's driver raised itself
+      // (verdict.driverRaised: its servers never listed or readied, capacity) is rebuilt only when this turn's context really was revoked
+      // while the engine held the prompt (A-1's live shape: a roster change during the readiness wait): the turn then needs fresh context
+      // whatever the engine does. With the context still current the engine alone refused, and the turn ends here as before A-1: a
+      // rebuild would wait the whole readiness cap again and be refused again, the bot busy all the while and its refusal row never told.
+      const verdict = lease.verdict;
+      let engineOnly = retryUnwritten === "ledger" && verdict?.state === "checking" && verdict.driverRaised === true;
+      if (engineOnly && internalTurnOwners.get(threadId)?.generation === generation) {
+        // the receipt's own pre-submit check (no delivery effect); anything but a proven revoke proves nothing and the turn ends
+        try { memoryDispatches.get(threadId)?.assertCurrent(); } catch (error) { if (isMemoryContextRevoked(error)) engineOnly = false; }
+      }
+      if (!retryUnwritten || engineOnly || !boundary.sealFencedUnwritten(revoked, instance.adapter.capabilities.fencedWrites)) boundary.seal(revoked);
+      else sealedUnwritten = true;
       if (internalTurnOwners.get(threadId)?.generation === generation) refusedReceipt = memoryDispatches.get(threadId);
       refusedLeases.set(generation, lease);
       revokeInternalGeneration(threadId, generation, false, true);
@@ -3424,7 +3466,8 @@ function admitLedgerLease(botId: string, threadId: string, generation: string, t
       // Exact source identity: never settle every open room member by thread.
       const sourceTurn = lease.providerTurnId ?? generation;
       persist(() => transaction(db => {
-        captureSource(db, { id: `turn:${threadId}:${sourceTurn}`, threadId, turnId: sourceTurn,
+        // a turn the owner's confirmed Stop already ended keeps no refusal sentence as its source either
+        if (!stopConfirmedAtFreeze) captureSource(db, { id: `turn:${threadId}:${sourceTurn}`, threadId, turnId: sourceTurn,
           kind: "turn", speaker: "harness", outcome: reason, text: LEDGER_REFUSAL_LINE });
         refusedReceipt?.completed(false);
         if (lease.providerTurnId) store.markTurnToolsUnrecorded(threadId, lease.providerTurnId);
@@ -3448,12 +3491,13 @@ function admitLedgerLease(botId: string, threadId: string, generation: string, t
           deferred = true;
           // a Q2-deferred row that is not told (owner Stop, a ticket owes it) releases this wait without latching R
           pendingWrites.push(Promise.race([refusal.reserveWrite(), new Promise<void>(resolve => { releaseWrite = resolve; })]));
-          void refusal.teardown.then(() => {
+          void refusal.teardown.then(close => {
             if (!ledgerRefusalAwaitingHandback.delete(generation)) return;
-            if (lease.providerTurnId && deferredRefusalNotes.has(lease.providerTurnId)) { if (!tellDeferredRefusal()) releaseWrite(); return; }
+            // this callback runs before the joined Stop's own continuation consumes its marks: an unconfirmed close is read here directly
+            if (lease.providerTurnId && deferredRefusalNotes.has(lease.providerTurnId)) { if (!tellDeferredRefusal(close.confirmed)) releaseWrite(); return; }
             // L2: no handback ever, and the owner stopped first (joined this close by generation, or the run is stopping): no generic row
             const stopping = directRuns.get(threadId);
-            if (refusalStopGenerations.has(`${threadId}\0${generation}`) || (stopping?.generation === generation && stopping.phase === "stopping")) { releaseWrite(); return; }
+            if ((close.confirmed && refusalStopGenerations.has(`${threadId}\0${generation}`)) || (stopping?.generation === generation && stopping.phase === "stopping")) { releaseWrite(); return; }
             persistNote(() => transaction(() => { store.appendMessage(threadId, murageLine({ role: "bot", kind: "text", actorKind: "murage",
               murage: { kind: "status" }, text: line, turnId: lease.providerTurnId }), randomUUID()); }, { busyMs: 50, op: "ledger-refusal-notice" }));
           });
@@ -3484,13 +3528,23 @@ function admitLedgerLease(botId: string, threadId: string, generation: string, t
         refuseTerminal();
         return;
       }
+      // 1.0.20 A-1: a direct turn proven unwritten whose late ticket owes the rebuild: the rebuild (or, if it cannot run, the ticket's one
+      // card) is this turn's row; a "stopped this turn" line here would sit above the rebuilt reply.
+      const rebuildTicket = sealedUnwritten && !notice && lease.providerTurnId ? lateMemoryRedispatches.get(lease.providerTurnId) : undefined;
+      if (rebuildTicket?.owed && rebuildTicket.redispatch && boundary.canRetry) {
+        refuseTerminal();
+        return;
+      }
       // This is the harness's refusal, not a provider reply. Revoking a turn
       // under contention may quarantine speech; attributing this notice to that
       // provider would make the eventual retry fail with speech_unavailable.
       const message = notice ? sendNoticeLine(notice) : murageLine({ role: "bot", kind: "text", actorKind: "murage",
         murage: { kind: "status" }, text: line, turnId: lease.providerTurnId });
       const noticeId = randomUUID();
-      persist(() => transaction(() => { store.appendMessage(threadId, message, noticeId); }, { busyMs: 50, op: "ledger-refusal-notice" }));
+      // JOINT RULING STOP-VS-REFUSAL: "If the confirmed Stop receipt exists before the refusal freezes, the turn ends silent and the card shows
+      // the Stop." Decided at the freeze and never rewritten; an admission notice is not a refusal of the stopped turn and still shows.
+      if (stopConfirmedAtFreeze && !notice) console.info("[turn] refusal row withheld after=owner-stop");
+      else persist(() => transaction(() => { store.appendMessage(threadId, message, noticeId); }, { busyMs: 50, op: "ledger-refusal-notice" }));
       // A busy/failed writer may delay the durable notice, never the terminal
       // control. No completion path can reopen this sealed lease.
       refuseTerminal();
@@ -3500,6 +3554,7 @@ function admitLedgerLease(botId: string, threadId: string, generation: string, t
       void Promise.all(pendingWrites).then(() => {
       refusedLeases.delete(generation);
       admittedLedgerLeases.delete(generation);
+      confirmedStopGenerations.consume(generation);
       projectTurnLeases.abandon(generation);
       closeTurnLineage(turn);
       // a deferred refusal row no ticket or pending terminal decision owes is told at this teardown, never left silent
@@ -4337,7 +4392,7 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
 }
 
 import { giveBackAdmitted, startAdmittedTurn, type AdmittedPhase, type AdmittedTurnState } from "./admitted-turn.ts";
-import { BrowserTurnExecution, BrowserExecutionRefusal } from "./browser-turn-execution.ts";
+import { BrowserTurnExecution, BrowserExecutionRefusal, turnGone } from "./browser-turn-execution.ts";
 import { DirectRebuildCancelled, IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, stillWaitingRemainingMs, requireDirectThreadTarget, stillWaitingLine, type DirectThreadRun, type ResourceBlocker } from "./independent-thread-runs.ts";
 import { ENGINE_CLOSED_LATE_NOTE, PROVIDER_STOP_UNCONFIRMED_LINE, releaseOnLateClose } from "./direct-late-close.ts";
 import { RetainedCloses, unconfirmedCloses } from "./reload-retain.ts";
@@ -4364,6 +4419,9 @@ type DirectTurnDispatchClaim = {
   readonly canRetry?: boolean;
 };
 class DirectTurnSetupCancelled extends Error {}
+/** MAIN Q1 (1115-FENCE-S1, option A): a retained-fence refusal whose check is still pending ends the turn terminally (one attempt, no
+ * write, one stopped-context line); only a settled retained refusal on an engine proven unwritten may rebuild (sealUnwritten). */
+const retainedRefusalPending = (verdict: { state: string; reason?: string }) => verdict.state === "checking" && verdict.reason === "pending";
 /** server/memory: assertMemoryAccess and deliverMemoryDisclosure refuse with
  * exactly this message when the authority a dispatch prepared under has moved. */
 /** The pin projection cannot be read while the receipt's recall view is being re-issued after a revoke: that is the revoked context
@@ -4417,6 +4475,9 @@ function discardDirectTurnCancellationProofsForGeneration(generation: string): v
  * re-dispatch (`redispatch`, the thread is taken again) or, past the last
  * one, the card that says so. */
 const lateMemoryRedispatches = new Map<string, LateMemoryTicket>();
+/** A delegated turn refused at a late submission whose rebuild is owed or running, by thread: the refused provider turn id. Its terminal fold is not the
+ * hand-off's end (the rebuild runs the same hand-off); the ticket finalizes the watch when no rebuild starts, the rebuilt turn's terminal when one does. */
+const lateRebuildWatches = new Map<string, string>();
 /** FENCE-RACE-1018 r2 (3.5): the rebuild ticket of a refused direct turn. Decided at most once (I-K): `take` returns at once when
  *  it is no longer owed, otherwise runs exactly one outcome. `routine` is the dispatch token of the scheduler run this turn belongs to. */
 type LateMemoryTicket = {
@@ -4549,14 +4610,21 @@ function schedulePendingFenceCheck(cancelled: () => boolean): void {
   wakeAfterKeepAllRepair(keepAllRepair, () => { if (!cancelled()) wakeMemoryRevocation(database); });
 }
 const withViewNotReady = <T extends object>(next: T | undefined) => next && { ...next, viewNotReady: true as const };
-async function rebuildRefusedDirectTurn(held: DirectThreadRun<BotRecord>, owner: DirectRejectionOwner, messageId: string, rebuild: { lastResort: boolean; recallHeld?: boolean; recallReadmit?: boolean; viewNotReady?: boolean }, start: (rebuildOf: string) => Promise<unknown>, refusal: unknown): Promise<DirectRebuildOutcome> {
-  // Only this input's pending verdict must settle; unrelated revokes stay background work.
-  const settled = rebuild.recallHeld || rebuild.recallReadmit || rebuild.viewNotReady || await settleRefusedFence(database(), refusal, () => !directRuns.rebuilding(held), undefined, () => schedulePendingFenceCheck(() => !directRuns.rebuilding(held)));
+async function rebuildRefusedDirectTurn(held: DirectThreadRun<BotRecord>, owner: DirectRejectionOwner, messageId: string, rebuild: { attempt: number; lastResort: boolean; recallHeld?: boolean; recallReadmit?: boolean; viewNotReady?: boolean; setupRetry?: boolean }, start: (rebuildOf: string, attempt: number) => Promise<unknown>, refusal: unknown, ownerMessageOnly: boolean): Promise<DirectRebuildOutcome> {
+  // Each rebuilt prompt still passes the submission fence before any write.
+  // MAIN Q2: an input still checking:pending waits for its exact obligation only; Stop ends the wait with no rebuild and no write.
+  // Any other refusal resolves at once (the wait returns true without work).
+  // Only this input's pending verdict must settle; unrelated revokes stay background work. A setup retry waits on no verdict.
+  const settled = rebuild.recallHeld || rebuild.recallReadmit || rebuild.viewNotReady || rebuild.setupRetry || await settleRefusedFence(database(), refusal, () => !directRuns.rebuilding(held), undefined, () => schedulePendingFenceCheck(() => !directRuns.rebuilding(held)));
   if (!directRuns.rebuilding(held)) { memoryRefusalCauses.delete(messageId); freeThreadAfterRebuild(held, owner); return { kind: "stopped" }; }
-  if (!settled) { memoryRefusalCauses.delete(messageId); return { kind: "rejected", error: refusal }; }
-  if (rebuild.lastResort) markLastResort(messageId);
+  if (!settled && (!ownerMessageOnly || fenceRefusalDiagnosis(refusal).refused !== "checking:pending")) {
+    memoryRefusalCauses.delete(messageId);
+    return { kind: "rejected", error: refusal };
+  }
+  // The original prompt stays refused. Only the fresh message may be sent.
+  if (!settled || rebuild.lastResort) markLastResort(messageId);
   try {
-    const admitted = await start(held.generation);
+    const admitted = await start(held.generation, settled ? rebuild.attempt : MEMORY_REDISPATCH_ATTEMPTS);
     // A held continuation can return without admission. Only its notice history ends here; the existing return/marker stay unchanged.
     if (admitted === undefined) memoryRefusalCauses.delete(messageId);
     return { kind: "started" };
@@ -4644,6 +4712,14 @@ type DirectAdmittedTurnState = AdmittedTurnState & {
 };
 
 const browserExecutions = new BrowserTurnExecution(directRuns);
+// BROWSERQ-1020 (MAIN ruling): a run past its live phases gives the browser profile to the turns in line only when the owner stopped
+// it or on positive evidence that it is gone (turnGone); an engine that cannot say is unknown, and unknown keeps the holder.
+browserExecutions.gone = owner => {
+  const run = directRuns.get(owner.threadId);
+  if (!run || run.generation !== owner.generation) return false;
+  return turnGone({ conversationExists: Boolean(store.taskByThread(run.botId, run.threadId)), threadId: run.threadId,
+    providerTurnId: run.providerTurnId, adapter: registry.get(run.snapshot.modelSelection.instanceId)?.adapter });
+};
 function setWaitingOnHuman(threadId: string, waiting: boolean, requestId = "", generation?: string): void {
   const run = directRuns.get(threadId);
   if (run && (generation === undefined || run.generation === generation)) browserExecutions.waiting(run, requestId, waiting);
@@ -4846,6 +4922,9 @@ function requestedDirectBot(botId:string,requested:unknown):BotRecord {
 /** LLS (nativecrash): the Stop's id-less engine interrupt per generation. A ledger refusal that lands while it is in flight adopts it as the
  * lease's one close (the lease never issues a second interruptTurn). */
 const stopInterrupts = new Map<string, Promise<unknown>>();
+/** JOINT RULING STOP-VS-REFUSAL: an owner Stop is a fact only once its interrupt is CONFIRMED (its close receipt exists). The generations whose
+ *  Stop the engine confirmed closed and whose run that Stop then released as stopped. A ledger refusal that freezes after this ends silent. */
+const confirmedStopGenerations = new PendingTurnKeys();
 /** LLS: the turn refusal of generation g (ledger lease or fenced driver), if any. A refused g is closed by its R, never by a Stop's own steps. */
 function refusedTurnOf(generation: string | undefined): FencedRefusal | undefined {
   if (!generation) return undefined;
@@ -4862,7 +4941,14 @@ async function joinRefusedStop(threadId: string, generation: string | undefined,
   if (turnId) refusalStopJoins.add(`${threadId}\0${turnId}`);
   if (generation) refusalStopGenerations.add(`${threadId}\0${generation}`);
   console.warn(`[stop] owner Stop joined the refusal close on thread ${threadId}`);
-  await R.teardown;
+  // JOINT RULING STOP-VS-REFUSAL: the joined Stop is a fact only once that one close is CONFIRMED. A rejected or unconfirmed close answers
+  // 409 provider_stop_unconfirmed with its chip, and the refusal keeps the run and the folder (fail closed); the refusal row explains the end:
+  // the join marks go first, so the deferred / L2 row and the refused terminal decision do not read this Stop as "the owner stopped first".
+  if (!(await R.teardown).confirmed) {
+    if (turnId) refusalStopJoins.consume(`${threadId}\0${turnId}`);
+    if (generation) refusalStopGenerations.consume(`${threadId}\0${generation}`);
+    throw unconfirmedDirectStop(threadId, generation);
+  }
 }
 async function interruptProjectTarget(target: ProjectInterruptTarget) {
   if (!target.requestId) return;
@@ -4898,6 +4984,9 @@ async function interruptDirectThread(botId:string,threadId:string,expectedGenera
   replyState.invalidate(threadId);
   const run=directRuns.get(threadId),emailStopGeneration=run?.generation??internalTurnOwners.get(threadId)?.generation,claim=cancelDirectTurnDispatch(botId,threadId,stopNote);
   const stoppedGeneration = run?.generation ?? internalTurnOwners.get(threadId)?.generation;
+  // 1.0.20 STOP-CHIP: this generation has no engine turn yet; the Stop (setup) or the guarded send's give-back (dispatching) owes its one stop line.
+  // Read from the run as it was before this Stop cancelled it, not from the claim: a Stop pressed at once finds the run admitted (setup) with no claim yet.
+  if(run&&run.providerTurnId==null&&(run.phase==="setup"||run.phase==="dispatching"))stopWithoutEngineTurn.arm(run.generation,run.phase,stopNote);
   const ownsStopTarget = () => (directRuns.get(threadId)?.generation ?? internalTurnOwners.get(threadId)?.generation) === stoppedGeneration;
   // bot email (4.5): the stopped turn's open email rows are withdrawn by email's own rule; closeOpenApprovals never touches the email card
   void stopEmailForTurn(emailRuntime,botId,emailStopGeneration,emailGeneration);
@@ -4955,7 +5044,8 @@ async function interruptDirectThread(botId:string,threadId:string,expectedGenera
   if (refusedJoin) { await joinRefusedStop(threadId, g, refusedJoin); return; }
   if(stopCloseConfirmed(stopped)===false)throw unconfirmedDirectStop(threadId,run?.generation);
   // A dispatching setup keeps ownership until its guarded send hands back.
-  if(run&&claim?.phase!=="dispatching"&&directRuns.current(run)){
+  // 1.0.20 STOP-CHIP: a second Stop finds the claim already consumed by the first; the generation's own record keeps the same ownership.
+  if(run&&claim?.phase!=="dispatching"&&!stopWithoutEngineTurn.dispatching(run.generation)&&directRuns.current(run)){
     if(screenPollers.get(botId)?.threadId===threadId)await finalScreenFrame(botId,threadId);
     if (!ownsStopTarget()) return;
     // Released before its child closed: that child's later turn.completed
@@ -4968,6 +5058,11 @@ async function interruptDirectThread(botId:string,threadId:string,expectedGenera
     if(stoppedTurnId)rememberReleasedStoppedTurn(threadId,stoppedTurnId);
     // A stop during setup ends that setup's admission watch too.
     settleDirectAttempts(run.generation, "stopped");
+    // the Stop is a fact from here: its close receipt is confirmed and the turn's receipt reads stopped (a legacy "not observed" stop is not)
+    if(stopCloseConfirmed(stopped)===true)confirmedStopGenerations.add(run.generation);
+    // 1.0.20 STOP-CHIP: no engine turn exists (queued or still preparing), so no stopped turn.completed will write the line: the Stop does,
+    // before the release lets the next send in. A known turn id leaves it to that turn's own terminal event.
+    if(!stoppedTurnId)stopWithoutEngineTurn.noteArmed(threadId,run.generation);
     watchdog.settleSetup(threadId,run.generation);
     directRuns.release(run);replySpeakerTurns.ended(threadId,run.providerTurnId);store.setTaskActivity(botId,threadId,"idle");
     finishDirectAttemptEffects(run.generation);
@@ -5210,6 +5305,10 @@ function retireStoppedDirectGeneration(run: DirectThreadRun<BotRecord>, botId: s
   const released = directRuns.release(run);
   if (released) {
     replySpeakerTurns.ended(threadId, still!.providerTurnId);
+    // 1.0.20 STOP-PREP: the generation's owed cleanup ends with its release, as on the Stop route and the terminal fold. Left pending,
+    // its release effect makes the queue drain refuse this thread for good: words waiting behind the stopped turn never run, nor does
+    // any later send.
+    finishDirectAttemptEffects(run.generation);
     retryDelegationsWaitingOn(botId);
     drainQueuedSends(); drainConnectorResumes(); drainSecretResumes();
     void browserSetup?.drain(); void browserExtension?.approvals.drain().catch(() => {}); drainTeamIncidents();
@@ -6172,12 +6271,7 @@ const conversationDeletions = new ConversationDeletions({
   },
   // Before a retry of a deletion whose engine history is held open: the process list alone (no worker, no pause, no plan) says whether the
   // same programs still hold it; the attempt runs only once that changes (SELF-OVERLOAD-105 item 2).
-  probeHomes: (homes) => homes.map((home) => {
-    configureScopes(join(DATA_DIR, "native")); // the worker's view of a private scope (engine-history-run.ts): the probe judges the same way
-    const verdict = engineState(home.engine, home.home, { identities: home.identities ?? [] });
-    const holders = (verdict.holders ?? []).map((item) => `${item.pid}:${item.name ?? ""}`).sort().join(",");
-    return { key: `${home.engine}\0${home.home}`, open: verdict.state === "open", holders: verdict.state === "open" ? (holders || `via:${verdict.via}`) : "" };
-  }),
+  probeHomes: (homes) => probeDeletionHomes(homes, join(DATA_DIR, "native")),
   onOwed: (notices, rev) => broadcast({ kind: "deletion-owed", notices, rev }),
 });
 /** Where each configured local engine keeps its own history, by provider instance. */
@@ -8614,10 +8708,10 @@ function pageSize(raw: string | null): number | null | undefined {
 /** `limit === undefined` is the original, unpaginated shape. A bounded page
  * of a thread that is not already in memory reads only that page from SQLite
  * (Store.messagePage). Null means `before` is not a message of this thread. */
-function messagePage(threadId: string, limit: number | undefined, before?: string | null) {
-  if (limit === undefined) return wireThread(store, threadId, { messages: store.messagesFor(threadId) }, { slim: false });
+function messagePage(threadId: string, limit: number | undefined, before?: string | null, ownerOnly = false) {
+  if (limit === undefined) return wireThread(store, threadId, { messages: store.messagesFor(threadId) }, { slim: false, ownerOnly });
   const page = store.messagePage(threadId, limit, before);
-  return page && wireThread(store, threadId, { messages: page.messages, hasMore: page.hasMore });
+  return page && wireThread(store, threadId, { messages: page.messages, hasMore: page.hasMore }, { ownerOnly });
 }
 
 /** Qualifying lines a voice call's context needs from the branch (voice-host-route.ts keeps the newest 8 after leaving out the
@@ -8651,7 +8745,7 @@ const ROSTER_DEFAULT_PAGE = 100;
 
 /** The line a sidebar row shows for a thread (shared/sidebar-line.ts): a bot's branch head, a room's newest row. At most two indexed reads for a
  * thread that is not loaded, none that materialise its transcript. */
-function sidebarLineFor(threadId: string, head: "leaf" | "newest"): SidebarLine | undefined {
+function sidebarLineFor(threadId: string, head: "leaf" | "newest", ownerOnly = false): SidebarLine | undefined {
   let row: Message | undefined;
   if (head === "leaf") {
     const id = store.leafOf(threadId);
@@ -8659,14 +8753,14 @@ function sidebarLineFor(threadId: string, head: "leaf" | "newest"): SidebarLine 
   } else {
     row = store.newestMessages(threadId, 1).messages[0];
   }
-  return row ? sidebarLineOf(sanitizeBotDisplayMessage(row, storedRowDisplayMetadata(row)) as unknown as Message) : undefined;
+  return row ? sidebarLineOf(sanitizeBotDisplayMessage(row, storedRowReadMetadata(row, ownerOnly)) as unknown as Message) : undefined;
 }
 
 /** A bot as the boot roster (`view=sidebar`) carries it: the record, its task window and the one sidebar line; no transcript rows. The first
  * page of a thread is fetched when it is opened (`/api/threads/:id/messages?view=switch`). */
-function sidebarBot(bot: NonNullable<ReturnType<typeof store.bot>>) {
+function sidebarBot(bot: NonNullable<ReturnType<typeof store.bot>>, ownerOnly = false) {
   const wired = wireBot(bot, ROSTER_TASK_WINDOW, true);
-  const sidebarLine = sidebarLineFor(bot.threadId, "leaf");
+  const sidebarLine = sidebarLineFor(bot.threadId, "leaf", ownerOnly);
   return {
     ...wired,
     ...(sidebarLine ? { sidebarLine } : {}),
@@ -8691,16 +8785,16 @@ function groupPageWithCards(threadId: string, limit: number, beside: boolean) {
 /** A bot entry for a bounded `/api/bots?messages=n`: publicBot()'s fields in
  * its key order, without publicBot()'s whole-transcript read. `roster`: the
  * listing's record (task window, cut description, no playbooks). */
-function pagedPublicBot(bot: NonNullable<ReturnType<typeof store.bot>>, limit: number, beside = false, roster = false) {
+function pagedPublicBot(bot: NonNullable<ReturnType<typeof store.bot>>, limit: number, beside = false, roster = false, ownerOnly = false) {
   // Read before the page, so the page is at least as new as its version.
   const threadVersion = threadVersions.token();
   const page = transcriptPage(store, bot.threadId, limit, beside);
   // wireBot already wires every task; the task list is built once, not twice.
   const wired = wireBot(bot, roster ? ROSTER_TASK_WINDOW : undefined, roster);
-  const sidebarLine = limit > 0 ? sidebarLineFor(bot.threadId, "leaf") : undefined;
+  const sidebarLine = limit > 0 ? sidebarLineFor(bot.threadId, "leaf", ownerOnly) : undefined;
   return {
     ...wired,
-    ...wirePage(store, bot.threadId, page, beside, true),
+    ...wirePage(store, bot.threadId, page, beside, true, ownerOnly),
     ...(sidebarLine ? { sidebarLine } : {}),
     activeLeafId: page.activeLeafId,
     tasks: wired.tasks ?? [],
@@ -8716,7 +8810,7 @@ function pagedPublicBot(bot: NonNullable<ReturnType<typeof store.bot>>, limit: n
  * the bot as a switch answers it, but with only the messages written since
  * (`threadDelta`) instead of the page. Null when the versions cannot say what
  * changed; the caller then answers with the whole page. */
-function switchDeltaBot(bot: NonNullable<ReturnType<typeof store.bot>>, since: string | null, limit: number) {
+function switchDeltaBot(bot: NonNullable<ReturnType<typeof store.bot>>, since: string | null, limit: number, ownerOnly = false) {
   if (!since || limit <= 0) return null;
   const threadVersion = threadVersions.token();
   const ids = threadVersions.since(bot.threadId, since, limit);
@@ -8728,7 +8822,7 @@ function switchDeltaBot(bot: NonNullable<ReturnType<typeof store.bot>>, since: s
     tasksSeq: taskDelta.seq(bot.id),
     tasksEpoch: taskDelta.epoch,
     threadVersion,
-    threadDelta: wireThread(store, bot.threadId, { messages: store.messagesByIds(bot.threadId, ids), activeLeafId: store.leafOf(bot.threadId) }),
+    threadDelta: wireThread(store, bot.threadId, { messages: store.messagesByIds(bot.threadId, ids), activeLeafId: store.leafOf(bot.threadId) }, { ownerOnly }),
   };
 }
 
@@ -8752,9 +8846,9 @@ function pagedGroupWithThread(group: GroupRecord, limit: number, beside = false)
 
 /** A bounded page centred on a known message, used when a search result is
  * opened on a client that only hydrated the newest part of the transcript. */
-function messageWindow(threadId: string, messageId: string, limit: number) {
+function messageWindow(threadId: string, messageId: string, limit: number, ownerOnly = false) {
   const window = store.messageWindow(threadId, messageId, limit);
-  return window && wireThread(store, threadId, { messages: window.messages, hasMore: window.hasMore });
+  return window && wireThread(store, threadId, { messages: window.messages, hasMore: window.hasMore }, { ownerOnly });
 }
 
 // ── SSE fan-out to clients ─────────────────────────────────────────────
@@ -11505,12 +11599,18 @@ function customConnectorIncidents() {
   });
 }
 function connectorIncidents() { return [...composio.reconnectIncidents(cfg), ...customConnectorIncidents()]; }
+/** One notice and one Needs-you row per app, however many of its accounts lapsed: the owner reads the sentence and its
+ * button once (1.0.19 owner report). Every account keeps its own incident; the first is the one the notice opens. */
+function onePerApp<T extends { slug: string }>(incidents: T[]): T[] {
+  const seen = new Set<string>();
+  return incidents.filter(incident => !seen.has(incident.slug) && Boolean(seen.add(incident.slug)));
+}
 
 /** Persistent Open-only rows feed the chosen tray, badge, bubble and dock surfaces. */
 function connectorTrayItems() {
   const bot = store.workspaceChief() ?? store.bots.find(bot => bot.composio !== false);
   if (!bot) return [];
-  return connectorIncidents().flatMap(incident => {
+  return onePerApp(connectorIncidents()).flatMap(incident => {
     const frame = buildNotification("connector-reconnect", bot, bot.threadId, incident.label);
     const shown = frame && applyNotificationPreferences(frame, cfg.notifications, new Date());
     if (!shown) return [];
@@ -11525,8 +11625,7 @@ function connectorTrayItems() {
 function connectorNotifications() {
   const bot = store.workspaceChief() ?? store.bots.find(bot => bot.composio !== false);
   if (!bot) return [];
-  return connectorIncidents().flatMap(incident => {
-    if (!incident.due && incident.notifiedAt === undefined) return [];
+  return onePerApp(connectorIncidents().filter(incident => incident.due || incident.notifiedAt !== undefined)).flatMap(incident => {
     const frame = buildNotification("connector-reconnect", bot, bot.threadId, incident.label, {
       deliveryId: incident.incidentId, requestId: incident.incidentId,
       reconnect: { slug: incident.slug, ...(incident.accounts[0] ? { accountId: incident.accounts[0].id } : {}) },
@@ -11940,6 +12039,20 @@ const UNATTENDED_TTL_MS = 30 * 60_000;
 /** Whether the latest turn in each thread was owner audience (owner-audience.ts):
  *  a turn it asks for or delegates inherits a no. */
 const ownerSurfacesByThread = new Map<string, boolean>();
+/** Host facts about who a thread's rows are for (owner-display.ts); read from the host's own records only. */
+function ownerDisplayFacts(threadId: string) {
+  return {
+    directBotThread: Boolean(store.botByThread(threadId)), room: Boolean(store.groupByThread(threadId)),
+    ownerPrincipal: isWorkspaceOwner(threadHumanPrincipal(threadId)),
+    notOwnerTurn: internalTurnOwners.get(threadId)?.notOwnerAudience === true || ownerSurfacesByThread.get(threadId) === false,
+    pairedChannel: Boolean(pairedChannelRun(threadId)),
+  };
+}
+/** MAIN Q2 ruling (1.0.20): the owner alone in his own bot's direct thread, for the one row the host WRITES with it
+ * (an error's reason). Any failure to tell is a shared audience. */
+function ownerOnlyDisplayThread(threadId: string): boolean {
+  try { return ownerOnlyDisplay(ownerDisplayFacts(threadId)); } catch { return false; }
+}
 setVenueReadLive({
   ownerSurface: threadId => ownerSurfacesByThread.get(threadId),
   notOwnerAudience: threadId => internalTurnOwners.get(threadId)?.notOwnerAudience === true,
@@ -13423,11 +13536,16 @@ const foldRuntimeEvent = (executionEvent: RuntimeEvent) => {
         const [engine, preset, kind, team, said] = sanitizeDisplayTextUnit([providerError.engine ?? "?", providerError.connection?.preset ?? "-", providerError.kind, providerError.providerTeam ?? "", providerError.providerSaid ?? ""], redactSecretsForSink);
         console.warn(`runtime.error thread=${event.threadId} engine=${engine} preset=${preset} http=${providerError.httpStatus} kind=${kind}${team ? ` team=${team}` : ""}${said ? ` said=${JSON.stringify(said)}` : ""}`);
       }
+      // An error whose reason the audience may not see says so in Murage's words: the bare marker is never the reason (A4).
+      // The owner alone reads the engine's own words when they scan clean, unless the turn's own secret scan latched it.
+      const errorOwnerView = () => !bus.audienceSecretMaskedFor(executionEvent) && ownerOnlyDisplayThread(event.threadId);
+      const errorReasonShown = shownErrorReason(displayField("message"), event.message, errorOwnerView);
+      const errorDetailsShown = shownErrorDetails(displayField("details"), event.details, errorOwnerView);
       pushMessage({
         role: "bot",
         kind: "activity",
         ...(event.turnId ? { turnId: event.turnId } : {}),
-        tool: { name: `error: ${redactSecretsInText(displayField("message") ?? "«redacted»").slice(0, ERROR_MESSAGE_MAX)}`, ok: false, setup: event.setup, authRequired: event.authRequired, ...(event.claudeUpdate ? { claudeUpdate: true } : {}), errorDetails: redactSecretsInText([displayField("message"), displayField("details")].filter(Boolean).join("\n")).slice(0, 4096), ...(event.errorKind ? { errorKind: event.errorKind } : {}), ...(event.localFailure ? { localFailure: event.localFailure, ...(event.localFailureEngine ? { localFailureEngine: event.localFailureEngine.slice(0, 64) } : {}) } : {}), ...(providerError ? { providerError } : {}), ...(diagnostic ? { diagnostic } : {}) },
+        tool: { name: `error: ${redactSecretsInText(errorReasonShown).slice(0, ERROR_MESSAGE_MAX)}`, ok: false, setup: event.setup, authRequired: event.authRequired, ...(event.claudeUpdate ? { claudeUpdate: true } : {}), errorDetails: redactSecretsInText([errorReasonShown === ERROR_REASON_WITHHELD ? undefined : errorReasonShown, errorDetailsShown].filter(Boolean).join("\n")).slice(0, 4096), ...(event.errorKind ? { errorKind: event.errorKind } : {}), ...(event.localFailure ? { localFailure: event.localFailure, ...(event.localFailureEngine ? { localFailureEngine: event.localFailureEngine.slice(0, 64) } : {}) } : {}), ...(providerError ? { providerError } : {}), ...(diagnostic ? { diagnostic } : {}) },
       });
       // a setup error means the engine could not even start: the bot is
       // dead until something changes, not merely idle. The next successful
@@ -13514,12 +13632,12 @@ const foldRuntimeEvent = (executionEvent: RuntimeEvent) => {
       const checkCarriesStop = replacementOwnsThread ? false : browserCheckTurns.terminal(event.threadId, { stopped: turnStopped(event) && !askStopped, desktopAction: desktopActionStopped });
       if (checkCarriesStop) { /* no second stop line */ }
       else if (turnStopped(event) && !askStopped && !replacementOwnsThread && !hostStopNotedSinceLastUserMessage(event.threadId)) {
-        pushMessage({
+        noteOwnerStopTerminal(directRun?.generation ?? terminalDispatchFor(executionEvent)?.identity.dispatchGeneration, () => { pushMessage({
           role: "bot",
           kind: "activity",
           ...(completedTurnId ? { turnId: completedTurnId } : {}),
           tool: { name: desktopActionStopped ? TURN_STOPPED_DESKTOP_ACTION_NOTE : TURN_STOPPED_NOTE, ok: true },
-        });
+        }); });
       }
       // A failed direct turn is never silent: when no runtime.error (or other failure line of Murage's) was shown for it, the
       // owner gets one plain line (server/failed-turn-line.ts). Rooms, delegations, routines and refusals have their own lines.
@@ -13771,7 +13889,13 @@ const foldRuntimeEvent = (executionEvent: RuntimeEvent) => {
         : !event.ok && event.stopReason?.trim()
           ? status("delegated_turn_failed", { why: failureCodeFrom(event.stopReason) })
           : undefined;
-      finalizeDelegationWatch(event.threadId, turnSucceeded(event), reply, delegationFailureName, delegationStopped, turnReplyCopy(event.threadId, event.turnId, delegationWatch.get(event.threadId)?.startedAtMs));
+      // A late refusal that owes its rebuild, decided or not yet, leaves the hand-off running: finalizing it here removed its row and the rebuild of the
+      // same hand-off was refused "this handoff is gone or finished" (lost helper work, comms "queues eight helpers"). The ticket finalizes it instead.
+      const lateRebuildOwnsWatch = event.turnId !== undefined && (lateRebuildWatches.get(event.threadId) === event.turnId || (lateRedispatch?.redispatch === true && lateRedispatch.owed));
+      if (!lateRebuildOwnsWatch) {
+        if (lateRebuildWatches.has(event.threadId)) lateRebuildWatches.delete(event.threadId);
+        finalizeDelegationWatch(event.threadId, turnSucceeded(event), reply, delegationFailureName, delegationStopped, turnReplyCopy(event.threadId, event.turnId, delegationWatch.get(event.threadId)?.startedAtMs));
+      }
       // A refusal is never silent (1.0.2 Keep all P0): a memory refusal is re-run or carded by its own entry (lateRedispatch); any other
       // refused send that wrote nothing gets the plain line here, and the last rebuild, which ran without remembered context, says so.
       if(!lateRedispatch){
@@ -16027,6 +16151,8 @@ async function startTurnAdmitting(
     packSuppressed?: true;
     /** Server-owned (rebuildRefusedDirectTurn): the generation of the refused turn whose held run this rebuild takes over at admission. */
     rebuildOf?: string;
+    /** Server-owned: this is the one automatic re-prepare of a turn whose setup failed in Murage itself (murageSetupRetryable). */
+    setupRetried?: true;
     /** Server-owned (routine dispatch only): at the three-thread limit, queue
      * visibly for a free thread slot instead of refusing. */
     waitForThreadSlot?: boolean;
@@ -16380,7 +16506,7 @@ async function startTurnAdmitting(
   // branch change revoked the thread, so the turn refused itself three times and ended with the card)
   // 1.0.18 TURNSTART r14.1 X1: which of the six kinds this turn's userMessage is (the footprint hashes it; only APPENDED is ever covered)
   let turnUserKind: UserKind = opts?.userMessage ? "EXPLICIT" : userMessage ? "PROJECT" : "APPENDED";
-  if (opts?.editedMessageId && !opts.memoryRedispatch) {
+  if (opts?.editedMessageId && !opts.memoryRedispatch && !opts.setupRetried) {
     const edited = store.branchMessage(threadId, opts.editedMessageId, text, opts.origin, opts.sendId);
     if (!edited) throw Object.assign(new Error("no such message"), { status: 404 });
     store.patchTask(bot.id, threadId, { rewound: true });
@@ -16458,6 +16584,13 @@ async function startTurnAdmitting(
   // thread back (admitted-turn.ts): a routine due at boot that threw here kept its slot until restart (rehearsal 2).
   // What this turn's own failure handler has settled, read by the give-back if that handler itself fails.
   const admitted: DirectAdmittedTurnState = { keepThread: false, reported: false, clearMemoryCause: () => memoryRefusalCauses.delete(userMessage.id), rejectionOwner: directTurnRejectionOwner(run, task) };
+  const directHumanInput = !userMessage.automation && !opts?.automationSource && !opts?.cardContinuation && !opts?.delegationRun && !opts?.projectCardRun && !opts?.sharedWorkRun && !opts?.unattended && !opts?.routineRunId && !opts?.askerWakeId && !opts?.via && !commsDepth && opts?.memorySkillSource === undefined && userMessage.role === "user" ? userMessage.text : undefined;
+  // 1.0.20 A-3: owner-originated work that is not the owner's own fresh line (a card continuation, the owner's routine, a delegation run in
+  // the owner's chat) takes the same message-only last resort when its exact pending check cannot settle: the last resort carries no stored
+  // context and no raw text of its own (fence-recovery.ts messageOnlyPrompt: the server frame), and its prompt is fenced again.
+  // A webhook, channel or app trigger carries outside input: it stays refused.
+  const directOwnerWork = !opts?.via && (opts?.automationSource === undefined || opts.automationSource === "schedule" || opts.automationSource === "manual") && !opts?.sharedWorkRun && !opts?.projectCardRun && !opts?.askerWakeId && !commsDepth
+    && (opts?.cardContinuation === true || opts?.routineRunId !== undefined || opts?.delegationRun !== undefined);
   void startAdmittedTurn(async () => {
   const attemptSeqs = opts?.attemptSeqs ?? (userMessage.sendId ? [sendStore.bySendId(threadId, userMessage.sendId)?.seq].filter((seq): seq is number => seq !== undefined) : []);
   bindDirectAttempts(run, attemptSeqs, instanceId);
@@ -16808,7 +16941,7 @@ async function startTurnAdmitting(
   // APPROVE-ALL: the owner's own typed turn in the app, the only turn whose cards Approve all may answer
   const ownerTyped = directOwnerAudience && isOwnerOrigin(opts?.origin) && !routineOrigin && opts?.automationSource === undefined && opts?.automation === undefined
     && !opts?.unattended && !opts?.via && !commsDepth && !opts?.delegationRun && !opts?.cardContinuation && !opts?.askerWake && !opts?.projectCardRun
-    && !opts?.sharedWorkRun && !opts?.queuedDrain && !opts?.memoryRedispatch && opts?.memorySkillSource === undefined;
+    && !opts?.sharedWorkRun && !opts?.queuedDrain && !opts?.memoryRedispatch && !opts?.setupRetried && opts?.memorySkillSource === undefined;
   const ownerPackAuthority = directOwnerAudience && (isOwnerOrigin(opts?.origin) || opts?.queuedOwnerProof === true) && !routineOrigin
     && opts?.automationSource === undefined && opts?.automation === undefined && !opts?.unattended && !opts?.via && !commsDepth
     && !opts?.delegationRun && !opts?.cardContinuation && !opts?.askerWake && !opts?.projectCardRun && !opts?.sharedWorkRun && opts?.memorySkillSource === undefined;
@@ -16839,9 +16972,9 @@ async function startTurnAdmitting(
     && (ownerCardRequest.origin === 'desktop' || ownerCardRequest.origin === 'companion')
     && !ownerCardRequest.notOwnerAudience && !ownerCardRequest.unattended
     && ownerCardRequest.parentId === null && ownerCardRequest.rootId === ownerCardRequest.id
-    && !opts?.cardContinuation && !opts?.memoryRedispatch && !opts?.unattended && !commsDepth;
+    && !opts?.cardContinuation && !opts?.memoryRedispatch && !opts?.setupRetried && !opts?.unattended && !commsDepth;
   const dispatchInitiator = decisionInitiator({ ownerTyped: ownerTyped || authenticatedOwnerCard, ownerOrigin: isOwnerOrigin(userMessage.origin), queuedDrain: opts?.queuedDrain, queuedOwnerProof: opts?.queuedOwnerProof,
-    memoryRedispatch: Boolean(opts?.memoryRedispatch), cardContinuation: opts?.cardContinuation, continuation: continuationInitiator, routine: routineInitiator,
+    memoryRedispatch: Boolean(opts?.memoryRedispatch || opts?.setupRetried), cardContinuation: opts?.cardContinuation, continuation: continuationInitiator, routine: routineInitiator,
     ...(opts?.automationSource === 'webhook' ? { kind: 'webhook' as const } : opts?.delegationRun ? { kind: 'delegation' as const } : commsDepth ? { kind: 'peer' as const, fromBotId: opts?.coordination?.path.at(-2) } : {}),
     ...(channelRun ? { channel: channelSource?.channelOrigin?.platform ?? 'telegram', channelOwner: channelRun.humanPrincipal !== undefined && isWorkspaceOwner(channelRun.humanPrincipal) && channelRun.notOwnerAudience !== true && !isGroupPrincipal(channelRun.humanPrincipal) } : {}),
   });
@@ -16939,7 +17072,30 @@ async function startTurnAdmitting(
       try { assertSendReplayProof(replayInputs.replayProof); }
       catch { throw sessionCheckRefusal({ reason: "send-replay-changed" }); }
     });
-    const ledgerLease = admitLedgerLease(bot.id, threadId, dispatchClaimId, turnLineage, instance, submissionBoundary);
+    // 1.0.20 A-1: an accepted direct turn on a fenced engine that has released no write (session/new answered, the first prompt held on
+    // readiness) is rebuilt like a room's, not ended: sealFencedUnwritten proves nothing of the old prompt can be written.
+    // 1.0.20 busy: "ledger", not true: a refusal the engine's own driver raised while the context is still current stays terminal
+    // (admitLedgerLease seal).
+    const ledgerLease = admitLedgerLease(bot.id, threadId, dispatchClaimId, turnLineage, instance, submissionBoundary, "ledger");
+    // 1.0.20 A-5: a RUNNING owner turn (its prompt already written) whose later release finds the context the engine already holds still
+    // checking:pending continues, with one left-out note (send-fence.ts assertRetainedFence). Unwritten turns keep the rebuild path above;
+    // a proven revoke, new context and every non-owner audience stay refused.
+    let pendingContinuationTold = false;
+    // T3 (DESIGN-T3.md, MAIN approved): the owner's resumed direct turn whose continuation check is still exactly checking:pending at the
+    // hurry bound keeps its session (no reset, no rebuild). It sends the owner's text alone, nothing remembered added, with one left-out
+    // note, and only what the session already holds is exempt from the release check (as A-5: never prospective refs). Set at dispatch.
+    const ownerMayKeepPending = directOwnerAudience && (directHumanInput !== undefined || directOwnerWork);
+    let ownerPendingKept = false;
+    const continueOwnerPending = ownerMayKeepPending ? () => {
+      if (!submissionBoundary.hasReleasedSubmission && !ownerPendingKept) return false;
+      if (!pendingContinuationTold) {
+        pendingContinuationTold = true;
+        console.warn(`[memory] retained release still checking:pending on thread ${threadId}; owner turn continues without the pending context`);
+        try { prepareFenceNotice(threadId, `${userMessage.id}:running-pending`, 1, 1, "checking", directHumanInput !== undefined)?.(ledgerLease.providerTurnId); }
+        catch { /* the note is the nice half; the decision stands */ }
+      }
+      return true;
+    } : undefined;
     const finalizeDirectReader = (reader: LineageReader) => {
       // Reader admission owns this member's successor. Receipt joins happen
       // before prompt submission and must not revalidate the retired generation.
@@ -16947,8 +17103,14 @@ async function startTurnAdmitting(
       return prepareRetainedFence(turnLineage, reader, verdict => {
         const error = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED", fence: verdict });
         // Preparation, or a fenced engine that has released nothing, proves the turn unwritten: it is rebuilt, not ended as a ledger refusal.
-        if (!submissionBoundary.refusePreparation(error) && !submissionBoundary.sealUnwritten(error, instance.adapter.capabilities.fencedWrites)) ledgerLease.onLedgerRefused(verdict);
-      }, database());
+        // MAIN ruling C1 (1.0.20): an owner-audience turn with fresh human text never ends terminal on checking:pending; proven unwritten, it is
+        // sealed and rebuilt (message-only last resort plus the left-out note). The owner's own work (1.0.20 A-3: a card continuation, the
+        // owner's routine, a delegation run) takes the same path, by the same gate as its pending-deadline last resort below. MAIN Q1
+        // (1115-FENCE-S1, option A) stays for every other turn: non-owner audiences and outside input (webhook, channel, app trigger, shared
+        // work, bot hops) end terminal on a retained refusal still checking:pending.
+        const pendingTerminal = retainedRefusalPending(verdict) && !(directOwnerAudience && (directHumanInput !== undefined || directOwnerWork));
+        if (!submissionBoundary.refusePreparation(error) && (pendingTerminal || !submissionBoundary.sealUnwritten(error, instance.adapter.capabilities.fencedWrites))) ledgerLease.onLedgerRefused(verdict);
+      }, database(), continueOwnerPending);
     };
     if (attemptBatch) attemptBatch.replay = replayConfirmation;
     if (attemptBatch) submissionBoundary.setPersistenceGate({
@@ -16978,7 +17140,7 @@ async function startTurnAdmitting(
     let earlyCheckStamp: string | undefined;
     // What the early continuation check found: it marks failing receipts
     // revoked, so the dispatch check then reads only "receipt-already-revoked".
-    const earlyWhy: { reason?: string } = {};
+    const earlyWhy: { reason?: string; kept?: boolean } = {};
     try {
       releaseEngineStart = ownerFirstGate.beginStart(threadId);
       if (directReader) directReader = finalizeDirectReader(directReader);
@@ -16999,7 +17161,12 @@ async function startTurnAdmitting(
         const access = await admittedRecallAccess(recallReadiness, bot.id, threadId, dispatchClaimId, (opts?.memoryRedispatch ?? 0) > 0);
         // The one write recall relies on: a message written a moment ago is captured now if the worker is behind. Lock-tolerant, bounded; recall itself writes nothing.
         catchUpRecentMemory(access, undefined, jobId => memoryWorker.completedSource(jobId), { messageIds: [...skipTranscript] });
-        if (!resumeCursor || !continuationMemoryRevoked(allowance, threadId, instanceId, resumeKey().nativeSession, access, earlyWhy)) {
+        // T3: probe without side effects; a pending verdict hurries the marker (bounded) before the one real check.
+        if (resumeCursor && ownerMayKeepPending && continuationPendingProbe(threadId, instanceId, resumeKey().nativeSession, access)) {
+          await settleRevokesForTurn(database(), OWNER_PENDING_HURRY_MS).catch(() => false);
+          if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before dispatch");
+        }
+        if (!resumeCursor || (!continuationMemoryRevoked(allowance, threadId, instanceId, resumeKey().nativeSession, access, earlyWhy, ownerMayKeepPending) && !earlyWhy.kept)) {
           const early = new EarlyBundle<Awaited<ReturnType<typeof buildMemoryBundle>>, MemoryAccess>(access);
           const query = Buffer.from(text).subarray(0, 4093).toString("utf8").replace(/�+$/, "");
           const options = {
@@ -17646,9 +17813,14 @@ async function startTurnAdmitting(
           noteLineageFootprint(threadId, turnFootprint);
         } catch { /* the footprint accounts for the warm claim; it never fails a turn (no claim is made without it) */ }
         directReader = finalizeDirectReader(freezeLineageReader(directOwnerAudience ? { audience: null } : { audience: lineageReaderAudience(access) }));
-        const revokedWhy: { reason?: string } = {};
+        const revokedWhy: { reason?: string; kept?: boolean } = {};
         if(packNeedsFreshSession)revokedWhy.reason="delegation-pack";
-        const revoked=Boolean(resumeCursor && (packNeedsFreshSession || (!earlyVerdictHolds && pre.sync("continuation.check",()=>continuationMemoryRevoked(allowance,threadId,instanceId,resumeKey().nativeSession,access,revokedWhy)))));
+        const revoked=Boolean(resumeCursor && (packNeedsFreshSession || (!earlyVerdictHolds && pre.sync("continuation.check",()=>continuationMemoryRevoked(allowance,threadId,instanceId,resumeKey().nativeSession,access,revokedWhy,ownerMayKeepPending)))));
+        ownerPendingKept=Boolean(resumeCursor&&!revoked&&revokedWhy.kept);
+        if(ownerPendingKept){
+          console.warn(`memory continuation kept thread=${threadId} engine=${instanceId} reason=checking:pending (owner turn, nothing remembered added)`);
+          earlyBundle?.cancel("owner-pending-kept");
+        }
         // Why a live conversation is being dropped (it closes a warm engine and its browsers).
         if(revoked){
           const reason=earlyWhy.reason&&earlyWhy.reason!==revokedWhy.reason?`${earlyWhy.reason} (then ${revokedWhy.reason??"check-failed"})`:(revokedWhy.reason??"check-failed");
@@ -17714,6 +17886,9 @@ async function startTurnAdmitting(
         // harness/memory-adapter.ts prefixes this turn's updated frame to the
         // prompt. So a resumed turn builds once, and a turn that must reset
         // builds once, after the reset.
+        // T3: a kept owner turn builds no bundle and no receipt: it adds nothing remembered, so nothing is left to reset for.
+        if(ownerPendingKept){memoryDispatches.delete(threadId);memoryDone?.("ok",{resumed:true,kept:true});}
+        else{
         let memoryRefreshed=revoked||memoryRebuild;
         let bundle: Awaited<ReturnType<typeof buildMemoryBundle>> | undefined;
         // PIP settings are reread at dispatch: a Continuity switch or option change during the mounts discards the early bundle.
@@ -17809,6 +17984,7 @@ async function startTurnAdmitting(
         memoryDispatches.set(threadId,memoryReceipt);
         if(instance.adapter.capabilities.memoryMcp){integrations.memory=memoryIntegration(bot.id,threadId,dispatchClaimId);threadRecallOn=threadRecallEligible(bot.id,threadId,dispatchClaimId);}
         memoryDone?.("ok", { resumed: Boolean(resumeCursor), ...(assembleStats?memoryStatsSince(assembleStats):{}) });
+        }
       } else {
         // Memory is off, paused or capture-only: memory_* still refuse (MEMORY_NOT_ACTIVE), but the thread tools answer, so the same
         // memory mount is added for a turn that can reach threads (r6 rule 18). A turn that reaches none keeps no mount.
@@ -18133,7 +18309,7 @@ async function startTurnAdmitting(
         // the lines of this thread the prompt quotes (the explicit reply target, quoted excerpts) are shown in words too, replay or not
         ownShownIds = ownShownLineIds(threadId, inWords, shown, withheldIds);
         turnShownRefs = crossThreadLineageRefs(threadId, shown, withheldIds);
-        selectiveDropped = (opts?.memoryRedispatch ?? 0) === 1 && refsLookup(database(), [
+        selectiveDropped = ownerPendingKept || (opts?.memoryRedispatch ?? 0) === 1 && refsLookup(database(), [
           { kind: "prefix", threadId, headLsn: turnLineage.turnLsn, shown: ownShownIds, held: resumeCursor && !sessionReset ? sessionLastLsn : null, ...(sessionFirstLsn !== null ? { heldFrom: sessionFirstLsn } : {}) },
           ...turnShownRefs, ...(workingBlock && "part" in working ? working.part.lineageOf : []),
           ...(learnedText ? learnedBlock.lessonIds.map((id): LineageRef => ({ kind: "memory", ref: { kind: "lesson", id } })) : []),
@@ -18219,13 +18395,18 @@ async function startTurnAdmitting(
         } catch { /* A missing current loan leaves the job with its note. */ }
       }
       const packGuard = delegationPackGuard(packRelease?.bindings ?? [], packHost, () => { packRefusedHere = true; });
-      const directHumanInput = !userMessage.automation && !opts?.automationSource && !opts?.cardContinuation && !opts?.delegationRun && !opts?.projectCardRun && !opts?.sharedWorkRun && !opts?.unattended && !opts?.routineRunId && !opts?.askerWakeId && !opts?.via && !commsDepth && opts?.memorySkillSource === undefined && userMessage.role === "user" ? userMessage.text : undefined;
       const directRecallPrepared = {
         system: joinShapeLayers(systemLayers), integrations: Object.keys(integrations),
         historyPrepared: transcript.length > 0, resumed: Boolean(resumeCursor && !sessionReset), ...(memoryLastResort || selectiveDropped ? { memoryFree: true as const } : {}),
       };
-      const renderRecoveryFrame = () => opts?.projectCardRun?.frame?.() ?? recoveryWakeFrame(opts?.sharedWorkRun?.request.id, threadId);
+      // A delegated turn keeps its task through recovery: the hand-off's stored prompt line, read again from the thread (comms "queues eight
+      // helpers": a rebuilt helper was sent only the static instruction, answered that, and its hand-off read done).
+      // MAIN RULING 2026-11-19: the same holds for the other work that has no fresh human words of its own, a routine run and a card
+      // continuation: each carries its own stored task line or ends refused with its card, never a run that did nothing and reads "ran".
+      const recoveryTaskTurn = opts?.delegationRun !== undefined || opts?.routineRunId !== undefined || opts?.cardContinuation === true;
+      const renderRecoveryFrame = () => opts?.projectCardRun?.frame?.() ?? recoveryWakeFrame(opts?.sharedWorkRun?.request.id, threadId) ?? (recoveryTaskTurn ? handoffFramePart(threadId, storedMessage(threadId, userMessage.id)) : null);
       const recoveryFrame = memoryLastResort || selectiveDropped ? renderRecoveryFrame() : undefined;
+      if (memoryLastResort || selectiveDropped) assertHandoffRecoveryCarriesTask(recoveryTaskTurn, recoveryFrame);
       if (recoveryFrame) submissionBoundary.alsoCheck(() => {
         if (renderRecoveryFrame()?.text !== recoveryFrame.text) throw new Error("MEMORY_CONTEXT_REVOKED");
       });
@@ -18241,6 +18422,7 @@ async function startTurnAdmitting(
       // so ask this bounded predicate at every write even with memory active.
       if (resumeCursor && !sessionReset) submissionBoundary.alsoCheck(() => {
         const verdict = writetimeSessionVerdict(threadId, instanceId, resumeKey().nativeSession, directFence.reader);
+        if (ownerPendingKept && verdict.state === "checking" && verdict.reason === "pending") return;
         if (verdict.state !== "shown") throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { fence: verdict });
       });
       const rawHumanText = directHumanInput;
@@ -18252,15 +18434,16 @@ async function startTurnAdmitting(
         threadRecallOn = false;
         directPrompt = messageOnlyPrompt(turnLineage, { rawHumanText, frame: speakerCorrection(threadId, bot.id), now: nowLine, serverFrame: recoveryFrame });
         transcript = [];
-        // the session this dispatch starts holds only this message: its cursor is never saved (session.started)
-        markMessageOnlyDispatch(turnOutputRoots.get(threadId));
+        // the session this dispatch starts holds only this message: its cursor is never saved (session.started). A kept session (T3) is
+        // not new: it keeps its cursor and records this turn's lineage, so the next check covers what it now holds.
+        if (!ownerPendingKept) markMessageOnlyDispatch(turnOutputRoots.get(threadId));
       } else {
         // Register only the text/ref pairs that survived the selective gate.
         directPrompt = buildPrompt(turnLineage, directPrompt.parts);
       }
       const fenceNote = prepareFenceNotice(threadId, userMessage.id, Math.min(2, opts?.memoryRedispatch ?? 0) as FenceTier,
         renderedWithheld.size + pendingWithheld.size + selectiveOmitted + working.omissions.checking + working.omissions.changed + working.omissions.unknown + bundleFenceOmissionCount(memoryReceipt?.bundle) + Math.max(0, packIds.length - (packRelease?.bindings.length ?? 0)),
-        (opts?.memoryRedispatch ?? 0) > 0 ? (memoryRefusalCauses.kind(userMessage.id) === "without-memory" ? "changed" : memoryRefusalCauses.kind(userMessage.id) === "without-memory-checking" ? "checking" : "unknown") : pendingWithheld.size || working.omissions.checking ? "checking" : renderedWithheld.size || working.omissions.changed ? "changed" : "unknown", rawHumanText !== undefined, undefined, (opts?.memoryRedispatch ?? 0) > 0 ? memoryRefusalCauses.diagnosis(userMessage.id) : { refused: "none", parts: 0 });
+        (opts?.memoryRedispatch ?? 0) > 0 ? (memoryRefusalCauses.kind(userMessage.id) === "without-memory" ? "changed" : memoryRefusalCauses.kind(userMessage.id) === "without-memory-checking" ? "checking" : "unknown") : ownerPendingKept || pendingWithheld.size || working.omissions.checking ? "checking" : renderedWithheld.size || working.omissions.changed ? "changed" : "unknown", rawHumanText !== undefined, undefined, (opts?.memoryRedispatch ?? 0) > 0 ? memoryRefusalCauses.diagnosis(userMessage.id) : { refused: "none", parts: 0 });
       // A session an earlier release started holds the older connected-app tool names in its history, and an
       // engine runs only a tool it was listed: it is mounted the older way, so it resumes and its calls run
       // unchanged. Any session started now is shown only the plain names, and its cursor is marked so.
@@ -18541,7 +18724,11 @@ async function startTurnAdmitting(
             registerLateTicket(accepted.turnId, releasedTicket);
             return;
           }
-          if (!isMemoryContextRevoked(refusal)) return;
+          // A hand-off has nobody to send it again. Its recall view lost at acceptance (the roster moved under the rebuilt turn; nothing was
+          // written) takes the same rebuild ladder as a revoked context: the next rebuild is prepared and fenced afresh, and the last one
+          // carries no memory. Before, the rebuilt helper ended on the card and its hand-off failed (comms "queues eight helpers").
+          const handoffViewLost = opts?.delegationRun !== undefined && refusal instanceof RecallViewLost;
+          if (!isMemoryContextRevoked(refusal) && !handoffViewLost) return;
           recordMemoryRefusal(refusal);
           turnRefused(threadId, userMessage.id, instance?.driverKind);
           const rebuild = nextMemoryRebuild(opts?.memoryRedispatch ?? 0);
@@ -18564,35 +18751,50 @@ async function startTurnAdmitting(
           if (rebuild) {
             console.warn(`[memory] context revoked at a late submission on thread ${threadId}; re-preparing (${rebuild.attempt} of ${MEMORY_REDISPATCH_ATTEMPTS})${refusalCauseNote(refusal)}`);
             recallReadiness.renewAfterContextChange();
+            // The hand-off this turn runs (if any) stays open while its rebuild is owed: the terminal fold leaves it to this ticket. Only the same watch
+            // entry is ever finalized here, so a later hand-off on this thread is never ended by this ticket.
+            const refusedWatch = delegationWatch.get(threadId);
+            const endRefusedWatch = (stopped: boolean) => {
+              if (lateRebuildWatches.get(threadId) === accepted.turnId) lateRebuildWatches.delete(threadId);
+              if (!refusedWatch || delegationWatch.get(threadId) !== refusedWatch) return;
+              finalizeDelegationWatch(threadId, false, "", stopped ? status("delegated_turn_stopped") : status("delegated_turn_failed", { why: failureCodeFrom("submission_refused") }), stopped);
+            };
             // at most once, whatever redelivers the terminal event: the turn's own run when it kept the thread, else the card
             const ticket: LateMemoryTicket = { redispatch: true, routine: routineToken, owed: true, canRetry: () => submissionBoundary.canRetry, take: (outcome, held) => {
               if (!ticket.owed) return;
               ticket.owed = false;
-              if (outcome === "none") { memoryRefusalCauses.delete(userMessage.id); if (routineToken) routines?.settleDispatch(routineToken, ROUTINE_REBUILD_STOPPED); return; }
-              if (outcome === "card" || !held) { try { settleWithCard(); } catch { /* the thread is gone */ } return; }
+              if (outcome === "none") { memoryRefusalCauses.delete(userMessage.id); endRefusedWatch(true); if (routineToken) routines?.settleDispatch(routineToken, ROUTINE_REBUILD_STOPPED); return; }
+              if (outcome === "card" || !held) { try { settleWithCard(); } catch { /* the thread is gone */ } endRefusedWatch(false); return; }
               // No second canRetry check here: both callers (settleRefusedLeaseTerminal and the terminal fold) read ticket.canRetry() in the
               // same synchronous expression that holds the run for this take, and nothing in between changes the submission boundary.
               // the same rebuild as a refusal during setup (rebuildRefusedDirectTurn): the walk settles first, the last one is the last resort
-              const attempt = rebuild.attempt;
               if (held.generation !== run.generation) {
                 console.warn(`[turn] ignored stale rejection on thread ${threadId} (generation ${held.generation})`);
+                endRefusedWatch(false);
                 if (routineToken) routines?.settleDispatch(routineToken, ROUTINE_REBUILD_STOPPED);
                 return;
               }
               // As at a setup refusal (canRebuildAttempt): seal the refused attempt's binding so the rebuild can bind over it.
               sealDirectAttempts(dispatchClaimId);
-              void rebuildRefusedDirectTurn(held, admitted.rejectionOwner, userMessage.id, rebuild, rebuildOf => startTurn(botId, text, { ...opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf, ...(packRefusedHere ? { packSuppressed: true as const } : {}) }), refusal)
+              // the rebuild runs the same hand-off: its watch stays for the rebuilt turn's own terminal event (bounded like the ticket maps)
+              if (refusedWatch && delegationWatch.get(threadId) === refusedWatch) {
+                if (lateRebuildWatches.size >= 256 && !lateRebuildWatches.has(threadId)) lateRebuildWatches.delete(lateRebuildWatches.keys().next().value!);
+                lateRebuildWatches.set(threadId, accepted.turnId);
+              }
+              void rebuildRefusedDirectTurn(held, admitted.rejectionOwner, userMessage.id, rebuild, (rebuildOf, attempt) => startTurn(botId, text, { ...opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf, ...(packRefusedHere ? { packSuppressed: true as const } : {}) }), refusal, directOwnerAudience && (directHumanInput !== undefined || directOwnerWork))
                 .catch(error => ({ kind: "rejected", error }) as const)
                 .then(outcome => {
                   if (outcome.kind === "started") return;
                   if (outcome.kind === "rejected" && admitted.rejectionOwner.current()) {
                     console.error(`[memory] late re-dispatch failed on thread ${threadId}:`, outcome.error instanceof Error ? outcome.error.message : String(outcome.error));
                     try { settleWithCard(); } catch { /* the thread is gone */ }
+                    endRefusedWatch(false);
                     freeThreadAfterRebuild(held, admitted.rejectionOwner);
                     return;
                   }
                   if (outcome.kind === "rejected") freeThreadAfterRebuild(held, admitted.rejectionOwner);
                   // E5: stopped meanwhile (the thread is freed): the passed-by run ends stopped
+                  endRefusedWatch(true);
                   if (routineToken) routines?.settleDispatch(routineToken, ROUTINE_REBUILD_STOPPED);
                 });
             } };
@@ -18687,8 +18889,13 @@ async function startTurnAdmitting(
       // never to the first dispatch's "send it again" card.
       const pinPendingRebuild = e instanceof MemoryPinProjectionPending && (opts?.memoryRedispatch ?? 0) > 0;
       const viewNotReady = e instanceof RecallViewNotReady;
+      // 1.0.20 T1: a setup that failed in Murage itself (murageSetupRetryable) is prepared once more when nothing was written: before the
+      // engine was invoked, or on an adapter whose every write goes through beforeSubmit with none released, none confirmed and no unfenced
+      // invocation (the same seal a fenced refusal takes). Any other adapter or state proves nothing and the card stands.
+      const setupRetry = murageSetupRetryable(e) && !opts?.setupRetried && directRuns.current(run)
+        && (submissionBoundary.canRetry || submissionBoundary.sealFencedUnwritten(e, instance?.adapter.capabilities.fencedWrites));
       const canRebuildAttempt = directRuns.current(run) && !(e instanceof DirectTurnSetupCancelled)
-        && (recallRetry || viewNotReady || isMemoryContextRevoked(e) || pinPendingRebuild) && submissionBoundary.canRetry && (recallRetry || !!nextMemoryRebuild(opts?.memoryRedispatch ?? 0));
+        && (recallRetry || viewNotReady || isMemoryContextRevoked(e) || pinPendingRebuild || setupRetry) && submissionBoundary.canRetry && (recallRetry || setupRetry || !!nextMemoryRebuild(opts?.memoryRedispatch ?? 0));
       if (canRebuildAttempt) sealDirectAttempts(dispatchClaimId);
       else if (!acceptedTurnCleanupFailed) settleDirectAttempts(dispatchClaimId, e instanceof DirectTurnSetupCancelled ? "stopped" : "failed");
       // Capture ownership before cleanup can yield or release the admitted run.
@@ -18698,6 +18905,11 @@ async function startTurnAdmitting(
       releaseTurnHold();
       earlyBundle?.cancel("setup-failed");
       if (ledgerLease.verdict) {
+        // MAIN Q1 terminal: the refused lease closes through its handback, and a sendTurn that rejected before handing a turn back, with
+        // no write released, has none to give: no engine turn exists, so its close is the admission's (not launched). Without this the
+        // lease waits for a handback that never comes and the thread stays busy with no refusal row. "Not launched" needs the boundary's
+        // own proof (fenced adapter, nothing released or confirmed, no unfenced invocation); without it the thread stays held (fail closed).
+        if (ledgerLease.providerTurnId === undefined && submissionBoundary.provenNotLaunched(instance.adapter.capabilities.fencedWrites)) ledgerLease.admissionNotLaunched();
         admitted.keepThread = refusedLeases.has(dispatchClaimId);
         return;
       }
@@ -18765,7 +18977,8 @@ async function startTurnAdmitting(
       // Proven unwritten: rebuilt as a late refusal is (rebuildRefusedDirectTurn), and the last rebuild is the last resort, a fresh session
       // with no memory (1.0.4 SETUP-LAST-RESORT: this path rebuilt three times with memory and then showed the card). Decided before the
       // release: a turn to be rebuilt keeps its run, so the thread reads as working until the rebuild takes it over or a Stop ends it.
-      const rebuild = ownsLatestGeneration && !(e instanceof DirectTurnSetupCancelled) && submissionBoundary.canRetry ? (recallRetry ? {attempt:opts?.memoryRedispatch ?? 0,lastResort:false,recallHeld:heldRecall,recallReadmit:readmitRecall} : viewNotReady ? withViewNotReady(nextMemoryRebuild(opts?.memoryRedispatch ?? 0)) : isMemoryContextRevoked(e) || pinPendingRebuild ? nextMemoryRebuild(opts?.memoryRedispatch ?? 0) : undefined) : undefined;
+      const rebuild = ownsLatestGeneration && !(e instanceof DirectTurnSetupCancelled) && submissionBoundary.canRetry ? (recallRetry ? {attempt:opts?.memoryRedispatch ?? 0,lastResort:false,recallHeld:heldRecall,recallReadmit:readmitRecall} : viewNotReady ? withViewNotReady(nextMemoryRebuild(opts?.memoryRedispatch ?? 0)) : isMemoryContextRevoked(e) || pinPendingRebuild ? nextMemoryRebuild(opts?.memoryRedispatch ?? 0)
+        : setupRetry ? { attempt: opts?.memoryRedispatch ?? 0, lastResort: false, setupRetry: true } : undefined) : undefined;
       if (ownsLatestGeneration && submissionBoundary.canRetry && !(e instanceof DirectTurnSetupCancelled) && isMemoryContextRevoked(e)) {
         recordMemoryRefusal(e);
         turnRefused(threadId, userMessage.id, instance?.driverKind);
@@ -18817,6 +19030,8 @@ async function startTurnAdmitting(
           && proof.phase === "dispatching";
         if (retireSameGeneration || retireConfirmedTeardown) {
           // A retired setup submitted nothing, so no provider completion will ever settle its ledger lease.
+          // 1.0.20 STOP-CHIP: the adapter was invoked but handed no turn back, so this retirement is the stopped turn's only terminal.
+          if (ownsStoppedGeneration()) stopWithoutEngineTurn.note(threadId, run.generation);
           if (retireStoppedDirectGeneration(run, bot.id, threadId, admitted.rejectionOwner.sameConversationGeneration)) settleLedgerLease();
         } else {
           if (ownsLatestGeneration && admitted.rejectionOwner.current() && store.taskByThread(bot.id,threadId)?.busy) {
@@ -18845,11 +19060,11 @@ async function startTurnAdmitting(
       let rebuildFailed = false;
       if (rebuild) {
         if (viewNotReady) console.warn(`[memory] rebuild ${opts?.memoryRedispatch ?? 0}: ${(e as RecallViewNotReady).message} on thread ${threadId}; last resort`);
+        else if ("setupRetry" in rebuild) console.warn(`[turn] setup failed in Murage on thread ${threadId} (${(e as Error).message}); preparing it once more`);
         else if (!recallRetry) { console.warn(`[memory] context revoked during dispatch on thread ${threadId}; re-preparing (${rebuild.attempt} of ${MEMORY_REDISPATCH_ATTEMPTS})${refusalCauseNote(e)}`); recallReadiness.renewAfterContextChange(); }
-        const attempt = rebuild.attempt;
         if (!heldForRebuild) { memoryRefusalCauses.delete(userMessage.id); freeThreadAfterRebuild(run, admitted.rejectionOwner); }
         const outcome: DirectRebuildOutcome = heldForRebuild
-          ? await rebuildRefusedDirectTurn(run, admitted.rejectionOwner, userMessage.id, rebuild, async rebuildOf => {
+          ? await rebuildRefusedDirectTurn(run, admitted.rejectionOwner, userMessage.id, rebuild, async (rebuildOf, attempt) => {
               if (recallRecoveryResetDecided && fenceResetCursor !== undefined) {
                 // Apply the already logged decision even if replay/recall failed before its ordinary reset.
                 // Commit first so the successor cannot retry the same denied native session.
@@ -18857,8 +19072,8 @@ async function startTurnAdmitting(
                 if (instance.adapter.resetSession) await instance.adapter.resetSession(threadId);
                 else if (instance.adapter.hasSession(threadId) || instance.adapter.capabilities.queueing === true) throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE");
               }
-              return startTurn(botId, text, { ...opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf, recallReadiness, ...(heldRecall ? {recallHeld:true as const} : {}), ...(packRefusedHere ? { packSuppressed: true as const } : {}) });
-            }, e)
+              return startTurn(botId, text, { ...opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf, recallReadiness, ...(heldRecall ? {recallHeld:true as const} : {}), ...("setupRetry" in rebuild ? { setupRetried: true as const } : {}), ...(packRefusedHere ? { packSuppressed: true as const } : {}) });
+            }, e, directOwnerAudience && (directHumanInput !== undefined || directOwnerWork))
             .catch(error => ({ kind: "rejected", error }) as const)
           : { kind: "stopped" };
         if (outcome.kind === "started") return;
@@ -18882,7 +19097,7 @@ async function startTurnAdmitting(
       }
       // D7: a rebuild blocked by an attempt that may have been written gets ONE row, the resend line, in place of the uncertain card
       const resendOffer = isMemoryContextRevoked(failure) && submissionBoundary.hasReleasedSubmission && !submissionBoundary.canRetry && !submissionBoundary.hasConfirmedSubmission && pinnedMemoryFailure(failure, `${bot.name}'s`) === undefined;
-      const message = ((pinnedMemoryFailure(failure, `${bot.name}'s`) || failure instanceof RecallDispatchPending || failure instanceof RecallPreparationPending) && !directOwnerAudience ? "Could not start this reply. Send it again." : pinnedMemoryFailure(failure, `${bot.name}'s`)) ?? (isMemoryContextRevoked(failure)
+      const detail = ((pinnedMemoryFailure(failure, `${bot.name}'s`) || failure instanceof RecallDispatchPending || failure instanceof RecallPreparationPending) && !directOwnerAudience ? "Murage couldn't start this reply. Send it again." : pinnedMemoryFailure(failure, `${bot.name}'s`)) ?? (isMemoryContextRevoked(failure)
         ? (submissionBoundary.canRetry ? lateMemoryRefusalLine(engineNameOf(instance)) : turnRefusedLine(engineNameOf(instance ?? { driverKind: bot.modelSelection.instanceId }), submissionRefusalKind(submissionBoundary)))
         : failure instanceof RecallPreparationPending ? new RecallDispatchPending().message : failure instanceof Error ? failure.message : String(failure));
       // A failure of this device's browser, computer or working folder says
@@ -18893,11 +19108,15 @@ async function startTurnAdmitting(
       const localFailureEngine = localFailure ? localSetupEngineOf(failure) : undefined;
       const guardError = failure instanceof SignInRequiredError ? classifyProviderError(failure) : undefined;
       if (localFailure) logTurnSetupRefused(localFailure, threadId);
-      console.error(`[turn] dispatch preparation failed on thread ${threadId}: ${message}`);
+      console.error(`[turn] dispatch preparation failed on thread ${threadId}: ${detail}`);
+      // 1.0.20 T1/B2: Murage's own internal code is not an engine error and not a sentence: the owner reads one plain Murage line (the
+      // card then offers Retry, never Models); the code stays in the technical details. Only a code on Murage's own list: an engine's or
+      // provider's code (sign-in, usage limit, quota, model) keeps its own words and its own card.
+      const message = !guardError && !localFailure && murageInternalCode(detail) ? MURAGE_NOT_STARTED_LINE : detail;
       if (!resendOffer) store.appendMessage(threadId, murageLine({
         role: "bot",
         kind: "activity",
-        tool: { ...turnFailureDiagnostic(message), ...(guardError ? { providerError: guardError } : {}), ...(localFailure ? { localFailure } : {}), ...(localFailureEngine ? { localFailureEngine: localFailureEngine.slice(0, 64) } : {}) },
+        tool: { ...turnFailureDiagnostic(message, detail), ...(guardError ? { providerError: guardError } : {}), ...(localFailure ? { localFailure } : {}), ...(localFailureEngine ? { localFailureEngine: localFailureEngine.slice(0, 64) } : {}) },
       }));
       else store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", ...(acceptedTurnId ? { turnId: acceptedTurnId } : {}), memoryNote: "resend" as const, ...resendOfRow, tool: { name: turnRefusedLine(engineNameOf(instance ?? { driverKind: bot.modelSelection.instanceId }), "resend-offer"), ok: true } }));
       admitted.failureCardWritten = true;
@@ -18936,9 +19155,30 @@ async function startTurnAdmitting(
   return userMessage;
 }
 
-function turnFailureDiagnostic(message: string): { name: string; ok: false; errorDetails: string } {
-  return { name: `error: ${message.length > 160 ? message.slice(0, 160) + "… (more)" : message}`, ok: false, errorDetails: message };
+function turnFailureDiagnostic(message: string, details = message): { name: string; ok: false; errorDetails: string } {
+  if (message === MURAGE_NOT_STARTED_LINE) return { name: message, ok: false, errorDetails: details };
+  return { name: `error: ${message.length > 160 ? message.slice(0, 160) + "… (more)" : message}`, ok: false, errorDetails: details };
 }
+/** 1.0.20 T1/B2: the line for a reply Murage itself could not start (its delete check, its root inventory, a detached engine instance:
+ * MURAGE_INTERNAL_CODES). Names Murage, never the engine or a model. */
+const MURAGE_NOT_STARTED_LINE = "Murage couldn't start this reply. Send it again.";
+/** The codes Murage ITSELF throws on the direct dispatch-preparation path, by exact name (MAIN ruling 1.0.20: never a pattern). An engine's
+ * or provider's own bare code (`invalid_api_key`, `usage_limit_reached`, `rate_limit_exceeded`, `model_not_found`) is not on it and keeps
+ * its own text and its own card, with Models: a code that is not listed here is shown as it came. Each entry names where Murage throws it. */
+const MURAGE_INTERNAL_CODES: ReadonlySet<string> = new Set([
+  "wipe-root-inventory-unavailable",      // pi-root-inventory.ts: the delete check's root inventory
+  "instance_not_attached",                // harness/bus.ts: the engine instance was detached (reload)
+  "invalid_attachment",                   // harness/audience-collector.ts: the instance attachment is no longer the active one
+  "provider_stop_unconfirmed",            // index.ts: Murage's own stop bookkeeping (the engine's teardown error is a sentence, not this code)
+  "decision-dispatch-without-provenance", // index.ts markDirectTurnDispatching
+  "browser_turn_cancelled",               // index.ts browserIntegration, browser-lifecycle-gate.ts
+]);
+/** `wipe-guard-*`: every code of Murage's delete check (wipe-guard/server.ts, wipe-guard/guard-file.ts, drivers/murage-exec-wipe.ts). */
+const murageInternalCode = (message: string): boolean => MURAGE_INTERNAL_CODES.has(message) || /^wipe-guard-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(message);
+/** Murage's own setup failures that a second preparation can clear (a guard or inventory that could not be set up for this attempt, an
+ * engine instance detached by a reload): the turn, proven unwritten, is prepared once more before any card is shown. */
+const murageSetupRetryable = (failure: unknown): boolean => failure instanceof Error
+  && /^(?:wipe-guard-[a-z0-9-]+|wipe-root-inventory-unavailable|instance_not_attached)$/.test(failure.message);
 
 /** Gives back a direct turn's thread when its start, or its own failure handling, failed after admission
  * (startAdmittedTurn, giveBackAdmitted): the run's per-turn marks end; a thread the handler chose to keep (engine stop
@@ -20997,7 +21237,12 @@ installDecisionTransport({
     if (!adapter) return { state: 'failed' };
     return adapter.respondToRequest(target.threadId, target.requestId, answer, options);
   },
-  interrupt: async target => { await decisionTargetAdapter(target)?.interruptTurn(target.threadId, target.turnId); },
+  // a decision-builder stop is the host's: the turn's line says why instead of "Stopped by you"
+  interrupt: decisionInterrupt({
+    adapter: decisionTargetAdapter,
+    botFor: threadId => internalTurnOwners.get(threadId)?.botId ?? store.botByThread(threadId)?.id,
+    noteHostStop: noteHostStoppedTurn,
+  }),
 });
 // T22 durable browser cards: a card whose call returned WAITING stays answerable for 24 hours, restart included. Its record is in
 // browser-extension/approvals.json. Open the integration now so the card has an owner (it also settles every card without a record).
@@ -24214,6 +24459,8 @@ async function runGroupMemberTurnDispatch(
   const roomLineageSource = roomLineageRow?.sourceMessageId ? store.messageById(threadId, roomLineageRow.sourceMessageId) : undefined;
   const roomOwnerAudience = turnAudienceIsOwner(threadId, { origin: latestUser?.origin }) && !roomLineageRow?.notOwnerAudience
     && (!roomLineageSource || turnAudienceIsOwner(threadId, { origin: roomLineageSource.origin }));
+  const roomHumanInput = roomLineageSource ?? latestUser;
+  const roomMinimalInput = roomHumanInput?.role === "user" && !roomHumanInput.automation && !orchestration && hop === 0 && !turnAutomation && !continuationPrompt ? roomHumanInput.text : undefined;
   const speechPromptId = roomLineageSource?.id ?? latestUser?.id;
   // 1.0.19 H1: Send again resolves the owner message THIS turn answers (the one it was queued for), never the newest user line; a mention hop, a wake or a routine turn offers none.
   const roomResendSource = hop === 0 && !continuationPrompt && !orchestration && !heldContinuation && (!roomLineageRow || (roomLineageRow.verb === "room_turn" && roomLineageRow.fromKind === "owner")) ? (roomLineageSource ?? latestUser) : undefined;
@@ -24282,7 +24529,11 @@ async function runGroupMemberTurnDispatch(
       freezeLineageReader({ audience: { owner: roomOwnerAudience, scopeIds: scopes, ...view?{view,recallOnly:true}:{} } }), verdict => {
         const error = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED", fence: verdict });
         // Preparation, or a fenced engine that has released nothing, proves the turn unwritten: it is rebuilt, not ended as a ledger refusal.
-        if (!submissionBoundary.refusePreparation(error) && !submissionBoundary.sealUnwritten(error, instance.adapter.capabilities.fencedWrites)) ledgerLease.onLedgerRefused(verdict);
+        // MAIN ruling C1 (1.0.20): a room turn answering only the owner, with fresh owner text, never ends terminal on checking:pending;
+        // proven unwritten, it is sealed and rebuilt. MAIN Q1 (1115-FENCE-S1, option A) stays for every other room turn (guests, @mention hops,
+        // orchestration, automation, continuations): a retained refusal still checking:pending is terminal even when proven unwritten.
+        const pendingTerminal = retainedRefusalPending(verdict) && !(roomOwnerAudience && roomMinimalInput !== undefined);
+        if (!submissionBoundary.refusePreparation(error) && (pendingTerminal || !submissionBoundary.sealUnwritten(error, instance.adapter.capabilities.fencedWrites))) ledgerLease.onLedgerRefused(verdict);
       }, database());
   };
   const roomStoredMemoryMode = memoryState().mode;
@@ -25258,8 +25509,6 @@ async function runGroupMemberTurnDispatch(
       recordTurnShapes(bot.id, { where: "room", threadId, layers: [...roomSystemLayers, shapeLayer("project-status", projectStatus), shapeLayer("working-context", workingBlock), shapeLayer("learned", learnedBlock.text), shapeLayer("now", nowLine)] });
       // write-time (DESIGN-WRITETIME 2, Enforcement (a)): the member's engine input is a BuiltPrompt; its part names the room's own context up
       // to the turn's position (a prefix), the lines of other threads it shows, the working context's quotes, cards and files, and the lessons
-      const roomHumanInput = roomLineageSource ?? latestUser;
-      const roomMinimalInput = roomHumanInput?.role === "user" && !roomHumanInput.automation && !orchestration && hop === 0 && !turnAutomation && !continuationPrompt ? roomHumanInput.text : undefined;
       const renderRecoveryFrame = () => recoveryWakeFrame(entryRequestId ?? setupRequestId(), threadId);
       const recoveryFrame = roomLastResort || roomSelectiveDropped ? renderRecoveryFrame() : undefined;
       if (recoveryFrame) submissionBoundary.alsoCheck(() => {
@@ -25445,7 +25694,12 @@ async function runGroupMemberTurnDispatch(
       })
       .catch(async (error) => {
         const err = recallSetupFailure(error, recallHeld);
-        if (ledgerLease.verdict) { unregisterStall(); unsub(); return; }
+        if (ledgerLease.verdict) {
+          // MAIN Q1 terminal, as in direct dispatch: no turn was handed back and nothing was released, so the close is the admission's,
+          // only on the boundary's own proof (provenNotLaunched); otherwise the lease keeps waiting for a handback (fail closed).
+          if (!providerTurnId && ledgerLease.providerTurnId === undefined && submissionBoundary.provenNotLaunched(instance.adapter.capabilities.fencedWrites)) ledgerLease.admissionNotLaunched();
+          unregisterStall(); unsub(); return;
+        }
         if (submissionBoundary.preparing) {
           ledgerLease.completed(); admittedLedgerLeases.delete(internalGeneration); closeTurnLineage(roomTurnLineage);
         }
@@ -25514,7 +25768,7 @@ async function runGroupMemberTurnDispatch(
         }
         // A refused pin is Murage's refusal, not the engine's: the room says
         // why once, in plain words, from Murage (0.1.61 final check D3).
-        const pinFailure = !roomOwnerAudience && (pinnedMemoryFailure(err, "its") || err instanceof RecallDispatchPending || err instanceof RecallPreparationPending) ? "Could not start this reply. Send it again." : pinnedMemoryFailure(err, err instanceof MemoryPinProjectionPending || err instanceof MemoryPinSetTooLarge ? `${bot.name}'s` : "its");
+        const pinFailure = !roomOwnerAudience && (pinnedMemoryFailure(err, "its") || err instanceof RecallDispatchPending || err instanceof RecallPreparationPending) ? "Murage couldn't start this reply. Send it again." : pinnedMemoryFailure(err, err instanceof MemoryPinProjectionPending || err instanceof MemoryPinSetTooLarge ? `${bot.name}'s` : "its");
         if (submissionBoundary.canRetry && isMemoryContextRevoked(err)) turnExhausted(threadId, entryRequestId ?? `${threadId}:${botId}`, instance?.driverKind);
         const message = pinFailure ?? (isMemoryContextRevoked(err)
           ? (submissionBoundary.canRetry ? lateMemoryRefusalLine(engineNameOf(instance ?? { driverKind: bot.modelSelection.instanceId })) : turnRefusedLine(engineNameOf(instance ?? { driverKind: bot.modelSelection.instanceId }), submissionRefusalKind(submissionBoundary)))
@@ -25539,6 +25793,8 @@ async function runGroupMemberTurnDispatch(
   });
   // Keep this room's claim while its exact pending input settles. Releasing it
   // first lets another send claim the thread during the wait.
+  // MAIN Q2: the wait covers its own obligation only (no foreground drain); Stop ends it with no rebuild and no write.
+  let roomPendingFallback = false;
   if (outcome === "memory_revoked" && !roomHeldRedispatch && !roomReadmitRedispatch) {
     // MA-REBUILD (B): the rebuild belongs to the SAME refused attempt. The speaker's own turn.completed fold (foldRuntimeEvent) clears the
     // busy flag and drops the generation before this runs, so the live flag cannot say "stopped". The captured identity does: the attempt
@@ -25557,6 +25813,11 @@ async function runGroupMemberTurnDispatch(
       // Its claim and busy state belong to that generation, never this one.
       if (current && current !== internalGeneration) return false;
       outcome = "cancelled";
+    }
+    // 1.0.20 A-3: the owner's card continuation or routine in a room (hop 0, no orchestration) takes the same last resort (server frame only)
+    else if (!settled && roomOwnerAudience && (roomMinimalInput !== undefined || (hop === 0 && !orchestration && (continuationPrompt !== undefined || turnAutomation !== undefined)))
+      && fenceRefusalDiagnosis(roomMemoryRefusal).refused === "checking:pending") {
+      roomPendingFallback = true;
     }
     else if (!settled) {
       outcome = "dispatch_failed";
@@ -25646,7 +25907,7 @@ async function runGroupMemberTurnDispatch(
     // The re-dispatch's completion (or its failure path) drains as always.
     if (skillAuthoring) skillAuthoringClaim.claimed = false;
     await releaseBrowserCapabilityForThread(threadId);
-    // Pending memory was settled while this attempt still held the room above.
+    // The pending check ran while this attempt still held the room.
     // This attempt's generation is finished: revoke it before the re-dispatch
     // claims the thread under its own (the finally below would otherwise do
     // so only after the re-dispatch returned). Its writer lease stays until
@@ -25675,14 +25936,14 @@ async function runGroupMemberTurnDispatch(
       skillAuthoringClaim,
       orchestration,
       noMentionChain,
-      roomHeldRedispatch || roomReadmitRedispatch ? memoryRedispatch : memoryRedispatch + 1,
+      roomPendingFallback ? MEMORY_REDISPATCH_ATTEMPTS : roomHeldRedispatch || roomReadmitRedispatch ? memoryRedispatch : memoryRedispatch + 1,
       heldContinuation,
       continuationCardId,
       continuationKind,
       turnAutomation,
       // the last rebuild after refusals at the late write, or during dispatch when proven unwritten: fresh session, no memory frame, and the
       // send fence still judges what it shows (1.0.3 revoke storm, M2)
-      !roomHeldRedispatch && !roomReadmitRedispatch && (lateMemoryRefusal || dispatchRefusalUnwritten) && nextMemoryRebuild(memoryRedispatch)?.lastResort === true,
+      roomPendingFallback || (!roomHeldRedispatch && !roomReadmitRedispatch && (lateMemoryRefusal || dispatchRefusalUnwritten) && nextMemoryRebuild(memoryRedispatch)?.lastResort === true),
       { key: memoryCauseKey, cause: memoryCause, diagnosis: memoryDiagnosis },
       ownerSend,
       recallReadiness,
@@ -28694,6 +28955,17 @@ function rosterAudience(req: IncomingMessage, url: URL): RosterAudience {
   if (requestSurface(req.headers, url.searchParams) === "desktop") return "owner-desktop";
   return companionAuthorized(req.headers) || doorAuthorized(req.headers) ? "owner-scoped" : "other";
 }
+/** This opt-in is for the owner's authenticated private task view. Shared tasks and channel runs keep the conservative projection. */
+function ownerOnlyTranscript(req: IncomingMessage, url: URL, threadId: string): boolean {
+  if (grantOfRequest.has(req) || (requestSurface(req.headers, url.searchParams) !== "desktop" && !companionAuthorized(req.headers))) return false;
+  const bot = store.botByThread(threadId);
+  // A room the owner runs, read on the owner's own desktop or phone (owner-display.ts ownerOnlyRead). Rows the host
+  // WRITES for a room keep the shared mask: the other members' engines read those rows.
+  if (!bot) { try { const facts = ownerDisplayFacts(threadId); return facts.room && ownerOnlyRead(facts); } catch { return false; } }
+  const task = store.taskByThread(bot.id, threadId);
+  return Boolean(task && !task.sharedWork && phoneDirectThread(bot.id, threadId) && !pairedChannelRun(threadId)
+    && ownerSurfacesByThread.get(threadId) !== false && internalTurnOwners.get(threadId)?.notOwnerAudience !== true);
+}
 /** Every answer that carries a bot carries its number (BOTADDED-DESIGN-V3 r6 §4): `tasksSeq`, the last frame built for that bot
  * (the change listener broadcasts before the handler answers), and `tasksEpoch`, the run; every answer that carries a room
  * carries the room's (`recordSeq`, `recordEpoch`, CI-OVERLAY-DESIGN I-H2). Applied here, once, to `bot`, `bots[]`,
@@ -30292,6 +30564,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const claim = internalCapabilities.resolve(req.headers.authorization);
       const control = claim && internalCapabilities.releaseControl(claim);
       if (method !== "POST" || !claim || !control) {
+        logSwallowedConsumingError("http.turn-release:unauthorized", Object.assign(new Error("TURN_RELEASE_UNAUTHORIZED"), {
+          code: method !== "POST" ? "method" : !claim ? "no-claim" : "no-control" }));
         if (claim) proxyReleaseAuthority.seal(claim);
         return denyConsumingHttp(res);
       }
@@ -30309,7 +30583,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         }
         const envelope = proxyReleaseAuthority.verdict(claim, body);
         return json(res, 200, envelope);
-      } catch {
+      } catch (error) {
+        logSwallowedConsumingError("http.turn-release", error);
         seal();
         return denyConsumingHttp(res);
       } finally { clearTimeout(deadline); }
@@ -31833,6 +32108,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           },
           refusal: () => Object.assign(new Error(nativeWinsRefusalText(highlevelConnectionActive(store.bot(internalClaim.botId)))), { status: 403 }),
         });
+        // OPTIONAL HIGHLEVEL: read the connected-apps inventory once when nothing is remembered, so an owner who holds a
+        // Composio HighLevel account keeps it on a cold start; a failed read leaves HighLevel hidden (fail closed).
+        if (nativeWinsFiltersReply(body) && !nativeHighLevelGranted(store.bot(internalClaim.botId)) && composio.rememberedConnectedSlugs(cfg) === null) await composio.connectedServices(cfg).catch(() => undefined);
         requireActiveInternal();
         const initialBot = store.bot(internalClaim.botId);
         if (!initialBot) throw Object.assign(new Error("Bot unavailable."), { status: 403 });
@@ -31901,9 +32179,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // a bot never discovers native HighLevel names on the external relay (GAP-HIGHLEVEL-109 section 7)
         const listed = (Array.isArray(body) ? body : [body]).some((message: unknown) => Boolean(message) && typeof message === "object" && (message as { method?: unknown }).method === "tools/list");
         const relayed = listed ? filterRelayToolListBytes(upstream.contentType, upstream.bytes) : upstream.bytes;
+        // NATIVE WINS for a native-granted bot; OPTIONAL HIGHLEVEL for a bot that never set HighLevel up (native-wins.ts)
         const nativeBot = store.bot(internalClaim.botId);
-        return res.end(Buffer.from(!serviceNoLimits(internalClaim.generation, internalClaim.threadId, internalClaim.botId) && nativeHighLevelGranted(nativeBot) && nativeWinsFiltersReply(body)
-          ? stripComposioHighLevelBytes(upstream.contentType, relayed, highlevelConnectionActive(nativeBot)) : relayed));
+        return res.end(Buffer.from(connectorReplyBytes({ bot: nativeBot, noLimits: serviceNoLimits(internalClaim.generation, internalClaim.threadId, internalClaim.botId), body,
+          contentType: upstream.contentType, bytes: relayed, connectedSlugs: () => composio.rememberedConnectedSlugs(cfg), connectionActive: () => highlevelConnectionActive(nativeBot) })));
       }
       // ── the owner's link servers: the relay behind remote-mcp-proxy (spec MCP-LINK 3.8) ──
       const mcpRemoteMatch = /^\/api\/internal\/mcp-remote\/([a-z][a-z0-9_-]{0,31})$/.exec(path);
@@ -32025,7 +32304,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           ? { pending: false, message: 'No app connection is pending; manage connections in App Settings → Connections → Connected apps.' }
           : { pending: true });
         // Refuse mixed requests whole, before inventory lookup or card creation.
-        if (!serviceNoLimits(internalClaim.generation, internalClaim.threadId, internalClaim.botId) && nativeHighLevelGranted(owner.bot) && nativeWinsConnectorRequestRefused(slugs)) return localJson(res, 403, { error: nativeWinsRefusalText(highlevelConnectionActive(owner.bot)) });
+        // NATIVE WINS below No limits; OPTIONAL HIGHLEVEL at every level: nobody is handed a HighLevel connect card they never set up.
+        if (nativeWinsConnectorRequestRefused(slugs) && !nativeHighLevelGranted(owner.bot) && composio.rememberedConnectedSlugs(cfg) === null) { await composio.connectedServices(cfg).catch(() => undefined); requireActiveInternal(); }
+        const highlevelRequestRefusal = connectorRequestHighLevelRefusal({ bot: owner.bot, noLimits: serviceNoLimits(internalClaim.generation, internalClaim.threadId, internalClaim.botId), slugs,
+          connectedSlugs: () => composio.rememberedConnectedSlugs(cfg), connectionActive: () => highlevelConnectionActive(owner.bot) });
+        if (highlevelRequestRefusal) return localJson(res, 403, { error: highlevelRequestRefusal });
         if (serviceNoLimits(internalClaim.generation, internalClaim.threadId, internalClaim.botId)) {
           const states: Awaited<ReturnType<typeof composio.connectionStatus>> = owner.bot.composio !== false && composio.configured(cfg) ? await composio.connectionStatus(cfg, slugs) : {};
           requireActiveInternal();
@@ -32631,7 +32914,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       return json(res, 200, withLongWayBudget(LONG_WAY_REQUEST_ROWS, () => ({
         ...(removed ? { tasksEpoch: taskDelta.epoch, removed, roomClock: horizon, removedGroups: removedGroups ?? [] } : {}),
         pendingSends: pendingSendsSnapshot(new Set(bots.map((bot) => bot.id)), new Set(groups.map((group) => group.id))),
-        bots: bots.map((bot) => sidebar ? sidebarBot(bot) : pagedPublicBot(bot, limit, takesCardsBeside(req.headers, url.searchParams), roster)),
+        bots: bots.map(bot => {
+          const ownerOnly = (sidebar || limit > 0) && ownerOnlyTranscript(req, url, bot.threadId);
+          return sidebar ? sidebarBot(bot, ownerOnly) : pagedPublicBot(bot, limit, takesCardsBeside(req.headers, url.searchParams), roster, ownerOnly);
+        }),
         groups: groups.map((g) => sidebar ? sidebarGroup(g) : ({
           ...publicGroupState(g, ROSTER_TASK_WINDOW),
           ...groupPageWithCards(g.threadId, limit, takesCardsBeside(req.headers, url.searchParams)),
@@ -32693,6 +32979,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!mayReadThread(req, url, threadId) || (!store.botByThread(threadId) && !store.groupByThread(threadId))) {
         return json(res, 404, { error: "no such conversation" });
       }
+      const ownerOnly = ownerOnlyTranscript(req, url, threadId);
       const limit = pageSize(url.searchParams.get("limit"));
       if (limit === null) return json(res, 400, { error: "limit must be a non-negative whole number" });
       const before = url.searchParams.get("before");
@@ -32708,10 +32995,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         const switchLimit = limit ?? DEFAULT_PAGE;
         const version = threadVersions.token();
         const ids = threadVersions.since(threadId, url.searchParams.get("since"), switchLimit);
-        if (ids) return json(res, 200, wireThread(store, threadId, { delta: true, version, activeLeafId: store.leafOf(threadId), messages: store.messagesByIds(threadId, ids) }));
+        if (ids) return json(res, 200, wireThread(store, threadId, { delta: true, version, activeLeafId: store.leafOf(threadId), messages: store.messagesByIds(threadId, ids) }, { ownerOnly }));
         const beside = takesCardsBeside(req.headers, url.searchParams);
         const page = transcriptPage(store, threadId, switchLimit, beside);
-        return json(res, 200, { ...wirePage(store, threadId, page, beside, true), activeLeafId: page.activeLeafId, version });
+        return json(res, 200, { ...wirePage(store, threadId, page, beside, true, ownerOnly), activeLeafId: page.activeLeafId, version });
       }
       // The next page back of a branch page: the rows of the active branch from
       // this ancestor up, by parent links (Store.branchPage), with the cursor
@@ -32721,16 +33008,16 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         const branch = store.branchPage(threadId, limit ?? DEFAULT_PAGE, branchFrom);
         if (!branch) return json(res, 404, { error: "no such message" });
         // a branch page is in parent-link order: gated legacy: no number on the rows or the envelope (bots stay legacy here)
-        return json(res, 200, wireThread(store, threadId, { messages: branch.messages, hasMore: branch.hasMore, ...(branch.olderFrom ? { olderFrom: branch.olderFrom } : {}) }, { legacy: true }));
+        return json(res, 200, wireThread(store, threadId, { messages: branch.messages, hasMore: branch.hasMore, ...(branch.olderFrom ? { olderFrom: branch.olderFrom } : {}) }, { legacy: true, ownerOnly }));
       }
       if (around) {
-        const window = messageWindow(threadId, around, limit ?? DEFAULT_PAGE);
+        const window = messageWindow(threadId, around, limit ?? DEFAULT_PAGE, ownerOnly);
         if (!window) return json(res, 404, { error: "no such message" });
         return json(res, 200, window);
       }
       // An unknown cursor must not silently answer with the newest page —
       // the client would paginate in a circle and never reach the top.
-      const page = messagePage(threadId, limit ?? DEFAULT_PAGE, before);
+      const page = messagePage(threadId, limit ?? DEFAULT_PAGE, before, ownerOnly);
       if (!page) return json(res, 404, { error: "no such message" });
       return json(res, 200, page);
     }
@@ -33112,10 +33399,16 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         : (store.groupTaskByThread(group!.id, threadId)?.title || group!.name);
       const filename = (title.replace(/[^\w\- ]+/g, "").trim() || "conversation").slice(0, 60);
       const userName = cfg.profile?.name?.trim() || "User";
-      // The whole branch, read and written in slices that yield to the event
-      // loop (thread-export.ts); the bytes are those of the one-shot load.
+      // Read and write the branch in slices. Outside the owner's private
+      // view, export the same conservative projection as an ordinary page.
+      const reader = store.branchExportReader(threadId);
       await streamThreadExport({
-        res, reader: store.branchExportReader(threadId), format, name: title, threadId, filename, ...exportSpeakers(userName, bot?.name),
+        res, reader: ownerOnlyTranscript(req, url, threadId) ? reader : {
+          next: budgetMs => {
+            const page = reader.next(budgetMs);
+            return { ...page, messages: page.messages.map(row => sanitizeBotDisplayMessage(row, storedRowDisplayMetadata(row)) as unknown as Message) };
+          },
+        }, format, name: title, threadId, filename, ...exportSpeakers(userName, bot?.name),
       });
       return;
     }
@@ -35472,7 +35765,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const grantBotId = grantOfRequest.get(req)?.botId;
       const visible = bot && (grantBotId ? grantBotId === bot.id : requestSurface(req.headers, url.searchParams) === "desktop" || visibleToCompanion(store, { scope: "bot", botId: bot.id }));
       if (!bot || !visible) return json(res, 404, { error: "no such bot" });
-      const sidebarLine = sidebarLineFor(bot.threadId, "leaf");
+      const sidebarLine = sidebarLineFor(bot.threadId, "leaf", ownerOnlyTranscript(req, url, bot.threadId));
       return json(res, 200, { bot: { ...wireBot(bot, ROSTER_TASK_WINDOW), ...(sidebarLine ? { sidebarLine } : {}), tasksSeq: taskDelta.seq(bot.id), tasksEpoch: taskDelta.epoch } });
     }
     if (m && method === "PATCH") {
@@ -37474,10 +37767,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // "0" is settings only, a positive value a bounded page, and no
       // parameter the newest SWITCH_FRAME_PAGE messages plus hasMore.
       // A switch back to a page the client holds asks for what changed since.
-      const delta = switchLimit ? switchDeltaBot(switched, url.searchParams.get("since"), switchLimit) : null;
+      const ownerOnly = ownerOnlyTranscript(req, url, switched.threadId);
+      const delta = switchLimit ? switchDeltaBot(switched, url.searchParams.get("since"), switchLimit, ownerOnly) : null;
       const responseBot = delta ?? (requestedMessages === "0"
         ? wireBot(switched)
-        : pagedPublicBot(switched, switchLimit ?? SWITCH_FRAME_PAGE, takesCardsBeside(req.headers, url.searchParams)));
+        : pagedPublicBot(switched, switchLimit ?? SWITCH_FRAME_PAGE, takesCardsBeside(req.headers, url.searchParams), false, ownerOnly));
       return json(res, 200, { bot: responseBot });
     }
     if (m && method === "PATCH") {
@@ -39837,14 +40131,16 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // The record a call leaves in its conversation when it ends
     // (server/voice/call-note.ts). Built from the call's own log, no model.
     if (method === "POST" && CALL_NOTE_PATH.test(path)) {
-      const access = callAccess(store, inboxDoor(req.headers, url.searchParams), CALL_NOTE_PATH.exec(path)![1]);
+      const door = inboxDoor(req.headers, url.searchParams);
+      const access = callAccess(store, door, CALL_NOTE_PATH.exec(path)![1]);
       if (access === "forbidden") return json(res, 403, { error: "calls need a paired device" });
       if (access === "not-found") return json(res, 404, { error: "no such bot" });
       await handleCallNoteRoute(method, path, req, res, {
         bot: (id) => store.bot(id),
         // the owner's own words as an owner row (memory keeps them), then Murage's status line (LINEAGE-DESIGN-S6 rule 21)
         record: (threadId, note) => {
-          store.appendMessage(threadId, { role: "user", kind: "text", text: note.ownerWords, actorKind: "owner" });
+          // the door that ended the call (desktop or the paired phone) is the row's proven origin, as on a typed send
+          store.appendMessage(threadId, { role: "user", kind: "text", text: note.ownerWords, actorKind: "owner", ...(door === "desktop" || door === "companion" ? { origin: door } : {}) });
           writeBotRow(rows, threadId, {}, status("call_ended", { minutes: note.minutes }));
         },
         readBody: (request) => readBody(request),
@@ -39947,7 +40243,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!mayApprove(req, url)) return json(res, 404, { error: "no such route" });
       const bot = store.workspaceChief() ?? store.bots.find(bot => bot.composio !== false);
       if (!bot || (requestSurface(req.headers, url.searchParams) !== "desktop" && !visibleToCompanion(store, { scope: "thread", threadId: bot.threadId }))) return json(res, 200, { apps: [] });
-      return json(res, 200, { apps: connectorIncidents().map(({ slug, label, accounts, incidentId }) => ({ slug, label, accounts, incidentId })) });
+      return json(res, 200, { apps: reconnectApps(connectorIncidents()) });
     }
     const connectorIncidentRoute = /^\/api\/connector-incidents\/([0-9a-f-]{36})$/.exec(path);
     if (connectorIncidentRoute && (method === "GET" || method === "POST")) {
@@ -39966,7 +40262,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     }
     if (method === "GET" && path === "/api/connectors/needs-reconnect") {
       // Durable unresolved incidents, including accounts missing from inventory. No broker call.
-      return json(res, 200, { apps: connectorIncidents().map(({ slug, label, accounts, incidentId }) => ({ slug, label, accounts, incidentId })), notifications: connectorNotifications() });
+      // One row per app; each account keeps its own incident and notification.
+      return json(res, 200, { apps: reconnectApps(connectorIncidents()), notifications: connectorNotifications() });
     }
     if (method === "GET" && path === "/api/connectors/connected") {
       const panel = await composio.connectedPanelInventory(cfg, { force: url.searchParams.get("force") === "1" });
@@ -40582,6 +40879,9 @@ const server = createServer((req, res) => {
   const source = routeSource(req.method, req.url);
   routeNames.set(res, source);
   meterResponse(req, res);
+  // Every answer names the launch that gave it (the hash of the shell's nonce, the value health answers already carry): the desktop renderer
+  // treats a responder without this launch's id as "Murage is reconnecting", never as an answer (electron/server-follow.mjs, src/lib/live-events.ts).
+  res.setHeader("x-murage-launch", bootLaunchId());
   // The synchronous part of the handler runs inside a named step too: JS work (row parsing, wiring a bot, a big body) is a holder, not "unknown".
   return completeHttpRequest(withClientCapabilities(req.headers, () => ioBudget.withSource(source, () => heldStep(source, () => handleRequest(req, res)))), res);
 });

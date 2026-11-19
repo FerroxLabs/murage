@@ -270,7 +270,8 @@ describe('final S0 cross-slice amendment', () => {
     }>();
     expectTypeOf<DecisionTransport>().toEqualTypeOf<{
       respond: (target: DecisionEngineTarget, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>) => Promise<RequestDelivery>;
-      interrupt: (target: DecisionEngineTarget) => Promise<void>;
+      // 1020 perm-deliver: a decision-builder stop names its host reason, so it is never shown as the owner's Stop
+      interrupt: (target: DecisionEngineTarget, hostStopReason?: string) => Promise<void>;
     }>();
     expectTypeOf<DecisionHost>().toEqualTypeOf<{
       readonly store: Store; view: (registration: Readonly<Registration>) => ApprovalView;

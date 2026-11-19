@@ -14,12 +14,22 @@ import { initializeMessageTables } from "./message-tables.ts";
 import { branchOracle, threadKey } from "./branch-index.ts";
 import { BACKFILL_UPGRADE_RECHECK_MS, BACKFILL_UPGRADE_YIELD_MAX_MS, holdTranscriptBackfillUntil, indexAttachmentNamesChunk, readIndexState, runTranscriptBackfill, transcriptBackfillWaitingOn, turnFirstRowid } from "./transcript-backfill.ts";
 
+/** One prepared INSERT per handle: an INSERT into messages compiles its triggers (about 200 KB native each) and V8 never sees that memory,
+ * so a statement per row (90,000 in the slice test) grew the worker past 13 GB before any GC and the pool killed it on every box. */
+const statements = new WeakMap<DatabaseSync, Map<string, ReturnType<DatabaseSync["prepare"]>>>();
+const prepared = (db: DatabaseSync, sql: string) => {
+  let cache = statements.get(db);
+  if (!cache) statements.set(db, (cache = new Map()));
+  let statement = cache.get(sql);
+  if (!statement) cache.set(sql, (statement = db.prepare(sql)));
+  return statement;
+};
 const put = (db: DatabaseSync, thread: string, id: string, parentId: string | null, extra: object = {}) =>
-  db.prepare("INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, 1, 'bot', ?, 'x', ?)").run(
+  prepared(db, "INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, 1, 'bot', ?, 'x', ?)").run(
     thread, id, (extra as { kind?: string }).kind ?? "text", JSON.stringify(openFixtureApproval(db, thread, { id, parentId, role: "bot", kind: "text", at: 1, ...extra })),
   );
 const insert = (db: DatabaseSync, id: string, parentId: string | null, extra: object = {}) =>
-  db.prepare("INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+  prepared(db, "INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
     "t", id, 1, "bot", (extra as { kind?: string }).kind ?? "text", "x", JSON.stringify(openFixtureApproval(db, "t", { id, parentId, role: "bot", kind: "text", at: 1, ...extra })),
   );
 const openCard = (requestId: string) => ({ kind: "options", card: { title: "May I?", options: [], requestId, tool: "Bash" } });

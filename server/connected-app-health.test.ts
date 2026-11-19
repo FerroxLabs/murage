@@ -542,3 +542,73 @@ describe("R3 fix-round response boundaries", () => {
     expect(read({ messages: [] }).ok.has("gmail")).toBe(true);
   });
 });
+
+// 1.0.19 owner report (HighLevel): an app the owner never finished connecting asked them to "sign in again",
+// said it twice with two buttons once they pressed Reconnect, and came back on every read.
+describe("an app that was never connected is never asked to sign in again", () => {
+  const hl = () => reconnectIncidents(cfg()).filter(incident => incident.slug === "highlevel");
+  // a forced read every time: each one is a real inventory answer from the broker stub, never a remembered list
+  const read = async () => (await connectedInventory(cfg(), { force: true, fresh: true })).services!;
+
+  it.each(["INITIATED", "INITIALIZING", "FAILED", "INACTIVE"])("W1 a lone %s HighLevel row opens no incident, on any read", async status => {
+    accounts.highlevel = [{ id: "ca_hl_try", status }];
+    // not even an incident that opens and ends within one read: nothing is ever opened, so nothing is ever settled
+    let settled = 0;
+    const stop = connectorHealthStore().onResolved(() => { settled++; });
+    try {
+      for (let pass = 0; pass < 3; pass++) {
+        const services = await read();
+        expect(services.highlevel?.needsReconnect).toBeUndefined();
+        expect(appsNeedingReconnect(cfg()).map(app => app.slug)).not.toContain("highlevel");
+      }
+    } finally { stop(); }
+    expect(settled).toBe(0);
+    expect(reconnectSystemPrompt(cfg())).not.toMatch(/highlevel/i);
+  });
+
+  it("W2 a Reconnect in progress is still ONE incident: the sign-in being made is not a second lapsed account", async () => {
+    accounts.highlevel = [{ id: "ca_hl_old", status: "EXPIRED" }];
+    await read();
+    expect(hl().map(incident => incident.accounts[0]?.id)).toEqual(["ca_hl_old"]);
+    accounts.highlevel = [{ id: "ca_hl_old", status: "EXPIRED" }, { id: "ca_hl_new", alias: "second", status: "INITIATED" }];
+    await read();
+    await read();
+    expect(hl().map(incident => incident.accounts[0]?.id)).toEqual(["ca_hl_old"]);
+  });
+
+  it("W3 a stored incident for a sign-in in progress (written by 1.0.19) ends on the next read", async () => {
+    accounts.highlevel = [{ id: "ca_hl_old", status: "EXPIRED" }];
+    await read();
+    const owner = hl()[0]!.owner;
+    // exactly what 1.0.19 left on disk: the lapsed row AND the sign-in the owner started from Reconnect
+    connectorHealthStore().update(owner, "highlevel", { accounts: [{ id: "ca_hl_old" }, { id: "ca_hl_new", alias: "second" }] });
+    expect(hl()).toHaveLength(2);
+    accounts.highlevel = [{ id: "ca_hl_old", status: "EXPIRED" }, { id: "ca_hl_new", alias: "second", status: "INITIATED" }];
+    await read();
+    expect(hl().map(incident => incident.accounts[0]?.id)).toEqual(["ca_hl_old"]);
+    // and an incident held ONLY for never-finished rows ends whole
+    accounts.highlevel = [{ id: "ca_hl_old", status: "FAILED" }, { id: "ca_hl_new", alias: "second", status: "INITIATED" }];
+    await read();
+    expect(hl()).toEqual([]);
+    await read();
+    expect(hl()).toEqual([]);
+  });
+
+  it("W4 a finished Reconnect clears it for good; a working HighLevel never asks", async () => {
+    accounts.highlevel = [{ id: "ca_hl_old", status: "EXPIRED" }];
+    await read();
+    expect(hl()).toHaveLength(1);
+    accounts.highlevel = [{ id: "ca_hl_new", alias: "second", status: "ACTIVE" }, { id: "ca_hl_try", status: "FAILED" }];
+    for (let pass = 0; pass < 3; pass++) {
+      const services = await read();
+      expect(services.highlevel?.needsReconnect).toBeUndefined();
+      expect(hl()).toEqual([]);
+    }
+  });
+
+  it("W5 unchanged: a sign-in that worked and lapsed still asks, beside a pending one", async () => {
+    accounts.gmail = [{ id: "ca_gmail1", alias: "work", status: "EXPIRED" }, { id: "ca_gmail9", alias: "work 2", status: "INITIATED" }];
+    await read();
+    expect(appsNeedingReconnect(cfg()).find(app => app.slug === "gmail")?.accounts).toEqual([{ id: "ca_gmail1", alias: "work" }]);
+  });
+});
