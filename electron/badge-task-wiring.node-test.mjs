@@ -7,6 +7,7 @@ import vm from "node:vm";
 import { createBackgroundLifecycle } from "./background-lifecycle.mjs";
 import { parseMurageTask, routeMurageTask } from "./badge-surfaces.mjs";
 import windowState from "./window-state.cjs";
+import { notifyCapabilities } from "./notify-capabilities.mjs";
 
 const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 function mainFunction(name) {
@@ -80,7 +81,7 @@ test("launch dispatch waits for startup, then checks current preferences; recove
     const calls = [];
     const scope = {
       desktopStartup: new Promise(resolve => { release = resolve; }), desktopRecoveryMode: false, desktopShutdownStarted: false,
-      notifySurfaces: { get: () => ({ badgeMenu }) }, routeMurageTask, parseMurageTask, process: { argv: [`--murage-task=${task}`] },
+      notifySurfaces: { get: () => ({ surfaces: { badge: badgeMenu } }) }, routeMurageTask, parseMurageTask, process: { argv: [`--murage-task=${task}`] },
       backgroundLifecycle: { open: () => calls.push("open"), openNeedsYou: () => calls.push("needs-you"),
         newChiefTask: () => calls.push("new-chief"), pauseAutomations: () => calls.push("pause") }, slog: () => calls.push("error"),
     };
@@ -110,7 +111,7 @@ test("failed task reads or admission writes open Murage without unhandled reject
   const calls = [];
   const dispatch = vm.runInNewContext(`${mainFunction("dispatchBadgeTask")}; dispatchBadgeTask`, {
     desktopStartup: Promise.resolve(), desktopRecoveryMode: false, desktopShutdownStarted: false,
-    notifySurfaces: { get: () => ({ badgeMenu: true }) }, routeMurageTask,
+    notifySurfaces: { get: () => ({ surfaces: { badge: true } }) }, routeMurageTask,
     backgroundLifecycle: { open: () => calls.push("open"), pauseAutomations: async () => { throw new Error("unavailable"); } },
     slog: () => calls.push("error"),
   });
@@ -144,13 +145,13 @@ test("preference set and reset refresh only after the store accepts the change",
   const owner = { sync: () => ({ ok: true }), trySet: () => ({ ok: true }) };
   vm.runInNewContext(main.slice(begin, end), { ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) },
     notifySurfacesForEvent: () => store, refreshBadgePreferences: () => calls.push("refresh"), initializeGlobalShortcut: async () => owner, shortcutOwner: owner });
-  assert.equal(await handlers.get("notify-surfaces:set")(null, "badgeMenu", false), "saved");
-  assert.deepEqual(calls, [["set", "badgeMenu", false], "refresh"]);
+  assert.equal(await handlers.get("notify-surfaces:set")(null, "surfaces.badge", false), "saved");
+  assert.deepEqual(calls, [["set", "surfaces.badge", false], "refresh"]);
   calls.length = 0;
   assert.equal(handlers.get("notify-surfaces:reset")(), "reset state");
   assert.deepEqual(calls, ["reset", "refresh"]);
   calls.length = 0; reject = true;
-  await assert.rejects(async () => handlers.get("notify-surfaces:set")(null, "badgeMenu", "bad"));
+  await assert.rejects(async () => handlers.get("notify-surfaces:set")(null, "surfaces.badge", "bad"));
   assert.deepEqual(calls, []);
 });
 
@@ -162,4 +163,24 @@ test("badge initialization stays inside the existing attention startup seam", ()
   assert.match(mainFunction("initializeBadgeSurfaces"), /refreshBadgePreferences\(\)/);
   const module = readFileSync(new URL("./badge-surfaces.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(module, /setInterval|requestAnimationFrame|new BrowserWindow/);
+});
+
+test("the Notify me IPC reports the real Mac status item frame, including an item hidden above the menu bar", async () => {
+  const handlers = new Map();
+  const display = { bounds: { x: 0, y: 0, width: 1512, height: 982 }, workArea: { x: 0, y: 38, width: 1512, height: 944 } };
+  let bounds = { x: 421, y: -28, width: 28, height: 28 };
+  const begin = main.indexOf('ipcMain.handle("notify-surfaces:capabilities",');
+  vm.runInNewContext(main.slice(begin, main.indexOf("// The origin", begin)), {
+    ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) },
+    notifyCapabilities, process: { platform: "darwin", env: {} },
+    initializeGlobalShortcut: async () => ({ status: () => ({}) }),
+    trayIcon: { getBounds: () => bounds, isDestroyed: () => false },
+    screen: { getAllDisplays: () => [display] },
+  });
+  const read = handlers.get("notify-surfaces:capabilities");
+  assert.equal((await read()).trayHidden, true);
+  bounds = { ...bounds, y: 0 };
+  assert.equal((await read()).trayHidden, false);
+  bounds = { ...bounds, x: 1512 };
+  assert.equal((await read()).trayHidden, true);
 });

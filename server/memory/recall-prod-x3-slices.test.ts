@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Receipt consumer owner: recall-prod-x3; grant producer owner: scperf-p1.
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DATA_DIR } from '../config.ts';
 import { closeDatabase, database, transaction as realTransaction } from '../database.ts';
 import { appendMessage } from '../message-db.ts';
+import { stopSearchIndex } from '../message-search-index.ts';
 import { ioBudget } from '../io-budget.ts';
+import { checkpointTruncate } from '../sqlite-checkpoint.ts';
+import * as walMaintenance from '../wal-maintenance.ts';
+import { stopWalMaintenance } from '../wal-maintenance.ts';
 import { removeTempDirSync } from '../testing/cleanup.ts';
 import { setMemoryMode } from './repository.ts';
 import { MemoryWorkerController, workerSliceTestHooks } from './worker-controller.ts';
@@ -52,8 +57,17 @@ function seed(n:number){
   state.indexing=true;state.indexRequestId='receipt';state.indexSent=new Map(records.map(row=>[`${row.id}\u00001`,'active']));
   return records;
 }
+async function settleSeedWrites(){
+  // Finish fixture writes before measuring the drain or controlling admission retries.
+  while(!checkpointTruncate(database(),'fixture'))await new Promise<void>(resolve=>setTimeout(resolve,10));
+  ioBudget.resetAdmissionForFixture();
+}
 it('30,000 receipts cost at most 350 bytes per row and each slice uses at most 10 ms row CPU',async()=>{
-  const records=seed(30_000),initial=ioBudget.admissionState();probe.on=true;
+  const records=seed(30_000);
+  await settleSeedWrites();
+  expect(statSync(join(DATA_DIR,'messages.db-wal')).size).toBe(0);
+  const initial=ioBudget.admissionState();probe.on=true;
+  expect(initial).toEqual({bg:0,debt:0,total:0,reserved:0});
   state.onWorkerMessage(state.child,{type:'index-result',requestId:'receipt',records,embeddingStatus:'indexed'});
   const deadline=Date.now()+60_000;
   while(state.indexing&&Date.now()<deadline)await new Promise<void>(resolve=>setImmediate(resolve));
@@ -84,29 +98,51 @@ it('a refused slice restores 2048 on the next good commit within the same minute
   expect(probe.attempts[2]).toMatchObject({rows:2048,committed:true});
   expect(probe.cpu).toHaveLength(probe.attempts.length);
 });
-it('a slice refused after a committed slice retries at half its size, then restores 2048',()=>{
+it('a slice refused after a committed slice retries at half its size, then restores 2048',async()=>{
   const records=seed(8_000),pending:Array<()=>void>=[];
-  state.later=step=>{pending.push(step);};
-  vi.spyOn(ioBudget,'nextAdmissionMs').mockReturnValue(1000);
-  vi.spyOn(Date,'now').mockReturnValue(Date.now());
-  // The clock between JSON pages is held still to make the row-cap assertion deterministic.
-  vi.spyOn(performance,'now').mockReturnValue(performance.now());
-  // As the controller's own scheduler: each step runs under the worker's admission source, so its bytes are measured.
-  const run=()=>ioBudget.withSource('memory-worker',pending.shift()!);
-  ioBudget.resetAdmissionForFixture();
-  probe.on=true;
-  state.onWorkerMessage(state.child,{type:'index-result',requestId:'receipt',records,embeddingStatus:'indexed'});
-  run();
-  expect(probe.attempts[0]).toMatchObject({rows:2048,committed:true});
-  expect(probe.attempts[0]!.bytes).toBeGreaterThan(0);
-  probe.refuse=true;
-  for(let i=0;pending.length&&i<20;i++)run();
-  probe.on=false;
-  expect(state.indexing).toBe(false);
-  expect(probe.attempts[1]).toMatchObject({rows:2048,committed:false});
-  expect(probe.attempts[2]).toMatchObject({rows:1024,committed:true});
-  expect(probe.attempts[3]).toMatchObject({rows:2048,committed:true});
-  expect(database().prepare("SELECT count(*) n FROM memory_projection_receipts WHERE lexical_status='indexed'").get()!.n).toBe(8_000);
+  let signal!:()=>void,release!:()=>void;
+  const entered=new Promise<void>(resolve=>{signal=resolve;});
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const realWalStop=stopWalMaintenance,realSearchStop=stopSearchIndex;
+  vi.spyOn(walMaintenance,'stopWalMaintenance').mockImplementationOnce(async()=>{
+    const exited=await realWalStop();expect(await realSearchStop()).toBe(true);
+    signal();await gate;return exited;
+  });
+  const workflow=(async()=>{
+    // Real-clock workers must exit before this manual scheduler freezes the fixture minute.
+    expect(await stopWalMaintenance()).toBe(true); expect(await stopSearchIndex()).toBe(true);
+    await settleSeedWrites();
+    expect(statSync(join(DATA_DIR,'messages.db-wal')).size).toBe(0);
+    expect(ioBudget.admissionState()).toEqual({bg:0,debt:0,total:0,reserved:0});
+    state.later=step=>{pending.push(step);};
+    vi.spyOn(ioBudget,'nextAdmissionMs').mockReturnValue(1000);
+    vi.spyOn(Date,'now').mockReturnValue(Math.floor(Date.now()/60_000)*60_000+30_000);
+    // The clock between JSON pages is held still to make the row-cap assertion deterministic.
+    vi.spyOn(performance,'now').mockReturnValue(performance.now());
+    // As the controller's own scheduler: each step runs under the worker's admission source, so its bytes are measured.
+    const run=()=>ioBudget.withSource('memory-worker',pending.shift()!);
+    probe.on=true;
+    state.onWorkerMessage(state.child,{type:'index-result',requestId:'receipt',records,embeddingStatus:'indexed'});
+    run();
+    expect(probe.attempts[0]).toMatchObject({rows:2048,committed:true});
+    expect(probe.attempts[0]!.bytes).toBeGreaterThan(0);
+    probe.refuse=true;
+    for(let i=0;pending.length&&i<20;i++)run();
+    probe.on=false;
+    expect(state.indexing).toBe(false);
+    expect(probe.attempts[1]).toMatchObject({rows:2048,committed:false});
+    expect(probe.attempts[2]).toMatchObject({rows:1024,committed:true});
+    expect(probe.attempts[3]).toMatchObject({rows:2048,committed:true});
+    expect(database().prepare("SELECT count(*) n FROM memory_projection_receipts WHERE lexical_status='indexed'").get()!.n).toBe(8_000);
+  })();
+  const result=workflow.catch(()=>{});
+  try{
+    await Promise.race([entered,workflow.then(()=>entered)]);
+    await new Promise<void>(resolve=>setImmediate(resolve));
+    expect(vi.isMockFunction(Date.now),'manual clock must wait for the pending shutdown acknowledgement').toBe(false);
+    expect(probe.on).toBe(false);
+  }finally{release();await result;}
+  await workflow;
 });
 it('live acknowledgements retain delete-pending debt and skip records never sent',()=>{
   const records=seed(3),db=database(),pending:Array<()=>void>=[];

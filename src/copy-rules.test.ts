@@ -182,6 +182,13 @@ const MODEL_FACING: Record<string, string> = {
   "shared/intake-matches.ts": "keywords matched against what the owner types",
   "shared/public-suffix-snapshot.ts": "generated Public Suffix List data (domain names such as safety.aero), matched against hostnames and never shown",
   "server/bot-shapes.ts": "a bot's system prompt",
+  "server/channels/signal/windows-security-session.ts": "the source of a worker script (WORKER template), run and never shown",
+  "server/drivers/pi-wipe-check.generated.mjs": "generated delete-check tables (the typographic dashes a shell reads as '-'), matched against a command and never shown",
+  "server/wipe/preflight.mjs": "release proof script: git's own safe.directory setting, written to a scratch config and never shown",
+  "server/wipe/red/run-red.mjs": "release proof script: git's own safe.directory setting, written to a scratch config and never shown",
+  "server/wipe-proof/fixture-tool.mjs": "proof fixture tool: its stderr is read by the proof harness, never by a person in the app",
+  "server/wipe-proof/windows/driver.mjs": "proof driver: PowerShell source it runs, never shown",
+  "server/email/exec-spec/restore/checker.ts": "model checker for the restore spec: `safety` is a violation kind, compared and never shown",
   "server/section-context.ts": "a bot's system prompt",
   "server/installed-playbooks.ts": "a bot's system prompt",
   "server/computer-proxy.ts": "computer tool descriptions a model reads",
@@ -196,14 +203,9 @@ const MODEL_FACING_TEXT: Array<{ file: string; starts: string }> = [
   { file: "server/drivers/acp/core.ts", starts: "The user denied this operation." },
 ];
 
-// Frozen schema diagnostics, never displayed: HighLevelHost returns its fixed
-// argument-refusal sentence instead of Zod issues. grants-management.test.ts
-// pins that boundary; the exception is exact and never applies to JSX copy.
-const INTERNAL_SCHEMA_DIAGNOSTICS = [
-  { file: "server/highlevel/operations/opportunities.ts", text: "Unsafe record id" },
-  { file: "server/highlevel/operations/schemas/opportunities.ts", text: "Unsafe record id" },
-  { file: "server/highlevel/operations/schemas/common.ts", text: "HighLevel arguments contain an unsafe field or value" },
-];
+// Frozen schema diagnostics, never displayed (none today). Each exception is
+// exact (file and text) and never applies to JSX copy.
+const INTERNAL_SCHEMA_DIAGNOSTICS: Array<{ file: string; text: string }> = [];
 
 // Desktop files whose strings never reach a person: a model reads them, or
 // they are storage keys and reason codes. Each needs its reason.

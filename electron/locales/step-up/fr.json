@@ -1,5 +1,5 @@
 {
-  "@source": "968d807cca562a743b79127e48954176f04baabf",
+  "@source": "f5be60d75f8dfdae69794bd6aeba3a92fb69cfc5",
   "label.cloudPairing": "Ajouter un nouvel appareil à ton foyer Cloud",
   "label.cloudDevicesAccount": "Modifier les appareils ou le compte de ton foyer Cloud",
   "label.modelSigninStart": "Démarrer une connexion de modèle sur ton foyer Cloud",
@@ -103,11 +103,6 @@
   "label.connectorDisconnect": "Déconnecter une application",
   "label.phoneCalls": "Gérer les appels téléphoniques des bots",
   "label.dataDirConfirmRoot": "Confirmer vers où pointe maintenant un dossier de données lié",
-  "label.highlevelCheck": "Vérifier un emplacement HighLevel",
-  "label.highlevelConnect": "Connecter un emplacement HighLevel",
-  "label.highlevelAccess": "Modifier ce qu'un bot peut lire dans HighLevel",
-  "label.highlevelDisconnect": "Déconnecter l'emplacement HighLevel",
-  "label.highlevelChange": "Modifier la connexion HighLevel",
   "label.fallback": "Effectuer une modification sur ton foyer Cloud",
   "flag.fullAccess": "Accès complet",
   "flag.noLimits": "Sans limites",

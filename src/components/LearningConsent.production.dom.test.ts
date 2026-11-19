@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { launchVerificationServer } from "../../scripts/control-murage.ts";
 
-it("LEARNING-CONSENT production broadcast and SSE reach StoreProvider and a mounted memory surface once", async () => {
+it("LEARNING-CONSENT production broadcast and SSE reach StoreProvider and a mounted memory surface shows no in-chat notice", async () => {
   vi.resetModules();
   localStorage.clear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -90,12 +90,16 @@ it("LEARNING-CONSENT production broadcast and SSE reach StoreProvider and a moun
     expect(host.querySelectorAll("[data-learning-notice]")).toHaveLength(0);
     writeFileSync(join(fixture.info.dataDir,"learning-test-trigger"),"1");
     await until(()=>frames.some(frame=>frame.kind==="learning.flux-sent"));
-    await until(()=>host.querySelectorAll("[data-learning-notice]").length===1);
-    expect(host.querySelector("[data-learning-notice]")?.textContent).toBe("Murage learns from your chats using Flux. You can change this in Settings.");
+    // MAIN 11:35Z: the disclosure is Settings toggle text only. Let each delivered frame settle through the store, then look.
+    await act(async()=>{await new Promise(resolve=>setTimeout(resolve,200));});
+    expect(host.querySelectorAll("[data-learning-notice]")).toHaveLength(0);
+    expect(host.textContent).not.toContain("Murage learns from your chats using Flux.");
     writeFileSync(join(fixture.info.dataDir,"learning-test-trigger"),"2");
     await until(()=>frames.filter(frame=>frame.kind==="learning.flux-sent").length===2);
-    await until(()=>host.querySelectorAll("[data-learning-notice]").length===0);
+    await act(async()=>{await new Promise(resolve=>setTimeout(resolve,200));});
     expect(frames.filter(frame=>frame.kind==="learning.flux-sent")).toHaveLength(2);
+    expect(host.querySelectorAll("[data-learning-notice]")).toHaveLength(0);
+    expect(host.textContent).not.toContain("Murage learns from your chats using Flux.");
   } finally {
     await act(async()=>root.unmount()); host.remove(); sources.forEach(source=>source.close());
     if(process.env.LEARNING_CONSENT_LOG) copyFileSync(fixture.info.logPath, process.env.LEARNING_CONSENT_LOG);

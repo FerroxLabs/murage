@@ -138,8 +138,21 @@ wg_tools() {
     done
 }
 
+wg_callback_guard() {
+    # A writer-format file passed wg_compact_roots before the fast matcher ran.
+    if [ "$wg_fast_roots" = 1 ] && { [ -n "$wg_end" ] || wg_compact_roots; }; then
+        wg_guard "$wg_header"'[]'"$wg_between"'['"$wg_client_items"']'"$wg_guard_tail"
+    else
+        wg_guard
+    fi
+}
+
 wg_guard() {
-    wg_json=$wg_guard_text
+    if [ "$#" -gt 0 ]; then wg_json=$1
+    elif [ "$wg_split_guard" = 1 ]; then
+        wg_json=$wg_header'['$wg_root_items']'$wg_between'['$wg_client_items']'$wg_guard_tail
+    else wg_json=$wg_guard_text
+    fi
     wg_ws
     case $wg_json in '{'*) wg_json=${wg_json#?} ;; *) return 1 ;; esac
     while :; do
@@ -547,7 +560,13 @@ wg_children() {
                 wg_total=$((wg_total + 1))
             done
             if [ "$wg_total" -gt 0 ] && { [ "$wg_selected" -eq "$wg_total" ] || { [ "$wg_selected" -ge 2 ] && [ $((wg_selected * 10)) -ge $((wg_total * 9)) ]; }; }; then
-                wg_match=$wg_root; return 0
+                [ "$wg_fast_roots" = 1 ] && [ -n "$wg_end" ] || { wg_match=$wg_root; return 0; }
+                # Compact candidates are numbered in argv order. A writer-format
+                # file names the first root in file order, as the full parser did.
+                wg_pos=${wg_root_text%%\""$wg_root"\"[],]*}
+                if [ -z "$wg_match" ] || [ "${#wg_pos}" -lt "$wg_match_pos" ]; then
+                    wg_match=$wg_root; wg_match_pos=${#wg_pos}
+                fi
             fi
         fi
         wg_i=$((wg_i + 1))

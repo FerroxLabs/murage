@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "muragemain-copyrev",
+    "account": "claude opus 5.5, MurageMain copy review"
+  },
+  "author": "notifysurf-1020-n1",
+  "date": "2026-11-19",
+  "base": "612abd2f64",
+  "scope": "notifysurf 1.0.20 Notify me rows: notifyMe.trayHidden, notifyMe.pickBot, notifyChooser.badge.linux.note (8 locales)",
+  "strings": {
+    "en:notifyChooser.badge.linux.note": {
+      "text": "A count on the launcher icon.",
+      "en": "A count on the launcher icon.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "en:notifyMe.pickBot": {
+      "text": "Pick a bot to pin",
+      "en": "Pick a bot to pin",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "en:notifyMe.trayHidden": {
+      "text": "Your menu bar is full, so macOS is hiding Murage's icon. Hold Cmd and drag it left, or turn on the notch pill.",
+      "en": "Your menu bar is full, so macOS is hiding Murage's icon. Hold Cmd and drag it left, or turn on the notch pill.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "de:notifyChooser.badge.linux.note": {
+      "text": "Eine Zahl am Startsymbol.",
+      "en": "A count on the launcher icon.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "de:notifyMe.pickBot": {
+      "text": "Wähle einen Bot zum Anheften",
+      "en": "Pick a bot to pin",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "de:notifyMe.trayHidden": {
+      "text": "Deine Menüleiste ist voll, daher blendet macOS das Murage-Symbol aus. Halte Cmd gedrückt und ziehe es nach links oder schalte die Anzeige unter der Notch ein.",
+      "en": "Your menu bar is full, so macOS is hiding Murage's icon. Hold Cmd and drag it left, or turn on the notch pill.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "es:notifyChooser.badge.linux.note": {
+      "text": "Un contador en el icono del lanzador.",
+      "en": "A count on the launcher icon.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "es:notifyMe.pickBot": {
+      "text": "Elige un bot para fijarlo",
+      "en": "Pick a bot to pin",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "es:notifyMe.trayHidden": {
+      "text": "Tu barra de menús está llena y macOS oculta el icono de Murage. Mantén pulsada la tecla Cmd y arrástralo hacia la izquierda o activa la cápsula bajo la muesca.",
+      "en": "Your menu bar is full, so macOS is hiding Murage's icon. Hold Cmd and drag it left, or turn on the notch pill.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "fr:notifyChooser.badge.linux.note": {
+      "text": "Un compteur sur l’icône du lanceur.",
+      "en": "A count on the launcher icon.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "fr:notifyMe.pickBot": {
+      "text": "Choisis un bot à épingler",
+      "en": "Pick a bot to pin",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "fr:notifyMe.trayHidden": {
+      "text": "Ta barre des menus est pleine, donc macOS masque l’icône de Murage. Maintiens Cmd et fais-la glisser vers la gauche, ou active la pastille sous l’encoche.",
+      "en": "Your menu bar is full, so macOS is hiding Murage's icon. Hold Cmd and drag it left, or turn on the notch pill.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "hi:notifyChooser.badge.linux.note": {
+      "text": "लॉन्चर आइकन पर एक संख्या।",
+      "en": "A count on the launcher icon.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "hi:notifyMe.pickBot": {
+      "text": "पिन करने के लिए एक बॉट चुनें",
+      "en": "Pick a bot to pin",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "hi:notifyMe.trayHidden": {
+      "text": "आपका मेनू बार भर गया है, इसलिए macOS Murage का आइकन छिपा रहा है। Cmd दबाकर उसे बाईं ओर खींचें या नॉच के नीचे की पट्टी चालू करें।",
+      "en": "Your menu bar is full, so macOS is hiding Murage's icon. Hold Cmd and drag it left, or turn on the notch pill.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "ja:notifyChooser.badge.linux.note": {
+      "text": "ランチャーアイコンに件数を表示します。",
+      "en": "A count on the launcher icon.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "ja:notifyMe.pickBot": {
+      "text": "固定するボットを選ぶ",
+      "en": "Pick a bot to pin",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "ja:notifyMe.trayHidden": {
+      "text": "メニューバーに空きがないため、macOS が Murage のアイコンを隠しています。Cmd キーを押しながらアイコンを左にドラッグするか、ノッチ下のピルをオンにしてください。",
+      "en": "Your menu bar is full, so macOS is hiding Murage's icon. Hold Cmd and drag it left, or turn on the notch pill.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "pt-br:notifyChooser.badge.linux.note": {
+      "text": "Um contador no ícone do inicializador.",
+      "en": "A count on the launcher icon.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "pt-br:notifyMe.pickBot": {
+      "text": "Escolha um bot para fixar",
+      "en": "Pick a bot to pin",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "pt-br:notifyMe.trayHidden": {
+      "text": "A barra de menus está cheia, então o macOS está ocultando o ícone do Murage. Segure Cmd e arraste o ícone para a esquerda ou ative a cápsula abaixo do recorte da tela.",
+      "en": "Your menu bar is full, so macOS is hiding Murage's icon. Hold Cmd and drag it left, or turn on the notch pill.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "zh:notifyChooser.badge.linux.note": {
+      "text": "在启动器图标上显示数量。",
+      "en": "A count on the launcher icon.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "zh:notifyMe.pickBot": {
+      "text": "选择要固定的机器人",
+      "en": "Pick a bot to pin",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    },
+    "zh:notifyMe.trayHidden": {
+      "text": "菜单栏已满，macOS 隐藏了 Murage 的图标。按住 Cmd 将图标拖到左侧，或开启刘海下方的胶囊。",
+      "en": "Your menu bar is full, so macOS is hiding Murage's icon. Hold Cmd and drag it left, or turn on the notch pill.",
+      "verdict": "pass",
+      "note": "Matches the English meaning and the pack tone (informal); plain words, macOS terms right (menu bar, Cmd-drag, notch)."
+    }
+  },
+  "files": {}
+}
