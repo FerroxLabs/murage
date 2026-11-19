@@ -9,12 +9,10 @@
 import { useMemo, useState, type ReactNode } from "react";
 
 import { api, useStore, type ConfigStatus } from "@/state/store";
-import { ANALYTICS_NOT_SAVED, analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { askBotTarget, askYourBot } from "@/lib/health-actions";
 import { DISCARD_SETTINGS_CHANGES, settingsDrafts } from "@/lib/settings-drafts";
 import { openHelp } from "./help/HelpHost";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
-import { inNativeShell } from "@/lib/native-shell";
 import { t } from "@/lib/i18n";
 import type { SettingsCard } from "@/lib/settings-cards";
 import { searchSettingsIndex, type SettingsIndexHit } from "@/lib/settings-search";
@@ -81,8 +79,6 @@ const keyOf = (hit: SettingsIndexHit) => (hit.bot ? `${hit.entry.id}@${hit.bot.i
 export function SettingsSearchResults({ query, desktop, onOpen, onLeave, currentBotId }: { query: string; desktop: boolean | undefined; onOpen: (card: SettingsCard) => void; onLeave?: () => void; currentBotId?: string }) {
   const { state, dispatch } = useStore();
   const toolCalls = useShowToolCalls();
-  const [analytics, setAnalytics] = useState(analyticsEnabled);
-  const [analyticsUnsaved, setAnalyticsUnsaved] = useState(false);
   const [expandedFor, setExpandedFor] = useState<string | null>(null);
   const bots = useMemo(() => {
     const visible = state.bots.filter((bot) => !bot.hidden);
@@ -108,8 +104,6 @@ export function SettingsSearchResults({ query, desktop, onOpen, onLeave, current
   };
   const toggles: Readonly<Record<string, ToggleRow | undefined>> = {
     "botDefaults.tool-calls": { checked: toolCalls.enabled, busy: toolCalls.saving, onToggle: () => void toolCalls.toggle(), error: toolCalls.error },
-    // The phone apps never send usage analytics and show no switch for it, so their results do not either.
-    ...(inNativeShell() ? {} : { "general.analytics": { checked: analytics, onToggle: () => { const next = !analytics; setAnalyticsUnsaved(!setAnalyticsEnabled(next)); setAnalytics(next); }, error: analyticsUnsaved ? ANALYTICS_NOT_SAVED : undefined } }),
   };
 
   return (

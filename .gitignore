@@ -94,3 +94,7 @@ server/testing/.git-ls-files.fixture
 
 # Generated package qualification receipts, like dist-native build receipts.
 /qualification-evidence/
+
+# integrator/test scratch (never tracked)
+__pycache__/
+.sw*.txt

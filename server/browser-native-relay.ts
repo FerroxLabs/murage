@@ -30,7 +30,10 @@ export type BrowserFrame = { seq: number; data: string; width: number; height: n
 export interface NativeBrowser {
   readonly daemonIdentity?: import('./browser-daemon-identity.ts').DaemonIdentity;
   seedDaemonIdentity?(identity: import('./browser-daemon-identity.ts').DaemonIdentity): void;
-  protected(armed?: boolean): Promise<boolean>;
+  /** `skip`: tabs left to the owner (protected); never looked at. */
+  protected(armed?: boolean, skip?: ReadonlySet<string>): Promise<boolean>;
+  /** The bot's pages (id, address) as the browser lists them, for the server only. Absent: tabs cannot be told apart. */
+  pages?(): Promise<{ id: string; url: string }[]>;
   request(method: string, params?: Record<string, unknown>): Promise<unknown>;
   command(args: string[]): Promise<unknown>;
   connect(onFrame: (frame: BrowserFrame) => void, onUrl: (url: string) => void, onDisconnect: () => void): Promise<string>;
@@ -232,12 +235,24 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
   };
   /** A command answered, so a daemon is running: the next one with no daemon prepares again. */
   const engineAnswered = () => { prepared = false; };
+  /** An engine process that ended (crashed, killed, idle exit, failed initialize) refuses every later request.
+   * Forget it so the next request starts a fresh one; a close in progress keeps it (close owns that teardown). */
+  const forgetEndedEngine = () => {
+    if (!client || closing || !client.ended?.()) return false;
+    const dead = client; client = undefined; initialized = undefined;
+    void dead.close().catch(() => {});
+    return true;
+  };
   const startEngine = async () => {
     await ensureBrowserSandboxAccess(spec); active();
+    if (forgetEndedEngine()) console.warn("[browser] engine process had ended; starting a fresh one");
     if (!initialized) {
       closeAcknowledged = false;
-      client = startHeadlessEngine(spec, null);
-      initialized = client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "murage-browser", version: "1" } }).then(() => {});
+      const started = client = startHeadlessEngine(spec, null);
+      const attempt: Promise<void> = started.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "murage-browser", version: "1" } }).then(() => {});
+      initialized = attempt;
+      // A failed initialize is never cached for the life of the app: the next request starts again.
+      attempt.catch(() => { if (initialized === attempt && client === started && !closing) { client = undefined; initialized = undefined; void started.close().catch(() => {}); } });
     }
     await initialized;
   };
@@ -392,7 +407,8 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
   const guard = new BrowserDocumentGuard(command, { ...(attached ? { connectTimeoutMs: USER_CHROME_ALLOW_WAIT_MS } : {}), ...(spec.guardCdpUrl ? { endpoint: spec.guardCdpUrl } : {}), ...(spec.guardScope ? { scope: spec.guardScope } : {}), connection: cloudRelayConnection("cdp", spec.env) });
   const browser: NativeBrowser = {
     command,
-    protected: (armed = true) => guard.protected(armed),
+    protected: (armed = true, skip) => guard.protected(armed, skip),
+    pages: () => guard.pages(),
     async request(method, params) {
       if (method === "tools/call" && params?.name === "agent_browser_read") throw Error("Network read must use the mediated reader.");
       await warm();
@@ -403,7 +419,14 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
       // A dialog the page opens during the bot's call is answered by the guard's connection (see answerDialogs).
       if (method === "tools/call") guard.answerDialogs(true);
       try { reply = method === "tools/call" && restore?.waiting() ? await restoringCall(params ?? {}) : await client!.request(method, params); }
-      catch (error) { if (cloudRestore) cloudSuspect = true; throw error; }
+      catch (error) {
+        if (cloudRestore) cloudSuspect = true;
+        // Listing tools reads and changes nothing, so an engine that died under it is replaced once and asked again.
+        if (method !== "tools/list" || !forgetEndedEngine()) throw error;
+        console.warn("[browser] engine process ended during tools/list; asking a fresh one");
+        await startEngine(); active();
+        reply = await client!.request(method, params);
+      }
       finally { if (method === "tools/call") guard.answerDialogs(false); }
       // MCP-only sessions also start daemons. Capture their identity while
       // the answering process is alive, before client.close can retire it.

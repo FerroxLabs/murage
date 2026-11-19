@@ -21,6 +21,17 @@ export function checkPeak(peak, cap, fraction = budgets.maxFraction) {
 export function heapCap(options = '') {
   return Number(options.match(/--max[-_]old[-_]space[-_]size(?:=|\s+)(\d+)/)?.[1] ?? 0);
 }
+// A job on a large runner may declare MURAGE_TYPECHECK_CAP_MIB: a compiler cap at
+// least the recorded one, never smaller, that its own NODE_OPTIONS supplies. The
+// 70% rule then holds against that cap. Without it every job gets the recorded cap.
+export function effectiveCap(entry, env = process.env) {
+  const raw = env.MURAGE_TYPECHECK_CAP_MIB;
+  if (raw === undefined || raw === '') return entry.capMiB;
+  const declared = Number(raw);
+  if (!Number.isInteger(declared) || declared < entry.capMiB) throw new Error(`MURAGE_TYPECHECK_CAP_MIB=${raw} is below the recorded ${entry.capMiB} MiB cap`);
+  if (heapCap(env.NODE_OPTIONS) < declared) throw new Error(`MURAGE_TYPECHECK_CAP_MIB=${declared} needs NODE_OPTIONS --max-old-space-size of at least ${declared}`);
+  return declared;
+}
 
 // A preload in the compiler process: maxRSS is an OS high-water mark, including
 // memory between GC cycles. It conservatively bounds heap usage on every OS.
@@ -58,11 +69,12 @@ export async function runProgram(name, { list = false, original = false, noEmit 
   const entry = budgets.programs[name];
   if (!entry) throw new Error(`Unrecorded TypeScript program: ${name}`);
   if (entry.recordedPeakMiB !== null) checkPeak(entry.recordedPeakMiB, entry.capMiB);
+  const capMiB = effectiveCap(entry);
   const ambient = heapCap(process.env.NODE_OPTIONS);
-  if (ambient && ambient < entry.capMiB) throw new Error(`${name} requires a ${entry.capMiB} MiB cap; job supplies ${ambient}`);
-  // The child always gets the recorded cap, even when the caller has a larger
-  // generic Node budget. Hosted macOS must never inherit a Linux-sized heap.
-  if (process.env.CI && totalmem() / 1024 ** 2 * 0.61 < entry.capMiB) throw new Error(`${name}: runner RAM is too small for cap ${entry.capMiB}`);
+  if (ambient && ambient < capMiB) throw new Error(`${name} requires a ${capMiB} MiB cap; job supplies ${ambient}`);
+  // The child gets the recorded cap (or the job's declared cap), never the
+  // caller's generic Node budget. Hosted macOS must never inherit a Linux-sized heap.
+  if (process.env.CI && totalmem() / 1024 ** 2 * 0.61 < capMiB) throw new Error(`${name}: runner RAM is too small for cap ${capMiB}`);
   const compilerRequire = createRequire(resolve(root, entry.config));
   const ts = compilerRequire('typescript');
   const compiler = compilerRequire.resolve('typescript/bin/tsc');
@@ -94,7 +106,7 @@ export async function runProgram(name, { list = false, original = false, noEmit 
       const result = spawnSync(process.execPath, ['--import', import.meta.url, compiler, '-p', config,
         '--pretty', 'false', ...(list ? ['--listFilesOnly'] : ['--extendedDiagnostics', ...(/-(?:build|emit)$/.test(name) ? ['--listFiles'] : [])]), ...(noEmit ? ['--noEmit'] : []), '--noCheck', String(Boolean(entry.noCheck))], {
         cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 ** 2,
-        env: { ...process.env, MURAGE_TSC_RESOURCE_WORKER: '1', NODE_OPTIONS: `--max-old-space-size=${entry.capMiB}` },
+        env: { ...process.env, MURAGE_TSC_RESOURCE_WORKER: '1', NODE_OPTIONS: `--max-old-space-size=${capMiB}` },
       });
       let measurement;
       for (const line of (result.stdout ?? '').split(/\r?\n/).filter(Boolean)) {
@@ -104,8 +116,8 @@ export async function runProgram(name, { list = false, original = false, noEmit 
       }
       if (result.stderr) process.stderr.write(result.stderr);
       if (!measurement) throw new Error(`${name}/${index + 1}: compiler exited without resource measurement (${result.status ?? result.signal})`);
-      console.log('TYPECHECK_MEASUREMENT ' + JSON.stringify({ program: name, shard: index + 1, capMiB: entry.capMiB, ...measurement, wallSeconds: (Date.now() - start) / 1000, status: result.status, list }));
-      checkPeak(measurement.peakMiB, entry.capMiB);
+      console.log('TYPECHECK_MEASUREMENT ' + JSON.stringify({ program: name, shard: index + 1, capMiB, ...measurement, wallSeconds: (Date.now() - start) / 1000, status: result.status, list }));
+      checkPeak(measurement.peakMiB, capMiB);
       if (result.status !== 0 || result.error || result.signal) failed = true;
     }
     if (failed) throw new Error(`${name}: TypeScript failed`);

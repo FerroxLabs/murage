@@ -423,6 +423,39 @@ export interface OpenTurn extends TurnLineage {
   preparedWindow?: import("./lineage-types.ts").PreparedWindow;
   onLedgerRefused?: (verdict: LineageVerdict) => void;
   validateParents?: (refs: readonly LineageRef[]) => void;
+  /** 1.0.20 A-5: set only for an owner-audience direct turn. A later release whose re-check of the context the engine ALREADY holds (no
+   * prospective refs) is still checking:pending lets the running turn continue when this returns true (it tells the one left-out note);
+   * a proven revoke, new context, or any other audience still refuses. 1.0.20 revokekeep (SEAN RULING): asked with the verdict for any
+   * refusal of held context, so a revoke or change mid-turn never stops the owner's turn (send-fence.ts keepOwnerTurn). */
+  continuePending?: (verdict?: LineageVerdict) => boolean;
+  /** 1.0.20 revokekeep: the words of held lines a privacy revoke withdrew while the turn ran; the turn's stored reply never keeps them
+   * (message-db.ts redactRevoked). Bounded by REDACTIONS_MAX. */
+  redactions?: Set<string>;
+}
+/** The most withdrawn texts one turn redacts; the shortest it redacts (a shorter one would erase ordinary words of the reply). */
+const REDACTIONS_MAX = 256;
+export const REDACTION_MIN_CHARS = 8;
+export const REDACTED_TEXT = "[removed]";
+/** 1.0.20 revokekeep: the running turn keeps only `kept` of what it was shown (the refused held refs leave its parents, so its reply is not
+ * built on them and does not cite them), and remembers the withdrawn words it must not store. Never seals the turn. */
+export function dropRetainedParents(open: OpenTurn, kept: readonly LineageRef[], withdrawn: readonly string[]): void {
+  open.parents = [...kept];
+  open.keys = new Set(kept.map(lineageRefKey));
+  open.revision++;
+  open.resolved = undefined;
+  for (const text of withdrawn) {
+    const words = text.trim();
+    if (words.length < REDACTION_MIN_CHARS) continue;
+    open.redactions ??= new Set();
+    if (open.redactions.size >= REDACTIONS_MAX) break;
+    open.redactions.add(words);
+  }
+}
+/** The reply text of a running turn without the words a privacy revoke withdrew from it; unchanged when nothing was withdrawn. */
+export function redactTurnText(turn: TurnLineage, text: string): string {
+  let out = text;
+  for (const open of openTurnsOf(turn)) for (const words of open.redactions ?? []) if (out.includes(words)) out = out.split(words).join(REDACTED_TEXT);
+  return out;
 }
 /** The deny_generation values the running turns' own writes produced (ownCarry), one row per value, in a TEMP table on the writing
  * connection. Written in the same transaction as the bump, so a rollback (an atomically() savepoint, or the caller's transaction) takes the
@@ -514,12 +547,12 @@ export function refuseRetainedTurn(open: OpenTurn, verdict: LineageVerdict): voi
 }
 
 export function freezeLineageReader(reader: LineageReader): LineageReader {
-  return Object.freeze({ ...reader, audience: reader.audience === null ? null : Object.freeze({ ...reader.audience, ...(reader.audience.view ? {view:Object.freeze({...reader.audience.view}),scopeIds:Object.freeze([])} : {scopeIds: Object.freeze([...reader.audience.scopeIds])}) }) });
+  return Object.freeze({ ...reader, audience: reader.audience === null ? null : Object.freeze({ ...reader.audience, ...(reader.audience.scopeCeiling ? {scopeCeiling:Object.freeze([...reader.audience.scopeCeiling])} : {}), ...(reader.audience.view ? {view:Object.freeze({...reader.audience.view}),scopeIds:Object.freeze([])} : {scopeIds: Object.freeze([...reader.audience.scopeIds])}) }) });
 }
 
 /** Finalize once, before authoritative preparation and receipt joins. */
 export function bindRetainedTurn(turn: TurnLineage, reader: LineageReader, onRefused: (verdict: LineageVerdict) => void,
-  validate: (refs: readonly LineageRef[]) => void): LineageReader {
+  validate: (refs: readonly LineageRef[]) => void, continuePending?: (verdict?: LineageVerdict) => boolean): LineageReader {
   const members = checkedOpenTurns(turn, false);
   if (members.length !== 1 || members[0]!.reader) throw new Error("RETAINED_READER_ALREADY_BOUND");
   const open = members[0]!;
@@ -527,10 +560,11 @@ export function bindRetainedTurn(turn: TurnLineage, reader: LineageReader, onRef
     refuseRetainedTurn(open, { state: "checking", reason: "not-built" });
     throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
   }
-  const frozen = Object.isFrozen(reader) && (reader.audience === null || Object.isFrozen(reader.audience) && Object.isFrozen(reader.audience.scopeIds)) ? reader : freezeLineageReader(reader);
+  const frozen = Object.isFrozen(reader) && (reader.audience === null || Object.isFrozen(reader.audience) && Object.isFrozen(reader.audience.scopeIds) && (!reader.audience.scopeCeiling || Object.isFrozen(reader.audience.scopeCeiling))) ? reader : freezeLineageReader(reader);
   open.reader = frozen;
   open.onLedgerRefused = onRefused;
   open.validateParents = validate;
+  if (continuePending) open.continuePending = continuePending;
   Object.defineProperty(open, "budget", { value: new ReleaseBudget(verdict => refuseRetainedTurn(open, verdict)), enumerable: true, writable: false, configurable: false });
   // Preparation may have staged parents before receipt access was final.
   // They acquire authority only under this exact frozen reader.

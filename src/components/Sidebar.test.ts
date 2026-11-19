@@ -9,16 +9,6 @@ vi.mock("@/lib/updater", () => ({ useUpdaterState: () => updaterState.value }));
 
 // posthog-js boots on import and reaches for a real browser. Nothing under
 // test here reports anything, so the module is stubbed rather than shimmed.
-vi.mock("@/lib/analytics", () => ({
-  analyticsEnabled: () => false,
-  optAction: () => "none" as const,
-  setAnalyticsEnabled: () => {},
-  initAnalytics: () => {},
-  track: () => {},
-  identifyEmail: () => {},
-  emailGateDone: () => false,
-  setEmailGateDone: () => {},
-}));
 
 // Sidebar's import graph reads `window` at module scope (DesktopCapabilities
 // asks the desktop shell what it is running on), and this suite runs in node.

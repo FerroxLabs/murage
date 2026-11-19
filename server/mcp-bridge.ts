@@ -62,6 +62,8 @@ import { releaseProxyFrame, proxyTransportLost, reserveProxyUpstream } from "./p
 // liveness probe, and only a probe that FAILS ends the bridge. Any byte on
 // stdin/stdout/stderr resets the window.
 export const BRIDGE_INACTIVITY_MS = 45_000;
+// Under the native CLI’s 15 s timeout so it does not close the wipe shim first.
+const BRIDGE_START_MS = 10_000;
 const PROBE_TIMEOUT_MS = 10_000;
 // Screenshots can be large; still cap an unterminated/malformed frame.
 export const MAX_BRIDGE_FRAME_BYTES = 8 * 1024 * 1024;
@@ -370,9 +372,24 @@ export function runMcpBridge(options: BridgeOptions): void {
     stdio: ["pipe", "pipe", "pipe"],
   }));
   registerChildMcpInput(child.stdin);
+  let downstreamUnavailable = false;
+  let starting: { id: unknown; timer: ReturnType<typeof setTimeout> } | undefined;
+  const ownerWipeBridge = options.releaseRole === "wipeMcp" && !!process.env.MURAGE_RELEASE_INSTANCE;
+  const dropDownstream = () => {
+    if (!ownerWipeBridge || !process.connected || !process.send) return false;
+    if (!downstreamUnavailable) {
+      downstreamUnavailable = true;
+      if (starting) clearTimeout(starting.timer);
+      detach();
+      try {
+        process.send({ type: "mcp-server-unavailable" }, error => { if (error) proxyTransportLost("wipeMcp"); });
+      } catch { proxyTransportLost("wipeMcp"); }
+    }
+    return true;
+  };
   // EOF seals immediately, before a queued frame or splitter flush can run.
   process.stdin.once("end", () => { if (options.releaseRole) proxyTransportLost(options.releaseRole); });
-  child.stdout.once("end", () => { if (options.releaseRole) proxyTransportLost(options.releaseRole); });
+  child.stdout.once("end", () => { if (!dropDownstream() && options.releaseRole) proxyTransportLost(options.releaseRole); });
 
   // docker may exit before it drains stdin; pipe() leaves this error unhandled.
   child.stdin.on("error", () => {});
@@ -407,6 +424,7 @@ export function runMcpBridge(options: BridgeOptions): void {
   const droppedLine = () => process.stderr.write(`${options.label} bridge dropped a response that answers no waiting request\n`);
   // Every frame to the engine goes through the writer. A response leaves through the handle of its live entry; anything else is a plain send.
   const answer = (line: string): Promise<void> => {
+    if (downstreamUnavailable) return Promise.resolve();
     const { response, value } = shapeOf(line);
     if (response) {
       const taken = ids.take(value.id);
@@ -431,9 +449,17 @@ export function runMcpBridge(options: BridgeOptions): void {
   const intercept = createMcpBridgeInterceptor({
     answer,
     forward: async (line) => {
+      if (downstreamUnavailable) return;
+      const frame = ownerWipeBridge && shapeOf(line).value;
+      if (frame?.method === "initialize" && !starting) {
+        const timer = setTimeout(dropDownstream, BRIDGE_START_MS);
+        timer.unref?.();
+        starting = { id: frame.id, timer };
+      }
       try {
         await writeMcpLine(child.stdin, line);
       } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EPIPE" && dropDownstream()) return;
         if (options.releaseRole) proxyTransportLost(options.releaseRole);
         // Docker may close stdin before consuming a request. Stop feeding it,
         // but let its close event report the actual transport exit status.
@@ -490,13 +516,18 @@ export function runMcpBridge(options: BridgeOptions): void {
   }, () => child.stdin.end(), transportFailed);
   // The write of a child answer is not awaited before the next child line is read (the writer's own order is unchanged).
   pipeMcpLines(child.stdout, (line) => {
+    if (downstreamUnavailable) return;
+    if (starting && shapeOf(line).value?.id === starting.id) {
+      clearTimeout(starting.timer);
+      starting = undefined;
+    }
     if(!options.observeTools){answer(textOnlyErrorResultLine(toolLists.rewriteResponse(line))).catch(transportFailed);return;}
     return (async()=>{
       const frame=shapeOf(line).value,replace=effectLists.get(frame?.id);
       if(replace!==undefined){effectLists.delete(frame.id);if(Array.isArray(frame.result?.tools))await options.observeTools!(frame.result.tools,replace);}
       await answer(textOnlyErrorResultLine(toolLists.rewriteResponse(line)));
     })();
-  }, () => { if (options.releaseRole) proxyTransportLost(options.releaseRole); }, transportFailed, options.releaseRole);
+  }, () => { if (!dropDownstream() && options.releaseRole) proxyTransportLost(options.releaseRole); }, transportFailed, options.releaseRole);
 
   let watchdog: WatchdogHandle | null = null;
   if (options.liveness) {
@@ -526,15 +557,17 @@ export function runMcpBridge(options: BridgeOptions): void {
     child.stderr.on("data", touch);
   }
 
-  child.on("error", () => {
-    if (options.releaseRole) proxyTransportLost(options.releaseRole);
-    process.stderr.write("bridge failures=1\n");
+  child.on("error", (error: NodeJS.ErrnoException) => {
+    // Name the launch failure before the release seals: code, syscall and the command's base name only.
+    const command = typeof error?.path === "string" ? error.path.split(/[\\/]/).pop()!.slice(0, 60) : "-";
+    process.stderr.write(`bridge failures=1 code=${String(error?.code ?? "-").slice(0, 32)} syscall=${String(error?.syscall ?? "-").split(" ")[0]!.slice(0, 32)} command=${command}\n`);
+    if (!dropDownstream() && options.releaseRole) proxyTransportLost(options.releaseRole);
     process.exitCode = 1;
     watchdog?.stop();
     detach();
   });
   child.on("close", (code, signal) => {
-    if (options.releaseRole) proxyTransportLost(options.releaseRole);
+    if (!dropDownstream() && options.releaseRole) proxyTransportLost(options.releaseRole);
     if (signal) process.stderr.write("bridge exits=1\n");
     // Let stdout and stderr drain before the bridge exits.
     process.exitCode = process.exitCode ?? code ?? 1;

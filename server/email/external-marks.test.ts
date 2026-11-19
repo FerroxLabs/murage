@@ -135,11 +135,13 @@ describe("memory capture (5.4, F16)", () => {
         expect(kept?.action, `${name} ${ok}`).toBeUndefined();
       }
     });
+    // 1.0.20 hlstrip: with Murage's own HighLevel removed, any HIGHLEVEL_* tool can only be an owner MCP server's, and every
+    // one answers with the CRM's words, so a name outside the old list is excluded too (fail closed; it used to be kept).
     messages.appendMessage("t", row("hlx", { kind: "activity", text: "kept", tool: { name: "mcp__highlevel__HIGHLEVEL_GET_ANYTHING", ok: true } } as Partial<Message>));
     const kept = payload("hlx");
     expect(kept).toBeDefined();
-    expect(kept!.excluded).toBeUndefined();
-    expect(kept!.text).toContain("kept");
+    expect(kept!.excluded).toBe("external-mail");
+    expect(kept!.text).toBe("");
   });
 
   it("a reply written by a turn that read mail carries the mark into its source", () => {

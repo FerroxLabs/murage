@@ -37,7 +37,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFile
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-  APPRUN_NO_SANDBOX, createSentinelScheduleProvider, proveSentinelRegistration, readRegistrationRecord, reconcileSentinelRegistration, writeRegistrationRecord,
+  APPRUN_NO_SANDBOX, MAC_SENTINEL_PAUSED, createSentinelScheduleProvider, proveSentinelRegistration, readRegistrationRecord, reconcileSentinelRegistration, usesMacAppBinary, writeRegistrationRecord,
 } from "./sentinel-schedule.mjs";
 
 export const SENTINEL_HOST_STATUS_FILE = "host-status.json";
@@ -115,6 +115,7 @@ function writeOwnedJson(file, value, platform) {
  */
 export function createSentinelHost(options) {
   const platform = options.platform ?? process.platform;
+  const macApp = usesMacAppBinary(platform, options.executable);
   const env = options.env ?? process.env;
   const now = options.now ?? Date.now;
   const log = line => { try { options.log?.(line); } catch { /* logging never changes anything here */ } };
@@ -150,6 +151,7 @@ export function createSentinelHost(options) {
   };
   let timers = [];
   let busy = null;
+  let macRetired = false;
   let pagesShown = 0;
   let disabled = null;
 
@@ -233,6 +235,7 @@ export function createSentinelHost(options) {
           try { mkdirSync(p.dirname(p.dirname(outputRoot)), { recursive: true, mode: 0o700 }); } catch { /* reconcile reports output-root-create */ }
         }
         log(`[sentinel] health root ${state}`);
+        if (macApp && !options.closed) void host.reconcile();
         return state;
       } catch {
         disabled = "boundary";
@@ -272,8 +275,22 @@ export function createSentinelHost(options) {
 
     /** Brings the OS registration to this executable and entry (section 10.2). Never throws. */
     async reconcile() {
-      if (!boundary || !installationId || !outputRoot || options.closed) return registration;
+      if (!boundary || !installationId || options.closed) return registration;
       if (busy) return busy;
+      if (macApp) {
+        if (registration.reason !== MAC_SENTINEL_PAUSED) {
+          registration = { state: "registration-needed", mechanism: null, revision: null, reason: MAC_SENTINEL_PAUSED };
+          log(`[sentinel] registration ${registration.state} ${registration.reason}`);
+        }
+        if (macRetired) return registration;
+        busy = Promise.resolve().then(async () => {
+          macRetired = await scheduleProvider().suspendMac({ boundary, installationId, outputRoot });
+          if (outputRoot && boundary.ensureOutputRoot(outputRoot, { platform, create: false }).ok) writeHostStatus();
+          return registration;
+        }).catch(() => registration).finally(() => { busy = null; });
+        return busy;
+      }
+      if (!outputRoot) return registration;
       busy = (async () => {
         const providerNow = scheduleProvider();
         await host.forgetMovedInstallation();
@@ -299,6 +316,7 @@ export function createSentinelHost(options) {
 
     /** OS refusal: the independent supervisor, plus (Linux) an owning-user autostart entry so it returns at sign-in. */
     async fallback(result) {
+      if (macApp) return result;
       const descriptorPath = p.join(outputRoot, boundary.DESCRIPTOR_FILE);
       const loaded = boundary.loadDescriptor(descriptorPath, { platform });
       if (!loaded.ok) return result;
@@ -350,6 +368,7 @@ export function createSentinelHost(options) {
 
     /** Proof, rollback and the host-side freshness note. Never throws. */
     async check() {
+      if (macApp) { if (!macRetired) void host.reconcile(); return heartbeat; }
       if (!boundary || !outputRoot || options.closed) return heartbeat;
       try {
         const uid = options.uid ?? process.getuid?.() ?? -1;

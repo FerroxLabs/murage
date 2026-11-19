@@ -23,6 +23,7 @@ import { CliMountRelay, mountedTurn, assertRelayAvailable, prepareCliMounts, rel
 import { freshMcpMountAdmission, assertConsumingMountAdmission } from "../mcp-mounts.ts";
 import { refuseConsumingTurn } from "../../consuming-turn-response.ts";
 import { LEDGER_REFUSAL_LINE } from "../../ledger-refusal.ts";
+import { fenceRefusalDiagnosis } from "../../memory/send-fence.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { recordOutsideInstallChange } from "../../outside-wire.ts";
 import { openAcpSession } from "./open-session.ts";
@@ -125,10 +126,12 @@ import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../sh
 import { enginePathFromEnv, noteEnginePath } from "../../outside-scan.ts";
 import { CLI_CALLER_DEADLINE_MS, cliContainment, describeSpawnFailure, engineJob, engineProcessPid, engineWrapsHostPower, execCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused, killCliTree, spawnCli } from "../../procs.ts";
 import { cachedCliVersion } from "../../cli-version-cache.ts";
+import { runningAppVersion } from "../../memory/app-version.ts";
 import { claudeExecutableIdentity } from "../claude-guards.ts";
 import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, ChildTeardown, combine, type TeardownWait } from "../child-teardown.ts";
 import {
   createLifecycleRecorder,
+  lifecycleVersion,
   errnoCategory,
   type LifecycleFields,
   type LifecycleStopReason,
@@ -1287,6 +1290,9 @@ export function engineStderrLastWords(captured: string, truncated: boolean): str
   return acpEngineExitStderrText(acpEngineStderrCapture(captured, truncated));
 }
 
+/** The engine lines that explain nothing (the error card's own "generic" set, src/components/RuntimeErrorCard.tsx). */
+const GENERIC_ENGINE_LINE = /^(?:internal error|unknown error|ACP request failed|request failed)[.!]?$/i;
+
 /** Fuigo's typed failure kind, a snake_case token. Read only from
  * `error.data.error_kind`: it travels as its own field so nothing has to
  * recover it from text the engine wrote. */
@@ -1867,6 +1873,8 @@ const mcpOwnReadyWaitMs = () => Math.min(mcpReadyWaitMs(), envOr("MURAGE_ACP_MCP
  *  so every turn keeps its wait until a notification, a settled list or the bound releases it. A new build has a
  *  new key and is asked afresh. */
 const acpMcpListUnsupported = new Set<string>();
+/** The engine version each driver's last `initialize` answer named in this process: lifecycle identity only. */
+const acpKnownEngineVersion = new Map<string, string>();
 const methodNotFound = (error: unknown): boolean => (error as { code?: unknown } | null)?.code === -32601;
 /** The direct readiness signal (mcp-listed.ts): Murage's own servers (agents,
  *  memory, connected apps) are its own processes, so each one writes a marker
@@ -2317,7 +2325,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       /** nativecrash LLD-acp: a refusal this driver raises itself, with no engine request behind it. There is no driver target to close
        *  (target null), so the lease takes the close at once; the error is rethrown unchanged for the caller's own path. */
       const refuseDirect = (turn: Pick<SendTurnInput, "threadId" | "releaseBinding">, line: string): never => {
-        try { return refuseConsumingTurn(turn.releaseBinding!); }
+        // 1.0.20 busy: the verdict says the driver raised it. With the turn's context still current, the direct turn's lease ends the
+        // turn at once (admitLedgerLease "ledger"): a rebuild would start the same engine into the same refusal, behind the full wait.
+        try { return refuseConsumingTurn(turn.releaseBinding!, { state: "checking", reason: "not-built", driverRaised: true }); }
         catch (error) {
           refusalFor(error, `acp.direct.${line}`, { engine: DRIVER_KIND, threadId: turn.threadId, binding: turn.releaseBinding, target: null, kind: "turn" });
           throw error;
@@ -2454,11 +2464,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (phoneJobs) {
           servers.push({ name: "phoneJobs", command: phoneJobs.command, args: phoneJobs.args, env: own("phoneJobs", phoneJobs.env) });
         }
-        // native HighLevel (HL-S2, read only): the host checks the grant on every call and lists no change tool.
-        const highlevel = turn.integrations?.highlevel;
-        if (highlevel) {
-          servers.push({ name: "highlevel", command: highlevel.command, args: highlevel.args, env: acpEnv(highlevel.env) });
-        }
         // The bot's computer, mounted exactly like the Claude driver does.
         // Cloud boxes use the REST adapter; host and sandbox Cua connections
         // expose Cua Driver's official MCP server directly.
@@ -2501,7 +2506,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
         if (turn.integrations?.browser) own.set("browser", "own:browser");
         if (turn.integrations?.phoneJobs) own.set("phoneJobs", "own:phoneJobs");
-        if (turn.integrations?.highlevel) own.set("highlevel", "own:highlevel");
         if (turn.integrations?.computer || turn.integrations?.localComputer) own.set("computer", "own:computer");
         const records: McpMountRecord[] = [];
         for (const server of servers) {
@@ -3385,7 +3389,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }
 
         // R1-T8: one bounded, allowlisted lifecycle trace per child generation.
-        const lifecycle = createLifecycleRecorder({ threadId, driver: DRIVER_KIND, instanceId, turnId });
+        // meetgreet 1.0.19: the identity fields were null on every event. The app's version is the build's; the engine's is
+        // the last `initialize` answer this driver had in this process (no probe per turn), updated when this one answers.
+        const lifecycle = createLifecycleRecorder({ threadId, driver: DRIVER_KIND, instanceId, turnId,
+          appVersion: lifecycleVersion(runningAppVersion()), engineVersion: acpKnownEngineVersion.get(DRIVER_KIND) ?? null });
+        const noteEngineVersion = (init: any) => {
+          const version = lifecycleVersion((init?.agentInfo ?? init?._meta?.agentInfo)?.version);
+          if (!version) return;
+          acpKnownEngineVersion.set(DRIVER_KIND, version);
+          lifecycle.setEngineVersion(version);
+        };
         // The child is spawned by `launch()` below — synchronously for most
         // turns, and only after the owner has answered a folder-trust card
         // when the folder needs one (FUIGOTRUST1). Until then there is no
@@ -4189,6 +4202,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               parkProcess(threadId, proc!, sessionId!, turn.prewarm === true);
             }
             flushAssistantText();
+            if (ok && !state.cancelRequested) mountRelay?.reportUnavailable(() => base(threadId, turnId), emit);
             // The Ask hard stop's one note, when something was refused and the reply does not already say it.
             if (askStopRefused && !replyCarriesAskStopNote(askStopReply)) {
               const itemId = `ask-stop-${turnId}`;
@@ -6475,7 +6489,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // the finished env), and every answer is checked before anything is prompted.
         const sessionParams = <T extends object>(params: T): T => {
           const requested = (params as { mcpServers?: typeof mcpServers }).mcpServers;
-          if (boundMounted && requested) params = { ...params, mcpServers: requested.map(server => {
+          if (boundMounted && requested) params = { ...params, mcpServers: requested.filter(server => !mountRelay?.mountUnavailable(server.name)).map(server => {
             const native = nativeMcpServers.find(entry => entry.name === server.name);
             if (!native) return refuseDirect(turn, "6364");
             const reconnect = server.env.filter(entry => entry.name === "MURAGE_MCP_RECONNECT");
@@ -6919,6 +6933,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               mountRelay = await CliMountRelay.create(turn, preparedMounts!, {}, null);
               mountRelay.attach(child!, error => {
                 if (state.settled) return;
+                if (error === undefined) console.warn("[memory] ledger refusal cause=acp-mount-relay-denied");
                 emit({ ...base(threadId, turnId), type: "runtime.error", message: error === undefined ? LEDGER_REFUSAL_LINE : "The mounted tool connection stopped." });
                 settle(false, error === undefined ? "memory-refused" : "error");
               });
@@ -6982,7 +6997,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const waitStartedAt = Date.now();
               const mcpDone = turnTrace(threadId).span("mcp.ready.wait", { servers: mcpServers.length });
               const id = sessionId!;
-              const names = mcpServers.map(server => server.name);
+              const activeNames = () => mcpServers.map(server => server.name).filter(name => !mountRelay?.mountUnavailable(name));
               const buildKey = acpBuildKey(DRIVER_KIND, init ?? proc?.initResult, () => claudeExecutableIdentity(config.cli, env));
               if (proc) proc.mcpBuildKey = buildKey;
               // Each server's status first: when the list already shows every
@@ -6990,7 +7005,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               mcpListShowsSettled = false;
               const first = await readStates();
               let outcome: "ready" | "own_ready" | "timeout" | "aborted";
-              if (first && mcpListSettled(first, names)) outcome = "ready";
+              if (!activeNames().length || (first && mcpListSettled(first, activeNames()))) outcome = "ready";
               else {
                 // While waiting for the notification, keep reading the list: a
                 // build that never sends one is released as soon as it settles.
@@ -7000,7 +7015,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                     await new Promise(resolve => setTimeout(resolve, 500));
                     if (!polling) return;
                     const next = await readStates();
-                    if (next && mcpListSettled(next, names)) { mcpListShowsSettled = true; releaseMcpWait?.(); return; }
+                    if (!activeNames().length || (next && mcpListSettled(next, activeNames()))) { mcpListShowsSettled = true; releaseMcpWait?.(); return; }
                   }
                 })();
                 // Never shortened on silence alone: only a notification, a settled list, the direct
@@ -7053,6 +7068,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // fresh process instead, in this same turn.
               init = proc!.initResult;
               pinHermes(init?.agentInfo?.version);
+              noteEngineVersion(init);
               retryDiscard = acpRetryDiscard(init);
               if (!crossThread && proc!.sessionKey === sessionKey) {
                 mcpEstablished = false;
@@ -7135,6 +7151,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (externalHalt()) { settleHalted(); return; }
             proc!.initResult = init;
             pinHermes(init?.agentInfo?.version);
+            noteEngineVersion(init);
             seedLanded();
             recordProbedImages(imagesKey(), init);
             retryDiscard = acpRetryDiscard(init);
@@ -7377,7 +7394,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const capMs = (acpMcpQuiet.get(quietKey) ?? 0) >= MCP_LISTED_QUIET_AFTER ? Math.min(mcpListedWaitMs(), MCP_LISTED_QUIET_WAIT_MS) : mcpListedWaitMs();
               const mcpDone = turnTrace(threadId).span("mcp.listed.wait", { servers: mcpListedPaths.length });
               const startedAt = Date.now();
-              const missing = () => mcpListedPaths.filter((path) => !mcpMarkerReady(path));
+              const missing = () => mcpListedPaths.filter(path => !mountRelay?.mountUnavailable(mcpListedNames.get(path)!) && !mcpMarkerReady(path));
               while (missing().length && Date.now() - startedAt < capMs && !state.settled && !state.cancelRequested) {
                 await new Promise((resolve) => setTimeout(resolve, MCP_LISTED_POLL_MS));
               }
@@ -7406,7 +7423,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
             // Intent warm: the engine is up with its session established and its MCP
             // servers ready. Settle parks it (held for one window); no prompt is sent.
-            if (boundMounted && mcpOutcome === "timeout") {
+            const activeMount = (server: { name: string }) => !mountRelay?.mountUnavailable(server.name);
+            if (boundMounted && mcpOutcome === "timeout" && mcpServers.some(activeMount)) {
               state.mcpReadiness = "unknown";
               if (turn.releaseBinding) refuseDirect(turn, "7292");
               throw new Error("MEMORY_CONTEXT_REVOKED");
@@ -7424,7 +7442,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             let requiredMissing: string[] | null = null;
             /** Required servers the engine's list did not name: their readiness is unknown. */
             let absentRequired: string[] = [];
-            const requiredNames = mcpServers.map(server => server.name).filter(name => requiredMountNames.has(name));
+            const requiredNames = mcpServers.filter(activeMount).map(server => server.name).filter(name => requiredMountNames.has(name));
             if (support.mcpListMethod && sessionId && (requiredNames.length || boundMounted)) {
               // Connected apps count as ready only once the engine holds the real tool list: the bridge files a
               // marker while it holds only a stand-in, and the engine's own status says "ready" either way.
@@ -7434,10 +7452,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               });
               const holdsStandIn = (name: string) => isConnectedAppsServer(name) && composioRefs.length > 0 && anyMountHoldsStandIn(composioRefs);
               const statusNotReady = (states: Map<string, string>) => requiredNames.filter(name => states.has(name) && states.get(name) !== "ready");
-              const checkedNames = boundMounted ? mcpServers.map(server => server.name) : requiredNames;
-              const notReady = (states: Map<string, string>) => checkedNames.filter(name => states.has(name) && (states.get(name) !== "ready" || holdsStandIn(name)));
+              const checkedNames = () => boundMounted ? mcpServers.filter(activeMount).map(server => server.name) : requiredNames;
+              const notReady = (states: Map<string, string>) => checkedNames().filter(name => states.has(name) && (states.get(name) !== "ready" || holdsStandIn(name)));
               // A required server the list does not name at all is unknown, not ready.
-              const absentFrom = (states: Map<string, string>) => checkedNames.filter(name => !states.has(name));
+              const absentFrom = (states: Map<string, string>) => checkedNames().filter(name => !states.has(name));
               const gateStartedAt = Date.now();
               let gateReconnected: string[] = [];
               let gateBackedOff: string[] = [];
@@ -7463,7 +7481,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // mcp/list. A positive all-mounted notification or every named
               // tools/list receipt is still proof. A partial/error list always
               // wins over that aggregate signal; silence never supplies proof.
-              if (boundMounted && (states ? notReady(states).length || absentFrom(states).length : mcpOutcome !== "ready")) {
+              if (boundMounted && checkedNames().length && (states ? notReady(states).length || absentFrom(states).length : mcpOutcome !== "ready")) {
                 // Keep the native readiness facts on the terminal receipt even
                 // when the consuming gate refuses before any prompt is sent.
                 if (!states || absentFrom(states).length) state.mcpReadiness = "unknown";
@@ -7909,6 +7927,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   try { turn.beforePrepare(); } catch { boundaryRefused = true; }
                   if (boundaryRefused) { settle(false, "submission_refused"); return; }
                 }
+                console.warn(`[memory] ledger refusal cause=${fenceRefusalDiagnosis(e).refused} site=acp-prompt`);
                 emit({ ...base(threadId, turnId), type: "runtime.error", message: LEDGER_REFUSAL_LINE });
                 settle(false, "memory-refused");
                 return;
@@ -7950,10 +7969,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // inside the transcript's own length. Classification above still
               // reads the raw message, and a line that sanitises to nothing is
               // the generic failure text rather than the raw one.
+              // meetgreet 1.0.19: a rejection that explains nothing ("Internal error", "Request failed.", or no message at all)
+              // and carries no typed kind for the card to explain is still a reason the owner can act on: the engine's
+              // service failed. One plain line naming the engine and the next step, never the bare JSON-RPC word.
+              const engineLine = fluxRefusal ? message : engineText ?? acpEngineErrorText(message);
+              const unexplained = !fluxRefusal && !errorKind && (engineLine === undefined || GENERIC_ENGINE_LINE.test(engineLine.trim()));
               emit({
                 ...eventBase,
                 type: "runtime.error",
-                message: fluxRefusal ? message : engineText ?? acpEngineErrorText(message) ?? `${ENGINE} could not finish this turn.`,
+                message: unexplained ? `${ENGINE}'s service returned an error. Try again, or switch engine.` : engineLine ?? `${ENGINE} could not finish this turn.`,
                 ...(errorKind ? { errorKind } : {}),
                 ...(acpEngineErrorCode(e) ? { engineCode: acpEngineErrorCode(e) } : {}),
                 // Read from the raw error and its data, before the text above is sanitised (Flux's code sits in error.state,

@@ -679,7 +679,7 @@ describe("a busy answer (DATABASE_BUSY, 503 with Retry-After) is retried with th
     expect(store).toContain("{ signal: action.signal });");
     expect(store).toContain("body: JSON.stringify({ text: action.text, threadId, sendId })");
     expect(store).toContain("busyTries: number = busyRetriesFor(init?.method)");
-    expect(store).toContain("return api(path, init, busyTries - 1);");
+    expect(store).toContain("return api(path, init, busyTries - 1, reconnectTries);");
     const chat = readFileSync(new URL("../components/ChatView.tsx", import.meta.url), "utf8");
     // one draft per message, one edit per message in flight, each answer keyed by its own sendId (lib/edit-drafts.test.ts)
     expect(chat).toContain("const next = beginEdit(editDraftStore.get(botId), messageId, text, newSendId());");
