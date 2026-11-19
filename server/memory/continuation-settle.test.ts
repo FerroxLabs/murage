@@ -3,7 +3,8 @@
 // Owner: warm-keep (continuation preparation and its dispatch consumer).
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { database, closeDatabase } from '../database.ts';
-import { continuationMemoryRevoked, resetSessionHolds } from './disclosures.ts';
+import { continuationMemoryRevoked, continuationPendingProbe, resetSessionHolds } from './disclosures.ts';
+import { verdictStore } from './verdict-store.ts';
 import { retainedSessionInvalid, CONTENT_SESSION_READER, sessionCheckRefusal, refusalCauseNote, memoryRefusalCause } from './dispatch.ts';
 import { sessionLookup } from './deny-read.ts';
 import { LineageAllowance, recordSessionRoots } from './replay-lineage.ts';
@@ -160,6 +161,33 @@ for (const kind of ['active', 'retained'] as const) {
   });
 }
 
+// T3 (DESIGN-T3.md): the owner turn's check on exactly checking:pending keeps the session and never consumes (or grants) its hold; the
+// probe is read-only; a settled revoke still resets with keepPending.
+it('T3 keepPending: a pending window keeps the session without consuming or granting the hold; without it the hold is consumed', () => {
+  const w = world();
+  w.f.pending('thread', 1);
+  const access = accessFor().access;
+  const lose = vi.spyOn(verdictStore, 'loseHold'), set = vi.spyOn(verdictStore, 'setHold'), touch = vi.spyOn(verdictStore, 'touchHold');
+  expect(continuationPendingProbe(key.threadId, key.driverInstance, key.nativeSession, access)).toBe(true);
+  expect(lose).not.toHaveBeenCalled();
+  const kept: { reason?: string; kept?: boolean } = {};
+  expect(continuationMemoryRevoked(LineageAllowance.turn(), key.threadId, key.driverInstance, key.nativeSession, access, kept, true)).toBe(false);
+  expect(kept).toEqual({ reason: 'checking:pending', kept: true });
+  expect(lose).not.toHaveBeenCalled(); expect(set).not.toHaveBeenCalled(); expect(touch).not.toHaveBeenCalled();
+  // the same verdict without the owner's keepPending: today's reset, the hold consumed
+  const reset: { reason?: string; kept?: boolean } = {};
+  expect(continuationMemoryRevoked(LineageAllowance.turn(), key.threadId, key.driverInstance, key.nativeSession, access, reset)).toBe(true);
+  expect(reset).toEqual({ reason: 'checking:pending' });
+  expect(lose).toHaveBeenCalledTimes(1); expect(lose.mock.calls[0]![1]).toBe('consumed');
+});
+it('T3 keepPending never keeps a settled revoke of a line the session held', () => {
+  const w = world();
+  commitRevoke(w.db, { kind: 'line', threadId: 'thread', messageIds: ['shown-owner-line'], cause: 'edit' }, { inline: false });
+  const access = accessFor().access, why: { reason?: string; kept?: boolean } = {};
+  expect(continuationMemoryRevoked(LineageAllowance.turn(), key.threadId, key.driverInstance, key.nativeSession, access, why, true)).toBe(true);
+  expect(why.kept).toBeUndefined();
+  expect(why.reason).not.toBe('checking:pending');
+});
 it('late submission diagnostics keep a fixed checking sub-cause without recalled content', () => {
   const error = sessionCheckRefusal({ reason: 'checking:pending' });
   expect(error.message).toBe('MEMORY_CONTEXT_REVOKED');

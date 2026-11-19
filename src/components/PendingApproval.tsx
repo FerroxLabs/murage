@@ -21,7 +21,6 @@ import { t } from "@/lib/i18n";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
 import { CollapsibleText } from "@/components/CollapsibleText";
-import { HighLevelReviewValues, highlevelAllowDigest, highlevelReviewId, useHighLevelReview } from "@/components/HighLevelReviewValues";
 import { reviewedSkillSha256 } from "../../shared/skill-request";
 import { usePlainApprovalReady } from "@/lib/plain-approval";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -80,8 +79,7 @@ function useFoldRows(pending: Pending, threadId: string, bot: Bot | undefined) {
   const refused = useComputerOnlyRefusal(threadId, pending.requestId);
   const card = pending.message.card;
   const computerOnly = allowNeedsComputer(surface, card, refused);
-  // a HighLevel change is approved one exact review at a time: never a remembered or standing answer (HL-S2-WRITES (a)4)
-  const special = isSpecialApproval(pending) || highlevelReviewId(pending.requestId) !== undefined;
+  const special = isSpecialApproval(pending);
   // 1.2: the rows the server would save; the desktop app and the paired phone
   // app give them (a browser pairing writes no grant), and bot rows need the bot
   const owner = desktop === true || surface === "app";
@@ -141,8 +139,6 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
       )}
       {held && <CollapsibleText text={held} className="mt-1 text-[12.5px] text-warning" />}
       <OutsideEngineNote card={pending.message.card} bot={bot} />
-      {/* a HighLevel change: every value it would send, read live from the open review; Allow waits on it */}
-      {highlevelReviewId(pending.requestId) && <HighLevelReviewValues reviewId={highlevelReviewId(pending.requestId)!} />}
       {!held && needsRoutineReview(pending) && <p className="mt-2 text-[12px] text-warning">This older routine request needs a fresh review. Cancel it and ask the bot to propose it again.</p>}
       {!bar && (
         <>
@@ -251,7 +247,6 @@ export function ApprovalDetailsSheet({
         <BoxBody className="px-4 pb-2">
           {why && <p data-why-line className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{why}</p>}
           {pending.held && <p data-held-note className="mt-1 whitespace-pre-wrap break-words text-[12.5px] text-warning">{pending.held}</p>}
-          {highlevelReviewId(pending.requestId) && <HighLevelReviewValues reviewId={highlevelReviewId(pending.requestId)!} />}
           {ownWordsBody(pending) ?? (
             <ApprovalDetailBody
               tool={skill || routine ? undefined : pending.tool}
@@ -300,12 +295,7 @@ export function PendingApprovalActions({
     ? reviewedSkillSha256(card.skillRequest)
     : undefined;
   const offer = card?.grantRequest?.routine;
-  // HL-S2-WRITES (a)4: Allow waits until the values answered 200 and are on screen, and carries their digest; a surface
-  // refused the values (a phone, a browser) shows Deny only
-  const highlevelId = highlevelReviewId(pending.requestId);
-  const highlevelReview = useHighLevelReview(highlevelId);
-  const highlevelDigest = highlevelAllowDigest(highlevelReview);
-  const allowHidden = computerOnly || highlevelReview?.phase === "refused";
+  const allowHidden = computerOnly;
   const verb = special ? undefined : cardVerb(card);
   const verbLabel = verb ? verbWord(verb) : "";
   // Rule 81c: each recipient is its own choice, unticked until the owner ticks it
@@ -370,7 +360,6 @@ export function PendingApprovalActions({
       ...(card?.botAuthority && !card.botAuthority.cut ? { seen: { renderer: 'bot-card@1', digest: card.botAuthority.specDigest } } : {}),
       botName: bot?.name,
       reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
-      ...(behavior === "allow" && highlevelDigest ? { reviewDigest: highlevelDigest } : {}),
       alwaysAllow: botGrant,
       ...(routineGrant ? { alwaysAllowRoutine: routineGrant } : {}),
       // the allowance the server says this answer added (none when it was already held)
@@ -397,7 +386,7 @@ export function PendingApprovalActions({
     ? card?.skillRequest?.action === "update" ? "Update" : "Enable"
     : isRoutineRequest ? "Confirm" : hostConsent ? "Allow for this bot" : eventLimit ? "Allow" : verbLabel;
   const denyLabel = narrowWipe ? "Don't" : isRoutineRequest || isSkillRequest ? "Cancel" : hostConsent ? "Don't allow" : eventLimit ? "Not now" : dontWord(verb ?? "allow");
-  const primaryDisabled = (isSkillRequest && !reviewedSha256) || needsRoutineReview(pending) || (highlevelId !== undefined && !highlevelDigest);
+  const primaryDisabled = (isSkillRequest && !reviewedSha256) || needsRoutineReview(pending);
   const cancelTurn = !durableRequest && (
     <button onClick={onCancelTurn} className={cn(base, PRESSED, "text-ink-secondary hover:bg-control hover:text-ink", !bar && "mr-auto")}>
       Cancel turn
@@ -417,7 +406,7 @@ export function PendingApprovalActions({
       disabled={primaryDisabled}
       {...btn("allow", cn(base, "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40", caret && "rounded-r-none"))}
     >
-      <ApprovalBusyLabel busy={feedback.busy === "allow"}>{highlevelReview?.phase === "loaded" && highlevelReview.operation === "users.create" ? "Add user" : primaryLabel}</ApprovalBusyLabel>
+      <ApprovalBusyLabel busy={feedback.busy === "allow"}>{primaryLabel}</ApprovalBusyLabel>
     </button>
   );
   const foldChunk = (variant: "menu" | "sheet", onClose: () => void, autoFocus = true) => (

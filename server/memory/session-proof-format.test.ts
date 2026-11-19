@@ -93,9 +93,15 @@ it("F1 W1b: a proof written after the fix round-trips: with no change it resumes
 it("F2 W2a: change-log rows lost after the checkpoint refuse as a gap", async () => {
   const s = await provenSession();
   const at = s.check()!.log_seq;
-  s.denyScope(s.peer);
+  // recallrest-1020 (port onto 1.0.19): a deny the footprint does not name is seen only through the log, so the lost rows are what refuses.
+  s.denyScope(s.unrelated);
   s.db.prepare("DELETE FROM memory_session_change_log WHERE seq>?").run(at);
   expect(s.prove()).toMatchObject({ kind: "fresh", reason: "change-log-gap" });
+  // A committed deny of a footprint scope is also read directly from memory_deny (the mark can precede its generation bump), and that
+  // read comes first: the same loss still refuses, named by the deny itself.
+  s.denyScope(s.peer);
+  s.db.prepare("DELETE FROM memory_session_change_log WHERE seq>?").run(at);
+  expect(s.prove()).toMatchObject({ kind: "fresh", reason: "changed:deny" });
 });
 
 it("F2 W2b: losing only the newest change-log row still refuses", async () => {
@@ -166,7 +172,7 @@ it("F1 W5b: the reopen tolerance is only the deny-generation trigger: a file mis
 /** An owner reader whose one receipt cites a record in a readable scope A that rests on evidence in another scope B: proved, checkpointed. */
 async function proven() {
  const f=setupProofFixture('direct'),db=database(),p=await proofModule();
- const a=policy.ensureScope('room','room'),b=policy.ensureScope('bot','helper');
+ const a=policy.ensureScope('room','room'),b=policy.ensureScope('bot','helper'),c=policy.ensureScope('bot','format-unrelated');
  // the reader holds B too (a grant); B is only the evidence behind A's record, never cited itself
  db.prepare("INSERT INTO memory_scope_bindings VALUES('format-grant',?,'bot','reader',0,'granted','{}')").run(b);
  new WritetimeFixture(db).source('format-source',b).record('format-record',1,a,['format-source'],{assertion:'owner-statement'});
@@ -177,7 +183,7 @@ async function proven() {
  expect(prove()).toEqual({kind:'resume'});
  const row=()=>db.prepare('SELECT log_seq,footprint FROM memory_session_checks WHERE thread_id=? AND driver_instance=? AND native_session=?').get(f.key.threadId,f.key.driverInstance,f.key.nativeSession) as {log_seq:number;footprint:string};
  expect(row().footprint).toContain(`~${b}`);
- return {f,db,p,a,b,prove,row,fixture:new WritetimeFixture(db)};
+ return {f,db,p,a,b,c,prove,row,fixture:new WritetimeFixture(db)};
 }
 
 it('W1: a checkpoint in the pre-envelope format is absent, so a later deny of its evidence scope is not ignored',async()=>{
@@ -201,17 +207,28 @@ it('W1b: a v2 checkpoint round-trips: with no change it resumes on the increment
 
 it('W2a: deny rows lost from the change log refuse (change-log-gap)',async()=>{
  const w=await proven(),at=Number(w.row().log_seq);
- w.fixture.deny('scope',w.b);bumpDenyGeneration(w.db);
+ // recallrest-1020 (port onto 1.0.19): c is in no footprint, so only the log can show its deny: the lost rows are what refuses
+ w.fixture.deny('scope',w.c);bumpDenyGeneration(w.db);
  w.db.prepare('DELETE FROM memory_session_change_log WHERE seq>?').run(at);
  expect(w.prove()).toMatchObject({kind:'fresh',reason:'change-log-gap'});
+ // a committed deny of the footprint's evidence scope is also read directly from memory_deny, first: the same loss still refuses
+ w.fixture.deny('scope',w.b);
+ w.db.prepare('DELETE FROM memory_session_change_log WHERE seq>?').run(at);
+ expect(w.prove()).toMatchObject({kind:'fresh',reason:'changed:deny'});
 });
 
 it('W2b: losing only the newest row, the deny, refuses',async()=>{
  const w=await proven();
- bumpDenyGeneration(w.db);w.fixture.deny('scope',w.b);
- expect(String(w.db.prepare('SELECT id FROM memory_session_change_log ORDER BY seq DESC LIMIT 1').get()!.id)).toBe(`deny-scope:${w.b}`);
+ // recallrest-1020 (port onto 1.0.19): c is in no footprint, so only the log can show its deny
+ bumpDenyGeneration(w.db);w.fixture.deny('scope',w.c);
+ expect(String(w.db.prepare('SELECT id FROM memory_session_change_log ORDER BY seq DESC LIMIT 1').get()!.id)).toBe(`deny-scope:${w.c}`);
  w.db.exec('DELETE FROM memory_session_change_log WHERE seq=(SELECT max(seq) FROM memory_session_change_log)');
  expect(w.prove()).toMatchObject({kind:'fresh',reason:'change-log-gap'});
+ // the footprint's evidence scope: its committed deny is read directly from memory_deny, first, so losing its log row hides nothing
+ w.fixture.deny('scope',w.b);
+ expect(String(w.db.prepare('SELECT id FROM memory_session_change_log ORDER BY seq DESC LIMIT 1').get()!.id)).toBe(`deny-scope:${w.b}`);
+ w.db.exec('DELETE FROM memory_session_change_log WHERE seq=(SELECT max(seq) FROM memory_session_change_log)');
+ expect(w.prove()).toMatchObject({kind:'fresh',reason:'changed:deny'});
 });
 
 it('W2c: a deny generation that moved with no logged proof refuses (deny-generation-unproven)',async()=>{

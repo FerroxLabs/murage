@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { assertSendFence, pendingFenceCheck } from "./send-fence.ts";
 import { buildPrompt, promptPart } from "./prompt-parts.ts";
-import { settleDirectRefusal, settleRefusedFence, PENDING_FENCE_WAIT_MS } from "./fence-pending.ts";
+import { awaitExactPendingCheck, settleDirectRefusal, settleRefusedFence, PENDING_FENCE_WAIT_MS } from "./fence-pending.ts";
 import * as revocation from "./memory-revocation.ts";
 import { resetRevokeWriteBudget, revokePaceTestHooks, REVOKE_WRITE_WINDOW_MS } from "./revoke-budget.ts";
 import { CONTENT, MEMBER, WritetimeFixture } from "./testing/writetime-fixture.ts";
@@ -138,4 +138,42 @@ it.each([CONTENT, MEMBER])("reschedules durable bookkeeping work after its runne
   expect(await settleRefusedFence(f.db, error, undefined, 2000)).toBe(true);
   expect(pendingFenceCheck(error)?.(f.db)).toEqual({ state: "shown" });
   expect(f.db.prepare("SELECT 1 FROM memory_scope_bindings WHERE id='memory-revocation:fixture-held-job'").get()).toBeUndefined();
+});
+// MAIN Q2: an input still checking:pending waits for its own obligation only. No foreground or global drain, ever.
+it("the exact pending wait never borrows foreground revoke work and only re-wakes the scheduled runner", async () => {
+  const { error } = refusal(CONTENT);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  const drain = vi.spyOn(revocation, "drainRevokeMarkerBounded"), settle = vi.spyOn(revocation, "settleRevokesForTurn");
+  const wake = vi.fn();
+  setTimeout(() => f.db.exec("DELETE FROM memory_deny_pending"), 1_500);
+  const result = awaitExactPendingCheck(f.db, error, undefined, 5_000, wake);
+  await vi.advanceTimersByTimeAsync(1_600);
+  expect(await result).toBe(true);
+  expect(drain).not.toHaveBeenCalled();
+  expect(settle).not.toHaveBeenCalled();
+  expect(wake.mock.calls.length).toBeGreaterThanOrEqual(2);
+  expect(pendingFenceCheck(error)?.(f.db)).toEqual({ state: "shown" });
+});
+it("Stop ends the exact pending wait before any wake, leaving its obligation owed", async () => {
+  const { error } = refusal(CONTENT);
+  const wake = vi.fn(), drain = vi.spyOn(revocation, "drainRevokeMarkerBounded");
+  expect(await awaitExactPendingCheck(f.db, error, () => true, 2_000, wake)).toBe(false);
+  expect(wake).not.toHaveBeenCalled();
+  expect(drain).not.toHaveBeenCalled();
+  expect(pendingFenceCheck(error)?.(f.db)).toEqual({ state: "checking", reason: "pending" });
+});
+it("the exact pending wait never authorizes an attempt when its bound runs out, and does no work for a settled refusal", async () => {
+  f.db.exec("DELETE FROM memory_revoke_jobs");
+  const { error, built } = refusal(CONTENT);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  const drain = vi.spyOn(revocation, "drainRevokeMarkerBounded"), wake = vi.fn();
+  const result = awaitExactPendingCheck(f.db, error, undefined, 100, wake);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(await result).toBe(false);
+  expect(drain).not.toHaveBeenCalled();
+  expect(() => assertSendFence(built, CONTENT, f.db)).toThrow("MEMORY_CONTEXT_REVOKED");
+  const settled = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { fence: { state: "withheld", reason: "deny-line" } });
+  const idle = vi.fn();
+  expect(await awaitExactPendingCheck(f.db, settled, undefined, 100, idle)).toBe(true);
+  expect(idle).not.toHaveBeenCalled();
 });

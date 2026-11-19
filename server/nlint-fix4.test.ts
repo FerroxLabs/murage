@@ -79,20 +79,8 @@ describe("NLINT-FIX4 B2 (Astra B): the program is judged by its realpath", () =>
   });
 });
 
-describe("NLINT-FIX4 own-tool classes: HighLevel and phone stay outside actions", () => {
+describe("NLINT-FIX4 own-tool classes: phone stays an outside action", () => {
   afterEach(() => marks.forgetAllTurnMarks());
-  it("every HighLevel read or helper tool and the highlevel/mcp route mark the turn; none is clean-listed", async () => {
-    const own = await import("./outside-own.ts");
-    const { HIGHLEVEL_READ_TOOL_NAMES, HIGHLEVEL_HELPER_NAMES } = await import("../shared/highlevel.ts");
-    marks.wireOutsideStore(store());
-    const tools = [...HIGHLEVEL_READ_TOOL_NAMES, ...HIGHLEVEL_HELPER_NAMES, own.ownToolOfRoute("POST", "/api/internal/highlevel/mcp"), own.ownToolOfRoute("GET", "/api/internal/highlevel/mcp")];
-    for (const tool of tools) {
-      expect(own.OWN_READ_CLEAN_TOOLS, tool).not.toContain(tool);
-      marks.beginOutsideTurn("t1", "i1", `turn-${tool}`, false);
-      expect(own.ownToolGate({ threadId: "t1", botId: "b1", tool, lane: false }), tool).toBeNull();
-      expect(marks.turnOutsideRead("t1"), tool).not.toBeNull();
-    }
-  });
   it("the phone route marks the turn, and a phone call on a marked lane turn is refused", async () => {
     const own = await import("./outside-own.ts");
     marks.wireOutsideStore(store());

@@ -1058,7 +1058,7 @@ export class ConversationDeletions {
       const state = this.retries.get(entry.id);
       if (state?.timer) clearTimeout(state.timer);
       // the schedule starts again; the ladder of attempts lost to Murage's own turns does not (a press never lowers the rung)
-      this.retries.set(entry.id, { attempts: 0, ...(state?.ownTurnLosses ? { ownTurnLosses: state.ownTurnLosses } : {}) });
+      this.retries.set(entry.id, { attempts: 0, ...(state?.ownTurnLosses ? { ownTurnLosses: state.ownTurnLosses } : {}), ...(state?.logged !== undefined ? { logged: state.logged } : {}) });
       started++;
       try { await this.finish(entry, { allHomes: true }); } catch (error) { console.warn("conversation deletion: a retry could not finish", error); }
     }
@@ -1120,7 +1120,8 @@ export class ConversationDeletions {
   /** Replays: after the pauses of the list, one more every `slowRetryMs` (6 hours), and the next start's reconcile. */
   private readonly retries = new Map<string, { attempts: number; timer?: NodeJS.Timeout; /** the last attempt was held back by Murage's own turn */ ownTurn?: boolean;
     /** the holders of the owed homes after the last attempt (probeHomes), and the looks since that found them unchanged */ holders?: string; looks?: number;
-    /** attempts in a row lost to Murage's own running turn (engine-running): the next hold waits longer */ ownTurnLosses?: number }>();
+    /** attempts in a row lost to Murage's own running turn (engine-running): the next hold waits longer */ ownTurnLosses?: number;
+    /** the holders the "still open" line was last written for */ logged?: string }>();
   private disposed = false;
 
   /** An unfinished deletion keeps its pending record, and is tried again after a growing pause (the record is the retry
@@ -1151,7 +1152,12 @@ export class ConversationDeletions {
       // made (no worker, no pause of the background runs, no plan line in the log). The look is repeated every openRetryMs.
       if (this.heldBySameHolders(current, state)) {
         state.looks = (state.looks ?? 0) + 1;
-        if (state.looks === 1) console.warn("conversation deletion: the engine history is still open by the same program; looked at again every 10 minutes, planned again once it changes");
+        // once per deletion and holder set: an attempt the looks force (OPEN_LOOKS_MAX) zeroes `looks`, and the line came back after
+        // every one of them, all day against a program the owner keeps open (DELETE-LOOP-1020)
+        if (state.looks === 1 && state.logged !== state.holders) {
+          state.logged = state.holders;
+          console.warn("conversation deletion: the engine history is still open by the same program; looked at again every 10 minutes, planned again once it changes");
+        }
         this.retryAfter(entry, state, Math.min(this.options.openRetryMs ?? 600_000, 600_000));
         return;
       }

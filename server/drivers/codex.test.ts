@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setOwnWebSearchProviderProbe } from "../../shared/own-servers.ts";
 import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
@@ -25,7 +26,7 @@ import { consumingFixture } from "../testing/consuming-fixture.ts";
 import { codexMountConfiguration } from "../testing/codex-mount-configuration.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin, readCodexLoginMode } from "./codex.ts";
-import { CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests, setHookRuntimeForTests } from "./codex-hook.ts";
+import { CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests, setHookRuntimeForTests, routeDelivery, codexWebRedirect } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
@@ -1228,6 +1229,14 @@ describe("CodexDriver turns (fake app-server)", () => {
     const argv: string[] = JSON.parse(readFileSync(file, "utf8")).argv;
     expect(argv).toContain('web_search="disabled"');
     expect(argv.join(" ")).toContain("mcp_servers.agents.command");
+    // CODEX-WEB-1020: the turn that loses native search must have a search that runs with no card. The hook's answer for
+    // Murage's own web_search on this turn's agents mount is a final allow; a native web call is told that tool's name.
+    const mounts = [{ engineName: "agents", mountId: "own:agents", provenance: "own" as const }];
+    setOwnWebSearchProviderProbe(() => "engine");
+    try { expect(routeDelivery({ tool_name: "mcp__agents__web_search", tool_input: { query: "Murage" }, tool_use_id: "u", turn_id: "t", cwd: scratch }, { project: scratch, home: scratch, mounts }))
+      .toEqual({ route: "allow", final: true, why: "own-unasked" }); } finally { setOwnWebSearchProviderProbe(undefined); }
+    expect(routeDelivery({ tool_name: "web__run", tool_input: {}, tool_use_id: "u", turn_id: "t", cwd: scratch }, { project: scratch, home: scratch, mounts }))
+      .toEqual({ route: "deny", reason: codexWebRedirect("agents") });
   });
 
   it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {

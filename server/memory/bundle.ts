@@ -9,7 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { database } from "../database.ts";
 import type { MemoryBundle, MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { MEMORY_HANDLE_LIMIT, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryHandle, memoryHandlePosition, memoryRequestPrefix } from "../../shared/memory.ts";
-import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, ownerReaderScopeSets, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, revalidateMemoryAccess, memoryAccessHasScope, ownerReaderScopeSets, type MemoryAccess, type MemoryRoster } from "./policy.ts";
 import { readableMemoryRecord, withReaderRule, type MemoryReadOptions } from "./readable.ts";
 import { noteRecallDegraded, recallHydrationLimitMs, searchMemory, type MemorySearchBridge } from "./search.ts";
 import { causeOf } from "./worker-log.ts";
@@ -248,7 +248,10 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   // and a brief that is left out says so in the log
   const briefAllowance=options.briefAllowance??briefBudget(), briefReading={allowance:briefAllowance,withheldMessage:null,workBudget:frameWork};
   const briefRecords=new Set<BundleRecord>();
-  const readingFor=(kind:string)=>kind==="continuity-brief"?briefReading:reading;
+  // W-B28-ALLOWANCE: the reveal state is delivered with the brief it continues, so both are proven on the brief's own budget;
+  // a transcript that spent the turn's allowance must not keep the brief and silently drop its reveal state.
+  const briefKind=(kind:string)=>kind==="continuity-brief"||kind==="reveal-state";
+  const readingFor=(kind:string)=>briefKind(kind)?briefReading:reading;
   const briefLeftOut=(error:unknown,stage:string)=>noteBriefLeftOut(access.botId,stage,error);
   let recallPartial=false;
   const omittedMemoryLines = new Set<string>();
@@ -315,6 +318,8 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   droppedPins.unshift(...overBudget);
   const selected = [...pinned], identity: BundleRecord[] = [], checkpoint: BundleRecord[] = [], evidence: BundleRecord[] = [];
   let degradedReason: string | undefined;
+  // The reply's left-out note counts a degraded recall only when something readable may really have been left out.
+  let degradedLeftOut = false;
   const add = (record: BundleRecord, target: BundleRecord[], ceiling = budget) => {
     if (selected.length>=MEMORY_HANDLE_LIMIT || selected.some(r => r.id===record.id && r.version===record.version)) return;
     if (tokens(render([...selected,record])) <= ceiling) { selected.push(record); target.push(record); }
@@ -540,6 +545,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     try {
       const result = await searchMemory(query,access,bridge,{limit:20,signal:options.signal,evolutionPolicy,withheldMessage:options.withheldMessage,allowance:recall,workBudget:frameWork});
       degradedReason = result.degradedReason ?? degradedReason;
+      if (result.degradedReason && (result as {missed?: boolean}).missed) degradedLeftOut = true;
       if ((result as {partial?: boolean}).partial) recallPartial = true;
       inMemoryAccessPass(() => {
         for (const hit of result.hits) {
@@ -557,7 +563,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     } catch (error) {
       options.signal?.throwIfAborted();
       assertMemoryAccess(access);
-      degradedReason = "MEMORY_RECALL_UNAVAILABLE";
+      degradedReason = "MEMORY_RECALL_UNAVAILABLE"; degradedLeftOut = true;
       noteRecallDegraded("turn", causeOf(error), { hits: 0, ms: 0, index: "unknown", outcome: "empty" });
     }
     // PIP episodes (design 1.2): recall only, merged after the shared search, direct owner turns with Continuity on.
@@ -610,7 +616,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
       }
       try {
         // a recall hit is re-proven from recall's own proof budget, the rest from the turn's
-        const proof = evidence.includes(record) ? recallReading : briefRecords.has(record) ? briefReading : reading;
+        const proof = evidence.includes(record) ? recallReading : briefRecords.has(record) || briefKind(record.kind) ? briefReading : reading;
         const current = hydrateDisclosedMemoryRecord(record.id,record.version,access,proof);
         if (!sameRecord(current,record)) throw new Error("MEMORY_RECORD_CHANGED");
         // The reader's own rule too: what it may see can change while recall
@@ -633,7 +639,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         noteRecordOmitted(record.id,record.version);
         selected.splice(selected.indexOf(record),1);
         for (const list of [identity,checkpoint,evidence]) { const index=list.indexOf(record); if (index>=0) list.splice(index,1); }
-        if (!withheldPin && !forgottenPin) degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE";
+        if (!withheldPin && !forgottenPin) { degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; degradedLeftOut = true; }
       }
     }
   });
@@ -652,7 +658,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   for (const row of bundle.sourceVersions) Object.freeze(row);
   Object.freeze(bundle.recordVersions); Object.freeze(bundle.sourceVersions);
   Object.freeze(pinned); Object.freeze(identity); Object.freeze(checkpoint); Object.freeze(evidence); Object.freeze(bundle);
-  bundles.set(bundle,{access,records:selected,pinAt,pinRows,fenceOmissions:omittedMemoryLines.size + new Set([...omittedRecords,...withheldPins.map(pin=>pin.id + "\0" + pin.version)]).size + (degradedReason && !omittedRecords.size ? 1 : 0),recall:new Set(evidence),...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}});
+  bundles.set(bundle,{access,records:selected,pinAt,pinRows,fenceOmissions:omittedMemoryLines.size + new Set([...omittedRecords,...withheldPins.map(pin=>pin.id + "\0" + pin.version)]).size + (degradedLeftOut && !omittedRecords.size ? 1 : 0),recall:new Set(evidence),...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}});
   // MURAGE_TURN_TRACE: one line per build, so a dispatch that builds twice shows it.
   turnTrace(access.threadId).mark("memory.bundle.built");
   return bundle;
@@ -689,7 +695,7 @@ type PinReference = { id: string; version: number };
 /** The admitted view is immutable. Equal stamps skip enumeration and membership probes. */
 const pinCache = new Map<string, { stamp: string; rows: PinReference[] }>();
 function authoritativePins(access: MemoryAccess, room: boolean, stamp: string | undefined): PinReference[] {
-  const db = database(), key = JSON.stringify([access.view, room]);
+  const db = database(), key = JSON.stringify([access.view, room, access.scopeDigest]);
   if (!ownerPinIndexPresent(db) || !optionalIndexReady(db, OWNER_PIN_INDEX)) throw new MemoryPinProjectionPending();
   const cached = stamp === undefined ? undefined : pinCache.get(key);
   if (cached && cached.stamp === stamp) return cached.rows;
@@ -697,7 +703,7 @@ function authoritativePins(access: MemoryAccess, room: boolean, stamp: string | 
   try { refs = db.prepare("SELECT id,version,scope_id FROM memory_records INDEXED BY memory_records_pinned WHERE owner_pinned=1 AND state='active' LIMIT 2049").all() as typeof refs; }
   catch { throw new MemoryPinProjectionPending(); }
   if (refs.length > 2048) throw new MemoryPinSetTooLarge();
-  const members = refs.filter(ref => recallViewHasScope(db, access.view, String(ref.scope_id)));
+  const members = refs.filter(ref => recallViewHasScope(db, access.view, String(ref.scope_id)) && (!access.scopeDigest || memoryAccessHasScope(access, String(ref.scope_id))));
   const rows = db.prepare(`SELECT r.id,r.version FROM json_each(?) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]') WHERE state='active' AND owner_pinned=1 AND r.kind NOT IN ${PIP_ALL_KINDS_SQL}
     ${room ? "AND NOT EXISTS (SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.partition='identity')" : ""} ORDER BY r.id,r.version`).all(JSON.stringify(members.map(ref => [ref.id, ref.version])))
     .map(row => ({ id: String(row.id), version: Number(row.version) }));
@@ -733,6 +739,19 @@ const bundleCheckedAt = new WeakMap<object, string>();
 /** Must run immediately before the adapter call, after all other asynchronous setup.
  * The access check runs every time; the per-record rehydration and withheld-source walk are
  * memoised per (bundle, authority epoch): they read only what the epoch tracks (authority-epoch.ts). */
+/** Producer owner: recall-scope (branded frame); consumer owner: recall-s1s2g (live receipt).
+ * A new certificate must re-prove the same words before replacing the frame's private reader binding. */
+export function revalidateMemoryBundle(bundle: MemoryBundle, access: MemoryAccess): MemoryAccess {
+  const trusted = bundles.get(bundle);
+  if (!trusted || trusted.access !== access) throw new Error('MEMORY_BUNDLE_UNTRUSTED');
+  const renewed = revalidateMemoryAccess(access);
+  if (renewed === access) return access;
+  bundles.set(bundle, { ...trusted, access: renewed });
+  bundleCheckedAt.delete(bundle);
+  try { assertMemoryBundle(bundle, renewed); return renewed; }
+  catch (error) { bundles.set(bundle, trusted); bundleCheckedAt.delete(bundle); throw error; }
+}
+
 export function assertMemoryBundle(bundle: MemoryBundle, access: MemoryAccess) {
   const trusted = bundles.get(bundle);
   if (!trusted || trusted.access !== access) throw new Error("MEMORY_BUNDLE_UNTRUSTED");
@@ -750,7 +769,7 @@ export function assertMemoryBundle(bundle: MemoryBundle, access: MemoryAccess) {
   const recallReading = { allowance: recallProofBudget(), withheldMessage: null }, briefReading = { allowance: briefBudget(), withheldMessage: null };
   inMemoryAccessPass(() => {
     for (const record of trusted.records) {
-      const proof = trusted.recall.has(record) ? recallReading : record.kind === "continuity-brief" ? briefReading : reading;
+      const proof = trusted.recall.has(record) ? recallReading : record.kind === "continuity-brief" || record.kind === "reveal-state" ? briefReading : reading;
       const current = hydrateDisclosedMemoryRecord(record.id,record.version,access,proof);
       if (!sameRecord(current,record)) throw new Error("MEMORY_CONTEXT_REVOKED");
       // What this reader may see is checked afresh at dispatch (Astra P1 #1).

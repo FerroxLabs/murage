@@ -13,7 +13,7 @@ import path from "node:path";
 import { parseUpgradeState } from "../shared/upgrade-contract.mjs";
 
 export const MEMORY_UPGRADE_STATUS_FILE = "memory-upgrade-status.json";
-const BLOCKED_CODES = new Set(["MEMORY_MIGRATION_DISK_SPACE", "MEMORY_SCHEMA_NEWER", "MEMORY_MIGRATION_FAILED"]);
+const BLOCKED_CODES = new Set(["MEMORY_MIGRATION_DISK_SPACE", "MEMORY_SCHEMA_NEWER", "MEMORY_SCHEMA_UNSUPPORTED", "MEMORY_MIGRATION_FAILED"]);
 const PHASES = new Set(["checking", "copying", "migrating", "indexing", "converting", "repairing", "reclaiming", "message-index", "search-index"]);
 const STEPS = new Set(["tables", "indexes", "backfill", "validating", "committing"]);
 const num = (value) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined);
@@ -131,7 +131,7 @@ export function memoryUpgradeBlockedSentence(status, language, { logPath = "serv
   if (status?.code === MEMORY_INDEX_STOPPED) return ONE_TIME_STEP[memoryUpgradeLocale(language)].replace("{log}", logPath);
   if (status?.code === "MEMORY_MIGRATION_TIMEOUT") return text.timeout.replace("{log}", logPath);
   if (status?.code === "MEMORY_MIGRATION_DISK_SPACE") return text.space.replace("{amount}", describeBytes(status.shortBytes ?? status.needBytes ?? 0));
-  if (status?.code === "MEMORY_SCHEMA_NEWER") return text.newer;
+  if (status?.code === "MEMORY_SCHEMA_NEWER" || status?.code === "MEMORY_SCHEMA_UNSUPPORTED") return text.newer;
   return text.failed;
 }
 

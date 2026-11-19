@@ -15,7 +15,7 @@ const locales = await allLocalePacks();
 
 afterEach(() => { setLocale("en"); vi.unstubAllGlobals(); });
 
-const render = (props: { message: string; details?: string; errorKind?: string; localFailure?: string; setup?: string; onRetry?: () => void }) =>
+const render = (props: { message: string; details?: string; errorKind?: string; localFailure?: string; setup?: string; botName?: string; onRetry?: () => void }) =>
   renderToStaticMarkup(createElement(RuntimeErrorCard, { ...props, onOpenProviderSettings: () => {} }));
 
 /** Catalog copy as it appears in the rendered markup: React escapes the same
@@ -93,6 +93,21 @@ describe("runtime error recovery", () => {
 // driver carries it as the event's own `errorKind` field and repeats it in the
 // technical details. The card leads with a short explanation of that kind and
 // still shows the engine's own message.
+// meetgreet 1.0.19 (item 1): a turn whose engine said only "Internal error" (no typed kind) left the owner with "the engine
+// reported an error without explaining what went wrong". Any engine, ACP or not, now gets a plain reason and the next step.
+describe("an engine failure that explains nothing", () => {
+  it.each(["Internal error", "Request failed.", "unknown error", "ACP request failed"])("%s: names the service, offers Try again and another engine", (message) => {
+    const markup = render({ message, botName: "Atlas", details: `${message}\nEngine error code: -32603`, onRetry: () => {} });
+    expect(markup).toContain("Atlas&#x27;s AI service returned an error. Try again, or switch engine.");
+    expect(markup).not.toContain("without explaining what went wrong");
+    expect(markup).toContain("Retry");
+    expect(markup).toContain("Engine error code: -32603");
+  });
+  it("without a bot name it still gives the reason", () => {
+    expect(render({ message: "Internal error" })).toContain("The AI service returned an error. Try again, or switch engine.");
+  });
+});
+
 describe("typed engine failures", () => {
   const code = "Engine error code: -32603";
 
@@ -259,7 +274,9 @@ describe("typed engine failures", () => {
     ["an oversized token", `internal_${"x".repeat(80)}`],
   ])("keeps the generic explanation for %s", (_shape, errorKind) => {
     const markup = render({ message: "Internal error", errorKind, details: `Internal error\nEngine error kind: ${errorKind}\n${code}` });
-    expect(markup).toContain("The engine reported an error without explaining what went wrong.");
+    // meetgreet 1.0.19: the generic line is now a plain reason with the next step (it was "without explaining what went
+    // wrong"); an unrecognised kind still gets that generic line, never a typed explanation.
+    expect(markup).toContain("The AI service returned an error. Try again, or switch engine.");
     expect(markup).not.toContain("did not accept the sign-in");
   });
 });

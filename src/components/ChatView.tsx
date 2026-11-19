@@ -150,11 +150,11 @@ import { useFocusMessage } from "@/lib/focus-message";
 import { ExportPasteNote } from "./ExportPasteNote";
 import { FromPhoneLine } from "./FromPhoneLine";
 import { canEditLine } from "@/lib/compose-link";
-import { describeRunRaw, groupTranscript, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
+import { describeRunRaw, groupTranscript, interimSteps, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
 import { TranscriptTail } from "./TranscriptTail";
 import { tailOf } from "@/lib/transcript-tail";
 import { VirtualTranscript } from "./VirtualTranscript";
-import { ActivityRun } from "./ActivityRun";
+import { ActivityRun, InterimStepsRow } from "./ActivityRun";
 import { TurnNarrationRun } from "./TurnNarrationRun";
 import { WEBHOOK_LOADING_TEXT, useWebhookDisplayText, useWebhookMessageView } from "@/lib/webhook-message-lazy";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
@@ -1164,6 +1164,8 @@ export const MessagesList = memo(function MessagesList({
   // becomes one reversible turn row while the terminal answer stays visible.
   const helperRuns = useStreamHelpers().runs[bot.threadId];
   const items = useMemo(() => groupTranscript(messages, helperRuns), [messages, helperRuns]);
+  // 1020: a step between two texts of one turn stays named between them, so they read as one reply
+  const stepsBetween = useMemo(() => interimSteps(messages, showToolCalls), [messages, showToolCalls]);
   // QW Q2: the bot messages whose question fences became cards, read across the whole active branch
   const fenceCards = useMemo(() => questionFenceCards(transcript), [transcript]);
   const instances = state.instances;
@@ -1461,12 +1463,14 @@ export const MessagesList = memo(function MessagesList({
           }
         })();
         if (!row) return divider ? <div key={m.id}>{divider}</div> : null;
+        const between = stepsBetween.get(m.id);
         return (
           <div key={m.id} data-row={m.id} className="transcript-row flex flex-col gap-3" data-mid={m.id}>
             {newDay && <DaySeparator at={m.at} />}
             {dividers.has(m.id) && (
               <div role="separator" data-testid="engine-divider" className="px-2 py-1 text-center text-[11.5px] text-ink-secondary">{dividers.get(m.id)}</div>
             )}
+            {between && <InterimStepsRow messages={between} />}
             {m.role === "bot" && m.engine ? <div className="contents" title={engineHoverLabel(m.engine, engineLabel)}>{row}</div> : row}
           </div>
         );

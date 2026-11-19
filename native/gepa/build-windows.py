@@ -66,6 +66,37 @@ run("install", [python, "-I", "-m", "pip", "install", "--no-index", "--find-link
 run("package", [python, "-I", "-m", "PyInstaller", "--clean", "--noconfirm", "--distpath", ROOT / "dist",
                 "--workpath", ROOT / "work", SOURCE / "native/gepa/gepa-worker.spec"])
 bundle = ROOT / "dist/gepa-worker"
+# Microsoft's VC++ runtime must keep Microsoft's embedded signature (verify-windows.ps1). PyInstaller resolves
+# VCRUNTIME140.dll from whichever candidate its dependency walk meets first, so run 44602288262 shipped a copy with no
+# embedded Microsoft signature while a rerun on the same source passed. Every copy is therefore replaced by Visual Studio's
+# own redistributable folder on the runner, the files the VC++ redistributable installs, each embedded-signed by Microsoft.
+REDISTRIBUTABLES = ("VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "MSVCP140.dll", "MSVCP140_1.dll", "MSVCP140_2.dll")
+vswhere = pathlib.Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
+installations = subprocess.check_output([str(vswhere), "-products", "*", "-sort", "-utf8", "-property", "installationPath"],
+                                        encoding="utf-8", timeout=120).splitlines()
+crt = None
+for installation in filter(None, (line.strip() for line in installations)):
+    version_file = pathlib.Path(installation) / "VC/Auxiliary/Build/Microsoft.VCRedistVersion.default.txt"
+    if version_file.is_file():
+        folders = sorted((version_file.parents[2] / "Redist/MSVC" / version_file.read_text().strip() / "x64").glob("Microsoft.VC14*.CRT"))
+        if len(folders) != 1:
+            raise RuntimeError("Visual Studio VC++ x64 redistributable folder missing or ambiguous")
+        crt = folders[0]
+        break
+if crt is None:
+    raise RuntimeError("Visual Studio VC++ redistributable required for Microsoft's runtime DLLs")
+redistributables = {}
+for collected in sorted((bundle / "_internal").iterdir()):
+    name = next((name for name in REDISTRIBUTABLES if name.lower() == collected.name.lower()), None)
+    if name is None:
+        continue
+    source = crt / name.lower()
+    if not source.is_file():
+        raise RuntimeError("Visual Studio redistributable lacks " + name)
+    shutil.copyfile(source, collected)
+    redistributables[collected.name] = {"source": str(source), "sha256": hashlib.sha256(collected.read_bytes()).hexdigest()}
+if "vcruntime140.dll" not in (name.lower() for name in redistributables):
+    raise RuntimeError("PyInstaller collected no VCRUNTIME140.dll")
 licenses = bundle / "licenses"
 licenses.mkdir()
 python_license = pathlib.Path(sys.base_prefix) / "LICENSE.txt"
@@ -98,5 +129,5 @@ shutil.copytree(bundle, DESTINATION)
 evidence = SOURCE / "qualification-evidence"
 evidence.mkdir(exist_ok=True)
 (evidence / "gepa-windows-build.json").write_text(json.dumps({**identity, "wheelHashes": wheel_hashes,
-    "stage": str(DESTINATION), "signed": False}, indent=2) + "\n")
+    "microsoftRedistributables": redistributables, "stage": str(DESTINATION), "signed": False}, indent=2) + "\n")
 print("GEPA Windows stage built; pre-manifest signing and runtime qualification still required.")

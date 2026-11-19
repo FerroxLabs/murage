@@ -59,7 +59,7 @@ export async function completeIndexCallbackFixture(callback:string,scope:Record<
     throw overrideRefused("json",resolveCaseDeclaration(actual,"json"),actual);
   }
   const {ensureDirs}=await import("../config.ts");ensureDirs();
-  if(!scope.dispatchAuthoritySetup && !Object.hasOwn(scope,"fixtureObservers") && !["imageService","imageOperations","publishOperations","highlevel","routines","webhooks","chiefProposals","toolResults"].some(name=>Object.hasOwn(scope,name))) {
+  if(!scope.dispatchAuthoritySetup && !Object.hasOwn(scope,"fixtureObservers") && !["imageService","imageOperations","publishOperations","routines","webhooks","chiefProposals","toolResults"].some(name=>Object.hasOwn(scope,name))) {
 
     const extracted=extractFunction({file:new URL("../index.ts",import.meta.url),text:source.text,select:()=>callback});
     const canonical={...scope},ports=freshIndexPorts();
@@ -227,7 +227,7 @@ export async function internalDispatchAuthorityFixture(
 
   const expose=['connectorThread','botForDirectThread','peerContactSettings','decisionNoLimitsOrigin','decisionLiveLevel',
     'ownLaneTurn','ownPermissionFacts','verifyDecisionClaim','inheritedBotPermissionLevel','botEffectiveState','botWriteDecision',
-    'projectGroupForThread','highlevelConnectionActive','issueDecisionAuthority','retainInternalResponseBinding','markUnattended'];
+    'projectGroupForThread','issueDecisionAuthority','retainInternalResponseBinding','markUnattended'];
   const admission:InternalAdmission={botId,threadId,generation,provenanceGeneration:options.generation,
     initiator:options.initiator??{k:'owner-typed'},roomOwnerOnly:options.roomOwnerOnly??true,provenance:options.provenance!==false};
   const registered=await bindInternalDispatch({expression:'async () => {}',scope:environment,admission,preserveCapabilities:true,expose,boxFetch:options.box?.fetch});

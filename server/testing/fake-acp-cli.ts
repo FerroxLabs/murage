@@ -217,6 +217,7 @@ import { holdFixtureRelayClient } from "./relay-client-lifetime.ts";
 //   FAKE_ACP_MCP_READY_GATE_FILE  also wait for this file before announcing
 //                        readiness, so a test can inspect the real process tree
 //                        before a reused turn reconciles its replacement servers
+//                        (writes `<path>.waiting` while held)
 //   FAKE_ACP_MCP_LIST_READY_AFTER_MS  with FAKE_ACP_MCP_LIST "all:<status>",
 //                        report every server "initializing" until that long
 //                        after the servers were handed over
@@ -947,6 +948,8 @@ const announceMcpReady = (sessionId: string, servers: unknown) => {
     if (afterListing && (connectionGeneration !== mcpConnectionGeneration || connectedMcp.some(child => child.exitCode !== null || child.signalCode !== null))) return;
     const gate = process.env.FAKE_ACP_MCP_READY_GATE_FILE;
     if (gate && !existsSync(gate)) {
+      // `<gate>.waiting` says the session was answered and the first prompt is held on readiness
+      if (!existsSync(`${gate}.waiting`)) writeFileSync(`${gate}.waiting`, "");
       setTimeout(announce, 10).unref();
       return;
     }
@@ -2017,6 +2020,17 @@ function handle(msg: any) {
           const frames = outputBatch; outputBatch = undefined;
           process.stdout.write(frames.map(frame => JSON.stringify(frame)).join("\n") + "\n");
         }
+        return;
+      }
+      // no-reason:<observed|bare|blank>: the 1.0.19 meetgreet failure. The engine's own retries end (retry_state failed, kind api),
+      // a stop notice says error/api, and session/prompt is rejected with -32603 and nothing that explains it.
+      if (mode.startsWith("no-reason:")) {
+        const variant = mode.slice("no-reason:".length);
+        if (variant === "observed") {
+          out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "retry_state", type: "failed", error_type: "api", creditLimit: false, hold: false }, _meta: { eventId: "fixture-no-reason-1", agentTimestampMs: Date.now() } } });
+          out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params.sessionId, stopReason: "error", errorKind: "api" } });
+        }
+        out({ jsonrpc: "2.0", id: msg.id, error: variant === "bare" ? { code: -32603 } : { code: -32603, message: "Internal error" } });
         return;
       }
       if (mode.startsWith("fuigo-diagnostic:")) {

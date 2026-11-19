@@ -335,12 +335,10 @@ describe("the device kind (1.0.9 phone tools, S13)", () => {
   });
 });
 
-describe("the highlevel kind (1.0.11 native HighLevel, GAP-HIGHLEVEL-109 section 17)", () => {
-  it("maps /api/internal/highlevel/ to highlevel, and every existing kind, device included, maps as before", () => {
-    expect(requiredInternalKind("/api/internal/highlevel/mcp")).toBe("highlevel");
-    expect(requiredInternalKind("/api/internal/highlevel/")).toBe("highlevel");
-    expect(requiredInternalKind("/api/internal/highlevels")).toBe("agents");
-    expect(requiredInternalKind("/api/internal/highlevel")).toBe("agents");
+describe("no highlevel kind (1.0.20: Murage's own HighLevel is removed)", () => {
+  it("/api/internal/highlevel/ has no capability kind of its own, and every other kind maps as before", () => {
+    expect(requiredInternalKind("/api/internal/highlevel/mcp")).toBe("agents");
+    expect(requiredInternalKind("/api/internal/highlevel/")).toBe("agents");
     expect(requiredInternalKind("/api/internal/device/call")).toBe("device");
     expect(requiredInternalKind("/api/internal/memory/search")).toBe("memory");
     expect(requiredInternalKind("/api/internal/connectors/mcp")).toBe("connectors");
@@ -350,27 +348,12 @@ describe("the highlevel kind (1.0.11 native HighLevel, GAP-HIGHLEVEL-109 section
     expect(requiredInternalKind("/api/internal/agents")).toBe("agents");
   });
 
-  it("mints a highlevel claim, and no other kind matches the highlevel path", () => {
-    const registry = new InternalCapabilities();
-    registry.begin("bot", "thread", "generation");
-    const highlevel = mint(registry, "thread", "generation", "highlevel");
-    expect(highlevel.claim.kind).toBe("highlevel");
-    expect(highlevel.claim.kind === requiredInternalKind("/api/internal/highlevel/mcp")).toBe(true);
-    for (const kind of ["agents", "connectors", "computer", "memory", "mcp", "device"] as const) {
-      const other = mint(registry, "thread", "generation", kind);
-      expect(other.claim.kind === requiredInternalKind("/api/internal/highlevel/mcp"), kind).toBe(false);
-      expect(other.claim.kind).toBe(kind);
-    }
-  });
-
-  it("the inline map in server/index.ts agrees, keeps device, and Stop ends HighLevel calls with the generation", () => {
+  it("server/index.ts registers no HighLevel route, mount, runtime or turn hook", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-    expect(source).toContain('path.startsWith("/api/internal/device/") ? "device" : path.startsWith("/api/internal/highlevel/") ? "highlevel" :');
-    const body = (name: string) => { const at = source.indexOf(`function ${name}(`); return source.slice(at, source.indexOf("\n}\n", at)); };
-    expect(body("revokeInternalGeneration")).toContain("highlevelCalls.turnEnded(generation)");
-    expect(body("revokeInternalThread")).toContain("highlevelCalls.turnEndedForThread(threadId)");
-    expect(body("revokeInternalBot")).toContain("highlevelCalls.turnEndedForBot(botId)");
-    expect(body("revokeAllInternalTurns")).toContain("highlevelCalls.turnEndedAll()");
+    for (const gone of ['"/api/internal/highlevel/', '"/api/highlevel', "createHighLevelRuntime", "highlevelIntegration(", "integrations.highlevel", "highlevelCalls", "./highlevel/"]) {
+      expect(source, gone).not.toContain(gone);
+    }
+    expect(source).toContain('path.startsWith("/api/internal/device/") ? "device" : ["/api/internal/computer-control"');
   });
 });
 

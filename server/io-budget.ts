@@ -36,6 +36,12 @@ const PERIODIC_SOURCES: ReadonlySet<string> = new Set([
   "memory-worker", "memory-capture", "memory-idle", "memory-notebook", "memory-upgrade", "memory-boot-recovery", "memory-continuity",
   "search-index", "transcript-backfill", "record-keys-backfill", "push-delivery",
 ]);
+/** recalldesign-1020-n1 section 4: the recall reclaimer's own admission class. Its token bucket is shared by the reclaim slices and the demanded
+ *  build that follows; it is excluded from foreground admission and refusal, and is not behind the BG ticket or the idle deferral. */
+export const RECALL_RECLAIM_SOURCE = "recall-reclaim";
+export const RECALL_RECLAIM_BYTES_PER_MINUTE = 700_000_000;
+export const RECALL_RECLAIM_YIELD_MS = 500;
+export const RECALL_RECLAIM_OPEN_HOLD_MS = 5_000;
 export const IO_BUDGET_CPU_FRACTION = 0.8;
 export const IO_BUDGET_CPU_MINUTES = 3;
 export const IO_BUDGET_MAX_SCALE = 8;
@@ -627,6 +633,30 @@ export class IoBudget {
   setPlannedBytes(read: (() => number) | null, capBytesPerMinute = Number.POSITIVE_INFINITY): void { this.plannedBytes = read; this.plannedCap = capBytesPerMinute > 0 ? capBytesPerMinute : Number.POSITIVE_INFINITY; }
   notifyMemoryWork(): void { try { this.onMemoryWork?.(); } catch { /* notifications do not change a write's result */ } }
 
+  /** recalldesign-1020-n1 section 4 (owner: the recallcap racer): owner write requests in flight and when the last one ended. The recall reclaimer
+   *  starts no slice while one is open or for RECALL_RECLAIM_YIELD_MS after it closes. The engine's own /api/internal calls are not owner sends, and a
+   *  request still open after RECALL_RECLAIM_OPEN_HOLD_MS is waiting on something else (a reply, a card), never on its write transaction. */
+  private ownerWrites = new Map<symbol, number>();
+  private ownerWriteEndedAt = 0;
+  beginOwnerWrite(method: string | undefined, rawUrl: string | undefined): (() => void) | null {
+    if (!countsAsOwnerAction(method, rawUrl) || (rawUrl ?? "").startsWith("/api/internal/")) return null;
+    const token = Symbol("owner-write");
+    this.ownerWrites.set(token, Date.now());
+    return () => { if (!this.ownerWrites.delete(token)) return; this.ownerWriteEndedAt = Date.now(); };
+  }
+  /** Milliseconds since the last owner write request closed; 0 while one opened in the last RECALL_RECLAIM_OPEN_HOLD_MS is still open. */
+  ownerWriteQuietMs(now = Date.now()): number {
+    for (const started of this.ownerWrites.values()) if (now - started < RECALL_RECLAIM_OPEN_HOLD_MS) return 0;
+    return now - this.ownerWriteEndedAt;
+  }
+
+  /** True while any owner write request is open (recallcap-1020-n4a: a paced build slice measured then also counts the turn's writes). */
+  ownerWriteOpen(): boolean { return this.ownerWrites.size > 0; }
+
+  /** Fable BLOCK bb30fb1d03 (owner: the recallcap racer): the reclaimer, held at the log gate, asks for one log copy under its own bucket
+   *  (admission-shared rule 5); its slices charge that same bucket. */
+  requestReclaimCopy(now = Date.now()): void { this.admissionShared.requestReclaimCopy(now); }
+  chargeReclaimBucket(bytes: number, now = Date.now()): void { this.admissionShared.chargeReclaim(bytes, now); }
   noteBytes(source: string, bytes: number): void {
     if (!Number.isFinite(bytes) || bytes <= 0) return;
     this.bytes.set(source, (this.bytes.get(source) ?? 0) + bytes);
@@ -789,6 +819,8 @@ export class IoBudget {
     const osBytes = osUnavailable ? 0 : Math.max(0, (reading.fsWriteBlocks - previous.fsWriteBlocks) * BLOCK_BYTES);
     let planned = 0;
     if (this.plannedBytes) { try { planned = Math.min(this.plannedCap * minutes, Math.max(0, Number(this.plannedBytes()) || 0)); } catch { planned = 0; } }
+    // recall-reclaim keeps to its own bucket (RECALL_RECLAIM_BYTES_PER_MINUTE): metered and in the io-minute facts, never counted against a foreground minute.
+    planned += Math.min(RECALL_RECLAIM_BYTES_PER_MINUTE * minutes, this.bytes.get(RECALL_RECLAIM_SOURCE) ?? 0);
     const totalWriteBytes=Math.max(osBytes,meterBytes,Math.max(0,attributedBytes-childBytes))+childBytes;
     const writeBytesPerMinute = Math.max(0, totalWriteBytes - planned) / minutes;
     const cpu = (reading.cpuMicros - previous.cpuMicros) / 1000 / (reading.at - previous.at);

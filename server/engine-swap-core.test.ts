@@ -411,8 +411,6 @@ describe("CF-5 history is fixed (I-24)", () => {
       "delegations.ts",
       // a held reply's own dres- row: the settle sets or clears its withheldFromBots flag (REPLY-WITHHELD-CONTRACT C4); never its words
       "held-replies.ts",
-      // HighLevel settles only its own review card metadata, preserving the conversation words.
-      "highlevel/review-cards.ts",
       "image-operations.ts",
       "index.ts",
       "message-db.ts",

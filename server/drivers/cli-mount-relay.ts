@@ -10,16 +10,24 @@ import { chmodSync, statSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { refuseConsumingTurn } from "../consuming-turn-response.ts";
+import { logSwallowedConsumingError } from "../consuming-error-log.ts";
+import { terminalReasonWord } from "../proxy-turn-release.ts";
 import { isMemoryRefusal } from "./engine-input.ts";
-import type { SendTurnInput } from "../contracts.ts";
+import type { RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { CLOUD_BROKER_DIR } from "../cloud-home/turn-process.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { brokerSocketPath, spawnCli, engineJob, killCliTree, awaitCliTreeStopped, cliTreeStoppedSignal, CLI_CALLER_DEADLINE_MS } from "../procs.ts";
 import { CRED_FILE_ENV, CRED_SERVER_ENV } from "../turn-credential.ts";
+import { unavailableLabels } from "./mcp-readiness.ts";
+import { isConnectedAppsServer } from "../../shared/connected-app-names.ts";
 import { admittedMcpMount, assertConsumingMountAdmission, type AdmittedMcpMount } from "./mcp-mounts.ts";
 import { bindCredentialPath, type TurnCredentialStore, type TurnSecrets } from "./turn-credentials.ts";
 import { CHAT_MCP_FRAME_CAP_BYTES, CHAT_MCP_MAX_FRAMES, ChatMcpDescendants, chatMcpTeardown, chatMcpChildEnv } from "./chat-mcp-client.ts";
 
+type MountLoss = "spawn" | "exit" | "stdin" | "stdout" | "ipc" | "socket" | "duplicate" | "server";
+const optionalMountNames = new Set(["browser", "murage-browser", "computer", "agents", "murage-memory", "phone", "phoneJobs", "dweb", "highlevel"]);
+/** The terminal frame's error code only (never its message or id). */
+const terminalFrameCode = (frame: unknown): string => terminalReasonWord((frame as { error?: { data?: { code?: unknown } } } | null)?.error?.data?.code);
 const transportClosed = () => Object.assign(new Error("MCP_TRANSPORT_CLOSED"), { code: "MCP_TRANSPORT_CLOSED" });
 
 /** Shared by ChatMcpConnection and the CLI relay. One immutable admission owns
@@ -35,23 +43,56 @@ export class RelayedMount {
   readonly failed: (nativeError?: unknown, refusal?: unknown) => void;
   readonly accepted: () => void;
   readonly pendingBarrier: () => boolean;
+  readonly drop: (cause: MountLoss, reason?: string) => boolean;
+  // The first bytes of the child's stderr. Only the content-free site/class/code words of its
+  // "[consuming] swallowed error" lines ever reach the log (stderrCause), never the text itself.
+  #stderrHead = "";
   constructor(child: ChildProcess, mount: AdmittedMcpMount,
-    write: (frame: string) => void, failed: (nativeError?: unknown, refusal?: unknown) => void, accepted: () => void = () => {}, pendingBarrier: () => boolean = () => false) {
+    write: (frame: string) => void, failed: (nativeError?: unknown, refusal?: unknown) => void, accepted: () => void = () => {}, pendingBarrier: () => boolean = () => false,
+    drop: (cause: MountLoss, reason?: string) => boolean = () => false) {
     this.child = child; this.mount = mount; this.write = write; this.failed = failed; this.accepted = accepted;
-    this.pendingBarrier = pendingBarrier;
+    this.pendingBarrier = pendingBarrier; this.drop = drop;
     for (const event of ["error", "exit", "close", "end", "disconnect"]) child.prependOnceListener(event, () => {
       if (this.pendingBarrier()) { this.retire(); this.failed(); }
     });
     mount.ingress.supervise(child);
-    child.on("message", message => { if(!isObservedChildIoMessage(child,message))this.fail(); });
-    child.on("error", error => this.fail(error));
-    child.once("exit", () => this.fail(transportClosed()));
-    child.stdin?.on("error", error => this.fail(error));
-    child.stderr?.on("error", () => {}); child.stderr?.resume();
-    child.stdout?.on("error", error => this.fail(error));
-    child.stdout?.on("end", () => this.fail(transportClosed()));
+    child.on("message", message => {
+      if (isObservedChildIoMessage(child, message)) return;
+      // Name only the shape: a frame or token never reaches the log.
+      const shape = message && typeof message === "object" ? message as Record<string, unknown> : {};
+      if (shape.type === "mcp-server-unavailable" && this.drop("server")) return;
+      // Bundled proxies also use terminal IPC when their own backend disappears.
+      // The parent denial and approval-broker guards in dropMount still take precedence.
+      if (shape.type === "turn-release-terminal" && shape.instanceId === mount.ingress.identity.proxyInstanceId && this.drop("ipc", terminalReasonWord(shape.reason))) return;
+      if (!this.stopping) console.warn(`[mount-relay] mount ipc message seals the relay type=${typeof shape.type === "string" ? shape.type.slice(0, 40) : typeof message}`
+        + ` keys=${Object.keys(shape).slice(0, 8).join(",").slice(0, 120)}`
+        // The terminal's frame is the fixed refusal; its reason is the child's code word for the first refusing check.
+        + (shape.type === "turn-release-terminal" ? ` frame=${terminalFrameCode(shape.frame)} reason=${terminalReasonWord(shape.reason)}` : ""));
+      this.fail();
+    });
+    child.on("error", error => this.transportLost("spawn", error));
+    child.once("disconnect", () => this.transportLost("ipc", undefined, "disconnect"));
+    child.once("exit", (code, signal) => {
+      if (!this.stopping) console.warn(`[mount-relay] mount child exited code=${code ?? "-"} signal=${signal ?? "-"}`);
+      this.transportLost("exit");
+    });
+    child.stdin?.on("error", error => this.transportLost("stdin", error));
+    child.stderr?.on("error", () => {});
+    child.stderr?.on("data", (chunk: Buffer | string) => { if (this.#stderrHead.length < 4096) this.#stderrHead = (this.#stderrHead + String(chunk)).slice(0, 4096); });
+    child.stderr?.resume();
+    child.stdout?.on("error", error => this.transportLost("stdout", error));
+    child.stdout?.on("end", () => this.transportLost("stdout"));
     child.stdout?.on("data", (chunk: Buffer | string) => this.data(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-    if (!child.stdin || !child.stdout) this.fail(transportClosed());
+    if (!child.stdin || !child.stdout) this.transportLost("spawn");
+  }
+  transportLost(cause: MountLoss, error: unknown = transportClosed(), reason?: string): void {
+    if (!this.stopping && !this.drop(cause, reason)) this.fail(error);
+  }
+  /** The child's own first refusing checks, as code words: site/class/code of each "[consuming] swallowed error" line (at most 3). */
+  stderrCause(): string {
+    const words = [...this.#stderrHead.matchAll(/^\[consuming\] swallowed error site=(\S+) n=\S+ class=(\S+) code=(\S+)/gm)].slice(0, 3)
+      .map(match => [match[1], match[2], match[3]].map(terminalReasonWord).join("/"));
+    return words.join(",") || "none";
   }
   retire(): void { this.stopping = true; this.mount.ingress.retire(); this.#parts = []; this.#bytes = 0; }
   /** G0-LLM: `refusal` is the fenced refusal error itself (a pre-entry ledger denial); the relay hands it to the consumer, which claims it
@@ -67,9 +108,13 @@ export class RelayedMount {
     if (this.stopping) return;
     let entered = false;
     try {
-      if (!this.child.stdin || this.child.stdin.writableNeedDrain || this.child.stdin.destroyed) throw new Error("MEMORY_CONTEXT_REVOKED");
+      if (!this.child.stdin || this.child.stdin.destroyed) { this.transportLost("stdin"); return; }
+      if (this.child.stdin.writableNeedDrain) throw new Error("MEMORY_CONTEXT_REVOKED");
       this.mount.ingress.request(frame, () => { entered = true; this.child.stdin!.write(frame + "\n"); }, "\n");
-    } catch (error) { this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error); }
+    } catch (error) {
+      if (!this.stopping) logSwallowedConsumingError(entered ? "relay.mount:entered" : "relay.mount", error);
+      this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error);
+    }
   }
   data(chunk: Buffer): void {
     if (this.stopping) return;
@@ -95,11 +140,14 @@ export class RelayedMount {
           // turn that release into a ledger denial or authorize a replay.
           try {
             if (!this.child.connected || !this.child.send) throw transportClosed();
-            this.child.send({ type: "turn-release-ack", instanceId: envelope.instanceId, sequence: envelope.sequence }, error => { if (error) this.fail(error); });
-          } catch (error) { this.fail(error ?? transportClosed()); }
+            this.child.send({ type: "turn-release-ack", instanceId: envelope.instanceId, sequence: envelope.sequence }, error => { if (error) this.transportLost("ipc", error); });
+          } catch (error) { this.transportLost("ipc", error); }
         }
       }
-    } catch (error) { this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error); }
+    } catch (error) {
+      if (!this.stopping) logSwallowedConsumingError(entered ? "relay.mount:entered" : "relay.mount", error);
+      this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error);
+    }
   }
 }
 
@@ -173,6 +221,7 @@ export class CliMountRelay {
   readonly socketPath: string;
   readonly servers: Record<string, unknown> = {};
   readonly mounts = new Map<string, RelayedMount>();
+  readonly #unavailable = new Set<string>();
   readonly #entries = new Map<string, Record<string, unknown>>();
   readonly #connections = new Map<string, Socket>();
   readonly #sockets = new Set<Socket>();
@@ -265,19 +314,45 @@ export class CliMountRelay {
         if (ingress.sealed || ingress.retired) throw new Error("MEMORY_CONTEXT_REVOKED");
       }
       for (const [name, entry] of relay.#entries) {
-        const child = launchMount(entry.command as string, entry.args as string[], chatMcpChildEnv(entry.env), turn.cwd ?? probeFolder());
+        const admitted = admittedMcpMount(entry);
+        let child: ChildProcess;
+        try { child = launchMount(entry.command as string, entry.args as string[], chatMcpChildEnv(entry.env), turn.cwd ?? probeFolder()); }
+        catch (error) {
+          if (["ENOENT", "EACCES", "EPERM"].includes((error as NodeJS.ErrnoException | null)?.code ?? "") && relay.dropMount(name, "spawn")) continue;
+          throw error;
+        }
         const descendants = new ChatMcpDescendants(child);
         const teardown = chatMcpTeardown(child, descendants);
-        const transport = new RelayedMount(child, admittedMcpMount(entry), frame => {
+        const transport = new RelayedMount(child, admitted, frame => {
           const socket = relay.#connections.get(name);
           if (!socket || socket.destroyed || socket.writableNeedDrain) throw new Error("MEMORY_CONTEXT_REVOKED");
           socket.write(frame);
-        }, (error, refusal) => relay.seal(error, refusal), () => descendants.track(), () => !!relay.#onTicketFailure);
-        relay.mounts.set(name, transport); relay.#children.push({ transport, descendants, teardown });
+        }, (error, refusal) => {
+          // Name the mount whose child, IPC or frame sealed the relay (name and cause kind only).
+          if (!relay.#stopping && !relay.#sealed) console.warn(`[mount-relay] mount failure seals the relay mount=${name.slice(0, 64)}`
+            + ` cause=${error !== undefined ? "native" : refusal !== undefined ? "refusal" : "none"}`);
+          relay.seal(error, refusal);
+        }, () => descendants.track(), () => !!relay.#onTicketFailure, (cause, reason) =>
+          relay.dropMount(name, cause, reason, () => {
+            teardown.markStopRequested();
+            void descendants.ready().then(() => {
+              killCliTree(child);
+              return descendants.stop();
+            }).catch(() => {});
+          }));
+        // One bounded line per dropped mount, once its child has gone: how it ended and its own first refusing checks.
+        child.once("close", (code, signal) => {
+          if (relay.mountUnavailable(name)) console.warn(`[mount-relay] dropped mount child closed mount=${JSON.stringify(name.slice(0, 64))}`
+            + ` code=${code ?? "-"} signal=${signal ?? "-"} stderr=${transport.stderrCause()}`);
+        });
+        if (relay.mountUnavailable(name)) transport.retire();
+        else relay.mounts.set(name, transport);
+        relay.#children.push({ transport, descendants, teardown });
         descendants.track();
       }
       return relay;
     } catch (error) {
+      logSwallowedConsumingError("relay.build", error);
       const memoryRefusal = (error as { code?: string } | null)?.code === "MEMORY_CONTEXT_REVOKED"
         || (error as { message?: string } | null)?.message === "MEMORY_CONTEXT_REVOKED";
       if (previous) relay.retire();
@@ -306,19 +381,63 @@ export class CliMountRelay {
     if (endCli) this.#endCli = endCli;
     if (this.#sealed) { killCliTree(cli); if (this.#refusal === undefined) onFailure(this.#nativeFailure); else onFailure(this.#nativeFailure, this.#refusal); }
   }
+  mountUnavailable(name: string): boolean { return this.#unavailable.has(name); }
+  reportUnavailable(base: () => Pick<RuntimeEvent, "eventId" | "provider" | "threadId" | "turnId" | "createdAt">, emit: (event: RuntimeEvent) => void): void {
+    if (!this.#unavailable.size || this.#sealed) return;
+    const labels = unavailableLabels([...this.#unavailable].map(name => name.replace(/[\p{C}\p{Z}]+/gu, " ").trim()));
+    const list = new Intl.ListFormat("en").format(labels);
+    const title = `Murage couldn't use the ${list} for this reply.`;
+    const event = base();
+    const itemId = `mount-unavailable-${event.turnId}`;
+    emit({ ...event, type: "item.started", itemType: "tool", origin: "murage", toolKind: "notice", itemId, title });
+    emit({ ...base(), type: "item.completed", itemType: "tool", itemId, ok: false });
+  }
+  private dropMount(name: string, cause: MountLoss, reason?: string, stopChild?: () => void): boolean {
+    if (this.#unavailable.has(name)) return true;
+    if (this.#stopping || this.#sealed || this.#onTicketFailure || name === "muragebox") return false;
+    const entry = this.#entries.get(name)!;
+    const mount = admittedMcpMount(entry);
+    const proxy = entry.command === process.execPath ? (entry.args as string[])[0] : undefined;
+    // Only the wipe proxy itself can report loss of the server behind it.
+    if (mount.ingress.ledgerRefused || proxy === SPAWNED_PROXIES.permission || (cause === "server" && proxy !== SPAWNED_PROXIES.wipeMcp)) return false;
+    const integrations = this.turn.integrations;
+    if (!optionalMountNames.has(name) && !isConnectedAppsServer(name) && integrations?.agents?.serverName !== name
+      && !Object.hasOwn(integrations?.custom ?? {}, name)) return false;
+    this.#unavailable.add(name);
+    this.mounts.get(name)?.retire();
+    mount.ingress.retire();
+    this.mounts.delete(name);
+    this.#connections.get(name)?.destroy();
+    this.#connections.delete(name);
+    stopChild?.();
+    console.warn(`[mount-relay] mount unavailable mount=${JSON.stringify(name.slice(0, 64))} cause=${cause}${reason ? ` reason=${terminalReasonWord(reason)}` : ""}`);
+    return true;
+  }
+  private dropConnection(name: string, cause: "socket" | "duplicate"): boolean {
+    return this.mountUnavailable(name) || (this.mounts.get(name)?.drop(cause) ?? false);
+  }
   private connect(socket: Socket): void {
     this.#sockets.add(socket);
     let name: string | undefined;
     let buffer = Buffer.alloc(0);
     const timer = setTimeout(() => socket.destroy(), 5000); timer.unref();
-    socket.on("error", error => { if (name && !this.#stopping) this.seal(error); });
+    socket.on("error", error => {
+      if (!name || this.#stopping || this.#sealed || this.dropConnection(name, "socket")) return;
+      console.warn(`[mount-relay] engine connection error seals the relay mount=${name.slice(0, 64)}`);
+      this.seal(error);
+    });
     socket.on("close", () => {
       clearTimeout(timer); this.#sockets.delete(socket);
-      if (name && !this.#stopping) this.seal(transportClosed());
+      if (!name || this.#stopping || this.#sealed || this.dropConnection(name, "socket")) return;
+      console.warn(`[mount-relay] engine connection closed seals the relay mount=${name.slice(0, 64)}`);
+      this.seal(transportClosed());
     });
     socket.on("data", (chunk: Buffer) => {
-      if (this.#stopping || this.#sealed) { socket.destroy(); return; }
-      if (buffer.length + chunk.length > CHAT_MCP_FRAME_CAP_BYTES) { if (name) this.seal(); socket.destroy(); return; }
+      if (this.#stopping || this.#sealed || (name && this.mountUnavailable(name))) { socket.destroy(); return; }
+      if (buffer.length + chunk.length > CHAT_MCP_FRAME_CAP_BYTES) {
+        if (name) { console.warn(`[mount-relay] engine frame over the cap seals the relay mount=${name.slice(0, 64)}`); this.seal(); }
+        socket.destroy(); return;
+      }
       buffer = Buffer.concat([buffer, chunk]);
       for (;;) {
         const end = buffer.indexOf(10); if (end < 0) return;
@@ -337,10 +456,14 @@ export class CliMountRelay {
               socket.destroy(); return;
             }
             // Authentication precedes association: strangers cannot refuse a turn.
-            if (this.#connections.has(auth.server)) { this.seal(); socket.destroy(); return; }
+            if (this.#connections.has(auth.server)) {
+              if (this.dropConnection(auth.server, "duplicate")) { socket.destroy(); return; }
+              if (!this.#stopping && !this.#sealed) console.warn(`[mount-relay] second engine connection for one mount seals the relay mount=${auth.server.slice(0, 64)}`);
+              this.seal(); socket.destroy(); return;
+            }
             name = auth.server as string; this.#connections.set(name, socket); clearTimeout(timer);
           } catch { socket.destroy(); return; }
-        } else this.mounts.get(name)!.request(line);
+        } else this.mounts.get(name)?.request(line);
       }
     });
   }
@@ -354,6 +477,9 @@ export class CliMountRelay {
     }
     this.#sealed = true;
     this.#nativeFailure = nativeError; this.#refusal = refusal;
+    // The first cause of a sealed relay: a native transport failure, a ledger refusal, or neither (a protocol seal).
+    logSwallowedConsumingError(nativeError !== undefined ? "relay.seal:native" : refusal !== undefined ? "relay.seal:refusal" : "relay.seal",
+      nativeError ?? refusal ?? new Error("RELAY_SEALED"));
     if (nativeError !== undefined) {
       // Invalidate every mount before teardown; native failure is not a ledger denial.
       for (const mount of this.mounts.values()) mount.retire();
