@@ -1,0 +1,10 @@
+{
+  "id": "claude-plain",
+  "provenance": "synthetic-definition",
+  "engine": "claude",
+  "dialect": "bash",
+  "command": "printf '#!/bin/bash\\necho ok\\n' > hello.sh && bash hello.sh",
+  "inputDigest": "910e58c6c0375c01665e7e9af44d1fccd40ad33f7b1a4d82626753b6c91093ea",
+  "effectiveCwdNative": "C:\\Users\\fixture\\work",
+  "runtimeEvidence": null
+}

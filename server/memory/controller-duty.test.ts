@@ -1,3 +1,4 @@
+import {settleFixtureIndexGrant} from "./testing/helper-permits.ts";
 // The real MemoryWorkerController with a stand-in worker: the pause after a cycle is three times
 // the time the cycle held the loop, with no one-second ceiling, and the idle consolidation pass's
 // synchronous time is charged to that same deadline. A long cycle therefore cannot hold the loop for
@@ -29,7 +30,8 @@ const build = (options: ConstructorParameters<typeof MemoryWorkerController>[0] 
   controller = new MemoryWorkerController(options);
   internals = controller as unknown as Internals;
   internals.child = { kill() {}, on() {}, send: (message: any) => {
-    if (message.type === "index") internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" });
+    if (message.type === "index") { settleFixtureIndexGrant(message,event=>internals.onWorkerMessage(internals.child,event)); internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
+    else if (message.type === "checkpoint") internals.onWorkerMessage(internals.child, { type: "checkpoint-result", requestId: message.requestId, ok: true });
     else sent.push(message);
   } };
   internals.ready = true;
@@ -38,6 +40,7 @@ beforeEach(() => {
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep();
   state.claimCost = 0; state.idleCost = 0; state.cost = 0; state.busy.length = 0; sent = [];
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });
+  vi.setSystemTime(new Date("2026-10-10T00:00:00Z"));
   vi.spyOn(performance, "now").mockImplementation(() => Date.now() + state.cost);
 });
 afterEach(async () => { await controller.stop().catch(() => {}); vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -71,10 +74,13 @@ it("over a minute of backlog the loop is held for at most a quarter of the time 
   build();
   const start = performance.now();
   controller.start();
+  const checkpoint = controller.requestCheckpoint();
   for (let step = 0; step < 240; step++) {
     await vi.advanceTimersByTimeAsync(250);
+    expect(sent.every(work => typeof work.text === "string"), "control messages are not capture work").toBe(true);
     while (sent.length) finish(sent.shift()!);
   }
+  expect(await checkpoint).toBe(true);
   const end = performance.now();
   const busyTotal = state.busy.reduce((sum, [a, b]) => sum + (b - a), 0);
   expect(state.busy.length).toBeGreaterThan(2);

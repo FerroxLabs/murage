@@ -165,11 +165,18 @@ export function createPrewarmGate() {
   };
 }
 
+/** A prewarm's fence refused its launch: nothing was spawned, nobody is told, and the next turn is a cold start. */
+export class PrewarmRefused extends Error {
+  readonly reason: string;
+  constructor(reason: string) { super(`prewarm refused: ${reason}`); this.reason = reason; }
+  get spareLoss(): string { return `fence:${this.reason}`; }
+}
+
 /** What a prewarm needs from a turn and no more: the spawn inputs (cwd, env source,
  * MCP config, settings, warm identity), without the message, its attachments, the
  * replay transcript or the caller's per-turn callbacks. */
 export function spawnInputsOf(turn: SendTurnInput): SendTurnInput {
-  return { ...turn, text: "", images: undefined, engineCommand: undefined, transcript: undefined, prewarm: undefined, onToolSurface: undefined, beforeSubmit: undefined };
+  return { ...turn, text: "", images: undefined, engineCommand: undefined, transcript: undefined, prewarm: undefined, onToolSurface: undefined, beforePrepare: undefined, beforeSubmit: undefined, prepareSubmit: undefined, notWritten: undefined, attemptWritten: undefined, attemptUncertain: undefined, attemptNotWritten: undefined, attemptSettled: undefined, launchFence: undefined };
 }
 
 /** The spawn inputs of each thread's last real (user) turn, held in memory only,
@@ -297,6 +304,10 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
   const intents = new Map<string, number>();
   /** Threads whose warm engine this pool closed, so the next spawn is a known cold wake. */
   const coldWakes = new Set<string>();
+  /** Engines that already settled an owner turn, with the order they last did so.
+   * A background turn that borrows one hands it back: it never closes it, and never moves it up the keep order. */
+  const ownerOrder = new WeakMap<object, number>();
+  let ownerSeq = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
 
   const windowMs = (): number => {
@@ -535,15 +546,32 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
     markIdle(member: object, info: WarmMember): Promise<void> {
       idle.delete(member);
       if (staleScope(info)) { sizes.delete(member); cancelEarly(member); try { info.close("login-split"); } catch {} return Promise.resolve(); }
-      if (info.hold && !info.background) intents.set(info.threadId, d.now() + windowMs());
-      else intents.delete(info.threadId);
-      if (info.background) {
+      // A background turn (routine, schedule, card continuation) on the owner's own thread runs on the
+      // owner's hot engine. That engine is the owner's: it goes back where it was, with the thread's hold as it was.
+      const borrowed = info.background === true && ownerOrder.has(member);
+      if (!borrowed) {
+        if (info.hold && !info.background) intents.set(info.threadId, d.now() + windowMs());
+        else intents.delete(info.threadId);
+      }
+      if (info.background && !borrowed) {
         sizes.delete(member);
         idle.set(member, info);
         evictKey(member, "background turn");
         return Promise.resolve();
       }
-      idle.set(member, info);
+      if (borrowed) {
+        // back at its owner-use position: engines the owner used later stay ahead of it
+        const mine = ownerOrder.get(member)!;
+        const later = [...idle].filter(([key]) => (ownerOrder.get(key) ?? Infinity) > mine);
+        for (const [key] of later) idle.delete(key);
+        idle.set(member, { ...info, background: false });
+        for (const [key, m] of later) idle.set(key, m);
+        d.log(`warm pool keep engine=${info.engine} thread=${info.threadId} reason=owner engine after a background turn`);
+      } else {
+        // a prewarm no send has reached yet is not the owner's engine: a background turn that takes it still releases it
+        if (!info.hold) ownerOrder.set(member, ++ownerSeq);
+        idle.set(member, info);
+      }
       if (!firstSeen.has(member)) firstSeen.set(member, d.now());
       if (info.hold) moveIntent(member, info);
       startTimer();

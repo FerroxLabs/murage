@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { CLOUD_ENGINES, CLOUD_RENDER_SYSTEM_PROMPT, TURN_MARKER, TURN_RENDER, cloudTurnRender, cloudEngineHome, cloudTurnEnvironment, cloudTurnLaunch } from "./turn-process.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -36,6 +38,20 @@ describe("home engine turns", () => {
     expect(cloudTurnEnvironment("grokAgent", {})).toMatchObject({ GROK_HOME: "/data/engine-homes/grokAgent/.grok", GROK_DISABLE_AUTOUPDATER: "1" });
     expect(cloudTurnEnvironment("kimiAgent", {})).toMatchObject({ KIMI_CODE_HOME: "/data/engine-homes/kimiAgent/.kimi-code", KIMI_CODE_NO_AUTO_UPDATE: "1" });
     expect(cloudTurnEnvironment("opencodeGo", {})).toMatchObject({ OPENCODE_DISABLE_AUTOUPDATE: "1" });
+  });
+  it("turns agy's self-update off with exactly \"true\" (\"1\" still calls the updater, measured on 1.4.4) and keeps its HOME the engine home", () => {
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    const env = cloudTurnEnvironment("antigravity", {});
+    expect(env.AGY_CLI_DISABLE_AUTO_UPDATE).toBe("true");
+    expect(env.HOME).toBe("/data/engine-homes/antigravity");
+  });
+  it("sends the Antigravity driver's MCP stanzas and Ask hook to the launcher as render parts on a home, and builds no owner-home mirror", () => {
+    const driver = readFileSync(new URL("../drivers/antigravity.ts", import.meta.url), "utf8");
+    expect(driver).toContain('const onCloudHome = process.env.MURAGE_CLOUD_ROLE === "home";');
+    expect(driver).toContain("if (!onCloudHome) scoped = buildAntigravityScopedHome({");
+    expect(driver).toContain('cloudTurnRender(turnEnv, "mcp", stanzas)');
+    // MAIN RULING INT-CONFLICT-DEFAULT 97ebdca55b 52ddf195d77: the live permission gate is now a callback.
+    expect(driver).toContain('if (askStop()) cloudTurnRender(turnEnv, "hooks", "ask")');
   });
   it("keeps Claude Code's updater and non-allowlisted telemetry off on a home", () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
@@ -137,12 +153,34 @@ describe("server never writes inside an engine home", () => {
 });
 
 describe("Claude approval broker socket", () => {
-  it("lives in the shared broker directory, never an engine home, and the launcher binds only that for Claude", async () => {
+  it("mounts the broker only for the three broker consumers and only while its directory exists", () => {
+    const root = mkdtempSync(join(tmpdir(), "murage-broker-mount-"));
+    try {
+      const result = JSON.parse(execFileSync("python3", ["-I", "-c", `import importlib.util,json,os,sys
+spec=importlib.util.spec_from_file_location("launcher",sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+m.BROKER_DIR=sys.argv[2]+"/broker";os.mkdir(m.BROKER_DIR)
+def mounted(engine):
+    home=sys.argv[2]+"/"+engine
+    argv,_=m.turn_mount_args(engine,[],home,home,"/usr/bin/true",[],turn_home=home)
+    return sum(argv[i:i+3]==["--bind",m.BROKER_DIR,m.BROKER_DIR] for i in range(len(argv)))
+engines=sorted(m.ENGINES)
+present={engine:mounted(engine) for engine in engines}
+os.rmdir(m.BROKER_DIR)
+print(json.dumps({"engines":engines,"present":present,"absent":{engine:mounted(engine) for engine in engines}}))`,
+        fileURLToPath(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url)), root], { encoding: "utf8" }));
+      expect(result.engines).toEqual([...CLOUD_ENGINES].sort());
+      expect(result.present).toEqual(Object.fromEntries(CLOUD_ENGINES.map(engine =>
+        [engine, ["claudeAgent", "codex", "antigravity"].includes(engine) ? 1 : 0])));
+      expect(result.absent).toEqual(Object.fromEntries(CLOUD_ENGINES.map(engine => [engine, 0])));
+    } finally { removeTempDirSync(root); }
+  });
+  it("lives in the shared broker directory, never an engine home, and the launcher binds only that for Claude and Antigravity (its relay hook)", async () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
     const { permissionSocketPath } = await import("../drivers/claude.ts");
     expect(permissionSocketPath("thread-1")).toMatch(/^\/data\/broker\/perm-[0-9a-z-]+\.sock$/u);
     const launcher = readFileSync(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url), "utf8");
     expect(launcher).toContain('BROKER_DIR = "/data/broker"');
-    expect(launcher).toContain('if engine == "claudeAgent" and os.path.isdir(BROKER_DIR)');
+    // MAIN RULING tri3-g5 (section 4): cfcb6039e06 adds Codex's broker mount to the launcher.
+    expect(launcher).toContain('if engine in ("claudeAgent", "codex", "antigravity") and os.path.isdir(BROKER_DIR)');
   });
 });

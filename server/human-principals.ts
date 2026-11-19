@@ -5,12 +5,13 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { database, transaction } from "./database.ts";
 import { requireMemoryOwner } from "./memory/authority.ts";
 import { scopeRow } from "./memory/scope-id.ts";
+import { insertScope } from "./memory/scope-insert.ts";
 import { bindingRowsStamp } from "./io-budget.ts";
 import { revokeAllDisclosures } from "./memory/revocation.ts";
 
 export const WORKSPACE_OWNER = "workspace-owner";
 export type HumanPrincipal = Readonly<{ personId: string; bindingId: string; revision: number }>;
-export type VerifiedHumanOrigin = { platform: "slack" | "discord" | "telegram" | "whatsapp"; connectionId: string; authorityId: string; userId: string };
+export type VerifiedHumanOrigin = { platform: "slack" | "discord" | "telegram" | "whatsapp" | "signal"; connectionId: string; authorityId: string; userId: string };
 /** What the channel calls the sender. Kept so lessons can be kept away from customer turns that name a person (bot learning, R3-04). Not an identity: never compared, never grants anything. */
 export type SenderDisplay = { name?: string; username?: string };
 type Binding = { id: string; origin: VerifiedHumanOrigin; personId: string | null; revision: number; active: boolean; display?: SenderDisplay };
@@ -29,7 +30,7 @@ export function isGroupPrincipal(principal: HumanPrincipal): boolean {
 function scope(db: DatabaseSync, kind: string, owner: string): string {
   const old = scopeRow(db, kind, owner);
   if (old) return String(old.id);
-  const id = randomUUID(); db.prepare("INSERT INTO memory_scopes VALUES(?,?,?,'[]',0)").run(id, kind, owner); return id;
+  const id = randomUUID(); insertScope(db, id, kind, owner); return id;
 }
 function binding(id: string, db = database()): Binding | undefined {
   const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='human-binding'").get(id);
@@ -83,9 +84,8 @@ export function linkHumanBinding(ticket: object, input: { bindingId: string; exp
     if (input.personId?.startsWith("whatsapp-group:")) throw new Error("HUMAN_GROUP_IMMUTABLE");
     let personId: string | null = null;
     if (input.as === "owner") {
-      // WhatsApp: the owner is the linked number and nothing else (design 5.1). A contact or group binding names a
-      // different userId than the linking authority, so the server refuses it here whatever the caller asked for.
-      if (value.origin.platform === "whatsapp" && value.origin.userId !== value.origin.authorityId) throw new Error("HUMAN_OWNER_INELIGIBLE");
+      // WhatsApp and Signal owners must be the account that linked the device.
+      if ((value.origin.platform === "whatsapp" || value.origin.platform === "signal") && value.origin.userId !== value.origin.authorityId) throw new Error("HUMAN_OWNER_INELIGIBLE");
       personId = WORKSPACE_OWNER;
     }
     if (input.as === "person") {
@@ -202,12 +202,36 @@ export function bindHumanThread(threadId: string, principal: HumanPrincipal) {
   db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'human-thread',?,?,'granted',?)")
     .run(id, scope(db, "conversation", threadId), threadId, principal.revision, JSON.stringify(principal));
 }
+/** The platforms whose paired DM may read the bot's rooms (CROSS-CHAT-PAIRED-DM-1019). */
+const PAIRED_PLATFORMS: ReadonlySet<string> = new Set(["telegram", "slack", "discord"]);
+export type PairedOwner = Readonly<{ bindingId: string; revision: number }>;
+/** The owner's own paired channel DM (CROSS-CHAT-PAIRED-DM-1019 step 1), read straight from the rows, no memo and no default: the thread
+ * has its own human-thread row (an unbound thread never qualifies; the OWNER default of threadHumanPrincipal is never consulted), that
+ * principal is a channel binding linked to the workspace owner, and the binding is active now, still the owner's, at the SAME revision
+ * (a relink, unlink or disconnect moves the revision or clears it), on Telegram, Slack or Discord, never a group. `expected`, when given,
+ * must name the same binding and revision. Null for every other case. */
+export function pairedOwnerBinding(threadId: string, expected?: PairedOwner | null, db: DatabaseSync = database()): PairedOwner | null {
+  try {
+    const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='human-thread'").get("human-thread:" + threadId);
+    if (!row) return null;
+    const principal = JSON.parse(String(row.intent)) as HumanPrincipal;
+    if (typeof principal.bindingId !== "string" || principal.bindingId === OWNER.bindingId || !principal.bindingId.startsWith(PREFIX)) return null;
+    if (principal.personId !== WORKSPACE_OWNER || !Number.isInteger(principal.revision)) return null;
+    if (expected && (expected.bindingId !== principal.bindingId || expected.revision !== principal.revision)) return null;
+    const value = binding(principal.bindingId, db);
+    if (!value || value.active !== true || value.personId !== WORKSPACE_OWNER || value.revision !== principal.revision) return null;
+    if (!PAIRED_PLATFORMS.has(value.origin.platform) || isGroupOrigin(value.origin)) return null;
+    return Object.freeze({ bindingId: principal.bindingId, revision: principal.revision });
+  } catch {
+    return null;
+  }
+}
 export function sameHumanAudience(a: HumanPrincipal, b: HumanPrincipal) { return a.personId === b.personId; }
 export function isLocalOwner(principal: HumanPrincipal) { return principal.personId === OWNER.personId && principal.bindingId === OWNER.bindingId && principal.revision === OWNER.revision; }
 export function isWorkspaceOwner(principal: HumanPrincipal) { return principal.personId === WORKSPACE_OWNER; }
 
 /** Server-selected task; exact binding revision prevents old native-session reuse after relinking. */
-export function humanTask(store: Store, botId: string, principal: HumanPrincipal) {
+export function humanTask(store: Pick<Store, "bot" | "createTask" | "patchTask">, botId: string, principal: HumanPrincipal) {
   assertHumanPrincipal(principal);
   const bot=store.bot(botId); if(!bot)return null;
   if (isLocalOwner(principal)) return homeThread(bot);
@@ -283,4 +307,12 @@ export function knownHumanNames(db: DatabaseSync = database()): string[] {
     if (display?.username) out.add(display.username);
   }
   return [...out];
+}
+
+/** Bounded all-local Signal authority inventory for custody replacement/replay. */
+export function signalHumanBindings(ticket: object) {
+  requireMemoryOwner(ticket);
+  const rows=database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_type='human-binding' AND json_extract(intent,'$.origin.platform')='signal' LIMIT 4097").all();
+  if(rows.length>4096)throw new Error("Signal authority inventory is full");
+  return rows.map(row=>JSON.parse(String(row.intent)) as Binding);
 }

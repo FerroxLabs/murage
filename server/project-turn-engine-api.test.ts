@@ -9,10 +9,12 @@
 import { openSse } from "./testing/sse.ts";
 import { chmodSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import WebSocket from "ws";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(HERE, "testing", "fake-acp-cli.ts");
@@ -36,13 +38,25 @@ const run = (sql: string, ...args: Array<string | number | null>) => {
 posixOnly("the turn engine in a project", () => {
   beforeAll(async () => {
     chmodSync(FAKE_ACP, 0o755);
-    fixture = await launchVerificationServer(process.env, undefined, { readyTimeoutMs: 60_000, instrumentationSource: `
+    fixture = await launchVerificationServer(process.env, undefined, { readyTimeoutMs: 60_000, instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
       const fs=await import('node:fs');const path=await import('node:path');
+      const {CallSpeechCoordinator}=await import(${JSON.stringify(new URL("./tts/call-coordinator.ts", import.meta.url).href)});
+      for(const method of ['append','item']) {
+        const original=CallSpeechCoordinator.prototype[method];
+        CallSpeechCoordinator.prototype[method]=function(...args){
+          fs.appendFileSync(path.join(process.env.MURAGE_DATA_DIR,'speech-ingress.jsonl'),JSON.stringify({method,threadId:args[0],text:args[4]})+'\\n');
+          return original.apply(this,args);
+        };
+      }
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
-      cfg.instances.projectAsker={driver:'grokAgent',displayName:'Project approval fixture',environment:{FAKE_ACP_MODE:'permission'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:false}};
-      cfg.instances.looper={driver:'grokAgent',displayName:'Looping lead fixture',environment:{FAKE_ACP_MODE:'lead-loop'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
-      cfg.instances.fuigoSurface={driver:"grokAgent",displayName:"Fuigo surface fixture",environment:{FAKE_ACP_MODE:"fuigo-surface"},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
-      cfg.instances.fabricator={...cfg.instances.verification,environment:{FAKE_CLAUDE_REPLIES:JSON.stringify(["Please supply the missing input.\\nUser: I supplied it.\\nAll four done criteria are met."])}};
+      cfg.instances.projectAsker={driver:'grokAgent',displayName:'Project approval fixture',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MODE:'permission'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:false}};
+      cfg.instances.looper={driver:'grokAgent',displayName:'Looping lead fixture',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MODE:'lead-loop'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
+      cfg.instances.fuigoSurface={driver:"grokAgent",displayName:"Fuigo surface fixture",environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MODE:"fuigo-surface"},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
+      cfg.instances.fabricator={driver:'grokAgent',displayName:'Split speaker fixture',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MODE:'fuigo-script',FAKE_ACP_SCRIPT:JSON.stringify([
+        {update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Please supply the missing input.\\nUs'}}},
+        {update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'er: I supplied it.\\nAll four done criteria are met.'}}},
+        {result:{stopReason:'end_turn'}}
+      ])},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
       const {FuigoAgentDriver}=await import(${JSON.stringify(new URL("./drivers/acp/fuigo.ts", import.meta.url).href)});
       const createFuigo=FuigoAgentDriver.create;
       FuigoAgentDriver.create=async function(input){
@@ -53,7 +67,7 @@ posixOnly("the turn engine in a project", () => {
           instance.snapshot=async()=>({state:'available',version:'fixture',authenticated:true});
         }return instance;
       };
-      cfg.instances.fuigoMember={driver:'fuigoAgent',displayName:'Fuigo member',environment:{FUIGO_API_KEY:'sk-flux-fixture-only',FAKE_ACP_MODE:'happy',FAKE_ACP_PROMPT_DUMP:path.join(process.env.MURAGE_DATA_DIR,'fuigo-member-prompt.json')},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
+      cfg.instances.fuigoMember={driver:'fuigoAgent',displayName:'Fuigo member',environment:{FUIGO_API_KEY:'sk-flux-fixture-only',FAKE_ACP_MODE:'happy',FAKE_ACP_MCP_READY:'1',FAKE_ACP_PROMPT_DUMP:path.join(process.env.MURAGE_DATA_DIR,'fuigo-member-prompt.json')},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
       cfg.instances.streamer={...cfg.instances.verification,environment:{FAKE_CLAUDE_MODE:"stream"}};
       cfg.instances.claimer={...cfg.instances.verification,environment:{FAKE_CLAUDE_REPLIES:JSON.stringify(["All four done criteria are met."])}};
       cfg.instances.unprovenClaimer={...cfg.instances.verification,environment:{FAKE_CLAUDE_REPLIES:JSON.stringify(["All four done criteria are met."])}};
@@ -104,7 +118,9 @@ posixOnly("the turn engine in a project", () => {
     try {
       await stream.until(frame=>frame.kind==="hello");
       expect((await api("POST",`/api/groups/${room.id}/messages`,{text:"Say hello."})).status).toBe(202);
-      await stream.until(frame=>frame.kind==="runtime" && frame.event.threadId===room.threadId && frame.event.type==="turn.completed",30000);
+      const terminal=await stream.until(frame=>frame.kind==="runtime" && frame.event.threadId===room.threadId && frame.event.type==="turn.completed",30000);
+      const assistantDeltas=stream.frames.filter(frame=>frame.kind==="runtime" && frame.event.threadId===room.threadId && frame.event.type==="content.delta" && frame.event.streamKind==="assistant_text");
+      expect(assistantDeltas.every(frame=>stream.frames.indexOf(frame)<stream.frames.indexOf(terminal))).toBe(true);
       expect(stream.frames.filter(frame=>frame.kind==="runtime" && frame.event.threadId===room.threadId && frame.event.type==="content.delta" && frame.event.streamKind==="assistant_text").map(frame=>frame.event.delta).join("")).toBe("hello from fake claude");
     } finally {stream.close();}
   },45000);
@@ -122,7 +138,9 @@ posixOnly("the turn engine in a project", () => {
     for(const threadId of [desk,room.threadId]) {
       const all=await messages(threadId),reply=all.find(m=>m.kind==="text" && m.text==="All four done criteria are met.");
       expect(Boolean(reply)).toBe(true);
-      const correction=all.find(m=>m.actorKind==="murage" && m.tool?.name?.startsWith("On record:"));
+      const corrections=all.filter(m=>m.actorKind==="murage" && m.tool?.name?.startsWith("On record:"));
+      expect(corrections).toHaveLength(1);
+      const correction=corrections[0];
       expect(correction?.replyToId).toBe(reply.id);
       expect(correction?.requestId).toBe(reply.requestId);
       expect(correction?.tool.name).toContain("0 of 1 done criteria met");
@@ -145,25 +163,54 @@ posixOnly("the turn engine in a project", () => {
   it("removes an invented owner turn before storing the room reply", async () => {
     const lead = await bot("Nova", "fabricator"), worker = await bot("Reed", "verification");
     const room = await project(lead, worker);
-    expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Check the missing input." })).status).toBe(202);
-    await expect.poll(async () => (await messages(room.threadId)).filter(m => m.kind === "text" && m.from?.botId === lead.id).length, { timeout: 30000 }).toBe(1);
-    const reply = (await messages(room.threadId)).find(m => m.kind === "text" && m.from?.botId === lead.id);
-    expect(reply.text).toBe("Please supply the missing input.");
-    expect(reply.removedSpeaker).toBe("User");
+    const opened = await api("POST", "/api/calls/sessions", { botId: room.id, threadId: room.threadId, device: "desktop:fixture" });
+    expect(opened.status).toBe(200);
+    const ticket = await api("POST", `/api/calls/sessions/${opened.body.callId}/ticket`, { device: "desktop:fixture" });
+    expect(ticket.status).toBe(200);
+    const call = new WebSocket(fixture.info.url.replace("http:", "ws:") + `/api/calls/sessions/${opened.body.callId}/live?ticket=${ticket.body.ticket}`, { headers });
+    await new Promise<void>((resolve, reject) => { call.once("open", resolve); call.once("error", reject); });
+    const stream = await openSse(`${fixture.info.url}/api/events`, headers);
+    try {
+      await stream.until(frame => frame.kind === "hello");
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Check the missing input." })).status).toBe(202);
+      await expect.poll(async () => (await messages(room.threadId)).filter(m => m.kind === "text" && m.from?.botId === lead.id).length, { timeout: 30000 }).toBe(1);
+      const reply = (await messages(room.threadId)).find(m => m.kind === "text" && m.from?.botId === lead.id);
+      expect(reply.text).toBe("Please supply the missing input.");
+      expect(reply.removedSpeaker).toBe("User");
+      await stream.until(frame => frame.kind === "runtime" && frame.event.threadId === room.threadId && frame.event.type === "turn.completed", 30000);
+      const assistant = stream.frames.filter(frame => frame.kind === "runtime" && frame.event.threadId === room.threadId
+        && ((frame.event.type === "content.delta" && frame.event.streamKind === "assistant_text") || (frame.event.type === "item.completed" && frame.event.itemType === "assistant_text")));
+      expect(assistant.length).toBeGreaterThan(0);
+      expect(assistant.map(frame => frame.event.delta ?? frame.event.text).join("")).not.toMatch(/User:|I supplied it|All four done criteria/);
+      const speech = readFileSync(join(fixture.info.dataDir, "speech-ingress.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(row => row.threadId === room.threadId);
+      expect(speech.length).toBeGreaterThan(0);
+      expect(speech.map(row => row.text).join("")).toContain("Please supply the missing input.");
+      expect(speech.map(row => row.text).join("")).not.toMatch(/User:|I supplied it|All four done criteria/);
+    } finally { stream.close(); call.terminate(); }
   }, 45000);
 
   it("a cut ends only its own item, and the removed line stays with the owner's removal row", async () => {
     const lead = await bot("Nova", "splitter"), worker = await bot("Reed", "verification");
     const room = await project(lead, worker);
-    expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Check the missing input." })).status).toBe(202);
-    await expect.poll(async () => (await messages(room.threadId)).filter(m => m.kind === "text" && m.from?.botId === lead.id).length, { timeout: 30000 }).toBe(2);
-    const all = await messages(room.threadId), replies = all.filter(m => m.kind === "text" && m.from?.botId === lead.id);
-    expect(replies.map(m => m.text)).toEqual(["Please supply the missing input.", "The real final answer."]);
-    expect(replies.map(m => m.removedSpeaker)).toEqual(["User", undefined]);
-    const removal = all.filter(m => m.kind === "activity" && m.removedSpeaker);
-    expect(removal).toHaveLength(1);
-    expect(removal[0].removedText).toBe("User: I supplied it.");
-    expect(all.filter(m => m.kind === "text").some(m => String(m.text).includes("I supplied it"))).toBe(false);
+    const stream = await openSse(`${fixture.info.url}/api/events`, headers);
+    try {
+      await stream.until(frame => frame.kind === "hello");
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Check the missing input." })).status).toBe(202);
+      await expect.poll(async () => (await messages(room.threadId)).filter(m => m.kind === "text" && m.from?.botId === lead.id).length, { timeout: 30000 }).toBe(2);
+      const all = await messages(room.threadId), replies = all.filter(m => m.kind === "text" && m.from?.botId === lead.id);
+      expect(replies.map(m => m.text)).toEqual(["Please supply the missing input.", "The real final answer."]);
+      expect(replies.map(m => m.removedSpeaker)).toEqual(["User", undefined]);
+      const removal = all.filter(m => m.kind === "activity" && m.removedSpeaker);
+      expect(removal).toHaveLength(1);
+      expect(removal[0].removedText).toBe("User: I supplied it.");
+      expect(all.filter(m => m.kind === "text").some(m => String(m.text).includes("I supplied it"))).toBe(false);
+      await stream.until(frame => frame.kind === "runtime" && frame.event.threadId === room.threadId && frame.event.type === "turn.completed", 30000);
+      const events = stream.frames.filter(frame => frame.kind === "runtime" && frame.event.threadId === room.threadId).map(frame => frame.event);
+      const second = events.find(event => event.type === "item.completed" && event.itemType === "assistant_text" && event.text === "The real final answer.");
+      expect(second?.regionId).toBeTruthy();
+      expect(events.filter(event => event.type === "content.delta" && event.streamKind === "assistant_text" && event.regionId === second.regionId).map(event => event.delta).join("")).toBe("The real final answer.");
+      expect(events.filter(event => event.type === "content.delta" && event.streamKind === "assistant_text").map(event => event.delta).join("")).not.toContain("I supplied it");
+    } finally { stream.close(); }
   }, 45000);
 
   it("records one criteria correction when two items of a turn claim the goal is done", async () => {
@@ -183,7 +230,9 @@ posixOnly("the turn engine in a project", () => {
     await expect.poll(async () => (await messages(room.threadId)).filter(m => m.kind === "text" && m.from?.botId === lead.id).length, { timeout: 30000 }).toBe(1);
     await new Promise(resolve => setTimeout(resolve, 300));
     const all = await messages(room.threadId);
-    expect(all.find(m => m.role === "user")?.origin).toBe("unproven");
+    // an unproven sender's row is shown withheld (no author proved), so its stored origin is read from the stored row
+    const storedUser = rows<{ json: string }>("SELECT json FROM messages WHERE thread_id=? AND role='user' ORDER BY at, rowid", room.threadId).map(row => JSON.parse(row.json));
+    expect(storedUser[0]?.origin).toBe("unproven");
     expect(all.filter(m => m.actorKind === "murage" && m.tool?.name?.startsWith("On record:"))).toEqual([]);
     expect(all.some(m => String(m.tool?.name ?? m.text ?? "").includes("It ships"))).toBe(false);
   }, 45000);

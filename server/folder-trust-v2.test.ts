@@ -36,6 +36,7 @@ import { QUESTION_LIMITS } from "../shared/questions.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
 const TRUST_REPLY = '{"jsonrpc":"2.0","id":9006,"result":{"outcome":"trust","scope":"configAndCommands"}}';
+const PROCESS_REPLY = '{"jsonrpc":"2.0","id":9006,"result":{"outcome":"trust","scope":"configAndCommands","duration":"process"}}';
 const REJECT_REPLY = '{"jsonrpc":"2.0","id":9006,"result":{"outcome":"reject"}}';
 
 describe("generation", () => {
@@ -459,6 +460,68 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
   /** A pooled turn on a thread, its session resumed the way the harness does. */
   const nativeOrder = (threadId: string) => readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");
 
+  it("N7 below No limits honours the owner's stored Do not trust without a card", async () => {
+    await create();
+    const turnId = await send("n7-reject", { stopLine: true,
+      folderTrust: gate({ decision: "reject", fromRecord: true, sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(replies()).toEqual([REJECT_REPLY]);
+    expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
+    expect(chips().some(line => line.startsWith("untrusted folder"))).toBe(true);
+  });
+
+  it("N7 below No limits trusts only undecided folders and preserves a reject that answers the engine key", async () => {
+    await create();
+    const turnId = await send("n7-records", { stopLine: true,
+      folderTrust: gate({ sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(replies()).toEqual([REJECT_REPLY]);
+    expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
+  });
+
+  it("N7 below No limits generation 1 keeps a stored reject off --trust and answers reject", async () => {
+    await create({ FAKE_ACP_TRUST_V: "", FAKE_ACP_VERSION: "fuigo 1.0.34" }, { cli: ownCli() });
+    const turnId = await send("n7-g1", { stopLine: true,
+      folderTrust: gate({ decision: "reject", fromRecord: true, sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(readDump().argv).not.toContain("--trust");
+    expect(replies().every(line => line?.includes('"outcome":"reject"'))).toBe(true);
+    expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
+  });
+
+  it("N7 No limits overrides the owner's stored Do not trust for this turn without a card", async () => {
+    await create();
+    const turnId = await send("n7-reject", { stopLine: true, noLimits: true,
+      folderTrust: gate({ decision: "reject", fromRecord: true, sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(readDump().argv).toContain("--trust");
+    expect(readDump().folderTrust.trustedAtBuild).toBe(true);
+    expect(replies()).toEqual([]);
+    expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
+    expect(chips().some(line => line.startsWith("untrusted folder"))).toBe(false);
+  });
+
+  it("N7 No limits trusts despite a saved reject that answers the engine key", async () => {
+    await create();
+    const turnId = await send("n7-records", { stopLine: true, noLimits: true,
+      folderTrust: gate({ sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(readDump().argv).toContain("--trust");
+    expect(readDump().folderTrust.trustedAtBuild).toBe(true);
+    expect(replies()).toEqual([]);
+    expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
+  });
+
+  it("N7 No limits generation 1 passes --trust despite a saved reject", async () => {
+    await create({ FAKE_ACP_TRUST_V: "", FAKE_ACP_VERSION: "fuigo 1.0.34" }, { cli: ownCli() });
+    const turnId = await send("n7-g1", { stopLine: true, noLimits: true,
+      folderTrust: gate({ decision: "reject", fromRecord: true, sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(readDump().argv).toContain("--trust");
+    expect(replies().every(line => line?.includes('"outcome":"trust"'))).toBe(true);
+    expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
+  });
+
   it("(R1, R9) generation 2 never passes --trust, raises no card before the spawn, and advertises v2", async () => {
     await create();
     const turnId = await send("t-g2", { folderTrust: gate({ decision: "trust", fromRecord: true, sources: ["AGENTS.md"], trustKeys: [cwd] }) });
@@ -717,7 +780,9 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     const turnId = await send("t-hold-late", { folderTrust: gate({ sources: ["AGENTS.md"] }) });
     await done(turnId);
     expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ folderTrustLate: "finished" });
-    expect(replies()).toEqual([REJECT_REPLY]);
+    // Completion is a driver event; the child still has to receive and log
+    // the reply written to its pipe. Assert that exact reply once observed.
+    await vi.waitFor(() => expect(replies()).toEqual([REJECT_REPLY]));
     expect(chips()).toEqual([folderTrustWithheldName(["AGENTS.md"])]);
   });
   it("(A, B) a card names an inside no, never a sibling desk's, and stores a fitted summary", async () => {
@@ -756,14 +821,11 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     const noCard = () => expect(recorder.events.find((e) => e.type === "request.opened")).toBeUndefined();
     const noCardFor = (turnId: string) => expect(recorder.events.find((e) => e.type === "request.opened" && e.turnId === turnId)).toBeUndefined();
 
-    // FUIGO-PROCESS-REPLY-OFF-1014: the process-only reply is off in 1.0.14, so on the
-    // owner's own home Fuigo 1.0.38 gets no desk answer, as 1.0.37 does. The desk rule
-    // answers on a home made for this turn (a routed turn). The process-only rows of the
-    // tests below live at 2630d9aaf in this file and come back with FUIGO-PROCESS-REPLY-ON.
+    // Process-capable engines use only an ephemeral grant, including fresh homes.
     const route = { connectionId: "desk-route", preset: "openai", protocol: "openai", baseUrl: "http://127.0.0.1:49999/v1", apiKey: "fixture-provider-key", model: "fixture-model", revision: "r1" } as ProviderTurnRoute;
     const routed = { providerRoute: route, model: route.model } satisfies Partial<SendTurnInput>;
     it("at Ask, Auto, Full access and No limits on a home made for this turn: trust, no card, no chip", async () => {
-      expect(FUIGO_PROCESS_TRUST_REPLY).toBe(false);
+      expect(FUIGO_PROCESS_TRUST_REPLY).toBe(true);
       await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
       for (const [threadId, level] of [["d-ask", { routeAsks: true, askLevel: true }], ["d-auto", { routeAsks: true }], ["d-nolimits", { stopLine: true }]] as const) {
         await done(await sendDesk(threadId, { ...routed, ...level }));
@@ -772,8 +834,8 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
       await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli(), fullAuto: true });
       await done(await sendDesk("d-full", routed));
       noCard();
-      expect(replies()).toEqual([TRUST_REPLY, TRUST_REPLY, TRUST_REPLY, TRUST_REPLY]);
-      expect(replies().some((line) => line?.includes("duration"))).toBe(false);
+      expect(replies()).toEqual([PROCESS_REPLY, PROCESS_REPLY, PROCESS_REPLY, PROCESS_REPLY]);
+      expect(replies().every((line) => line?.includes('"duration":"process"'))).toBe(true);
       expect(chips()).toEqual([]);
       // the reply leaves before the first prompt (the hold)
       const order = nativeOrder("d-ask");
@@ -783,24 +845,25 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     for (const version of ["1.0.37", "1.0.38"]) {
       // FUIGO-DESK-BARE-REJECT-1014 (Y4): a fresh bot's first turn in its own bare desk
       // on the owner's own home answers with no card: the plain reject, then the prompt.
-      it(`Fuigo ${version} on the owner's own home, bare desk: no card, the prompt is not held, a reply arrives, never a grant`, async () => {
+      it(`Fuigo ${version} on the owner's own home, bare desk: no card, a version-gated reply arrives before the prompt`, async () => {
         const thread = `d-own-${version}`;
         await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
         const turnId = await sendDesk(thread, { routeAsks: true, askLevel: true });
         await done(turnId);
         noCard();
-        expect(replies()).toEqual([REJECT_REPLY]);
+        expect(replies()).toEqual([version === "1.0.38" ? PROCESS_REPLY : REJECT_REPLY]);
         expect(chips()).toEqual([]);
         const order = nativeOrder(thread);
-        expect(order.indexOf('"outcome":"reject"')).toBeGreaterThan(-1);
-        expect(order.indexOf('"outcome":"reject"')).toBeLessThan(order.indexOf('"method":"session/prompt"'));
+        const outcome = version === "1.0.38" ? '"outcome":"trust"' : '"outcome":"reject"';
+        expect(order.indexOf(outcome)).toBeGreaterThan(-1);
+        expect(order.indexOf(outcome)).toBeLessThan(order.indexOf('"method":"session/prompt"'));
         // ql2 sink fold (was '"text":"agents: '): the reply's frame is on the wire trace, its words are not written
         expect(order).toContain('"sessionUpdate":"agent_message_chunk"');
         expect(order).not.toContain("agents: ");
       });
       // FUIGO-DESK-LINKED-OWNER-HOME: a fresh bot with pinned skills (a library team) has a
       // linked desk; 1.0.13 parity is the same plain reject, no card, the prompt goes.
-      it(`Fuigo ${version} on the owner's own home, linked desk (pinned skills only): no card, the prompt is not held, a reply arrives, never a grant`, async () => {
+      it(`Fuigo ${version} on the owner's own home, linked desk (pinned skills only): no card, a version-gated reply arrives before the prompt`, async () => {
         const thread = `d-own-linked-${version}`;
         const bundleRoot = join(desk, ".murage-procedures", "bundle_a");
         mkdirSync(join(bundleRoot, "skills", "review"), { recursive: true });
@@ -812,11 +875,12 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
         const turnId = await sendDesk(thread, { routeAsks: true, askLevel: true });
         await done(turnId);
         noCard();
-        expect(replies()).toEqual([REJECT_REPLY]);
+        expect(replies()).toEqual([version === "1.0.38" ? PROCESS_REPLY : REJECT_REPLY]);
         expect(chips()).toEqual([]);
         const order = nativeOrder(thread);
-        expect(order.indexOf('"outcome":"reject"')).toBeGreaterThan(-1);
-        expect(order.indexOf('"outcome":"reject"')).toBeLessThan(order.indexOf('"method":"session/prompt"'));
+        const outcome = version === "1.0.38" ? '"outcome":"trust"' : '"outcome":"reject"';
+        expect(order.indexOf(outcome)).toBeGreaterThan(-1);
+        expect(order.indexOf(outcome)).toBeLessThan(order.indexOf('"method":"session/prompt"'));
         // ql2 sink fold (was '"text":"agents: '): the reply's frame is on the wire trace, its words are not written
         expect(order).toContain('"sessionUpdate":"agent_message_chunk"');
         expect(order).not.toContain("agents: ");
@@ -825,7 +889,7 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
         const wider = await sendDesk(`${thread}-mcp`, { routeAsks: true, askLevel: true });
         await skip(`${thread}-mcp`, (await opened(wider)).requestId);
         await done(wider);
-        expect(replies()).toEqual([REJECT_REPLY, REJECT_REPLY]);
+        expect(replies()).toEqual([version === "1.0.38" ? PROCESS_REPLY : REJECT_REPLY, REJECT_REPLY]);
       });
       it(`Fuigo ${version} on the owner's own home: a desk holding settings, a kind Fuigo names, or a picked folder still cards`, async () => {
         await create({ FAKE_ACP_TRUST_KINDS: "mcp", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
@@ -854,7 +918,7 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
       const turnId = await sendDesk("d-warm", { routeAsks: true, askLevel: true });
       await done(turnId);
       noCard();
-      expect(replies().filter((raw) => raw?.includes('"outcome":"trust"'))).toEqual([]);
+      expect(replies()).toEqual([REJECT_REPLY, PROCESS_REPLY]);
       // ql2 sink fold (was '"text":"agents: '): the reply's frame is on the wire trace, its words are not written
       expect(nativeOrder("d-warm")).toContain('"sessionUpdate":"agent_message_chunk"');
       expect(nativeOrder("d-warm")).not.toContain("agents: ");
@@ -921,7 +985,7 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
       const otherTurn = await sendDesk("d-other", { ...routed, routeAsks: true, askLevel: true, folderTrust: deskGate({ rejects: [{ key: other, folder: other }] }) });
       await done(otherTurn);
       noCardFor(otherTurn);
-      expect(replies()).toEqual([REJECT_REPLY, REJECT_REPLY, TRUST_REPLY]);
+      expect(replies()).toEqual([REJECT_REPLY, REJECT_REPLY, PROCESS_REPLY]);
     });
   });
 
@@ -1105,16 +1169,19 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
       process.env.MURAGE_ACP_CROSS_THREAD_SPARE = "1";
       await create();
       const inputs = gate({ trustKeys: [cwd] });
-      const donorTurn = await send("t-spare-marked");
+      // A local model has no per-thread Flux usage header in its spawn
+      // contract, so the control really is a compatible cross-thread spare.
+      const model = 'ollama::fixture-model';
+      const donorTurn = await send("t-spare-marked",{model});
       await answer("t-spare-marked", (await opened(donorTurn)).requestId, "Don't trust");
       await done(donorTurn);
       expect(spawns()).toHaveLength(1);
       // nothing parked: the other thread's turn spawns
-      const taker = await send("t-spare-taker", { resumeCursor: cursor, folderTrust: inputs });
+      const taker = await send("t-spare-taker", { model, resumeCursor: cursor, folderTrust: inputs });
       await done(taker);
       expect(spawns()).toHaveLength(2);
       // control: that turn's rule 3 reply left it unmarked and parked, so a third thread adopts it
-      await done(await send("t-spare-third", { resumeCursor: cursor, folderTrust: inputs }));
+      await done(await send("t-spare-third", { model, resumeCursor: cursor, folderTrust: inputs }));
       expect(spawns()).toHaveLength(2);
     });
   });

@@ -1,3 +1,4 @@
+import { basicStage, runStages, maskVendorLast, replaceTracked, type TrackedRule } from "../../shared/basic-auth-mask.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -155,8 +156,16 @@ export function checkScreenEnvelope(value: unknown): string | null {
 // "What we send" fold shows exactly what leaves the computer. Owner-typed
 // words are not sent (see the feedback request below). Shapes from server/redact.ts
 // KEY_PREFIXES, plus bearer values, JWTs, private-key blocks and key=value pairs.
+// A private-key block, header to the first footer (or to the end when none
+// follows). It runs FIRST, ahead of KEY_VALUE, so `private_key=-----BEGIN ...`
+// is removed whole instead of losing the header to the key=value rule
+// (U1-SECURITY-FOLLOWUPS, Astra r3 Low; server/redact.ts runs PEM_BLOCK first too).
+const PEM_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
+const FEEDBACK_JWT = /(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})([A-Za-z0-9_-]*?)\b(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
 const SECRET_SHAPES: readonly RegExp[] = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+  // Whole-token shapes that can hold another prefix run first (SendGrid, PyPI).
+  /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g,
+  /\bpypi-AgE[A-Za-z0-9_-]{82,}/g,
   /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/g,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
@@ -169,19 +178,26 @@ const SECRET_SHAPES: readonly RegExp[] = [
   /\bxai-[A-Za-z0-9_-]{20,}/g,
   /\bgsk_[A-Za-z0-9]{40,}/g,
   /\bhf_[A-Za-z0-9]{30,}/g,
-  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
+  FEEDBACK_JWT,
 ];
 const BEARER = /(\bBearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi;
 const KEY_VALUE = /(\b(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|access[_-]?key|private[_-]?key)s?["']?\s*[=:]\s*["']?)[A-Za-z0-9._~+/=-]{8,}/gi;
 export const REMOVED = "[removed]";
 
+const FEEDBACK_SECRET_CHAIN: readonly TrackedRule[] = [
+  (text, edits) => replaceTracked(text, PEM_BLOCK, () => REMOVED, edits),
+  (text, edits) => replaceTracked(text, BEARER, (_match, lead: string) => `${lead}${REMOVED}`, edits),
+  (text, edits) => replaceTracked(text, KEY_VALUE, (_match, lead: string) => `${lead}${REMOVED}`, edits),
+  ...SECRET_SHAPES.map((shape): TrackedRule => (text, edits) => replaceTracked(
+    text, shape, (_match, lead: string) => shape === FEEDBACK_JWT ? `${lead}${REMOVED}` : REMOVED, edits,
+  )),
+];
+export const FEEDBACK_SECRET_STAGES = [basicStage(FEEDBACK_SECRET_CHAIN, () => REMOVED)];
+export const baseScrubSecrets=(words:string)=>runStages(words,FEEDBACK_SECRET_STAGES);
 export function scrubSecrets(words: string): string {
-  // Whole-credential rules run first: a token shape replaced inside a
-  // Bearer or key=value credential would end that match at the marker and
-  // leave the rest of the credential behind.
-  let out = words.replace(BEARER, `$1${REMOVED}`).replace(KEY_VALUE, `$1${REMOVED}`);
-  for (const shape of SECRET_SHAPES) out = out.replace(shape, REMOVED);
-  return out;
+  // Track Basic spans on the original input while whole-credential rules
+  // mask PEM, Bearer and key=value values before individual token shapes.
+  return maskVendorLast(words, FEEDBACK_SECRET_STAGES, () => REMOVED);
 }
 
 // ── which screen is this ─────────────────────────────────────────────────

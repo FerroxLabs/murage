@@ -1,0 +1,39 @@
+Murage 1.0.19 database scope verification (gap-db)
+
+BOOT-INDEX (row 19), FTS merge (row 32), and C2DEBT (row 37) are already
+implemented in 7c9ce6fe3e783b19a9cda1969d7aa9de676ec356. The found heads are
+4f033c5f1d792de5b650536e65780356bdbc236c,
+b5c23339cb1fcc5a0dab529fa80fffd9dccbe06b, and
+b6e19376f28acae098a1cbf4d3669a936def91ff. Each is an ancestor; each requested
+fast-forward integration returned Already up to date. Current search uses the
+later agreed isolated-worker design, which supersedes the old R6 coupling.
+
+The FTS writer inventory predates decision/records.ts. That module's message
+writes change options-card JSON. The inventory now names it, with a real SQLite
+regression exercising upgrade and cancellation and checking unchanged searchable
+text/activity projections and unrelated rows. All existing assertions remain.
+No production No limits/wipe or database code changed.
+
+The full required 649 Vitest and 42 Node files were compared against the exact
+base, plus 21 Vitest and 3 Node focused files. The frozen test/fixture overlay
+was identical on both product snapshots. Final NEW is zero by stable test ID;
+there are no missing results. Existing baseline failures remain failures.
+The first comparison's ACP retry discrepancy was reproduced in three identical
+baseline/candidate pairs; failure aggregation retains every observed failure.
+Only private run paths and random test-home suffixes are normalized in IDs.
+The original full-run reports and original names remain in the job evidence.
+
+The strengthened FTS file passes 41/41 on each side. Two fixture-only negative
+controls fail on the intended text/activity preservation assertions. All six
+paired serial C2 probes pass the unchanged unrounded 50 ms assertion. Two earlier
+candidate-only shared-host probes missed that bound (50.50 and 51.17 ms); those
+measurements are retained, and no dedicated OS/slow-disk qualification is claimed.
+An isolated fake-engine shared-control smoke completed a chat, verified its
+transcript, restarted the same profile, and verified the persisted transcript.
+The temporary profile was removed.
+
+See evidence/gap-db/receipt.json for counts, provenance and raw-artifact hashes.
+The required and focused file manifests are next to that receipt. Full local
+execution detail, original failures, commands and cleanup are recorded in LAST
+in the gap-db job directory. No live data, Mac, billable service or GitHub push
+was used.

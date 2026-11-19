@@ -199,10 +199,10 @@ export function versionHits(value, locale, listedTokens = new Set()) {
   return hits;
 }
 
-// Price words per language. English "free" keeps its other senses (free disk space, a free slot, free up, feel free,
-// jargon-free) but the -free compounds of cost are prices.
+// Price words per language. English "free" keeps its other senses (free disk space, free some space, a free slot, free up,
+// feel free, jargon-free) but the -free compounds of cost are prices.
 const COST_FREE = /\b(?:cost|charge|fee|price|payment)-free\b/i;
-const FREE_SENSES = /\bfree (?:disk )?space\b|\bfree slots?\b|\bfree up\b|\bfeel free\b|\b\w+-free\b/gi;
+const FREE_SENSES = /\bfree (?:some )?(?:disk )?space\b|\bfree slots?\b|\bfree up\b|\bfeel free\b|\b\w+-free\b/gi;
 export const PRICE_WORDS = {
   en: /\bfree\b|\bno (?:extra )?charge\b|\bat no (?:extra )?cost\b|\bcosts? nothing\b|\bwithout (?:any )?(?:cost|charge)\b|\bfree of charge\b/i,
   de: /kostenlos|kostenfrei|gebührenfrei|gratis|umsonst|ohne (?:zusätzliche )?kosten/i,

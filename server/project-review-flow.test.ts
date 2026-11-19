@@ -148,6 +148,11 @@ describe("a review always ends in a verdict or a decision for the lead", () => {
   it("a pass moves the card to done and the lead is woken to record the criteria", () => {
     const a = toReview();
     reviewEnds(a.c, "pass", members);
+    const settled = projectCardById(db, a.c);
+    const repeated = completeRequest(db, reviews(a.c)[0]!.id, { state: "done", now: 230, resultMessageId: "late-duplicate" }, hooks(members));
+    expect(repeated.changed).toBe(false);
+    expect(repeated.wakes).toEqual([]);
+    expect(projectCardById(db, a.c)).toEqual(settled);
     expect(cardState(a.c)).toBe("done");
     expect(leadWokenWith(reviews(a.c)[0]!.id)).toBe(1);
     const review = roomRequest(db, reviews(a.c)[0]!.id)!;

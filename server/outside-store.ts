@@ -1,3 +1,4 @@
+import { assertFileWriteAdmission, isReadOnly } from "./read-only-start.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -8,7 +9,8 @@
 // and a durability barrier cuts the file back to its last "\n" and fsyncs before any line is appended, so an acknowledged line
 // can never be joined onto torn bytes. Any other unreadable line throws, which leaves the store not ready, so every turn
 // reads as marked (fail closed).
-import { appendFileSync, closeSync, existsSync, fstatSync, fsyncSync, ftruncateSync, openSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync } from "./counted-fs.ts";
+import { closeSync, existsSync, fstatSync, fsyncSync, ftruncateSync, openSync, readFileSync, statSync } from "node:fs";
 import { syncParentDirectoryStatus, writeFileAtomic } from "./atomic.ts";
 import type { RegistryEntry } from "./download-registry.ts";
 import { noteOutsideStoreWrite, noteStoreFailure } from "./email/external-marks.ts";
@@ -210,6 +212,7 @@ export function fileOutsideStore(path: string, seams: OutsideStoreSeams = {}): O
   };
   /** the per-write gate: no line reaches the file until a barrier has passed (also for a store used without load) */
   const admit = () => {
+    assertFileWriteAdmission(path);
     if (published) return;
     if (!meta) readJournal();
     barrier();
@@ -271,6 +274,7 @@ export function fileOutsideStore(path: string, seams: OutsideStoreSeams = {}): O
       const before = statOf(path);
       const replayed = readJournal();
       const { registry: _registry, meta: _meta, ...rest } = replayed;
+      if (isReadOnly()) return rest;
       // barrier #1: mend the tail, fsync, and PROBE the directory sync (it decides whether a rename may ever happen)
       try { barrier(); } catch (error) { regCache = undefined; noteStoreFailure(); throw error; }
       compact(replayed, before);

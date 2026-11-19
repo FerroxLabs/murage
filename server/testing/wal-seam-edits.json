@@ -1,0 +1,226 @@
+{
+ "server/wal-maintenance.ts": [
+  {
+   "name": "wal-maintenance.ts@31",
+   "anchor": "import { checkpointLedger } from \"./admission-shared.ts\";\nimport { ioBudget } from \"./io-budget.ts\";\nimport { ioMeterNativeId, ioMeterNativePath, ioMeterPageSize } from \"./io-meter.ts\";",
+   "insert": "import { checkpointLedger } from \"./admission-shared.ts\";\nimport { admissionClockOffset, ioBudget } from \"./io-budget.ts\";\nimport { ioMeterNativeId, ioMeterNativePath, ioMeterPageSize } from \"./io-meter.ts\";"
+  },
+  {
+   "name": "wal-maintenance.ts@36",
+   "anchor": "import { DatabaseBusyError } from \"./db-busy.ts\";\n",
+   "insert": "import { DatabaseBusyError } from \"./db-busy.ts\";\nimport { pathIsWithin, registerTestHandle } from \"./test-handle-registry.ts\";\n"
+  },
+  {
+   "name": "wal-maintenance.ts@127",
+   "anchor": "let pendingEnd = null, tableFullSeen = 0;\nconst admissionNow = () => Date.now();\nfunction retryPendingEnd() {",
+   "insert": "let pendingEnd = null, tableFullSeen = 0;\nconst admissionNow = () => Date.now() + (workerData.admissionClockOffsetMs || 0);\nfunction retryPendingEnd() {"
+  },
+  {
+   "name": "wal-maintenance.ts@133",
+   "anchor": "}\nconst { stepBytes, pollMs, dueMs, debtBytes } = workerData;\nconst { debt: debtFd, index: indexFd } = workerData.debtFd;",
+   "insert": "}\n// Test seam: production workers get no barrier (workerData.barrier is null), so every parkAt call is an empty function. A test installs a\n// barrier through server/testing/wal-barrier.ts (the server build excludes that folder); nothing in this file spins or waits for it.\nconst hooks = workerData.barrier ? (0,eval)(\"(\"+workerData.barrier.source+\")\")(workerData.barrier.buffer, shared) : { park() {}, beforeRunning() {}, gateHeld: () => false, awaitGate() {}, takeHold: () => 0, hold() {} };\nconst parkAt = hooks.park;\nconst { stepBytes, pollMs, dueMs, debtBytes } = workerData;\nconst { debt: debtFd, index: indexFd } = workerData.debtFd;"
+  },
+  {
+   "name": "wal-maintenance.ts@215",
+   "anchor": "let requested = null, timed = false, unsyncedBytes = 0, debtRetryAt = 0;\nfunction close() {",
+   "insert": "let requested = null, timed = false, unsyncedBytes = 0, debtRetryAt = 0;\nconst trace = workerData.trace === true; // test hook only (walMaintenanceTestHooks.paceTrace): observes each poll tick, changes nothing\nlet tickNo = 0;\nconst paceGen = trace && workerData.paceGen ? new Int32Array(workerData.paceGen) : null; // test hook only: the generation cell a test bumps after it takes the writer lock\nlet timedStartedAt;\nfunction close() {"
+  },
+  {
+   "name": "wal-maintenance.ts@220",
+   "anchor": "}\nfunction runPass(kind, reqId = null, sample = null) {\n  if (Atomics.load(shared, 7)) return;",
+   "insert": "}\nfunction runPass(kind, reqId = null, answerHold = 0, sample = null) {\n  if (Atomics.load(shared, 7)) return;"
+  },
+  {
+   "name": "wal-maintenance.ts@223",
+   "anchor": "  if (Atomics.load(shared, 3)) {\n    if (kind === \"requested\") requested = { reqId }; else timed = true;\n    return;",
+   "insert": "  if (Atomics.load(shared, 3)) {\n    if (kind === \"requested\") requested = { reqId, answerHold }; else timed = true;\n    return;"
+  },
+  {
+   "name": "wal-maintenance.ts@226",
+   "anchor": "  }\n  Atomics.store(shared, 3, 1);",
+   "insert": "  }\n  hooks.beforeRunning(); // test instrumentation only (server/testing/wal-barrier.ts); an empty function in production\n  Atomics.store(shared, 3, 1);"
+  },
+  {
+   "name": "wal-maintenance.ts@239",
+   "anchor": "    Atomics.add(shared, 6, 1);\n  }",
+   "insert": "    Atomics.add(shared, 6, 1);\n    if (trace) timedStartedAt = performance.timeOrigin + performance.now();\n  }"
+  },
+  {
+   "name": "wal-maintenance.ts@241",
+   "anchor": "  function finish() {\n    let out = { type: \"pass\", gen, id, kind, reqId };",
+   "insert": "  function finish() {\n    // Each spin is bounded; yielding keeps requested work queued behind this pass.\n    if (hooks.gateHeld()) sample = null;\n    hooks.awaitGate(pollMs);\n    if (hooks.gateHeld() && !Atomics.load(shared, 7)) { sample = null; setImmediate(finish); return; }\n    let out = { type: \"pass\", gen, id, kind, reqId };"
+  },
+  {
+   "name": "wal-maintenance.ts@267",
+   "anchor": "        if(!pendingEnd){\n          try{copyTicket=admission.beginCopy(ceiling,admissionNow());}",
+   "insert": "        if(!pendingEnd){\n          parkAt(1);\n          try{copyTicket=admission.beginCopy(ceiling,admissionNow());}"
+  },
+  {
+   "name": "wal-maintenance.ts@285",
+   "anchor": "        const endUsed=Math.ceil(copiedFrames)*copyPageSpan+osPageSize+4096,endReading=nativeMeter?{os,meter}:undefined;\n        try{admission.endCopy(copyTicket,endUsed,raw,endReading,admissionNow());}",
+   "insert": "        const endUsed=Math.ceil(copiedFrames)*copyPageSpan+osPageSize+4096,endReading=nativeMeter?{os,meter}:undefined;\n        parkAt(2);\n        try{admission.endCopy(copyTicket,endUsed,raw,endReading,admissionNow());}"
+  },
+  {
+   "name": "wal-maintenance.ts@329",
+   "anchor": "      Object.assign(out, result, {salt:before&&before.salt, copied:copyTicket!==null});\n    }",
+   "insert": "      Object.assign(out, result, {salt:before&&before.salt, copied:copyTicket!==null});\n      if (kind === \"requested\") hooks.hold(answerHold);\n    }"
+  },
+  {
+   "name": "wal-maintenance.ts@337",
+   "anchor": "      const next = requested; requested = null;\n      runPass(\"requested\", next.reqId);\n    }",
+   "insert": "      const next = requested; requested = null;\n      runPass(\"requested\", next.reqId, next.answerHold);\n    }"
+  },
+  {
+   "name": "wal-maintenance.ts@343",
+   "anchor": "const timer = setInterval(() => {\n  if (pendingEnd) retryPendingEnd();",
+   "insert": "const timer = setInterval(() => {\n  if (trace) tickNo++;\n  const sampledGen = paceGen ? Atomics.load(paceGen, 0) : -1; // program order: before this tick reads data_version\n  if (pendingEnd) retryPendingEnd();"
+  },
+  {
+   "name": "wal-maintenance.ts@350",
+   "anchor": "    const dv = version(), h = header();\n    const changed = dv !== lastVersion && (h.salt === lastSalt || (h.index && h.index.mxFrame > 0));\n    sampleBacklog(h, dv);",
+   "insert": "    const dv = version(), h = header();\n    const changed = dv !== lastVersion && (h.salt === lastSalt || (h.index && h.index.mxFrame > 0));\n    parkAt(3, tickNo); // test seam only: a test parks the worker right after it read data_version\n    sampleBacklog(h, dv);"
+  },
+  {
+   "name": "wal-maintenance.ts@363",
+   "anchor": "  due ||= debtFd >= 0 && unsyncedBytes >= debtBytes && now >= debtRetryAt;\n  if (due) runPass(\"timed\", null, sample);\n}, pollMs);",
+   "insert": "  due ||= debtFd >= 0 && unsyncedBytes >= debtBytes && now >= debtRetryAt;\n  const before = trace ? Atomics.load(shared, 6) : 0;\n  if (due) runPass(\"timed\", null, 0, sample);\n  if (trace) parentPort.postMessage({ type: \"pace\", tick: tickNo, now, lastAt: lastThen, work, changed: changedNow, timed: wasTimed, retry: retrying, started: Atomics.load(shared, 6) !== before, startedAt: timedStartedAt, deferredAt, gen: sampledGen, committedFrames: sample?.h.index?.mxFrame });\n}, pollMs);"
+  },
+  {
+   "name": "wal-maintenance.ts@370",
+   "anchor": "    if (!Atomics.load(shared, 3)) close();\n  } else if (m.op === \"passive\") runPass(\"requested\", m.reqId);\n});",
+   "insert": "    if (!Atomics.load(shared, 3)) close();\n  } else if (m.op === \"passive\") runPass(\"requested\", m.reqId, hooks.takeHold());\n});"
+  },
+  {
+   "name": "wal-maintenance.ts@379",
+   "anchor": "  try {\n    fd = openSync(walFile, \"r\");",
+   "insert": "  try {\n    if (walMaintenanceTestHooks.unreadableReads > 0) { walMaintenanceTestHooks.unreadableReads--; throw Object.assign(new Error(\"EMFILE: too many open files\"), { code: \"EMFILE\" }); }\n    fd = openSync(walFile, \"r\");"
+  },
+  {
+   "name": "wal-maintenance.ts@429",
+   "anchor": "\ninterface Pending { afterPass: number; resolve: (result: PassiveResult) => void }",
+   "insert": "\n/** One poll tick as the worker's scheduler saw it (test hook only). `work` is the scheduler's own committed-work decision (data_version changed, and a new\n * salt or a step of growth since the last pass; a pass deferred by the reset fence shows work=true, started=false); `retry` is its reader-blocked or failed-read retry flag; `now` and `lastAt` are the clocks it compared. `startedAt` is the monotonic epoch time of the latest timed pass's start, before its work. `deferredAt` is the worker's Date.now() when the reset fence first deferred the pass now pending (null when none is): the clock the DUE_MS cap is measured on. */\nexport interface PaceTick { tick: number; now: number; lastAt: number; work: boolean; changed: boolean; timed: boolean; retry: boolean; started: boolean; startedAt?: number; deferredAt?: number | null; gen: number; committedFrames?: number }\nexport interface WalMaintenanceHooks {\n  /** Test only: when set before the worker starts, receives one record per poll tick. Observe only: it never changes a tick or a decision. */\n  paceTrace: ((tick: PaceTick) => void) | null;\n  /** Test only: one Int32 cell, read by the worker at the top of each poll tick (before data_version) and echoed in the pace record as `gen`. Set before the worker starts. */\n  paceGen: Int32Array | null;\n  /** Test only: milliseconds between retries of a scrub that did not finish (default 30 s). */\n  retryMs: number;\n  /** Test only: the least time between two \"checkpointer stopped\" lines (default 10 minutes). */\n  failureLogGapMs: number;\n  /** Test only: the pauses before each restart of a failed checkpointer (default 1 s, 5 s, 30 s, 2 min, then every 5 min for good; an empty list means no restart). */\n  restartDelaysMs: number[];\n  /** Test only: the next this-many reads of the log header fail as if the system refused them (EMFILE). */\n  unreadableReads: number;\n  /** Test only: ends the checkpointer thread abruptly. */\n  terminate(): void;\n  /** Test only: workers created so far, live workers now, and starts refused because the journal limit could not be pinned. */\n  spawned(): number;\n  liveWorkers(): number;\n  pinRefusals(): number;\n  /** Test only: fails the current worker as if it had errored; false when there is none (stopped or retired). */\n  failActive(): boolean;\n  /** Test only: the descriptor number the sync-debt flush uses (-1: none), and how many replaced descriptors still wait for their workers to exit. */\n  debtFd(): number;\n  debtOrphans(): number;\n  /** Test only: re-arms both one-shot log lines. */\n  resetLogOnce(): void;\n  captureHandler(): (message: unknown) => void;\n  /** Test only: the thread id of the current checkpointer (-1: none). */\n  workerThreadId(): number;\n  heartbeat(): number;\n  lastResult(): PassiveResult | null;\n}\nexport const walMaintenanceTestHooks: WalMaintenanceHooks = {\n  paceTrace: null, paceGen: null, failureLogGapMs: 600_000, retryMs: 30_000, restartDelaysMs: [1000, 5000, 30_000, 120_000, 300_000], unreadableReads: 0,\n  terminate() { if (active) void endWorker(active.worker, active.gen); },\n  spawned() { return generation; },\n  liveWorkers() { return live.size; },\n  pinRefusals() { return pinRefused; },\n  failActive() { const fail = failCurrent; fail?.(); return Boolean(fail); },\n  debtFd() { return debtFd?.fd ?? -1; },\n  debtOrphans() { return debtOrphans.length; },\n  captureHandler() { return active?.handler ?? (() => {}); },\n  workerThreadId() { return active?.worker.threadId ?? -1; },\n  heartbeat() { return active ? Atomics.load(active.shared, HEARTBEAT_SLOT) : -1; },\n  lastResult() { return active?.lastResult ?? null; },\n  resetLogOnce() { refusalLogged = false; lastFailureLogAt = -Infinity; },\n};\n/** Test seam for a checkpointer barrier before beginCopy (site 1) or endCopy (site 2). Production never sets it; the only writer is\n *  server/testing/wal-barrier.ts, which the server build excludes (guarded by wal-park-guard.test.ts). Read when a worker is created. */\nexport const walWorkerSeam: { barrier: { source: string; buffer: SharedArrayBuffer } | null } = { barrier: null };\n\ninterface Pending { afterPass: number; resolve: (result: PassiveResult) => void }"
+  },
+  {
+   "name": "wal-maintenance.ts@438",
+   "anchor": "}\nconst RETRY_MS = 30_000, FAILURE_LOG_GAP_MS = 600_000, RESTART_DELAYS_MS = [1000, 5000, 30_000, 120_000, 300_000];\nlet generation = 0;\nexport function walMaintenanceCounters() {",
+   "insert": "}\nconst passListeners = new Set<(pass: WalPass) => void>();\nlet generation = 0;\nlet requestedPass: WalPass | null = null;\nexport function onWalPass(listener: (pass: WalPass) => void): () => void {\n  passListeners.add(listener);\n  return () => { passListeners.delete(listener); };\n}\nexport function lastRequestedPass(): WalPass | null { return requestedPass; }\nexport function walMaintenanceCounters() {"
+  },
+  {
+   "name": "wal-maintenance.ts@573",
+   "anchor": "  try { worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: {\n    file, shared: shared.buffer, copied: copied.buffer, admission:(ioBudget.rebuildAdmissionIfPoisoned(), ioBudget.checkpointAdmissionBuffer()), admissionSource:checkpointLedger.toString(), nativeMeterPath:ioMeterNativePath(), nativeMeterId:ioMeterNativeId(), osPageSize:ioMeterPageSize(), stepBytes: STEP_BYTES, pollMs: STEP_POLL_MS, dueMs: DUE_MS, debtBytes: DEBT_SYNC_BYTES, debtFd: { debt: debtFdFor(file), index: indexFdFor(file) },\n  } }); }",
+   "insert": "  try { worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: {\n    file, shared: shared.buffer, copied: copied.buffer, admission:(ioBudget.rebuildAdmissionIfPoisoned(), ioBudget.checkpointAdmissionBuffer()), admissionSource:checkpointLedger.toString(), admissionClockOffsetMs:admissionClockOffset(), nativeMeterPath:ioMeterNativePath(), nativeMeterId:ioMeterNativeId(), osPageSize:ioMeterPageSize(), stepBytes: STEP_BYTES, pollMs: STEP_POLL_MS, dueMs: DUE_MS, debtBytes: DEBT_SYNC_BYTES, debtFd: { debt: debtFdFor(file), index: indexFdFor(file) }, barrier: walWorkerSeam.barrier, trace: walMaintenanceTestHooks.paceTrace !== null, paceGen: walMaintenanceTestHooks.paceGen?.buffer ?? null,\n  } }); }"
+  },
+  {
+   "name": "wal-maintenance.ts@616",
+   "anchor": "    if ((raw as { type?: string }).type === \"debt-fail\") { logDebtFailure((raw as { message?: unknown }).message); return; }\n    if (message.type !== \"pass\" || message.gen !== m.gen || typeof message.id !== \"number\" || message.id <= lastDelivered) return;",
+   "insert": "    if ((raw as { type?: string }).type === \"debt-fail\") { logDebtFailure((raw as { message?: unknown }).message); return; }\n    if ((raw as { type?: string }).type === \"pace\") { if (active === m) walMaintenanceTestHooks.paceTrace?.(raw as PaceTick); return; }\n    if (message.type !== \"pass\" || message.gen !== m.gen || typeof message.id !== \"number\" || message.id <= lastDelivered) return;"
+  },
+  {
+   "name": "wal-maintenance.ts@628",
+   "anchor": "    }\n    if (active !== m || m.failed) return;",
+   "insert": "    }\n    for (const listener of passListeners) {\n      try { listener(pass); } catch { /* one observer cannot prevent delivery */ }\n    }\n    if (active !== m || m.failed) return;"
+  },
+  {
+   "name": "wal-maintenance.ts@635",
+   "anchor": "    m.waiting.delete(pass.reqId);\n    pending.resolve(result);",
+   "insert": "    m.waiting.delete(pass.reqId);\n    requestedPass = pass;\n    pending.resolve(result);"
+  },
+  {
+   "name": "wal-maintenance.ts@655",
+   "anchor": "  if (Date.now() - startedAt > 60_000) restartAttempts = 0;\n  const delays = RESTART_DELAYS_MS;\n  if (!delays.length) return;",
+   "insert": "  if (Date.now() - startedAt > 60_000) restartAttempts = 0;\n  const delays = walMaintenanceTestHooks.restartDelaysMs;\n  if (!delays.length) return;"
+  },
+  {
+   "name": "wal-maintenance.ts@673",
+   "anchor": "  const now = performance.now();\n  if (now - lastFailureLogAt < FAILURE_LOG_GAP_MS) return;\n  lastFailureLogAt = now;",
+   "insert": "  const now = performance.now();\n  if (now - lastFailureLogAt < walMaintenanceTestHooks.failureLogGapMs) return;\n  lastFailureLogAt = now;"
+  },
+  {
+   "name": "wal-maintenance.ts@690",
+   "anchor": "  const now = performance.now(); // its own gap: a swallowed flush failure never silences a checkpointer failure line\n  if (now - lastDebtLogAt < FAILURE_LOG_GAP_MS) return;\n  lastDebtLogAt = now;",
+   "insert": "  const now = performance.now(); // its own gap: a swallowed flush failure never silences a checkpointer failure line\n  if (now - lastDebtLogAt < walMaintenanceTestHooks.failureLogGapMs) return;\n  lastDebtLogAt = now;"
+  },
+  {
+   "name": "wal-maintenance.ts@826",
+   "anchor": "      .then(() => settleOwed()).catch(() => {}).finally(() => { retrying = false; armRetry(); });\n  }, RETRY_MS);\n  retryTimer.unref();",
+   "insert": "      .then(() => settleOwed()).catch(() => {}).finally(() => { retrying = false; armRetry(); });\n  }, walMaintenanceTestHooks.retryMs);\n  retryTimer.unref();"
+  },
+  {
+   "name": "wal-maintenance.ts@903",
+   "anchor": "  return done;\n}\n\n\n",
+   "insert": "  return done;\n}\n\n// Under vitest only: lets test cleanup await this copy's checkpointer even after vi.resetModules() made it a stranger.\nregisterTestHandle(\"stop\", dir => {\n  if (dir !== undefined && ![...live].some(m => pathIsWithin(m.walFile, dir)) && !(portsFile && pathIsWithin(portsFile, dir))) return;\n  return stopWalMaintenance();\n}, () => [...live].flatMap(m => [m.walFile, `${m.file}-shm`]));\n"
+  },
+  {
+   "name": "wal-maintenance.ts@failCurrent0",
+   "anchor": "let pinRefused = 0;\n",
+   "insert": "let pinRefused = 0;\nlet failCurrent: (() => void) | null = null;\n"
+  },
+  {
+   "name": "wal-maintenance.ts@failCurrent1",
+   "anchor": "  active = m; live.add(m);\n  const fail = (error?: unknown) => {",
+   "insert": "  active = m; live.add(m);\n  failCurrent = () => fail(new Error(\"test\"));\n  const fail = (error?: unknown) => {"
+  },
+  {
+   "name": "wal-maintenance.ts@failCurrent2",
+   "anchor": "active = null; logFailure(error);",
+   "insert": "active = null; failCurrent = null; logFailure(error);"
+  },
+  {
+   "name": "wal-maintenance.ts@failCurrent3",
+   "anchor": "if (active === m) { active = null; }",
+   "insert": "if (active === m) { active = null; failCurrent = null; }"
+  },
+  {
+   "name": "wal-maintenance.ts@failCurrent4",
+   "anchor": "stopped = true; ports = null;",
+   "insert": "stopped = true; ports = null; failCurrent = null;"
+  },
+  {
+   "name": "wal-restart-header",
+   "anchor": "  if (readSync(fd, headCheck, 0, 32, 0) !== 32 || !original.equals(headCheck) || index.salt !== salt)\n    throw Object.assign(Error(\"WAL generation changed\"), { snapshot });\n  return { ...snapshot, logSize: body % frameSize ? size : 32 + liveFrames * frameSize, frameSize, pageSize };",
+   "insert": "  parkAt(4);\n  if (readSync(fd, headCheck, 0, 32, 0) !== 32 || !original.equals(headCheck) || index.salt !== salt)\n    throw Object.assign(Error(\"WAL generation changed\"), { snapshot });\n  parkAt(5);\n  return { ...snapshot, logSize: body % frameSize ? size : 32 + liveFrames * frameSize, frameSize, pageSize };"
+  },
+  {
+   "name": "recovery-admission",
+   "anchor": "const admissionBytes = WAL_ADMISSION_BYTES;",
+   "insert": "let admissionBytes = WAL_ADMISSION_BYTES;"
+  },
+  {
+   "name": "recovery-stall",
+   "anchor": "const stallMs = WAL_STALL_MS;",
+   "insert": "let stallMs = WAL_STALL_MS;"
+  },
+  {
+   "name": "recovery-knobs",
+   "anchor": "export function walWritesPaused(): boolean { return writesPaused; }",
+   "insert": "export function walWritesPaused(): boolean { return writesPaused; }\n/** Test-only: lowers the admission ceiling and the stall bound so a behavioural run fits in seconds. It refuses to run outside Vitest,\n * so the production defaults are unreachable. Call with no argument to restore them. */\nexport function setWalRecoveryKnobsForTest(knobs: { admissionBytes?: number; stallMs?: number } = {}): void {\n  if (!process.env.VITEST) throw new Error(\"setWalRecoveryKnobsForTest is test-only\");\n  admissionBytes = knobs.admissionBytes ?? WAL_ADMISSION_BYTES;\n  stallMs = knobs.stallMs ?? WAL_STALL_MS;\n}"
+  }
+ ],
+ "server/io-budget.ts": [
+  {
+   "name": "io-budget.ts@23",
+   "anchor": "\nimport { checkpointLedger, isAdmissionLockTimeout } from \"./admission-shared.ts\";",
+   "insert": "\nimport { registerTestHandle } from \"./test-handle-registry.ts\";\nimport { checkpointLedger, isAdmissionLockTimeout } from \"./admission-shared.ts\";"
+  },
+  {
+   "name": "io-budget.ts@105",
+   "anchor": " * coverage endpoint. The minute tick owns the authenticated external sample. */\n/** Production conversion of the process counters to an admission reading. The deps are parameters only so a test can drive the real",
+   "insert": " * coverage endpoint. The minute tick owns the authenticated external sample. */\n/** Test only: shifts the wall clock the admission ledger sees, here and in the checkpointer thread (see wal-maintenance.ts), so a\n * test can start a run at a chosen second of the minute. Always 0 outside a test run. */\nlet admissionClockOffsetMs=0;\nexport function setAdmissionClockOffsetForFixture(ms:number):void {\n if(!process.env.VITEST)throw new Error(\"IO_ADMISSION_TEST_ONLY\");\n admissionClockOffsetMs=ms;\n}\nexport function admissionClockOffset():number {return admissionClockOffsetMs;}\n/** Production conversion of the process counters to an admission reading. The deps are parameters only so a test can drive the real"
+  },
+  {
+   "name": "io-budget.ts@108",
+   "anchor": " * win32 the OS reading is an alias of the meter, never a second source: its validity is always false. */\nexport function readAdmissionProcess():IoReading {\n const platform=process.platform,meterSnapshot=ioMeterSnapshot,meterTotal=ioMeterTotal,disk=darwinWrittenBytes;\n const usage=process.resourceUsage(),at=Date.now(),cpuMicros=usage.userCPUTime+usage.systemCPUTime;\n const snap=meterSnapshot();",
+   "insert": " * win32 the OS reading is an alias of the meter, never a second source: its validity is always false. */\nexport function readAdmissionProcess(platform:string=process.platform,meterSnapshot:()=>{total:number;known?:boolean}|null=ioMeterSnapshot,meterTotal:()=>number|null=ioMeterTotal,disk:()=>number|null=darwinWrittenBytes):IoReading {\n const usage=process.resourceUsage(),at=Date.now()+admissionClockOffsetMs,cpuMicros=usage.userCPUTime+usage.systemCPUTime;\n const snap=meterSnapshot();"
+  },
+  {
+   "name": "io-budget.ts@197",
+   "anchor": "    try{this.log(`[io-budget] ERROR ${line}`);}catch{/* a line never changes the ledger */}\n  }",
+   "insert": "    try{this.log(`[io-budget] ERROR ${line}`);}catch{/* a line never changes the ledger */}\n  }\n  /** A closed test fixture is a fresh application. Never resets a running product ledger. */\n  resetAdmissionForFixture():void {\n    this.ownerIdle.minute=-2;\n    if(!process.env.VITEST)throw new Error(\"IO_ADMISSION_TEST_ONLY\");\n    const reading=this.admissionRead(),a=this.admissionShared;\n    a.lock();try{\n      for(const slot of [2,3,4,5,6,8,11,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29])Atomics.store(a.slots,slot,0n);\n      this.copyDebt=[];this.reserved.clear();this.sumWrite=0;this.sumBg=0;this.pendingDelta=null;this.pendingSince=null;this.retryMarks.clear();this.rescanOwners=false;\n      Atomics.store(a.slots,9,BigInt(reading.fsWriteBlocks*BLOCK_BYTES));Atomics.store(a.slots,10,BigInt(reading.meterBytes??0));\n      Atomics.store(a.slots,12,a.slots[9]);Atomics.store(a.slots,13,a.slots[10]);\n      this.admissionMinute=Math.floor(reading.at/IO_BUDGET_INTERVAL_MS);Atomics.store(a.slots,1,BigInt(this.admissionMinute));\n    }finally{a.unlock();}\n  }"
+  },
+  {
+   "name": "io-budget.ts@877",
+   "anchor": "ioBudget.registerByteSource(\"owned-node-children\",ownedChildIoBytes,{child:true});\nioBudget.registerByteSource(\"sentinel-file-receipts\",sentinelExternalIoBytes,{child:true});",
+   "insert": "ioBudget.registerByteSource(\"owned-node-children\",ownedChildIoBytes,{child:true});\nregisterTestHandle(\"stop\",dir=>{if(dir===undefined)ioBudget.resetAdmissionForFixture();});\nioBudget.registerByteSource(\"sentinel-file-receipts\",sentinelExternalIoBytes,{child:true});"
+  }
+ ]
+}

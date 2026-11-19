@@ -1,9 +1,12 @@
+import { createMemoryEmailRuntime } from "../testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Flux #519/#520 alignment (flux-router master 42ee7973): the account counters from #1 settings, 403 email_scope_required naming its
+// Flux #519/#520 alignment (the reviewed Flux router contract): the account counters from #1 settings, 403 email_scope_required naming its
 // scope, the account switch and renewal_due on #28, a bot key never mounting on closing or failed inboxes, a 202 hold without a receipt
 // still making a card, and an owner resume that Flux keeps paused saying why instead of "resumed".
+import { serviceQueueFixture } from '../testing/service-queue-fixture.ts';
+import { Store } from '../store.ts';
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { EmailRuntime } from "./runtime.ts";
@@ -13,6 +16,7 @@ import { FakeFlux, fluxError, scopeRequired } from "../testing/fake-flux-email.t
 import { EMAIL_OWNER_COPY, ownerRouteLine } from "../../shared/email-copy.ts";
 import type { BotRecord } from "../store.ts";
 
+import { provenInsert } from "../testing/email-proven.ts";
 const BOT = { id: "b1", name: "Juniper", threadId: "t-b1" };
 const CAPS = { object: "email.capabilities", enabled: true, available: true, account_state: "active", terms_version: "v1", limits: {} };
 let fake: FakeFlux;
@@ -26,7 +30,9 @@ beforeEach(async () => {
   db = new DatabaseSync(":memory:");
   logs = [];
   localBots = new Set(["b1"]);
-  runtime = new EmailRuntime({
+  const producer = serviceQueueFixture(new Store(() => ({instanceId:"fixture",model:"fixture"})),{cancelAtEnd:true});
+  runtime = createMemoryEmailRuntime({
+    authorityFor:producer.authorityFor,
     accountKey: () => "sk-flux-account-fixture", database: () => db, transaction: fn => fn(), fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test",
     now: () => 1_800_000_000_000, workspaceRoot: () => undefined, bot: id => (localBots.has(id) ? BOT as unknown as BotRecord : undefined), log: line => logs.push(line),
   });
@@ -34,7 +40,8 @@ beforeEach(async () => {
   runtime.secrets.setBotKey("b1", { token: "bot-fixture", keyId: "key_b1" });
   fake.always("GET", /^\/v1\/email\/capabilities$/, { status: 200, body: CAPS });
   await runtime.probe.refresh();
-  runtime.services()!.store.insertBinding({ botId: "b1", inboxId: "ibx_1", address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy: "auto", failure: null, updatedAt: 1 });
+  producer.queue(runtime.services()!.send.approvalQueue());
+  provenInsert(runtime.services()!.store, { botId: "b1", inboxId: "ibx_1", address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy: "auto", failure: null, updatedAt: 1 });
 });
 
 const call = (method: string, path: string, body?: unknown, patch: Partial<OwnerRouteRequest> = {}) => emailOwnerRoute({
@@ -123,7 +130,7 @@ describe("Email addresses from another setup (2.6, #4)", () => {
     ] } });
     const status = await call("GET", "/api/email/status");
     expect(status?.body.otherSetups).toEqual([{ inboxId: "ibx_9", address: "old@murage.email" }]);
-    expect((await call("POST", "/api/email/other-setups/ibx_9/remove", { confirm: true }, { surface: "phone" }))?.status).toBe(403);
+    expect((await call("POST", "/api/email/other-setups/ibx_9/remove", { confirm: true }, { surface: "phone" }))?.status).toBe(400);
     expect((await call("POST", "/api/email/other-setups/ibx_9/remove", {}))?.status).toBe(400);
     expect((await call("POST", "/api/email/other-setups/ibx_1/remove", { confirm: true }))?.status).toBe(404);
     fake.on("DELETE", /^\/v1\/email\/inboxes\/ibx_9$/, { status: 202, body: { id: "ibx_9", state: "closing" } });

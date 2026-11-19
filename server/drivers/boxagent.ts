@@ -1,3 +1,10 @@
+import { fluxTurnDecision } from "../flux-memory-headers.ts";
+import { registerBusyloopRequestSite, registerBusyloopPayloadSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { inspectFluxResponse } from "./flux-busyloop-readers.ts";
+import { withRequestDelivery } from "./request-delivery.ts";
+import { engineJsonBody } from "./engine-wire.ts";
+import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { NO_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // Box agent driver — the purest form of the idea: the turn runs ON the
 // bot's own cloud computer (box.ascii.dev), not on this machine. Uses the
@@ -63,6 +70,11 @@ function decodeConfig(raw: unknown): BoxAgentConfig {
   return { pollMs: typeof o.pollMs === "number" ? o.pollMs : 2500 };
 }
 
+/** Final provider/model/prompt JSON body, without a JSONL newline. */
+export function serializeBoxAgentInput(message: unknown, beforeWrite?: () => void): string {
+  return engineJsonBody(message, beforeWrite);
+}
+
 export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Computer", supportsMultipleInstances: false },
@@ -76,8 +88,9 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
     const listeners = new Set<RuntimeEventListener>();
     const active = new Map<string, { cancel: () => void; turnId: string; boxId: string }>();
 
-    const emit = (event: RuntimeEvent) => {
-      for (const l of [...listeners]) l(event);
+    const emissionSource = new AsyncLocalStorage<SendTurnInput["sourceContext"]>();
+    const emit = (event: RuntimeEvent, source = emissionSource.getStore()) => {
+      for (const l of [...listeners]) l(event, source);
     };
     const base = (threadId: string, turnId: string) => ({
       eventId: newEventId(),
@@ -88,22 +101,32 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
     });
     // STOP-NONACP-DISPOSE: the one stop gate. Every turn ending and turn.started goes through the entry (finish, markStarted); a Stop
     // (interruptTurn, stopAll) is `gate.ask`, a dispose is `gate.close`, and the gate alone decides which ending a turn gets.
-    const gate = createStopGate({ engineName: "the Cloud computer", emit: (event) => emit(event as unknown as RuntimeEvent), base });
+    const gate = createStopGate({ engineName: "the Cloud computer", emit: (event, source) => emit(event as unknown as RuntimeEvent, source as SendTurnInput["sourceContext"]), base });
 
     const api = async (path: string, opts: RequestInit = {}) => {
-      const res = await fetch(`${BOX_API}${path}`, {
+      const res = await registerBusyloopRequestSite(fluxRouteFor(`${BOX_API}${path}`), fetch(fluxRouteFor(`${BOX_API}${path}`).requestUrl, {
         ...opts,
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...opts.headers },
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...opts.headers, ...(fluxRouteFor(`${BOX_API}${path}`).routed ? fluxTurnDecision({ background: true }).headers : {}) },
         signal: (opts as any).signal ?? AbortSignal.timeout(30_000),
-      });
-      const body: any = await res.json().catch(() => null);
+      }));
+      // only a routed refusal body is read here: every other answer keeps its one body for the read below (no unread copy per poll)
+      const flux = await inspectFluxResponse(fluxRouteFor(`${BOX_API}${path}`).routed && !res.ok ? res.clone() : res, fluxRouteFor(`${BOX_API}${path}`).routed, (opts as any).signal);
+      if (flux.decision && flux.decision.action !== "PASS") throw new Error(`box refused: ${flux.decision.reason}`);
+      const body: any = await registerBusyloopPayloadSite("read", res.json()).catch(() => null);
       if (!res.ok || body?.ok === false) {
         throw new Error(body?.code ?? body?.error ?? `box HTTP ${res.status}`);
       }
       return body;
     };
 
-    const sendTurn = async (turn: SendTurnInput) => {
+    const sendTurn = (turn: SendTurnInput): Promise<{ turnId: string }> => emissionSource.run(turn.prewarm ? undefined : turn.sourceContext, () => sendTurnCaptured(turn));
+    const emitCapturedSource = emit;
+    const sendTurnCaptured = async (turn: SendTurnInput) => {
+      const source = turn.prewarm ? undefined : turn.sourceContext;
+      const emit = (event: RuntimeEvent) => emitCapturedSource(event, source);
+      // Boxagent's computer entry selects the native cloud box, not an MCP
+      // child. Any additional consuming mount still needs an actual ingress.
+      assertConsumingMountAdmission({ ...turn, integrations: { ...turn.integrations, computer: undefined } });
     turn = renderMurageTurn(turn, NO_TOOL_SURFACE, {});
       const { threadId } = turn;
       const computer = turn.integrations?.computer;
@@ -116,7 +139,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       const turnId = newId();
       // The turn's gate entry, from here to its single ending. A Stop, Stop All or dispose before the POST has no `active` entry to reach
       // (it is set after the POST), so the entry carries the mark: the fence below refuses the POST once it is marked.
-      const entry = gate.enter(threadId, { turnId });
+      const entry = gate.enter(threadId, { turnId, source });
       // Failures with no mark stay rejections (busy, a refused send, a box refusal); a marked turn ends through the entry.
       return gate.run(entry, async () => {
       const model = turn.model || MODELS.default;
@@ -163,22 +186,26 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       sent = await gate.step(entry, sendCloudPrompt({
         turnId, boxId, threadId, token,
         stop: { gate, entry },
+        attempt: { written: id => turn.attemptWritten?.(id), uncertain: id => turn.attemptUncertain?.(id), notWritten: id => turn.attemptNotWritten?.(id) },
         beforeSubmit: () => {
           refuseIfMarked();
-          turn.beforeSubmit?.();
+          const attempt = turn.beforeSubmit?.();
           refuseIfMarked();
+          return attempt;
         },
         events: async () => { const listed: any = await api(`/boxes/${boxId}/events`); return listed?.events ?? listed?.items ?? []; },
         // the irreversible call: the entry is live once the box ACCEPTED the prompt (liveWhen: a refused POST, an HTTP error status or a body
         // saying ok:false, never goes live; a mark that landed during the POST is read by the step below)
         post: () => gate.launch(entry, async () => {
-          const res = await fetch(`${BOX_API}/boxes/${boxId}/prompt`, {
+          const res = await registerBusyloopRequestSite(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`), fetch(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`).requestUrl, {
             method: "POST",
-            headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+            headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`).routed ? fluxTurnDecision(turn).headers : {}) },
             body: JSON.stringify({ provider: providerFor(model), model, prompt }),
             signal: AbortSignal.timeout(30_000),
-          });
-          return { status: res.status, body: await res.json().catch(() => null) };
+          }));
+          const flux = await inspectFluxResponse(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`).routed && !res.ok ? res.clone() : res, fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`).routed);
+          if (flux.decision && flux.decision.action !== "PASS") return { status: res.status, body: { ok: false, code: `box refused: ${flux.decision.reason}` } };
+          return { status: res.status, body: await registerBusyloopPayloadSite("read", res.json()).catch(() => null) };
         }, { liveOn: "resolve", liveWhen: (res) => res.status >= 200 && res.status < 300 && (res.body as { ok?: unknown } | null)?.ok !== false }),
       }), {
         // a Stop or a dispose landed while the box was answering: the prompt is on the box, so it is Stopped now and the turn ends
@@ -302,6 +329,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                   origin: "engine",
                   itemId: id,
                   title: String(ev.title ?? ev.command ?? kind).slice(0, 80),
+                  input: ev.input ?? ev.arguments ?? ev.parameters ?? ev.data?.input ?? ev.data?.arguments ?? ev.data?.parameters ?? (typeof ev.command === "string" ? { command: ev.command } : undefined),
                 });
               } else {
                 // work the chat does not show is still work
@@ -381,7 +409,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       }
     };
 
-    return {
+    return withRequestDelivery({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
@@ -394,7 +422,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         capabilities: { sessionModelSwitch: "in-session" },
         sendTurn,
         // the gate first, before anything else: a send before its POST has no live handle, only the mark; a live turn's handle is its stopLive
-        interruptTurn: async (threadId) => { gate.ask(threadId); },
+        interruptTurn: async (threadId, turnId) => { gate.ask(threadId, turnId); return { closeConfirmed: false, reason: "stop-failed" }; },
         respondToRequest: async () => "unavailable" as const, // this engine has no asks to answer
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => { gate.ask(); },
@@ -411,6 +439,6 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         gate.settleOutstanding(open);
         listeners.clear();
       },
-    };
+    });
   },
 };

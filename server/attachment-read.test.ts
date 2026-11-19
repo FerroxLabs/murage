@@ -91,7 +91,7 @@ describe("leaf checks", () => {
   });
 
   it.runIf(posix)("refuses a FIFO without opening it, and the event loop keeps running", async () => {
-    execFileSync("mkfifo", [join(folder, NAME)]);
+    execFileSync("mkfifo", [join(folder, NAME)], { windowsHide: true });
     const seen = countingFs();
     __setAttachmentFsForTests(seen.fs);
     let ticked = false;
@@ -143,7 +143,7 @@ describe("leaf checks", () => {
   it.runIf(posix)("a FIFO swapped in after the check does not hang: refused after the open, no byte read", async () => {
     const path = join(folder, NAME);
     writeFileSync(path, "plain");
-    __setAttachmentReadHookForTests(stage => { if (stage === "before-open") { unlinkSync(path); execFileSync("mkfifo", [path]); } });
+    __setAttachmentReadHookForTests(stage => { if (stage === "before-open") { unlinkSync(path); execFileSync("mkfifo", [path], { windowsHide: true }); } });
     let ticked = false;
     setTimeout(() => { ticked = true; }, 0);
     const read = await readAttachmentFile(home(), NAME, ATTACHMENT_READ_CEILING);

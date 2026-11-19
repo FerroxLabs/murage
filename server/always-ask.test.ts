@@ -2,10 +2,10 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The commands that always ask, at every access level. Under No limits these
-// used to be answered by the machine; now they raise a card. Ordinary work,
-// including the same words inside an echo or a commit message, still runs
-// without one, and text the reader cannot parse asks rather than runs.
+// The raw reader and the approval policy are tested separately.
+// MAIN RULING 2026-11-13 wipe-only: No limits cards only for a wipe or
+// catastrophe. Reader doubts and protected writes alone do not card.
+// Unproven origins, guests and other people's threads retain Ask.
 //
 // Table-driven: every row from both Astra reviews is here and marked (r1, r2)
 // next to adversarial twins of each shape.
@@ -17,11 +17,12 @@
 // ordinary (`null` in a rule column). A row that used to be ordinary and now
 // asks is `nowAsks(...)` in its ordinary table (section 4).
 import { homedir } from "node:os";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import type { AlwaysAskRule } from "./always-ask.ts";
 import type { AutoContext } from "./auto-approve.ts";
 import { nlh0 } from "./testing/marks-nlh0.ts";
+import { expectNoLimitsOwnerOutcome, isWipeRule } from "./testing/no-limits-1019.ts";
 
 // The test setup gives each file a home folder under the temp folder, which
 // makes the temp folder the folder that holds the home folders, and the
@@ -32,6 +33,11 @@ process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { alwaysAskCommand } = await import("./always-ask.ts");
 const { approvalHoldNote, autoVerdict } = await import("./auto-approve.ts");
+const { installWipeContextReader } = await import("./wipe/context.ts");
+const { MountInventory } = await import("./wipe/mounts.ts");
+// These rows model an ordinary /tmp, not the runner's bind-mounted Git config.
+const mountInventory = new MountInventory(() => []);
+afterAll(installWipeContextReader(() => ({ mountInventory })));
 const marksModule = await import("./shell/marks.ts");
 const wipeVocab = await import("./shell/wipe-vocab.ts").catch(() => undefined); // NLH0 has no wipe vocabulary
 /** The owner's clean No limits read (MARKS R1); a plain call on a tree that has none (NLH0). */
@@ -1140,8 +1146,8 @@ const ruleOf = (command: string, cwd?: string) => alwaysAskCommand(command, cwd)
 // position (FIX4). Rows that mean "ordinary work in a project" run from PROJECT; each shared block below has a
 // "(no cwd)" twin whose expectation is a frozen table probed with no folder (the card the reader raises then).
 const PROJECT = "/w";
-/** M-R10 monotonic: the only cards No limits keeps are a named catastrophe (deny rule) and the protected-path wipe list. */
-const denyOrWipe = (rule?: string | null) => rule !== undefined && rule !== null && rule !== "unreadable" && rule !== "unknown-target";
+// MAIN RULING 2026-11-13 wipe-only: protected-path is not a catastrophe.
+const denyOrWipe = isWipeRule;
 type NoCwd = Array<[command: string, rule: AlwaysAskRule | null, doubt?: string]>;
 const noCwdRows = (table: NoCwd) => table.map(([command, rule, doubt]) => ({ title: title(command), command, rule, doubt }));
 /** The hit with its doubt, null for an ordinary command. */
@@ -1589,9 +1595,16 @@ describe("5.4 from a folder", () => {
 
   it.each(ORDINARY_FROM_FOLDER)("%s run from %s is ordinary unless it says (%s)", (command, cwd, rule) => {
     expect(ruleOf(command, cwd)).toBe(rule ?? null);
-    const verdict = autoVerdict(NO_LIMITS, "Bash", command, { exactCommand: { command, cwd, engine: "claude" } });
+    const context: AutoContext = { exactCommand: { command, cwd, engine: "claude" } };
+    const verdict = autoVerdict(NO_LIMITS, "Bash", command, context);
     if (rule) expect(verdict).toMatchObject({ approve: null, source: "always-ask", rule });
-    else expect(verdict.approve).not.toBeNull();
+    else {
+      // MAIN RULING 2026-11-13 wipe-only: bot flags alone do not prove an owner turn.
+      expect(verdict.approve).toBeNull();
+      // The owner facts model the authenticated turn supplied at this policy seam.
+      expect(autoVerdict(NO_LIMITS, "Bash", command, { ...context, ...OWNER_TURN }))
+        .toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
+    }
   });
 });
 
@@ -1709,6 +1722,351 @@ const HELD_PAST_ALWAYS_ASK = new Set(["env -i PATH=/bin ls", "env -i PATH=/usr/b
 const namedOnNoLimitsOnly = (command: string, rule: AlwaysAskRule) =>
   rule !== "unreadable" && rule !== "unknown-target" && (/^(\w+)=\S+; f\(\)\{ \1=\/tmp; \}; rm -r/.test(command) || command.endsWith('D=/tmp; fi; rm -rf "$D"') || command.endsWith('D=/tmp; fi; rm "$D"') || command === 'true || D=/; rm -rf "$D"');
 
+// The raw reader's legacy rule does not decide whether an executable effect is a wipe.
+// Each exception below is a literal fixture judgment; none is selected from the actual verdict.
+const noLimitsEffectRules = new Map<string, AlwaysAskRule | null>([
+  // MAIN RULING 1114-NOLIMITS-OLD-ORACLES: := preserves the already set /tmp; no protected root is selected.
+  ['D=/tmp; f(){ : "${D:=/usr}"; }; f; rm -rf "$D"', null],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["f(){ set -- ~; rm -rf \"$1\"; }; f", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: KNOWN-CONSERVATIVE unevaluated else branch retains disk root.
+  ["if true; then D=/tmp; else D=/; fi; rm -rf \"$D\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["case $x in a) D=/tmp ;; *) D=/ ;; esac; rm -rf \"$D\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["[ -d x ] && cd x || cd /; rm -rf *", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["powershell -c '[IO.Directory]::Delete(\"$HOME\", $true)'", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["find $ROOT/ -delete", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["f(){ D=/usr; }; D=/tmp; f; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: KNOWN-CONSERVATIVE uncalled local /usr binding; actual target remains /tmp.
+  ["D=/tmp; f(){ local D=/usr; }; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/tmp; f(){ export D=/usr; }; f; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/tmp; f(){ for D in /usr; do :; done; }; f; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/tmp; f(){ eval \"$1\"; }; f 'D=/usr'; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/tmp; f(){ eval D=/usr; }; f; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: KNOWN-CONSERVATIVE uncalled function cd /usr; accepted conservative cwd alternative.
+  ["f(){ cd /usr; }; rm -rf *", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/usr; false && D=/tmp; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: KNOWN-CONSERVATIVE uncalled else-branch home-wipe definition.
+  ["if true; then f(){ ls; }; else f(){ rm -rf ~; }; fi; f", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["Remove-Item -c x -Recurse ~", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["Remove-Item $flags ~", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["rm $FLAGS /", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["rm \"$f\" /usr", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["$'rm\\0x' -rf /usr", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["$'rm\\x00' -rf ~", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["$'rm\\c@' -rf ~", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["printf '%s' 'rm -rf /' | sh", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["printf '%s%s' 'rm -rf ' '~' | sh", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["printf 'rm -rf %s\\n' / | bash", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["g(){ D=/usr; }; f(){ g; }; D=/tmp; f; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/usr; D=/tmp true; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/usr; D=/tmp | cat; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/usr; D=/tmp & wait; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["rm -rf \"$D\"/*", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["rm -rf ~/$x", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: KNOWN-CONSERVATIVE uncalled HOME=/ binding; accepted conservative /bin target.
+  ["f(){ HOME=/; }; rm -rf $HOME/bin", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["R=rm; R=ls true; $R -rf ~", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["R=rm; R=ls | cat; $R -rf ~", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["R=rm; R=ls & wait; $R -rf ~", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["g(){ R=rm; }; f(){ g; }; R=ls; f; $R -rf ~", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["f(){ g; }; g(){ R=rm; }; R=ls; f; $R -rf ~", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/usr; D=/tmp env; rm -r \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["h(){ g; }; g(){ D=/usr; }; f(){ h; }; D=/tmp; f; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["g(){ D=/usr; }; f(){ g; }; D=/tmp; f; rm -rf $D", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/usr; D=/tmp true; rm -rf $D", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/usr; D=/tmp | cat; rm -rf $D", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/usr; D=/tmp & wait; rm -rf $D", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["D=/usr; D=/tmp env; rm -r $D", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["h(){ g; }; g(){ D=/usr; }; f(){ h; }; D=/tmp; f; rm -rf $D", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["g(){ DIR=/usr; }; f(){ g; }; DIR=/tmp; f; rm -rf \"${DIR}\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["DIR=/usr; DIR=/tmp true; rm -rf \"${DIR}\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["DIR=/usr; DIR=/tmp | cat; rm -rf \"${DIR}\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["DIR=/usr; DIR=/tmp & wait; rm -rf \"${DIR}\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["DIR=/usr; DIR=/tmp env; rm -r \"${DIR}\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["h(){ g; }; g(){ DIR=/usr; }; f(){ h; }; DIR=/tmp; f; rm -rf \"${DIR}\"", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["g(){ target=/usr; }; f(){ g; }; target=/tmp; f; rm -rf ${target}", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["target=/usr; target=/tmp true; rm -rf ${target}", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["target=/usr; target=/tmp | cat; rm -rf ${target}", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["target=/usr; target=/tmp & wait; rm -rf ${target}", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["target=/usr; target=/tmp env; rm -r ${target}", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["h(){ g; }; g(){ target=/usr; }; f(){ h; }; target=/tmp; f; rm -rf ${target}", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["g(){ d=/usr; }; f(){ g; }; d=/tmp; f; rm -rf $d/", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["d=/usr; d=/tmp true; rm -rf $d/", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["d=/usr; d=/tmp | cat; rm -rf $d/", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["d=/usr; d=/tmp & wait; rm -rf $d/", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["d=/usr; d=/tmp env; rm -r $d/", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["d=/usr; f(){ d=/tmp; }; rm -rf $d/", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the top-level OS folder.
+  ["h(){ g; }; g(){ d=/usr; }; f(){ h; }; d=/tmp; f; rm -rf $d/", "delete-system-folder"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["g(){ D=/; }; f(){ g; }; D=/tmp; f; rm -rf \"$D\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["D=/; D=/tmp true; rm -rf \"$D\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["D=/; D=/tmp | cat; rm -rf \"$D\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["D=/; D=/tmp & wait; rm -rf \"$D\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["D=/; D=/tmp env; rm -r \"$D\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["h(){ g; }; g(){ D=/; }; f(){ h; }; D=/tmp; f; rm -rf \"$D\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["g(){ D=/; }; f(){ g; }; D=/tmp; f; rm -rf $D", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["D=/; D=/tmp true; rm -rf $D", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["D=/; D=/tmp | cat; rm -rf $D", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["D=/; D=/tmp & wait; rm -rf $D", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["D=/; D=/tmp env; rm -r $D", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["h(){ g; }; g(){ D=/; }; f(){ h; }; D=/tmp; f; rm -rf $D", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["g(){ DIR=/; }; f(){ g; }; DIR=/tmp; f; rm -rf \"${DIR}\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["DIR=/; DIR=/tmp true; rm -rf \"${DIR}\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["DIR=/; DIR=/tmp | cat; rm -rf \"${DIR}\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["DIR=/; DIR=/tmp & wait; rm -rf \"${DIR}\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["DIR=/; DIR=/tmp env; rm -r \"${DIR}\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["h(){ g; }; g(){ DIR=/; }; f(){ h; }; DIR=/tmp; f; rm -rf \"${DIR}\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["g(){ target=/; }; f(){ g; }; target=/tmp; f; rm -rf ${target}", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["target=/; target=/tmp true; rm -rf ${target}", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["target=/; target=/tmp | cat; rm -rf ${target}", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["target=/; target=/tmp & wait; rm -rf ${target}", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["target=/; target=/tmp env; rm -r ${target}", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["h(){ g; }; g(){ target=/; }; f(){ h; }; target=/tmp; f; rm -rf ${target}", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["g(){ d=/; }; f(){ g; }; d=/tmp; f; rm -rf $d/", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["d=/; d=/tmp true; rm -rf $d/", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["d=/; d=/tmp | cat; rm -rf $d/", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["d=/; d=/tmp & wait; rm -rf $d/", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["d=/; d=/tmp env; rm -r $d/", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["d=/; f(){ d=/tmp; }; rm -rf $d/", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["h(){ g; }; g(){ d=/; }; f(){ h; }; d=/tmp; f; rm -rf $d/", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["g(){ D=~; }; f(){ g; }; D=/tmp; f; rm -rf \"$D\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["D=~; D=/tmp true; rm -rf \"$D\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["D=~; D=/tmp | cat; rm -rf \"$D\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["D=~; D=/tmp & wait; rm -rf \"$D\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["D=~; D=/tmp env; rm -r \"$D\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["h(){ g; }; g(){ D=~; }; f(){ h; }; D=/tmp; f; rm -rf \"$D\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["g(){ D=~; }; f(){ g; }; D=/tmp; f; rm -rf $D", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["D=~; D=/tmp true; rm -rf $D", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["D=~; D=/tmp | cat; rm -rf $D", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["D=~; D=/tmp & wait; rm -rf $D", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["D=~; D=/tmp env; rm -r $D", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["h(){ g; }; g(){ D=~; }; f(){ h; }; D=/tmp; f; rm -rf $D", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["g(){ DIR=~; }; f(){ g; }; DIR=/tmp; f; rm -rf \"${DIR}\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["DIR=~; DIR=/tmp true; rm -rf \"${DIR}\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["DIR=~; DIR=/tmp | cat; rm -rf \"${DIR}\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["DIR=~; DIR=/tmp & wait; rm -rf \"${DIR}\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["DIR=~; DIR=/tmp env; rm -r \"${DIR}\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["h(){ g; }; g(){ DIR=~; }; f(){ h; }; DIR=/tmp; f; rm -rf \"${DIR}\"", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["g(){ target=~; }; f(){ g; }; target=/tmp; f; rm -rf ${target}", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["target=~; target=/tmp true; rm -rf ${target}", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["target=~; target=/tmp | cat; rm -rf ${target}", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["target=~; target=/tmp & wait; rm -rf ${target}", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["target=~; target=/tmp env; rm -r ${target}", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["h(){ g; }; g(){ target=~; }; f(){ h; }; target=/tmp; f; rm -rf ${target}", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["g(){ d=~; }; f(){ g; }; d=/tmp; f; rm -rf $d/", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["d=~; d=/tmp true; rm -rf $d/", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["d=~; d=/tmp | cat; rm -rf $d/", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["d=~; d=/tmp & wait; rm -rf $d/", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["d=~; d=/tmp env; rm -r $d/", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["d=~; f(){ d=/tmp; }; rm -rf $d/", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["h(){ g; }; g(){ d=~; }; f(){ h; }; d=/tmp; f; rm -rf $d/", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["echo cm0gLXJmIH4= | base64 -d | sh", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["rm -rf $DIR/", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["rm -rf \"$DIR/\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["rm -rf $DIR/*", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["rm -rf \"$DIR\"/.", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["rm -rf ${DIR}/", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["rm -rf $DIR//", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the disk root.
+  ["sudo rm -rf \"$1/\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: recursive deletion targets the whole home.
+  ["$(echo rm) -rf ~", "delete-home"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: R2: name-filtered find does not wipe the root.
+  ["find / -name x -exec rm -rf {} \\;", null],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: R2: the name filter selects object files.
+  ["find ~ -name '*.o' -delete", null],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: WIPE-V3-PREMISE ASKAPI-16: read consumes the payload and bash receives EOF.
+  ["echo 'rm -rf ~' | while read x; do bash; done", null],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: R4: quoted suffix prevents shell tilde expansion.
+  ["rm -rf ~\"\"", null],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: R6: WhatIf simulates the delete.
+  ["Remove-Item -Recurse -WhatIf ~", null],
+  // MAIN RULING 2026-11-13 wipe-only: the command substitution executes a whole-home delete.
+  ["echo ${a[$(rm -rf ~)]}", "delete-home"],
+  // MAIN RULING 2026-11-13 wipe-only: the backtick substitution executes a whole-home delete.
+  ["echo ${a[`rm -rf ~`]}", "delete-home"],
+  // MAIN RULING 2026-11-13 wipe-only: the true branch deletes from the drive root.
+  ["if true; then cd /; else cd /tmp; fi; rm -rf *", "delete-root"],
+  // MAIN RULING 2026-11-13 wipe-only: the true branch binds the drive root.
+  ["ok=1; if true; then ok=/; fi; rm -rf \"$ok\"", "delete-root"],
+  // MAIN RULING 2026-11-13 wipe-only: the true branch overwrites the disk.
+  ["DEV=/tmp/x; if true; then DEV=/dev/sda; fi; dd if=/dev/zero of=$DEV", "disk-erase"],
+  // MAIN RULING 2026-11-13 wipe-only: the true branch redirects onto the disk.
+  ["DEV=/tmp/x; if true; then DEV=/dev/sda; fi; cat x > $DEV", "disk-erase"],
+  // MAIN RULING 2026-11-13 wipe-only: the true branch moves the delete to the drive root.
+  ["D=/tmp; if true; then D=/; fi; cd $D && rm -rf *", "delete-root"],
+  // MAIN RULING 2026-11-13 wipe-only: find executes the literal system-folder wipe.
+  ["A=-exec; find . \"$A\" sh -c 'rm -rf /usr' \\;", "delete-system-folder"],
+  // MAIN RULING 2026-11-13 wipe-only: the called function binds the system folder.
+  ["D=/tmp; f(){ D=/usr; }; f; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 2026-11-13 wipe-only: the called function binds the system folder on its true branch.
+  ["D=/tmp; f(){ if true; then D=/usr; fi; }; f; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 2026-11-13 wipe-only: both called functions propagate the system-folder target.
+  ["D=/tmp; f(){ g(){ D=/usr; }; g; }; f; rm -rf \"$D\"", "delete-system-folder"],
+  // MAIN RULING 2026-11-13 wipe-only: the called function moves the delete to the system folder.
+  ["f(){ cd /usr; }; f; rm -rf *", "delete-system-folder"],
+  // MAIN RULING 2026-11-13 wipe-only: the called function pushes the system folder before deletion.
+  ["f(){ pushd /usr; }; f; rm -rf *", "delete-system-folder"],
+  // MAIN RULING 2026-11-13 wipe-only: both function calls reach the whole-home delete.
+  ["f(){ g(){ rm -rf ~; }; }; f; g", "delete-home"],
+  // MAIN RULING 2026-11-13 wipe-only: the true branch replaces the called function with a home wipe.
+  ["f(){ ls; }; if true; then f(){ rm -rf ~; }; fi; f", "delete-home"],
+  // MAIN RULING 2026-11-13 wipe-only: the successful condition defines the called home wipe.
+  ["true && f(){ rm -rf ~; }; f", "delete-home"],
+  // MAIN RULING 2026-11-13 wipe-only: explicit true recursion deletes the whole home.
+  ["Remove-Item -Recurse:$true ~", "delete-home"],
+  // MAIN RULING 2026-11-13 wipe-only: the inline path names the whole home with recursion.
+  ["Remove-Item -Path:~ -Recurse", "delete-home"],
+  // MAIN RULING 2026-11-13 wipe-only: the called function changes the command to a whole-home delete.
+  ["R=ls; f(){ R=rm; }; f; $R -rf ~", "delete-home"],
+  // MAIN RULING 2026-11-13 wipe-only: the inline code executes the literal whole-home delete.
+  ["python3 -c \"import os; os.system('rm -rf ~')\"", "delete-home"],
+  // MAIN RULING 2026-11-13 wipe-only: the inline code recursively removes the drive root.
+  ["node -e \"require('fs').rmSync('/', {recursive: true})\"", "delete-root"],
+  // MAIN RULING 1114-WIPE-FIXTURE-DIRECTION: KNOWN-CONSERVATIVE branch retains the prior disk root.
+  ["D=/; if true; then D=/tmp; fi; rm -rf \"$D\"", "delete-root"],
+  // MAIN RULING 2026-11-13 wipe-only: printf only prints the quoted disk-write text.
+  ["printf '%s\\n' 'dd if=/dev/zero of=/dev/sda'", null],
+]);
+
+// MAIN RULING 1114-NOLIMITS-OLD-ORACLES: retain the approved check's
+// home-wipe or conservative fault cards for these exact original bytes.
+// This table affects only the authenticated routine No limits verdict below;
+// the raw reader, unknown cwd and /home/tester home, and other-person hold stay.
+const approvedHomeCards = new Set([
+  'powershell -c "Remove-Item -Recurse -Force $env:USERPROFILE"',
+  'Remove-Item -Bogus -Recurse ~', 'Remove-Item -p ~ -Recurse',
+  'Remove-Item --% -Recurse ~', 'read HOME; rm -rf "$HOME"',
+  'Remove-Item -Recurse "$dir\\"', 'echo $(rm -rf ~', 'echo `rm -rf ~',
+  'sudo --unknown-opt rm -rf ~', 'sudo -Z rm -rf ~',
+]);
+
 describe("always ask, at every access level", () => {
   const RULED = [...CATASTROPHIC, ...ASTRA_R3, ...ASTRA_R4, ...ASTRA_R4_CATASTROPHIC, ...ASTRA_R5, ...ASTRA_R5_VARIANTS];
   const ASKS: Array<[string, AlwaysAskRule]> = [
@@ -1728,10 +2086,19 @@ describe("always ask, at every access level", () => {
       const verdict = autoVerdict(bot, "Bash", command);
       // MARKS r9 R2: probe `D=/usr; f(){ D=/tmp; }; rm -rf "$D"` -> delete-system-folder on No limits, unreadable at Full access
       // (b18 and Auto too): the doubt-free read that names it runs on No limits only. Both are a card.
-      const asked = level === "Full access" && namedOnNoLimitsOnly(command, rule) ? "unreadable" : rule;
+      // a39aa9f5c0 (Sean 2026-11-12 02:50Z): a No limits call with no stored origin is unproven and reads as an Ask bot,
+      // so here it gets the same strict read as Full access; the named rule is the owner's own No limits turn, pinned below.
+      const named = namedOnNoLimitsOnly(command, rule);
+      const asked = named ? "unreadable" : rule;
       expect(verdict).toMatchObject({ approve: null, source: "always-ask", rule: asked });
       // It asks; it is not blocked: the card says what the command would do.
       expect(approvalHoldNote(verdict)).toMatch(/always asks before a command like this/);
+      if (named && level === "No limits") {
+        // the owner's own No limits turn reads it doubt-free and names the wipe, with its deny class (a53b36c189)
+        const owner = autoVerdict(bot, "Bash", command, { ...OWNER_TURN, commandText: command });
+        expect(owner, `owner No limits names ${rule} for ${command}`).toMatchObject({ approve: null, source: "always-ask", rule, classification: "deny" });
+        expect(approvalHoldNote(owner)).toMatch(/Run it anyway\?/);
+      }
     });
 
     it.each(plain([...ORDINARY, ...UNREADABLE_TWINS, ...ASTRA_R3_TWINS, ...ASTRA_R4_TWINS, ...ASTRA_R5_TWINS, ...released(RULED)]))(`${level}: $title runs without asking`, ({ command }) => {
@@ -1748,7 +2115,7 @@ describe("always ask, at every access level", () => {
       }
       // MARKS r9 C4/C5: rows in ASKS_IN_PROJECT still ask on No limits from /w (probe), so they raise their card
       // M-R10 monotonic: a doubt alone no longer cards on No limits (the reader's strict card is replaced by Full access's read);
-      // only the wipe list (protected-path) still asks
+      // MAIN RULING 2026-11-13 wipe-only: protected paths alone do not ask
       const stillAsks = noLimits ? denyOrWipe(ASKS_IN_PROJECT.get(command)?.rule) && ASKS_IN_PROJECT.get(command) : undefined;
       if (stillAsks) expect(verdict).toMatchObject({ approve: null, source: "always-ask", rule: stillAsks.rule });
       else expect(verdict.approve).not.toBeNull();
@@ -1777,7 +2144,19 @@ describe("always ask, at every access level", () => {
       routineLevel: true,
       routineAllow: ["delete:~"],
     };
-    expect(autoVerdict(bot, "Bash", command, context)).toMatchObject({ approve: null, source: "always-ask" });
+    // NOLIM 1.0.19: no grant, allowance or excuse answers it for work another person started (stored origin other) ...
+    expect(autoVerdict(bot, "Bash", command, { ...context, fullAccessOrigin: "other" })).toMatchObject({ approve: null, source: "always-ask" });
+    // ... and for the owner's own routine only the wipe list still asks; every other row runs (Sean's policy flip)
+    const verdict = autoVerdict(bot, "Bash", command, { ...context, fullAccessOrigin: "routine", automated: true });
+    const expectedRule = noLimitsEffectRules.has(command) ? noLimitsEffectRules.get(command) : ASKS.find(([text]) => text === command)?.[1];
+    // MAIN RULING 1114-NOLIMITS-OLD-ORACLES
+    if (approvedHomeCards.has(command)) expect(verdict).toMatchObject({approve:null,source:'always-ask'});
+    else expectNoLimitsOwnerOutcome(verdict, command, expectedRule);
+    // MAIN RULING 2026-11-13 wipe-only: explicit non-wipes require the No limits run verdict.
+    if (noLimitsEffectRules.has(command)) {
+      if (expectedRule === null) expect(verdict).toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
+      else expect(verdict).toMatchObject({ approve: null, source: "always-ask", rule: expectedRule });
+    }
   });
 
   it("keeps the plain words: no dash-pause punctuation and no 'safe'", () => {
@@ -1898,10 +2277,10 @@ describe("UPSEC closed r2: the auditor's items", () => {
   });
 });
 
-// MARKS FIX A (ruling N5), migrated from CLOSED_R2_ORDINARY: inline code that names a wipe word (os.remove, shutil.rmtree) and
-// computes its target (os.path.expanduser) is code the reader cannot finish. On the owner's clean No limits turn that is a typed
-// deny (unknown-target); every other level and origin reads it as NLH0 did (the card text is unreadable at Ask and Auto, Full access
-// runs it). The monotonic table below leaves these two rows out: the typed deny is the ruling's own difference, asserted here.
+// Historical test titles remain stable for failing-ID comparisons.
+// MARKS N5's raw reader still names a typed unknown-target deny for these computed cache paths.
+// MAIN RULING 2026-11-13 wipe-only: that reader finding does not card No limits;
+// neither command deletes the whole home. The raw reader and lower levels keep their assertions.
 const N5_ROWS = [
   "python3 -c \"import os; os.remove(os.path.expanduser('~/.cache/x'))\"",
   "python3 -c \"import shutil, os; shutil.rmtree(os.path.expanduser('~/.cache/pip'))\"",
@@ -1914,7 +2293,9 @@ describe("MARKS N5: inline code naming a wipe word and computing its target is a
     nlh0(`N5|${command}|Auto`, autoVerdict(AUTO, "Bash", command, inProject(command)));
     expect(wipeVocab?.wipeWordIn(command), "the wipe vocabulary finds the word").toBeDefined();
     expect(ownerMarks(() => alwaysAskCommand(command, PROJECT))).toMatchObject({ classification: "deny", rule: "unknown-target", reason: "incomplete-executable-code" });
-    expect(autoVerdict(NO_LIMITS, "Bash", command, inProject(command))).toMatchObject({ approve: null, source: "always-ask", classification: "deny", rule: "unknown-target" });
+    // MAIN RULING 2026-11-13 wipe-only: computing a cache path is not a whole-home wipe.
+    expect(autoVerdict(NO_LIMITS, "Bash", command, inProject(command)))
+      .toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
     expect(autoVerdict(FULL, "Bash", command, inProject(command)).approve, "Full access runs it as at NLH0").toBeTruthy();
   });
 });
@@ -1922,7 +2303,7 @@ describe("MARKS N5: inline code naming a wipe word and computing its target is a
 // M-R10 MONOTONIC BEGIN
 // MurageMain ruling 11-07: the levels are monotonic. For every row in every table above, No limits (from a known
 // project folder, the way the engines run a command) is never stricter than Full access, unless the card it raises
-// names a deny rule (a catastrophe) or the wipe list (a protected path). A row that fails this is fixed in code.
+// names a wipe/catastrophe rule. A row that fails this is fixed in code.
 describe("levels are monotonic: No limits is never stricter than Full access", () => {
   const CATASTROPHE_RULES = new Set<string>(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb"]);
   const everyCommand = (): string[] => {
@@ -1963,20 +2344,38 @@ describe("monotonic relief reaches the owner's own turn only", () => {
     expect(autoVerdict(NO_LIMITS, "Bash", DOUBTED, { ...base, ...OWNER }).approve).not.toBeNull();
   });
   it("a routine turn keeps the card", () => {
-    expect(autoVerdict(NO_LIMITS, "Bash", DOUBTED, { ...base, automated: true, routineLevel: true })).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    // The historical title predates the owner's wipe-only routine policy.
+    // MAIN RULING 1114-NOLIMITS-OLD-ORACLES: live routineLevel attributes the owner routine; this unknown argument is not a known wipe.
+    const routine = { ...base, automated: true, routineLevel: true };
+    expect(autoVerdict(NO_LIMITS, "Bash", DOUBTED, routine)).toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
   });
+  // a39aa9f5c0 (Sean 2026-11-12 02:50Z): a channel message or unattended turn with no stored origin is unproven, so
+  // No limits does not apply and the call reads exactly as an Ask bot's: that card, never a run.
   it("a channel message keeps the card", () => {
-    expect(autoVerdict(NO_LIMITS, "Bash", DOUBTED, { ...base, automated: true, channelOwner: true })).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    const context = { ...base, automated: true, channelOwner: true };
+    const verdict = autoVerdict(NO_LIMITS, "Bash", DOUBTED, context);
+    expect(verdict).toMatchObject({ approve: null, source: "destructive-guard" });
+    expect(verdict).toEqual(autoVerdict({}, "Bash", DOUBTED, context));
   });
   it("an unattended turn keeps the card", () => {
-    expect(autoVerdict(NO_LIMITS, "Bash", DOUBTED, { ...base, automated: true, unattended: true })).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    const context = { ...base, automated: true, unattended: true };
+    const verdict = autoVerdict(NO_LIMITS, "Bash", DOUBTED, context);
+    expect(verdict).toMatchObject({ approve: null, source: "destructive-guard" });
+    expect(verdict).toEqual(autoVerdict({}, "Bash", DOUBTED, context));
   });
   it("a marked lane turn keeps the outside-content card", () => {
-    expect(autoVerdict({ id: "owned", ...NO_LIMITS }, "Bash", DOUBTED, { ...base, ...OWNER, outsideRead: ["network command"] })).toMatchObject({ approve: null, source: "outside-turn", rule: "outside-content" });
+    // MAIN RULING 2026-11-13 wipe-only: outside content alone does not card the owner's No limits turn.
+    expect(autoVerdict({ id: "owned", ...NO_LIMITS }, "Bash", DOUBTED, { ...base, ...OWNER, outsideRead: ["network command"] }))
+      .toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
   });
   it("a deny rule and the wipe list still card on the owner's turn", () => {
-    for (const command of ["rm -rf /usr", "rm -rf ~", "dd if=./a of=/dev/sda", "dd if=/etc/passwd of=/etc/x"])
-      expect(autoVerdict(NO_LIMITS, "Bash", command, { commandText: command, commandCwd: PROJECT, ...OWNER })).toMatchObject({ approve: null, source: "always-ask" });
+    for (const command of ["rm -rf /usr", "rm -rf ~", "dd if=./a of=/dev/sda", "dd if=/etc/passwd of=/etc/x"]) {
+      const verdict = autoVerdict(NO_LIMITS, "Bash", command, { commandText: command, commandCwd: PROJECT, ...OWNER });
+      // MAIN RULING 2026-11-13 wipe-only: a protected file copy runs; all three wipes still card.
+      if (command === "dd if=/etc/passwd of=/etc/x")
+        expect(verdict).toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
+      else expect(verdict).toMatchObject({ approve: null, source: "always-ask" });
+    }
   });
 });
 

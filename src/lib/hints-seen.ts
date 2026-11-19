@@ -64,6 +64,11 @@ export function hintAllowed(screen: string, mark: string, context: HintContext, 
   return !hintSeen(screen, mark, storage);
 }
 
+/** A control with no box on the page (a display:none ancestor gives a 0x0 rect): a hint beside it would be drawn at the top-left corner. */
+export function anchorHasNoBox(rect: Pick<DOMRect, "width" | "height">): boolean {
+  return !(rect.width > 0 || rect.height > 0);
+}
+
 /** Something already covers the page: help, an open menu or a window. */
 export function pageCovered(root: Pick<Document, "querySelector"> = document): boolean {
   return Boolean(root.querySelector("[data-help-panel], [role='menu'], [role='listbox'], dialog[open], [aria-modal='true']"));

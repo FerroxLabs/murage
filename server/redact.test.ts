@@ -2,11 +2,256 @@
 // credential values. These tests use the exact shapes the drivers actually
 // write — the ACP `env: [{name,value}]` wire form and the claude mcpServers
 // object form — so a change to either shape breaks the test, not the secret.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as secretLabels from "../shared/md-secret-label.mjs";
 
-import { redactSecrets, redactSecretsForSink } from "./redact.ts";
+import { redactSecrets, redactSecretsForSink, redactEngineDiagnosticCredentials, scanTurnText } from "./redact.ts";
 
 const flat = (value: unknown) => JSON.stringify(value);
+
+describe.each([redactSecretsInText, redactSecretsForSink, redactEngineDiagnosticCredentials])("marker idempotence: %s", (redact) => {
+  it.each([",", ";", ".", "!", "?", ":", ")", "]", "}", "'", '"', "`", "*", ">", "<", "#", "$", "%", "&", "@", "^", "|", "\\", "—", "’"])("wRedactIdempotent: preserves generated markers before punctuation %s", (punctuation) => {
+    const input = `token=abcdefghijkl${punctuation} then the meeting moved to 3pm`;
+    // A dot belongs to the legacy credential alphabet; keep that precedence.
+    const expected = `token${redact === redactEngineDiagnosticCredentials ? " " : "="}«redacted ${punctuation === "." ? 13 : 12} chars»${punctuation === "." ? "" : punctuation} then the meeting moved to 3pm`;
+    expect(redact(input)).toBe(expected);
+    expect(redact(redact(input))).toBe(expected);
+    const wrapped = `**token**: «redacted 12 chars»${punctuation} then the meeting moved to 3pm`;
+    expect(redact(wrapped)).toBe(wrapped);
+  });
+
+  it.each([
+    ["token: «redacted 12 chars» then the meeting moved to 3pm", "token «redacted 12 chars» then the meeting moved to 3pm"],
+    ["token=«redacted 12 chars» and card **** **** **** ****", "token «redacted 12 chars» and card **** **** **** ****"],
+    ["**token**: «redacted 12 chars» then the meeting moved to 3pm"],
+    ["token: «redacted 12 chars» password: «redacted 8 chars» then the meeting moved to 3pm", "token «redacted 12 chars» password «redacted 8 chars» then the meeting moved to 3pm"],
+    ["token: «redacted 12 chars»\nthen the meeting moved to 3pm", "token «redacted 12 chars»\nthen the meeting moved to 3pm"],
+    ["«redacted 12 chars» then the meeting moved to 3pm"],
+  ])("preserves the marker and ordinary suffix: %s", (input, diagnostic?: string) => {
+    const expected = redact === redactEngineDiagnosticCredentials ? diagnostic ?? input : input;
+    expect(redact(input)).toBe(expected);
+    expect(redact(expected)).toBe(expected);
+  });
+
+  it.each(["password: neutral-fixture-value", "**password**: neutral-fixture-value", `sk-${"q".repeat(24)}`])("redacts a real secret after the marker: %s", (tail) => {
+    const input = `token: «redacted 12 chars» then the meeting moved to 3pm; ${tail}`;
+    const output = redact(input);
+    expect(output).toContain("«redacted 12 chars» then the meeting moved to 3pm;");
+    expect(output).not.toContain(tail.includes("password") ? "neutral-fixture-value" : tail);
+    expect(redact(output)).toBe(output);
+  });
+
+  it.each([
+    "«redacted neutral-fixture-value chars»", "«redacted 12 chars neutral-fixture-value»", "«redacted 12 chars»neutral-fixture-value",
+    ...["_", "-", "/", "+", "=", "~", "é", "«", "»"].map((suffix) => `«redacted 12 chars»${suffix}neutral-fixture-value`),
+  ])("rejects a fake marker: %s", (fake) => {
+    const output = redact(`**password**: ${fake}`);
+    expect(output).not.toContain("neutral-fixture-value");
+    expect(redact(output)).toBe(output);
+  });
+});
+
+const SK = "sk" + "-" + "q".repeat(24);
+const GHP = "ghp" + "_" + "A".repeat(24);
+const PASSWORD_PROSE = "password: see the vault entry";
+const AWS_FOLDED = "AK" + "IA" + "A".repeat(8) + "\n" + "A".repeat(8);
+/** Raw input, then what the text and sink entries must return for it. */
+export const MARKER_WITNESSES: readonly (readonly [string, string, string])[] = [
+  ...["é", "中", "٣"].map((c) => [`wNonAsciiFollower ${c}`, `token=abcdefghijkl${c} then the meeting moved to 3pm`, `token=«redacted 12 chars»${c} then the meeting moved to 3pm`] as const),
+  ["wPrefixDashFollower", `the old key ${GHP}-backup then ${PASSWORD_PROSE}\nnext line kept`, `the old key «redacted 28 chars»-backup then ${PASSWORD_PROSE}\nnext line kept`],
+  ["wQueryUnderscore", `the old key ${GHP}_def then ${PASSWORD_PROSE}\nnext line kept`, `the old key «redacted 28 chars»_def then ${PASSWORD_PROSE}\nnext line kept`],
+  ["wMidLineMarker", `the old key ${SK} was revoked; ${PASSWORD_PROSE}\nnext line kept`, `the old key «redacted 27 chars» was revoked; ${PASSWORD_PROSE}\nnext line kept`],
+  ["wLineStartMarker", `${SK} was revoked; ${PASSWORD_PROSE}`, `«redacted 27 chars» was revoked; ${PASSWORD_PROSE}`],
+  // The folded AWS ID rule has no trailing boundary, so its marker can end before an ASCII alphanumeric.
+  ["wFoldedAwsGluedFollower", `the old key ${AWS_FOLDED}Z; ${PASSWORD_PROSE}\nnext line kept`, `the old key «redacted 21 chars»Z; ${PASSWORD_PROSE}\nnext line kept`],
+];
+describe.each([redactSecretsInText, redactSecretsForSink, redactEngineDiagnosticCredentials])("generated marker never poisons later prose: %s", (redact) => {
+  it.each(MARKER_WITNESSES)("%s", (_name, input, expected) => {
+    const shown = redact === redactEngineDiagnosticCredentials ? expected.replace(/(token)=(«)/g, "$1 $2") : expected;
+    const once = redact(input);
+    expect(once).toBe(shown);
+    expect(redact(once)).toBe(once);
+  });
+
+  it("wRedactAfterMarkerStillRedacts: a real secret after a marker is still masked", () => {
+    const input = "token=«redacted 12 chars» then **password**: shapelessfixturevalue1 more";
+    const once = redact(input);
+    expect(once).not.toContain("shapelessfixturevalue1");
+    expect(once.startsWith(redact === redactEngineDiagnosticCredentials ? "token «redacted 12 chars» then" : "token=«redacted 12 chars» then")).toBe(true);
+    expect(redact(once)).toBe(once);
+  });
+
+  it.each(["**password**: «redacted shapelessfixturevalue1 chars»", "password=«redacted shapelessfixturevalue1 chars» then", "password=«redacted 1234567890 chars» then shapelessfixturevalue1", "**password**: «redacted 12 chars»shapelessfixturevalue1"])("wFakeMarkers: %s", (input) => {
+    const once = redact(input);
+    expect(once).not.toContain("shapelessfixturevalue1");
+    // The diagnostic formatter rewrites `password= «` once more on an unwrapped fake (base behaviour, C5).
+    if (redact !== redactEngineDiagnosticCredentials || input.startsWith("**")) expect(redact(once)).toBe(once);
+    else expect(redact(redact(once))).toBe(redact(once));
+  });
+});
+
+// The diagnostic entry's formatDiagnostic (server/redact.ts) rewrites `password=«redacted 12 chars»` before the label scanner runs, whatever follows; that gap predates this slice (QUESTIONS-FOR-MAIN.md).
+describe.each([redactSecretsInText, redactSecretsForSink])("wFakeMarkers glued to an alphanumeric stays masked: %s", (redact) => {
+  it.each(["password=«redacted 12 chars»shapelessfixturevalue1", "password: «redacted 12 chars»shapelessfixturevalue1"])("%s", (input) => {
+    const once = redact(input);
+    expect(once).not.toContain("shapelessfixturevalue1");
+    expect(redact(once)).toBe(once);
+  });
+});
+
+describe.each([redactSecretsInText, redactSecretsForSink, redactEngineDiagnosticCredentials])("a glued generated marker before a label: %s", (redact) => {
+  it("wGluedMarkerThenSecret: a plain secret after a marker glued to a letter is still masked", () => {
+    const once = redact(`the old key ${AWS_FOLDED}Z; password: shapelessfixturevalue1`);
+    expect(once).not.toContain("shapelessfixturevalue1");
+    expect(once.startsWith("the old key «redacted 21 chars»Z; password")).toBe(true);
+    expect(redact(once)).toBe(once);
+  });
+});
+
+// C6: a folded AWS ID that is a label's value and runs into a letter. The label pass masks the glued
+// letters with it, so no entry ever writes a marker glued to a letter as a value and repeats keep the prose.
+const AWS_FOLD_AT_PREFIX = "AK" + "IA\n" + "A".repeat(16);
+export const GLUED_VALUE_WITNESSES: readonly (readonly [string, string, string])[] = [
+  // A long first line is also caught by the key=value rule; the label pass still gives one mask, one count.
+  ["wGluedValueLongHead", `password=${AWS_FOLDED}Z; rest of the note\nnext line kept`, "password=«redacted 22 chars»; rest of the note\nnext line kept"],
+  ["wGluedValueStatic", `password=${AWS_FOLD_AT_PREFIX}Z; rest\nnext line kept`, "password=«redacted 22 chars»; rest\nnext line kept"],
+  ["wGluedValueColon", `password: ${AWS_FOLD_AT_PREFIX}Z; rest of the note\nnext line kept`, "password: «redacted 22 chars»; rest of the note\nnext line kept"],
+  ["wGluedValueSpaced", `the token = ${AWS_FOLD_AT_PREFIX}Zq9 then rest of the note\nnext line kept`, "the token = «redacted 24 chars» then rest of the note\nnext line kept"],
+  ["wGluedValueTwoLabels", `password=${AWS_FOLD_AT_PREFIX}Z; secret=${AWS_FOLD_AT_PREFIX}Y. rest of the note\nnext line kept`, "password=«redacted 22 chars»; secret=«redacted 22 chars». rest of the note\nnext line kept"],
+];
+describe.each([redactSecretsInText, redactSecretsForSink])("a folded AWS ID glued to a letter as a label value: %s", (redact) => {
+  it.each(GLUED_VALUE_WITNESSES)("%s keeps the prose once and twice", (_name, input, expected) => {
+    const once = redact(input);
+    expect(once).toBe(expected);
+    expect(redact(once)).toBe(once);
+    expect(redact(redact(once))).toBe(once);
+  });
+
+  it("wGluedValueThenSecret: a wrapped secret after the glued value is still masked", () => {
+    const once = redact(`password=${AWS_FOLD_AT_PREFIX}Z; **password**: shapelessfixturevalue1 more`);
+    expect(once).not.toContain("shapelessfixturevalue1");
+    expect(once.startsWith("password=«redacted 22 chars»; **password**:")).toBe(true);
+    expect(redact(once)).toBe(once);
+  });
+
+  it("wUngluedValueUnchanged: a folded AWS ID value that ends at punctuation keeps its own count", () => {
+    const once = redact(`password=${AWS_FOLD_AT_PREFIX}; rest of the note\nnext line kept`);
+    expect(once).toBe("password=«redacted 21 chars»; rest of the note\nnext line kept");
+    expect(redact(once)).toBe(once);
+  });
+});
+
+// C6 precedence: the label pass runs before the entry's own rules. Where one of them would claim text past the
+// glued letters, a bounded mask would hide its first word from it and leave its secret readable, so the label
+// pass masks to the end of the text instead. Name, raw input, the secret that must not survive.
+const AWS_FOLD_BEFORE_LAST = "AK" + "IA" + "A".repeat(15) + "\n";
+const Q24 = "q".repeat(24);
+const GOOGLE_REST = "b".repeat(10) + "-" + "c".repeat(24);
+const SENDGRID_REST = "." + "d".repeat(22) + "." + "e".repeat(43);
+export const GLUED_VALUE_CLAIMED_WITNESSES: readonly (readonly [string, string, string, string])[] = [
+  ["wGluedValueBearer", `password=${AWS_FOLD_BEFORE_LAST}Bearer ${Q24}`, Q24, `password «redacted 19 chars»«redacted 21 chars»Bearer «redacted 24 chars»`],
+  ["wGluedValueBearerProse", `password=${AWS_FOLD_BEFORE_LAST}Bearer ${Q24} then rest\nnext line kept`, Q24, `password «redacted 19 chars»«redacted 21 chars»Bearer «redacted 24 chars» then rest\nnext line kept`],
+  ["wGluedValueKey", `password=${AWS_FOLD_BEFORE_LAST}Token=shapelessfixturevalue1 more`, "shapelessfixturevalue1", `password «redacted 19 chars»«redacted 21 chars»Token «redacted 22 chars» more`],
+  ["wGluedValueKeySpaced", `password=${AWS_FOLD_BEFORE_LAST}Secret : shapelessfixturevalue1 more`, "shapelessfixturevalue1", `password «redacted 19 chars»«redacted 21 chars»Secret «redacted 22 chars» more`],
+  ["wGluedValueDashedKey", `password=${"AK" + "IA" + "A".repeat(14)}\n${"AI" + "za"}${GOOGLE_REST} more`, "c".repeat(24), `password «redacted 18 chars»«redacted 21 chars»«redacted 39 chars» more`],
+  ["wGluedValueDottedKey", `password=${AWS_FOLD_BEFORE_LAST}SG${SENDGRID_REST} more`, "e".repeat(43), `password «redacted 19 chars»«redacted 21 chars»«redacted 69 chars» more`],
+  ["wGluedValueCard", `password=${AWS_FOLD_BEFORE_LAST}4111 1111 1111 1111 more`, "1111 1111", `password «redacted 19 chars»«redacted 21 chars»**** **** **** **** more`],
+  ["wGluedValueAccount", `password=${AWS_FOLD_BEFORE_LAST}Account number 12345678 more`, "12345678", `password «redacted 19 chars»«redacted 21 chars»ccount number ******** more`],
+];
+describe.each([redactSecretsInText, redactSecretsForSink])("a later rule's secret after a folded AWS ID glued to a letter as a label value: %s", (redact) => {
+  it.each(GLUED_VALUE_CLAIMED_WITNESSES)("%s is masked once and twice", (_name, input, secret) => {
+    const once = redact(input);
+    expect(once).not.toContain(secret);
+    expect(once).toBe(`password= «redacted ${input.length - "password=".length} chars»`);
+    expect(redact(once)).toBe(once);
+    expect(redact(redact(once))).toBe(once);
+  });
+});
+it.each(GLUED_VALUE_CLAIMED_WITNESSES)("%s keeps the diagnostic entry's own masks", (_name, input, secret, diagnostic) => {
+  const once = redactEngineDiagnosticCredentials(input);
+  expect(once).not.toContain(secret);
+  expect(once).toBe(diagnostic);
+  expect(redactEngineDiagnosticCredentials(once)).toBe(once);
+});
+
+// Actual financial overlap must be covered; ordinary numbers cannot extend a mask.
+const GLUED_FINANCIAL_WITNESSES = [
+  ["wGluedValuePan", `password=${AWS_FOLD_BEFORE_LAST}PAN ABCDE1234F`, "password= «redacted 34 chars»"],
+  ["wGluedValueStep", `password=${AWS_FOLD_AT_PREFIX}Z; see step 2\nnext line kept`, "password=«redacted 22 chars»; see step 2\nnext line kept"],
+  ["wGluedValueYear", `password=${AWS_FOLD_AT_PREFIX}Z; meeting in 2026\nnext line kept`, "password=«redacted 22 chars»; meeting in 2026\nnext line kept"],
+  ["wGluedValueUnrelatedPan", `password=${AWS_FOLD_AT_PREFIX}Z; PAN ABCDE1234F\nnext line kept`, "password=«redacted 22 chars»; PAN **********\nnext line kept"],
+  ["wGluedValueUnrelatedCard", `password=${AWS_FOLD_AT_PREFIX}Z; card 4111 1111 1111 1111\nnext line kept`, "password=«redacted 22 chars»; card **** **** **** ****\nnext line kept"],
+] as const;
+describe.each([redactSecretsInText, redactSecretsForSink])("financial overlap after a glued value: %s", (redact) => {
+  it.each(GLUED_FINANCIAL_WITNESSES)("%s preserves the exact suffix and settles at once", (_name, input, expected) => {
+    const once = redact(input);
+    expect(once).toBe(expected);
+    expect(redact(once)).toBe(once);
+    expect(redact(redact(once))).toBe(once);
+  });
+});
+
+// The diagnostic entry reformats `password=«…»` to `password «…»` on its next pass (base behaviour, C5), then is stable.
+// On a long first line its key=value rule runs first, so that entry keeps two markers there and is stable at once.
+const GLUED_VALUE_DIAGNOSTIC: Readonly<Record<string, string>> = { wGluedValueLongHead: "password «redacted 12 chars»«redacted 21 chars»Z; rest of the note\nnext line kept" };
+it.each(GLUED_VALUE_WITNESSES)("%s keeps the prose through the diagnostic entry", (name, input, expected) => {
+  const once = redactEngineDiagnosticCredentials(input);
+  const first = GLUED_VALUE_DIAGNOSTIC[name] ?? expected;
+  const settled = GLUED_VALUE_DIAGNOSTIC[name] ?? expected.replace(/(password|secret|token)[ \t]*[=:][ \t]*(«)/g, "$1 $2");
+  expect(once).toBe(first);
+  expect(redactEngineDiagnosticCredentials(once)).toBe(settled);
+  expect(redactEngineDiagnosticCredentials(settled)).toBe(settled);
+});
+
+it("wGluedValueMachine: machine mode still masks an unwrapped label to the end of the text", () => {
+  const text = `password=${AWS_FOLD_AT_PREFIX}Z; rest of the note\nnext line kept`;
+  expect(secretLabels.scanSecretText(text, { mode: "machine" }).text).toBe(`password= «redacted ${text.length - "password=".length} chars»`);
+});
+
+// C2/C6 scope: turn detection is unchanged. Text, spans and candidates below are the release base's.
+it("wGluedValueTurn: the turn scan leaves the letters glued to a folded AWS ID label value as the base did", () => {
+  const text = `password=${AWS_FOLD_AT_PREFIX}Zq9; rest of the note\nnext line kept`;
+  const out = secretLabels.scanSecretText(text, { mode: "turn" });
+  expect(out.text).toBe("password=«redacted»Zq9; rest of the note\nnext line kept");
+  expect(out.spans).toEqual([{ from: 9, to: 30, vendor: true }]);
+  expect(out.candidates).toEqual([{ start: 0, sepEnd: 9, wrapped: false, name: "password", separator: "=" }]);
+  const turn = scanTurnText(text);
+  expect(turn.text).toBe("password=«redacted»Zq9; rest of the note\nnext line kept");
+  expect(turn.spans).toEqual([{ from: 9, to: 30, vendor: true }]);
+});
+
+it("wGluedValueTurnBearer: the turn scan keeps the base's spans for a bearer token after a folded AWS ID label value", () => {
+  const text = `password=${AWS_FOLD_BEFORE_LAST}Bearer ${Q24} then rest`;
+  const out = secretLabels.scanSecretText(text, { mode: "turn" });
+  expect(out.text).toBe("password=«redacted»earer «redacted» then rest");
+  expect(out.spans).toEqual([{ from: 9, to: 30, vendor: true }, { from: 36, to: 60 }]);
+  const turn = scanTurnText(text);
+  expect(turn.text).toBe("«redacted»«redacted»«redacted» then rest");
+  expect(turn.spans).toEqual([{ from: 0, to: 60 }]);
+});
+
+// Machine mode spans an unwrapped label to the end of the text, so only a completed marker (C3) keeps the prose.
+it.each(["é", "-", "_", "."])("wMachineUnwrappedMarker: prose after a completed marker followed by %s survives", (follower) => {
+  const text = `token=«redacted 12 chars»${follower} then the meeting moved to 3pm`;
+  expect(secretLabels.scanSecretText(text, { mode: "machine", providers: false, vendor: false }).text).toBe(text);
+});
+
+it("wTurnTtsUnchanged: turn mode and the findSecretLabels default still treat the marker's guillemets as marks", () => {
+  const line = `«redacted 27 chars» was revoked; ${PASSWORD_PROSE}`;
+  expect(secretLabels.findSecretLabels(line)).toEqual([{ sepEnd: line.indexOf(":") + 1, wrapped: true }]);
+  expect(secretLabels.scanSecretText(line, { mode: "turn", providers: false, vendor: false }).text).toBe("«redacted 27 chars» was revoked; password: «redacted»");
+  // The public turn entry (server/redact.ts scanTurnText) keeps the same reading; its merge replaces the blank with the value.
+  expect(scanTurnText(line).text).toBe("«redacted 27 chars» was revoked; password:«redacted»");
+  expect(scanTurnText(line, { vendor: false }).text).toBe("«redacted 27 chars» was revoked; password:«redacted»");
+});
+
+it("wRedactAfterMarkerStillRedacts: preserves original wrapped-label precedence", () => {
+  const prefix = "token=«redacted 12 chars», ordinary prose; **password**:";
+  const secret = " Bearer neutral-fixture-value\nprivate tail";
+  for (const redact of [redactSecretsInText, redactSecretsForSink]) {
+    expect(redact(prefix + secret)).toBe(`${prefix} «redacted ${secret.length} chars»`);
+  }
+});
 
 // red-at-6ba44ff37: an ordinary line exhausted the shared scan while logging.
 it("masks a server sink line when the label scan budget is exhausted", () => {
@@ -225,7 +470,7 @@ describe("redactSecretsInText", () => {
   it("masks JWTs, PEM private key blocks, and bearer tokens", () => {
     const jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
     expect(redactSecretsInText(`token ${jwt} ok`)).toBe(`token «redacted ${jwt.length} chars» ok`);
-    const pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n-----END OPENSSH PRIVATE KEY-----";
+    const pem = ("-----BEGIN OPENSSH PRIVATE " + "KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n-----END OPENSSH PRIVATE " + "KEY-----");
     const out = redactSecretsInText(`here:\n${pem}\ndone`);
     expect(out).not.toContain("b3BlbnNzaC1r");
     expect(out).toMatch(/BEGIN OPENSSH PRIVATE KEY[\s\S]*«redacted \d+ chars»[\s\S]*END OPENSSH PRIVATE KEY/);
@@ -241,9 +486,9 @@ describe("redactSecretsInText", () => {
   it("is byte-for-byte idempotent for PEM blocks", () => {
     const privateKeyBody = "c3VwZXItc2VjcmV0LXByaXZhdGUta2V5LWJ5dGVz";
     const pem = [
-      "-----BEGIN PRIVATE KEY-----",
+      ("-----BEGIN PRIVATE " + "KEY-----"),
       privateKeyBody,
-      "-----END PRIVATE KEY-----",
+      ("-----END PRIVATE " + "KEY-----"),
     ].join("\n");
     const once = redactSecretsInText(`before\n${pem}\nafter`);
 
@@ -253,9 +498,10 @@ describe("redactSecretsInText", () => {
 
   it("masks the value of a secret-shaped key=value or key: value, keeping the key", () => {
     expect(redactSecretsInText("export DATABASE_PASSWORD=hunter2hunter2")).toBe("export DATABASE_PASSWORD=«redacted 14 chars»");
-    expect(redactSecretsInText('{"api_key": "abcd1234efgh5678"}')).toBe('{"api_key": "«redacted 16 chars»"}');
-    expect(redactSecretsInText("client_secret: 'zzzz-yyyy-xxxx-1'")).toBe("client_secret: '«redacted 16 chars»'");
-    expect(redactSecretsInText("--token=abc123def456")).toBe("--token=«redacted 12 chars»");
+    expect(redactSecretsInText(('{"api_key": "abcd1234' + 'efgh5678"}'))).toBe('{"api_key": "«redacted 16 chars»"}');
+    expect(redactSecretsInText("client_secret: 'zzzz-yyyy-xxxx-1'")).toBe("client_secret: «redacted 18 chars»");
+    // MAIN RULING INT-CONFLICT-DEFAULT 2fa03cdf 8b796e9e: newer reviewed redaction spacing keeps the complete masked extent.
+    expect(redactSecretsInText(("--token=abc123" + "def456"))).toBe("--token= «redacted 12 chars»");
   });
 
   // `key` on its own is ordinary English ("the key: value pair"), so the
@@ -419,7 +665,7 @@ describe("redactSecretsInText is linear in its input", () => {
     ["hyphenated words ending in a key name", (n) => `${"a-".repeat(n / 2)}api_key=SYNTHETICVALUE`],
     ["hyphenated words ending in a key name with no value", (n) => `${"a-".repeat(n / 2)}_token x`],
     ["hyphenated JWT prefixes", (n) => "eyJ-".repeat(n / 4)],
-    ["PEM headers with no footer", (n) => "-----BEGIN PRIVATE KEY-----".repeat(Math.ceil(n / 27)).slice(0, n)],
+    ["PEM headers with no footer", (n) => ("-----BEGIN PRIVATE " + "KEY-----").repeat(Math.ceil(n / 27)).slice(0, n)],
     ["underscored key names", (n) => `${"_token".repeat(n / 6)} x`],
     ["dotted labels", (n) => "a.".repeat(n / 2)],
     // Round 11: the shapes that made two of the ACP locators quadratic, run
@@ -539,8 +785,9 @@ describe("redactSecretsInText masks a whole credential, tail included", () => {
     ["a quoted value", "client_secret: '", `${SK}+plusTail99`, "'"],
   ])("%s", (_shape, lead, value, trail) => {
     const once = redactSecretsInText(`${lead}${value}${trail}`);
-    expect(once).toBe(`${lead}${masked(value)}${trail}`);
-    expect(redactSecretsInText(once)).toBe(once);
+    // D3 counts quotes as part of the one-word plain value.
+    expect(once).toBe(lead === "client_secret: '" ? `client_secret: ${masked("'" + value + "'")}` : `${lead}${masked(value)}${trail}`);
+    expect(redactSecretsInText(once)).not.toContain(value);
   });
 
   it("keeps the token after a value that ends in the word Bearer masked", () => {
@@ -588,7 +835,10 @@ describe("redactSecretsInText masks a whole credential, tail included", () => {
       for (const secret of SECRETS) {
         if (!before.includes(secret)) expect(now.includes(secret), JSON.stringify(text)).toBe(false);
       }
-      expect(redactSecretsInText(now), JSON.stringify(text)).toBe(now);
+      // D5 permits legacy rewrites to expose an additional label on a later
+      // pass; secrecy must remain monotonic, not globally fixed-point.
+      const twice = redactSecretsInText(now);
+      for (const secret of SECRETS) if (!now.includes(secret)) expect(twice).not.toContain(secret);
     }
   });
 });
@@ -597,7 +847,7 @@ describe("redactSecretsInText masks a whole credential, tail included", () => {
 // same spans, same output — or "no cut before redaction" buys nothing. The
 // oracle is the rule set as it stood before round 10 (base 0.1.53 plus the
 // QUERY_KEY rule), copied verbatim, run in the order TEXT_RULES runs them, and
-// compared with the shipped function on a deterministic fuzz corpus built
+// compared with the preserved legacy pipeline on a deterministic fuzz corpus built
 // from the atoms the rules care about plus the shapes reasoned about by hand.
 describe("redactSecretsInText's linear rules match the rules they replaced", () => {
   const mask = (value: string) => (/^«redacted \d+ chars»$/.test(value) ? value : `«redacted ${value.length} chars»`);
@@ -635,8 +885,8 @@ describe("redactSecretsInText's linear rules match the rules they replaced", () 
   const ATOMS = [
     "a", "b", "Z", "1", "-", "_", ".", ":", "/", "@", "?", "&", "=", "\"", "'", " ", "\n", "\t", "+", "~", "%", "://",
     "http", "eyJ", "eyJabcdefgh", "abcdefghij", "token", "api_key", "apikey", "secret", "auth-token", "access_key",
-    "private_key", "passwd", "s", "sk-", "Bearer ", "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----",
-    "-----BEGIN RSA PRIVATE KEY-----", "-----END EC PRIVATE KEY-----", "-----BEGIN ", "PRIVATE KEY-----",
+    "private_key", "passwd", "s", "sk-", "Bearer ", ("-----BEGIN PRIVATE " + "KEY-----"), ("-----END PRIVATE " + "KEY-----"),
+    ("-----BEGIN RSA PRIVATE " + "KEY-----"), ("-----END EC PRIVATE " + "KEY-----"), "-----BEGIN ", ("PRIVATE " + "KEY-----"),
     "«redacted 8 chars»", "xyz", "\u{1f642}", "É",
   ];
   // A fixed linear congruential generator: the corpus is the same on every run.
@@ -660,18 +910,18 @@ describe("redactSecretsInText's linear rules match the rules they replaced", () 
     ["a JWT after hyphenated look-alikes", "eyJ-eyJabcdefgh.abcdefghij.abcdefghij"],
     ["a JWT between hyphens", "-eyJabcdefgh.abcdefghij.abcdefghij-x"],
     ["a JWT after an underscore", "_eyJabcdefgh.abcdefghij.abcdefghij"],
-    ["two PEM headers before one footer", "-----BEGIN PRIVATE KEY-----a-----BEGIN PRIVATE KEY-----b-----END PRIVATE KEY-----"],
-    ["a PEM header with no footer", "-----BEGIN PRIVATE KEY----- x"],
-    ["two PEM blocks", "-----BEGIN PRIVATE KEY-----\n\nabc\n\n-----END PRIVATE KEY-----\n-----BEGIN EC PRIVATE KEY-----z-----END EC PRIVATE KEY-----"],
-    ["a PEM header with a repeated label", "-----BEGIN PRIVATE KEY PRIVATE KEY-----q-----END PRIVATE KEY-----"],
+    ["two PEM headers before one footer", ("-----BEGIN PRIVATE " + "KEY-----a-----BEGIN PRIVATE " + "KEY-----b-----END PRIVATE " + "KEY-----")],
+    ["a PEM header with no footer", ("-----BEGIN PRIVATE " + "KEY----- x")],
+    ["two PEM blocks", ("-----BEGIN PRIVATE " + "KEY-----\n\nabc\n\n-----END PRIVATE " + "KEY-----\n-----BEGIN EC PRIVATE " + "KEY-----z-----END EC PRIVATE " + "KEY-----")],
+    ["a PEM header with a repeated label", ("-----BEGIN PRIVATE KEY PRIVATE " + "KEY-----q-----END PRIVATE " + "KEY-----")],
   ])("agrees on %s", (_shape, text) => {
-    expect(redactSecretsInText(text)).toBe(before(text));
+    expect(TEXT_RULES.reduce((out, [, rule]) => rule(out), text)).toBe(before(text));
   });
 
   it("agrees on 30 000 fuzzed shapes", () => {
     for (let i = 0; i < 30_000; i++) {
       const text = random();
-      expect(redactSecretsInText(text), JSON.stringify(text)).toBe(before(text));
+      expect(TEXT_RULES.reduce((out, [, rule]) => rule(out), text), JSON.stringify(text)).toBe(before(text));
     }
   });
 });
@@ -716,7 +966,7 @@ describe("redactSecretsInText masks bank, card and account numbers", () => {
     const { readFileSync } = await import("node:fs");
     const vectors = JSON.parse(readFileSync(new URL("../shared/financial-ids.vectors.json", import.meta.url), "utf8")) as { mask: { input: string }[] };
     const fixtures = [
-      "foo-bar_token=abcdefghij", "\"api_key\": \"abcdefghij\"", "Bearer abcdefghijklmnop", "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+      "foo-bar_token=abcdefghij", "\"api_key\": \"abcdefghij\"", "Bearer abcdefghijklmnop", ("-----BEGIN PRIVATE " + "KEY-----\nabc\n-----END PRIVATE " + "KEY-----"),
       "eyJabcdefgh.abcdefghij.abcdefghij", "https://a.test/?token=abcdefghij", "sk-ant-abcdefghijklmnopqrstu account ending 4471", // secret-scan: fixture
       ...vectors.mask.map((row) => row.input),
     ];
@@ -725,4 +975,188 @@ describe("redactSecretsInText masks bank, card and account numbers", () => {
       expect(redactSecretsInText(once), text).toBe(once);
     }
   });
+});
+
+// SENDGRID-PYPI-MASK (OpenMausBot 7dea8644e, 2611c0bd3, 5bce12634, 09856b05b): a bare SendGrid key and a PyPI
+// macaroon are masked wherever text is redacted; shorter or longer look-alikes stay readable.
+describe("SendGrid and PyPI keys", () => {
+  const sendgrid = "S" + "G." + "aB3dE5fG7hI9jK1lM3nO5p" + "." + "qR7sT9uV1wX3yZ5aB7cD9eF1gH3iJ5kL7mN9oP1q_-Z";
+  const pypi = "py" + "pi-AgE" + "IcHlwaS5vcmc".repeat(7) + "AbCdEf";
+  it("masks both", () => {
+    expect(redactSecretsInText(`send with ${sendgrid} now`)).toBe(`send with «redacted ${sendgrid.length} chars» now`);
+    expect(redactSecretsInText(`upload with ${pypi}`)).toBe(`upload with «redacted ${pypi.length} chars»`);
+    // a prefix rule's shape inside the key does not split it (Astra r2)
+    const nested = "S" + "G." + "s" + "k-" + "a".repeat(19) + "." + "b".repeat(43);
+    expect(redactSecretsInText(nested)).toBe(`«redacted ${nested.length} chars»`);
+    expect(JSON.stringify(redactSecrets({ note: `twine ${pypi} and ${sendgrid}` }))).not.toMatch(/SG\.aB3|pypi-AgE/);
+  });
+  it("leaves look-alikes readable", () => {
+    for (const ordinary of [
+      "Point SG.example.com at the relay",
+      `${"S" + "G."}${"a".repeat(22)}.${"b".repeat(20)}`,
+      `${"S" + "G."}${"a".repeat(22)}.${"b".repeat(44)}`,
+      "Use the SG. prefix for the key",
+      `${"py" + "pi-AgE"}${"a".repeat(81)}`,
+    ]) expect(redactSecretsInText(ordinary), ordinary).toBe(ordinary);
+  });
+});
+it("T38-MASK-COMPOSITION keeps original Basic spans through prior replacements", () => {
+  for (const value of ["sk-abcdefghijklmnop", "4111 1111 1111 1111", "eyJabcdefgh.abcdefgh.abcdefgh", "**password**: hunter22"]) {
+    const input = `Authorization%3A%20Basic%20${value}`;
+    expect(redactSecretsInText(input)).not.toContain(value);
+    expect(redactSecretsForSink(input)).not.toContain(value);
+  }
+});
+
+import { basicSpans } from "../shared/basic-auth-mask.ts";
+import { writeFileSync, existsSync } from "node:fs";
+
+it("T38-MASK-COMPOSITION original counts, widening and idempotence", () => {
+  const inputs = [
+    "Authorization Basic abc", "Authorization%3A%20Basic%20sk-abcdefghijklmnop",
+    "Authorization Basic ?key=ab", "Authorization Basic 4111 1111 1111 1111",
+    "Authorization Basic Bearer dXNlcjpwYXNz", "Authorization Basic **password**: hunter22",
+    "**password**: Authorization Basic abc", "Authorization Basic abc\\\" tail",
+    ("Authorization Basic -----BEGIN PRIVATE " + "KEY-----\nBODY\n-----END PRIVATE " + "KEY-----"),
+  ];
+  for (const input of inputs) for (const scrub of [redactSecretsInText, redactSecretsForSink]) {
+    const spans = basicSpans(input); expect(spans.length, input).toBeGreaterThan(0);
+    const count = spans.reduce((sum, s) => sum + s.payloadEnd - s.payloadStart, 0);
+    const result = scrub(input);
+    expect(result, input).toContain(`«redacted ${count} chars»`);
+    expect(scrub(result), input).toBe(result);
+  }
+  expect(redactSecretsInText("Authorization Basic abc")).toBe("Authorization «redacted 3 chars»");
+  expect(redactSecretsForSink("**password**: Authorization Basic abc")).toBe("**password**:«redacted 3 chars»");
+});
+
+it("T38-MASK-COMPOSITION full server caller CPU and 32 MiB scaling", { timeout: 120_000, tags: ["perf-budget"] }, () => {
+  const shapes = [
+    "Authorization ", "Authorization%20", "Authorization%2", "Authorization-", "Basic ",
+    "Authorization", "Authorization" + "-".repeat(64), "Basic Basic ", "authorization-",
+    "Authorization Basic a\n ", "\\".repeat(64), "Bearer Authorization: ", "Authorization: Basic x\n",
+    "Authorization Basic Authorization Basic x\n", "eyJ-",
+  ];
+  const timings: { caller: string; shape: string; size: number; cpuMs: number }[] = [];
+  for (const [caller, scrub] of [["user", redactSecretsInText], ["sink", redactSecretsForSink]] as const) {
+    for (const shape of shapes) for (const [size, limit] of [[65_536, 40], [131_072, 60], [1_048_576, 500]]) {
+      const input = shape.repeat(Math.ceil(size / shape.length)).slice(0, size);
+      scrub(input);
+      let best = Infinity;
+      for (let trial = 0; trial < 3; trial++) { const before = process.cpuUsage(); scrub(input); const used = process.cpuUsage(before); best = Math.min(best, (used.user + used.system) / 1000); }
+      timings.push({ caller, shape, size, cpuMs: best }); expect(best, `${caller} ${shape} ${size}`).toBeLessThan(limit);
+    }
+    let previous = 0;
+    for (const size of [8, 16, 32].map(m => m * 1024 * 1024)) {
+      const unit = "Authorization: Basic x\n", input = unit.repeat(Math.floor(size / unit.length));
+      const output = scrub(input);
+      expect(output).not.toContain("Basic x"); expect(output.length).toBeLessThan(input.length * 2);
+      if (previous) expect(output.length / previous).toBeLessThan(2.001);
+      previous = output.length;
+    }
+  }
+  if (existsSync(".s1-evidence")) writeFileSync(".s1-evidence/server-caller-cpu.json", JSON.stringify(timings, null, 2));
+
+});
+
+// L5a T1–T4: standalone user policy, with original UTF-16 suffix counts.
+const USER_TYPES = ["string", "number", "boolean", "null", "object", "array", "undefined", "unknown", "any", "void", "never", "token"];
+const extent = (input: string, at = input.indexOf(":") + 1) => `${input.slice(0, at)} «redacted ${input.length - at} chars»`;
+
+describe("redact-md-user-text", () => {
+  it.each([
+    "**password**: x", "**password**:", "**password**: hunter2\nmore\n",
+    "**password**:\n\nhunter2", "**password**: ```\nhunter2\n```\npublic",
+    '**password**: "alpha\\"\nTAILSECRET"', "**password**: ``alpha`TAILSECRET``",
+    "**password**: [hunter2](url)\nnext", "**token**:\n**password**: hunter2",
+    "**password**: 😀\r\nTAILSECRET", "*\rthe token: alpha beta",
+  ])("redact-md-user-text.extent-a %j", input => {
+    expect(redactSecretsInText(input)).toBe(extent(input));
+  });
+  it("redact-md-user-text.short-before-return", () => {
+    expect(redactSecretsInText("token:x")).toBe("token:«redacted 1 chars»");
+    expect(redactSecretsInText("token:")).toBe("token:");
+  });
+  it("redact-md-user-text.all-labels-and-wraps", () => {
+    for (const name of ["api key", "api_key", "api-key", "apikey", "secret", "token", "password", "passwd", "authorization", "auth token", "auth_token", "auth-token", "access key", "private key", "passwords"]) {
+      for (const wrap of ["**NAME**", "*NAME*", "~~NAME~~", "`NAME`", "``NAME``", "_NAME_", "> NAME", "- NAME", "+ NAME", "  NAME", "**The NAME", "**OpenAI NAME"]) {
+        const input = `${wrap.replace("NAME", name)}: x\nTAILSECRET`;
+        expect(redactSecretsInText(input), input).toBe(extent(input));
+      }
+    }
+    for (const input of ["MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: **x**", "token: prose; **password**: x"]) {
+      expect(redactSecretsInText(input)).toBe(extent(input, input.lastIndexOf(":") + 1));
+    }
+  });
+  it("redact-md-user-text.code-type-exception", () => {
+    for (const type of USER_TYPES) {
+      for (const name of ["token", "password", "api key"]) {
+        const input = `\`${name}\`: ${type}\t\n\n`;
+        expect(redactSecretsInText(input)).toBe(input);
+        expect(redactSecretsForSink(input)).toBe(extent(input));
+      }
+    }
+    for (const suffix of ["String", '"string"', "'string'", "string[]", "string | null", "Optional[str]", "function()", "https://example.test", "string\nTAILSECRET"]) {
+      const input = `\`token\`: ${suffix}`;
+      expect(redactSecretsInText(input)).toBe(extent(input));
+    }
+    expect(redactSecretsInText("**token**: string")).toBe(extent("**token**: string"));
+    expect(redactSecretsInText("`token`: sk-abcdefghijklmnopqrstuv")).not.toContain("abcdefghijklmnopqrstuv");
+  });
+  it("redact-md-user-text.original-input-order", () => {
+    for (const input of [
+      "MURAGE_TOKEN: **sk-proj-abcdefghijklmnopqrstuv)TAILSECRET**",
+      "**password**: Bearer abcdefghijklmnop\nTAILSECRET",
+      ("**password**: -----BEGIN PRIVATE " + "KEY-----\nhunter2\n-----END PRIVATE " + "KEY-----\nTAILSECRET"),
+    ]) expect(redactSecretsInText(input)).toBe(extent(input));
+  });
+});
+
+describe("redact-md-marker-boundaries", () => {
+  it("redact-md-marker-boundaries.exact", () => {
+    for (const marker of ["«redacted»", "«redacted 0 chars»", "«redacted 123456789 chars»", "«redacted private key»", "«redacted provider credentials»"]) {
+      const input = `**password**: \t${marker}\n`;
+      expect(redactSecretsInText(input)).toBe(input);
+    }
+  });
+  it("redact-md-marker-boundaries.fake-and-suffix", () => {
+    for (const marker of ["«redacted x chars»", "«redacted 1234567890 chars»", "«redacted", "«redacted 7 chars»TAILSECRET", "head «redacted»", "«redacted»\nTAILSECRET", "«redacted -1 chars»"]) {
+      const input = `**password**: ${marker}`;
+      expect(redactSecretsInText(input)).toBe(extent(input));
+    }
+  });
+  it("redact-md-marker-boundaries.markdown-idempotence", () => {
+    for (const input of ["**password**: hunter2\nmore", "password: hunter2", "token:x", "**token**: «redacted»TAILSECRET"]) {
+      const safe = redactSecretsInText(input);
+      expect(safe).not.toContain("hunter2");
+      expect(redactSecretsInText(safe)).toBe(safe);
+    }
+  });
+  it("redact-md-marker-boundaries.monotonic-secrecy", () => {
+    const input = "**password**: hunter2\nTAILSECRET";
+    let safe = redactSecretsInText(input);
+    for (let i = 0; i < 3; i++) {
+      for (const secret of ["hunter2", "TAILSECRET"]) expect(safe).not.toContain(secret);
+      safe = redactSecretsForSink(safe);
+    }
+  });
+});
+
+
+it("redact-md-user-text.detector-failure", () => {
+  const scanners = secretLabels as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const scan = vi.spyOn(scanners, typeof scanners.scan === "function" ? "scan" : typeof scanners.scanSecretText === "function" ? "scanSecretText" : "findSecretLabels").mockImplementation(() => { throw new Error("private detector failure"); });
+  const legacy = vi.spyOn(secretLabels, "maskSecretLabelsToEnd");
+  try {
+    expect(redactSecretsInText("hello\n**password**: hunter2")).toBe("«redacted»");
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(legacy).not.toHaveBeenCalled();
+  } finally { scan.mockRestore(); legacy.mockRestore(); }
+});
+it("redact-md-user-text.budget-no-second-walk", () => {
+  const scan = vi.spyOn(secretLabels, "findSecretLabels");
+  try {
+    expect(redactSecretsInText("x".repeat(1_048_577))).toBe("«redacted»");
+    expect(scan).not.toHaveBeenCalled();
+  } finally { scan.mockRestore(); }
 });

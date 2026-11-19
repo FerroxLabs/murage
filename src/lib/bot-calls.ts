@@ -40,8 +40,8 @@ export const BOT_CALL_WORDS = {
   offTodayOn: (until: string) => `Calls are off until ${until}.`,
   offTodayRefusal: "Calls are off for today. Turn them back on to get this call.",
   get turnBackOn() { return t("calls.turnBackOn"); },
-  history: "History",
-  historyEmpty: "No calls yet.",
+  history: "Calls to you",
+  historyEmpty: "No bot has called you yet.",
   get failed() { return t("calls.failed"); },
   couldNotConnect: "The call couldn't connect, so it ended. Try again in a moment.",
   // Bot settings > Voice & alerts > Calls (design 3 and 8; MurageMain 11-02, BOT-CALLS-UNREACHABLE). These live in the

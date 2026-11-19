@@ -36,7 +36,7 @@ const B = (engine: string) => `bystander-${engine}-9917`;
 
 /** Starts `node <script>` as a second process (never a copy of this one) and returns it; it is ended after the test. */
 function start(script: string, env: Record<string, string>): ChildProcess {
-  const child = spawn(process.execPath, [script], { env: { ...process.env, ...env }, stdio: "ignore" });
+  const child = spawn(process.execPath, [script], { windowsHide: true, env: { ...process.env, ...env }, stdio: "ignore" });
   children.push(child);
   return child;
 }
@@ -306,7 +306,7 @@ describe.skipIf(!built || !posix)("T8: the addon lists every process, with the f
 
   it("every process `ps` shows is listed, and each entry carries pid, ppid, uid, mine, comm, exe and argv", () => {
     const addon = loadExclusionAddon()!;
-    const ps = spawnSync("ps", ["-axo", "pid="], { encoding: "utf8" });
+    const ps = spawnSync("ps", ["-axo", "pid="], { windowsHide: true, encoding: "utf8" });
     const listed = new Map(addon.processes().map((item) => [item.pid, item]));
     const wanted = ps.stdout.split("\n").map((line) => Number(line.trim())).filter((pid) => pid > 0 && pid !== ps.pid);
     expect(wanted.length).toBeGreaterThan(1);
@@ -342,7 +342,7 @@ describe.skipIf(!built || !posix)("T8: the addon lists every process, with the f
 
   it("every process of ANOTHER user that `ps` shows (root's daemons, launchd) is listed with its owner and its name, never as unreadable", () => {
     const addon = loadExclusionAddon()!;
-    const ps = spawnSync("ps", ["-axo", "pid=,uid=,comm="], { encoding: "utf8" });
+    const ps = spawnSync("ps", ["-axo", "pid=,uid=,comm="], { windowsHide: true, encoding: "utf8" });
     const listed = new Map(addon.processes().map((item) => [item.pid, item]));
     const me = process.getuid!();
     let others = 0;
@@ -370,8 +370,8 @@ describe.skipIf(!built || !posix)("T8: the addon lists every process, with the f
 describe.skipIf(!built || process.platform !== "win32")("T9 (Windows): the built addon loads and lists a spawned child with its owner and its arguments split as CommandLineToArgvW splits them", () => {
   it("lists a child with mine true and exact arguments", () => {
     const addon = loadExclusionAddon()!;
-    expect(addon.version()).toBe(10);
-    const child = spawn(process.execPath, ["-e", "setTimeout(()=>{},20000)", "a b", 'c"d', "e\\\\", "--x"], { stdio: "ignore" });
+    expect(addon.version()).toBe(11);
+    const child = spawn(process.execPath, ["-e", "setTimeout(()=>{},20000)", "a b", 'c"d', "e\\\\", "--x"], { windowsHide: true, stdio: "ignore" });
     children.push(child);
     expect(waitFor(() => addon.processes().some((item) => item.pid === child.pid && item.argv !== null))).toBe(true);
     const item = addon.processes().find((entry) => entry.pid === child.pid)!;
@@ -380,7 +380,7 @@ describe.skipIf(!built || process.platform !== "win32")("T9 (Windows): the built
     expect(item.comm).toMatch(/node/i);
     // the vectors of the CommandLineToArgvW rules (backslashes before a quote), through a real process each
     for (const args of [['"C:\\Py\\python.exe" "C:\\k y\\kimi.py" --x'], ["a\\\\\\\"b"], ["x\\\\"]]) {
-      const other = spawn(process.execPath, ["-e", "setTimeout(()=>{},20000)", ...args], { stdio: "ignore" });
+      const other = spawn(process.execPath, ["-e", "setTimeout(()=>{},20000)", ...args], { windowsHide: true, stdio: "ignore" });
       children.push(other);
       expect(waitFor(() => addon.processes().some((entry) => entry.pid === other.pid && entry.argv !== null))).toBe(true);
       const seen = addon.processes().find((entry) => entry.pid === other.pid)!;

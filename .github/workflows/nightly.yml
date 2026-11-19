@@ -81,15 +81,159 @@ jobs:
         env:
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
 
+  cloud-portal:
+    name: cloud portal journeys (fake control plane)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      JOURNEY_CP: fake
+      NEXT_TELEMETRY_DISABLED: "1"
+    defaults:
+      run:
+        working-directory: cloud-portal
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: cloud-portal/package-lock.json
+      - run: npm ci
+      # e2e/fake-cp.ts imports cloudflare/control-plane/src/*.ts, which import zod from that workspace package and from the
+      # root install (server/cloud-home). npm ci above installs only cloud-portal's own packages; without these the fake
+      # control plane exits "Cannot find module 'zod'" and every journey times out on port 8788 (nightly 44422378171).
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - name: Install the control-plane package the fake control plane imports
+        working-directory: .
+        run: pnpm install --frozen-lockfile --filter @murage/control-plane --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      # playwright.config.ts owns all three local servers, including fake-cp.ts;
+      # reuseExistingServer is false, so no live control plane can be reused.
+      - run: npm run test:e2e
+      - name: Retain portal failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cloud-portal-results
+          path: cloud-portal/test-results
+          if-no-files-found: warn
+          retention-days: 7
+
   nightly:
     # One result for the release gate and for branch rules: success only if every job passed.
     if: ${{ always() }}
-    needs: [slow]
+    needs: [slow, cloud-portal]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - env:
           SLOW: ${{ needs.slow.result }}
+          CLOUD_PORTAL: ${{ needs.cloud-portal.result }}
         run: |
           echo "nightly tests: $SLOW"
           test "$SLOW" = success
+          test "$CLOUD_PORTAL" = success
+
+  real-engine-package:
+    name: package for real engines (RC SHA)
+    # MAIN RULING 1115-REAL-ENGINE-RUNNER: runs only where the repo variable opts in; skipped (never queued) otherwise.
+    if: ${{ vars.MURAGE_REAL_ENGINE_RUNNER == 'on' }}
+    runs-on: [self-hosted, Linux, X64, real-engine]
+    timeout-minutes: 120
+    # Pre-provisioned Node 24/native packaging toolchain. No host installs or logins.
+    container:
+      image: ${{ vars.MURAGE_REAL_ENGINE_IMAGE || 'node:24-bookworm' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Build the exact RC package
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          NODE_OPTIONS: --max-old-space-size=4300
+        run: |
+          while awk '{exit !($1 > 60)}' /proc/loadavg; do sleep 60; done
+          python3 -I native/gepa/build-linux.py "$RUNNER_TEMP/gepa-linux"
+          gepa_hash="$(node -e 'const m=require("./qualification-evidence/gepa-package-metadata.json"); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
+          pnpm package:linux:dir "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash" "--config.extraMetadata.murageSourceSha=$SOURCE_SHA"
+          tar -czf "$RUNNER_TEMP/real-engine-package.tgz" -C release linux-unpacked
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: real-engine-package-${{ github.sha }}
+          path: ${{ runner.temp }}/real-engine-package.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  real-engine:
+    name: real-engine (${{ matrix.engine }})
+    # Run preflight even if packaging failed: absent engines must say NOT-RUN.
+    if: ${{ always() && !cancelled() && vars.MURAGE_REAL_ENGINE_RUNNER == 'on' }}
+    needs: [real-engine-package]
+    runs-on: [self-hosted, Linux, X64, real-engine]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        engine: [claude, codex, gemini, fuigo, opencode]
+    container:
+      image: ${{ vars.MURAGE_REAL_ENGINE_IMAGE || 'node:24-bookworm' }}
+      volumes:
+        - ${{ vars.MURAGE_REAL_ENGINE_HOME || '/opt/murage-gate/home' }}:/engine-home:ro
+        - ${{ vars.MURAGE_REAL_ENGINE_BIN || '/opt/murage-gate/bin' }}:/engines:ro
+    env:
+      HOME: /engine-home
+      SMOOTH_OUT: /tmp/smooth-evidence
+      # Only existing secrets are used; missing entries remain empty and fail preflight.
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      FUIGO_API_KEY: ${{ secrets.FUIGO_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Existing engine prerequisites
+        shell: bash
+        run: |
+          export PATH="/engines:$PATH"
+          node scripts/smoothness/real-engine.mjs '${{ matrix.engine }}' --preflight
+      - name: Require the RC package
+        if: ${{ success() && needs.real-engine-package.result != 'success' }}
+        shell: bash
+        run: |
+          export PATH="/engines:$PATH"
+          node scripts/smoothness/real-engine.mjs '${{ matrix.engine }}' --package-unavailable
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: real-engine-package-${{ github.sha }}
+          path: /tmp/smooth-package
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+        with:
+          dest: /tmp/pnpm-setup
+      - run: pnpm install --frozen-lockfile --store-dir /tmp/pnpm-store
+      - name: Real-engine verdict
+        shell: bash
+        run: |
+          export PATH="/engines:$PATH"
+          while awk '{exit !($1 > 60)}' /proc/loadavg; do sleep 60; done
+          tar -xzf /tmp/smooth-package/real-engine-package.tgz -C /tmp/smooth-package
+          export SMOOTH_APP_DIR=/tmp/smooth-package/linux-unpacked
+          zsh scripts/smoothness/hz-smooth.sh --nightly-real-engine '${{ matrix.engine }}'
+      - name: Preserve per-engine verdict
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: real-engine-verdict-${{ matrix.engine }}-${{ github.sha }}
+          path: /tmp/smooth-evidence/real-engine-*.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,62 @@
+[
+  {
+    "phase": "before-shutdown",
+    "files": 40,
+    "decoded": 0,
+    "leaks": 0,
+    "grepExit": 1,
+    "scope": [
+      "entire isolated data/home including hidden artifacts and SQLite/WAL",
+      "all server process logs",
+      "exported evidence"
+    ]
+  },
+  {
+    "phase": "after-shutdown",
+    "files": 41,
+    "decoded": 0,
+    "leaks": 0,
+    "grepExit": 1,
+    "scope": [
+      "entire isolated data/home including hidden artifacts and SQLite/WAL",
+      "all server process logs",
+      "exported evidence"
+    ]
+  },
+  {
+    "phase": "after-restart",
+    "files": 47,
+    "decoded": 0,
+    "leaks": 0,
+    "grepExit": 1,
+    "scope": [
+      "entire isolated data/home including hidden artifacts and SQLite/WAL",
+      "all server process logs",
+      "exported evidence"
+    ]
+  },
+  {
+    "phase": "after-restart-shutdown",
+    "files": 45,
+    "decoded": 0,
+    "leaks": 0,
+    "grepExit": 1,
+    "scope": [
+      "entire isolated data/home including hidden artifacts and SQLite/WAL",
+      "all server process logs",
+      "exported evidence"
+    ]
+  },
+  {
+    "phase": "exported-before-cleanup",
+    "files": 84,
+    "decoded": 0,
+    "leaks": 0,
+    "grepExit": 1,
+    "scope": [
+      "entire isolated data/home including hidden artifacts and SQLite/WAL",
+      "all server process logs",
+      "exported evidence"
+    ]
+  }
+]

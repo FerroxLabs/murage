@@ -1,5 +1,5 @@
 import type { Bot, Group, GroupDefaultResponder } from "@/state/store";
-import { mentionedPeers, mentionsEveryone } from "../../shared/mention-boundary";
+import { mentionedPeers, mentionsEveryone } from "../../shared/mention-boundary.ts";
 
 /** Be defensive around rooms loaded while an older server is still running,
  * and around a lead removed by another client before the group patch arrives. */

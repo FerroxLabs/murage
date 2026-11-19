@@ -71,11 +71,11 @@ describe("first boot destroys the cloud-init copies of the secrets", () => {
     const { root, secret } = tree();
     try {
       writeFileSync(join(root, "var/lib/murage-home/credential"), "enrolled");
-      execFileSync("sh", [scrub, root]);
+      execFileSync("sh", [scrub, root], { windowsHide: true });
       for (const f of secret) expect(existsSync(f)).toBe(false);
       expect(readFileSync(join(root, "etc/murage-home/backup.key"), "utf8")).toBe(SECRET);
       expect(existsSync(join(root, "etc/cloud/cloud-init.disabled"))).toBe(true);
-      execFileSync("sh", [scrub, root]); // idempotent
+      execFileSync("sh", [scrub, root], { windowsHide: true }); // idempotent
     } finally { removeTempDirSync(root); }
   });
   it("removes a claim-user-data symlink without following it", () => {
@@ -84,7 +84,7 @@ describe("first boot destroys the cloud-init copies of the secrets", () => {
       writeFileSync(join(root, "var/lib/murage-home/credential"), "enrolled");
       const target = join(root, "keep-me"); writeFileSync(target, SECRET);
       rmSync(join(root, "etc/murage-home/claim-user-data")); symlinkSync(target, join(root, "etc/murage-home/claim-user-data"));
-      execFileSync("sh", [scrub, root]);
+      execFileSync("sh", [scrub, root], { windowsHide: true });
       expect(existsSync(join(root, "etc/murage-home/claim-user-data"))).toBe(false);
       expect(readFileSync(target, "utf8")).toBe(SECRET);
     } finally { removeTempDirSync(root); }
@@ -95,7 +95,7 @@ describe("first boot destroys the cloud-init copies of the secrets", () => {
       writeFileSync(join(root, "var/lib/murage-home/credential"), "enrolled");
       const held = openSync(join(root, "etc/murage-home/claim-user-data"), "r");
       try {
-        execFileSync("sh", [scrub, root]);
+        execFileSync("sh", [scrub, root], { windowsHide: true });
         expect(existsSync(join(root, "etc/murage-home/claim-user-data"))).toBe(false);
         expect(fstatSync(held).size).toBe(0);
         const buffer = Buffer.alloc(SECRET.length); expect(readSync(held, buffer, 0, buffer.length, 0)).toBe(0);
@@ -108,7 +108,7 @@ describe("first boot destroys the cloud-init copies of the secrets", () => {
       writeFileSync(join(root, "var/lib/murage-home/credential"), "enrolled");
       const other = join(root, "other-name"); writeFileSync(other, SECRET, { mode: 0o600 });
       rmSync(join(root, "etc/murage-home/claim-user-data")); linkSync(other, join(root, "etc/murage-home/claim-user-data"));
-      execFileSync("sh", [scrub, root], { stdio: "pipe" });
+      execFileSync("sh", [scrub, root], { windowsHide: true, stdio: "pipe" });
       expect(existsSync(join(root, "etc/murage-home/claim-user-data"))).toBe(false);
       expect(readFileSync(other, "utf8")).toBe(SECRET);
     } finally { removeTempDirSync(root); }
@@ -120,7 +120,7 @@ describe("first boot destroys the cloud-init copies of the secrets", () => {
       const claim = join(root, "etc/murage-home/claim-user-data"); chmodSync(claim, 0o644);
       const held = openSync(claim, "r");
       try {
-        execFileSync("sh", [scrub, root], { stdio: "pipe" });
+        execFileSync("sh", [scrub, root], { windowsHide: true, stdio: "pipe" });
         expect(existsSync(claim)).toBe(false);
         expect(fstatSync(held).size).toBe(SECRET.length);
       } finally { closeSync(held); }
@@ -129,7 +129,7 @@ describe("first boot destroys the cloud-init copies of the secrets", () => {
   it("leaves user-data alone until enrollment has finished (enrollment still needs the token to retry)", () => {
     const { root, secret } = tree();
     try {
-      execFileSync("sh", [scrub, root]);
+      execFileSync("sh", [scrub, root], { windowsHide: true });
       for (const f of secret) expect(existsSync(f)).toBe(true);
       expect(existsSync(join(root, "etc/cloud/cloud-init.disabled"))).toBe(false);
     } finally { removeTempDirSync(root); }

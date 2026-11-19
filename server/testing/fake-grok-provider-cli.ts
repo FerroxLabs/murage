@@ -12,6 +12,11 @@ const dump = () => { if (process.env.FAKE_GROK_DUMP) writeFileSync(process.env.F
 const out = (id: number, result: unknown) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
 const error = (id: number, message: string) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } }) + "\n");
 let selected = "", sessionId = "";
+let mountedNames: string[] = [];
+const ready = (servers: any[]) => {
+  mountedNames = (servers ?? []).map(server => server.name);
+  if (mountedNames.length) process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "_x.ai/mcp_initialized", params: { sessionId, mcpToolCount: mountedNames.length, elapsedMs: 1 } }) + "\n");
+};
 for await (const line of createInterface({ input: process.stdin })) {
   const m = JSON.parse(line); if (m.id === undefined || !m.method) continue;
   calls.push({ method: m.method, params: m.params }); dump();
@@ -19,12 +24,13 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (m.method === "authenticate") { if (process.env.MURAGE_GROK_PROVIDER_API_KEY) error(m.id, "Routed fixture must not authenticate with native session"); else out(m.id, {}); continue; }
   if (m.method === "session/new") {
     sessionId = randomUUID(); mkdirSync(join(home, "sessions"), { recursive: true }); writeFileSync(join(home, "sessions", sessionId + ".json"), "{}");
-    out(m.id, { sessionId }); continue;
+    out(m.id, { sessionId }); ready(m.params.mcpServers); continue;
   }
   if (m.method === "session/load") {
     if (!/^[a-f0-9-]{36}$/.test(m.params.sessionId) || !existsSync(join(home, "sessions", m.params.sessionId + ".json"))) { out(m.id, null); continue; }
-    sessionId = m.params.sessionId; out(m.id, { sessionId }); continue;
+    sessionId = m.params.sessionId; out(m.id, { sessionId }); ready(m.params.mcpServers); continue;
   }
+  if (m.method === "_x.ai/mcp/list") { out(m.id, { servers: mountedNames.map(name => ({ name, session: { enabled: true, status: "ready" } })) }); continue; }
   if (m.method === "session/set_model") {
     if (process.env.FAKE_GROK_REJECT_MODEL === "1") { error(m.id, "Unsupported selected model"); continue; }
     selected = m.params.modelId; out(m.id, {}); continue;

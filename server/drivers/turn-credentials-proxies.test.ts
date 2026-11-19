@@ -1,8 +1,10 @@
+// control migration: real bound proxy ingress; existing assertions retained.
 // Every stdio proxy that carries a per-turn token reads it from the process's
 // credential file on EACH call. Reverting any of them to a token captured at
 // startup (a module-level const read from env) fails here: the file is
 // rewritten between two calls and the bearer on the wire must follow it.
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnBoundProxy } from "../testing/bound-proxy-fixture.ts";
 import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -34,12 +36,19 @@ describe.each(cases)("$name proxy follows the credential file between calls", (c
     const auths: Array<string | undefined> = [];
     try {
       stub = createServer((req, res) => {
-        req.resume();
-        req.on("end", () => { auths.push(req.headers.authorization); res.writeHead(200, { "content-type": "application/json" }); res.end("{}"); });
+        let body = "";
+        req.setEncoding("utf8").on("data", chunk => { body += chunk; });
+        req.on("end", () => {
+          auths.push(req.headers.authorization);
+          res.writeHead(200, { "content-type": "application/json" });
+          // The remote entry consumes JSON-RPC, unlike the other HTTP tools.
+          // An empty object is a malformed transport, not a token-read control.
+          res.end(c.name === "remote-mcp" ? JSON.stringify({ jsonrpc: "2.0", id: JSON.parse(body).id, result: { tools: [] } }) : "{}");
+        });
       });
       await new Promise<void>((resolve) => stub!.listen(0, "127.0.0.1", resolve));
       const port = (stub.address() as { port: number }).port;
-      child = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL(c.file, import.meta.url)), ...(c.args ?? [])], {
+      child = await spawnBoundProxy(c.name === "remote-mcp" ? "remoteMcp" : c.name, process.execPath, ["--experimental-strip-types", fileURLToPath(new URL(c.file, import.meta.url)), ...(c.args ?? [])], {
         env: { ...process.env, ...c.env, [c.urlEnv]: `http://127.0.0.1:${port}`, MURAGE_CRED_FILE: store.path, MURAGE_CRED_SERVER: c.server, [c.envVar]: "stale-env-token" },
         stdio: ["pipe", "pipe", "ignore"],
       });

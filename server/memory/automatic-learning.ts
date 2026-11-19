@@ -42,7 +42,9 @@ export function candidateReviewReason(db:DatabaseSync,id:string,version:number):
 export function pendingSaveNote(reason:string):string {
   return `Saved for the owner's review in Needs you. It is not active yet, so memory_search will not return it until the owner approves it. Reason: ${reason.trim().replace(/[.\s]+$/,"")}.`;
 }
-export function holdMemoryCandidate(db:DatabaseSync,id:string,reason:string){
+export function holdMemoryCandidate(db:DatabaseSync,id:string,reason:string, _authority:unknown=undefined){
+  // Autonomous learning has no executing owner actor. Requested saves resolve
+  // their live authority before entering the transaction in authority.ts.
   db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=1 AND EXISTS(SELECT 1 FROM memory_records r WHERE r.id=memory_record_details.record_id AND r.version=memory_record_details.record_version AND r.state='candidate')").run(learningReviewReason(reason),id);
   return false;
 }
@@ -104,9 +106,7 @@ export function activateGroundedMemory(db: DatabaseSync, id: string, claimType?:
   const bot=learningSourceBot(source.thread_id===null?null:String(source.thread_id));
   const decision=learningWriteDecision(db,{writer:"activation",target:"memory",evidenceScopeIds:learningEvidenceScopes(db,id,1),sourceId:String(source.id),sourceRevision:Number(source.revision),targetScopeId:String(record.scope_id),botId:bot?.id});
   const effective=decision.decision!=="auto"?decision:run?.decision??decision;
-  if(effective.decision!=="auto"){
-    return holdMemoryCandidate(db,id,effective.reason);
-  }
+  if(effective.decision!=="auto")return holdMemoryCandidate(db,id,effective.reason);
   if(run?.reviewOnly || settings.reviewMode || !(claimType==="procedure"?settings.automaticProcedures:settings.automaticFacts))return holdMemoryCandidate(db,id,run?.reviewOnly?"default-review":settings.reviewMode?"review-mode":"automatic-off");
   const quote=Buffer.from(payload.text??"").subarray(Number(source.start_byte),Number(source.end_byte)).toString("utf8");
   if(quote!==record.text && !support?.supported)return false;

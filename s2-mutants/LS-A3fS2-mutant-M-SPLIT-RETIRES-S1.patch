@@ -1,0 +1,10 @@
+--- a/server/drivers/cli-mount-relay.ts
++++ b/server/drivers/cli-mount-relay.ts
+@@ -342,6 +342,7 @@
+   }
+   /** S1 §4: cleanup failures never skip another cleanup, nor certify death. */
+   finish(cli = this.#cli): Promise<boolean> {
++    if (!this.#generationStop && this.cred && this.#cli && process.env.MURAGE_CLOUD_ROLE !== "home") return this.retireGeneration(); // MUTANT: retain S1
+     if (this.#confirmed) return Promise.resolve(true);
+     // Once a successor owns the process, stale generation callbacks may not
+     // close its listener, credentials, admission or CLI.

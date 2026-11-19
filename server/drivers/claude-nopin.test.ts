@@ -28,7 +28,8 @@ const SHAPES = [["linux", EXEC], ["win32", WIN_EXEC], ["win32", INHERIT]] as con
 // Names Fable named: off the allowlist, read by google-auth / botocore helpers, "" differs from absent for each.
 const HELPER_NAMES = ["GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_CA_BUNDLE", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"];
 // 14.6 ruled (frozen): enforcement-critical names with no non-empty neutral value, whose readers take "" as unset.
-const ALLOWED = ["CLAUDE_CODE_SHELL_PREFIX", "NODE_OPTIONS", "GIT_ASKPASS", "CLAUDE_ENV_FILE", "PYTHONINSPECT", "CLAUDE_CODE_PLUGIN_DIRS", "ENV"];
+// X3 r4.5 B0 (ruled, MurageMain): MURAGE_EXEC_KEEP joins as the eighth; any non-empty value is a class claim, "" is Bash class.
+const ALLOWED = ["CLAUDE_CODE_SHELL_PREFIX", "NODE_OPTIONS", "GIT_ASKPASS", "CLAUDE_ENV_FILE", "PYTHONINSPECT", "CLAUDE_CODE_PLUGIN_DIRS", "ENV", "MURAGE_EXEC_KEEP"];
 
 function hand(platform: "linux" | "win32", extra: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = { PATH: platform === "win32" ? "C:\\Windows\\system32" : "/usr/bin", ...extra };

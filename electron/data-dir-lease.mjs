@@ -8,16 +8,17 @@
 // Windows same-boot PID reuse concept adapted from upstream PR #1324 at
 // 7c82592ff8b1; Murage binds an exact creation identity instead of wall time.
 // This helper never creates, migrates, renames or replaces the installation.
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { execFileSync } from "node:child_process";
 import { windowsNative } from "./windows-native.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync,
-  openSync, readFileSync, readSync, realpathSync, unlinkSync, writeFileSync,
+  closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync,
+  openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { hostname, uptime } from "node:os";
 import { isMainThread } from "node:worker_threads";
-import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 
 const CHILD_LEASE_ENV = "MURAGE_INTERNAL_DATA_DIR_LEASE";
 const NO_CAPABILITY = Symbol("no private lease capability");
@@ -57,6 +58,13 @@ function uptimeMs() {
 // retain PID exclusion; notably failed uptime must not become zero.
 // With recordPath, a live Windows PID is also checked against the owner's
 // published creation identity; reapers and delegation checks pass none.
+export function provedOwnerReboot(owner, boot = bootSession(), uptimeValue) {
+  if (boot !== null && validBoot(boot) && validBoot(owner.boot)) return owner.boot !== boot;
+  if (!validUptime(owner.uptime)) return false;
+  const current = uptimeValue === undefined ? uptimeMs() : uptimeValue;
+  return validUptime(current) && current < owner.uptime;
+}
+
 function ownerIsAlive(owner, recordPath) {
   // A record naming this very process is live only while this process holds
   // its token. A container starts its server as the same PID on every restart
@@ -69,13 +77,7 @@ function ownerIsAlive(owner, recordPath) {
   // empty token set): there a record naming this PID is the running process
   // hosting the thread, and the checks below decide as for any other PID.
   if (owner.pid === process.pid && isMainThread) return heldTokens.has(owner.token);
-  const boot = bootSession();
-  if (boot !== null && typeof owner.boot === "string") {
-    if (owner.boot !== boot) return false;
-  } else if (validUptime(owner.uptime)) {
-    const current = uptimeMs();
-    if (current !== null && current < owner.uptime) return false;
-  }
+  if (provedOwnerReboot(owner)) return false;
   if (!processIsAlive(owner.pid)) return false;
   return recordPath === undefined || !creationIdentityDisproves(owner, recordPath);
 }
@@ -96,19 +98,47 @@ const WINDOWS_START = /^[1-9][0-9]{0,19}$/;
 // boot. With the boot id it names one process exactly, so a live PID with
 // another starttime is a reused PID and its owner is gone.
 const LINUX_START = /^[0-9]{1,20}$/;
+// macOS identity (version 4). macOS has no exact process-creation probe in
+// Node, so ps reports the owner's start (lstart, to the second, in a fixed C
+// locale and UTC): with the boot session it names one process, so a live PID
+// with another start is a reused PID and its owner is gone. It lives in the
+// token-scoped side file, never in the record, so older versions read records
+// unchanged (and ignore a version they do not know).
+const DARWIN_START = /^[A-Z][a-z]{2} [A-Z][a-z]{2} [0-9]{1,2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}$/;
 const MAX_FILETIME = 0x7fffffffffffffffn;
 const IDENTITY_KEYS = ["version", "pid", "token", "start"];
 const HELD_IDENTITY_KEYS = ["version", "pid", "token"];
 const MAX_DISPROVED = 64;
 const disproved = new Set();
 const validStart = (value) => typeof value === "string" && WINDOWS_START.test(value) && BigInt(value) <= MAX_FILETIME;
+/** Same exact process-start policy for callers fencing external children. */
+export function validProcessStart(value, platform = process.platform) {
+  return platform === "linux" ? typeof value === "string" && LINUX_START.test(value)
+    : platform === "win32" && validStart(value);
+}
 const identityPath = (recordPath, owner) => `${recordPath}.identity-${owner.token}`;
 function isIdentity(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || !isPid(value.pid) || typeof value.token !== "string" || !UUID.test(value.token)) return false;
-  const keys = value.version === 1 || value.version === 3 ? IDENTITY_KEYS : value.version === 2 ? HELD_IDENTITY_KEYS : null;
+  const keys = value.version === 1 || value.version === 3 || value.version === 4 ? IDENTITY_KEYS : value.version === 2 ? HELD_IDENTITY_KEYS : null;
   return Boolean(keys) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key))
-    && (value.version === 2 || (value.version === 3 ? typeof value.start === "string" && LINUX_START.test(value.start) : validStart(value.start)));
+    && (value.version === 2 || (value.version === 4 ? typeof value.start === "string" && DARWIN_START.test(value.start)
+      : value.version === 3 ? typeof value.start === "string" && LINUX_START.test(value.start) : validStart(value.start)));
 }
+
+/** ps's start time of a live process, normalised, or null: missing,
+ * slow, denied or malformed. null keeps PID exclusion. */
+function darwinProcessStart(pid) {
+  if (!isPid(pid)) return null;
+  try {
+    const raw = execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], withHideInherit({
+      encoding: "utf8", timeout: 5_000, maxBuffer: 1024, stdio: ["ignore", "pipe", "ignore"],
+      env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LC_ALL: "C", TZ: "UTC" },
+    }));
+    const value = typeof raw === "string" ? raw.trim().replace(/\s+/g, " ") : null;
+    return value && DARWIN_START.test(value) ? value : null;
+  } catch { return null; }
+}
+
 // libuv's share-none open flag (Windows only; the documented value where a
 // build does not name it).
 const EXLOCK = constants.UV_FS_O_EXLOCK ?? 0x10000000;
@@ -151,9 +181,16 @@ function creationIdentityDisproves(owner, recordPath) {
     const stat = linuxProcStat(owner.pid);
     return stat !== null && stat[1] !== identity.start;
   }
+  if (process.platform === "darwin") {
+    // Only a clean, different start disproves, as on Linux.
+    const identity = readIdentity(recordPath, owner);
+    if (!identity || identity.version !== 4) return false;
+    const current = darwinProcessStart(owner.pid);
+    return current !== null && current !== identity.start;
+  }
   if (process.platform !== "win32") return false;
   const identity = readIdentity(recordPath, owner);
-  if (!identity || identity.version === 3) return false;
+  if (!identity || (identity.version !== 1 && identity.version !== 2)) return false;
   const key = `${identity.pid}:${identity.token}:${identity.start ?? "held"}`;
   if (disproved.has(key)) return true;
   if (identity.version === 2) {
@@ -183,6 +220,16 @@ function recordOwnIdentity(recordPath, owner, isReleased) {
     } catch { /* Missing identity keeps the PID-only protocol. */ }
     return;
   }
+  if (process.platform === "darwin") {
+    const start = darwinProcessStart(process.pid);
+    if (start === null) return;
+    try {
+      if (isReleased() || !sameOwner(readRecord(recordPath)?.owner, owner)) return;
+      publishRecord(identityPath(recordPath, owner), { version: 4, pid: owner.pid, token: owner.token, start });
+      if (isReleased() || !sameOwner(readRecord(recordPath)?.owner, owner)) removeIdentity(recordPath, owner);
+    } catch { /* Missing identity keeps the PID-only protocol. */ }
+    return;
+  }
   if (process.platform !== "win32") return;
   let fd;
   try {
@@ -196,6 +243,7 @@ function recordOwnIdentity(recordPath, owner, isReleased) {
 }
 
 function removeIdentity(recordPath, owner) {
+  removeMachineNote(recordPath, owner);
   if (readIdentity(recordPath, owner)) {
     try { unlinkSync(identityPath(recordPath, owner)); } catch { /* inert, token-scoped leftover */ }
   }
@@ -223,6 +271,7 @@ const MESSAGES = {
   LEASE_DELEGATION_INVALID: "The private installation lease delegation is invalid; refusing to start.",
   LEASE_DELEGATION_CONSUME: "Murage could not consume its private installation lease delegation.",
   LEASE_CLOSING: "The installation owner is releasing its lease; no new server may start.",
+  LEASE_TAKEOVER_REFUSED: "Murage could not confirm that no other computer or process is using this installation; its lock files were left as they are.",
 };
 
 export class DataDirLeaseError extends Error {
@@ -250,10 +299,83 @@ const localHost = () => hostname();
  * The boot session id proves it too: it is random per boot, so no two
  * computers share one. A record from an earlier boot under another name
  * cannot be told apart from another computer's and still fails closed. */
-function sameMachine(record) {
-  if (record.host === localHost()) return true;
-  const boot = bootSession();
-  return boot !== null && typeof record.boot === "string" && record.boot === boot;
+function sameMachine(record, host = localHost(), boot) {
+  if (record.host === host) return true;
+  const currentBoot = boot === undefined ? bootSession() : boot;
+  return currentBoot !== null && typeof record.boot === "string" && record.boot === currentBoot;
+}
+
+// A lock left by an unclean end (an interrupted update, a force quit), then a
+// restart on another network, carries an old name AND an old boot, so the two
+// proofs above cannot place it and the Mac stayed on the recovery window at
+// every start. Two more proofs of this very computer (macOS only), never of a
+// live owner (liveness is still decided by ownerIsAlive):
+// 1. new records get a token-scoped note holding a hash of the Mac's own
+//    hardware identity (IOPlatformUUID). Another computer has another one, so
+//    it still fails closed. Not Linux: container images can bake one
+//    machine-id into every copy. Older versions never read the note; a record
+//    without one keeps the older proofs.
+// 2. a record from before the note named this Mac by its own Bonjour name
+//    (LocalHostName, ".local") or its set HostName. Bonjour keeps that name
+//    unique on a network, and an unknown or unset name proves nothing.
+const MACHINE_KEYS = ["version", "token", "machine"];
+const MACHINE_DIGEST = /^[0-9a-f]{64}$/;
+const machinePath = (recordPath, owner) => `${recordPath}.machine-${owner.token}`;
+const isMachineNote = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value)
+  && Object.keys(value).length === MACHINE_KEYS.length && MACHINE_KEYS.every((key) => Object.hasOwn(value, key))
+  && value.version === 1 && typeof value.token === "string" && UUID.test(value.token)
+  && typeof value.machine === "string" && MACHINE_DIGEST.test(value.machine);
+const darwinProbe = (file, args) => execFileSync(file, [...args], withHideInherit({
+  encoding: "utf8", timeout: 5_000, maxBuffer: 64 * 1024, stdio: ["ignore", "pipe", "ignore"],
+}));
+let cachedMachine;
+function machineIdentity() {
+  if (cachedMachine !== undefined) return cachedMachine;
+  cachedMachine = null;
+  try {
+    const raw = process.platform === "darwin"
+      ? /"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]{36})"/.exec(darwinProbe("/usr/sbin/ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"]))?.[1] : null;
+    if (typeof raw === "string" && /^[0-9A-Fa-f-]{36}$/.test(raw) && !/^[0-]+$/.test(raw)) {
+      cachedMachine = createHash("sha256").update(`murage-data-dir-lease-machine-v1\0${raw.toLowerCase()}`).digest("hex");
+    }
+  } catch { /* Unknown machine identity proves nothing. */ }
+  return cachedMachine;
+}
+let cachedNames;
+function ownHostNames() {
+  if (cachedNames !== undefined) return cachedNames;
+  cachedNames = new Set();
+  if (process.platform !== "darwin") return cachedNames;
+  for (const key of ["LocalHostName", "HostName"]) {
+    let name;
+    try { name = darwinProbe("/usr/sbin/scutil", ["--get", key]).trim().toLowerCase(); } catch { continue; }
+    if (!/^[a-z0-9][a-z0-9.-]{0,252}$/.test(name)) continue;
+    cachedNames.add(name);
+    if (key === "LocalHostName" && !name.includes(".")) cachedNames.add(`${name}.local`);
+  }
+  return cachedNames;
+}
+function recordOwnMachine(recordPath, owner) {
+  const machine = machineIdentity();
+  if (!machine) return;
+  try { publishRecord(machinePath(recordPath, owner), { version: 1, token: owner.token, machine }); }
+  catch { /* Without a note the older proofs still apply. */ }
+}
+function removeMachineNote(recordPath, owner) {
+  try { if (readRecord(machinePath(recordPath, owner), undefined, isMachineNote)) unlinkSync(machinePath(recordPath, owner)); }
+  catch { /* inert, token-scoped leftover */ }
+}
+/** sameMachine, plus the two proofs above for the record stored at recordPath. */
+function sameMachineAt(record, recordPath) {
+  if (sameMachine(record)) return true;
+  let note;
+  try { note = readRecord(machinePath(recordPath, record), undefined, isMachineNote)?.owner ?? null; }
+  catch { return false; }
+  // A note is the owner's own word: it alone decides, so a computer that only
+  // shares this Mac's name is never taken for it. Names speak only for records
+  // written before notes existed.
+  if (note) return note.token === record.token && machineIdentity() !== null && note.machine === machineIdentity();
+  return ownHostNames().has(record.host.toLowerCase());
 }
 
 function withoutWindowsNamespace(path) {
@@ -330,14 +452,18 @@ function canonicalDataDir(dataDir) {
 /** The full canonical installation path selects a stable sibling anchor.
  * Replacing only DATA_DIR leaves all ownership records in place. Parent
  * directory renames and hostile same-UID filesystem races are not contained. */
+export function dataDirIdentity(canonical, platform = process.platform) {
+  const identity = platform === "darwin" ? canonical.normalize("NFC").toLowerCase() : canonical;
+  return createHash("sha256").update(identity).digest("hex");
+}
+
 export function dataDirLeasePaths(dataDir) {
   const canonical = canonicalDataDir(dataDir);
   // Darwin commonly uses a case-insensitive volume. Before a missing leaf
   // exists, realpath cannot normalize that leaf's case. Fold its identity
   // conservatively, while preserving the physical parent path for I/O.
   // Case-sensitive Darwin volumes may therefore over-exclude case-only peers.
-  const identity = process.platform === "darwin" ? canonical.normalize("NFC").toLowerCase() : canonical;
-  const digest = createHash("sha256").update(identity).digest("hex");
+  const digest = dataDirIdentity(canonical);
   const leasePath = join(dirname(canonical), `.murage-data-owner-${digest}.lease`);
   return Object.freeze({ canonicalDataDir: canonical, leasePath, childLeasePath: `${leasePath}.child` });
 }
@@ -504,10 +630,10 @@ function claimReaper(leasePath, target) {
   let path = `${leasePath}.reap-${target.token}`;
   for (let generation = 0; generation < MAX_REAPER_GENERATIONS; generation++) {
     const candidate = { ...newOwner(), targetToken: target.token };
-    if (publishRecord(path, candidate)) return true;
+    if (publishRecord(path, candidate)) { recordOwnMachine(path, candidate); return true; }
     const current = readRecord(path, target.token)?.owner;
     if (!current) continue;
-    if (!sameMachine(current)) throw fail("LEASE_FOREIGN_HOST");
+    if (!sameMachineAt(current, path)) throw fail("LEASE_FOREIGN_HOST");
     if (ownerIsAlive(current)) return false;
     const digest = createHash("sha256").update(current.token).digest("hex").slice(0, 32);
     path = `${leasePath}.reap-${target.token}-${digest}`;
@@ -519,7 +645,7 @@ function retireDeadOwner(path, expected) {
   if (!claimReaper(path, expected)) throw fail("LEASE_RECOVERY_BUSY");
   const current = readRecord(path)?.owner;
   if (!current || !sameOwner(current, expected)) return;
-  if (!sameMachine(current)) throw fail("LEASE_FOREIGN_HOST");
+  if (!sameMachineAt(current, path)) throw fail("LEASE_FOREIGN_HOST");
   if (ownerIsAlive(current, path)) throw fail("LEASE_BUSY");
   removeOwnedRecord(path, expected);
   removeIdentity(path, expected);
@@ -528,7 +654,7 @@ function retireDeadOwner(path, expected) {
 function assertNoLiveChild(paths, exitedChildren = []) {
   const child = readRecord(paths.childLeasePath)?.owner;
   if (!child) return;
-  if (!sameMachine(child)) throw fail("LEASE_FOREIGN_HOST");
+  if (!sameMachineAt(child, paths.childLeasePath)) throw fail("LEASE_FOREIGN_HOST");
   if (!ownerIsAlive(child, paths.childLeasePath)) return;
   // The caller spawned this exact child and watched it exit cleanly (code 0),
   // so a record still naming its PID is leftover from a stop that arrived
@@ -567,18 +693,18 @@ export function inspectDataDirLease(dataDir) {
     // and only a dead primary requires traversing its immutable reapers.
     const child = read(paths.childLeasePath, "child");
     if (child) {
-      if (!sameMachine(child)) return result("blocked", "LEASE_FOREIGN_HOST");
+      if (!sameMachineAt(child, paths.childLeasePath)) return result("blocked", "LEASE_FOREIGN_HOST");
       if (ownerIsAlive(child, paths.childLeasePath)) return result("blocked", "LEASE_CHILD_BUSY");
     }
     const primary = read(paths.leasePath, "primary");
     if (primary) {
-      if (!sameMachine(primary)) return result("blocked", "LEASE_FOREIGN_HOST");
+      if (!sameMachineAt(primary, paths.leasePath)) return result("blocked", "LEASE_FOREIGN_HOST");
       if (ownerIsAlive(primary, paths.leasePath)) return result("blocked", "LEASE_BUSY");
       let path = `${paths.leasePath}.reap-${primary.token}`;
       for (let generation = 0; generation < MAX_REAPER_GENERATIONS; generation++) {
         const reaper = read(path, "reaper", primary.token);
         if (!reaper) break;
-        if (!sameMachine(reaper)) return result("blocked", "LEASE_FOREIGN_HOST");
+        if (!sameMachineAt(reaper, path)) return result("blocked", "LEASE_FOREIGN_HOST");
         if (ownerIsAlive(reaper)) return result("blocked", "LEASE_RECOVERY_BUSY");
         if (generation === MAX_REAPER_GENERATIONS - 1) return result("blocked", "LEASE_RECOVERY_LIMIT");
         const digest = createHash("sha256").update(reaper.token).digest("hex").slice(0, 32);
@@ -599,15 +725,16 @@ function claim(path, guard = () => {}) {
     guard();
     if (publishRecord(path, owner)) {
       heldTokens.add(owner.token);
+      recordOwnMachine(path, owner);
       try { guard(); }
-      catch (error) { heldTokens.delete(owner.token); removeOwnedRecord(path, owner); throw error; }
+      catch (error) { heldTokens.delete(owner.token); removeOwnedRecord(path, owner); removeMachineNote(path, owner); throw error; }
       return owner;
     }
     let current;
     try { current = readRecord(path)?.owner; }
     catch (error) { if (error?.raced) continue; throw error; }
     if (!current) continue;
-    if (!sameMachine(current)) throw fail("LEASE_FOREIGN_HOST");
+    if (!sameMachineAt(current, path)) throw fail("LEASE_FOREIGN_HOST");
     if (ownerIsAlive(current, path)) throw fail("LEASE_BUSY");
     try { retireDeadOwner(path, current); }
     catch (error) { if (!error?.raced) throw error; }
@@ -693,7 +820,7 @@ export function acquireDataDirLeaseForProcess(dataDir, environment = process.env
   const validateParent = () => {
     const owner = readRecord(paths.leasePath)?.owner;
     if (!owner || owner.pid !== Number(match[1]) || owner.token !== match[2]
-      || !sameMachine(owner) || !ownerIsAlive(owner)) throw fail("LEASE_DELEGATION_INVALID");
+      || !sameMachineAt(owner, paths.leasePath) || !ownerIsAlive(owner)) throw fail("LEASE_DELEGATION_INVALID");
     assertNotClosing(paths, owner);
   };
   validateParent();
@@ -714,4 +841,129 @@ export function acquireDataDirLeaseForProcess(dataDir, environment = process.env
       return true;
     },
   });
+}
+
+/** External-child probes deliberately exclude the current-process held-token shortcut. */
+export { validBoot, validUptime, localHost, sameMachine, bootSession, uptimeMs, linuxProcStat, processIsAlive, probeProcessStartSync, darwinProcessStart };
+
+/** This process's currently held installation lease generation, never child death proof. */
+export function currentDataDirLeaseEpoch(dataDir) {
+  try {
+    const paths=dataDirLeasePaths(dataDir);
+    for(const path of [paths.childLeasePath,paths.leasePath]){
+      const owner=readRecord(path)?.owner;
+      if(owner&&owner.pid===process.pid&&heldTokens.has(owner.token)&&sameMachineAt(owner,path))return owner.token;
+    }
+  }catch{/* Unknown ownership cannot establish Signal coverage. */}
+  return null;
+}
+
+// Network and cluster filesystems: a folder on one may be in use by another
+// computer right now, so its lock files are never set aside from here.
+const NETWORK_FS = /^(nfs4?|cifs|smb[23]?|smbfs|afpfs|webdav|davfs|fuse\.sshfs|sshfs|9p|ceph|glusterfs|gfs2?|ocfs2|lustre|afs|beegfs|gpfs|virtiofs|fuse\.rclone)$/;
+const unescapeMount = (value) => value.replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
+/** Whether every path lies on a local volume: the longest mount point
+ * holding it is local (macOS mount says "local"; Linux names a non-network
+ * filesystem). Anything unreadable, and every other platform, is not local. */
+export function pathsOnLocalVolume(targets, platform = process.platform) {
+  let mounts;
+  try {
+    if (platform === "darwin") {
+      const raw = execFileSync("/sbin/mount", [], { encoding: "utf8", timeout: 5_000, maxBuffer: 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+      mounts = String(raw).split("\n").map((line) => /^.+? on (\/.*) \(([^()]*)\)$/.exec(line))
+        .filter(Boolean).map((match) => ({ point: match[1], local: match[2].split(",").map((part) => part.trim()).includes("local") }));
+    } else if (platform === "linux") {
+      mounts = readFileSync("/proc/self/mounts", "utf8").split("\n").map((line) => line.split(" ")).filter((fields) => fields.length >= 3)
+        .map((fields) => ({ point: unescapeMount(fields[1]), local: !NETWORK_FS.test(fields[2]) }));
+    } else return false;
+  } catch { return false; }
+  if (!mounts.length) return false;
+  return targets.every((target) => {
+    let real;
+    try { real = realpathSync.native(target); } catch { return false; }
+    const holder = mounts.filter(({ point }) => point === "/" || real === point || real.startsWith(`${point}/`))
+      .sort((a, b) => b.point.length - a.point.length)[0];
+    return holder?.local === true;
+  });
+}
+
+const UUID_TEXT = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const RECORD_SUFFIX = new RegExp(`^(?:|\\.child|\\.closing-${UUID_TEXT}|\\.reap-${UUID_TEXT}(?:-[0-9a-f]{32})*)$`);
+const SIDE_SUFFIX = new RegExp(`^(?:\\.child|\\.reap-${UUID_TEXT}(?:-[0-9a-f]{32})*)?\\.(?:identity|alive|machine)-${UUID_TEXT}$`);
+function setAsidePlan(paths) {
+  const dir = dirname(paths.leasePath);
+  const base = basename(paths.leasePath);
+  let names;
+  try { names = readdirSync(dir); } catch (error) { throw fail("LEASE_IO", error); }
+  const records = [], sides = [];
+  for (const name of names) {
+    if (name !== base && !name.startsWith(`${base}.`)) continue;
+    const suffix = name.slice(base.length);
+    // The restore marker (.lease.restore.json), candidates mid-publication
+    // and anything set aside before are never part of the lock; they stay.
+    if (RECORD_SUFFIX.test(suffix)) records.push(join(dir, name));
+    else if (SIDE_SUFFIX.test(suffix)) sides.push(join(dir, name));
+  }
+  return { records, sides };
+}
+
+/** Whether "This is my computer, continue" may be offered: inspection reports
+ * a foreign claim and the installation and its lock files are on a local
+ * volume (a network folder may really be in use by another computer). */
+export function foreignDataDirLeaseSetAsideAvailable(dataDir, { localVolume = pathsOnLocalVolume } = {}) {
+  try {
+    if (inspectDataDirLease(dataDir).code !== "LEASE_FOREIGN_HOST") return false;
+    const paths = dataDirLeasePaths(dataDir);
+    return localVolume([dirname(paths.leasePath), ...(existsSync(paths.canonicalDataDir) ? [paths.canonicalDataDir] : [])]) === true;
+  } catch { return false; }
+}
+
+/** The owner said this computer is the only one using this installation
+ * ("This is my computer, continue"). Sets the foreign lock records aside by
+ * renaming them to `<name>.foreign-<time>` (never deleting, never touching
+ * the installation or the restore marker), only when every record is
+ * readable and none names a process that may be alive: a same-machine live
+ * owner is LEASE_BUSY; a foreign record whose PID is alive here on a boot
+ * that cannot be proved over is refused. Any doubt renames nothing. */
+export function setAsideForeignDataDirLease(dataDir, { localVolume = pathsOnLocalVolume, now = Date.now } = {}) {
+  if (!foreignDataDirLeaseSetAsideAvailable(dataDir, { localVolume })) throw fail("LEASE_TAKEOVER_REFUSED");
+  const paths = dataDirLeasePaths(dataDir);
+  const { records, sides } = setAsidePlan(paths);
+  const checked = [];
+  for (const path of records) {
+    const suffix = path.slice(paths.leasePath.length);
+    const validate = suffix.startsWith(".reap-")
+      ? (value) => typeof value?.targetToken === "string" && isOwner(value, value.targetToken) : undefined;
+    const read = readRecord(path, undefined, validate);
+    if (!read) continue;
+    const owner = read.owner;
+    // Primary and child carry a liveness identity; recovery claims and seals
+    // are checked by PID and boot only, as acquisition checks them.
+    const identityFor = suffix === ".child" || suffix === "" ? path : undefined;
+    if (sameMachineAt(owner, path)) {
+      if (ownerIsAlive(owner, identityFor)) throw fail(suffix === ".child" ? "LEASE_CHILD_BUSY" : "LEASE_BUSY");
+    } else if (!provedOwnerReboot(owner) && processIsAlive(owner.pid)) {
+      throw fail("LEASE_TAKEOVER_REFUSED");
+    }
+    checked.push({ path, stat: read.stat });
+  }
+  const stamp = new Date(now()).toISOString().replace(/[-:.]/g, "");
+  const target = (path) => `${path}.foreign-${stamp}`;
+  for (const path of [...checked.map((entry) => entry.path), ...sides]) {
+    if (existsSync(target(path))) throw fail("LEASE_RECOVERY_BUSY");
+  }
+  // Recovery claims and seals first, the primary record last, then the
+  // token-scoped side files, which nothing reads once their record is gone.
+  checked.sort((a, b) => (a.path === paths.leasePath) - (b.path === paths.leasePath));
+  let moved = 0;
+  for (const { path, stat } of checked) {
+    let current;
+    try { current = lstatSync(path); } catch (error) { throw absent(error) ? fail("LEASE_RECOVERY_BUSY") : fail("LEASE_IO", error); }
+    if (!current.isFile() || !sameFile(stat, current)) throw fail("LEASE_RECOVERY_BUSY");
+    try { renameSync(path, target(path)); moved++; } catch (error) { throw fail("LEASE_IO", error); }
+  }
+  for (const path of sides) {
+    try { renameSync(path, target(path)); moved++; } catch { /* inert, token-scoped leftover */ }
+  }
+  return moved;
 }

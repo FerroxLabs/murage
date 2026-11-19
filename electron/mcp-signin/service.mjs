@@ -106,7 +106,15 @@ export function createMcpServers(deps) {
       log(`mcp server ${name}: the harness could not be reached to hand over its secrets`);
       return "offline";
     }
-    if (answer.status === 200) return "ok";
+    if (answer.status === 200) {
+      if (doc?.origin) {
+        try { await deps.commit(`/api/mcp/servers/${name}/health`, { method: "PUT", body: {
+          origin: doc.origin, needsReconnect: doc.needsReconnect === true, revision: doc.savedAt ?? 0,
+          ...(Number.isFinite(doc.oauth?.signedInAt) ? { signedInAt: doc.oauth.signedInAt } : {}),
+        } }); } catch { /* The durable document retries this projection on resume. */ }
+      }
+      return "ok";
+    }
     if (answer.status === 404 || answer.status === 409) {
       if (projection) {
         try { await update(name, (current) => current && JSON.stringify(projectDoc(current)) === JSON.stringify(projection) ? null : undefined); }
@@ -120,6 +128,18 @@ export function createMcpServers(deps) {
 
   const refresher = createRefresher({
     read, update, push, request, now, log,
+    probe: async (name, doc) => {
+      const target = await deps.commit(`/api/mcp/servers/${name}/oauth-target`, { method: "GET" });
+      if (target.status !== 200 || typeof target.body?.url !== "string" || !sameOrigin(doc.origin, target.body.url)) return null;
+      // Initialize is a read-only authentication check. No tool is executed,
+      // and redirects and address changes use the same guarded MCP transport.
+      const result = await request({ url: target.body.url, method: "POST", kind: "mcp", mode: "request",
+        confirmed: target.body.local ?? null, totalMs: 5000, maxBytes: 65536,
+        headers: { authorization: `Bearer ${doc.oauth.accessToken}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "murage-health", version: "1" } } }),
+      });
+      return result.status;
+    },
     setTimeout: deps.setTimeout, clearTimeout: deps.clearTimeout,
   });
 
@@ -277,7 +297,7 @@ export function createMcpServers(deps) {
       try {
         await update(name, (current) => {
           const base = current && current.origin === origin ? current : {};
-          return { ...base, origin, oauth: result.oauth, savedAt: now() };
+          return { ...base, origin, oauth: result.oauth, needsReconnect: false, savedAt: Math.max(now(), (base.savedAt ?? 0) + 1) };
         });
       } catch {
         return fail("storage", MESSAGES.storage);

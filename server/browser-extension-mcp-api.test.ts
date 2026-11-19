@@ -1,9 +1,11 @@
+import { fixtureDisplayReply, fixtureMessageEvidence } from "./testing/browser-display-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Real Murage HTTP/approval flow with a declared fake browser broker, not native proof.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 const instrumentation = `
 globalThis.__murageFixtureBrowserEngine=options=>({
  async call(name,args){
@@ -31,7 +33,9 @@ registerHooks({load(url,context,next){
    if(command.operation==='cdp'){
     const {method,params}=command.params;let r={};const tab=b.tabs[0];
     if(method==='Page.navigate'){tab.url=params.url;tab.origin=new URL(params.url).origin;tab.navigationEpoch++}
+    if(method==='Murage.getAllFrames')r={frames:[{frameId:0,parentFrameId:-1,url:tab.url}]};
     if(method==='Page.getFrameTree')r={frameTree:{frame:{id:'frame',loaderId:'L'}}};
+    if(method==='Murage.getAllFrames')r={frames:[{frameId:0,parentFrameId:-1}]};
     if(method==='Page.createIsolatedWorld')r={executionContextId:7};
     if(method==='DOM.getDocument')r={root:{nodeId:1}};
     if(method==='DOM.describeNode')r={node:{backendNodeId:1}};
@@ -54,6 +58,11 @@ let owner: Record<string, string> = {};
 let client: Record<string, string> = {};
 let clientId: string, botId: string, threadId: string;
 async function request(path: string, body?: unknown, headers = owner) {
+  if(path==='/api/browser-extension/clients'&&body&&typeof body==='object'&&'action' in body&&body.action==='pair'&&!('disclosureKey' in body)){
+    const preview=await request(path,{...body,action:'preview'},headers);
+    body={...body,disclosureKey:preview.body.disclosure.disclosureKey};
+  }
+ if(path.endsWith("/respond")) body=fixtureDisplayReply(join(fixture.info.dataDir,"messages.db"),body);
   const res = await fetch(fixture.info.url + path, { method: body === undefined ? "GET" : "POST", headers: { ...headers, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: await res.json() as any };
 }
@@ -61,7 +70,7 @@ async function pendingCard() {
   let card: any;
   await expect.poll(async () => {
     const response = await request("/api/bots");
-    card = response.body.bots.find((bot: any) => bot.id === botId)?.messages?.findLast((message: any) => message.card?.tool === "browser_extension_action" && !message.card.answered)?.card;
+    card = fixtureMessageEvidence(join(fixture.info.dataDir,"messages.db"), response.body.bots.find((bot: any) => bot.id === botId)?.messages ?? []).findLast((message: any) => message.card?.tool === "browser_extension_action" && !message.card.answered)?.card;
     return !!card;
   }, { timeout: 10000 }).toBe(true);
   return card;
@@ -85,6 +94,17 @@ it("lists the restricted tools without site or action authority", async () => {
   expect(value.status).toBe(200); expect(value.body.tools.some((tool: any) => tool.name === "agent_browser_open")).toBe(true);
   expect(value.body.tools.some((tool: any) => /eval|cookies|approve/.test(tool.name))).toBe(false);
   expect((await request("/api/browser-extension/mcp", { method: "tools/list", botId: "other" }, client)).status).toBe(400);
+});
+it("a paired external client stays at Ask when its bot is set to No limits", async () => {
+  const api = async (method: string, path: string, body?: unknown) => {
+    const response = await fetch(fixture.info.url + path, { method, headers: { ...owner, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: response.status, body: await response.json() as any };
+  };
+  expect((await raiseLevel(api, botId, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+  const navigating = request('/api/browser-extension/mcp', { method: 'tools/call', params: { name: 'agent_browser_open', arguments: { url: 'https://external-client.test/' } } }, client);
+  const site = await pendingCard();
+  expect((await request(`/api/threads/${threadId}/respond`, { requestId: site.requestId, behavior: 'deny' })).status).toBe(200);
+  expect((await navigating).status).toBeGreaterThanOrEqual(400);
 });
 it("asks the owner for a site then refuses a denied consequential action", async () => {
   const navigating = request("/api/browser-extension/mcp", { method: "tools/call", params: { name: "agent_browser_open", arguments: { url: "https://fixture.test/" } } }, client);

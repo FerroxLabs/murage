@@ -158,6 +158,8 @@ type SkillRecordingPayload = {
     /** What the last verified backup left out of the data folder, listed
      * after it (0.1.60 audit A-01). */
     lastSkipped?:import("../../shared/backup-skipped.mjs").BackupSkipped;
+    /** Scheduled backups are on but wait while a restore is finishing; they run by themselves afterwards. */
+    restoreDeferred?:boolean;
   }
   interface BackupClosedStatus {
     supported:boolean;
@@ -172,18 +174,28 @@ type SkillRecordingPayload = {
   interface Window {
     /** B3 WP4: the Cloud-home window's own small bridge (electron/preload-cloud.cjs). Never present in the main window. */
     muragecloud?: {
+      browserPopout?: {
+        open?(botId: string): Promise<boolean>;
+        close(botId: string): Promise<boolean>;
+        currentState(): Promise<{ available: boolean; windows: { botId: string; open: boolean }[] }>;
+        onState?(cb: (state: { botId: string; open: boolean }) => void): () => void;
+      };
       homeId: string;
       platform: NodeJS.Platform;
       setUnreadCount(count: number): void;
+      /** S3R session, offers, display hand-off and payload acknowledgements over cloud-attention:*; main derives the home. */
+      attention?: import("@/lib/attention-offer").AttentionBridge;
       approvalNotifications: {
-        show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string; silent?: boolean }): Promise<{ accepted: boolean }>;
-        onOpen(callback: (target: { botId: string; threadId: string; messageId?: string }) => void): () => void;
+        show(payload: { approvalId?: string; requestRef?: string; actionHash?: string; botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string; silent?: boolean }): Promise<{ accepted: boolean }>;
+        onOpen(callback: (target: { botId: string; threadId: string; messageId?: string; reconnectIncidentId?: string }) => void): () => void;
       };
       reachable(): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
       /** Settings: disconnect this computer from this window's own home. Main then closes the window and shows the Connect panel. */
       disconnectThisComputer?(): Promise<{ disconnected: true }>;
       /** Open an https link in the default browser. Main validates it; a Cloud-home window gets https only. */
       openExternal?(url: string): Promise<boolean>;
+      /** A new bot's "Sign <bot> in to <engine>": main opens that sign-in in the local window. A bot id and an engine name only. */
+      requestSignIn?(request: { bot: string; engine: string }): Promise<{ requested: true }>;
     };
     muragebox?: {
       platform: NodeJS.Platform;
@@ -251,7 +263,12 @@ type SkillRecordingPayload = {
         state(): Promise<{ enabled: true; cpSignedIn: boolean; paired: { homeId: string; origin: string }[] }>;
         listHomes(): Promise<{ id: string; name: string; status: string; reachable: boolean; paired: boolean }[]>;
         /** The bots of a paired home (id and name only): a per-bot engine sign-in names one. */
-        listBots(homeId: string): Promise<{ id: string; name: string }[]>;
+        /** `signIn`: the engine the bot uses and whether it is signed in (F4 C2); absent when the home cannot say. `uses` is Claude's: the home-wide or the bot's own. */
+        listBots(homeId: string): Promise<{ id: string; name: string; signIn?: { engine: string; label: string; signedIn: boolean; uses: "home" | "own" | null; signedInEngines?: string[]; dismissed?: string[] } }[]>;
+        /** "Not now" on a sign-in offer, kept on the home for good. */
+        dismissOffer?(homeId: string, bot: string, engine: string): Promise<{ dismissed: true }>;
+        /** main -> this window: a Cloud window asked for a bot's engine sign-in (names only). */
+        onSignInRequested?(callback: (request: { homeId: string; bot: string; engine: string }) => void): () => void;
         /** Fires when Cloud goes live (true) or stops being live (false); the entry appears or disappears without a restart. */
         onLive(callback: (live: boolean) => void): () => void;
         /** Door v2: Connect from the browser. connectStart opens the system browser; the window then carries on by itself. */
@@ -264,25 +281,40 @@ type SkillRecordingPayload = {
          * until the next Connect or ten minutes, whether or not a Connect is still pending. */
         connectStatus(): Promise<{ pending: boolean; startedAt: number | null; attempted: boolean; paired: boolean; lastResult: { code: string; message: string; at: number; retryAfterMs?: number } | null; disconnected: boolean; open: boolean }>;
         disconnect(homeId: string): Promise<{ disconnected: true }>;
-        open(homeId: string): Promise<{ opened: true }>;
+        open(homeId: string, reconnecting?: true): Promise<{ opened: boolean }>;
         /** main -> this window: this computer was disconnected from its Cloud home; show the Connect panel. */
         onShowConnect?(callback: () => void): () => void;
         /** main -> this window: main handled a Cloud link. Only its kind and, for open-cloud, the home id: never the link. */
         onLinkEvent?(callback: (event: { kind: "door" | "connect-cloud" | "open-cloud"; homeId?: string }) => void): () => void;
       };
       approvalNotifications?: {
-        show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string; silent?: boolean }): Promise<{ accepted: boolean }>;
-        onOpen(callback: (target: { botId: string; threadId: string; messageId?: string }) => void): () => void;
+        show(payload: { approvalId?: string; requestRef?: string; actionHash?: string; botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string; silent?: boolean }): Promise<{ accepted: boolean }>;
+        onOpen(callback: (target: { botId: string; threadId: string; messageId?: string; reconnectIncidentId?: string }) => void): () => void;
       };
+      /** S3R desktop session, offers, display hand-off and payload acknowledgements. */
+      attention?: import("@/lib/attention-offer").AttentionBridge;
       /** Menu bar / system tray menu intents (electron/background-lifecycle.mjs). */
       tray?: {
         onOpen(callback: (target: TrayOpenTarget) => void): () => void;
       };
+      /** Device notification surfaces (electron/notify-surfaces.mjs). Main window only. */
+      notifySurfaces?: import("@/lib/notify-surfaces").NotifySurfacesBridge;
       startup?: {
         status(): Promise<StartupBackgroundState>;
         update(patch:{keepRunning?:boolean;startAtLogin?:boolean}):Promise<StartupBackgroundState>;
         onChange(callback:(state:StartupBackgroundState)=>void):()=>void;
         onOpenInbox(callback:()=>void):()=>void;
+        /** Has the person pressed What's new on the update screen and not yet had it shown. */
+        pendingWhatsNew():Promise<boolean>;
+        /** The renderer has shown What's new: clear the request. */
+        ackWhatsNew():Promise<boolean>;
+        onWhatsNew(callback:()=>void):()=>void;
+      };
+      /** The cached start-up picture (two faces and the next tip); main validates it and the next splash reads it. */
+      startupPicture?: {
+        save(payload:unknown):Promise<boolean>;
+        /** The tip index this start showed (null when no picture was saved): the point the daily tip rotates from. */
+        sessionTip():Promise<number|null>;
       };
       /** Engine sign-in on this computer (main runs it; see src/lib/local-engine-login.ts). Main window only. */
       localEngineLogin?: import("@/lib/local-engine-login").LocalEngineLoginBridge;
@@ -295,6 +327,10 @@ type SkillRecordingPayload = {
         onData(listener: (payload: { id: string; data: Uint8Array }) => void): () => void;
         onClosed(listener: (payload: { id: string; reason: string }) => void): () => void;
       };
+      /** The launch id this launch's engine puts in every answer (x-murage-launch); "" when main has none. */
+      serverLaunch?: string;
+      /** The chat on screen, so a window that follows a restarted engine reopens it. */
+      reportOpenChat?(threadId: string): void;
       getCapabilities(): Promise<DesktopCapabilities>;
       onCapabilitiesChanged(cb: (capabilities: DesktopCapabilities) => void): () => void;
       /** Whether the engine is alive, and whether it is coming back. A dead
@@ -379,6 +415,12 @@ type SkillRecordingPayload = {
       /** Updates the native Dock/taskbar unread indicator. */
       setUnreadCount?(count: number): void;
       /** Opens a live desktop as a sandboxed window owned by Murage. */
+      browserPopout?: {
+        open(botId: string): Promise<boolean>;
+        close(botId: string): Promise<boolean>;
+        currentState(): Promise<{ available: boolean; windows: { botId: string; open: boolean }[] }>;
+        onState(cb: (state: { botId: string; open: boolean }) => void): () => void;
+      };
       desktopViewer?: {
         open(url: string, title: string, contextId: string): Promise<boolean>;
         /** Closes the live-desktop window, but only when it belongs to this bot. */
@@ -481,6 +523,10 @@ type SkillRecordingPayload = {
         submitCode(provider: import("../../shared/provider-connections").SignInPreset, code: string): Promise<boolean>;
         signOut(provider: import("../../shared/provider-connections").SignInPreset): Promise<import("../../shared/model-signin").SignInResult>;
       };
+      /** Confirm a source-staged HighLevel flow. IDs enter; no secret values leave main. */
+      highlevel?: {
+        commit(intent: { flowId: string; versionId: string }): Promise<{ ok: true } | { ok: false; error: "storage" | "invalid_request" | "outcome_unknown" | "unavailable" }>;
+      };
       /** The owner's own MCP servers (MCP-LINK T11). Desktop only; every
        * result is value-free. See lanes/mcplink/API-T11.md for the sequencing. */
       mcpServers?: {
@@ -496,9 +542,9 @@ type SkillRecordingPayload = {
         remove(name: string): Promise<McpRemoveResult>;
       };
       /** Run the legacy connected-apps claim once (user consent). */
-      claimLegacyComposio?(): Promise<{ state: "none" | "offered" | "pending" | "claimed" | "conflict" | "abandoned"; code?: string; installationId?: string; at?: string; confirmPending?: boolean }>;
+      claimLegacyComposio?(): Promise<{ state: "none" | "offered" | "pending" | "claimed" | "conflict" | "abandoned"; code?: string; installationId?: string; at?: string; confirmPending?: boolean; outcome?: "held" | "completed" | "deferred" | "failed"; reason?: string; retryAt?: number; attempted?: boolean; status?: number }>;
       /** Reconnect connected apps here after another computer took over. */
-      reconnectConnectedApps?(): Promise<{ reconnected: boolean }>;
+      reconnectConnectedApps?(): Promise<{ reconnected: boolean; outcome?: "held" | "completed" | "deferred" | "failed"; reason?: string; retryAt?: number; attempted?: boolean; status?: number }>;
       setCredential?(
         name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "highlevelPrivateToken" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
         value: string,
@@ -506,6 +552,8 @@ type SkillRecordingPayload = {
       /** In-app auto-update (packaged app only; dormant in dev). onState
        * fires immediately with the current state, then on transitions. */
       updater?: {
+        reportNotice?(value: { version: string; dismissed: boolean; title: string }): Promise<void>;
+        onNotice?(cb: (version: string) => void): () => void;
         check(): Promise<void>;
         download(): Promise<void>;
         /** apply the download: quit-and-install, or copy the command and open a terminal */
@@ -591,6 +639,7 @@ export interface UpdaterState {
 }
 
 export type TrayOpenTarget =
+  | { kind: "connector"; threadId: string; reconnectIncidentId: string }
   | { kind: "approval"; botId?: string; threadId: string; messageId: string }
   | { kind: "conversation"; botId: string; threadId: string }
   | { kind: "compose"; botId: string };

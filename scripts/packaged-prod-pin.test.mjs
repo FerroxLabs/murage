@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { finished } from "node:stream/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { packagedPinBytes, validatePackagedProdPin } from "./packaged-prod-pin.mjs";
@@ -110,7 +111,9 @@ describe("packaged prod pin check", () => {
       fs.writeFileSync(path.join(app, "electron", "big.bin"), Buffer.alloc(70000, 7));
       fs.writeFileSync(path.join(app, CLIENT), real(CLIENT));
       fs.writeFileSync(path.join(app, PIN), source, outcome === "pass" ? "utf8" : "latin1");
-      await asar.createPackage(app, path.join(resources, "app.asar"));
+      // This asar version resolves with the output stream after calling end(),
+      // before its queued writes finish. Read only the completed archive.
+      await finished(await asar.createPackage(app, path.join(resources, "app.asar")));
       if (outcome === "pass") expect(validatePackagedProdPin(resources)).toEqual({ sha256: sourceSha() });
       else refuses(resources, /PACKAGED_PROD_PIN_MISMATCH/);
     }

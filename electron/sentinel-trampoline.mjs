@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -74,7 +75,7 @@ export function runTrampoline({ argv = process.argv, env = process.env, execPath
   if (!trampolineDescriptorMatches(parsed, { execPath, platform, ...(read ? { read } : {}), ...(size ? { size } : {}) })) return TRAMPOLINE_USAGE_EXIT;
   let result;
   try {
-    result = spawn(execPath, [parsed.entry, parsed.descriptor, "--once"], { env: trampolineEnvironment(env), stdio: "ignore", windowsHide: true, timeout: TRAMPOLINE_TIMEOUT_MS, shell: false });
+    result = spawn(execPath, [parsed.entry, parsed.descriptor, "--once"], withHideInherit({ env: trampolineEnvironment(env), stdio: "ignore", windowsHide: true, timeout: TRAMPOLINE_TIMEOUT_MS, shell: false }));
   } catch { return TRAMPOLINE_FAILED_EXIT; }
   return Number.isInteger(result?.status) ? result.status : TRAMPOLINE_FAILED_EXIT;
 }

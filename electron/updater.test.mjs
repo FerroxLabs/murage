@@ -1,16 +1,18 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { EventEmitter } from "node:events";
 import ts from "typescript";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createBackgroundLifecycle } from "./background-lifecycle.mjs";
 
-const { updater, handlers } = vi.hoisted(() => ({
+const { updater, handlers, fixturePath } = vi.hoisted(() => ({
+  fixturePath: { root: "" },
   updater: { on: vi.fn(), checkForUpdates: vi.fn(), downloadUpdate: vi.fn() },
   handlers: new Map(),
 }));
 vi.mock("electron", () => ({
-  app: { isPackaged: true, getPath: () => "/unused-updater-fixture", getVersion: () => "9.8.7-fixture" },
+  app: { isPackaged: true, getPath: () => fixturePath.root, getVersion: () => "9.8.7-fixture" },
   clipboard: { writeText: vi.fn() },
   ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
 }));
@@ -35,13 +37,23 @@ const fakeDownload = () => updater.downloadUpdate.mockImplementation(async () =>
   return ["/unused-staged-update.zip"];
 });
 
-beforeEach(() => {
+function registerMainNotice(ipcMain, reportUpdateNotice) {
+  const source = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
+  const registration = source.match(/^ipcMain\.handle\("update:notice-report".*$/m)?.[0];
+  expect(registration, 'main must register notice reports through its owned IPC gate').toBeDefined();
+  vm.runInNewContext(registration, { ipcMain, reportUpdateNotice });
+}
+
+beforeEach(async () => {
+  fixturePath.root = mkdtempSync(path.resolve(".updater-notify-fixture-"));
   vi.resetModules();
   vi.clearAllMocks();
   handlers.clear();
   vi.useFakeTimers();
+  const api = await import("./updater.mjs");
+  registerMainNotice({ handle: (channel, listener) => handlers.set(channel, listener) }, api.reportUpdateNotice);
 });
-afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); rmSync(fixturePath.root, { recursive: true, force: true }); });
 
 it("retargets progress and retained state without adding updater listeners or timers", async () => {
   const api = await import("./updater.mjs");
@@ -170,7 +182,14 @@ it("the actual main createWindow and activate wiring retargets the process updat
   const updaterImport = file.statements.find((node) => ts.isImportDeclaration(node) && node.moduleSpecifier.text === "./updater.mjs");
   const bindings = Object.fromEntries(updaterImport.importClause.namedBindings.elements.map((entry) =>
     [entry.name.text, api[entry.propertyName?.text ?? entry.name.text]]));
+  const notices = [];
+  class Notification extends EventEmitter {
+    static isSupported() { return true; }
+    constructor() { super(); notices.push(this); }
+    show() {}
+  }
   const context = vm.createContext({
+    Notification, notificationAuthorization: { current: async () => ({ authorized: true }) }, powerMonitor: { on: vi.fn() },
     ...bindings, BrowserWindow: Window, mainWindow: null, persistedSkin: null, desktopUpdater: null,
     screen: { getPrimaryDisplay: () => ({ id: 1, workArea: {} }), getAllDisplays: () => [] },
     resolveWindowState: () => ({ bounds: {}, maximized: false }), readWindowState: () => null,
@@ -184,14 +203,15 @@ it("the actual main createWindow and activate wiring retargets the process updat
     cloudHome: null, // Cloud flag off: createWindow passes --murage-cloud=1 only when installCloudHome returned a controller
     // createWindow now closes the startup splash (4931ea16d); the fixture has none to close.
     closeStartupSplash: vi.fn(), startupSplash: null, desktopMark: vi.fn(), noteVersionStarted: vi.fn(),
-    shell: { openExternal: vi.fn(), openPath: vi.fn() }, LOG_DIR: "/unused-log-dir", pathToFileURL: (value) => new URL(`file://${value}`),
+    rendererSessions: { track: vi.fn() }, osShell: { openExternal: vi.fn(), openPath: vi.fn() }, LOG_DIR: "/unused-log-dir", pathToFileURL: (value) => new URL(`file://${value}`),
     createMainWindowOpenHandler: () => vi.fn(), createMainNavigationGuard: () => ({ willNavigate: vi.fn(), willRedirect: vi.fn() }),
-    trustedRendererOrigin: () => "http://127.0.0.1:18888", rendererOriginArguments: () => [], deliverPackageInstall: vi.fn(),
+    trustedRendererOrigin: () => "http://127.0.0.1:18888", rendererOriginArguments: () => [], deliverPackageInstall: vi.fn(), appReadiness: { track: vi.fn() }, lastErrorPageUrl: null,
     console: { warn: vi.fn(), error: vi.fn(), log: vi.fn() },
-    createRendererRecovery: () => ({ onGone: async () => "ignored" }), splashPage: () => "data:,", RECONNECTING_LINE: "Reconnecting",
+    createRendererRecovery: () => ({ onGone: async () => "ignored" }), attachLoadFailureRecovery: () => ({}), loadFailureRecoveries: new WeakMap(), splashPage: () => "data:,", RECONNECTING_LINE: "Reconnecting",
     // Module state the lane's startup reveal (pendingRevealWindows, 15 s fallback) reads.
     pendingSwap: null, replacingMainWindow: false, pendingRevealWindows: new WeakSet(), maximizeOnShow: new WeakSet(), WINDOW_REVEAL_FALLBACK_MS: 15000, setTimeout: () => ({ unref() {} }),
     serverLifecycleState: { state: "running" }, startupSplash: null, closeStartupSplash: vi.fn(), slog: vi.fn(), showDesktopRecovery: vi.fn(), desktopMark: vi.fn(),
+    rendererSessions: { track: vi.fn(), current: () => null, hello: vi.fn(), check: vi.fn() },
   });
   vm.runInContext(windowFactory.getText(file), context);
   vm.runInContext(updaterFactory.getText(file), context);
@@ -218,7 +238,20 @@ it("the actual main createWindow and activate wiring retargets the process updat
   expect(reopened.webContents.send).toHaveBeenCalledWith("update:state", expect.objectContaining({ status: "downloaded" }));
   expect(updater.on.mock.calls).toHaveLength(listeners);
   expect(vi.getTimerCount()).toBe(timers);
+  // Exercise notification activation through ensureDesktopUpdater's actual
+  // ensureWindow callback, lifecycle.open and createWindow, with a NEW window.
   reopened.close();
+  await handlers.get("update:notice-report")({}, { version: "2.0.0", dismissed: false, title: "Ready" });
+  expect(notices).toHaveLength(1);
+  notices[0].emit('click');
+  expect(liveWindows).toHaveLength(1);
+  const activated = liveWindows[0];
+  expect(activated).not.toBe(reopened);
+  expect(reopened.isDestroyed()).toBe(true);
+  expect(activated.focus).toHaveBeenCalled();
+  expect(activated.webContents.send).toHaveBeenCalledWith('update:state', expect.objectContaining({ status: 'downloaded' }));
+  expect(activated.webContents.send).toHaveBeenCalledWith('update:notice', '2.0.0');
+  activated.close();
   context.desktopShutdownStarted = true;
   vm.runInContext(`(${activate.arguments[1].getText(file)})()`, context);
   expect(liveWindows).toHaveLength(0);
@@ -245,4 +278,130 @@ it("a retry clears the old percentage before the next progress event", async () 
   resolve(["/unused-staged-update.zip"]);
   await retry;
   expect(handlers.get("update:get-state")().status).toBe("downloaded");
+});
+
+it("routes native focus, wake and trusted renderer reports through the owned updater", async () => {
+  const { EventEmitter } = await import("node:events");
+  const api = await import("./updater.mjs");
+  const powerMonitor = new EventEmitter();
+  const win = new EventEmitter();
+  Object.assign(win, { webContents: { send: vi.fn() }, isDestroyed: () => false,
+    isVisible: () => false, isFocused: () => false });
+  const shown = vi.fn();
+  class Notification extends EventEmitter { static isSupported() { return true; } show() { shown(); } }
+  api.attachUpdaterWindow(win);
+  api.registerUpdaterIpc();
+  api.startUpdater({ scheduleChecks: false, notificationServices: {
+    Notification, powerMonitor, authorization: { current: async () => ({ authorized: true }) },
+  } });
+  fakeDownload();
+  await handlers.get("update:download")();
+  await handlers.get("update:notice-report")({}, { version: "2.0.0", dismissed: false, title: "Murage 2.0.0 is ready to install" });
+  expect(shown).toHaveBeenCalledOnce();
+  win.emit("focus");
+  expect(win.webContents.send).toHaveBeenCalledWith("update:notice", "2.0.0");
+  win.webContents.send.mockClear();
+  powerMonitor.emit("resume");
+  expect(win.webContents.send).toHaveBeenCalledWith("update:notice", "2.0.0");
+  const replacement = new EventEmitter();
+  api.attachUpdaterWindow(replacement);
+  expect(win.listenerCount("focus")).toBe(0);
+  expect(replacement.listenerCount("focus")).toBe(1);
+});
+
+it("never starts the updater or notification service in either store build", async () => {
+  for (const key of ["mas", "windowsStore"]) {
+    vi.resetModules();
+    const previous = Object.getOwnPropertyDescriptor(process, key);
+    Object.defineProperty(process, key, { value: true, configurable: true });
+    try {
+      const api = await import("./updater.mjs");
+      expect(api.startUpdater({ scheduleChecks: false })).toBeUndefined();
+      expect(updater.on).not.toHaveBeenCalled();
+    } finally {
+      if (previous) Object.defineProperty(process, key, previous);
+      else delete process[key];
+    }
+  }
+});
+
+it('every wake refreshes a missed failure even while a silent check is pending and throttled', async () => {
+  const { EventEmitter } = await import('node:events');
+  const api = await import('./updater.mjs');
+  const powerMonitor = new EventEmitter();
+  const win = { webContents: { send: vi.fn() } };
+  api.attachUpdaterWindow(win); api.registerUpdaterIpc();
+  api.startUpdater({ scheduleChecks: false, notificationServices: {
+    Notification: { isSupported: () => false }, authorization: {}, powerMonitor,
+  } });
+  let finish;
+  updater.checkForUpdates.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+  const pending = handlers.get('update:check')();
+  updater.downloadUpdate.mockImplementationOnce(async () => { throw Error('lost download'); });
+  await handlers.get('update:download')();
+  expect(handlers.get('update:get-state')().status).toBe('error');
+  win.webContents.send.mockClear();
+  powerMonitor.emit('resume'); powerMonitor.emit('resume');
+  expect(win.webContents.send.mock.calls).toEqual([
+    ['update:state', expect.objectContaining({ status: 'error' })],
+    ['update:state', expect.objectContaining({ status: 'error' })],
+  ]);
+  finish(null); await pending;
+});
+
+it.each(['blur', 'hide', 'minimize'])('focused readiness retries on %s and detaches every listener', async (event) => {
+  const api = await import('./updater.mjs');
+  const win = new EventEmitter();
+  Object.assign(win, { webContents: { send: vi.fn() }, isDestroyed: () => false,
+    isVisible: () => true, isFocused: () => true, isMinimized: () => false });
+  const shown = vi.fn();
+  class Notification extends EventEmitter { static isSupported() { return true; } show() { shown(); } }
+  api.attachUpdaterWindow(win); api.registerUpdaterIpc();
+  api.startUpdater({ scheduleChecks: false, notificationServices: {
+    Notification, powerMonitor: new EventEmitter(), authorization: { current: async () => ({ authorized: true }) },
+  } });
+  fakeDownload(); await handlers.get('update:download')();
+  await handlers.get('update:notice-report')({}, { version: '2.0.0', title: 'Ready', dismissed: false });
+  expect(shown).not.toHaveBeenCalled();
+  if (event === 'blur') win.isFocused = () => false;
+  if (event === 'hide') win.isVisible = () => false;
+  if (event === 'minimize') win.isMinimized = () => true;
+  win.emit(event); await Promise.resolve(); await Promise.resolve();
+  expect(shown).toHaveBeenCalledOnce();
+  for (const name of ['blur', 'hide', 'minimize']) win.emit(name);
+  await Promise.resolve(); expect(shown).toHaveBeenCalledOnce();
+  const replacement = new EventEmitter(); api.attachUpdaterWindow(replacement);
+  for (const name of ['focus', 'blur', 'hide', 'minimize']) {
+    expect(win.listenerCount(name)).toBe(0);
+    expect(replacement.listenerCount(name)).toBe(1);
+  }
+});
+
+it('refuses foreign update notice reports before reading their payload', async () => {
+  const { createOwnedMainIpc, OWNED_MAIN_IPC_REFUSAL } = await import('./main-ipc-trust.mjs');
+  const api = await import('./updater.mjs');
+  api.startUpdater({ scheduleChecks: false, notificationServices: {
+    Notification: { isSupported: () => true }, authorization: {}, powerMonitor: new EventEmitter(), ensureWindow() {},
+  } });
+  registerMainNotice(createOwnedMainIpc({
+    ipcMain: { handle: (channel, listener) => handlers.set(channel, listener) }, isTrusted: () => false,
+  }), api.reportUpdateNotice);
+  const read = vi.fn(() => { throw Error('listener read payload'); });
+  const payload = Object.defineProperty({}, 'version', { get: read });
+  await expect(handlers.get('update:notice-report')({}, payload)).rejects.toMatchObject({ code: OWNED_MAIN_IPC_REFUSAL });
+  expect(read).not.toHaveBeenCalled();
+});
+
+// fablehunt-1020q item 9: the launch pause main.mjs registers at startup is the one the install uses.
+it("the registered launch pause takes the timed jobs down before quitAndInstall", async () => {
+  const api = await import("./updater.mjs");
+  const order = [];
+  api.useUpdateLaunchPause({ pause: () => { order.push("pause"); }, resume: () => { order.push("resume"); } });
+  api.registerUpdaterIpc();
+  api.startUpdater();
+  fakeDownload();
+  await handlers.get("update:download")();
+  updater.quitAndInstall = vi.fn(() => { order.push("quitAndInstall"); });
+  await handlers.get("update:install")();
+  expect(order).toEqual(["pause", "quitAndInstall"]);
 });

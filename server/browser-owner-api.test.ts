@@ -1,10 +1,11 @@
+import { createCompanionAuthority } from "./companion-authority.ts";
 import { describe, it, expect } from "vitest";
 import { createServer } from "node:http";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UnifiedBrowserController } from "./browser-control.ts";
-import { browserOwnerRequest } from "./browser-owner-api.ts";
+import { browserOwnerRequest, browserOwnerId, browserOwnerPrincipal } from "./browser-owner-api.ts";
 import type { NativeBrowser } from "./browser-native-relay.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 describe("authenticated browser owner HTTP relay", () => {
@@ -56,6 +57,46 @@ describe("authenticated browser owner HTTP relay", () => {
         status: 401,
         code: "browser_inactive",
       });
+    } finally { await controller.close(); removeTempDirSync(directory); }
+  });
+});
+
+describe("person-keyed browser owner", () => {
+  it("uses the authenticated desktop or companion proof off-home and ignores request owner fields", async () => {
+    const base = { realm: "fixture-realm", cloudHome: false, desktop: false, companion: false };
+    expect(browserOwnerId(base.realm)).toBe("d5ffa202b19c137a23cddabe4f7aa3f6");
+    const desktop = browserOwnerPrincipal({ ...base, desktop: true });
+    const acceptsCompanion = createCompanionAuthority("a".repeat(64));
+    const phone = browserOwnerPrincipal({ ...base, companion: acceptsCompanion({ "x-murage-companion-token": "a".repeat(64) }) });
+    expect(browserOwnerPrincipal({ ...base, companion: acceptsCompanion({ "x-murage-companion": "1", "x-murage-companion-token": "b".repeat(64) }) })).toBeNull();
+    expect(desktop).toEqual({ owner: browserOwnerId(base.realm), canReclaim: true });
+    expect(phone).toEqual({ owner: desktop!.owner, canReclaim: false });
+    expect(browserOwnerPrincipal(base)).toBeNull();
+    const directory = mkdtempSync(join(tmpdir(), "murage-person-"));
+    const controller = new UnifiedBrowserController({ stateFile: join(directory, "control.json") });
+    controller.register("profile", {command:"fixture",args:[],env:{}});
+    try {
+      const authority = (person: NonNullable<typeof desktop>) => ({...person,profileKey:"profile",active:()=>true});
+      const taken = await browserOwnerRequest(controller, authority(desktop!), "POST", {action:"take",owner:"forged"}) as {control:number};
+      expect(controller.status("profile").owner).toBe(desktop!.owner);
+      await browserOwnerRequest(controller, authority(phone!), "POST", {action:"release",control:taken.control,owner:"forged"});
+      expect(controller.status("profile").held).toBe(false);
+    } finally { await controller.close(); removeTempDirSync(directory); }
+  });
+  it("only admits owner-desktop and owner-phone on a Cloud home, even with other surface proofs", async () => {
+    const base = {realm:"cloud",cloudHome:true,desktop:true,companion:true};
+    expect(browserOwnerPrincipal({...base,scope:"owner-desktop"})).toEqual({owner:browserOwnerId("cloud"),canReclaim:true});
+    expect(browserOwnerPrincipal({...base,scope:"owner-phone"})).toEqual({owner:browserOwnerId("cloud"),canReclaim:false});
+    const directory = mkdtempSync(join(tmpdir(), "murage-cloud-owner-"));
+    const controller = new UnifiedBrowserController({stateFile:join(directory,"control.json")});
+    controller.register("profile", {command:"fixture",args:[],env:{}});
+    try {
+      for (const scope of [undefined,"browser","member","owner-browser"]) {
+        const principal = browserOwnerPrincipal({...base,scope});
+        expect(principal).toBeNull();
+        await expect(browserOwnerRequest(controller, principal ? {...principal,profileKey:"profile",active:()=>true} : null, "POST", {action:"take",owner:browserOwnerId("cloud")})).rejects.toMatchObject({status:401});
+        expect(controller.status("profile").held).toBe(false);
+      }
     } finally { await controller.close(); removeTempDirSync(directory); }
   });
 });

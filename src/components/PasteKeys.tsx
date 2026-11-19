@@ -34,6 +34,7 @@ import { Check, Loader2, TriangleAlert, X } from "lucide-react";
 
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { useSettingsMode } from "@/lib/settings-mode";
 import { FLUX_KEY_FIELD_SELECTOR, focusSettingsField } from "./ConnectedAppsLock";
 import {
   extractKeys,
@@ -108,9 +109,14 @@ export interface PasteKeysBodyProps {
   onDismiss: (id: string) => void;
   /** Presence flags from GET /api/config. Null until it has answered. */
   configured: ConfiguredFlags | null;
+  /** Simple mode: the short helper line. */
+  simple?: boolean;
 }
 
-const HELP =
+/** Simple keeps the two facts a person needs; where each kind of key is filed is Advanced detail (UX bar 1 and 3). */
+export const HELP_SIMPLE = "Paste a note with several keys. Murage reads it on this computer and saves nothing until you choose.";
+
+export const HELP =
   "Review several keys from a note or .env file. Recognition happens on this computer; scanning saves nothing. Model keys add separate connections in Models. Service keys update the same settings above. Flux Router uses its single editor in Models.";
 
 /** Rendering only, so every state has a test that does not need a server. */
@@ -122,6 +128,7 @@ export function PasteKeysBody({
   onAccept,
   onDismiss,
   configured,
+  simple,
 }: PasteKeysBodyProps) {
   const box = useRef<HTMLTextAreaElement>(null);
 
@@ -139,8 +146,9 @@ export function PasteKeysBody({
 
   return (
     <div>
-      <div className="mb-1.5 text-[13px] text-ink-secondary">Review keys to add or replace</div>
-      <div className="mb-1.5 text-[12px] leading-relaxed text-ink-secondary">{HELP}</div>
+      {/* Simple carries one helper line (G9 Fable H2); this label is a second, Advanced only. */}
+      {!simple && <div className="mb-1.5 text-[13px] text-ink-secondary">Review keys to add or replace</div>}
+      <div className="mb-1.5 text-[12px] leading-relaxed text-ink-secondary">{simple ? HELP_SIMPLE : HELP}</div>
       <textarea
         data-setting-control="paste-any-keys"
         ref={box}
@@ -489,6 +497,7 @@ export function createPasteController(effects: PasteEffects): PasteController {
  * two doors ApiKeys.tsx uses. */
 export function PasteKeys() {
   const { state, dispatch } = useStore();
+  const mode = useSettingsMode();
   const [rows, setRows] = useState<PasteRow[]>([]);
   const [scanned, setScanned] = useState(false);
   const [navigationError, setNavigationError] = useState("");
@@ -528,6 +537,7 @@ export function PasteKeys() {
 
   return (
     <><PasteKeysBody
+      simple={mode === "simple"}
       rows={rows}
       scanned={scanned}
       onScan={(blob) => {

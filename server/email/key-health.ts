@@ -40,6 +40,7 @@ export function healthKey(ref: CredentialRef): string | null {
 /** What one answer says about the credential that made it; null = nothing (a recipient refusal, a lost answer). */
 export function classifyKeyHealth(ref: CredentialRef, outcome: FluxOutcome<unknown>): Exclude<KeyHealthState, "ok"> | "ok" | null {
   if (outcome.kind === "ok" || outcome.kind === "held") return "ok";
+  if (outcome.kind === "local_refused") return null; // the client's own gate: nothing reached Flux, so nothing about the credential
   if (outcome.kind === "uncertain") return outcome.reason === "server" && (outcome.status ?? 0) >= 500 ? "outage" : null;
   const { code, status } = outcome;
   if (isKeyRejection(status, code)) return "rejected";

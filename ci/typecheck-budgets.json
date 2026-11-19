@@ -1,0 +1,86 @@
+{
+  "maxFraction": 0.7,
+  "programs": {
+    "frontend": {
+      "config": "tsconfig.json",
+      "shards": 1,
+      "capMiB": 8192,
+      "recordedPeakMiB": 4613
+    },
+    "server": {
+      "config": "tsconfig.server.json",
+      "shards": 4,
+      "capMiB": 8192,
+      "recordedPeakMiB": 4966
+    },
+    "conformance": {
+      "config": "tools/flux-stream-conformance/tsconfig.json",
+      "shards": 1,
+      "capMiB": 4096,
+      "recordedPeakMiB": 1577
+    },
+    "frontend-build": {
+      "config": "tsconfig.build.json",
+      "shards": 1,
+      "capMiB": 4300,
+      "recordedPeakMiB": 2576
+    },
+    "server-build": {
+      "config": "tsconfig.server.build.json",
+      "shards": 4,
+      "capMiB": 4300,
+      "recordedPeakMiB": 2876,
+      "partition": "dependencies",
+      "typecheckOnly": true,
+      "emitProgram": "server-emit"
+    },
+    "companion-build": {
+      "config": "tsconfig.companion.build.json",
+      "shards": 1,
+      "capMiB": 4300,
+      "recordedPeakMiB": 349
+    },
+    "broker": {
+      "config": "cloudflare/composio-broker/tsconfig.json",
+      "shards": 1,
+      "capMiB": 4096,
+      "recordedPeakMiB": 411
+    },
+    "mobile": {
+      "config": "apps/mobile/tsconfig.json",
+      "shards": 1,
+      "capMiB": 4096,
+      "recordedPeakMiB": 398
+    },
+    "control-plane": {
+      "config": "cloudflare/control-plane/tsconfig.json",
+      "shards": 1,
+      "capMiB": 4096,
+      "recordedPeakMiB": 1388
+    },
+    "docs": {
+      "config": "apps/docs/tsconfig.json",
+      "shards": 1,
+      "capMiB": 4096,
+      "recordedPeakMiB": 523
+    },
+    "server-emit": {
+      "config": "tsconfig.server.build.json",
+      "shards": 1,
+      "capMiB": 4300,
+      "recordedPeakMiB": 2449,
+      "noCheck": true
+    }
+  },
+  "groups": {
+    "full": [
+      "frontend",
+      "server",
+      "conformance"
+    ],
+    "production": [
+      "frontend-build",
+      "server-build"
+    ]
+  }
+}

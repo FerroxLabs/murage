@@ -1,0 +1,11 @@
+--- a/server/connector-health-store.ts
++++ b/server/connector-health-store.ts
+@@ -70,7 +70,7 @@
+   slugs(owner: string) { return Object.keys(this.state.marks[owner] ?? {}).sort(); }
+   update(owner: string, slug: string, patch: Partial<Omit<AppHealthMark, "at" | "cause">>) {
+     const mark = this.get(owner, slug);
+-    if (!mark || (!(patch.accounts && !mark.accountIncidents) && Object.entries(patch).every(([key, value]) => JSON.stringify(mark[key as keyof AppHealthMark]) === JSON.stringify(value)))) return false;
++    if (!mark) return false;
+     if (patch.accounts) {
+       const previous = mark.accountIncidents ?? {};
+       const next: NonNullable<AppHealthMark["accountIncidents"]> = {};

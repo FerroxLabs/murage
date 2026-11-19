@@ -1,0 +1,322 @@
+[
+  {
+    "event": "ContactCreate",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/ContactCreate",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "ContactUpdate",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/ContactUpdate",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "ContactDelete",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/ContactDelete",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "ContactTagUpdate",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/ContactTagUpdate",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "NoteCreate",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/NoteCreate",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "TaskCreate",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/TaskCreate",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "OpportunityCreate",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/OpportunityCreate",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "OpportunityStageUpdate",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/OpportunityStageUpdate",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "OpportunityStatusUpdate",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/OpportunityStatusUpdate",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "InboundMessage",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/InboundMessage",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "OutboundMessage",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/OutboundMessage",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "AppointmentCreate",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/AppointmentCreate",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "AppointmentUpdate",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/AppointmentUpdate",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "AppointmentDelete",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/AppointmentDelete",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "InvoicePaid",
+    "status": "qualified",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/webhook/InvoicePaid",
+    "enabled": false,
+    "reason": "Marketplace registration and broker required; F8 owns mapping.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  },
+  {
+    "event": "FormSubmission",
+    "status": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/llms/guides/webhook.md",
+    "enabled": false,
+    "reason": "No FormSubmission app webhook in the provider webhook catalogue; do not substitute a workflow webhook.",
+    "responseProjection": {
+      "fields": [
+        "event",
+        "locationId",
+        "id",
+        "contactId",
+        "opportunityId",
+        "appointmentId",
+        "invoiceId"
+      ],
+      "values": "outside-content-only",
+      "maxBytes": 65536
+    }
+  }
+]

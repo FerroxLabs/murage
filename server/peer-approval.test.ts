@@ -3,6 +3,12 @@
 // and the composer stays disabled behind it — so a gate that works
 // perfectly can still make a thread unusable. These tests pin the settle.
 
+import { randomUUID } from 'node:crypto';
+import { database } from './database.ts';
+import { appendLegacyFixtureMessage, openFixtureApproval } from './testing/approval-card.ts';
+import { updateRecord } from './decision/records.ts';
+import { serviceQueueFixture } from './testing/service-queue-fixture.ts';
+import { serviceQueue } from './narrow-denials.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -21,6 +27,7 @@ import {
 } from "./peer-approval.ts";
 import { closeMessageDb } from "./message-db.ts";
 import { stopWalMaintenance } from "./wal-maintenance.ts";
+import { stopRecallViewMaintenance } from "./memory/recall-view.ts";
 import { Store, type BotRecord } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -42,7 +49,25 @@ describe("peer approval card lifecycle", () => {
     store = new Store(selection);
     from = store.patchBot(store.createBot().id, { name: "Asker", approvePeerComms: true })!;
     target = store.patchBot(store.createBot().id, { name: "Helper" })!;
-    bus = { store, broadcast: () => {} };
+    const producer = serviceQueueFixture(store);
+    producer.queue(serviceQueue('peer'));
+    producer.queue(serviceQueue('event-limit'));
+    bus = { store, authorityFor:producer.authorityFor, broadcast: () => {} };
+  });
+
+  function orphanPeerCard(threadId:string,input:Parameters<Store['appendMessage']>[1]) {
+    // These cases exercise cards left by the legacy waiter, before registered
+    // decisions owned recovery. A retired registered request is separate below.
+    return appendLegacyFixtureMessage(store,threadId,input);
+  }
+
+  it('keeps a retired registered decision out of the legacy waiter sweep', () => {
+    const id='retired-'+randomUUID();
+    const seeded=openFixtureApproval(database(),from.threadId,{id,role:'bot' as const,kind:'options' as const,card:{title:'Registered request',subtitle:'Retired fixture request',options:['Allow','Deny'],requestId:'registered-retired',tool:'ask_bot'}});
+    const row=store.appendMessage(from.threadId,seeded,id);
+    updateRecord(database(),(seeded.card as typeof seeded.card & {approvalId:string}).approvalId,{state:'cancelled',settled_at:Date.now()});
+    expect(dismissStalePeerCards(bus)).toBe(0);
+    expect(store.messageById(from.threadId,row.id)?.card?.dismissed).not.toBe(true);
   });
 
   // closeDatabase stops the WAL checkpointer without waiting; one still writing -wal/-shm while the dir is removed leaves it non-empty (ENOTEMPTY)
@@ -65,7 +90,7 @@ describe("peer approval card lifecycle", () => {
     target = store.patchBot(target.id, { autoApprove: true, fullAccess: true, noLimits: true })!;
     expect(target.busy).not.toBe(true);
     const payment = { kind: "pay" as const, place: "stripe:cus_1", what: "Pay the named recipient" };
-    expect(autoVerdict(target, "mcp__stripe__create_charge", "Create charge", { stopLine: payment }))
+    expect(autoVerdict(target, "mcp__stripe__create_charge", "Create charge", { stopLine: payment,ownerStarted:true,fullAccessOrigin:"owner" }))
       .toMatchObject({ source: "no-limits", approve: expect.any(String) });
     expect(authority, "peer dispatch needs to carry the parent routine authority").toBeTypeOf("function");
     for (const triggerSource of ["manual", "schedule"] as const) {
@@ -84,6 +109,7 @@ describe("peer approval card lifecycle", () => {
     from = store.patchBot(from.id, { alwaysAllow: [peerAllowKey("ask_bot", target.id)] })!;
     bus.unattended = () => true;
     const verdict = requestPeerApproval(bus, from, target, "scheduled contact", "ask_bot");
+    await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
     const card = pendingCard(store, from);
     expect(card).toBeTruthy();
     expect(resolvePeerComms(bus, card!.card!.requestId!, "deny")).toBe(true);
@@ -97,6 +123,7 @@ describe("peer approval card lifecycle", () => {
     const verdict = requestPeerApproval(bus, from, target, "queued contact", "delegate_bot", from.threadId, undefined, {
       permissionMode: "ask", triggerSource: "schedule",
     });
+    await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
     const card = pendingCard(store, from);
     expect(card).toBeTruthy();
     expect(resolvePeerComms(bus, card!.card!.requestId!, "allow")).toBe(true);
@@ -105,6 +132,7 @@ describe("peer approval card lifecycle", () => {
 
   it("settles the card when the user allows, so the composer unblocks", async () => {
     const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot");
+    await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
     const card = pendingCard(store, from);
     expect(card).toBeTruthy();
 
@@ -123,6 +151,7 @@ describe("peer approval card lifecycle", () => {
     let observed: string[] = [];
     bus.onApproval = (...ids) => { observed = ids; throw new Error("notification unavailable"); };
     const verdict = requestPeerApproval(bus, from, target, "same prompt", "ask_bot");
+    await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
     const card = pendingCard(store, from)!;
     expect(observed).toEqual([from.id, from.threadId, card.card!.requestId, card.id]);
     expect(card.card!.answered).toBeUndefined();
@@ -132,6 +161,7 @@ describe("peer approval card lifecycle", () => {
 
   it("settles the card on deny too", async () => {
     const verdict = requestPeerApproval(bus, from, target, "ping", "delegate_bot");
+    await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
     const card = pendingCard(store, from)!;
     resolvePeerComms(bus, card.card!.requestId!, "deny");
     expect(await verdict).toBe("deny");
@@ -140,11 +170,18 @@ describe("peer approval card lifecycle", () => {
 
   // GROK-STOPPED F1 (1.0.10): the owner's card never expires; a restored timer fails here.
   it("an unanswered card stays open past a day and the owner's late answer still lands", async () => {
-    vi.useFakeTimers();
+    await stopWalMaintenance();
+    // Advancing a day must drive approval timers, not the 50 ms recall upkeep.
+    stopRecallViewMaintenance();
+    // Keep presentation's immediates and background intervals real. The peer
+    // expiry clock (Date and timeout) still advances through the full day.
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     try {
       let settled: string | undefined;
       const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot").then((v) => (settled = v));
+      await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
       const card = pendingCard(store, from)!;
+      stopRecallViewMaintenance();
       await vi.advanceTimersByTimeAsync(15 * 60_000 + 1);
       await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
       expect(settled).toBeUndefined();
@@ -177,6 +214,7 @@ describe("peer approval card lifecycle", () => {
 
     const impostor = store.patchBot(store.createBot().id, { name: originalName })!;
     const verdict = requestPeerApproval(bus, from, impostor, "ping", "ask_bot");
+    await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
     const card = pendingCard(store, from);
     expect(card).toBeTruthy();
     cancelPeerApprovalsFor(impostor.id);
@@ -185,6 +223,7 @@ describe("peer approval card lifecycle", () => {
 
   it("cancels and settles when the bot on either side is deleted", async () => {
     const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot");
+    await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
     const card = pendingCard(store, from)!;
 
     cancelPeerApprovalsFor(target.id);
@@ -198,6 +237,7 @@ describe("peer approval card lifecycle", () => {
 
   it("cancels and settles approvals owned by an interrupted thread", async () => {
     const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot");
+    await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
     const card = pendingCard(store, from)!;
 
     cancelPeerApprovalsForThread(from.threadId);
@@ -211,7 +251,7 @@ describe("peer approval card lifecycle", () => {
 
   it("dismisses cards left by a previous run, which nothing can answer", () => {
     // a card on disk whose in-memory approval died with the process
-    const orphan = store.appendMessage(from.threadId, {
+    const orphan = orphanPeerCard(from.threadId, {
       role: "bot",
       kind: "options",
       card: {
@@ -232,7 +272,7 @@ describe("peer approval card lifecycle", () => {
 
   it("dismisses stale cards in non-active task threads", () => {
     const background = store.createTask(from.id, "Background", false)!;
-    const orphan = store.appendMessage(background.threadId, {
+    const orphan = orphanPeerCard(background.threadId, {
       role: "bot",
       kind: "options",
       card: {
@@ -252,6 +292,7 @@ describe("peer approval card lifecycle", () => {
 
   it("leaves a live card alone at boot", async () => {
     void requestPeerApproval(bus, from, target, "ping", "ask_bot");
+    await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
     expect(pendingCard(store, from)).toBeTruthy();
     expect(dismissStalePeerCards(bus)).toBe(0);
     expect(pendingCard(store, from)).toBeTruthy();
@@ -264,7 +305,7 @@ describe("peer approval card lifecycle", () => {
     // bot's own threads, so this card could never be settled after a crash
     // and the room's composer stayed blocked forever.
     const room = store.createGroup("Exec", [from.id, target.id]);
-    const orphan = store.appendMessage(room.threadId, {
+    const orphan = orphanPeerCard(room.threadId, {
       role: "bot",
       kind: "options",
       card: {
@@ -286,7 +327,7 @@ describe("peer approval card lifecycle", () => {
   it("dismisses a stale card in a room's non-active task thread", () => {
     const room = store.createGroup("Exec", [from.id, target.id]);
     const task = store.createGroupTask(room.id, "Side quest")!;
-    const orphan = store.appendMessage(task.threadId, {
+    const orphan = orphanPeerCard(task.threadId, {
       role: "bot",
       kind: "options",
       card: {
@@ -308,10 +349,21 @@ describe("peer approval card lifecycle", () => {
   // a permission card: no 15-minute expiry, the run waits on the owner, and
   // an allow given after the run's turn ended covers the same contact once
   // when the run carries on.
+  // An hour of fake time must drive approval clocks only. Left running, the 50 ms recall upkeep re-arms on the fake
+  // setTimeout and advanceTimersByTime(1 h) runs it 72,000 times synchronously (about 33 s idle, past 45 s under load).
+  async function fakeApprovalClock(){
+    await stopWalMaintenance();
+    stopRecallViewMaintenance();
+    // Every timer an expiry could ride on (Date, timeouts, intervals) is fake; immediates stay real, as above.
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+  }
+
   it("project peer decisions stay open past the ordinary timeout",async()=>{
-    vi.useFakeTimers();try{
-      bus={store,broadcast:()=>{},holdProjectApproval:()=>true};
-      const verdict=requestPeerApproval(bus,from,target,"ping","ask_bot");const card=pendingCard(store,from)!;
+    await fakeApprovalClock();try{
+      bus={...bus,store,broadcast:()=>{},holdProjectApproval:()=>true};
+      const verdict=requestPeerApproval(bus,from,target,"ping","ask_bot");await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});const card=pendingCard(store,from)!;
+      // Presentation may have restarted the upkeep on the fake clock.
+      stopRecallViewMaintenance();
       vi.advanceTimersByTime(60*60000);expect(pendingCard(store,from)?.id).toBe(card.id);
       resolvePeerComms(bus,card.card!.requestId!,"deny");expect(await verdict).toBe("deny");
     }finally{vi.useRealTimers();}
@@ -323,18 +375,20 @@ describe("peer approval card lifecycle", () => {
     let turnEnded = false;
     beforeEach(() => {
       opened.length = 0; closed.length = 0; turnEnded = false;
-      bus = { store, broadcast: () => {}, routineCard: {
+      bus = { ...bus,store, broadcast: () => {}, routineCard: {
         opened: (_threadId, requestId) => { opened.push(requestId); return true; },
         closed: (_threadId, requestId, answer) => { closed.push([requestId, answer]); return turnEnded; },
       } };
     });
 
     it("never expires, and tells the run when it opens and closes", async () => {
-      vi.useFakeTimers();
+      await fakeApprovalClock();
       try {
         const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot");
-        const card = pendingCard(store, from)!;
+        await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
+    const card = pendingCard(store, from)!;
         expect(opened).toEqual([card.card!.requestId]);
+        stopRecallViewMaintenance();
         vi.advanceTimersByTime(60 * 60_000);
         expect(pendingCard(store, from)?.id).toBe(card.id);
         resolvePeerComms(bus, card.card!.requestId!, "allow");
@@ -345,13 +399,15 @@ describe("peer approval card lifecycle", () => {
 
     it("an allow after the turn ended covers the same contact once when the run carries on", async () => {
       void requestPeerApproval(bus, from, target, "ping", "ask_bot");
-      const card = pendingCard(store, from)!;
+      await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
+    const card = pendingCard(store, from)!;
       turnEnded = true;
       resolvePeerComms(bus, card.card!.requestId!, "allow");
       expect(await requestPeerApproval(bus, from, target, "ping again", "ask_bot")).toBe("allow");
       expect(pendingCard(store, from)).toBeUndefined();
       // once only
       void requestPeerApproval(bus, from, target, "and again", "ask_bot");
+      await vi.waitFor(()=>{if(!pendingCard(store,from))throw new Error("peer approval not presented");});
       expect(pendingCard(store, from)).toBeTruthy();
     });
   });

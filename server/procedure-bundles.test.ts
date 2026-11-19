@@ -107,8 +107,8 @@ it("a pin written before whom it serves was recorded serves no turn, so its desk
 });
 it("turns pin from the audience's catalogue on direct and room turns, with no sweep, retire or folder delete left",()=>{
   const index=readFileSync(join(import.meta.dirname,"index.ts"),"utf8"),source=readFileSync(join(import.meta.dirname,"procedure-bundles.ts"),"utf8");
-  expect(index).toContain("const pinAudience = { ownerTurn: directOwnerAudience && ownServersAllowedFor(bot), shipped: murageSkill };");
-  expect(index).toContain("const pinAudience = { ownerTurn: roomOwnerAudience && ownServersAllowedFor(bot), shipped: murageSkill };");
+  expect(index).toContain("const pinAudience = { ownerTurn: directOwnerAudience && ownServersAllowedFor(bot, serviceNoLimits(dispatchClaimId, threadId, bot.id)), shipped: murageSkill };");
+  expect(index).toContain("const pinAudience = { ownerTurn: roomOwnerAudience && ownServersAllowedFor(bot, serviceNoLimits(internalGeneration, threadId, bot.id)), shipped: murageSkill };");
   expect(index.match(/procedureContext\(bot\.id,threadId\), pinAudience\)/gu)).toHaveLength(2);
   for(const gone of ["clearOwnerProjections","retireOwnerPin","retireBundle"]){expect(index).not.toContain(gone);expect(source).not.toContain(gone);}
   expect(source).not.toContain("rmdirSync");

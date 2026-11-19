@@ -23,7 +23,7 @@ const GUARD_WORLD = 'murage-protected-document-v1';
 export const RELEASE_LIMITS = Object.freeze({ tabMs: 3000, totalMs: 8000 });
 // Every Murage group is orange, the palette colour closest to the Murage accent (spec 4.1).
 const METHODS = new Set([
-  'Runtime.enable', 'Runtime.disable', 'Runtime.evaluate', 'Runtime.callFunctionOn', 'Runtime.getProperties', 'Runtime.releaseObject', 'Runtime.releaseObjectGroup', 'Runtime.runIfWaitingForDebugger',
+  'Target.setAutoAttach', 'Runtime.enable', 'Runtime.disable', 'Runtime.evaluate', 'Runtime.callFunctionOn', 'Runtime.getProperties', 'Runtime.releaseObject', 'Runtime.releaseObjectGroup', 'Runtime.runIfWaitingForDebugger',
   'Page.enable', 'Page.disable', 'Page.getFrameTree', 'Page.createIsolatedWorld', 'Page.addScriptToEvaluateOnNewDocument', 'Page.removeScriptToEvaluateOnNewDocument', 'Page.navigate', 'Page.getNavigationHistory', 'Page.navigateToHistoryEntry', 'Page.reload', 'Page.captureScreenshot', 'Page.getLayoutMetrics', 'Page.bringToFront', 'Page.setLifecycleEventsEnabled', 'Page.handleJavaScriptDialog',
   'DOM.enable', 'DOM.disable', 'DOM.getDocument', 'DOM.querySelector', 'DOM.querySelectorAll', 'DOM.describeNode', 'DOM.resolveNode', 'DOM.getBoxModel', 'DOM.scrollIntoViewIfNeeded',
   'Accessibility.enable', 'Accessibility.disable', 'Accessibility.getFullAXTree', 'Accessibility.getPartialAXTree',
@@ -31,16 +31,16 @@ const METHODS = new Set([
   'Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride', 'Emulation.setEmulatedMedia', 'Network.enable', 'Network.disable',
 ]);
 const EVENT_DOMAINS = new Set(['Page', 'Runtime', 'DOM', 'Accessibility', 'Network']);
-const BOOTSTRAP_METHODS = new Set(['Page.navigate', 'Page.enable', 'Page.disable', 'Runtime.enable', 'Runtime.disable', 'DOM.enable', 'DOM.disable', 'Accessibility.enable', 'Accessibility.disable', 'Page.getFrameTree', 'Page.createIsolatedWorld', 'Page.addScriptToEvaluateOnNewDocument', 'Page.setLifecycleEventsEnabled', 'Network.enable', 'Network.disable', 'Runtime.runIfWaitingForDebugger']);
+const BOOTSTRAP_METHODS = new Set(['Target.setAutoAttach', 'Page.navigate', 'Page.enable', 'Page.disable', 'Runtime.enable', 'Runtime.disable', 'DOM.enable', 'DOM.disable', 'Accessibility.enable', 'Accessibility.disable', 'Page.getFrameTree', 'Page.createIsolatedWorld', 'Page.addScriptToEvaluateOnNewDocument', 'Page.setLifecycleEventsEnabled', 'Network.enable', 'Network.disable', 'Runtime.runIfWaitingForDebugger']);
 // An accessibility tree deeper than this is cut; a screenshot is JPEG at this quality, then smaller.
 const AX_MAX_DEPTH = 48, SHOT_QUALITY = [70, 40, 35];
 const MAX_BINDINGS = 32, MAX_RETIRED = 2048, MAX_OPENER_CANDIDATES = 16;
 const fail = (code, message = code) => { throw Object.assign(new Error(message), { code }); };
-function originOf(raw) {
+function originOf(raw, noLimits = false) {
   let url; try { url = new URL(raw); } catch { fail('site_denied'); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) fail('site_denied');
   // Only the handover-only category is closed here; the server decides every other category per action (spec 2.3).
-  if (categoryFor(url.hostname) === 'handover') fail('human_handover');
+  if (!noLimits && categoryFor(url.hostname) === 'handover') fail('human_handover');
   return url.origin;
 }
 
@@ -174,6 +174,30 @@ const ACTING_EVALUATE = /^(?:window\.scrollBy\(\s*-?[\d.eE+-]+\s*,\s*-?[\d.eE+-]
 const actingEvaluate = params => params?.method === 'Runtime.evaluate' && typeof params.params?.expression === 'string' && ACTING_EVALUATE.test(params.params.expression.trim());
 const journaled = req => MUTATING.has(req.operation) && (req.operation !== 'cdp' || typeof req.params?.method !== 'string' || req.params.method.startsWith('Input.') || ACTING_CDP.has(req.params.method) || !METHODS.has(req.params.method) || actingEvaluate(req.params));
 const DOWNLOAD_TTL_MS = 30000;
+// Decisions use only raw evidence and the supplied clock. Binding identity and
+// policy are snapshots at dispatch, so a later downgrade cannot revoke an exemption.
+export function decide(download, events, now, since = now - DOWNLOAD_TTL_MS) {
+  const fresh = [...events].filter(e => e.at <= now && e.at >= since);
+  const observations = [download, ...fresh.filter(e => e.kind === 'observation' && e.id === download.id)];
+  const keys = new Set(observations.flatMap(e => [e.url, e.finalUrl, e.referrer]).filter(Boolean));
+  const tabs = new Set(observations.map(e => e.tabId).filter(Number.isSafeInteger));
+  const matches = e => keys.has(e.url) || keys.has(e.referrer);
+  if (fresh.some(e => e.binding?.noLimits && (e.kind === 'click' || e.kind === 'announce') && matches(e))) return 'keep';
+  // Chrome's anonymous filename event cannot distinguish a simultaneous No limits
+  // action on this site from an Ask URL arm. Keep that ambiguity; a concrete tab
+  // or referrer still requires the exact evidence above. This uses raw dispatch
+  // events, rather than a cached current actor or a URL ownership decision.
+  if (!tabs.size && !observations.some(e => e.referrer)) {
+    const origins = new Set([...keys].flatMap(key => { try { return [new URL(key).origin]; } catch { return []; } }));
+    if (fresh.some(e => e.kind === 'click' && e.binding?.noLimits && now - e.at <= 1500 &&
+      [e.url, e.referrer].some(key => { try { return origins.has(new URL(key).origin); } catch { return false; } }))) return 'keep';
+  }
+
+  const candidates = new Set(fresh.filter(e => e.binding && (tabs.has(e.tabId) || matches(e))).map(e => e.binding.id));
+  if (candidates.size !== 1) return 'keep';
+  const [binding] = candidates;
+  return fresh.some(e => e.binding?.id === binding && !e.binding.noLimits && e.kind === 'arm') ? `cancel:${binding}` : 'keep';
+}
 const MODES = new Set(['step', 'task', 'full']), SITE_CATEGORIES = new Set(['always', 'never', 'asks']);
 const RECOVERY_MESSAGES = Object.freeze({
   reshare_required: 'Murage for Chrome started fresh and kept a copy of the old data. Share your tabs again to continue.',
@@ -193,7 +217,9 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   // The last mutating request still running. It is stored so a worker that dies mid-action can report it uncertain, never replay it.
   let inFlight, restartReport;
   const save = () => {
-    const state = { profileId, retired: [...retired], ...(inFlight ? { inFlight } : {}), bindings: [...bindings.values()].map(b => ({ ...b, tabs: [...b.tabs.values()].map(({tabId, navigationEpoch, origin, url, bootstrap}) => ({tabId, navigationEpoch, origin, url, bootstrap})), attached: undefined, ready: undefined, botAvatar: undefined, botAvatarId: undefined })) };
+    // Protected origins admitted for this live No limits session are not durable
+    // approvals: restart validation and ordinary bindings must still reject them.
+    const state = { profileId, retired: [...retired], ...(inFlight ? { inFlight } : {}), bindings: [...bindings.values()].map(b => ({ ...b, approvedOrigins: b.approvedOrigins.filter(o => { try { return originOf(o) === o; } catch { return false; } }), tabs: [...b.tabs.values()].map(({tabId, navigationEpoch, origin, url, bootstrap}) => ({tabId, navigationEpoch, origin, url, bootstrap})), attached: undefined, ready: undefined, noLimits: undefined, botAvatar: undefined, botAvatarId: undefined })) };
     if (readOnly) return Promise.reject(Object.assign(new Error('persistence_unavailable'), { code: 'persistence_failed' }));
     // Each save starts from a settled tail, so one rejection never poisons the saves after it.
     const run = async () => { try { await api.storage.local.set({ [STORAGE_KEY]: { schema: STATE_SCHEMA, ...state } }); persistenceFailed = false; } catch (error) { persistenceFailed = true; throw error; } };
@@ -278,21 +304,162 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     for (const b of bindings.values()) if (b.state === 'stopped' && !b.attached.size) { retire(b.id); return true; }
     return false;
   }
-  // Downloads. A tab's debugger cannot set download behavior (Chrome treats it as browser level), so a download is cancelled
-  // through the downloads API, and only when the bot's own tab announced it (Page.downloadWillBegin on an attached, owned tab).
-  // A filename decision carries no tab, so an origin match proves nothing: the owner's other tabs on the same site are never
-  // cancelled or erased. The announcement and the downloads event can arrive in either order: an item is cancelled only up to its
-  // filename step; one the filename step already let through is never removed on a later announcement's word (blockDownload).
-  // Announcements expire, so an old URL never cancels a later download.
-  // recentDownloads: every address an item was seen under (its url and its finalUrl) -> { id, urls }. blockedUrls: an announcement no
-  // item has met yet -> { notify, binding, saidBlocked, filenameOnly }. passedIds: item id -> { binding, urls, told } for an item the
-  // filename step let through while that binding's bot action ran (`actor`): the only items any bot is told were kept, and only that
-  // bot. stoppedIds: items Murage stopped at onCreated, never counted as let through. addressIds: address -> every item id Murage saw
-  // under it (bounded), only so the fresh look below also asks about those items by id.
-  // Nothing here remembers that a file "is kept": whether a file with an address may still be on disk is asked of the browser, fresh,
-  // at the moment a bot would be told "nothing was saved" (onDisk, tell). A lost memory entry can only make Murage say less.
+  // Downloads use raw dispatch, arm and Chrome observation events. A unique Ask
+  // attribution pauses the item, then waits for three quiet seconds, bounded by
+  // the arm's lifetime. Related owner evidence resumes it immediately. No cancel,
+  // file removal or history erasure may run before that final decision.
+  // The address maps below support notifications and disk checks, never attribution.
   const recentDownloads = new Map(), blockedUrls = new Map(), downloadWaiters = new Set(), pendingRemovals = new Map(), passedIds = new Map(), stoppedIds = new Map(), addressIds = new Map();
   let lastCommandAt = 0, actor;
+  // Immutable raw dispatch/announcement/arm events; never cache an ownership
+  // decision. Expire a time-ordered prefix, including retired bindings, once.
+  const downloadEvents = new Set(), downloadItems = new Map(), loggedKeeps = new Map(), downloadHolds = new Map();
+  const expireDownloadEvents = now => {
+    for (const entry of downloadEvents) {
+      if (now - entry.at <= DOWNLOAD_TTL_MS || [...downloadHolds.values()].some(h => !h.keeping && entry.at >= h.since)) break;
+      downloadEvents.delete(entry);
+    }
+  };
+  // The longest arm lives 30 seconds. Lookups may refresh a history, but must
+  // never refresh the age of its individual observations.
+  const expireObservations = (history, now) => {
+    let count = 0;
+    while (count < history.events.length && now - history.events[count].at > DOWNLOAD_TTL_MS + 5000) count++;
+    if (count) history.events.splice(0, count);
+  };
+  const recordDownloadEvent = (b, kind, url, referrer, tabId) => {
+    const at = Date.now();
+    expireDownloadEvents(at);
+    const entry = Object.freeze({ binding: Object.freeze({ id: b.id, noLimits: b.noLimits === true }), kind, url, referrer, tabId, at });
+    downloadEvents.add(entry);
+    for (const hold of downloadHolds.values()) reconsiderHold(hold, entry);
+    return entry;
+  };
+  const recordAction = (b, t, params) => recordDownloadEvent(b, 'click', params.url || t.url, t.url, t.tabId);
+  const announceAction = (b, t, url) => recordDownloadEvent(b, 'announce', url, t.url, t.tabId);
+  // These are Chrome's observations, not inferred URL/referrer attribution.
+  const observeDownload = (item, source = 'callback') => {
+    const event = Object.freeze({ ...item, kind: 'observation', source, at: Date.now() });
+    let history = downloadItems.get(item.id);
+    if (!history) { history = { events: [], value: event, at: event.at }; downloadItems.set(item.id, history); }
+    history.events.push(event);
+    expireObservations(history, event.at);
+    history.value = event;
+    history.at = event.at; downloadItems.delete(item.id); downloadItems.set(item.id, history);
+    // Expire only the ordered prefix. Fresh histories and held items are never evicted.
+    for (const [id, old] of downloadItems) {
+      if (event.at - old.at <= DOWNLOAD_TTL_MS) break;
+      if (downloadHolds.has(id)) { expireObservations(old, event.at); continue; }
+      downloadItems.delete(id);
+    }
+    const hold = downloadHolds.get(item.id);
+    if (hold) reconsiderHold(hold, event);
+    return event;
+  };
+  const decision = (item, now = Date.now()) => {
+    expireDownloadEvents(now);
+    const history = downloadItems.get(item.id);
+    if (history) expireObservations(history, Date.now());
+    const result = decide(item, [...downloadEvents, ...(downloadItems.get(item.id)?.events ?? [])], Math.max(now, Date.now()), now - DOWNLOAD_TTL_MS);
+    if (result === 'keep' && !recall(loggedKeeps, item.id)) {
+      rememberFresh(loggedKeeps, item.id, true);
+      console.warn(`Murage kept download ${item.id}: attribution does not permit cancellation.`);
+    }
+    return result;
+  };
+  const permits = (item, binding) => {
+    const hold = downloadHolds.get(item.id);
+    return !hold?.keeping && (!hold || hold.finalAt !== undefined) && decision(item, hold?.finalAt ?? Date.now()) === `cancel:${binding}`;
+  };
+  const relatedToDownload = (event, history) => history.some(e =>
+    [e.url, e.finalUrl, e.referrer].filter(Boolean).some(key => key === event.url || key === event.referrer) ||
+    Number.isSafeInteger(e.tabId) && e.tabId === event.tabId);
+  function holdArms(binding, history, now) {
+    const active = [...downloadEvents].filter(e => e.kind === 'arm' && e.binding.id === binding && e.at <= now && now - e.at <= DOWNLOAD_TTL_MS);
+    const matching = active.filter(arm => relatedToDownload(arm, history));
+    // Redirects can lack a matching address. Only the newest active arm may
+    // supply the fallback lifetime; an unrelated old arm must not shorten it.
+    return matching.length ? matching : active.slice(-1);
+  }
+  function resumeHold(hold) {
+    if (hold.resuming) return hold.resuming;
+    hold.keeping = true;
+    clearTimeout(hold.timer);
+    // Chain after pause: a slow pause must not land after resume. A failed
+    // resume retains the hold so the next observation can retry the decision.
+    hold.resuming = (async () => {
+      await hold.pausing;
+      let resumed = false;
+      for (let attempt = 0; attempt < 2 && !resumed; attempt++) {
+        try { await api.downloads.resume?.(hold.id); resumed = true; } catch { /* retry once */ }
+      }
+      if (resumed) downloadHolds.delete(hold.id);
+      else if (!hold.resumeLogged) {
+        hold.resumeLogged = true;
+        console.warn(`Murage could not resume download ${hold.id}; it remains paused and will be retried.`);
+      }
+      hold.resolve(false);
+    })().finally(() => { hold.resuming = undefined; hold.resolveSettled(); });
+    return hold.resuming;
+  }
+  function reconsiderHold(hold, event) {
+    if (hold.keeping) { resumeHold(hold); return; }
+    if (hold.finalAt !== undefined) return;
+    const item = downloadItems.get(hold.id)?.value ?? { id: hold.id };
+    if (decision(item) === 'keep') {
+      resumeHold(hold);
+      return;
+    }
+    const history = downloadItems.get(hold.id)?.events ?? [];
+    const related = event && (event.id === hold.id || relatedToDownload(event, history));
+    const arms = holdArms(hold.binding, history, Date.now());
+    if (arms.length) {
+      hold.since = Math.min(...arms.map(arm => arm.at));
+      hold.deadline = Math.max(...arms.map(arm => {
+        const lastRelatedAt = Math.max(hold.relatedAt.get(arm) ?? hold.startedAt, arm.at, related ? event.at : -Infinity);
+        hold.relatedAt.set(arm, lastRelatedAt);
+        return Math.min(arm.at + DOWNLOAD_TTL_MS, lastRelatedAt + 3000);
+      }));
+    }
+    clearTimeout(hold.timer);
+    hold.timer = setTimeout(async () => {
+      // Clamp to the deadline so scheduler drift at the lifetime boundary cannot expire the arm.
+      hold.finalAt = hold.deadline;
+      await hold.pausing;
+      if (decision(item, hold.finalAt) === 'keep') {
+        await resumeHold(hold);
+      } else {
+        const stopped = await settle(hold.id, hold.notify, hold.binding);
+        if (decision(downloadItems.get(hold.id)?.value ?? item, hold.finalAt) === 'keep') await resumeHold(hold);
+        else {
+          downloadHolds.delete(hold.id);
+          hold.resolve(stopped);
+          hold.resolveSettled();
+        }
+      }
+    }, Math.max(0, hold.deadline - Date.now()));
+    hold.timer.unref?.();
+  }
+  function holdDownload(item, notify = () => {}) {
+    const existing = downloadHolds.get(item.id);
+    if (existing) return existing;
+    const result = decision(item);
+    if (!result.startsWith('cancel:')) return undefined;
+    const binding = result.slice(7);
+    const now = Date.now();
+    const arms = holdArms(binding, downloadItems.get(item.id)?.events ?? [item], now);
+    if (!arms.length) return undefined;
+    let resolve, resolveSettled;
+    const done = new Promise(r => { resolve = r; });
+    const settled = new Promise(r => { resolveSettled = r; });
+    const hold = { id: item.id, binding, since: Math.min(...arms.map(arm => arm.at)), notify, resolve, done, settled, resolveSettled,
+      startedAt: now, relatedAt: new Map(),
+      pausing: Promise.resolve().then(() => api.downloads.pause?.(item.id)).catch(() => {}) };
+    downloadHolds.set(item.id, hold);
+    rememberFresh(stoppedIds, item.id, true);
+    reconsiderHold(hold);
+    return hold;
+  }
   const DOWNLOAD_KEYS = 64, PENDING_REMOVALS = 32, PASSED_KEYS = 1024;
   const remember = (map, key, value) => {
     map.delete(key); map.set(key, { value, at: Date.now() });
@@ -302,7 +469,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   // stoppedIds (and passedIds) never drop an entry inside its 30 s window: past PASSED_KEYS they shed only expired ones.
   const rememberFresh = (map, key, value) => {
     map.delete(key); map.set(key, { value, at: Date.now() });
-    if (map.size > PASSED_KEYS) for (const [old, entry] of map) if (Date.now() - entry.at > DOWNLOAD_TTL_MS) map.delete(old);
+    if (map.size > PASSED_KEYS) for (const [old, entry] of map) { if (Date.now() - entry.at <= DOWNLOAD_TTL_MS) break; map.delete(old); }
   };
   // An address whose seen ids were dropped from addressIds (cap) is remembered in lostAddresses: a fresh look that finds nothing there is
   // not proof of "nothing on disk" (a dropped item's history row may be gone while its file stays), so it is said as unknown. Past
@@ -323,12 +490,21 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   const attempt = thunk => Promise.resolve().then(thunk);
   async function downloadItem(id) {
     if (typeof api.downloads.search !== 'function') return undefined;
-    try { return (await api.downloads.search({ id }))?.[0]; } catch { return undefined; }
+    try {
+      const item = (await api.downloads.search({ id }))?.[0];
+      if (item) observeDownload({ ...item, id }, 'lookup');
+      return item;
+    } catch { return undefined; }
   }
   // One look at the downloads list: 'unknown' when it cannot answer, never "no item".
   async function lookup(query) {
     if (typeof api.downloads.search !== 'function') return 'unknown';
-    try { const items = await api.downloads.search(query); return Array.isArray(items) ? items : []; } catch { return 'unknown'; }
+    try {
+      const items = await api.downloads.search(query);
+      if (!Array.isArray(items)) return [];
+      for (const item of items) if (Number.isSafeInteger(item?.id)) observeDownload(item, 'lookup');
+      return items;
+    } catch { return 'unknown'; }
   }
   const anchored = url => `^${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
   // The items whose file may still be on disk under any of these addresses, asked fresh and with no time cutoff. Each address is looked
@@ -374,48 +550,71 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   // Stop a download and remove what it saved. 'removed': nothing of it is left and its entry is erased. 'pending': it is still being
   // written (a cancel that did not take); the removal runs once it completes. 'kept': its file could not be removed, and its entry
   // stays on the downloads shelf so the owner can see it.
-  async function cancelDownload(id) {
-    await attempt(() => api.downloads.cancel(id)).catch(() => {});
-    const item = await downloadItem(id);
-    if (item?.state === 'in_progress') return 'pending';
-    if (!await fileGone(id, item)) return 'kept';
-    await attempt(() => api.downloads.erase({ id })).catch(() => {});
+  async function cancelDownload(id, binding, observed) {
+    const cancelled = await attempt(() => {
+      if (!permits(downloadItems.get(id)?.value ?? observed, binding)) return false;
+      return Promise.resolve(api.downloads.cancel(id)).then(() => true, () => true);
+    }).catch(() => true);
+    if (!cancelled) return 'kept';
+    const item = await downloadItem(id) ?? { id };
+    if (item.state === 'in_progress') return 'pending';
+    if (!await fileGone(id, item, binding)) return 'kept';
+    const erased = await attempt(() => {
+      if (!permits(downloadItems.get(id)?.value ?? item, binding)) return false;
+      return Promise.resolve(api.downloads.erase({ id })).then(() => true, () => false);
+    }).catch(() => false);
+    if (!erased) return 'kept';
     forgetRemoved(id);
     return 'removed';
   }
-  // Whether nothing the download wrote is left on disk, by the browser's own word. A cancelled download's partial file is deleted by the
-  // browser later, not at once, and a resumable interrupt keeps it: so an item counts as gone only when the browser reports it missing,
-  // or when removeFile resolves and a fresh look does not still show the file. Anything else is kept, and its shelf entry stays.
-  async function fileGone(id, item) {
+  // Every asynchronous gap may admit new evidence, including an owner exemption.
+  async function fileGone(id, item, binding) {
+    if (!permits(item, binding)) return false;
     if (item?.exists === false) return true;
-    const removed = await attempt(() => api.downloads.removeFile(id)).then(() => true, () => false);
+    const removed = await attempt(() => {
+      if (!permits(downloadItems.get(id)?.value ?? item, binding)) return false;
+      return Promise.resolve(api.downloads.removeFile(id)).then(() => true, () => false);
+    }).catch(() => false);
     const after = await downloadItem(id);
-    // a fresh look that fails or finds no item leaves the outcome unknown: unknown is said as kept, never as gone
     return removed ? !!after && after.exists !== true : after?.exists === false;
   }
-  // The outcome of one download Murage stopped, handed to `notify`: 'download_blocked' once its file is gone (the bot hears it only if
-  // nothing else with its address is on disk: tell), 'download_kept' when Murage could not remove it. A download still being written is
-  // settled when it finishes (downloadChanged); until then the browser itself reports its file, so no other removal at its address can
-  // be said as blocked.
-  async function settle(id, notify) {
-    const result = await cancelDownload(id);
-    if (result === 'pending') return holdRemoval(id, notify);
+  async function settle(id, notify, binding) {
+    const item = downloadItems.get(id)?.value ?? { id };
+    if (!permits(item, binding)) return false;
+    const result = await cancelDownload(id, binding, item);
+    if (result === 'pending') { await holdRemoval(id, notify, binding); return true; }
     await notify(result === 'removed' ? 'download_blocked' : 'download_kept');
+    return true;
   }
-  async function holdRemoval(id, notify) {
-    pendingRemovals.set(id, { notify, at: Date.now() });
+  async function holdRemoval(id, notify, binding) {
+    pendingRemovals.set(id, { notify, binding, at: Date.now() });
     while (pendingRemovals.size > PENDING_REMOVALS) { const [oldest, entry] = pendingRemovals.entries().next().value; pendingRemovals.delete(oldest); await entry.notify('download_kept'); }
     // it may have finished between the cancel and this registration, before any change event could find it here
     const item = await downloadItem(id);
     if (item && item.state !== 'in_progress') await downloadChanged({ id, state: { current: item.state } });
   }
   async function downloadChanged(delta) {
-    const pending = delta && pendingRemovals.get(delta.id);
-    const state = delta?.state?.current;
-    if (!pending || (state !== 'complete' && state !== 'interrupted')) return;
-    pendingRemovals.delete(delta.id);
-    const removed = await fileGone(delta.id, (await downloadItem(delta.id)) ?? { state });
-    if (removed) { await attempt(() => api.downloads.erase({ id: delta.id })).catch(() => {}); forgetRemoved(delta.id); }
+    if (!connected || !Number.isSafeInteger(delta?.id)) return;
+    const pending = pendingRemovals.get(delta.id), state = delta.state?.current;
+    const finished = state === 'complete' || state === 'interrupted';
+    // Claim the pending removal before the lookup await: duplicate terminal
+    // events must not remove or report the same file twice.
+    if (pending && finished) pendingRemovals.delete(delta.id);
+    const fields = Object.fromEntries(Object.entries(delta).filter(([key, value]) => key !== 'id' && value && 'current' in Object(value)).map(([key, value]) => [key, value.current]));
+    observeDownload({ ...fields, id: delta.id }, 'changed');
+    await downloadItem(delta.id);
+    const item = downloadItems.get(delta.id)?.value ?? { id: delta.id };
+    if (!pending || !finished) return;
+    if (!permits(item, pending.binding)) return;
+    const removed = await fileGone(delta.id, item, pending.binding);
+    if (removed) {
+      const erased = await attempt(() => {
+        if (!permits(downloadItems.get(delta.id)?.value ?? item, pending.binding)) return false;
+        return Promise.resolve(api.downloads.erase({ id: delta.id })).then(() => true, () => false);
+      }).catch(() => false);
+      if (!erased) { await pending.notify('download_kept'); return; }
+      forgetRemoved(delta.id);
+    }
     await pending.notify(removed ? 'download_blocked' : 'download_kept');
   }
   // An armed announcement met its item `id`: a file Murage could not remove is said as kept; a removal is said through tell.
@@ -423,23 +622,22 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   async function downloadCreated(item) {
     if (!connected || !item || !Number.isSafeInteger(item.id)) return;
     sawItem(item);
+    item = observeDownload(item);
     const urls = [...new Set([item.url, item.finalUrl].filter(Boolean))];
-    for (const url of urls) {
-      const armed = url && recall(blockedUrls, url);
-      // an arm made while an item for the address may already exist acts only at the filename step: before it, this item could be the
-      // owner's retry with a small file already written, and nothing ties it to the bot
-      if (armed && !armed.value.filenameOnly) { blockedUrls.delete(url); rememberFresh(stoppedIds, item.id, true); await settle(item.id, armedNotify(urls, armed.value, item.id)); return; }
+    const result = decision(item);
+    if (result.startsWith('cancel:')) {
+      const entry = urls.map(url => recall(blockedUrls, url)?.value).find(e => e?.binding === result.slice(7));
+      holdDownload(item, entry ? armedNotify(urls, entry, item.id) : () => {});
+      return;
     }
     for (const url of urls) remember(recentDownloads, url, { id: item.id, urls });
   }
-  // The filename step: Chrome holds the download here until every listener answers, so a cancel now happens before any file is
-  // written (onCreated alone can lose the race to a small file). Unrelated downloads are answered at once. Only while a bot action is
-  // running, and only for a download from an owned tab's site, is the page's own announcement waited for, briefly.
-  // An item let through here is never removed by a later announcement. One let through while a bot action ran is recorded for that
-  // bot (passedIds); one let through while no bot action ran is the owner's and is never mentioned to any bot. An item Murage already
-  // stopped at onCreated (or is still removing) was not let through.
+  // Chrome also holds a filename callback until it is answered. An Ask item waits
+  // through grace here even when pause is unavailable; unrelated items pass at once.
   async function downloadDetermining(item) {
-    const by = botActive() ? actor : undefined;
+    if (Number.isSafeInteger(item?.id)) item = observeDownload(item);
+    const result = item ? decision(item) : 'keep';
+    const by = result.startsWith('cancel:') ? result.slice(7) : (botActive() ? actor : undefined);
     if (connected && Number.isSafeInteger(item?.id)) sawItem(item);
     const stop = await decideFilename(item);
     if (!stop && by !== undefined && Number.isSafeInteger(item?.id) && !recall(stoppedIds, item.id) && !pendingRemovals.has(item.id)) {
@@ -451,11 +649,21 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   }
   async function decideFilename(item) {
     if (!connected || !item || !Number.isSafeInteger(item.id)) return false;
+    item = observeDownload(item);
+    const result = decision(item);
     const urls = [item.url, item.finalUrl].filter(Boolean);
-    const proven = () => urls.find(url => recall(blockedUrls, url));
-    const cancelProven = async url => { const armed = recall(blockedUrls, url); blockedUrls.delete(url); forgetItem(item.id); await settle(item.id, armed ? armedNotify(urls, armed.value, item.id) : () => {}); return true; };
+    const proven = () => decision(item).startsWith('cancel:');
+    const cancelProven = async () => {
+      if (downloadHolds.has(item.id)) return downloadHolds.get(item.id).done;
+      if (recall(stoppedIds, item.id)) return false;
+      const binding = decision(item).slice(7);
+      const entry = urls.map(url => recall(blockedUrls, url)?.value).find(e => e?.binding === binding);
+      forgetItem(item.id);
+      return holdDownload(item, entry ? armedNotify(urls, entry, item.id) : () => {})?.done ?? false;
+    };
+    if (result === 'keep' && [...downloadEvents].some(e => e.kind === 'arm' && Date.now() - e.at <= DOWNLOAD_TTL_MS && urls.includes(e.url))) return false;
     const first = proven();
-    if (first) return cancelProven(first);
+    if (first) return cancelProven();
     // Not while a bot action runs or has only just ended: nothing the bot did can explain this download.
     if (!botActive()) return false;
     const sites = new Set(); for (const u of [item.url, item.finalUrl, item.referrer]) { try { if (u) sites.add(new URL(u).origin); } catch { /* not an address */ } }
@@ -467,22 +675,18 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       const timer = setTimeout(() => done(undefined), options.downloadWaitMs ?? 500);
       timer.unref?.(); downloadWaiters.add(check);
     });
-    return url ? cancelProven(url) : false;
+    return url ? cancelProven() : false;
   }
   const botActive = () => writeBusy || Date.now() - lastCommandAt <= (options.downloadAfterMs ?? 1500);
-  // The page of `binding` announced a download (Page.downloadWillBegin, or a popup's first address). The address is armed first, so an
-  // item still at (or not yet at) the filename step is stopped there. Then the bot is told what the browser shows (tell): blocked when no
-  // file with the address is on disk (its item, when it comes, is stopped before any file is written), kept for a file its own action
-  // let through, and nothing otherwise. An item the filename step already let through is never cancelled, removed or erased here:
-  // Chrome does not say which tab a download came from, so it may be the owner's, and deleting an owner's file cannot be undone. When
-  // an item for the address may already exist, the arm acts only at the filename step (see downloadCreated).
-  async function blockDownload(url, notify = () => {}, binding) {
-    if (!url) return;
-    const entry = { notify, binding, saidBlocked: false, filenameOnly: true };
+  // Announcements arm Ask downloads and report only what a fresh disk lookup
+  // establishes. Items already let through remain untouched by a later arm alone.
+  async function blockDownload(url, notify = () => {}, binding, referrer, tabId) {
+    const b = bindings.get(binding);
+    if (!url || !b || b.noLimits) return;
+    recordDownloadEvent(b, 'arm', url, referrer, tabId);
+    const entry = { notify, binding, saidBlocked: false };
     remember(blockedUrls, url, entry);
     for (const check of [...downloadWaiters]) check();
-    const present = await onDisk([url]);
-    entry.filenameOnly = present === 'unknown' || present.length > 0;
     await tell([url], undefined, entry);
   }
   async function disarmGuard(tabId, t) {
@@ -600,8 +804,8 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // A private window is never shared, and nothing about it is stored: refused before the binding records the tab.
     if (tab.incognito) fail('incognito_denied');
     if (tab.url === 'about:blank' && !bootstrap) fail('site_denied');
-    const origin = tab.url === 'about:blank' ? 'null' : originOf(tab.url);
-    if (origin !== 'null' && !b.approvedOrigins.includes(origin)) fail('site_denied');
+    const origin = tab.url === 'about:blank' ? 'null' : originOf(tab.url, b.noLimits);
+    if (!b.noLimits && origin !== 'null' && !b.approvedOrigins.includes(origin)) fail('site_denied');
     if (generation !== undefined && !(connected && b.state === 'active' && b.ready && b.generation === generation)) fail('binding_inactive');
     b.tabs.set(tabId, { tabId, navigationEpoch: 1, origin, url: tab.url, bootstrap });
     const groupId = await api.tabs.group({ tabIds: [tabId], ...(b.groupId === undefined ? {} : { groupId: b.groupId }) });
@@ -639,8 +843,8 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (tab.incognito) fail('incognito_denied');
     if (!tab.url && tab.pendingUrl === 'about:blank') tab.url = 'about:blank';
     if (!(allowBlank && t.bootstrap && tab.url === 'about:blank')) {
-      const origin = originOf(tab.url);
-      if (origin !== t.origin || !b.approvedOrigins.includes(origin)) fail('site_denied');
+      const origin = originOf(tab.url, b.noLimits);
+      if (origin !== t.origin || (!b.noLimits && !b.approvedOrigins.includes(origin))) fail('site_denied');
     }
     return t;
   }
@@ -745,13 +949,17 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   }
   // Chrome's debugging bar shows only while the bot is driving: after the idle window (a turn that ended, a wait
   // for the owner, a handoff) the tab is released, and the next dispatch attaches again. Authority is unchanged.
+  function forgetChildSessions(b, t) {
+    for (const sessionId of t.childSessions?.keys() ?? []) event(b, 'cdp', { tabId: t.tabId, navigationEpoch: t.navigationEpoch, method: 'Target.detachedFromTarget', params: { sessionId } });
+    delete t.childSessions;
+  }
   async function idleDetach(b, t) {
     if (!b.attached.has(t.tabId)) return;
     b.attached.delete(t.tabId);
     await removeObserver(t);
     if (t.contextId !== undefined) await api.debugger.sendCommand({ tabId: t.tabId }, 'Runtime.evaluate', { expression: 'globalThis.__murageGuard?.enable(false)', contextId: t.contextId, returnByValue: true }).catch(() => {});
     for (const identifier of t.scripts ?? []) await api.debugger.sendCommand({ tabId: t.tabId }, 'Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => {});
-    delete t.scripts; delete t.contextId; delete t.contextIds;
+    delete t.scripts; delete t.contextId; delete t.contextIds; forgetChildSessions(b, t);
     await api.debugger.detach({ tabId: t.tabId }).catch(() => {});
   }
   async function removePresence(t) {
@@ -765,9 +973,17 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     await bounded(send('Runtime.removeBinding', { name: p.name }));
     if (p.script) await bounded(send('Page.removeScriptToEvaluateOnNewDocument', { identifier: p.script }));
   }
-  async function presenceCapture(t, on) {
+  async function presenceCapture(t, on, noLimits = false) {
     const p = t?.presence;
-    // Round 9 (R8-07): a screenshot needs a verified mask. No presence control, a failed or timed out masking: no capture.
+    // No limits does not depend on the overlay or its masking support.
+    if (noLimits) {
+      if (!p || p.contextId === undefined) return;
+      p.capturing = true;
+      if (p.fallback) await presenceSend(t, 'Overlay.hideHighlight', {}).catch(() => {});
+      await presenceEval(t, 'globalThis.__muragePresence?.capture(true, [], true)', options.presenceCaptureMs ?? 500, true).catch(() => {});
+      return;
+    }
+    // Below No limits, a screenshot requires a verified mask.
     if (!p || p.contextId === undefined) { if (on) fail('masking_unavailable'); return; }
     try {
       if (on) {
@@ -844,7 +1060,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       // An older app than this extension supports: refuse plainly so the owner updates Murage.
       if (Number.isInteger(req.params.appProtocol) && req.params.appProtocol < MIN_APP_PROTOCOL) fail('update_murage');
       const approvedOrigins = req.params.approvedOrigins;
-      if (!Array.isArray(approvedOrigins) || approvedOrigins.length > 128 || approvedOrigins.some(o => typeof o !== 'string' || originOf(o) !== o)) fail('site_denied');
+      if (!Array.isArray(approvedOrigins) || approvedOrigins.length > 128 || approvedOrigins.some(o => typeof o !== 'string' || originOf(o, req.params.noLimits === true) !== o)) fail('site_denied');
       if (!b) {
         // A retired id is never bound again: an old, captured bind cannot revive a finished task.
         if (retired.has(req.bindingId)) fail('binding_retired');
@@ -859,6 +1075,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
         if (b.revoked?.length) { b.revoked = b.revoked.filter(o => approvedOrigins.includes(o)); if (!b.revoked.length) delete b.revoked; }
         b.approvedOrigins = approvedOrigins.filter(o => !b.revoked?.includes(o)); b.bindEpoch = (b.bindEpoch ?? 0) + 1; b.ready = b.state === 'active'; if (b.ready) b.everReady = true;
       }
+      b.noLimits = req.params.noLimits === true;
       applyPanel(b, req.params.panel);
       await save();
       if (!b.tabs.size && b.state === 'active') {
@@ -884,7 +1101,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // A pause that names a handoff is the Your turn state: the page is released and the owner presses Continue (T25).
     if (req.operation === 'stop' || req.operation === 'pause') return fence(b, req.operation === 'stop' ? 'stopped' : 'paused', req.operation === 'stop' ? 'stopped' : 'paused', req.operation === 'pause' && req.params.reason === 'handoff' ? { text: req.params.handoff } : undefined);
     // The app's own Continue (the owner at the desktop) answers a hand-over; every other resume stays the owner's action in the browser.
-    if (req.operation === 'resume') { if (req.params?.reason === 'continue' && handoffWaiting(b)) return ownerResume(b); fail('owner_action_required'); }
+    if (req.operation === 'resume') { if (req.params?.reason === 'continue' && handoffWaiting(b)) return ownerResume(b, req.params.noLimits === true); fail('owner_action_required'); }
     active(b, req.generation);
     if (req.operation === 'share') fail('owner_action_required');
     if (req.operation === 'unshare') return unshare(b, req.params.tabId);
@@ -902,14 +1119,31 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (req.operation !== 'cdp') fail('unsupported_operation');
     const { method, params = {} } = req.params;
     if (method === 'Target.getTargets') return { targetInfos: summary(b).tabs.map(t => ({ targetId: String(t.tabId), type: 'page', attached: b.attached.has(t.tabId), url: t.url })) };
-    if (!METHODS.has(method) || params.sessionId || params.targetId || params.uniqueContextId) fail('method_denied');
-    if (isClipboardInput(method, params)) fail('clipboard_denied');
+    // BRLOCK19: Page.getFrameTree cannot see a frame that lives in another process, so the page lock asks the browser for every frame
+    // of the tab. Read-only, scoped to a shared and approved tab, and any failure is an error the lock treats as "locked".
+    if (method === 'Murage.getAllFrames') {
+      active(b, req.generation);
+      const t = await checkedTab(b, req.params);
+      const frames = await api.webNavigation.getAllFrames({ tabId: t.tabId });
+      active(b, req.generation);
+      if (!Array.isArray(frames)) fail('frames_unavailable');
+      await checkedTab(b, req.params);
+      // Only live documents: a back/forward-cached or prerendered one is not on the page. An unreadable url goes through as missing, so the lock reads it as doubt.
+      const live = frames.filter(f => f.documentLifecycle === undefined || f.documentLifecycle === 'active');
+      return { result: { frames: live.map(f => ({ frameId: f.frameId, parentFrameId: f.parentFrameId, ...(typeof f.url === 'string' ? { url: f.url } : {}) })) }, tabId: t.tabId, navigationEpoch: t.navigationEpoch, origin: t.origin, url: t.url };
+    }
+    if ((method === 'Target.setAutoAttach' && (req.params.noLimits !== true || params.flatten !== true)) || !METHODS.has(method) || params.sessionId || params.targetId || params.uniqueContextId) fail('method_denied');
+    if (req.params.noLimits !== true && isClipboardInput(method, params)) fail('clipboard_denied');
     const t = await checkedTab(b, req.params, BOOTSTRAP_METHODS.has(method));
     // A page showing a dialog is blocked: answering it must not evaluate anything in that page.
     const dialog = method === 'Page.handleJavaScriptDialog', isInput = method.startsWith('Input.');
+    const childSession = req.params.sessionId;
+    const child = childSession && t.childSessions?.get(childSession);
+    if (childSession && (req.params.noLimits !== true || !child)) fail('context_denied');
+    const contexts = child ? child.contextIds : t.contextIds;
     const contextId = params.executionContextId ?? params.contextId;
-    if (contextId !== undefined && contextId !== t.contextId && !t.contextIds?.has(contextId)) fail('context_denied');
-    if (method === 'Page.navigate' && (!b.approvedOrigins.includes(originOf(params.url)) || params.frameId)) fail('site_denied');
+    if (contextId !== undefined && contextId !== t.contextId && !contexts?.has(contextId)) fail('context_denied');
+    if (method === 'Page.navigate' && req.params.noLimits !== true && (!b.approvedOrigins.includes(originOf(params.url)) || params.frameId)) fail('site_denied');
     // One in-flight trusted command per profile: includes reads to avoid hidden writes in engine scripts.
     // The one exception is the answer to a dialog: a click that made the page open an alert blocks its own command until the
     // dialog is answered, so the answer has to pass while that command is in flight. It never takes or clears the busy flag then.
@@ -925,6 +1159,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
         // Restore only successful domain subscriptions, never an input, navigation or page script.
         try {
           for (const [subscription, args] of t.subscriptions ?? []) {
+            if (subscription === 'Target.setAutoAttach' && req.params.noLimits !== true) continue;
             active(b, req.generation);
             await api.debugger.sendCommand({ tabId: t.tabId }, subscription, args);
           }
@@ -950,14 +1185,15 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       if (isInput) {
         active(b, req.generation); if (b.tabs.get(t.tabId) !== t || t.navigationEpoch !== req.params.navigationEpoch) fail('stale_document');
         // Round 9 (R8-10): the owner changed the approved sites or settings while this input waited: it does not dispatch, and the site is looked at again, synchronously.
-        if ((b.bindEpoch ?? 0) !== bindEpoch || !b.approvedOrigins.includes(t.origin)) fail('site_denied');
+        if (req.params.noLimits !== true && ((b.bindEpoch ?? 0) !== bindEpoch || !b.approvedOrigins.includes(t.origin))) fail('site_denied');
       }
       // Each operation has its own deadline. Only a command that may have acted (input, a function
       // call on a node) is "uncertain" and pauses; a read that is simply slow fails that call alone.
       const deadline = options.commandTimeoutMs ?? browserCommandDeadlineMs(method, params), mayAct = isInput || method === 'Runtime.callFunctionOn';
       const sendOnce = sendParams => {
         let timer;
-        return Promise.race([api.debugger.sendCommand({ tabId: t.tabId }, method, sendParams), new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error(mayAct ? 'Command outcome uncertain' : 'Command timed out'), { code: mayAct ? 'uncertain' : 'command_timeout' })), deadline); })]).finally(() => clearTimeout(timer));
+        if (journaled(req) && ownsBusy) recordAction(b, t, sendParams);
+        return Promise.race([api.debugger.sendCommand({ tabId: t.tabId, ...(childSession ? { sessionId: childSession } : {}) }, method, sendParams), new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error(mayAct ? 'Command outcome uncertain' : 'Command timed out'), { code: mayAct ? 'uncertain' : 'command_timeout' })), deadline); })]).finally(() => clearTimeout(timer));
       };
       const inspection = ['DOM.getDocument', 'DOM.describeNode'].includes(method) && params.murageInspection === true;
       let sendParams = params;
@@ -970,8 +1206,8 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       // A frame another site draws (a card form, a sign-in box) cannot be checked for private input from
       // here, so a screenshot hides it for the moment of the capture; if it cannot be hidden, no capture.
       const shot = method === 'Page.captureScreenshot';
-      if (shot) { shotHidden = t; await presenceCapture(t, true); }
-      if (shot) await frameMask(t, false);
+      if (shot) { shotHidden = t; await presenceCapture(t, true, req.params.noLimits === true); }
+      if (shot && req.params.noLimits !== true) await frameMask(t, false);
       let result;
       try {
         result = await sendOnce(sendParams);
@@ -981,7 +1217,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
             active(b, req.generation); result = await sendOnce({ ...sendParams, quality });
           }
         }
-      } finally { if (shot) await frameMask(t, true).catch(() => {}); if (shot) await presenceCapture(t, false); }
+      } finally { if (shot && req.params.noLimits !== true) await frameMask(t, true).catch(() => {}); if (shot) await presenceCapture(t, false); }
       // A click or key that navigates replaces the document and its observer: there is nothing left to clear
       // or check, and that is not the owner taking over. The input was delivered; the result carries the new
       // document identity so the server can say truthfully that the page then navigated.
@@ -1006,15 +1242,20 @@ export function createBrowserExtensionRuntime(api, options = {}) {
         if (verb === 'enable') t.subscriptions.set(method, structuredClone(params));
         else t.subscriptions.delete(`${domain}.enable`);
       }
+      if (method === 'Target.setAutoAttach' && !child) {
+        t.subscriptions ??= new Map();
+        if (params.autoAttach === true) t.subscriptions.set(method, structuredClone(params));
+        else t.subscriptions.delete(method);
+      }
       if (method === 'Page.setLifecycleEventsEnabled') {
         t.subscriptions ??= new Map();
         if (params.enabled === true) t.subscriptions.set(method, { enabled: true });
         else t.subscriptions.delete(method);
       }
-      if (method === 'Page.getFrameTree') t.frameId = result.frameTree?.frame?.id;
+      if (method === 'Page.getFrameTree') (child ?? t).frameId = result.frameTree?.frame?.id;
       // Opus gate (round 10): t.contextId is where an idle or restart release disarms the private-input guard, so only the guard's own world sets it.
       // The server also asks for the overlay's world (R9-05); that context is allowed, but must not take the guard release away from the guard.
-      if (method === 'Page.createIsolatedWorld') { if (params.worldName === GUARD_WORLD) t.contextId = result.executionContextId; (t.contextIds ??= new Set()).add(result.executionContextId); }
+      if (method === 'Page.createIsolatedWorld') { if (!child && params.worldName === GUARD_WORLD) t.contextId = result.executionContextId; ((child ?? t).contextIds ??= new Set()).add(result.executionContextId); }
       if (method === 'Page.addScriptToEvaluateOnNewDocument' && result.identifier) (t.scripts ??= []).push(result.identifier);
       return { result: result ?? {}, tabId: t.tabId, navigationEpoch: t.navigationEpoch, origin: t.origin, url: t.url };
     } catch (error) {
@@ -1056,17 +1297,17 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     finally { if (reads) { reader.reading = Math.max(0, (reader.reading ?? 1) - 1); if (reader.reading === 0) pushStatus(); } if (inFlight?.id === req.id) { inFlight = undefined; saveSoon(); } }
   }
   // The owner takes the task back: sites are looked at again, the generation moves on and the app is told (event 'resumed').
-  async function ownerResume(b) {
+  async function ownerResume(b, noLimits = false) {
     if (!connected) fail('host_offline');
     const generation = b.generation, seen = [];
-    for (const t of b.tabs.values()) { const tab = await api.tabs.get(t.tabId); if (tab.incognito) fail('incognito_denied'); const origin = tab.url === 'about:blank' ? 'null' : originOf(tab.url); if (origin !== 'null' && !b.approvedOrigins.includes(origin)) fail('site_denied'); seen.push([t, origin, tab.url]); }
+    for (const t of b.tabs.values()) { const tab = await api.tabs.get(t.tabId); if (tab.incognito) fail('incognito_denied'); const origin = tab.url === 'about:blank' ? 'null' : originOf(tab.url, noLimits); if (!noLimits && origin !== 'null' && !b.approvedOrigins.includes(origin)) fail('site_denied'); seen.push([t, origin, tab.url]); }
     // The page was read across awaits: a Stop, Pause or disconnect that landed meanwhile wins, and nothing here brings the task back.
     if (!connected || b.state === 'stopped' || b.generation !== generation || bindings.get(b.id) !== b) fail('binding_inactive');
     for (const [t, origin, url] of seen) { t.origin = origin; t.url = url; t.navigationEpoch++; }
     // 1.0.1: resumedAt is the generation this Resume made, recorded at the bump and never changed. The app takes a Resume in only
     // through it (the event's own generation is stamped at emit, after the awaits below, and an unshare meanwhile moves it).
     b.generation++; const resumedAt = b.generation; b.state = 'active'; b.ready = false; delete b.pausedReason; delete b.handoff; delete b.yourTurn;
-    await save(); await indicator(b); event(b, 'resumed', { ...summary(b), resumedAt }); return summary(b);
+    await save(); await indicator(b); if (!noLimits) event(b, 'resumed', { ...summary(b), resumedAt }); return summary(b);
   }
   async function handlePanel(action) {
     if (action.action === 'status') return statusSnapshot();
@@ -1094,7 +1335,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       if (!connected || b.state !== 'active') fail('binding_inactive');
       // A site not allowed yet: ask the owner in Murage (a site card), then Share works. Origin only, never the address.
       let origin;
-      try { const tab = await api.tabs.get(action.tabId); if (tab.incognito) fail('incognito_denied'); origin = originOf(tab.url); } catch (error) { if (error.code === 'incognito_denied') throw error; /* the share below reports why */ }
+      try { const tab = await api.tabs.get(action.tabId); if (tab.incognito) fail('incognito_denied'); origin = originOf(tab.url, b.noLimits); } catch (error) { if (error.code === 'incognito_denied') throw error; /* the share below reports why */ }
       if (origin && !b.approvedOrigins.includes(origin)) event(b, 'notice', { kind: 'share_requested', tabId: action.tabId, origin });
       const result = await addTab(b, action.tabId); event(b, 'status', summary(b)); return result; }
     if (action.action === 'resume') {
@@ -1137,9 +1378,11 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     candidates.delete(details.tabId);
     if (!Number.isSafeInteger(details.sourceTabId)) return;
     await tabCreated({ id: details.tabId, openerTabId: details.sourceTabId });
+    const sourceBinding = bindings.get(candidates.get(details.tabId));
+    if (sourceBinding) recordDownloadEvent(sourceBinding, 'announce', details.url, sourceBinding.tabs.get(details.sourceTabId)?.url, details.tabId);
     // A new tab the bot's tab opened is not attached, so it announces no download. Its first address is the announcement:
     // a download from it is the bot's (a target=_blank link to a file), and is blocked like one from the bot's own tab.
-    if (candidates.has(details.tabId) && typeof details.url === 'string' && details.url && details.url !== 'about:blank') { popupUrls.set(details.tabId, details.url); while (popupUrls.size > MAX_OPENER_CANDIDATES) popupUrls.delete(popupUrls.keys().next().value); await blockDownload(details.url, popupNotify(details), bindings.get(candidates.get(details.tabId))?.id); }
+    if (candidates.has(details.tabId) && typeof details.url === 'string' && details.url && details.url !== 'about:blank') { popupUrls.set(details.tabId, details.url); while (popupUrls.size > MAX_OPENER_CANDIDATES) popupUrls.delete(popupUrls.keys().next().value); await blockDownload(details.url, popupNotify(details), sourceBinding?.id, sourceBinding?.tabs.get(details.sourceTabId)?.url, details.tabId); }
   }
   // A popup's first address may still turn out to be a page, so only a kept file (an item already let through under that address during
   // bot activity, so a real download) is said from here; "blocked" waits for a real announcement.
@@ -1154,17 +1397,22 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (!details.url || details.url === 'about:blank') return; // still waiting for the first real page
     const b = bindings.get(candidates.get(details.tabId)); candidates.delete(details.tabId);
     // The new tab showed a page, so its first address was not a download: it no longer stands for one.
-    const announced = popupUrls.get(details.tabId); popupUrls.delete(details.tabId); if (announced) blockedUrls.delete(announced);
+    const announced = popupUrls.get(details.tabId); popupUrls.delete(details.tabId);
+    if (announced) {
+      blockedUrls.delete(announced);
+      // decide() reads raw events, so the announce and arm this popup's first address made go too; any other tab's stay.
+      for (const e of [...downloadEvents]) if ((e.kind === 'arm' || e.kind === 'announce') && e.tabId === details.tabId && e.url === announced) downloadEvents.delete(e);
+    }
     if (!b || !connected || b.state !== 'active' || !b.ready) return;
     const generation = b.generation;
     let origin = '';
-    try { origin = originOf(details.url); } catch { origin = ''; }
-    if (origin && b.approvedOrigins.includes(origin)) {
+    try { origin = originOf(details.url, b.noLimits); } catch { origin = ''; }
+    if (origin && (b.noLimits || b.approvedOrigins.includes(origin))) {
       try { await addTab(b, details.tabId, false, generation); event(b, 'notice', { kind: 'tab_opened', tabId: details.tabId, origin, adopted: true }); return; } catch { /* reported below */ }
     }
     event(b, 'notice', { kind: 'tab_opened', tabId: details.tabId, origin, adopted: false });
   }
-  async function navigation(details) {
+  async function navigation(details, sameDocument = false) {
     if (details.frameId !== 0) return;
     if (candidates.has(details.tabId)) { await openerNavigation(details); return; }
     for (const b of bindings.values()) {
@@ -1173,11 +1421,11 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       const stored = `${t.origin}\0${t.url}`;
       // CDP may have already committed this navigation. Keep its main frame identity for lifecycle events.
       // Page.frameNavigated replaces it when needed; the epoch still fences every old-document command.
-      t.navigationEpoch++; t.bootstrap = false; delete t.contextId; delete t.contextIds; if (t.takeover) delete t.takeover.contextId;
+      if (!sameDocument || !b.noLimits) { forgetChildSessions(b, t); t.navigationEpoch++; t.bootstrap = false; delete t.contextId; delete t.contextIds; if (t.takeover) delete t.takeover.contextId; }
       if (b.state !== 'active' || !b.ready) { t.origin = ''; t.url = ''; if (stored !== '\0') await save(); continue; }
-      try { t.origin = originOf(details.url); t.url = b.approvedOrigins.includes(t.origin) ? details.url : ''; } catch { t.origin = ''; t.url = ''; }
+      try { t.origin = originOf(details.url, b.noLimits); t.url = (b.noLimits || b.approvedOrigins.includes(t.origin)) ? details.url : ''; } catch { t.origin = ''; t.url = ''; }
       if (`${t.origin}\0${t.url}` !== stored) await save();
-      if (!b.approvedOrigins.includes(t.origin)) await fence(b, 'paused', 'paused');
+      if (!b.noLimits && !b.approvedOrigins.includes(t.origin)) await fence(b, 'paused', 'paused');
       // No title, frame or page contents leave on browser events. The URL, query
       // included, leaves only for an approved origin (the same URL get_url reads);
       // an unapproved origin sends no URL at all.
@@ -1185,10 +1433,17 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     }
   }
   async function debuggerEvent(source, method, params) {
-    if (source.tabId === undefined || source.sessionId) return;
+    if (source.tabId === undefined) return;
     for (const b of bindings.values()) {
       const t = b.tabs.get(source.tabId);
       if (!t || !connected || !b.ready || b.state !== 'active' || !b.attached.has(t.tabId)) continue;
+      if (source.sessionId && (!b.noLimits || !t.childSessions?.has(source.sessionId))) continue;
+      const sessionState = source.sessionId ? t.childSessions.get(source.sessionId) : t;
+      if (method === 'Target.attachedToTarget' && b.noLimits && params.targetInfo?.type === 'iframe') {
+        (t.childSessions ??= new Map()).set(params.sessionId, { contextIds: new Set() });
+      }
+      if (method === 'Target.detachedFromTarget') t.childSessions?.delete(params.sessionId);
+      if (method === 'Runtime.bindingCalled' && source.sessionId) continue;
       if (method === 'Runtime.bindingCalled') {
         if (params.name === t.takeover?.name && params.executionContextId === t.takeover?.contextId && params.payload === 'pause') await fence(b,'paused','takeover');
         // The overlay's own pill and fallback signal: only from the presence world's context, never the page's.
@@ -1201,18 +1456,20 @@ export function createBrowserExtensionRuntime(api, options = {}) {
         continue;
       }
       // What the owner's page did that the bot cannot see otherwise: said in plain words by the server.
-      if (method === 'Page.downloadWillBegin') { const name = clip(params.suggestedFilename, 80), tabId = t.tabId, origin = t.origin; await blockDownload(params.url, kind => event(b, 'notice', { kind, tabId, origin, name }), b.id); continue; }
+      if (method === 'Page.downloadWillBegin') announceAction(b, t, params.url);
+      if (method === 'Page.downloadWillBegin' && b.noLimits) continue;
+      if (method === 'Page.downloadWillBegin') { const name = clip(params.suggestedFilename, 80), tabId = t.tabId, origin = t.origin; await blockDownload(params.url, kind => event(b, 'notice', { kind, tabId, origin, name }), b.id, t.url, tabId); continue; }
       if (method === 'Page.javascriptDialogOpening') event(b, 'notice', { kind: 'dialog', tabId: t.tabId, origin: t.origin, dialogType: clip(params.type, 16), text: clip(params.message, 500) });
       // Setup context/lifecycle metadata may be needed before first navigation;
       // page contents, console and arbitrary CDP notifications never leave here.
-      if (method === 'Page.frameNavigated' && !params.frame?.parentId) t.frameId = params.frame?.id;
-      if (method === 'Runtime.executionContextsCleared') t.contextIds?.clear();
-      const data = scopedCdpEvent(method, params, t);
+      if (method === 'Page.frameNavigated' && !params.frame?.parentId) sessionState.frameId = params.frame?.id;
+      if (method === 'Runtime.executionContextsCleared') sessionState.contextIds?.clear();
+      const data = scopedCdpEvent(method, params, sessionState === t ? t : { ...sessionState, origin: t.origin }, b.noLimits);
       if (!data) continue;
-      if (method === 'Runtime.executionContextCreated') (t.contextIds ??= new Set()).add(params.context.id);
-      if (method === 'Runtime.executionContextDestroyed') t.contextIds?.delete(params.executionContextId);
+      if (method === 'Runtime.executionContextCreated') (sessionState.contextIds ??= new Set()).add(params.context.id);
+      if (method === 'Runtime.executionContextDestroyed') sessionState.contextIds?.delete(params.executionContextId);
       if (JSON.stringify(data).length > 65536) continue;
-      event(b, 'cdp', { tabId: t.tabId, navigationEpoch: t.navigationEpoch, method, params: data });
+      event(b, 'cdp', { tabId: t.tabId, navigationEpoch: t.navigationEpoch, method, params: data, ...(source.sessionId ? { sessionId: source.sessionId } : {}) });
     }
   }
   // What a saved binding record may carry. Anything else is dropped, and a record that fails these checks grants nothing.
@@ -1283,7 +1540,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     } else if (connected) {
       connected = false; connectionEpoch++;
       // Fence every binding synchronously, before storage or debugger awaits.
-      for (const b of bindings.values()) { b.generation++; b.state = b.state === 'stopped' ? 'stopped' : 'paused'; b.ready = false; }
+      for (const b of bindings.values()) { b.noLimits = false; b.generation++; b.state = b.state === 'stopped' ? 'stopped' : 'paused'; b.ready = false; }
       disconnecting = (async () => {
         // Release first, record second: a rejected save leaves the marker and never a held page.
         const saved = saveSoon();
@@ -1313,9 +1570,16 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   async function discarded(tabId) {
     for (const b of bindings.values()) {
       const t = b.tabs.get(tabId); if (!t) continue;
-      t.navigationEpoch++; t.bootstrap = false; delete t.contextId; delete t.contextIds; delete t.frameId; if (t.takeover) delete t.takeover.contextId;
+      t.navigationEpoch++; t.bootstrap = false; delete t.contextId; delete t.contextIds; delete t.childSessions; delete t.frameId; if (t.takeover) delete t.takeover.contextId;
       event(b, 'notice', { kind: 'tab_discarded', tabId, navigationEpoch: t.navigationEpoch });
     }
   }
+  // Supplied only by isolated tests; production callers expose no test surface.
+  if (options.downloadTestHooks) Object.assign(options.downloadTestHooks, {
+    settled: id => downloadHolds.get(id)?.resuming ?? downloadHolds.get(id)?.settled ?? Promise.resolve(),
+    hasHold: id => downloadHolds.has(id),
+    observations: id => [...(downloadItems.get(id)?.events ?? [])],
+    deadline: id => downloadHolds.get(id)?.deadline,
+  });
   return { restartReports, driving, busy, setUpdateWaiting: value => { updateWaiting = !!value; pushStatus(); }, status: statusSnapshot, drivingBotName, pauseDriving, replaced, discarded, initialize, connection, handleRequest, handlePanel, navigation, tabCreated, navigationTarget, downloadCreated, downloadDetermining, downloadChanged, debuggerEvent, removed: async tabId => { candidates.delete(tabId); for (const b of bindings.values()) if (b.tabs.has(tabId)) await unshare(b, tabId); }, detached: async tabId => { for (const b of bindings.values()) if (b.attached.has(tabId)) { b.attached.delete(tabId); await fence(b, 'paused', 'takeover'); } } };
 }

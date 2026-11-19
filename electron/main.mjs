@@ -1,11 +1,18 @@
+import "../shared/win-hide-child-process.mjs";
 import { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";
 // 1.0.9 Sentinel: right after the guard module (which only defines the guard), so a Windows Sentinel task launch runs
 // its one scan and exits before any other module of the app evaluates.
 import "./sentinel-trampoline-entry.mjs";
+import { protectPasswordProcess } from "../shared/password-process-protection.mjs";
+import { loadPasswordNativeAddon } from "./password-native-addon.mjs";
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
+import { createBrowserPopouts, BROWSER_POPOUT_PLATFORMS } from "./browser-popout.mjs";
 import { createDeferredStartup } from "./deferred-startup.mjs";
 import { settleDesktopStartup, fallbackDesktopStartup, terminalDesktopStartup, startupFailureCode } from "./startup-settle.mjs";
 import {backupStartupDispatch, explicitBackupReturn} from "./backup-startup.mjs";
 import { createSentinelHost } from "./sentinel-host.mjs";
+import { sentinelNames } from "./sentinel-schedule.mjs";
+import { createUpdateLaunchPause } from "./update-launch-pause.mjs";
 import { FluxSigninError, assertFluxDesktopSigninEnabled, cancelFluxDesktopSignin, readEmailOwnerToken, runFluxDesktopSignin } from "./flux-desktop-signin.mjs";
 import { writeCallTrace } from "./call-trace.mjs";
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
@@ -13,13 +20,15 @@ import { closedVolumeProblem } from "./backup-closed-volume.mjs";
 import { portAvailable } from "./port-availability.mjs";
 import { launchSecretVia, sendLaunchSecretParent } from "./launch-secret.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
-import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
+import { CRASH_WINDOW_MS, createServerSupervisor, exitCodeNote } from "./server-supervisor.mjs";
+import { launchIdOf, openChatThread, restartedWindowTarget } from "./server-follow.mjs";
 import { compileCacheEnvironment } from "./compile-cache.mjs";
 import { createDesktopTrace } from "./desktop-trace.mjs";
-import { app, BaseWindow, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents } from "electron";
+import { app, BaseWindow, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell as electronShell, systemPreferences, utilityProcess, webContents } from "electron";
+import { createOsShell } from "./os-shell.mjs";
 import { protocol as electronProtocol } from "electron";
-import { crashReporter } from "electron";
-import { createCrashDumpLinker, crashDumpNamesInLog, includeCrashDumpOnRequest, pruneCrashDumps, startLocalCrashReporter, unnamedCrashDumps } from "./crash-dumps.mjs";
+import { globalShortcut } from "electron";
+import { createCrashDumpLinker, crashDumpNamesInLog, includeCrashDumpOnRequest, pruneCrashDumps, unnamedCrashDumps } from "./crash-dumps.mjs";
 import { installCloudHome, cloudHomeEnabled } from "./cloud-home-window.mjs";
 import { resolveCloudControlPlane } from "./cloud-control-plane.mjs";
 import { createCloudLiveGate } from "./cloud-live.mjs";
@@ -28,6 +37,7 @@ import { writeClipboardText } from "./clipboard-write.mjs";
 import { COPY as CLOUD_COPY, createCloudHomeClient, createNativeStepUpConfirm } from "./cloud-home-client.mjs";
 import { desktopStepUpLanguage } from "./step-up-locale.mjs";
 import { voiceFinishingDialog } from "./prepare-voice-finishing.mjs";
+import { downgradeWorkPendingMessage } from "./prepare-work-pending.mjs";
 import { createCloudHomeStore } from "./cloud-home-store.mjs";
 import { registerCloudHomeIpc } from "./cloud-home-ipc.mjs";
 import { doorLinkFromCommandLine, doorLinkFromDeepLink, parseDoorLink, parseOpenCloudLink } from "./cloud-door-link.mjs";
@@ -37,7 +47,7 @@ import { configureLinuxPasswordStore } from "./linux-password-store.mjs";
 import { ensureLinuxUrlHandler } from "./linux-url-handler.mjs";
 import { createEngineLoginRelay, registerEngineLoginIpc } from "./cloud-home-engine-login.mjs";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
-import { createApprovalNotifications } from "./approval-notification.mjs";
+import { createApprovalNotifications, createWindowsBanners } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeController, createBackupToolCapability, createResticToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, firstRunWithoutHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { BACKUP_UNAVAILABLE_SENTENCES, backupUnavailableCode, captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
@@ -60,9 +70,33 @@ import { remoteWorkDirectory,remoteSshDirectory,prepareRemoteFolder,remoteContro
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
+import { createNotifySurfaces } from "./notify-surfaces.mjs";
+import { notifyCapabilities, linuxSessionType } from "./notify-capabilities.mjs";
+import { createGlobalShortcut, enableGlobalShortcutPortal, globalShortcutPortalAvailable } from "./global-shortcut.mjs";
+import { createBadgeSurfaces, parseMurageTask, routeMurageTask } from "./badge-surfaces.mjs";
+import { badgeSurfaceText } from "./badge-surface-copy.mjs";
+import { createAttentionActions } from "./attention-actions.mjs";
+import { createConnectorNoticeReceipts } from "./connector-notice-receipts.mjs";
+import { createAttentionMain } from "./attention-main.mjs";
+import { createPresenceGuard } from "./presence-guard.mjs";
+import { createAttentionSurfaces } from "./attention-surfaces.mjs";
+import { createBannerApprovals, bannerActionsOn } from "./native-banner-approvals.mjs";
+import { createMacBanners } from "./mac-banners.mjs";
+import { createLinuxBanners, loadSessionBus } from "./linux-notify.mjs";
+import { pickNativeBanner } from "./native-banner-pick.mjs";
+import { createCloudTransport, createLocalTransport } from "./attention-transport.mjs";
+import { createLockState } from "./lock-state.mjs";
+import { createLockReader, createLogindWatcher, wireAttentionInvalidation } from "./attention-wiring.mjs";
 import { watchInboxChanges } from "./inbox-watch.mjs";
+import { createAppReadiness } from "./app-readiness.mjs";
+import { createRendererSessions } from "./renderer-session.mjs";
+import { wirePresence } from "./presence-wiring.mjs";
+import { attachLoadFailureRecovery } from "./load-failure-recovery.mjs";
+import { recordedPreviousDataRoots } from "./data-root-history.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
-import { createStartupSplash, splashPage, firstStartOfVersion, noteVersionStarted, FIRST_AFTER_UPDATE_NOTE } from "./startup-splash.mjs";
+import { createStartupSplash, splashPage, splashMode, noteVersionStarted } from "./startup-splash.mjs";
+import { readStartupPicture } from "./startup-picture.mjs";
+import { registerStartupIpc } from "./startup-ipc.mjs";
 import { createRequire } from "node:module";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer as createLoopbackServer } from "node:http";
@@ -87,8 +121,9 @@ import { harnessResourceEnvironment, packagedGepaManifestEnvironment } from "./h
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { createLocalEngineLogin, registerLocalEngineLoginIpc } from "./engine-login-local.mjs";
 import { launchRecipeTerminal } from "./engine-login-terminal.mjs";
-import { attachUpdaterWindow, checkForUpdatesNow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
+import { attachUpdaterWindow, checkForUpdatesNow, startUpdater, registerUpdaterIpc, reportUpdateNotice, useUpdateLaunchPause } from "./updater.mjs";
 import { hasCustomUpdaterProfile, prepareUpdaterRestart } from "./updater-restart.mjs";
+import { quitAnnouncement } from "./quit-notice.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
 import { createMacInstallerFallback, nativeContractSupported, observeRequestedInstall, decideRequestedInstall, landedArgument, LANDED_ARGUMENT_PREFIX, newer, OFFER_MAX_AGE_MS } from "./mac-install-guard.mjs";
 import { runStartGate, refusal } from "./update-start-gate.mjs";
@@ -103,18 +138,25 @@ import {
   readSafeLogTail,
 } from "./diagnostics.mjs";
 import { desktopFluxEnvironment, migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
-import { EMAIL_OWNER_MESSAGE, EMAIL_OWNER_SCOPE, isEmailSecretsSave, withEmailOwner, withEmailSecrets } from "./email-secrets.mjs";
+import { createHighLevelCredentialBridge, assertHighLevelSafeStorage } from "./highlevel-credentials.mjs";
+import { writeFileDurable } from "./durable-write.mjs";
+import { EMAIL_OWNER_MESSAGE, EMAIL_OWNER_SCOPE, ackFromDisk, isEmailSecretsSave, withEmailOwner, withEmailSecrets } from "./email-secrets.mjs";
 import { phoneKeyMessage, phoneSecretsEnv, withPhoneKey } from "./phone-secrets.mjs";
 import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnosticsReport, validateIncidentSelection } from "./incident-export.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
-import { clearMemoryUpgradeStatus, copiedBytes, describeBytes, memoryUpgradeBlockedSentence, readMemoryUpgradeStatus, watchMemoryUpgrade } from "./memory-upgrade-status.mjs";
+import { clearMemoryUpgradeStatus, copiedBytes, describeBytes, isOneTimeIndexNote, MEMORY_INDEX_STOPPED, memoryUpgradeBlockedSentence, readMemoryUpgradeStatus, upgradeTimeoutCode, watchMemoryUpgrade } from "./memory-upgrade-status.mjs";
+import { watchBootProgress } from "./boot-progress-watch.mjs";
 import { createUpgradeScreen } from "./upgrade-screen.mjs";
-import { acquireDataDirLease, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
+import { openNewerDataWindow } from "./newer-data-window.mjs";
+import { newerDataVersion, readDataVersion, showsNewerDataScreen } from "../shared/data-version-marker.mjs";
+import { restoreWindowOpenOnDisk } from "./restore-window.mjs";
+import { acquireDataDirLease, dataDirLeasePaths, foreignDataDirLeaseSetAsideAvailable, inspectDataDirLease, setAsideForeignDataDirLease } from "./data-dir-lease.mjs";
 import { migrateLegacyDataDirectory } from "./data-dir-migration.mjs";
 import { assertRestoreReviewed } from "./restore-review.mjs";
 import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserPartition } from "./restored-connections.mjs";
 import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
+import { startupRecoveryReason } from "./installation-recovery-controller.mjs";
 import { backupProgressKind, openBackupProgressWindow } from "./backup-progress-window.mjs";
 import { createBackupReturn, createReturnAuthority, joinExplicitQuit, revokeReturn, runOfflineBackup } from "./backup-offline-return.mjs";
 import { runInstallationRecoveryWorker } from "./installation-recovery-runner.mjs";
@@ -129,6 +171,7 @@ import { createServerStopReason } from "./server-stop-reason.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import {
   createMainWindowOpenHandler,
+  OPEN_LOG_URL,
   createOpenExternalHandler,
   mainAppPermissionCheckAllowed,
   mainAppPermissionRequestAllowed,
@@ -147,9 +190,8 @@ import { linuxGpuDecision } from "./linux-gpu.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
 import {
-  applyComposioCredentialResult,
+  applyComposioCredentialResult, applyComposioCustodyDelta, readComposioCustody,
   composioLegacyBrokerUntil,
-  deriveManagedComposioCredentials,
   fluxComposioAccess,
   fluxComposioBrokerUrl,
   MANAGED_COMPOSIO_UPDATE_OPTIONS,
@@ -157,12 +199,14 @@ import {
   managedComposioChildEnvironment,
   normalizeManagedComposioBrokerUrl,
   publicComposioLegacyClaim,
-  readComposioLegacyClaim,
+  withComposioCredentialChange,
 } from "./managed-composio.mjs";
-import { ensureFluxComposioBrokerToken, revokeFluxComposioBrokerToken } from "./flux-composio-token.mjs";
+import { createDesktopComposioProducers } from "./composio-desktop-producers.mjs";
+import { createComposioLifecycle } from "./composio-lifecycle.mjs";
+import { createComposioAdmissionHost } from "./composio-admission-port.mjs";
+import { createComposioAdmissionStore } from "./composio-admission-store.mjs";
 import { mintLabel } from "./install-id.mjs";
-import { createLifecycleQueue, createLifecycleScheduler, createTokenRejectionHandler, TOKEN_TAKEN_OVER } from "./composio-lifecycle-policy.mjs";
-import { claimLegacyComposioInstall, prepareLegacyComposioClaim } from "./composio-legacy-claim.mjs";
+import { createLifecycleScheduler, createTokenRejectionHandler, TOKEN_TAKEN_OVER } from "./composio-lifecycle-policy.mjs";
 import {
   createManagedCompanionTunnel,
   managedCompanionTunnelAccess,
@@ -189,6 +233,7 @@ import capabilitiesModule from "./capabilities.cjs";
 // A server proxy or worker started without ELECTRON_RUN_AS_NODE would otherwise run on as a second app (G5): it exits
 // here, before any other work and before the single-instance lock.
 enforceProxyLaunchGuard();
+const osShell = createOsShell(electronShell);
 const closedBackupRequested=process.argv.includes(CLOSED_DUE_FLAG)||process.argv.includes(CLOSED_DESCRIPTOR_FLAG);
 function writeClosedBackupResult(status){fs.writeSync(1,JSON.stringify({type:"murage:closed-backup-result",status})+"\n");}
 let closedBackupInvocation=null,closedBackupDescriptor=null;
@@ -221,10 +266,13 @@ if (process.env.MURAGE_USER_DATA !== undefined) {
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
 // Keep this outside the profile-isolation slice, but before Electron is ready.
 configureLinuxPasswordStore({ commandLine: app.commandLine });
-// Local crash dumps, started before "ready" as Electron requires and after any
-// user-data move so they land in this profile's app.getPath("crashDumps").
-// Uploads are off and there is no server address (crash-dumps.mjs).
-startLocalCrashReporter(crashReporter);
+if(process.platform==="linux"&&linuxSessionType(process.env)==="wayland")enableGlobalShortcutPortal(app.commandLine);
+// Inherit the hard OS core limit before launching renderers or the server.
+// This remains a shared process safeguard; users.create has no native password UI.
+protectPasswordProcess({ native: loadPasswordNativeAddon({ packaged: app.isPackaged, resourcesPath: process.resourcesPath }) });
+// Do not start Crashpad: even a local-only minidump persists process memory.
+// A process dump can include credentials.
+// Legacy dump discovery/export below is retained for files from earlier runs.
 const nativeActions = nativeDesktopActions(process.platform);
 const companionToken = randomBytes(32).toString("hex");
 const require = createRequire(import.meta.url);
@@ -267,10 +315,12 @@ const cloudCp = resolveCloudControlPlane({ env: process.env, qualification: clou
 const CLOUD_CP_ENVIRONMENT = cloudCp?.environment ?? "prod";
 const cloudLive = createCloudLiveGate({ resolve: () => resolveCloudControlPlane({ env: process.env }), cacheDir: () => app.getPath("userData"), warn: (m) => console.warn(`[cloud-live] ${m}`),
   hardOff: () => process.env.MURAGE_DESKTOP_CLOUD === "0" });
-const cloudHome = installCloudHome({ liveGate: cloudLive, packaged: app.isPackaged, protocol: electronProtocol, session, BrowserWindow, shell, net, env: process.env,
+// NOTIFY-EVERYWHERE-1019 S4a: set at app ready (initializeAttentionActions); the callbacks below tolerate null.
+let attentionActions=null,attentionWiring=null,attentionMain=null,attentionSurfaces=null,bannerNative=null,trayIcon=null;
+const cloudHome = installCloudHome({ liveGate: cloudLive, packaged: app.isPackaged, protocol: electronProtocol, session, BrowserWindow, shell: osShell, net, env: process.env,
   userDataDir: () => app.getPath("userData"), distDir: path.join(__dirname, "..", "dist"), warn: (m) => console.warn(`[cloud-home] ${m}`),
   createClient: () => createCloudHomeClient({ cp: cloudCp ? { [cloudCp.environment]: cloudCp } : {}, appVersion: app.getVersion(), cpEnvironment: CLOUD_CP_ENVIRONMENT,
-    openExternal: (url) => shell.openExternal(url),
+    openExternal: (url) => osShell.openExternal(url),
     store: createCloudHomeStore({ safeStorage, directory: cloudHomesDirectory() }),
     confirmStepUp: createNativeStepUpConfirm({ systemPreferences, dialog, getWindow: () => mainWindow,
       // Security confirmations always use THIS computer's language: its saved app language, then the system language,
@@ -283,7 +333,8 @@ const cloudHome = installCloudHome({ liveGate: cloudLive, packaged: app.isPackag
         const list = await cloudHome?.client?.fetchHomeInfo(homeId, "/api/bots?messages=0", { signal });
         const name = Array.isArray(list?.bots) ? list.bots.find((bot) => bot?.id === botId)?.name : undefined;
         return typeof name === "string" ? name : undefined; } }) }),
-  cloudPreload: path.join(__dirname, "preload-cloud.cjs"), onWindowClosed: () => applyUnreadBadge() });
+  popoutState: { workAreas: () => [screen.getPrimaryDisplay(), ...screen.getAllDisplays()].map(display => display.workArea) },
+  cloudPreload: path.join(__dirname, "preload-cloud.cjs"), onWindowClosed: (homeId) => { attentionWiring?.cloudWindowChanged(); attentionMain?.homeGone(homeId); applyUnreadBadge(); }, onWindowOpened: (homeId) => { attentionWiring?.cloudWindowChanged(); attentionMain?.homeGone(homeId); } });
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
@@ -333,6 +384,14 @@ const browserConnectionStore = createDescriptorStore({
 });
 let pendingPackageInstallUrl = packageUrlFromCommandLine(process.argv);
 let mainWindow = null;
+const browserPopouts = createBrowserPopouts({
+  owner: () => mainWindow, origin: () => trustedRendererOrigin(), preload: path.join(__dirname, "preload.cjs"),
+  createWindow: options => new BrowserWindow({ ...options, icon: APP_ICON, backgroundColor: skinChrome(persistedSkin).color }),
+  readState: botId => JSON.parse(fs.readFileSync(path.join(app.getPath("userData"), `browser-popout-${botId}.json`), "utf8")),
+  writeState: (botId, state) => fs.writeFileSync(path.join(app.getPath("userData"), `browser-popout-${botId}.json`), JSON.stringify(state), { mode: 0o600 }),
+  workAreas: () => [screen.getPrimaryDisplay(), ...screen.getAllDisplays()].map(display => display.workArea),
+  openExternal: url => osShell.openExternal(url),
+});
 // When the GPU process last died, and whether a renderer reload is already
 // handling the main window (so a GPU loss does not replace it twice).
 let gpuLostAt = 0;
@@ -371,6 +430,8 @@ const refusedIpcChannels = new Set();
 let lastRefusalWhy = "";
 const ipcMain = createOwnedMainIpc({
   ipcMain: electronIpcMain,
+  cloudPopout: { windowFor: sender => cloudHome?.browserPopouts.windowFor(sender) },
+  popout: { windowFor: sender => browserPopouts.windowFor(sender), origin: () => trustedRendererOrigin() },
   // B3 WP3: only with the Cloud flag on. Off, this gate is the main-window-only gate it always was.
   cloud: cloudHome ? { isCloudSender: (event) => cloudHome.isCloudSender(event), classOf: channelClass,
     onRefused: (channel) => slog(`refused ${channel} from the Cloud-home window (local-only)`) } : undefined,
@@ -388,11 +449,219 @@ const ipcMain = createOwnedMainIpc({
 });
 // B3 WP5: the Cloud engine sign-in terminal relay, main window only. Registered at every start (MURAGE_DESKTOP_CLOUD=0 registers nothing); refuses every call until Cloud is live.
 if (cloudHome?.client) registerEngineLoginIpc({ ipcMain, active: () => cloudHome.active(), relay: createEngineLoginRelay({ client: cloudHome.client,
-  createSocket: (url, options) => new EngineLoginWebSocket(url, options), openExternal: (url) => shell.openExternal(url), log: slog }) });
+  createSocket: (url, options) => new EngineLoginWebSocket(url, options), openExternal: (url) => osShell.openExternal(url), log: slog }) });
+// Start-up screens (FIRSTRUN-1019): the cached picture the splash reads, and the What's new request from the update screen.
+const startupIpc = registerStartupIpc({ gate: ipcMain, userData: () => app.getPath("userData"), getMainContents: () => ownedMainContents() });
 let backgroundLifecycle=null;
+// NOTIFY-EVERYWHERE-1019 S2: the device file that says which outside-the-app surfaces this computer uses. Decided from disk
+// before the server spawns (the server creates messages.db), so an upgrade is never mistaken for a new install.
+// NOTIFY-EVERYWHERE-1019 S4a: the one action path and the lock state. The lock state starts UNKNOWN (which counts as locked: Allow and
+// Reply refused) and is fed an explicit boolean: getSystemIdleState on Mac and Windows, logind LockedHint on Linux. Every event that must
+// kill outstanding tokens (lock, suspend, server restart, data-owner change, Cloud window swap, previews change) is wired here.
+function initializeAttentionActions(){
+  if(attentionActions)return;
+  void initializeGlobalShortcut();
+  initializeBadgeSurfaces();
+  const logind=process.platform==="linux"?createLogindWatcher({spawn: spawnInherited}):null;
+  const lock=createLockState({powerMonitor,readLocked:createLockReader({platform:process.platform,getSystemIdleState:seconds=>powerMonitor.getSystemIdleState(seconds),execFile: execFileInherited,env:process.env,healthy:()=>logind?.healthy()??true})});
+  attentionActions=createAttentionActions({lock,log:line=>slog(line)});
+  attentionWiring=wireAttentionInvalidation({actions:attentionActions,lock,powerMonitor,logind});
+  // NOTIFY-EVERYWHERE-1019 S3: the router. Windows send routing ids only; main answers with the decision and, for the notification rungs,
+  // tells the offering window to show it (S4a/b/c replace that with native actionable banners). Presence (full screen, sharing, Focus,
+  // locked) is S3B's (electron/presence-guard.mjs): read once at each decision, and polled only while something is held.
+  const presenceRun=(file,args)=>new Promise((resolve,reject)=>execFile(file,[...args],withHideInherit({timeout:1500,maxBuffer:65536,env:process.env}),(error,stdout)=>error?reject(error):resolve(String(stdout))));
+  const presenceGuard=createPresenceGuard({platform:process.platform,resourcesPath:process.resourcesPath,env:process.env,run:presenceRun,lock,log:line=>slog(line)});
+  // S4a/S4b/S4c: a banner's action token is minted against the transport and identity that were captured WITH the card read (never looked up
+  // again at mint time), answers go through the one action path with no window context, and a click opens the card in the offering home.
+  const mintBanner=({entry,surface,surfaceId,digest,transport,identity})=>{
+    if(!attentionActions||!transport||identity===undefined||identity===null||!entry?.frame?.requestId)return null;
+    return attentionActions.mint({approvalId:entry.frame.approvalId,requestRef:entry.frame.requestRef,actionHash:entry.frame.actionHash,home:entry.home,epoch:entry.epoch,threadId:entry.frame.threadId,messageId:entry.frame.messageId,requestId:entry.frame.requestId,digest,surface,surfaceId,identity,transport});
+  };
+  const bannerAct=(token,action,text)=>attentionActions.act(token,action,text);
+  const bannerOpen=(route,home="local")=>{
+    const candidate=home==="local"?mainWindow:cloudHome?.windows().get(home);
+    const win=candidate&&!candidate.isDestroyed()?candidate:mainWindow;
+    if(!win||win.isDestroyed())return;
+    if(win.isMinimized())win.restore();win.show();win.focus();
+    win.webContents.send("approval-notification:open",{botId:route.botId,threadId:route.threadId,messageId:route.messageId});
+  };
+  // A banner's Mute button has no server effect in 1.0.19 (no per-bot mute route): it opens the card instead, never answers it.
+  const macBanners=process.platform==="darwin"?createMacBanners({platform:"darwin",loadAddon:()=>notificationAuthorization.addon(),mint:mintBanner,act:bannerAct,open:bannerOpen,mute:bannerOpen,log:line=>slog(line)}):null;
+  const windowsBanners=process.platform==="win32"?createWindowsBanners({platform:"win32",Notification,mint:mintBanner,act:bannerAct,open:bannerOpen,
+    invalidate:id=>attentionActions.invalidateSurface(id),locked:()=>lock.locked(),log:line=>slog(line),
+    language:()=>{try{return desktopStepUpLanguage({system:systemLanguage(),readDesktopConfig:()=>fs.readFileSync(path.join(ownedDesktopDataDir(),"config.json"),"utf8")});}catch{return "en";}}}):null;
+  const linuxBanners=process.platform==="linux"?createLinuxBanners({platform:"linux",loadBus:loadSessionBus,mint:mintBanner,act:bannerAct,open:bannerOpen,mute:bannerOpen,log:line=>slog(line),
+    language:()=>{try{return desktopStepUpLanguage({system:systemLanguage(),readDesktopConfig:()=>fs.readFileSync(path.join(ownedDesktopDataDir(),"config.json"),"utf8")});}catch{return "en";}}}):null;
+  attentionMain=createAttentionMain({
+    connectorReceipts:createConnectorNoticeReceipts(path.join(ownedDesktopDataDir(),"connector-notice-receipts.json")),
+    isAppFocused:()=>BrowserWindow.getFocusedWindow() !== null,
+    prefs:()=>notifySurfaces?.get()??null,
+    presence:presenceGuard,watchPresence:()=>presenceGuard.watch(),
+    sendToSession:(home,session,message)=>{
+      const win=home==="local"?mainWindow:cloudHome?.windows().get(home);
+      if(!win||win.isDestroyed())return false;
+      const bound=rendererSessions.current(win.webContents);
+      if(!bound?.alive||bound.home!==home||bound.session!==session)return false;
+      return attentionSend(home,message);
+    },
+    createNotice:options=>new Notification(options),
+    // S4a/S4b/S4c through S3R's one native seam: actionable banners where they can post, else today's notifier
+    // (Mac, Windows) or a plain main notice (Linux). See electron/native-banner-approvals.mjs.
+    nativeApprovals:bannerNative=createBannerApprovals({
+      banner:pickNativeBanner({platform:process.platform,mac:macBanners,linux:linuxBanners,windows:windowsBanners}),
+      base:process.platform==="linux"?null:(()=>{
+        let onEvict;
+        const notifier=key=>{
+          const home=key.split("|")[0];
+          const show=home==="local"?showApprovalNotification:cloudApprovalNotifier(home);
+          show.setOnEvict?.(onEvict);return show;
+        };
+        return {
+          async prepare(input,options){
+            const show=notifier(options.key),result=await show.prepare(input,options);
+            return result.ok?{ok:true,prepared:{inner:result.prepared,words:result.prepared.words}}:{ok:false};
+          },
+          present(prepared,options){prepared.inner.words=prepared.words;return notifier(options.key).present(prepared.inner,options);},
+          close:key=>notifier(key).close(key),setOnEvict:fn=>{onEvict=fn;},
+        };
+      })(),
+      createNotice:options=>new Notification(options),transportFor:attentionTransportFor,mint:mintBanner,
+      actionsOn:()=>bannerActionsOn(notifySurfaces?.get()),log:line=>slog(line)}),
+    // The router's bubble rung (S9): the float surface shows the card's bot dot and the pinned bubble; a nudge reaches it through here.
+    showSurface:async(rung,entry)=>{
+      if(rung!=="bubble"||!attentionSurfaces)return null;
+      const id=await attentionSurfaces.floatSurface.show(entry);return id?[id]:null;
+    },
+    closeSurface:()=>attentionSurfaces?.floatSurface.close(),
+    onOpen:target=>{
+      const candidate=target.home==="local"?mainWindow:cloudHome?.windows().get(target.home);
+      const win=target.session&&candidate&&!candidate.isDestroyed()&&rendererSessions.current(candidate.webContents)?.session===target.session?candidate:mainWindow;
+      if(!win||win.isDestroyed())return;
+      if(win.isMinimized())win.restore();win.show();win.focus();
+      win.webContents.send("approval-notification:open",{botId:target.botId,threadId:target.threadId,messageId:target.messageId,...(target.reconnectIncidentId?{reconnectIncidentId:target.reconnectIncidentId}:{})});
+    },
+    transportFor:attentionTransportFor,
+    invalidateTokens:()=>{},
+    onPreviewsChanged:()=>{attentionWiring?.previewsChanged();attentionSurfaces?.invalidateAll();},
+    readPreviews:async home=>{
+      let config;
+      if(home==="local")config=await harnessJson("/api/config");
+      else{const client=cloudHome?.client;if(!client)return null;const response=await client.fetch(home,"/api/config");if(response.status!==200)return null;config=JSON.parse(await response.text());}
+      return config?.notifications?.previewContent!==false;
+    },
+    onCounts:()=>{attentionSurfaces?.changed();},pillAvailable:()=>false,pinnedBotId:()=>notifySurfaces?.get()?.pinnedBotId??null,
+    log:line=>slog(line)});
+  // R6: every presence event bumps the guard's revision and asks for a complete read; only the guard's committed change releases held items.
+  wirePresence({lock,presenceGuard,attentionMain,powerMonitor});
+  // The attention windows' OWN gate (never the owned-main gate), registered on Electron's ipcMain directly, on purpose: S6 tray panel and
+  // S9 bubble/dock windows. One loadUrlFor serves the gate and every window; the panel is built the first time the tray asks for it.
+  attentionSurfaces=createAttentionSurfaces({
+    electron:{BrowserWindow,screen},ipcMain:electronIpcMain,platform:process.platform,
+    tray:{getBounds:()=>trayIcon.getBounds()},actions:attentionActions,
+    prefs:()=>notifySurfaces?.get()??null,
+    capabilities:()=>notifyCapabilities({platform:process.platform,env:process.env,trayHost:null}),
+    presence:()=>presenceGuard.quiet(),presenceWatch:()=>presenceGuard.watch(),
+    transportFor:attentionTransportFor,
+    readLocal:route=>harnessJson(route),
+    readPreviews:async()=>{try{return (await harnessJson("/api/config"))?.notifications?.previewContent!==false;}catch{return false;}},
+    openApp:async()=>{backgroundLifecycle?.open();},
+    openTarget,
+    sendToBot:sendDirectToBot,
+    pauseAutomations:async()=>{try{await backgroundLifecycle?.pauseAutomations();return {ok:true};}catch{return {ok:false};}},
+    loadUrlFor:attentionWindowUrl,log:line=>slog(line)});
+  // Floating surfaces follow presence: a share or a full-screen app hides them, the end of it restores them (the guard's committed change only).
+  presenceGuard.onChange(()=>{void attentionSurfaces?.sync();});
+  void attentionSurfaces.sync();
+}
+/** The exact file URL main loads into each kind of attention window: the gate's urlFor and every window's loadURL (one function). */
+function attentionWindowUrl(kind){
+  const page=kind==="bubble"?"src/float/bubble.html":kind==="dock"?"src/float/dock.html":kind==="popover"||kind==="flyout"||kind==="popup"?"src/tray-panel/index.html":null;
+  if(!page)return null;
+  const root=app.isPackaged?path.join(process.resourcesPath,"ui"):path.join(__dirname,"..","dist");
+  return pathToFileURL(path.join(root,...page.split("/"))).href;
+}
+/** The tray panel's and the pinned bubble's "send": one text to the Chief's or the pinned bot's direct thread, through the same route the composer uses. */
+async function sendDirectToBot(who,text){
+  if(!serverReady||!desktopSurfaceSecret||desktopShutdownStarted||desktopRecoveryMode||typeof text!=="string"||!text.trim())return {ok:false};
+  const headers={"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret,"content-type":"application/json"};
+  const origin=`http://127.0.0.1:${SERVER_PORT}`;
+  try{
+    let botId=null;
+    if(who==="pinned")botId=notifySurfaces?.get()?.pinnedBotId??null;
+    else{const tray=await harnessJson("/api/desktop/tray");botId=(tray?.bots??[]).find(bot=>bot?.chief===true)?.id??null;}
+    if(typeof botId!=="string"||!botId)return {ok:false};
+    const list=await fetch(`${origin}/api/bots?messages=0`,{headers,signal:AbortSignal.timeout(5000),redirect:"error"});
+    if(!list.ok)return {ok:false};
+    const bot=(await list.json())?.bots?.find(row=>row?.id===botId);
+    if(typeof bot?.threadId!=="string"||!bot.threadId)return {ok:false};
+    const sent=await fetch(`${origin}/api/bots/${encodeURIComponent(botId)}/messages`,{method:"POST",headers,body:JSON.stringify({text:text.trim(),threadId:bot.threadId,sendId:randomUUID(),mode:"chat"}),signal:AbortSignal.timeout(8000),redirect:"error"});
+    return {ok:sent.ok};
+  }catch{return {ok:false};}
+}
+/** One message to the window that owns a home (the local window or that home's Cloud window): a show, a close or a previews change. */
+function attentionSend(home,message){
+  const win=home==="local"?mainWindow:cloudHome?.windows().get(home);
+  if(!win||win.isDestroyed())return false;
+  win.webContents.send(home==="local"?"attention:show":"cloud-attention:show",message);return true;
+}
+/** The transport an attention read or action uses for one home, captured now: null when that home cannot be reached right now. */
+function attentionTransportFor(home){
+  if(home==="local"){
+    const owner=desktopDataOwner,secret=desktopSurfaceSecret,proc=serverProc,port=SERVER_PORT;
+    if(!secret||!proc||!serverReady||desktopShutdownStarted||desktopRecoveryMode)return null;
+    const identity=()=>owner===desktopDataOwner&&secret===desktopSurfaceSecret&&proc===serverProc&&serverReady&&!desktopShutdownStarted&&!desktopRecoveryMode?`${port}|${proc.pid??"p"}`:"gone";
+    return createLocalTransport({origin:`http://127.0.0.1:${port}`,secret,identity});
+  }
+  const client=cloudHome?.client,win=cloudHome?.windows().get(home);
+  if(!client||!win||win.isDestroyed())return null;
+  return createCloudTransport({client,homeId:home,windowId:()=>win.isDestroyed()?-1:win.webContents.id});
+}
+let notifySurfaces=null;
+let shortcutOwner=null,shortcutReady=null;
+function initializeGlobalShortcut(){
+  if(shortcutReady)return shortcutReady;
+  shortcutReady=(async()=>{
+    const wayland=process.platform==="linux"&&linuxSessionType(process.env)==="wayland";
+    const portalAvailable=wayland?await globalShortcutPortalAvailable(execFileInherited):false;
+    shortcutOwner=createGlobalShortcut({globalShortcut,platform:process.platform,isWayland:()=>wayland,
+      portal:{available:()=>portalAvailable,register:(accelerator,callback)=>{
+        if(!globalShortcut.register(accelerator,callback))return null;
+        return()=>globalShortcut.unregister(accelerator);
+      }},onTrigger:openShortcut,log:slog});
+    if(desktopShutdownStarted){shortcutOwner.dispose();return shortcutOwner;}
+    const state=notifySurfaces?.get();
+    shortcutOwner.sync(state?.surfaces.shortcut?state.shortcut:null);
+    return shortcutOwner;
+  })();
+  return shortcutReady;
+}
+/** S9 can replace this body with its quick chat window without changing shortcut ownership. */
+function openPinnedQuickChat(){
+  backgroundLifecycle?.open();
+  const botId=notifySurfaces?.get()?.pinnedBotId;
+  if(botId)openTarget({kind:"compose",botId});
+}
+async function openShortcut(){
+  if(desktopShutdownStarted||desktopRecoveryMode)return;
+  // Read on the press, so an old tray snapshot cannot send the owner to a settled card.
+  let summary;
+  try{summary=await harnessJson("/api/desktop/tray");}catch{summary=null;}
+  if(desktopShutdownStarted||desktopRecoveryMode)return;
+  if(summary?.needsYou===0){openPinnedQuickChat();return;}
+  // Needs you and unknown state both use the tray's existing Inbox open path.
+  backgroundLifecycle?.open();
+  sendWhenLoaded("startup-background:open-inbox");
+}
+function initializeNotifySurfaces(){
+  if(notifySurfaces)return;
+  let profileDir=null;
+  try{profileDir=desktopDataDir??(process.env.MURAGE_DATA_DIR&&process.env.MURAGE_USER_DATA?fs.realpathSync(process.env.MURAGE_DATA_DIR):null);}catch{profileDir=null;}
+  notifySurfaces=createNotifySurfaces({profileDir,platform:process.platform,onError:error=>slog(`notify-surfaces: ${error.message}`)});
+}
 let backupScheduleHost=null;
 // 1.0.9 Sentinel host (electron/sentinel-host.mjs): the health/ producer root, the desktop producer and the OS schedule.
 let sentinelHost=null;
+let sentinelIoServer = null;
 const SENTINEL_CAPTURE_PHASES=new Set(["claiming","capturing","handoff-prepared","handoff-armed","offline-claimed"]);
 /** The data owner's health/ initialization boundary: after the lease, before any backup capture is admitted. */
 async function initializeSentinelHost({closed=false}={}){
@@ -400,11 +669,12 @@ async function initializeSentinelHost({closed=false}={}){
   try{
     sentinelHost=createSentinelHost({
       dataDir:ownedDesktopDataDir(),resourcesPath:process.resourcesPath,closed,
-      executable:fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe")),
+      executable:process.platform==="darwin"?app.getPath("exe"):fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe")),
       home:app.getPath("home"),userData:app.getPath("userData"),env:process.env,
       configHome:path.isAbsolute(process.env.XDG_CONFIG_HOME??"")?process.env.XDG_CONFIG_HOME:undefined,
       captureActive:()=>{try{return SENTINEL_CAPTURE_PHASES.has(backupScheduleHost?.internalStatus().phase);}catch{return true;}},
       Notification,log:line=>slog(line),
+      onIoEvent:event=>{try{sentinelIoServer?.postMessage({type:"murage:sentinel-io",event});}catch{}},
       // S01: the live folder/key check of the backup host (created later); unknown only until it exists.
       bindingCurrent:async()=>backupScheduleHost?backupScheduleHost.bindingCurrent():null,
       onPageClick:()=>{const win=mainWindow;if(!win||win.isDestroyed())return;if(win.isMinimized())win.restore();win.show();win.focus();},
@@ -532,13 +802,25 @@ function finishClosedBackup(result){
   })();return closedBackupFinish;
 }
 let desktopUpdater=null;
+// The OS jobs that start this executable on a timer are taken down for the
+// install and put back after it (electron/update-launch-pause.mjs). The
+// updater takes the same instance, so a later quitAndInstall pauses them.
+let updateLaunchPause=null;
+function desktopUpdateLaunchPause(){
+  if(!updateLaunchPause){
+    updateLaunchPause=createUpdateLaunchPause({home:app.getPath("home"),markerPath:path.join(app.getPath("userData"),"update-launch-pause.json"),
+      windowsTasks:()=>{const id=sentinelHost?.installationId;return id?[sentinelNames(id).task]:[];},log:line=>slog(line)});
+    useUpdateLaunchPause(updateLaunchPause);
+  }
+  return updateLaunchPause;
+}
 function ensureDesktopUpdater(scheduleChecks=true){
   const fallback=process.platform==="darwin"?createMacInstallerFallback({execPath:process.execPath,getuid:()=>process.getuid(),offerFile:path.join(app.getPath("userData"),"installer-offer.json"),
     recover:async()=>{if(returnAuthority.userQuitRequested)return {status:"stopped"};if(!cuaCleanedUp){cleanupFailed(refusal("BACKUP_UPGRADE_CLEANUP_FAILED"));return;}return returnToWorkspaceAfterBackup();},log:line=>slog(line)}):null;
   const installerFallback=fallback?{...fallback,
     peekPendingOffer:running=>{const offer=backupScheduleHost?.peekInstallerOffer();if(offer){if(offer.at>Date.now()||Date.now()-offer.at>OFFER_MAX_AGE_MS||!newer(offer.version,running)){backupScheduleHost.acknowledgeInstallerOffer(offer);return fallback.peekPendingOffer(running);}return offer;}return fallback.peekPendingOffer(running);},
     acknowledgePendingOffer:offer=>{if(offer.handoffId){backupScheduleHost.acknowledgeInstallerOffer(offer);if(fallback.peekPendingOffer(app.getVersion())?.version===offer.version)fallback.acknowledgePendingOffer();}else fallback.acknowledgePendingOffer();}}:null;
-  desktopUpdater=startUpdater({scheduleChecks,installerFallback,returnAuthority,beforeInstall:candidate=>prepareBackedUpInstall(candidate,{
+  desktopUpdater=startUpdater({scheduleChecks,notificationServices:{Notification,authorization:notificationAuthorization,powerMonitor,ensureWindow:()=>{if(!mainWindow||mainWindow.isDestroyed())backgroundLifecycle?.open();}},installerFallback,returnAuthority,beforeInstall:candidate=>prepareBackedUpInstall(candidate,{
     backup:backupScheduleHost,
     prepareNormal:()=>{return prepareUpdaterRestart({
       environment:process.env,isClosing:()=>desktopShutdownStarted,isCleanedUp:()=>cuaCleanedUp,
@@ -802,6 +1084,33 @@ ipcMain.handle("approval-notification:show", (event, payload) => {
   const homeId = cloudHome?.senderHomeId(event);
   return homeId ? cloudApprovalNotifier(homeId)(payload) : showApprovalNotification(payload);
 });
+// NOTIFY-EVERYWHERE-1019 S3: a window offers an event or reports what is on screen by ROUTING IDS only. The local window calls
+// attention:*; a Cloud window calls cloud-attention:*, and main derives its home from the registered Cloud window, never the payload.
+// S3R: every call is bound to the trusted top frame's document nonce. These
+// pushes and invokes never enter appReadiness's deferred queue.
+const attentionBinder=prefix=>(event,payload,hello=false)=>{
+  const home=prefix==="attention"?"local":cloudHome?.senderHomeId(event);
+  if(!home||!attentionMain)return null;
+  rendererSessions.track(event.sender);
+  const trust={top:event.senderFrame?.parent===null,url:event.senderFrame?.url};
+  if(prefix==="cloud-attention")trust.trusted=true;
+  if(hello)return rendererSessions.hello(event.sender,{...trust,home,session:payload?.session}).record??null;
+  const record=rendererSessions.check(event.sender,payload?.session,trust);
+  return record?.home===home?record:null;
+};
+const attentionLocalBound=attentionBinder("attention"),attentionCloudBound=attentionBinder("cloud-attention");
+ipcMain.handle("attention:hello",(event,payload)=>{const record=attentionLocalBound(event,payload,true);return record?attentionMain.hello(record):{ok:false};});
+ipcMain.handle("attention:offer",(event,payload)=>{const record=attentionLocalBound(event,payload);return record?attentionMain.offer(record,payload):{ok:false};});
+ipcMain.handle("attention:visible",(event,payload)=>{const record=attentionLocalBound(event,payload);return record?attentionMain.visible(record,payload):{ok:false};});
+ipcMain.handle("attention:present",(event,payload)=>{const record=attentionLocalBound(event,payload);return record?attentionMain.present(record,payload):{ok:false};});
+ipcMain.handle("attention:gone",(event,payload)=>{const record=attentionLocalBound(event,payload);return record?attentionMain.gone(record,payload):{ok:false};});
+ipcMain.on("attention:freed",(event,payload)=>{const record=attentionLocalBound(event,payload);if(record)attentionMain.freed(record,payload?.refs);});
+ipcMain.handle("cloud-attention:hello",(event,payload)=>{const record=attentionCloudBound(event,payload,true);return record?attentionMain.hello(record):{ok:false};});
+ipcMain.handle("cloud-attention:offer",(event,payload)=>{const record=attentionCloudBound(event,payload);return record?attentionMain.offer(record,payload):{ok:false};});
+ipcMain.handle("cloud-attention:visible",(event,payload)=>{const record=attentionCloudBound(event,payload);return record?attentionMain.visible(record,payload):{ok:false};});
+ipcMain.handle("cloud-attention:present",(event,payload)=>{const record=attentionCloudBound(event,payload);return record?attentionMain.present(record,payload):{ok:false};});
+ipcMain.handle("cloud-attention:gone",(event,payload)=>{const record=attentionCloudBound(event,payload);return record?attentionMain.gone(record,payload):{ok:false};});
+ipcMain.on("cloud-attention:freed",(event,payload)=>{const record=attentionCloudBound(event,payload);if(record)attentionMain.freed(record,payload?.refs);});
 // B3 WP4: the pairing UI's channels (local window) and the Cloud window's reachability check. Flag off: not registered at all.
 if (cloudHome) cloudHome.onActiveChange((live) => { for (const win of BrowserWindow.getAllWindows()) { try { if (!win.isDestroyed() && win === mainWindow) win.webContents.send("cloud-home:live", { live }); } catch {} } });
 // A Cloud link waiting while Cloud was not live drains the moment the gate flips on.
@@ -815,6 +1124,12 @@ function showCloudConnect(homeId) {
   mainWindow.webContents.send("cloud-home:show-connect");
 }
 if (cloudHome) registerCloudHomeIpc(ipcMain, { cloudHome, active: () => cloudHome.active(), showConnect: showCloudConnect, clipboard,
+  showSignIn: request => {
+    if (!mainWindow || mainWindow.isDestroyed() || !appReadiness.ready(mainWindow.webContents) || mainWindow.webContents.isLoadingMainFrame()) return false;
+    activateExistingWindow([mainWindow]);
+    mainWindow.webContents.send("cloud-home:sign-in-requested", request);
+    return true;
+  },
   cpEnvironment: CLOUD_CP_ENVIRONMENT,
   getCpToken: () => (secureCredentialState?.read() ?? secureCredentials)?.[COMPANION_ACCOUNT_TOKEN_FIELD] });
 let unreadCount = 0;
@@ -895,20 +1210,40 @@ function installWindowStatePersistence(win) {
   win.on("close", flush);
 }
 
+let badgeSurfaces = null;
+function initializeBadgeSurfaces() {
+  if (badgeSurfaces) return;
+  const language = desktopStepUpLanguage({ system: systemLanguage(),
+    readDesktopConfig: () => fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8") });
+  badgeSurfaces = createBadgeSurfaces({ app, Menu, platform: process.platform,
+    prefs: () => notifySurfaces?.get(), onTask: dispatchBadgeTask,
+    t: (key, values) => badgeSurfaceText(language, key, values), window: () => mainWindow,
+    overlayIcon: () => (unreadOverlayIcon ??= nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 })),
+  });
+  refreshBadgePreferences();
+}
+function refreshBadgePreferences() {
+  badgeSurfaces?.refreshMenu();
+  applyUnreadBadge();
+  // The device's surface choices changed: the tray panel's preference is read on the next click; floating windows follow at once.
+  void attentionSurfaces?.sync();
+}
+function dispatchBadgeTask(task) {
+  if (!task) return;
+  // A launch action can arrive before the server and tray are ready. Resolve the preference at dispatch time.
+  void desktopStartup.then(() => {
+    if (desktopRecoveryMode || desktopShutdownStarted || !backgroundLifecycle) return;
+    return routeMurageTask({ task, badgeMenuOn: notifySurfaces?.get()?.badgeMenu,
+      open: () => backgroundLifecycle.open(), openNeedsYou: () => backgroundLifecycle.openNeedsYou(),
+      newChiefTask: () => backgroundLifecycle.newChiefTask(), pauseAutomations: () => backgroundLifecycle.pauseAutomations(),
+    });
+  }).catch(error => { slog(`badge task: ${error.message}`); backgroundLifecycle?.open(); });
+}
 function applyUnreadBadge(win = mainWindow) {
   let cloudTotal = 0;
   for (const homeId of cloudHome ? cloudHome.windows().keys() : []) cloudTotal += cloudUnreadCounts.get(homeId) ?? 0;
-  const count = normalizeUnreadCount(normalizeUnreadCount(unreadCount) + cloudTotal);
-  if (process.platform === "win32") {
-    if (!win || win.isDestroyed()) return;
-    unreadOverlayIcon ??= nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 });
-    win.setOverlayIcon(
-      count > 0 && !unreadOverlayIcon.isEmpty() ? unreadOverlayIcon : null,
-      count > 0 ? `${count} unread conversation${count === 1 ? "" : "s"}` : "No unread conversations",
-    );
-    return;
-  }
-  if (process.platform === "darwin" || process.platform === "linux") app.setBadgeCount(count);
+  const unread = normalizeUnreadCount(normalizeUnreadCount(unreadCount) + cloudTotal);
+  badgeSurfaces?.apply({ unread, needsYou: backgroundLifecycle?.summary()?.needsYou }, win);
 }
 
 // GNOME groups the window with its installed desktop entry only when both
@@ -937,6 +1272,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 function deliverPackageInstall(win) {
   if (!pendingPackageInstallUrl || !win || win.isDestroyed()) return;
+  if (!appReadiness.ready(win.webContents)) return;
   if (win.webContents.isLoadingMainFrame()) return;
   win.webContents.send("package:install", pendingPackageInstallUrl);
   pendingPackageInstallUrl = null;
@@ -952,14 +1288,74 @@ function queuePackageInstall(rawLink) {
   return true;
 }
 
+// Which windows are showing the app (a 200 on the trusted origin) right now. The server answers a page it cannot serve with its
+// own setup page (503), and a package install or Cloud link sent there would be swallowed, so both wait, queued, until the app loads.
+// A navigation that never committed (a cancelled link, a download) gives readiness back with no did-finish-load, so the queues drain here too.
+// The live main document, read in one try/catch (a throw gives null): the committed URL, the main frame's URL and origin ("null" for an
+// error document) and the active navigation entry's URL (for an error page, the URL that failed). Load recovery and readiness both decide from it.
+function inspectMainDocument(contents) {
+  try {
+    const history = contents.navigationHistory;
+    return {
+      committedUrl: contents.getURL(),
+      frameUrl: contents.mainFrame.url,
+      frameOrigin: contents.mainFrame.origin,
+      entryUrl: history.getEntryAtIndex(history.getActiveIndex())?.url,
+    };
+  } catch { return null; }
+}
+
+const appReadiness = createAppReadiness({
+  origin: () => trustedRendererOrigin(),
+  // A navigation that ended without committing asks the renderer to prove it is alive (A14); only its ack drains the queues.
+  probe: (contents, token) => {
+    try { contents.send("app-readiness:probe", token); } catch { /* the renderer is gone: no ack, the window stays not ready */ }
+  },
+  onRestored: (contents) => {
+    const win = BrowserWindow.fromWebContents(contents);
+    if (!win || win.isDestroyed()) return;
+    deliverPackageInstall(win);
+    cloudLinks.drain();
+    flushCloudLinkEvent(win);
+    appReadiness.flush(contents);
+  },
+  inspect: inspectMainDocument,
+});
+
+// NOTIFY-EVERYWHERE S3R R2: the notification delivery session per window, an extension of A14 (the bound nonce, home and payload ledger).
+// It ends on a committed cross-document navigation, a crash, destroy or a new-nonce hello, and tells attention-main once.
+const rendererSessions = createRendererSessions({
+  origin: () => trustedRendererOrigin(),
+  onEnd: (webContentsId, session, record) => { attentionMain?.sessionEnded?.(webContentsId, session, record); },
+});
+
+// The renderer answers an app-readiness probe from its top frame; the owned-IPC gate has already refused any other sender.
+ipcMain.on("app-readiness:alive", (event, token) => {
+  appReadiness.alive(event.sender, token, { top: event.senderFrame?.parent === null, url: event.senderFrame?.url, frameOrigin: event.senderFrame?.origin });
+});
+
 // Cloud links: murage://open-cloud?h=, murage://connect-cloud and murage://door?h=&o=#t=. Every source (open-url before
 // or after ready, argv on a Windows or Linux cold start, second-instance, the sealed handoff, "Use copied link") goes into
 // ONE slot (cloud-link-queue.mjs); it drains once the app is ready, Cloud is live and the main window has loaded. A door
 // link carries a ticket, so nothing here logs a link: only `[cloud] door: <reason>`. The window hears the kind, never the link.
 let cloudLinkReady = false;
-const cloudLinkWindowLoaded = () => Boolean(mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame());
+const cloudLinkWindowLoaded = () => Boolean(mainWindow && !mainWindow.isDestroyed() && appReadiness.ready(mainWindow.webContents) && !mainWindow.webContents.isLoadingMainFrame());
+// A link event the window could not take (it was on the setup page) waits here and is sent once, when the app has loaded.
+let pendingCloudLinkEvent = null;
 function tellCloudLinkWindow(event) {
-  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("cloud-home:link-event", event); } catch { /* the window went away */ }
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (appReadiness.ready(mainWindow.webContents)) mainWindow.webContents.send("cloud-home:link-event", event);
+    else pendingCloudLinkEvent = event;
+  } catch { /* the window went away */ }
+}
+function flushCloudLinkEvent(win) {
+  try {
+    if (!pendingCloudLinkEvent || win !== mainWindow || win.isDestroyed() || !appReadiness.ready(win.webContents)) return;
+    const event = pendingCloudLinkEvent;
+    pendingCloudLinkEvent = null;
+    win.webContents.send("cloud-home:link-event", event);
+  } catch { /* the window went away */ }
 }
 function focusConnectCard(kind) {
   if (mainWindow && !mainWindow.isDestroyed()) activateExistingWindow([mainWindow]);
@@ -1063,6 +1459,8 @@ app.on("second-instance", (_event, commandLine) => {
   const packageUrl = packageUrlFromCommandLine(commandLine);
   if (packageUrl) pendingPackageInstallUrl = packageUrl;
   if(reopenUpdateRecoveryIfNeeded())return;
+  const task = parseMurageTask(commandLine);
+  if (task) { dispatchBadgeTask(task); return; }
   activateExistingWindow(BrowserWindow.getAllWindows());
   const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
   deliverPackageInstall(target);
@@ -1130,6 +1528,7 @@ let serverReady = true;
 const serverSupervisor = createServerSupervisor();
 /** One restart in flight at a time, and none once we are quitting. */
 let serverRestarting = false;
+const loadFailureRecoveries = new WeakMap();
 /** What the renderer is told, so a dead engine can never again pass for a
  *  dozen broken features. */
 let serverLifecycleState = { state: "running", since: null, attempt: 0 };
@@ -1139,6 +1538,8 @@ function publishServerLifecycle(next) {
   const win = mainWindow;
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
   try { win.webContents.send("server-lifecycle:state", next); } catch { /* the window is going away */ }
+  // A window parked on Chromium's error page (the setup page's refresh met a dead server) reloads as soon as the engine is back.
+  if (next.state === "running") loadFailureRecoveries.get(win.webContents)?.kick();
 }
 
 /** Watch the child that actually became the engine. Boot attempts that lose a
@@ -1146,6 +1547,9 @@ function publishServerLifecycle(next) {
 function superviseServerChild(proc, lifecycle) {
   proc.once("exit", (code) => {
     if (proc !== serverProc) return; // superseded by a later child
+    attentionWiring?.serverChanged(); // a dead server's cards are not answered
+    attentionMain?.serverChanged();
+    attentionSurfaces?.invalidateAll(); // and the panel, bubble and dock forget the cards they were shown
     const decision = serverSupervisor.decide({ code, intentional: desktopShutdownStarted || lifecycle?.stopRequested === true });
     if (decision.action === "stay-down") {
       slog(`server supervisor: staying down (${decision.reason})`);
@@ -1169,6 +1573,8 @@ function superviseServerChild(proc, lifecycle) {
           if (serverReady) {
             slog("server supervisor: engine back up");
             publishServerLifecycle({ state: "running", since: Date.now(), attempt: decision.attempt });
+            // The window goes where the replacement is, with this launch's proof (server-follow.mjs).
+            followRestartedServer();
             // Only once it has answered health checks does it stop counting
             // against the loop guard; a child that dies during boot is the
             // loop this guards.
@@ -1186,6 +1592,29 @@ function superviseServerChild(proc, lifecycle) {
       })();
     }, decision.delayMs);
   });
+}
+/** The chat the main window last reported open, so a moved window reopens it. */
+let openChat = null;
+const FOLLOW_RETRIES = 10;
+const FOLLOW_RETRY_MS = 1000;
+
+/** After a replacement engine answers, the main window reloads at the engine's
+ *  origin, or is replaced by a window created for it when the port moved. It is
+ *  never left on a dead origin: until the swap can happen it shows the
+ *  reconnecting page and tries again. */
+function followRestartedServer(triesLeft = FOLLOW_RETRIES) {
+  const win = mainWindow;
+  if (!app.isPackaged || desktopShutdownStarted || !win || win.isDestroyed()) return;
+  const target = restartedWindowTarget({ windowOrigin: win.murageRendererOrigin, serverOrigin: `http://127.0.0.1:${SERVER_PORT}`, openThread: openChat });
+  if (target.mode === "reload") {
+    slog("server supervisor: main window reloads for the new engine launch");
+    void win.loadURL(target.url).catch(() => {});
+    return;
+  }
+  slog(`server supervisor: main window moves to port ${SERVER_PORT}`);
+  if (replaceMainWindow("server-moved", target.url)) return;
+  if (!win.isDestroyed()) void win.loadURL(splashPage({ dark: nativeTheme.shouldUseDarkColors, line: RECONNECTING_LINE })).catch(() => {});
+  if (triesLeft > 1) setTimeout(() => followRestartedServer(triesLeft - 1), FOLLOW_RETRY_MS);
 }
 let desktopRecoveryMode = false;
 let recoveryWindow = null;
@@ -1252,6 +1681,8 @@ function trackOwnedServerChild(proc, options) {
 // type a header. Held in memory in this process only — never written to
 // userData, never logged, never put in a child environment.
 let desktopSurfaceSecret = "";
+/** The launch id the current engine puts in every answer (server-follow.mjs LAUNCH_HEADER); the renderer refuses any other responder. */
+let serverLaunchId = "";
 
 function receiveDesktopSurfaceSecret(message) {
   if (message?.type !== "murage:desktop-secret") return false;
@@ -1327,6 +1758,8 @@ const modelProviderCommitToken = randomBytes(32).toString("hex");
 // The link-server routes have their own token: holding the model-provider one
 // must not be enough to push or clear link secrets (MCP-LINK M2).
 const mcpCommitToken = randomBytes(32).toString("hex");
+// HighLevel has a separate main-only credential; it travels only over the utility parent port.
+const highlevelCommitCredential = randomBytes(32).toString("hex");
 let credentialStoreUnavailable = false;
 
 async function loadSecureCredentials() {
@@ -1370,9 +1803,8 @@ async function saveSecureCredentials(credentials) {
   await assertSecretStorageWritable();
   fs.mkdirSync(path.dirname(CREDENTIALS_FILE), { recursive: true });
   const encrypted = await safeStorage.encryptStringAsync(JSON.stringify(credentials));
-  const temporary = `${CREDENTIALS_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, encrypted, { mode: 0o600 });
-  fs.renameSync(temporary, CREDENTIALS_FILE);
+  // EMAIL-ACCOUNT-CHANGE r4 section 1: fsync, rename, then make the rename durable (directory fsync, or reopen and flush on Windows)
+  writeFileDurable(fs, CREDENTIALS_FILE, encrypted);
 }
 
 async function secureComposioConfig() {
@@ -2140,7 +2572,7 @@ function showMemoryUpgradeProgress(status, percent) {
     if (!status && !upgradeScreen) return;
     if (status && !startupSplash) {
       // an unpackaged run, or one opened at login, has no splash: the upgrade still needs somewhere to be seen
-      startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: systemLanguage(), onUserClose: requestOwnerQuit });
+      startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: systemLanguage(), onUserClose: requestOwnerQuit, mode: "update", grace: 0 });
     }
     upgradeScreen ??= createUpgradeScreen({ language: systemLanguage(), describeBytes });
     const view = upgradeScreen.update(status, percent, { copiedBytes: status && desktopDataDir ? copiedBytes(status, desktopDataDir) : null });
@@ -2294,6 +2726,13 @@ async function startServerOn(port) {
     // A random value for this launch only, for this child only: the child echoes it in its health answers and the boot probe compares it (never logged).
     MURAGE_BOOT_NONCE: bootNonce,
     MURAGE_USER_DATA: app.getPath("userData"),
+    MURAGE_CREDENTIAL_TUNNEL_ROOT: restoredConnections?.tunnelRuntime ?? path.join(app.getPath("userData"), "managed-companion-tunnel"),
+    MURAGE_CREDENTIAL_BACKUP_ROOT: (() => {
+      // An unavailable local backup root cannot produce SSH material. It must not prevent the app starting.
+      if (!desktopDataDir) return "";
+      try { return path.join(remoteControlDirectory({control:closedControlDirectory(desktopDataDir),userData:app.getPath("userData"),localAppData:process.platform === "win32" ? localAppDataDirectory() : null}), "remote"); }
+      catch { return ""; }
+    })(),
     // V8 compile cache, per app version; {} (no cache) on any failure.
     ...compileCacheEnvironment({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }),
     // Shown to WhatsApp as the linked device label ("Murage Desktop <version>"). Not a secret.
@@ -2324,12 +2763,14 @@ async function startServerOn(port) {
   delete childEnv.MURAGE_COMPANION_TOKEN;
   slog(`fork ${entry} port=${port}`);
   desktopMark("server.fork");
+  // A note a killed launch left must not read as this launch's when the pid comes round again: this launch owns the folder, and nothing of ours is running on it.
+  if (desktopDataDir) clearMemoryUpgradeStatus(desktopDataDir);
   let proc;
   try {
-    proc = utilityProcess.fork(entry, [], {
+    proc = utilityProcess.fork(entry, [], withHideInherit({
       env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
-    });
+    }));
   } catch (error) {
     throw error;
   }
@@ -2341,11 +2782,22 @@ async function startServerOn(port) {
   proc.stderr?.on("data", (d) => slog(`[err] ${String(d).trimEnd()}`));
   proc.on("message", (message) => {
     try {
+      if (receiveComposioChildMessage(proc, message)) return;
+      if (message?.type === "murage:sentinel-io-ready") { sentinelIoServer = proc; sentinelHost?.replayIo(); return; }
+      if (message?.type === "murage:sentinel-io-ack") { if (sentinelIoServer === proc) sentinelHost?.acceptIo(message.event); return; }
       if (message?.type === "startup-stage") {
         const stage = String(message.stage);
         // the server is listening: the upgrade window says the app is opening (it stays the one window)
         if (upgradeScreen && startupSplash?.upgrading && (stage === "listen" || stage === "ready")) { const view = upgradeScreen.finishing({ ready: stage === "ready" }); if (view) { lastUpgradeView = JSON.stringify(view); startupSplash.set(view); } }
         startupSplash?.stage(stage);
+        return;
+      }
+      if (message?.type === "murage:highlevel-bootstrap-request") {
+        if (typeof message.requestId !== "string" || !/^[A-Za-z0-9_-]{1,160}$/u.test(message.requestId)) return;
+        void highlevelCredentials.bootstrap().then(
+          (bootstrap) => proc.postMessage({ type: "murage:highlevel-bootstrap", requestId: message.requestId, bootstrap }),
+          () => proc.postMessage({ type: "murage:highlevel-bootstrap", requestId: message.requestId, error: "storage" }),
+        ).catch(() => {});
         return;
       }
       if (receiveDesktopSurfaceSecret(message)) return;
@@ -2385,10 +2837,17 @@ async function startServerOn(port) {
       }
       // Bot email (2.3, 2.4): the server minted, rotated or revoked an email key; the whole sanitized doc replaces the stored copy.
       if (isEmailSecretsSave(message)) {
+        // EMAIL-ACCOUNT-CHANGE r3: the server uses a new key only after this ack, so a crash can never bring back a key that was not saved.
+        // A failed write sends none; the server pushes the doc again.
+        // r4 section 1: the ack is built from a read-back of credentials.bin (decrypted, key ids listed); a failed read-back sends none
+        const ack = () => ackFromDisk({ readFile: () => fs.readFileSync(CREDENTIALS_FILE), decrypt: (buffer) => safeStorage.decryptStringAsync(buffer) }, message)
+          .then((saved) => { try { serverProc?.postMessage(saved); } catch { /* the server is restarting; its next push is answered */ } });
         if (!credentialStoreUnavailable) {
           void updateSecureCredentialDocument((current) => withEmailSecrets(current, message.doc), undefined, { skipUnchanged: true })
+            .then(ack)
             .catch((error) => slog(`bot email keys not saved: ${error?.message ?? error}`));
         }
+        // r4 section 1: with no readable key store the shell sends NO ack and saves nothing; the server keeps bot email off
         return;
       }
       // A link server answered 401 to its access token: refresh it here (the
@@ -2422,6 +2881,7 @@ async function startServerOn(port) {
   });
   let exited = false;
   proc.once("exit", (code) => {
+    cancelComposioChild(proc);
     exited = true;
     // The secret belonged to THAT child. A replacement mints its own, and
     // holding a dead one would let the renderer keep presenting a proof the
@@ -2431,7 +2891,7 @@ async function startServerOn(port) {
     // restart invalidates them before any replacement child receives the
     // browser descriptor.
     browserHost?.clearCapabilities();
-    slog(`exited code=${code}`);
+    slog(`exited code=${code}${exitCodeNote(code)}`);
   });
   // wait for the port to answer (fresh machine: first boot writes data dirs).
   // Identity check is by the launch nonce: a dev harness server has the same API shape,
@@ -2449,29 +2909,33 @@ async function startServerOn(port) {
   const upgradeWatch = desktopDataDir
     ? watchMemoryUpgrade({ dataDir: desktopDataDir, pid: () => proc.pid, onReading: showMemoryUpgradeProgress })
     : null;
+  // every step before listen writes its own note (server/boot-progress.ts): while it is this child's and moving, the 5-minute limit waits
+  const bootWatch = desktopDataDir ? watchBootProgress({ dataDir: desktopDataDir, pid: () => proc.pid }) : null;
   try {
     identity = await Promise.race([pollServerIdentity({
     extendWhile: () => upgradeWatch?.active() ?? false,
     onUpgrading: (body) => upgradeWatch?.feed(body),
     isSuspended: () => bootSystemSuspended,
     progressFresh: () => upgradeWatch?.fresh() ?? false,
+    liveWithoutLimit: () => (upgradeWatch?.fresh() ?? false) && isOneTimeIndexNote(upgradeWatch?.status()),
+    bootProgressFresh: () => bootWatch?.fresh() ?? false,
     port,
     // The launch nonce, not the pid: the pid is public, so a foreign listener could echo it.
     nonce: () => bootNonce,
     bootTimeoutMs: SERVER_BOOT_SLOW_LIMIT_MS,
     isExited: () => exited || lifecycle.failed || desktopShutdownStarted,
-    }), lifecycle.exit.then(() => ({ outcome: "exited" }))]).finally(() => clearTimeout(slowNote));
+    }), lifecycle.exit.then(() => ({ outcome: "exited" }))]).finally(() => { clearTimeout(slowNote); bootWatch?.stop(); });
     // The note must be read before the watcher stops: a child that ended on a
     // blocked upgrade has already written why.
     const finalNote = desktopDataDir ? readMemoryUpgradeStatus(desktopDataDir, { pid: proc.pid }) : null;
     upgradeWatch?.stop();
     closeMemoryUpgradeWindow(identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted);
-    if (identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted) return { proc, lifecycle };
+    if (identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted) return { proc, lifecycle, launch: launchIdOf(bootNonce) };
     // The 30-minute cap ran out with the upgrade still running: another port or
     // another try would start the same upgrade from the beginning again.
     const upgradeSeen = finalNote?.state === "upgrading";
     if (identity.outcome === "timeout" && upgradeSeen) {
-      memoryUpgradeBlocked = { state: "blocked", code: "MEMORY_MIGRATION_TIMEOUT" };
+      memoryUpgradeBlocked = { state: "blocked", code: upgradeTimeoutCode(finalNote) };
       slog(`child on port ${port} stopped: memory upgrade still running at the start-up limit`);
       await lifecycle.stop({ graceful: false });
       if (desktopDataDir) clearMemoryUpgradeStatus(desktopDataDir);
@@ -2523,7 +2987,11 @@ async function startServerPackaged() {
       if (started.proc) {
         serverProc = started.proc;
         SERVER_PORT = port;
+        serverLaunchId = started.launch ?? "";
         superviseServerChild(started.proc, started.lifecycle);
+        attentionWiring?.serverChanged(); // a new server run: tokens minted against the old one die
+        attentionMain?.serverChanged();
+        attentionSurfaces?.invalidateAll();
         // The owner's own MCP servers: hand the new harness every saved doc
         // (each naming its origin), then refresh what expired while closed.
         void mcpServers.resume().catch((error) => slog(`mcp server secrets resume failed: ${error?.message ?? error}`));
@@ -2550,6 +3018,7 @@ function syncManagedComposioCredentials() {
     const fluxBrokerUrl = fluxComposioBrokerUrlValue();
     serverProc.postMessage({
       type: "murage:managed-composio",
+      admission: composioAuthority?.inspect(),
       // The Murage Worker broker, until its cut-off.
       access: managedComposioAccess(composioBrokerUrl(), secureCredentials, { legacyUntil }),
       // The FluxRouter broker. The URL travels even without a token, so the
@@ -2557,6 +3026,8 @@ function syncManagedComposioCredentials() {
       // token yet" from "this build has none".
       fluxBrokerUrl,
       fluxAccess: fluxComposioAccess(fluxBrokerUrl, secureCredentials),
+      // Set only by a successful mint from the stored key, never by the renderer.
+      fluxOwner: secureCredentials.fluxComposioBrokerTokenKeyFingerprint ?? null,
       legacyUntil,
       legacyClaim: publicComposioLegacyClaim(secureCredentials),
       accountKind: secureCredentials.fluxComposioAccountKind ?? null,
@@ -2578,10 +3049,15 @@ function syncManagedComposioCredentials() {
 // tick recomputes it.
 // How long after a pass the next one runs is `lifecycleDelay`'s call (a failed
 // mint retries in seconds, backing off; the ordinary timer is ten minutes).
+const composioProducers = createDesktopComposioProducers(connectedAppsAuthority);
 const composioScheduler = createLifecycleScheduler({
   net,
   powerMonitor,
-  run: (options) => runComposioLifecycle(options),
+  run: options => options.force ? composioProducers.scheduledForce(options) : runComposioLifecycle(options),
+  dispatchers: {
+    online: options => runComposioLifecycle({ ...options, trigger: "online" }),
+    resume: options => runComposioLifecycle({ ...options, trigger: "resume" }),
+  },
   isShuttingDown: () => desktopShutdownStarted,
 });
 
@@ -2596,75 +3072,87 @@ function composioLifecycleOptions() {
   };
 }
 
-/** One pass of the lifecycle: mint or refresh the broker token, then advance
- * the legacy claim. `claim` forces the three legs (the consent button).
- * Never throws; connected apps are optional background work. */
-async function runComposioLifecyclePass({ claim = false, force = false, rejectedTokenFingerprint } = {}) {
-  const fluxBrokerUrl = fluxComposioBrokerUrlValue();
-  if (!fluxComposioLifecycleEnabled() || !secureCredentialState) {
-    return publicComposioLegacyClaim(secureCredentials);
+const composioChildPorts = new Map();
+function receiveComposioChildMessage(proc, message) {
+  if (!String(message?.type).startsWith("murage:connected-apps-admission-")) return false;
+  let port = composioChildPorts.get(proc);
+  if (!port) {
+    port = createComposioAdmissionHost({ authority: connectedAppsAuthority, send: message => proc.postMessage(message),
+      isCurrent: () => !desktopShutdownStarted && (serverProc === null || serverProc === proc) });
+    composioChildPorts.set(proc, port);
   }
-  const snapshot = { ...secureCredentials };
-  // Tokens a mint replaced: revoked only once the new document is saved.
-  const revokeSink = [];
-  // `murage-<random install id>` from the data directory: tells this install's
-  // token from another device's at Flux. No name, hostname or key.
-  const label = desktopDataDir ? mintLabel(desktopDataDir) : undefined;
-  const options = { ...composioLifecycleOptions(), fluxBrokerUrl, legacyBrokerUrl: composioBrokerUrl(), fluxKey: snapshot.fluxApiKey ?? "", revokeSink, ...(label ? { label } : {}) };
-  let rateLimited = false;
-  let transient = false;
-  const onRateLimited = () => { rateLimited = true; };
-  const onTransientFailure = () => { transient = true; };
-  let next = snapshot;
-  try {
-    next = await ensureFluxComposioBrokerToken({ ...options, credentials: next, onRateLimited, onTransientFailure, force, rejectedTokenFingerprint });
-    const state = readComposioLegacyClaim(next);
-    if (claim || state.state === "pending" || (state.state === "claimed" && state.confirmPending)) {
-      next = await claimLegacyComposioInstall({ ...options, credentials: next, onRateLimited });
-    } else if (state.state === "none" || state.state === "offered") {
-      next = await prepareLegacyComposioClaim({ ...options, credentials: next, onRateLimited });
-    }
-  } catch (error) {
-    if (!desktopShutdownStarted) slog(`connected-apps lifecycle failed: ${error?.message ?? error}`);
-  }
-  // A forced re-mint that left the token unchanged (offline, 503) is retried,
-  // forced, on the backoff; the rejected token's fingerprint rides along.
-  const forcedAndUnminted = force && !rateLimited && next.fluxComposioBrokerToken === snapshot.fluxComposioBrokerToken
-    && Boolean(snapshot.fluxApiKey) && !next.fluxComposioTokenError;
-  composioScheduler.afterPass({
-    rateLimited,
-    transient: transient || forcedAndUnminted,
-    ...(forcedAndUnminted ? { retryForce: rejectedTokenFingerprint ?? "" } : {}),
+  return port.receive(message);
+}
+function composioChildTransport(url, init) {
+  const port = serverProc ? composioChildPorts.get(serverProc) : [...composioChildPorts.values()].at(-1);
+  if (!port) throw new Error("admission_port_unavailable");
+  return port.transport(url, init);
+}
+function cancelComposioChild(proc) { composioChildPorts.get(proc)?.dispose(); composioChildPorts.delete(proc); }
+
+let composioAuthority;
+function connectedAppsAuthority() {
+  if (composioAuthority) return composioAuthority;
+  const readProtectedComposioDocument = async () => {
+    const result = await readSecureCredentials({ exists: () => fs.existsSync(CREDENTIALS_FILE),
+      isAvailable: () => safeStorage.isAsyncEncryptionAvailable(), readFile: () => fs.readFileSync(CREDENTIALS_FILE),
+      decrypt: buffer => safeStorage.decryptStringAsync(buffer), sleep: ms => new Promise(resolve => setTimeout(resolve, ms)), delays: [] });
+    if (result.status === "unavailable") throw new Error("credential_recovery_failed");
+    return result.credentials;
+  };
+  const saveProtectedCleanup = async (entries, delta) => {
+      const committed = await updateSecureCredentialDocument(async () => { const current = await readProtectedComposioDocument(); return { ...current, composioPendingRevocations: JSON.stringify(applyComposioCustodyDelta(current.composioPendingRevocations, entries, delta)) }; }, undefined, MANAGED_COMPOSIO_UPDATE_OPTIONS);
+      return readComposioCustody(committed.composioPendingRevocations);
+    };
+  composioAuthority = createComposioLifecycle({
+    getConfiguration: () => ({ fluxBrokerUrl: fluxComposioBrokerUrlValue(), legacyBrokerUrl: composioBrokerUrl(),
+      label: desktopDataDir ? mintLabel(desktopDataDir) : undefined, timeoutSignal: composioLifecycleOptions().timeoutSignal }),
+    getCredentials: () => secureCredentials,
+    requireDurableCustody: true,
+    readDurableCredentials: readProtectedComposioDocument,
+    onAutomaticReplacement: event => composioTokenRejections.noteReplacement(event.tokenFingerprint, event.at),
+    trackRequest: work => { credentialWrites.add(work); void work.finally(() => credentialWrites.delete(work)).catch(() => {}); },
+    saveCredentials: async (next, snapshot) => {
+      let saved = false;
+      await updateSecureCredentialDocument(async () => {
+        const current = await readProtectedComposioDocument();
+        const result = applyComposioCredentialResult(current, snapshot, next);
+        saved = result.applied;
+        return result.credentials;
+      }, undefined, MANAGED_COMPOSIO_UPDATE_OPTIONS);
+      return saved;
+    },
+    store: createComposioAdmissionStore(desktopDataDir ?? app.getPath("userData")),
+    lifecycleTransport: globalThis.fetch,
+    transport: (url, init) => composioChildTransport(url, init),
+    isOnline: () => net.isOnline(), isShuttingDown: () => desktopShutdownStarted, log: slog,
+    pendingRevocationsVersion: () => secureCredentials.composioPendingRevocations,
+    getPendingRevocations: () => {
+      return readComposioCustody(secureCredentials.composioPendingRevocations);
+    },
+    savePendingCredentialWrite: saveProtectedCleanup,
+    savePendingRevocations: saveProtectedCleanup,
   });
-  let saved = false;
-  try {
-    await updateSecureCredentialDocument((current) => {
-      const applied = applyComposioCredentialResult(current, snapshot, next);
-      saved = applied.applied;
-      if (!applied.applied) slog("connected-apps lifecycle result discarded: credentials changed while it ran");
-      return applied.credentials;
-    }, undefined, MANAGED_COMPOSIO_UPDATE_OPTIONS);
-  } catch (error) {
-    saved = false;
-    if (!desktopShutdownStarted) slog(`connected-apps lifecycle write failed: ${error?.message ?? error}`);
-  }
-  // Settle the replaced tokens only now: if the new document was saved the old
-  // token goes; if it was discarded the new one is the orphan, and goes instead.
-  for (const entry of revokeSink) {
-    await revokeFluxComposioBrokerToken({
-      fluxBrokerUrl: entry.fluxBrokerUrl,
-      token: saved ? entry.previous : entry.minted,
-      fetchImpl: globalThis.fetch,
-      timeoutSignal: composioLifecycleOptions().timeoutSignal,
-    });
-  }
-  syncManagedComposioCredentials();
-  return publicComposioLegacyClaim(secureCredentials);
+  composioAuthority.subscribe(() => syncManagedComposioCredentials());
+  return composioAuthority;
 }
 
-/** One pass at a time. An ordinary request shares a running pass; a forced
- * re-mint or a claim runs after it, so it is never swallowed. */
-const runComposioLifecycle = createLifecycleQueue(runComposioLifecyclePass);
+async function runComposioLifecyclePass({ claim = false, force = false, rejectedTokenFingerprint, trigger } = {}) {
+  if (!fluxComposioLifecycleEnabled() || !secureCredentialState) return { ...publicComposioLegacyClaim(secureCredentials), outcome: "deferred", reason: "unavailable", attempted: false };
+  const result = await (trigger === "startup" ? composioProducers.startup()
+    : trigger === "credentials" ? composioProducers.credentialChange()
+    : trigger === "online" ? composioProducers.online({ force, rejectedTokenFingerprint })
+    : trigger === "resume" ? composioProducers.resume({ force, rejectedTokenFingerprint })
+    : claim ? composioProducers.claim()
+    : force ? rejectedTokenFingerprint ? composioProducers.rejected(rejectedTokenFingerprint) : composioProducers.reconnect()
+    : composioProducers.scheduled());
+  composioScheduler.afterPass();
+  syncManagedComposioCredentials();
+  return { ...publicComposioLegacyClaim(secureCredentials), ...result, credentials: undefined };
+}
+
+/** One pass at a time. The authority owns the queue and re-admits each leg. */
+const runComposioLifecycle = options => runComposioLifecyclePass(options ?? { trigger: "startup" });
 
 /** The retry clock. Pending claims and confirmations used to wait for the next
  * boot; now they retry while the app is open, backing off after a 429. */
@@ -2700,18 +3188,20 @@ function escapeHtml(value) {
   return value.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
 
+// The exact data: URL buildErrorPage last made: the one page besides the app's own origin the log link is trusted from.
+let lastErrorPageUrl = null;
 function buildErrorPage({ allPortsOccupied }) {
   const serverLogPath = path.join(LOG_DIR, "server.log");
-  const serverLogHref = pathToFileURL(serverLogPath).href;
   const reason = allPortsOccupied
     ? "Another program is using every port Murage can use (8799, 18799 and 28799). It is most likely a second copy of Murage. Quit that program, then quit and reopen Murage."
     : "Murage's background server didn't start in time. This is usually a slow start, not a problem with your data. Quit and reopen Murage.";
-  return (
+  // The log link is the private OPEN_LOG_URL (a file: address is never offered from a data: page); the open handler maps it to server.log.
+  lastErrorPageUrl =
     "data:text/html;charset=utf-8," +
     encodeURIComponent(
-      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🔥</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">${escapeHtml(reason)} If it keeps happening, check <a target="_blank" rel="noopener" href="${serverLogHref}" style="color:#fcfcfc">${escapeHtml(serverLogPath)}</a>.</p></div></body>`,
-    )
-  );
+      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🔥</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">${escapeHtml(reason)} If it keeps happening, check <a target="_blank" rel="noopener" href="${OPEN_LOG_URL}" style="color:#fcfcfc">${escapeHtml(serverLogPath)}</a>.</p></div></body>`,
+    );
+  return lastErrorPageUrl;
 }
 
 // How long one packaged-server child gets to answer /api/health before the
@@ -2859,7 +3349,7 @@ function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
   viewer.webContents.setWindowOpenHandler(({ url: target }) => {
     try {
       const external = desktopViewerUrl(target);
-      void shell.openExternal(external.toString());
+      void osShell.openExternal(external.toString());
     } catch {
       // Ignore non-web and insecure URLs from the remote viewer.
     }
@@ -2869,7 +3359,7 @@ function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
     if (sameDesktopViewerOrigin(target, viewerOrigin)) return;
     event.preventDefault();
     try {
-      void shell.openExternal(desktopViewerUrl(target).toString());
+      void osShell.openExternal(desktopViewerUrl(target).toString());
     } catch {
       // Keep privileged or malformed navigation out of the viewer.
     }
@@ -3111,6 +3601,19 @@ ipcMain.on("desktop:surface-secret", (event) => {
   event.returnValue = desktopSurfaceSecret;
 }, { refusedReturnValue: "" });
 
+// Synchronous for the same reason: the first answer the page reads is already
+// checked against this launch (src/lib/live-events.ts responderIsOurs).
+ipcMain.on("desktop:server-launch", (event) => {
+  event.returnValue = serverLaunchId;
+}, { refusedReturnValue: "" });
+
+// The chat on screen, so a window that follows a moved engine reopens it (followRestartedServer).
+ipcMain.on("desktop:open-chat", (event, threadId) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return;
+  const thread = openChatThread(threadId);
+  if (thread) openChat = thread;
+});
+
 ipcMain.on("desktop:unread-count", (event, value) => {
   const cloudId = cloudHome?.senderHomeId(event); // B3 WP4: a Cloud window reports its own count; the badge lives on the main window
   if (cloudId) {
@@ -3167,33 +3670,37 @@ function closeStartupSplash({ afterMainWindowClosed = false } = {}) {
   }
 }
 
-/** Help menu: one step back to Murage 1.0.2 after the memory v11 upgrade. Quits
- * Murage, steps the memory database down to v10 under the recovery lease, then
- * asks the person to install 1.0.2. The next start of this version brings the
- * set-aside details up to date again. (1.0.2 has its own step back to 1.0.1.) */
-async function prepareForPreviousVersion() {
+/** Help menu: prepare the previous release under the recovery lease. The
+ * separate 1.0.2 item keeps the older, deeper rollback available. */
+async function prepareForPreviousVersion(version = "1.0.18") {
+  const release = version === "1.0.2" ? "1.0.2" : "1.0.18";
   if (!app.isPackaged || prepareForPreviousVersion.running || desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner || !desktopDataDir) return;
   prepareForPreviousVersion.running = true;
   try {
     const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    const confirm = await dialog.showMessageBox(...(parent ? [parent] : []), { type: "question", buttons: ["Prepare and quit", "Cancel"], defaultId: 0, cancelId: 1, title: "Prepare to reinstall Murage 1.0.2", message: "Prepare to reinstall Murage 1.0.2?", detail: "Murage will close. Your chats and memories stay. Details that only this version uses are set aside, and the next start of this version brings them up to date again. After Murage closes, install 1.0.2." });
+    const confirm = await dialog.showMessageBox(...(parent ? [parent] : []), { type: "question", buttons: ["Prepare and quit", "Cancel"], defaultId: 0, cancelId: 1, title: `Prepare to reinstall Murage ${release}`, message: `Prepare to reinstall Murage ${release}?`, detail: `Murage will close. Your chats and memories stay. Details that only this version uses are set aside, and the next start of this version brings them up to date again. After Murage closes, install ${release}.` });
     if (confirm.response !== 0 || desktopRecoveryMode || desktopShutdownStarted) return;
     desktopRecoveryMode = true;
     let failure = null;
     let phoneCallsPreservedAt;
-    try { const result = await runDesktopRecovery("memory-downgrade", {}); phoneCallsPreservedAt = result?.phoneCallsPreservedAt; } catch (error) { if (error?.code !== "MEMORY_DATABASE_MISSING" && error?.message !== "MEMORY_DATABASE_MISSING") failure = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(error.code) ? error.code : "RECOVERY_OPERATION_FAILED"; }
+    let applicationDataPreservedAt;
+    try { const result = await runDesktopRecovery("memory-downgrade", { to: release === "1.0.2" ? "10" : "13" }); phoneCallsPreservedAt = result?.phoneCallsPreservedAt; applicationDataPreservedAt = result?.applicationDataPreservedAt; } catch (error) { if (error?.code !== "MEMORY_DATABASE_MISSING" && error?.message !== "MEMORY_DATABASE_MISSING") failure = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(error.code) ? error.code : "RECOVERY_OPERATION_FAILED"; }
     // work that is still owed is named in plain words, with nothing to look up
-    const PREPARE_WAITING = { PHONE_CALLS_PENDING: "Some phone calls are unfinished or their status is unknown. Reopen this version of Murage, finish or cancel them in Phone calls settings, then try again.", PHONE_CALLS_UNREADABLE: "Murage could not read your phone call history. Keep this version installed and repair or restore the data before trying again.", DOWNGRADE_WORK_PENDING: "Some messages, bot posts or other work are still waiting. Open Murage, send, post or decline what is waiting, let the rest finish, then try again.", DOWNGRADE_CARD_DELIVERY_OWED: "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again." };
+    const language = (() => { try { return desktopStepUpLanguage({ system: systemLanguage(), readDesktopConfig: () => fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8") }); } catch { return "en"; } })();
+    const PREPARE_WAITING = { PHONE_CALLS_PENDING: "Some phone calls are unfinished or their status is unknown. Reopen this version of Murage, finish or cancel them in Phone calls settings, then try again.", PHONE_CALLS_UNREADABLE: "Murage could not read your phone call history. Keep this version installed and repair or restore the data before trying again.", DOWNGRADE_WORK_PENDING: downgradeWorkPendingMessage(language), DOWNGRADE_RESTORE_OPEN: "A restore has not finished. Open this version of Murage to finish recovery, then try going back to the earlier version.", DOWNGRADE_CARD_DELIVERY_OWED: "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again." };
     // a voice reply still finishing: the minutes left, in the app's language (prepare-voice-finishing.mjs)
-    const finishing = voiceFinishingDialog(failure, (() => { try { return desktopStepUpLanguage({ system: systemLanguage(), readDesktopConfig: () => fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8") }); } catch { return "en"; } })());
+    const finishing = voiceFinishingDialog(failure, language);
     if (finishing) await dialog.showMessageBox(finishing);
-    else if (failure && PREPARE_WAITING[failure]) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.2 once this is done.", detail: `Your chats and memories are as they were. ${PREPARE_WAITING[failure]}` });
-    else if (failure) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.2 after another start.", detail: `Your chats and memories are as they were. The next start of this version picks up where it left off. Code: ${failure}` });
-    else await dialog.showMessageBox({ type: "info", buttons: ["Quit"], title: "Murage", message: "Ready for Murage 1.0.2.", detail: "Install it now; your chats and memories are kept." + (typeof phoneCallsPreservedAt === "string" ? ` Phone call history and settings were saved in ${phoneCallsPreservedAt}. Keep this folder to restore them after upgrading again.` : "") });
+    else if (failure && PREPARE_WAITING[failure]) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: `Murage will be ready for ${release} once this is done.`, detail: `Your chats and memories are as they were. ${PREPARE_WAITING[failure]}` });
+    else if (failure) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: `Murage will be ready for ${release} after another start.`, detail: `Your chats and memories are as they were. The next start of this version picks up where it left off. Code: ${failure}` });
+    else await dialog.showMessageBox({ type: "info", buttons: ["Quit"], title: "Murage", message: `Ready for Murage ${release}.`, detail: "Install it now; your chats and memories are kept." + (typeof phoneCallsPreservedAt === "string" ? ` Phone call history and settings were saved in ${phoneCallsPreservedAt}. Keep this folder to restore them after upgrading again.` : "") + (typeof applicationDataPreservedAt === "string" ? ` Pending request data and local backup archives were saved in ${applicationDataPreservedAt}. Keep this folder for recovery after upgrading again.` : "") });
     noteShutdownCause("automatic");
     app.quit();
   } finally { prepareForPreviousVersion.running = false; }
 }
+
+// The renderer reports the ready notice it is showing; gated here like every main.mjs channel.
+ipcMain.handle("update:notice-report", (_event, value) => reportUpdateNotice(value));
 
 // Settings > About & updates: the same step back as the Help menu item. No arguments; refused while recovery
 // or shutdown is under way. Answers at once; the native confirm dialog does the rest.
@@ -3205,11 +3712,26 @@ ipcMain.handle("update:prepare-previous-version", (_event, ...args) => {
 });
 
 let recoveryAttempt = null;
+let newerDataWindow = null;
+/** The start stopped on data a newer Murage saved (memory-upgrade-status.mjs note): one plain screen naming the version to install (the
+ * data folder's data-version.json, when newer than this build) with the download page and Quit. Closing it ends Murage: no second start. */
+function showNewerDataScreen() {
+  if (newerDataWindow && !newerDataWindow.isDestroyed()) { newerDataWindow.focus(); return newerDataWindow; }
+  const version = newerDataVersion(desktopDataDir ? readDataVersion(desktopDataDir) : null, app.getVersion());
+  slog(`start stopped: data saved by a newer Murage (${memoryUpgradeBlocked?.code}; newest recorded ${version ?? "unknown"}); showing the install screen`);
+  newerDataWindow = openNewerDataWindow({ BrowserWindow, openExternal: url => osShell.openExternal(url), language: systemLanguage(), version, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, onQuit: requestOwnerQuit }).window;
+  deferredStartup.presented();
+  closeStartupSplash();
+  return newerDataWindow;
+}
 function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
   if(descriptor.updatePause)updateRecoveryDescriptor={...descriptor,reasonCode};
   startupDecisionPending=false;
   desktopRecoveryMode = true;
   serverReady = false;
+  // Data a newer Murage saved is not damaged: its one screen says what to install, never the restore page. A memory object this build
+  // does not know, with no newer release recorded for the folder, is not newer data: it gets the recovery window as before.
+  if (reasonCode === "MEMORY_UPGRADE_BLOCKED" && showsNewerDataScreen(memoryUpgradeBlocked?.code, desktopDataDir ? readDataVersion(desktopDataDir) : null, app.getVersion())) return showNewerDataScreen();
   if (recoveryWindow && !recoveryWindow.isDestroyed()) {
     if(!descriptor.updatePause){recoveryWindow.focus();return recoveryWindow;}
     recoveryWindow.destroy();recoveryWindow=null;
@@ -3231,6 +3753,8 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
       + "You are in Backup mode. Your bots, schedules and messaging apps are paused while you are here. Restore a backup or make one, or choose Return to workspace."
     : reasonCode === "LEASE_FOREIGN_HOST"
     ? "Murage's data folder says it was last used on a computer with a different name. That does not mean anything is damaged, and reinstalling Murage won't change it."
+    : reasonCode === "LEASE_BUSY"
+    ? words["lease-busy"]
     : reasonCode === "RESTORE_REVIEW_REQUIRED"
     ? "Your restored copy is paused until you review it. Your previous data is kept as it was."
     : reasonCode === "MEMORY_UPGRADE_BLOCKED"
@@ -3245,9 +3769,16 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
     BrowserWindow, ipcMain: electronIpcMain, dialog, baseDir: __dirname,
     updatePause:()=>descriptor.updatePause===true,returnRevoked:()=>returnAuthority.userQuitRequested||updateRequester,
     relaunchAfterRestore:()=>returnToWorkspaceAfterBackup({prepare:()=>{backupScheduleHost?.prepareWorkspaceReturn();return {kind:"normal"};}}),
-    context: { reason, returnRevoked:descriptor.returnRevoked===true, updateMessages:words, updatePause:descriptor.updatePause===true, ownership, backupMode: reasonCode === "BACKUP_REQUESTED", dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
+    context: { reason, returnRevoked:descriptor.returnRevoked===true, updateMessages:words, updatePause:descriptor.updatePause===true, ownership, backupMode: reasonCode === "BACKUP_REQUESTED", oneTimeStep: reasonCode === "MEMORY_UPGRADE_BLOCKED" && memoryUpgradeBlocked?.code === MEMORY_INDEX_STOPPED, dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
     isAvailable: () => Boolean(desktopDataOwner && desktopDataDir && !desktopShutdownStarted),
     canRestoreSeparate: canRestoreSeparateInstallation,
+    canSetAsideForeign: canSetAsideForeignLease,
+    setAsideForeign: async () => {
+      if (!canSetAsideForeignLease()) throw Object.assign(new Error("LEASE_TAKEOVER_REFUSED"), { code: "LEASE_TAKEOVER_REFUSED" });
+      const moved = setAsideForeignDataDirLease(desktopDataDir);
+      slog(`data folder lock set aside by the owner (${moved} files renamed, none deleted)`);
+      await explicitBackupReturn(backupScheduleHost,returnToWorkspaceAfterBackup);
+    },
     canCaptureSeparate: canCaptureSeparateInstallation,
     runCaptureSeparate: runSnapshotDesktopRecovery,
     planSeparate: () => planSeparateInstallation(app.getPath("userData"), desktopRequestedDataDir, desktopDataDir),
@@ -3269,7 +3800,7 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
       try { await returnToWorkspaceAfterBackup({retry:true,prepare:()=>prepareUpdateReturn(true)}); }
       catch(error){if(error?.code)throw error;throw refusal("BACKUP_UPGRADE_CLEANUP_FAILED");}
     },
-    openDiagnostics: async () => { const error = await shell.openPath(LOG_DIR); if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE"); },
+    openDiagnostics: async () => { const error = await osShell.openPath(LOG_DIR); if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE"); },
     onClosed: () => { if (recoveryAttempt === attempt) { recoveryAttempt = null; recoveryWindow = null; } },
   });
   recoveryAttempt = attempt;
@@ -3288,6 +3819,13 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
     });
   }
   return recoveryWindow;
+}
+
+/** "This is my computer, continue": only in the recovery window this start
+ * opened for a foreign claim, before any owner, on a local volume. */
+function canSetAsideForeignLease() {
+  return Boolean(desktopRecoveryMode && !desktopShutdownStarted && !desktopDataOwner && desktopDataDir &&
+    foreignDataDirLeaseSetAsideAvailable(desktopDataDir));
 }
 
 function canRestoreSeparateInstallation() {
@@ -3313,7 +3851,7 @@ async function runSnapshotDesktopRecovery(confirm) {
   window?.once("closed", cancelled);
   app.once("before-quit", cancelled);
   try {
-    const captured = await captureRecoveryCopy({ spawn, helper: path.join(process.resourcesPath, "murage-recovery.exe"),
+    const captured = await captureRecoveryCopy({ spawn: spawnInherited, helper: path.join(process.resourcesPath, "murage-recovery.exe"),
       source: desktopDataDir, destination: captureDirectory,
       restoreJournalLeaf: path.basename(`${dataDirLeasePaths(desktopDataDir).leasePath}.restore.json`),
       env, signal: cancellation.signal, confirm: preview => confirm({ ...preview, installation: plan.dataDirectory }) });
@@ -3408,7 +3946,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     : operation === "backup" ? ["backup", "--data-dir", dataDirectory, "--output", parameters.output]
     : operation === "restore" ? ["restore", "--data-dir", dataDirectory, "--archive", parameters.archive, "--sha256", parameters.sha256]
     : operation === "rollback" ? ["rollback", "--data-dir", dataDirectory]
-    : operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", "10"] : null;
+    : operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", parameters.to === "10" ? "10" : "13"] : null;
   if (!args || args.some(value => typeof value !== "string" || !value)) throw Object.assign(new Error("Invalid recovery request"), { code: "INVALID_RECOVERY_REQUEST" });
   if(operation==="backup-encrypted"&&parameters.maxBytes!==undefined){
     if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>MAX_BACKUP_BYTES||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>MAX_BACKUP_DURATION_MS)throw new Error("INVALID_BACKUP_BUDGET");
@@ -3430,7 +3968,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
   for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMPDIR", "TEMP", "TMP"]) if (process.env[key] !== undefined) env[key] = process.env[key];
   if (operation !== "plan-restore") Object.assign(env, owner.utilityServerLeaseEnvironment());
   try { const result = await runInstallationRecoveryWorker({
-    fork: (entry, argv, options) => utilityProcess.fork(entry, argv, options),
+    fork: (entry, argv, options) => utilityProcess.fork(entry, [...argv], withHideInherit(options)),
     entry: path.join(process.resourcesPath, "server", "installation-recovery-worker.js"),
     args, env, track: trackOwnedServerChild,
     ...(operation.includes("encrypted") ? {readIdentity:parameters.readIdentity} : {}),
@@ -3454,8 +3992,10 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
 function sendWhenLoaded(channel,...args){
   const win=mainWindow;if(!win||win.isDestroyed())return;
   const send=()=>{if(!win.isDestroyed())win.webContents.send(channel,...args);};
-  if(win.webContents.isLoadingMainFrame())win.webContents.once("did-finish-load",send);else send();
+  // Tray and inbox events wait, queued, until the window is showing the app (a 503 setup page would swallow them).
+  if(appReadiness.ready(win.webContents)&&!win.webContents.isLoadingMainFrame())send();else appReadiness.defer(win.webContents,send);
 }
+function openTarget(target){sendWhenLoaded("tray:open",target);}
 /** The tray menu's reads and answers: the desktop surface, like the app. */
 async function harnessJson(route,body){
   if(!serverReady||!desktopSurfaceSecret||desktopShutdownStarted)throw new Error("Murage is not ready yet.");
@@ -3468,7 +4008,8 @@ async function harnessJson(route,body){
 }
 // The tray's Inbox change watcher (electron/inbox-watch.mjs), bound to this
 // process's server port and desktop surface proof.
-const watchTrayInbox=onChange=>watchInboxChanges(onChange,{
+const watchTrayInbox=onChange=>watchInboxChanges(change=>{attentionMain?.reconcile();if(change?.scale===undefined)void attentionMain?.previewsCheck("local");void attentionSurfaces?.sync();onChange(change);},{
+  onFrame:frame=>{attentionMain?.watcherFrame(frame);attentionSurfaces?.botFrame(frame);},
   ready:()=>serverReady&&Boolean(desktopSurfaceSecret)&&!desktopShutdownStarted,
   url:()=>`http://127.0.0.1:${SERVER_PORT}/api/events?screens=off`,
   headers:()=>({accept:"text/event-stream","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret}),
@@ -3477,7 +4018,8 @@ function initializeBackgroundLifecycle(){
   const profileDir=desktopDataDir??(process.env.MURAGE_DATA_DIR&&process.env.MURAGE_USER_DATA?fs.realpathSync(process.env.MURAGE_DATA_DIR):null);
   const preferenceFile=profileDir?path.join(profileDir,"startup-background.json"):null;
   const primaryPath=path.join(app.getPath("home"),".murage");
-  const login=createBackgroundLogin({platform:process.platform,app,installed:app.isPackaged,primaryProfile:profileDir===(fs.existsSync(primaryPath)?fs.realpathSync(primaryPath):primaryPath),profileDir,userDataDir:app.getPath("userData"),executable:process.env.APPIMAGE??app.getPath("exe"),autostartDir:path.join(path.isAbsolute(process.env.XDG_CONFIG_HOME??"")?process.env.XDG_CONFIG_HOME:path.join(app.getPath("home"),".config"),"autostart")});
+  const login=createBackgroundLogin({platform:process.platform,app,installed:app.isPackaged,previousProfileDirs:profileDir?recordedPreviousDataRoots(profileDir):[],primaryProfile:profileDir===(fs.existsSync(primaryPath)?fs.realpathSync(primaryPath):primaryPath),profileDir,userDataDir:app.getPath("userData"),executable:process.env.APPIMAGE??app.getPath("exe"),autostartDir:path.join(path.isAbsolute(process.env.XDG_CONFIG_HOME??"")?process.env.XDG_CONFIG_HOME:path.join(app.getPath("home"),".config"),"autostart")});
+  void login.reconcile().catch(()=>console.warn("Sign-in startup needs review after the data folder moved."));
   const automation=async(paused)=>{
     if(!serverReady||!desktopSurfaceSecret)throw new Error("Automatic-work controls are unavailable until the desktop server is ready.");
     const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/automation-admission`,{method:paused===undefined?"GET":"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},...(paused===undefined?{}:{body:JSON.stringify({paused})}),signal:AbortSignal.timeout(5000),redirect:"error"});
@@ -3489,7 +4031,9 @@ function initializeBackgroundLifecycle(){
     loadPreferences:()=>{try{if(!preferenceFile)return {};const stat=fs.lstatSync(preferenceFile);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>8192)return {};return JSON.parse(fs.readFileSync(preferenceFile,"utf8"));}catch{return {};}},
     savePreferences:value=>{if(!preferenceFile)throw new Error("An owned installation is required to save startup settings.");if(app.isPackaged)ownedDesktopDataDir();const temporary=`${preferenceFile}.${process.pid}.tmp`;fs.writeFileSync(temporary,JSON.stringify(value),{mode:0o600});fs.renameSync(temporary,preferenceFile);},
     dockAvailable:()=>process.platform==="darwin"&&app.dock?.isVisible()===true,
-    createTray:onOpen=>{const tray=new Tray(trayImage(false));tray.setToolTip("Murage");tray.on("click",onOpen);return tray;},
+    createTray:onOpen=>{const tray=new Tray(trayImage(false));tray.setToolTip("Murage");tray.on("click",onOpen);trayIcon=tray;return tray;},
+    // S6: the tray panel (built on first use) and the device's tray preference. Off, a tray click opens the window as before.
+    trayPanel:attentionSurfaces?.trayPanel,trayPanelOn:()=>notifySurfaces?.get()?.surfaces?.tray===true,
     presentTray:(()=>{let shown=null;return(tray,view)=>{
       tray.setToolTip(view.tooltip);
       if(process.platform==="darwin")tray.setTitle(view.title);
@@ -3497,15 +4041,16 @@ function initializeBackgroundLifecycle(){
     };})(),
     harness:{get:route=>harnessJson(route),post:(route,body)=>harnessJson(route,body)},
     watch:watchTrayInbox,
-    openTarget:target=>sendWhenLoaded("tray:open",target),
+    openTarget,
     checkForUpdates:app.isPackaged?()=>{checkForUpdatesNow();}:undefined,
-    setTrayMenu:(tray,items)=>tray.setContextMenu(Menu.buildFromTemplate(items)),
-    probeTray:tray=>process.platform==="linux"?linuxTrayHostAvailable(execFile):(()=>{try{const bounds=tray.getBounds();return bounds.width>0&&bounds.height>0;}catch{return false;}})(),
+    // With a panel the menu is built and RETURNED unattached (a right click pops it up); without, it is attached as before.
+    setTrayMenu:(tray,items,{manual=false}={})=>{const menu=Menu.buildFromTemplate(items);if(!manual)tray.setContextMenu(menu);return menu;},
+    probeTray:tray=>process.platform==="linux"?linuxTrayHostAvailable(execFileInherited):(()=>{try{const bounds=tray.getBounds();return bounds.width>0&&bounds.height>0;}catch{return false;}})(),
     openWindow:()=>{if(pendingSwap&&!pendingSwap.done){pendingSwap.wantVisible=true;pendingSwap.wantFocus=true;const old=pendingSwap.old;if(!old.isDestroyed()){if(old.isMinimized())old.restore();old.show();old.focus();}return;}const win=mainWindow&&!mainWindow.isDestroyed()?mainWindow:createWindow();if(win.isMinimized())win.restore();win.show();win.focus();},
     openInbox:()=>sendWhenLoaded("startup-background:open-inbox"),
     explainClose:async win=>{const options={type:"info",title:"Murage stays available",message:"Closing this window keeps Murage running.",detail:"Use the Murage menu bar or tray icon to reopen it, open Inbox or quit. Automatic work only runs while Murage is open and this computer is awake. Change this in Settings → General → Startup & background.",buttons:["Keep running","Quit Murage"],defaultId:0,cancelId:0};const result=win?await dialog.showMessageBox(win,options):await dialog.showMessageBox(options);return result.response===1?"quit":"keep";},
     automationStatus:()=>automation(),setAutomationsPaused:paused=>automation(paused),quit:requestOwnerQuit,
-    onChange:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("startup-background:changed",state);},
+    onChange:state=>{applyUnreadBadge();if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("startup-background:changed",state);},
     onError:error=>{slog(`startup/background: ${error.message}`);},
   });
   return {lifecycle:backgroundLifecycle,login};
@@ -3516,6 +4061,45 @@ function backgroundForEvent(event){
 }
 ipcMain.handle("startup-background:status",event=>backgroundForEvent(event).status());
 ipcMain.handle("startup-background:update",(event,patch)=>backgroundForEvent(event).update(patch));
+// Device notification surfaces: the main window only (local-only class); one key per set, validated in main.
+const notifySurfacesForEvent=()=>{initializeNotifySurfaces();return notifySurfaces;};
+ipcMain.handle("notify-surfaces:get",()=>notifySurfacesForEvent().get());
+ipcMain.handle("notify-surfaces:set",async(_event,key,value)=>{
+  const prefs=notifySurfacesForEvent();
+  if(key!=="shortcut"&&key!=="surfaces.shortcut"){const state=prefs.set(key,value);refreshBadgePreferences();return state;}
+  const owner=await initializeGlobalShortcut(),before=prefs.get();
+  let result;
+  if(key==="shortcut")result=value===null?owner.sync(null):owner.trySet(value);
+  else if(value===true)result=owner.trySet(before.shortcut);
+  else if(value===false)result=owner.sync(null);
+  else return {ok:false,reason:"invalid"};
+  if(!result.ok)return result;
+  try{
+    const state=prefs.set(key,value);
+    // Recording tests the key even when the surface is off; enabling the row activates it.
+    if(!state.surfaces.shortcut||state.shortcut===null)owner.sync(null);
+    refreshBadgePreferences();
+    return state;
+  }catch(error){
+    const restored=owner.sync(before.surfaces.shortcut?before.shortcut:null);
+    if(!restored.ok)owner.sync(null);
+    throw error;
+  }
+});
+ipcMain.handle("notify-surfaces:reset",()=>{
+  const state=notifySurfacesForEvent().reset();
+  shortcutOwner?.sync(null);
+  refreshBadgePreferences();
+  return state;
+});
+// The Mac permission prompt, asked only from the first-run chooser's Continue click (design 3.1); nothing to ask on other systems.
+ipcMain.handle("notify-surfaces:ensure-permission",async()=>{notifySurfacesForEvent();if(process.platform!=="darwin")return{authorized:true};try{const result=await notificationAuthorization.ensure();return{authorized:result?.authorized===true};}catch{return{authorized:false};}});
+ipcMain.handle("notify-surfaces:capabilities",async()=>{
+  const caps=notifyCapabilities({platform:process.platform,env:process.env,trayHost:process.platform==="linux"?await linuxTrayHostAvailable(execFileInherited).catch(()=>null):null});
+  const owner=await initializeGlobalShortcut();
+  if(owner.status().disabledReason)caps.surfaces.shortcut={available:false,reason:"portal-needed"};
+  return caps;
+});
 
 // The origin the owned main window should show, read lazily because the
 // packaged server port is chosen at boot. null (never trusted) if unparsable.
@@ -3527,7 +4111,7 @@ function ownedMainContents() {
   return mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
 }
 
-function createWindow({quiet=false}={}) {
+function createWindow({quiet=false,url=null}={}) {
   if (app.isPackaged && desktopRecoveryMode) return showDesktopRecovery();
   const primary = screen.getPrimaryDisplay();
   const displays = [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)];
@@ -3536,6 +4120,7 @@ function createWindow({quiet=false}={}) {
   // the OS is doing right now, which is also what the renderer's "auto" default
   // will resolve to. Either way the very first frame is the right colour.
   persistedSkin = readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light");
+  const rendererOrigin = trustedRendererOrigin();
   const win = new BrowserWindow({
     ...restored.bounds,
     minWidth: 900,
@@ -3561,8 +4146,11 @@ function createWindow({quiet=false}={}) {
       additionalArguments: [...rendererOriginArguments(trustedRendererOrigin()), ...(cloudHome ? ["--murage-cloud=1"] : [])],
     },
   });
+  // The origin this window was created for: its preload's bridge belongs to that origin only (B6, followRestartedServer).
+  win.murageRendererOrigin = rendererOrigin;
   mainWindow = win;
   win.on("focus", () => cloudLive.probeOnFocus());
+  win.webContents.on("did-finish-load", () => startupIpc.deliver());
   desktopMark("window.created");
   win.once("ready-to-show", () => { desktopMark("window.ready-to-show"); noteVersionStarted({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }); });
   // The bar reaches 100% when the real window exists; the window appears, and
@@ -3580,9 +4168,15 @@ function createWindow({quiet=false}={}) {
       pendingRevealWindows.delete(win);
       if (restored.maximized) win.maximize();
       win.show();
+      desktopMark("splash.handoff");
       closeStartupSplash();
     };
-    win.once("ready-to-show", reveal);
+    // The splash decides when: at once if it was never drawn (a fast start), else after its minimum dwell and any fade in progress.
+    // A window that is closed or swapped while that is pending is dropped by reveal's own checks above.
+    win.once("ready-to-show", () => {
+      const splash = startupSplash;
+      if (splash && typeof splash.whenRevealable === "function") splash.whenRevealable(reveal); else reveal();
+    });
   }
   win.on("close",event=>backgroundLifecycle?.handleClose(event));
   attachUpdaterWindow(win);
@@ -3602,13 +4196,14 @@ function createWindow({quiet=false}={}) {
   // default browser; the startup error page's own server-log link opens that
   // one file. Everything else is refused (S1-T2, adapted from OpenMausBot #986).
   win.webContents.setWindowOpenHandler(createMainWindowOpenHandler({
-    openExternal: (url) => shell.openExternal(url),
+    openExternal: (url) => osShell.openExternal(url),
     openDiagnosticsLog: async () => {
-      const error = await shell.openPath(path.join(LOG_DIR, "server.log"));
+      const error = await osShell.openPath(path.join(LOG_DIR, "server.log"));
       if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE");
     },
     currentUrl: () => (win.isDestroyed() ? "" : win.webContents.getURL()),
-    diagnosticsLogHref: () => (app.isPackaged ? pathToFileURL(path.join(LOG_DIR, "server.log")).href : null),
+    trustedOrigin: () => trustedRendererOrigin(),
+    errorPageUrl: () => lastErrorPageUrl,
     warn: (message) => console.warn(`[external-link] ${message}`),
   }));
   // The privileged preload must never end up on another origin (B6). A link
@@ -3617,12 +4212,36 @@ function createWindow({quiet=false}={}) {
   // redirect off the renderer origin, is refused.
   const navigationGuard = createMainNavigationGuard({
     origin: trustedRendererOrigin,
-    openExternal: (url) => shell.openExternal(url),
+    openExternal: (url) => osShell.openExternal(url),
     warn: (message) => console.warn(`[navigation] ${message}`),
   });
   win.webContents.on("will-navigate", navigationGuard.willNavigate);
   win.webContents.on("will-redirect", navigationGuard.willRedirect);
-  win.webContents.on("did-finish-load", () => { deliverPackageInstall(win); cloudLinks.drain(); });
+  appReadiness.track(win.webContents);
+  rendererSessions.track(win.webContents);
+  // A window left on Chromium's error document (the setup page's refresh met a dead server) reloads once the server answers: decided
+  // level-triggered from the live committed document, never from failure events (WIN-NOROUTE-1019 S7, A15).
+  loadFailureRecoveries.set(win.webContents, attachLoadFailureRecovery(win.webContents, {
+    origin: () => trustedRendererOrigin(),
+    inspect: () => inspectMainDocument(win.webContents),
+    readiness: () => appReadiness.stateOf(win.webContents),
+    busy: () => mainRendererRecovering,
+    quitting: () => desktopShutdownStarted || win.isDestroyed(),
+    documentHref: () => win.webContents.mainFrame.executeJavaScript("location.href", false),
+    healthy: async () => {
+      const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/health`, { signal: AbortSignal.timeout(2000) });
+      return res.ok;
+    },
+    reload: (target) => {
+      if (win.isDestroyed()) return;
+      // A window created for another port has no bridge on this one: it is replaced, never reloaded there.
+      if (app.isPackaged && win === mainWindow && win.murageRendererOrigin !== trustedRendererOrigin()) { followRestartedServer(); return; }
+      void win.loadURL(target).catch(() => {});
+    },
+    log: slog,
+  }));
+  win.webContents.on("did-finish-load", () => { deliverPackageInstall(win); cloudLinks.drain(); appReadiness.flush(win.webContents); });
+  win.webContents.on("did-finish-load", () => flushCloudLinkEvent(win));
 
   // A renderer crash used to leave NO trace anywhere. RootErrorBoundary logs
   // "Murage failed to render" to the renderer console, and the renderer
@@ -3643,6 +4262,7 @@ function createWindow({quiet=false}={}) {
   const rendererRecovery = createRendererRecovery({
     quitting: () => desktopShutdownStarted || win.isDestroyed(),
     serverState: () => (app.isPackaged ? serverLifecycleState.state : "running"),
+    documentHref: () => win.webContents.mainFrame.executeJavaScript("location.href", false),
     healthy: async () => {
       if (!app.isPackaged) return true;
       const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/health`, { signal: AbortSignal.timeout(2000) });
@@ -3655,6 +4275,7 @@ function createWindow({quiet=false}={}) {
       // A window whose GPU process died with it stays black on macOS even after
       // a reload (measured: page running, nothing painted); a fresh window paints.
       if (win === mainWindow && Date.now() - gpuLostAt < GPU_LOSS_REPLACE_WINDOW_MS && lastWindowReplaceAt < gpuLostAt && replaceMainWindow("gpu-lost")) return;
+      if (app.isPackaged && win === mainWindow && win.murageRendererOrigin !== trustedRendererOrigin()) { followRestartedServer(); return; }
       void win.loadURL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).catch(() => {});
     },
     showRecovery: () => { showDesktopRecovery("STARTUP_FAILED"); },
@@ -3666,7 +4287,7 @@ function createWindow({quiet=false}={}) {
   win.webContents.on("render-process-gone", (_event, details) => {
     console.error(`[renderer] process gone: ${details.reason} (exitCode ${details.exitCode})`);
     if (win === mainWindow) mainRendererRecovering = true;
-    void rendererRecovery.onGone(details).catch((error) => slog(`renderer recovery threw ${error?.message ?? error}`));
+    void rendererRecovery.onGone(details).catch((error) => slog(`renderer recovery threw ${error?.message ?? error}`)).finally(() => { mainRendererRecovering = false; });
   });
   // The dev server being down is the other black-window cause, and it is the
   // one that has actually bitten: Electron loads DEV_URL once and never
@@ -3824,7 +4445,9 @@ function createWindow({quiet=false}={}) {
   }
 
   if (app.isPackaged) {
-    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : buildErrorPage({ allPortsOccupied: serverStartConflictOnly }));
+    // A window that follows a moved engine opens at the chat it had (followRestartedServer), on this window's own origin only.
+    const start = url && new URL(url).origin === rendererOrigin ? url : `http://127.0.0.1:${SERVER_PORT}`;
+    win.loadURL(serverReady ? start : buildErrorPage({ allPortsOccupied: serverStartConflictOnly }));
   } else {
     win.loadURL(DEV_URL);
   }
@@ -3855,7 +4478,7 @@ ipcMain.handle("screen:frame", async () => {
 // The one reliable path is the first real in-process capture
 // (screen:frame above / getDisplayMedia via the handler below) — macOS
 // prompts then, attributed correctly, at the moment of actual use. The
-// perm:open-settings deep link stays as the repair path for denials.
+// perm:open-settings opens System Settings as the repair path for denials.
 // window.muragebox.copyText: write-only, text only, capped at 1 MB (clipboard-write.mjs).
 ipcMain.handle("clipboard:write", (event, text) => writeClipboardText(event, text, {
   clipboard, window: mainWindow, origin: trustedRendererOrigin(),
@@ -3901,7 +4524,7 @@ const localEngineApi = async (path, body, { timeoutMs = 20000 } = {}) => {
   return { status: response.status, body: await response.json().catch(() => null) };
 };
 const localEngineLogin = createLocalEngineLogin({
-  api: localEngineApi, spawn: spawn, launchTerminal: (recipe) => launchRecipeTerminal(recipe), log: slog,
+  api: localEngineApi, spawn: spawnInherited, launchTerminal: (recipe) => launchRecipeTerminal(recipe), log: slog,
   killTree: (child, signal) => {
     if (process.platform === "win32") { spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore", shell: false }).once("error", () => {}); return; }
     try { process.kill(-child.pid, signal); } catch { child.kill(signal); }
@@ -3999,7 +4622,7 @@ ipcMain.handle("desktop:reveal-workspace", async (event, botId, threadId) => {
   if (typeof result.path !== "string" || !path.isAbsolute(result.path)) throw new Error("Working folder could not be verified.");
   const stat = fs.lstatSync(result.path);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Working folder changed. Refresh Files.");
-  const error = await shell.openPath(result.path);
+  const error = await osShell.openPath(result.path);
   if (error) throw new Error("The operating system could not open this folder.");
 });
 
@@ -4021,8 +4644,8 @@ ipcMain.handle("desktop:artifact-action", async (event, id, action) => {
   if (action === "open" && ![".html", ".htm", ".txt", ".md", ".csv", ".json", ".pdf", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".png", ".jpg", ".jpeg", ".gif", ".webp"].includes(path.extname(savedPath).toLowerCase())) {
     throw new Error("This file type cannot be opened directly by Murage. Download or reveal it for manual review.");
   }
-  if (action === "reveal") shell.showItemInFolder(savedPath);
-  else { const error = await shell.openPath(savedPath); if (error) throw new Error("The operating system could not open this file. Download it instead."); }
+  if (action === "reveal") osShell.showItemInFolder(savedPath);
+  else { const error = await osShell.openPath(savedPath); if (error) throw new Error(error); }
 });
 
 // F4-T5: open or reveal a live workspace file (the Workspace view and the
@@ -4056,8 +4679,8 @@ ipcMain.handle("desktop:workspace-file-action", createWorkspaceFileActionHandler
       buttons: ["Cancel", "Open in browser"], defaultId: 0, cancelId: 0 });
     return decision.response === 1;
   },
-  openPath: (file) => shell.openPath(file),
-  revealPath: (file) => shell.showItemInFolder(file),
+  openPath: (file) => osShell.openPath(file),
+  revealPath: (file) => osShell.showItemInFolder(file),
 }));
 
 // Native writers use the installation this process owns (B1/B3): after a
@@ -4104,7 +4727,7 @@ ipcMain.handle("desktop:save-file", createSaveFileHandler({
     });
     return choice.canceled || !choice.filePath ? null : choice.filePath;
   },
-  reveal: (filePath) => shell.showItemInFolder(filePath),
+  reveal: (filePath) => osShell.showItemInFolder(filePath),
 }));
 
 // The renderer owns the palette. Native Windows/Linux chrome is intentionally
@@ -4116,7 +4739,8 @@ ipcMain.handle("desktop:save-file", createSaveFileHandler({
 // would be rejected here rather than silently getting dark chrome on a light
 // desktop. Recording it is what makes the NEXT cold start open with the right
 // window background instead of a black rectangle.
-ipcMain.handle("desktop:skin", (_event, skin) => {
+ipcMain.handle("desktop:skin", (event, skin) => {
+  if (browserPopouts.isSender(event)) return persistedSkin;
   if (!isKnownSkin(skin)) return false;
   if (skin !== persistedSkin) {
     persistedSkin = skin;
@@ -4132,7 +4756,7 @@ ipcMain.handle("desktop:skin", (_event, skin) => {
 ipcMain.handle("desktop:open-external", createOpenExternalHandler({
   isTrustedSender: ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin }),
   isCloudSender: (event) => cloudHome?.isCloudSender(event) === true,
-  openExternal: (url) => shell.openExternal(url),
+  openExternal: (url) => osShell.openExternal(url),
 }));
 
 // The terms screen's Quit (src/components/TermsGate.tsx): the person who will
@@ -4143,6 +4767,33 @@ ipcMain.handle("desktop:quit", (event) => {
   if (isTermsQuitSender(event) !== true) throw new Error("Quit is available only from the main Murage window");
   requestOwnerQuit();
 });
+
+// Pop out view is available on macOS, Windows and Linux. This child window
+// shares the existing browser session and never changes its control hold.
+ipcMain.handle("browser-popout:open", (_event, botId) => {
+  if (!BROWSER_POPOUT_PLATFORMS.includes(process.platform)) throw Error("Pop out view is unavailable on this platform");
+  return browserPopouts.open(botId);
+});
+ipcMain.handle("browser-popout:close", (event, botId) => browserPopouts.close(botId, browserPopouts.isSender(event) ? event.sender : undefined));
+ipcMain.handle("browser-popout:state-now", event => ({
+  available: BROWSER_POPOUT_PLATFORMS.includes(process.platform),
+  windows: browserPopouts.isSender(event)
+    ? browserPopouts.states(event.sender)
+    : browserPopouts.states(),
+}));
+
+if (cloudHome) {
+  ipcMain.handle("cloud-home:browser-popout:open", (event, botId) => {
+    if (!BROWSER_POPOUT_PLATFORMS.includes(process.platform)) throw Error("Pop out view is unavailable on this platform");
+    if (!cloudHome) throw Error("The Cloud window is unavailable");
+    return cloudHome.browserPopouts.open(event, botId);
+  });
+  ipcMain.handle("cloud-home:browser-popout:close", (event, botId) => cloudHome?.browserPopouts.close(event, botId) ?? false);
+  ipcMain.handle("cloud-home:browser-popout:state-now", event => ({
+    available: BROWSER_POPOUT_PLATFORMS.includes(process.platform),
+    windows: cloudHome?.browserPopouts.states(event) ?? [],
+  }));
+}
 
 // The Box VNC viewer must be a top-level page for its token exchange. A
 // sandboxed modal BrowserWindow satisfies that requirement while keeping the
@@ -4204,20 +4855,12 @@ ipcMain.handle("perm:request-mic", async () => {
   }
 });
 
-// macOS never re-prompts a denied permission — the only path is System
-// Settings; deep-link straight to the right privacy pane.
-ipcMain.handle("perm:open-settings", (_event, pane) => {
+// A denied macOS permission is repaired in the user's System Settings app.
+// OS URL handlers are restricted to web and mail links by the shell boundary.
+ipcMain.handle("perm:open-settings", async () => {
   if (!nativeActions.applePrivacySettings) return false;
-  const panes = {
-    mic: "Privacy_Microphone",
-    screen: "Privacy_ScreenCapture",
-    speech: "Privacy_SpeechRecognition",
-    accessibility: "Privacy_Accessibility",
-  };
-  // own-property lookup only — a renderer-supplied "__proto__"/"constructor"
-  // would otherwise resolve up the prototype chain to a truthy object
-  const anchor = Object.hasOwn(panes, pane) ? panes[pane] : "Privacy";
-  return shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${anchor}`);
+  const error = await osShell.openPath("/System/Applications/System Settings.app");
+  if (error) throw new Error(error);
 });
 
 ipcMain.handle("speech:start", (event, options) => {
@@ -4392,12 +5035,15 @@ const providerBankReconciliation = createProviderBankReconciliation({
 });
 
 async function mutateFluxConnectionInMain(input) {
+  const runComposioLifecycle = () => runComposioLifecyclePass({ trigger: "credentials" });
   if (!(await ensureDesktopSurfaceSecret())) throw new Error("Desktop authorization is not ready. Try again shortly.");
   if (app.isPackaged) await assertSecretStorageWritable();
   return mutateFluxCredentials(input, {
     packaged: app.isPackaged,
     // Flux also writes the provider bank, so it settles the same fence first.
-    updateDocument: fenceProviderDocumentUpdate(updateSecureCredentialDocument, { reconciliation: providerBankReconciliation, post: postModelProviderCommit }),
+    updateDocument: fenceProviderDocumentUpdate((derive, afterPersist, options) => updateSecureCredentialDocument(
+      async current => withComposioCredentialChange(current, await derive(current), fluxComposioBrokerUrlValue()), afterPersist, options,
+    ), { reconciliation: providerBankReconciliation, post: postModelProviderCommit }),
     post: (route, body) => modelProviderCommitRequest(route, { body, failure: "Could not save Flux connection." }),
     afterDocument: () => syncManagedComposioCredentials(),
   }).then((status) => {
@@ -4434,7 +5080,7 @@ ipcMain.handle("flux-signin:start", async (_event, input) => {
     let config = null;
     try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config follows the default (on) */ }
     assertFluxDesktopSigninEnabled(config);
-    const { key } = await runFluxDesktopSignin({ openExternal: (url) => shell.openExternal(url) });
+    const { key } = await runFluxDesktopSignin({ openExternal: (url) => osShell.openExternal(url) });
     const status = await mutateFluxConnectionInMain({ action, revision, key });
     return { ok: true, status };
   } catch (error) {
@@ -4454,7 +5100,7 @@ ipcMain.handle("email-owner-signin:start", async () => {
     assertFluxDesktopSigninEnabled(config);
     const gate = await modelSignInGate();
     if (gate) return { ok: false, code: gate.error, message: "Murage could not keep the sign-in on this computer." };
-    const { key: owner } = await runFluxDesktopSignin({ openExternal: (url) => shell.openExternal(url), scope: EMAIL_OWNER_SCOPE, readToken: readEmailOwnerToken });
+    const { key: owner } = await runFluxDesktopSignin({ openExternal: (url) => osShell.openExternal(url), scope: EMAIL_OWNER_SCOPE, readToken: readEmailOwnerToken });
     await updateSecureCredentialDocument((current) => withEmailOwner(current, owner), undefined, { skipUnchanged: true });
     serverProc?.postMessage({ type: EMAIL_OWNER_MESSAGE, owner });
     return { ok: true };
@@ -4500,8 +5146,7 @@ ipcMain.handle("composio:claim-legacy", async () => {
 // mint. Mint first, then end this install's old token.
 ipcMain.handle("composio:reconnect", async () => {
   if (!fluxComposioLifecycleEnabled()) throw new Error("FluxRouter connected apps run from the installed Murage app, not a development launch");
-  await composioTokenRejections.reconnect();
-  return { reconnected: true };
+  return composioTokenRejections.reconnect();
 });
 
 // Plan sign-in (ChatGPT, Grok). Ported from Wayland's chatgptAuth/xaiAuth
@@ -4518,7 +5163,7 @@ const modelSignIn = createModelSignIn({
     if (!target) return;
     target.postMessage({ type: "murage:model-signin", entries });
   },
-  openExternal: (url) => shell.openExternal(url),
+  openExternal: (url) => osShell.openExternal(url),
   createServer: () => createLoopbackServer(),
   randomId: randomUUID,
   log: slog,
@@ -4570,10 +5215,45 @@ const mcpServers = createMcpServers({
     return updateSecureCredentialDocument(derive, undefined, { skipUnchanged: true });
   },
   commit: mcpCommitRequest,
-  openExternal: (url) => shell.openExternal(url),
+  openExternal: (url) => osShell.openExternal(url),
   createServer: () => createLoopbackServer(),
   log: slog,
 });
+// Source owns the two server handlers. Their private payloads never return to
+// the renderer; only IDs enter this bridge and a value-free result leaves it.
+const highlevelCredentials = createHighLevelCredentialBridge({
+  commitCredential: highlevelCommitCredential,
+  readDocument: () => {
+    if (!secureCredentialState || credentialStoreUnavailable) throw Error("HighLevel secure storage unavailable");
+    return secureCredentialState.read();
+  },
+  assertSafeStorage: () => assertHighLevelSafeStorage({ safeStorage, storeUnavailable: credentialStoreUnavailable }),
+  updateDocument: async (derive) => {
+    await updateSecureCredentialDocument(derive);
+    // The bank must survive a crash before metadata can become active.
+    const file = fs.openSync(CREDENTIALS_FILE, "r+");
+    try { fs.fsyncSync(file); } finally { fs.closeSync(file); }
+    if (process.platform !== "win32") {
+      const directory = fs.openSync(path.dirname(CREDENTIALS_FILE), "r");
+      try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+    }
+  },
+  request: async (action, body, credential) => {
+    if (!(await ensureDesktopSurfaceSecret()) || !serverProc) throw Error("HighLevel desktop unavailable");
+    const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/highlevel/credential-commit/${action}`, {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(15_000),
+      headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${credential}` },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw Error("HighLevel credential commit refused");
+    return response.json();
+  },
+});
+ipcMain.handle("highlevel:commit", async (_event, input) => {
+  if (!app.isPackaged || !serverProc) return { ok: false, error: "unavailable" };
+  return highlevelCredentials.commit(input);
+});
+
 async function mcpServersGate() {
   if (!(await ensureDesktopSurfaceSecret())) throw new Error("Desktop authorization is not ready. Try again shortly.");
   if (!app.isPackaged || !serverProc) return { ok: false, error: "desktop-only", message: "This needs the Murage desktop app." };
@@ -4862,7 +5542,7 @@ async function initializeBackupScheduleHost(){
   // 1.0.9 Sentinel: the backup-status manifest follows each durable commit of this coordinator (never ahead of it).
   // Every path into review commits here. Told on the next turn, after any note
   // the same step writes; Backup mode and closed runs are told after they reopen.
-  const coordinator=new BackupCoordinator({stateDirectory,onCommitted:state=>{sentinelHost?.backupCommitted(state);if(backupStopCommitted(state)&&!desktopRecoveryMode)setImmediate(()=>{void announceLastBackupFailure().catch(()=>{});});}});
+  const coordinator=new BackupCoordinator({stateDirectory,restoreWindow:()=>restoreWindowOpenOnDisk(installation),onCommitted:state=>{sentinelHost?.backupCommitted(state);if(backupStopCommitted(state)&&!desktopRecoveryMode)setImmediate(()=>{void announceLastBackupFailure().catch(()=>{});});}});
   closedTrace("coordinator ready");
   const provider=createNativeClosedBackupProvider({home:app.getPath("home")});
   closedBackupController=createClosedBackupController({
@@ -5017,13 +5697,25 @@ const desktopStartup = app.whenReady().then(async () => {
     void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>{closedTrace("run");return backupScheduleHost.runClosedDue();}).then(result=>{closedTrace(`result ${result?.status}${result?.reason?" "+result.reason:""}`);return finishClosedBackup(result);}).catch(()=>{closedTrace("failed");return finishClosedBackup({status:"unavailable"});});
     return;
   }
+  // An install this app (any version since 1.0.20) started paused these jobs;
+  // whatever runs next puts them back, before the closed-app job is rebuilt.
+  if (app.isPackaged) desktopUpdateLaunchPause().resume();
   // Show something now: browser host, backup check and server boot (up to the
   // 60s health cap) all run before the real window can load. Not for login
   // launches, which start quietly, nor for backup-mode relaunches.
   if (app.isPackaged && !process.argv.includes(BACKUP_MODE_ARGUMENT) && !process.argv.includes("--murage-login")) {
     let wasOpenedAtLogin = false;
     try { wasOpenedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin === true; } catch { /* unsupported platform */ }
-    if (!wasOpenedAtLogin) { startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: app.getLocale?.(), onUserClose: requestOwnerQuit, note: firstStartOfVersion({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }) ? FIRST_AFTER_UPDATE_NOTE : "" }); desktopMark("splash.shown"); }
+    if (!wasOpenedAtLogin) {
+      const splashUserData = () => app.getPath("userData"), splashVersion = () => app.getVersion();
+      const picture = readStartupPicture({ userData: splashUserData });
+      const mode = splashMode({ userData: splashUserData, appVersion: splashVersion, picture });
+      let reducedMotion = false;
+      try { reducedMotion = systemPreferences.getAnimationSettings?.().prefersReducedMotion === true; } catch { /* not supported here */ }
+      // created hidden: it is drawn after the grace, and only if the window is not ready by then (splash.shown, splash.fade come from its own clock)
+      startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: app.getLocale?.(), onUserClose: requestOwnerQuit, mode, picture, version: splashVersion, reducedMotion, sinceLaunchMs: () => process.uptime() * 1000, onWhatsNew: () => startupIpc.requestWhatsNew(), onMark: desktopMark });
+      desktopMark("splash.created");
+    }
   }
   const connectionError = error => dialog.showErrorBox("Murage server connection", error.message);
   const serverConnections = createServerConnections({ BrowserWindow, session, onError: connectionError });
@@ -5042,15 +5734,18 @@ const desktopStartup = app.whenReady().then(async () => {
     Menu.setApplicationMenu(applicationMenu);
   } else Menu.setApplicationMenu(serverMenu);
   if (app.isPackaged) {
-    const prepareItem = { label: "Prepare to reinstall Murage 1.0.2…", click: () => { void prepareForPreviousVersion().catch(() => {}); } };
+    const prepareItem = { label: "Prepare to reinstall Murage 1.0.18…", click: () => { void prepareForPreviousVersion().catch(() => {}); } };
+    const prepareOlderItem = { label: "Prepare to reinstall Murage 1.0.2…", click: () => { void prepareForPreviousVersion("1.0.2").catch(() => {}); } };
     const currentMenu = Menu.getApplicationMenu();
     const helpItem = currentMenu?.items.find(item => item.role === "help" || item.label === "Help");
-    if (helpItem?.submenu) { helpItem.submenu.append(new MenuItem(prepareItem)); Menu.setApplicationMenu(currentMenu); }
-    else if (currentMenu) { currentMenu.append(new MenuItem({ label: "Help", submenu: [prepareItem] })); Menu.setApplicationMenu(currentMenu); }
+    if (helpItem?.submenu) { helpItem.submenu.append(new MenuItem(prepareItem)); helpItem.submenu.append(new MenuItem(prepareOlderItem)); Menu.setApplicationMenu(currentMenu); }
+    else if (currentMenu) { currentMenu.append(new MenuItem({ label: "Help", submenu: [prepareItem, prepareOlderItem] })); Menu.setApplicationMenu(currentMenu); }
   }
   if (app.isPackaged) { acquireDesktopDataOwner(); await initializeSentinelHost(); }
   await initializeBackupScheduleHost();
   desktopMark("backup-host.ready");
+  initializeNotifySurfaces();
+  initializeAttentionActions();
   const backupDispatch=backupStartupDispatch({host:backupScheduleHost,backupMode:process.argv.includes(BACKUP_MODE_ARGUMENT),publish:()=>backupScheduleHost?.publishCommitted()});
   if(backupDispatch.blocked){showDesktopRecovery("BACKUP_REQUESTED");return;}
   // A settled wait whose installer offer or landed hops were unreadable pauses for review (BW-B9).
@@ -5334,15 +6029,7 @@ void androidDevice.reclaimOrphan().catch(() => {});
     // must never mint another anonymous Worker identity. An existing Worker
     // token is left untouched — it is what the claim moves, and what the app
     // falls back to while FluxRouter is unreachable.
-    void updateSecureCredentialDocument(deriveManagedComposioCredentials({
-      brokerUrl: composioBrokerUrl(),
-      registrationAllowed: !fluxComposioBrokerUrlValue(),
-      timeoutSignal: (milliseconds) => AbortSignal.any([
-        managedComposioShutdown.signal,
-        AbortSignal.timeout(milliseconds),
-      ]),
-      log: slog,
-    }), undefined, MANAGED_COMPOSIO_UPDATE_OPTIONS).finally(syncManagedComposioCredentials).catch(() => {
+    void connectedAppsAuthority().request({ operation: "register" }).finally(syncManagedComposioCredentials).catch(() => {
       if (!desktopShutdownStarted) slog("connected-apps registration did not complete");
     });
   }
@@ -5369,6 +6056,7 @@ function closeSplashWhenNoMainWindow() {
 }
 // A Cloud link that arrived during startup drains once startup is through (and again on window load and the live flip).
 void desktopStartup.then(() => cloudLinks.drain()).catch(() => {});
+dispatchBadgeTask(parseMurageTask(process.argv));
 void desktopStartup.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted){backupScheduleHost?.start();void backupRemoteReady.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted)startAutomaticRemoteBackups();});}}).catch(()=>{});
 const startupSettleDeps = {
   record: recordStartupRefusal,
@@ -5383,8 +6071,7 @@ const startupSettleDeps = {
   packaged: () => app.isPackaged,
   shutdownStarted: () => desktopShutdownStarted,
   closeSplash: closeStartupSplash,
-  showRecovery: error => showDesktopRecovery(error?.code === "RESTORE_REVIEW_REQUIRED" ? "RESTORE_REVIEW_REQUIRED"
-    : error?.code === "LEASE_FOREIGN_HOST" ? "LEASE_FOREIGN_HOST" : "STARTUP_FAILED"),
+  showRecovery: error => showDesktopRecovery(startupRecoveryReason(error?.code)),
   showError: () => dialog.showErrorBox("Murage could not open this installation", "Murage could not finish desktop startup. Installation data was preserved. Check the local startup diagnostics, then reopen Murage."),
   cleanup: cleanupDesktopForExit,
   retain: retry => {
@@ -5408,6 +6095,7 @@ app.on("window-all-closed", () => {
   }
 });
 app.on("will-quit",()=>backgroundLifecycle?.dispose());
+app.on("will-quit",()=>shortcutOwner?.dispose());
 
 // EMBEDDING.md lifecycle rule: defer the first quit until the embedded
 // daemon's async cleanup completes — it can't run after the host exits.
@@ -5480,7 +6168,7 @@ function cleanupDesktopForExit(reason="user-stop",token) {
   const localEngineLoginEnded = localEngineLogin.shutdown().catch(() => {});
   modelSignIn.dispose();
   mcpServers.dispose();
-  notificationAuthorization.invalidate();showApprovalNotification.dispose();
+  notificationAuthorization.invalidate();showApprovalNotification.dispose();bannerNative?.dispose();attentionSurfaces?.dispose();
   desktopBackupTool.invalidate();
   desktopResticTool?.invalidate();
   remoteBackupAttestation.abort();
@@ -5492,9 +6180,9 @@ function cleanupDesktopForExit(reason="user-stop",token) {
   // Release the sleep blocker synchronously; child shutdown is awaited below.
   syncCompanionKeepAwake(false);
   // The bundled adb daemon is not a child: it forks itself off the first adb
-  // command and stays, holding its port. Stop the one this app started, and
-  // start doing so now so it overlaps the rest of shutdown. It resolves
-  // either way, so quitting never waits on a phone.
+  // command and stays, holding its port. Stop the one this app started now
+  // so it overlaps the rest of shutdown. The bounded stage below observes
+  // completion before installation ownership can be released.
   const androidStopped = Promise.all([androidDevice.stop().catch(() => {}), localEngineLoginEnded]);
   // A live dictation or recorder session runs its own helper app that holds
   // the mic or a global event tap. Signal both now so they exit in parallel
@@ -5541,7 +6229,10 @@ function cleanupDesktopForExit(reason="user-stop",token) {
     await awaitOwnedWork(cuaReady, "Computer-use startup has not settled", CUA_STOP_TIMEOUT_MS);
     await awaitOwnedWork(stopCua(), "Computer-use cleanup has not completed", CUA_STOP_TIMEOUT_MS);
     desktopCleanupStage = "android helper";
-    await androidStopped;
+    // Both Android stop and a sign-in already finishing can remain pending.
+    // A backup return must report that uncertainty, retaining the lease, just
+    // like every owned-work stage above; it must never join this wait forever.
+    await awaitOwnedWork(androidStopped, "Android helper or engine sign-in has not stopped");
     desktopCleanupStage = "installation lease release";
     if (desktopDataOwner) {
       desktopDataOwner.release({ exitedChildren: exitedServerChildren });
@@ -5571,7 +6262,7 @@ app.on("child-process-gone", (_event, details) => {
 
 /** Swap the main window for a fresh one at the same place, shown only once it
  * has painted. The old window stays up until then. False when nothing was done. */
-function replaceMainWindow(reason) {
+function replaceMainWindow(reason, url = null) {
   const old = mainWindow;
   if (pendingSwap || replacingMainWindow || desktopShutdownStarted || quitRequested || !old || old.isDestroyed()) return false;
   replacingMainWindow = true;
@@ -5581,7 +6272,7 @@ function replaceMainWindow(reason) {
   const revealWasPending = pendingRevealWindows.has(old);
   pendingRevealWindows.delete(old);
   let fresh = null;
-  try { fresh = createWindow({ quiet: true }); } catch (error) { slog(`main window: replacement failed ${error?.message ?? error}`); }
+  try { fresh = createWindow({ quiet: true, url }); } catch (error) { slog(`main window: replacement failed ${error?.message ?? error}`); }
   replacingMainWindow = false;
   if (!fresh || fresh === old || fresh.isDestroyed?.()) {
     if (mainWindow !== old && !old.isDestroyed()) mainWindow = old;
@@ -5635,6 +6326,17 @@ function replaceMainWindow(reason) {
   return true;
 }
 
+app.on("before-quit", () => { browserPopouts.closeAll(); cloudHome?.browserPopouts.closeAll(); });
+// meetgreet 1.0.19 (quit-notice.mjs): one line per quit naming its cause and profile; a separate-profile copy that is quit by
+// someone else (another app's quit to the shared bundle id, the system, automation) says so on screen before it closes.
+let quitAnnounced = false;
+function announceQuit(cause) {
+  if (quitAnnounced) return;
+  quitAnnounced = true;
+  const { log, notice } = quitAnnouncement({ cause, customProfile: hasCustomUpdaterProfile(process.env) });
+  slog(log);
+  if (notice) { try { if (Notification.isSupported()) new Notification({ title: notice.title, body: notice.body, silent: true }).show(); } catch { /* the log line stands */ } }
+}
 app.on("before-quit", (e) => {
   const backupInternalQuit=internalBackupQuit||returnAuthority.internalQuit;
   if(!backupInternalQuit)backupScheduleHost?.noteStop?.();
@@ -5644,6 +6346,7 @@ app.on("before-quit", (e) => {
     if (shutdownCause === "unclassified") slog("desktop quit unclassified");
   }
   noteShutdownCause(shutdownCause);
+  announceQuit(shutdownCause);
   app.murageShutdownCause=shutdownCause;
   quitRequested = true;
   backgroundLifecycle?.beginQuit();
@@ -5670,3 +6373,7 @@ app.on("before-quit", (e) => {
       else dialog.showErrorBox("Murage is still closing", `Cleanup is waiting on ${desktopCleanupStage}. Installation ownership was kept. Wait, then try Quit again. You can force quit through your operating system, but that is not a verified clean shutdown.`);
     },log:line=>slog(line)}).catch(()=>{});
 });
+
+// Dependency-injected launchers keep inheritance at their own call boundary.
+function spawnInherited(file, args, options) { return spawn(file, [...args], withHideInherit(options)); }
+function execFileInherited(file, args, options, callback) { return execFile(file, [...args], withHideInherit(options), callback); }

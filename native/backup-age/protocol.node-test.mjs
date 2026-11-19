@@ -99,8 +99,13 @@ test("truncated, oversized and trailing control data fail without a closure resu
 const native = readFileSync(new URL("./transport.cpp", import.meta.url), "utf8");
 test("native source uses deny-write/delete guards, NTFS and reparse/link admission", () => {
   assert.match(native, /directory \? FILE_READ_ATTRIBUTES \| FILE_LIST_DIRECTORY : GENERIC_READ/);
-  assert.match(native, /FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT/);
-  assert.doesNotMatch(native, /FILE_SHARE_WRITE|FILE_SHARE_DELETE|ShellExecute|runas|chmod\(/);
+  // MAIN RULING: integrated W-A6 permits writes INTO pinned ancestor directories, while tool/file guards still deny write/delete and every ancestor denies delete.
+  const code = native.replace(/\/\/[^\n]*/g, "");
+  assert.match(code, /openGuard\([^)]*DWORD share = FILE_SHARE_READ\)/);
+  assert.match(code, /share, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT/);
+  assert.match(code, /constexpr DWORD ancestorShare = FILE_SHARE_READ \| FILE_SHARE_WRITE/);
+  assert.match(code, /tool = openGuard\(executable, false\)/);
+  assert.doesNotMatch(code, /FILE_SHARE_DELETE|ShellExecute|runas|chmod\(/);
   assert.match(native, /GetDriveTypeW[\s\S]*DRIVE_FIXED/); assert.match(native, /std::wstring\(fsName\) == L"NTFS"/);
   assert.match(native, /nNumberOfLinks == 1/); assert.match(native, /FileIdInfo/);
 });

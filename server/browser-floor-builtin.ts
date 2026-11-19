@@ -7,6 +7,7 @@
 // returns the same plain "YOUR TURN:" text the extension path returns, so the action is never sent. Unsure is floor.
 // The result is plain text in the tool result, so every engine reads it the same way.
 import { classifyFloor, type FloorFacts, type FloorResult } from "./browser-floor.ts";
+import { currentUpstreamAccounting } from "./memory/upstream-reader.ts";
 import { FLOOR_OWNER_PHRASE } from "../shared/browser-floor-signatures.ts";
 
 export interface BuiltinElement {
@@ -217,13 +218,15 @@ export const floorToolResult = (text: string) => ({ content: [{ type: "text", te
  * bodies can contain page data and never reach the client. Kept outside the
  * executable proxy modules so bundling cannot start a second stdio reader. */
 export async function readBrowserRefusal(response: Response): Promise<{ code: string; text: string } | undefined> {
+  const accounting = currentUpstreamAccounting("collection");
   if (!response.body) return undefined;
   const reader = response.body.getReader();
   try {
     const chunks: Uint8Array[] = []; let bytes = 0;
     for (;;) {
       const chunk = await reader.read();
-      if (chunk.done) break;
+      if (chunk.done) { accounting?.end(); break; }
+      accounting?.accept(chunk.value);
       bytes += chunk.value.length;
       if (bytes > 4096) { await reader.cancel(); return undefined; }
       chunks.push(chunk.value);
@@ -232,7 +235,11 @@ export async function readBrowserRefusal(response: Response): Promise<{ code: st
     // An uncertain effect is never replayed based on raw backend details.
     if (body.code === "uncertain" || body.code === "browser_extension_uncertain") return { code: body.code, text: "The browser step may have happened. Ask the owner to check the page before continuing. Do not repeat this step." };
     return typeof body.code === "string" && /^browser_[a-z0-9_]{1,128}$/.test(body.code) && typeof body.error === "string" ? { code: body.code, text: body.error } : undefined;
-  } catch { return undefined; }
+  } catch (error) {
+    void reader.cancel().catch(() => {});
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+    return undefined;
+  }
   finally { reader.releaseLock(); }
 }
 

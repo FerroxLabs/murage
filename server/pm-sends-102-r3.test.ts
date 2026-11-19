@@ -122,8 +122,9 @@ describe("C a Send again token is bound to one restore generation", () => {
     const row = store.bySendId("t1", "s1")!;
     expect(row.restoreGen).toBeTruthy();
     expect(pendingItem(row).restoreGen).toBe(row.restoreGen);
-    expect(store.accept({ ...input, resend: true }).kind).toBe("existing");
-    expect(store.accept({ ...input, resend: true, restoreGen: "guess" }).kind).toBe("existing");
+    // A real explicit press has an action id, even when its restore token is absent or stale.
+    expect(store.accept({ ...input, resend: true, actionId: "restore-press" }).kind).toBe("existing");
+    expect(store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: "guess" }).kind).toBe("existing");
     expect(store.bySendId("t1", "s1")!.restoreHeld).toBe(true);
   });
 
@@ -136,20 +137,20 @@ describe("C a Send again token is bound to one restore generation", () => {
     const second = store.bySendId("t1", "s1")!.restoreGen!;
     expect(second).not.toBe(first);
     expect(currentRestoreGeneration(db)).toBe(second);
-    const stale = store.accept({ ...input, resend: true, restoreGen: first });
+    const stale = store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: first });
     expect(stale.kind).toBe("existing");
     expect(stale.row.status).toBe("refused");
     expect(stale.row.restoreHeld).toBe(true);
-    expect(store.accept({ ...input, resend: true, restoreGen: second }).kind).toBe("new");
+    expect(store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: second }).kind).toBe("new");
   });
 
   it("an automatic retry of an admitted Send again cannot carry the press across a later restore", () => {
     const { db, store } = setup();
     const token = store.bySendId("t1", "s1")!.restoreGen!;
-    expect(store.accept({ ...input, resend: true, restoreGen: token }).row.status).toBe("sending"); // the click
-    expect(store.accept({ ...input, resend: true, restoreGen: token }).kind).toBe("existing"); // its retry, same generation: no second run
+    expect(store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: token }).row.status).toBe("sending"); // the click
+    expect(store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: token }).kind).toBe("existing"); // its retry, same generation: no second run
     neutralizeRestoredSends(db); // a restore neutralizes the send the click made
-    const retry = store.accept({ ...input, resend: true, restoreGen: token });
+    const retry = store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: token });
     expect(retry.kind).toBe("existing");
     expect(retry.row.restoreHeld).toBe(true);
     expect(retry.row.status).toBe("refused");

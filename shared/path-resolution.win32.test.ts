@@ -19,7 +19,19 @@ const disk = vi.hoisted(() => ({ nodes: new Map<string, { node: Node; shown: str
 vi.mock("node:fs", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs")>();
   const { win32: w } = await import("node:path");
-  const isDrive = (path: unknown): path is string => typeof path === "string" && /^[A-Za-z]:[\\/]/.test(path);
+  // On a real Windows runner the worker's own home and temp folders (server/testing/setup.ts) are drive paths too;
+  // server/config.ts resolves DATA_DIR under that home at import, so they stay on the real disk (nightly 44422378171).
+  const realRoots = [process.env.USERPROFILE, process.env.TEMP, process.env.TMP,
+    (globalThis as Record<symbol, unknown>)[Symbol.for("murage.test.osTmpdir")]]
+    .filter((root): root is string => typeof root === "string" && /^[A-Za-z]:[\\/]/.test(root))
+    .map((root) => w.normalize(root).replace(/\\+$/, "").toLowerCase());
+  // Inside a real root, or on the way down to one (its drive and parents) unless the fake tree holds that folder.
+  const onRealDisk = (path: string) => {
+    const n = w.normalize(path).replace(/(?<=.[^:])\\+$/, "").toLowerCase();
+    return realRoots.some((root) => n === root || n.startsWith(`${root}\\`)
+      || ((root.startsWith(n.endsWith("\\") ? n : `${n}\\`)) && !disk.nodes.has(n)));
+  };
+  const isDrive = (path: unknown): path is string => typeof path === "string" && /^[A-Za-z]:[\\/]/.test(path) && !onRealDisk(path);
   const key = (path: string) => {
     const n = w.normalize(path);
     return (n.length > 3 ? n.replace(/\\+$/, "") : n).toLowerCase();

@@ -2,6 +2,7 @@
 // Keep the trusted driver behind the harness and reserve it only while an
 // admitted tool call (including transport cleanup) is actually outstanding.
 import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
+import { currentUpstreamAccounting } from "./memory/upstream-reader.ts";
 
 export type HostComputerSpec = { command: string; args: string[]; env: Record<string, string> };
 const refused = () => Object.assign(new Error("Computer control changed or this turn is no longer active; its result cannot be delivered."), { status: 409 });
@@ -11,12 +12,18 @@ const cancelled = (sent: boolean) => Object.assign(new Error(sent
   ? "Stopped: this computer action was cancelled. An action already sent to the computer may still have taken effect; inspect the screen before continuing."
   : "Stopped before this computer action was sent; nothing was performed."), { status: 409, code: "cancelled", sent });
 
+// The server request owns this raw transport; only standalone proxies use proxy IPC.
+function startHostEngine(spec: HostComputerSpec): EngineClient {
+  const accounting = currentUpstreamAccounting("collection");
+  return startHeadlessEngine(spec, null, chunk => accounting?.accept(chunk));
+}
+
 export class HostComputerBroker {
   private active: object | undefined;
   private pending = new Set<Promise<unknown>>();
   private closing = false;
   private readonly start: (spec: HostComputerSpec) => EngineClient;
-  constructor(start: (spec: HostComputerSpec) => EngineClient = startHeadlessEngine) { this.start = start; }
+  constructor(start: (spec: HostComputerSpec) => EngineClient = startHostEngine) { this.start = start; }
 
   /** `signal` is the stop: it answers the caller at once and withdraws the
    * action, while exclusion is still held until the driver really replies. */

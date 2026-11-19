@@ -18,9 +18,13 @@ export const EMAIL_SECRETS_KEY = "emailSecrets";
 export const EMAIL_SECRETS_SAVE = "murage:email-secrets-save";
 export const EMAIL_OWNER_MESSAGE = "murage:email-owner";
 export const EMAIL_OWNER_SCOPE = "email:owner";
+// EMAIL-ACCOUNT-CHANGE r3: main -> server once the doc of a save is in credentials.bin ({rev, epoch} echoed from the save), so the server uses
+// a new email key only once it survives a crash.
+export const EMAIL_SECRETS_SAVED = "murage:email-secrets-saved";
 
 const KEY_ID = /^[\w.:-]{1,200}$/;
 const BOT_ID = /^[\w-]{1,160}$/;
+const INBOX_ID = /^[\w.:-]{1,200}$/;
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
 /** One credential, or null: a non-empty token without whitespace (at most 4096 chars) and a plain key id. */
@@ -32,7 +36,8 @@ export function emailCredential(raw) {
   return { token, keyId };
 }
 
-/** The stored shape: { owner?, bots: { [botId]: {token, keyId} } }. Anything else is dropped. */
+/** The stored shape: { owner?, bots: { [botId]: {token, keyId} }, retired?: { [inboxId]: {token, keyId, botId} } }. Anything else is dropped.
+ *  `retired` (EMAIL-ACCOUNT-CHANGE r3) holds an old Flux account's bot key while sends on its inbox are still open. */
 export function sanitizeEmailSecretsDoc(raw) {
   let source = raw;
   if (typeof source === "string") { try { source = JSON.parse(source); } catch { source = null; } }
@@ -47,10 +52,31 @@ export function sanitizeEmailSecretsDoc(raw) {
       if (cred) out.bots[botId] = cred;
     }
   }
+  for (const field of ["retired", "legacyRetired"]) {
+    if (Array.isArray(source[field])) {
+      const kept = source[field].map(emailCredential).filter(Boolean);
+      if (kept.length) out[field] = kept;
+    }
+  }
+  if (isRecord(source.retired)) {
+    for (const [inboxId, value] of Object.entries(source.retired)) {
+      if (inboxId === "__proto__" || !INBOX_ID.test(inboxId) || !isRecord(value) || typeof value.botId !== "string" || !BOT_ID.test(value.botId)) continue;
+      const cred = emailCredential(value);
+      if (cred) (out.retired ??= {})[inboxId] = { ...cred, botId: value.botId };
+    }
+  }
+  // r4 section 2: the rotation handover slot, { [botId]: {token, keyId} }
+  if (isRecord(source.prev)) {
+    for (const [botId, value] of Object.entries(source.prev)) {
+      if (botId === "__proto__" || !BOT_ID.test(botId)) continue;
+      const cred = emailCredential(value);
+      if (cred) (out.prev ??= {})[botId] = cred;
+    }
+  }
   return out;
 }
 
-const empty = (doc) => !doc.owner && Object.keys(doc.bots).length === 0;
+const empty = (doc) => !doc.owner && Object.keys(doc.bots).length === 0 && Object.keys(doc.retired ?? {}).length === 0 && (doc.legacyRetired ?? []).length === 0 && Object.keys(doc.prev ?? {}).length === 0;
 
 /** The credential document with the server's latest email doc in place (an empty doc removes the field). */
 export function withEmailSecrets(credentials, doc) {
@@ -76,6 +102,36 @@ export function emailSecretsEnv(credentials) {
 }
 
 export function isEmailSecretsSave(message) { return isRecord(message) && message.type === EMAIL_SECRETS_SAVE; }
+
+/** Every key id the stored credential document holds under emailSecrets (bot, prev and retired slots, and the owner): what a read-back proves. */
+export function emailKeyIdsOf(credentials) {
+  const doc = sanitizeEmailSecretsDoc(credentials?.[EMAIL_SECRETS_KEY]);
+  return [
+    ...Object.values(doc.bots).map((cred) => cred.keyId),
+    ...Object.values(doc.prev ?? {}).map((cred) => cred.keyId),
+    ...(doc.legacyRetired ?? []).map((cred) => cred.keyId), ...Object.values(doc.retired ?? {}).map((cred) => cred.keyId),
+    ...(doc.owner ? [doc.owner.keyId] : []),
+  ];
+}
+
+/** The ack for a save (EMAIL-ACCOUNT-CHANGE r3, r4 section 1): {rev, epoch} echoed from the save plus the key ids READ BACK from disk
+ *  (`keyIds`); null for a save that carried none (an older server) or when no read-back list is given. */
+export function emailSecretsSavedMessage(message, keyIds) {
+  if (!isRecord(message) || !Number.isInteger(message.rev) || typeof message.epoch !== "string" || message.epoch.length > 80) return null;
+  if (!Array.isArray(keyIds) || keyIds.some((id) => typeof id !== "string" || !KEY_ID.test(id))) return null;
+  return { type: EMAIL_SECRETS_SAVED, rev: message.rev, epoch: message.epoch, keyIds: [...new Set(keyIds)] };
+}
+
+/** r4 section 1: reads credentials.bin back, decrypts it, and builds the ack from the key ids it holds. Rejects (no ack) when the file cannot
+ *  be read, decrypted or parsed. `readFile` and `decrypt` are main.mjs's. */
+export async function ackFromDisk({ readFile, decrypt }, message) {
+  const decrypted = await decrypt(readFile());
+  const text = typeof decrypted === "string" ? decrypted : decrypted?.result;
+  const parsed = JSON.parse(text);
+  const ack = emailSecretsSavedMessage(message, emailKeyIdsOf(parsed));
+  if (!ack) throw new Error("no ack for this save");
+  return ack;
+}
 
 /**
  * The email:owner credential from the PKCE token response (contract r2.5: POST /api/desktop/token with `scope: "email:owner"` answers

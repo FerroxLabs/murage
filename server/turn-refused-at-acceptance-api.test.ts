@@ -17,6 +17,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const FAKE_PI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-pi-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -32,7 +33,7 @@ const dumpRows = (): any[] => { const file = join(fixture.info.dataDir, "pi-dump
 
 posixOnly("a turn refused at acceptance releases the workspace writer lease", () => {
   beforeAll(async () => {
-    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       cfg.instances.piGate={driver:'piAgent',displayName:'Gated pi fixture',config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true},
@@ -249,7 +250,7 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
       const chips = (thread: any[]) => thread.filter(message => typeof message.tool?.name === "string" && message.tool.name.startsWith("error:")).map(message => message.tool.name);
       expect(chips(await messages(room.threadId))).toEqual([]);
       await expect.poll(async () => (await replies()).length, { timeout: 15000 }).toBe(1);
-      expect(readFileSync(fixture.info.logPath, "utf8")).toContain(`[memory] context revoked during dispatch on thread ${room.threadId}; re-preparing (1 of 3, room member Room member A)`);
+      expect(readFileSync(fixture.info.logPath, "utf8")).toContain(`[memory] context revoked during dispatch on thread ${room.threadId}; re-preparing (1 of 2, room member Room member A)`);
       const thread = await messages(room.threadId);
       expect(thread.filter(message => message.role === "user" && message.kind === "text").map(message => message.text)).toEqual(["room turn held in its dispatch window"]);
       const reply = (await replies())[0];
