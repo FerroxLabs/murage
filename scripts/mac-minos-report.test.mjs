@@ -71,7 +71,8 @@ describe("Mac runner pins", () => {
 
   it("the Mac build jobs use the fixed macos-15 label, never a moving or retired one", () => {
     for (const path of [".github/workflows/release.yml", ".github/workflows/package-mac-qualification.yml", ".github/workflows/mac-notification-authorization-preflight.yml"]) {
-      const labels = [...read(path).matchAll(/^\s*runs-on: (macos-\S+)/gm)].map(match => match[1]);
+      // release.yml reads the label through a repo variable whose fallback is the fixed label
+      const labels = [...read(path).matchAll(/^\s*runs-on: (?:\$\{\{ vars\.MURAGE_MAC_(?:INTEL_)?RELEASE_RUNNER \|\| \')?(macos-[^\s\']+)/gm)].map(match => match[1]);
       expect(labels.length, path).toBeGreaterThan(0);
       expect(labels.filter(label => label !== "macos-15" && label !== "macos-15-intel"), path).toEqual([]);
     }

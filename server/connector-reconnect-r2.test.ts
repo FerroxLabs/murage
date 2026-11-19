@@ -35,7 +35,18 @@ let id = 0;
 function call(tool = "GMAIL_FETCH_EMAILS", account = "work", options = {}) {
   return relayConnectedAppCall(cfg, { jsonrpc: "2.0", id: ++id, method: "tools/call", params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: tool, account, arguments: {} }] } } }, undefined, undefined, { botId: "fixture", ...options });
 }
-it.each(["INITIATED", "INITIALIZING", "FAILED", "INACTIVE", "EXPIRED", "UNKNOWN"])("R2 status %s marks only the non-ACTIVE account", async status => {
+// CHANGED (hl-optional, 1.0.19 owner report): INITIATED, INITIALIZING, FAILED and INACTIVE left this list. A sign-in in
+// progress, one that never finished and an account the owner switched off were never a working sign-in, and marking
+// them asked owners to "sign in again" to apps they never connected (and twice during a Reconnect). They are asserted
+// below to open NO incident. A lapsed (EXPIRED) or unrecognised status still marks only its own account.
+it.each(["INITIATED", "INITIALIZING", "FAILED", "INACTIVE"])("R2 status %s is not a lapsed sign-in: no incident, and the other account is untouched", async status => {
+  accounts.gmail![0]!.status = status;
+  await connectedInventory(cfg, { force: true, fresh: true });
+  expect(appsNeedingReconnect(cfg)).toEqual([]);
+  expect((await connectedServices(cfg)).gmail?.accounts).toEqual(expect.arrayContaining([expect.objectContaining({ id: "a", status }), expect.objectContaining({ id: "b", status: "ACTIVE" })]));
+  expect((await connectedServices(cfg)).gmail?.needsReconnect).toBeUndefined();
+});
+it.each(["EXPIRED", "UNKNOWN"])("R2 status %s marks only the non-ACTIVE account", async status => {
   accounts.gmail![0]!.status = status;
   await connectedInventory(cfg, { force: true, fresh: true });
   expect(appsNeedingReconnect(cfg).map(app => app.accounts)).toEqual([[{ id: "a", alias: "work" }]]);
@@ -172,4 +183,10 @@ it("Flux contract: prose-only upstream failure with ACTIVE never establishes aut
   await call(undefined, undefined, { scheduled: true });
   expect(appsNeedingReconnect(cfg)).toEqual([]);
   expect(calls.some(c => !String(c.id).startsWith("health-"))).toBe(true);
+});
+// Live UI report (1.0.20): the reconnect line named HighLevel by the catalog's spelling; it is the product's own name.
+it("R2 a lapsed HighLevel sign-in is named HighLevel in the reconnect list", async () => {
+  accounts = { highlevel: [{ id: "a", alias: "work", status: "EXPIRED" }] };
+  await connectedInventory(cfg, { force: true, fresh: true });
+  expect(appsNeedingReconnect(cfg).map(app => [app.slug, app.label])).toEqual([["highlevel", "HighLevel"]]);
 });

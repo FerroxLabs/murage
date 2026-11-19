@@ -423,6 +423,10 @@ export interface OpenTurn extends TurnLineage {
   preparedWindow?: import("./lineage-types.ts").PreparedWindow;
   onLedgerRefused?: (verdict: LineageVerdict) => void;
   validateParents?: (refs: readonly LineageRef[]) => void;
+  /** 1.0.20 A-5: set only for an owner-audience direct turn. A later release whose re-check of the context the engine ALREADY holds (no
+   * prospective refs) is still checking:pending lets the running turn continue when this returns true (it tells the one left-out note);
+   * a proven revoke, new context, or any other audience still refuses. */
+  continuePending?: () => boolean;
 }
 /** The deny_generation values the running turns' own writes produced (ownCarry), one row per value, in a TEMP table on the writing
  * connection. Written in the same transaction as the bump, so a rollback (an atomically() savepoint, or the caller's transaction) takes the
@@ -514,12 +518,12 @@ export function refuseRetainedTurn(open: OpenTurn, verdict: LineageVerdict): voi
 }
 
 export function freezeLineageReader(reader: LineageReader): LineageReader {
-  return Object.freeze({ ...reader, audience: reader.audience === null ? null : Object.freeze({ ...reader.audience, ...(reader.audience.view ? {view:Object.freeze({...reader.audience.view}),scopeIds:Object.freeze([])} : {scopeIds: Object.freeze([...reader.audience.scopeIds])}) }) });
+  return Object.freeze({ ...reader, audience: reader.audience === null ? null : Object.freeze({ ...reader.audience, ...(reader.audience.scopeCeiling ? {scopeCeiling:Object.freeze([...reader.audience.scopeCeiling])} : {}), ...(reader.audience.view ? {view:Object.freeze({...reader.audience.view}),scopeIds:Object.freeze([])} : {scopeIds: Object.freeze([...reader.audience.scopeIds])}) }) });
 }
 
 /** Finalize once, before authoritative preparation and receipt joins. */
 export function bindRetainedTurn(turn: TurnLineage, reader: LineageReader, onRefused: (verdict: LineageVerdict) => void,
-  validate: (refs: readonly LineageRef[]) => void): LineageReader {
+  validate: (refs: readonly LineageRef[]) => void, continuePending?: () => boolean): LineageReader {
   const members = checkedOpenTurns(turn, false);
   if (members.length !== 1 || members[0]!.reader) throw new Error("RETAINED_READER_ALREADY_BOUND");
   const open = members[0]!;
@@ -527,10 +531,11 @@ export function bindRetainedTurn(turn: TurnLineage, reader: LineageReader, onRef
     refuseRetainedTurn(open, { state: "checking", reason: "not-built" });
     throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
   }
-  const frozen = Object.isFrozen(reader) && (reader.audience === null || Object.isFrozen(reader.audience) && Object.isFrozen(reader.audience.scopeIds)) ? reader : freezeLineageReader(reader);
+  const frozen = Object.isFrozen(reader) && (reader.audience === null || Object.isFrozen(reader.audience) && Object.isFrozen(reader.audience.scopeIds) && (!reader.audience.scopeCeiling || Object.isFrozen(reader.audience.scopeCeiling))) ? reader : freezeLineageReader(reader);
   open.reader = frozen;
   open.onLedgerRefused = onRefused;
   open.validateParents = validate;
+  if (continuePending) open.continuePending = continuePending;
   Object.defineProperty(open, "budget", { value: new ReleaseBudget(verdict => refuseRetainedTurn(open, verdict)), enumerable: true, writable: false, configurable: false });
   // Preparation may have staged parents before receipt access was final.
   // They acquire authority only under this exact frozen reader.

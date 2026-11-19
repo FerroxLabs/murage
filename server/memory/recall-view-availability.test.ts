@@ -119,8 +119,11 @@ for (const [name, invoke] of sites) {
 }
 it('inventories every availability throw so a new untyped reader site cannot escape review', () => {
   const converted = source.match(/throw new RecallPreparationPending\(\)/g) ?? [];
-  // MAIN RULING 1114-RECALL-S1-TYPED-AVAILABILITY: retain all 13 S1 sites and include the four merged S4 background sites.
-  expect(converted).toHaveLength(17);
+  // MAIN RULING 2026-11-17T19:46Z: the merged SELECT has one throw; invalid-view and wrong-binding rows above witness both refusals.
+  // recallrest-1020 (port onto 1.0.19): 19 = the lane's 16 and three sites the 1.0.19 side keeps: the wrong-binding refusal on its own line
+  // in assertRecallView, and in resolveRecallView the epoch-mismatch refusal inside the fence and the stale scope mark that holds a new
+  // issuance for a fresh view (recall-read-through.test.ts). 1.0.19 itself has 18 against a pinned 17, so this row was already red there.
+  expect(converted).toHaveLength(19);
   for (const file of ['recall-view.ts', 'worker.ts', 'eligibility.ts', 'worker-query.ts']) {
     expect(readFileSync(new URL(file, import.meta.url), 'utf8')).not.toMatch(/throw new Error\(['"]MEMORY_RECALL_UNAVAILABLE['"]\)/);
   }

@@ -31,6 +31,19 @@ export function recoveryFramePart(db: DatabaseSync, shown: { value: string; orig
     ...shown.ranges.map((range): LineageRef => ({ kind: "prefix", threadId: range.threadId })),
   ]);
 }
+/** A delegated turn has no fresh human words, yet its recovery must still carry its task: the hand-off's own stored prompt line, read again
+ * from the thread and named as that line (never none), so the send fence asks it again like any shown line. Null when the line is gone or empty. */
+export function handoffFramePart(threadId: string, line: { readonly id: string; readonly text?: string | null } | null | undefined): PromptPart | null {
+  const text = line?.text;
+  if (!line || typeof text !== "string" || !text.trim()) return null;
+  return promptPart(text, [{ kind: "line", threadId, messageId: line.id }]);
+}
+/** The same rule for every turn that has a task but no fresh human words (a hand-off, a routine run, a card continuation).
+ * A delegated recovery that cannot carry its task does not run: the engine would answer the static instruction and the hand-off would read
+ * as done. It is refused like any other revoked input, so the turn ends with its card and the hand-off fails. */
+export function assertHandoffRecoveryCarriesTask(delegated: boolean, frame: PromptPart | null | undefined): void {
+  if (delegated && !frame?.text.trim()) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { continuationReason: "handoff-line-unavailable" });
+}
 /** Only the unexpanded, freshly typed human input may be owner-turn. Automated
  * triggers without fresh human words receive a static instruction; generated
  * deliveries and stored transcripts can never be relabelled none. The caller

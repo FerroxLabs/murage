@@ -1,0 +1,536 @@
+[
+ {
+  "type": "trigger",
+  "name": "memory_recall_binding_delete",
+  "tbl_name": "memory_scope_bindings",
+  "sql": "CREATE TRIGGER memory_recall_binding_delete AFTER DELETE ON memory_scope_bindings WHEN (OLD.id IN ('memory-owner-settings','memory-roster-policy') OR OLD.subject_type IN ('human-thread','human-binding','room','bot','person')) BEGIN\n UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1;\n DELETE FROM memory_recall_excluded;\n INSERT INTO memory_recall_excluded SELECT DISTINCT CAST(e.value AS TEXT) FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings'; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_binding_insert",
+  "tbl_name": "memory_scope_bindings",
+  "sql": "CREATE TRIGGER memory_recall_binding_insert AFTER INSERT ON memory_scope_bindings WHEN (NEW.id IN ('memory-owner-settings','memory-roster-policy') OR NEW.subject_type IN ('human-thread','human-binding','room','bot','person')) BEGIN\n UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1;\n DELETE FROM memory_recall_excluded;\n INSERT INTO memory_recall_excluded SELECT DISTINCT CAST(e.value AS TEXT) FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings'; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_binding_replace",
+  "tbl_name": "memory_scope_bindings",
+  "sql": "CREATE TRIGGER memory_recall_binding_replace BEFORE INSERT ON memory_scope_bindings\n WHEN NEW.id IN ('memory-owner-settings','memory-roster-policy') OR NEW.subject_type IN ('human-thread','human-binding','room','bot','person')\n OR EXISTS(SELECT 1 FROM memory_scope_bindings previous WHERE previous.id=NEW.id AND previous.subject_type IN ('human-thread','human-binding','room','bot','person'))\n BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_binding_update",
+  "tbl_name": "memory_scope_bindings",
+  "sql": "CREATE TRIGGER memory_recall_binding_update AFTER UPDATE ON memory_scope_bindings WHEN (OLD.id IN ('memory-owner-settings','memory-roster-policy') OR OLD.subject_type IN ('human-thread','human-binding','room','bot','person')) OR (NEW.id IN ('memory-owner-settings','memory-roster-policy') OR NEW.subject_type IN ('human-thread','human-binding','room','bot','person')) BEGIN\n UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1;\n DELETE FROM memory_recall_excluded;\n INSERT INTO memory_recall_excluded SELECT DISTINCT CAST(e.value AS TEXT) FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings'; END"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_change_cover",
+  "tbl_name": "memory_recall_change_cover",
+  "sql": "CREATE TABLE memory_recall_change_cover(id INTEGER PRIMARY KEY CHECK(id=1),sequence INTEGER NOT NULL,lo_id TEXT NOT NULL,lo_version INTEGER NOT NULL,hi_id TEXT NOT NULL,hi_version INTEGER NOT NULL)"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_change_trim",
+  "tbl_name": "memory_recall_changes",
+  "sql": "CREATE TRIGGER memory_recall_change_trim AFTER INSERT ON memory_recall_changes BEGIN\n UPDATE memory_recall_epoch SET projection_floor=max(projection_floor,NEW.sequence-1000000) WHERE id=1;\n DELETE FROM memory_recall_changes WHERE sequence=NEW.sequence-1000000; END"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_changes",
+  "tbl_name": "memory_recall_changes",
+  "sql": "CREATE TABLE memory_recall_changes(sequence INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,object_id TEXT NOT NULL,version INTEGER NOT NULL)"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_contains",
+  "tbl_name": "memory_recall_contains",
+  "sql": "CREATE TABLE memory_recall_contains(view_id TEXT NOT NULL,generation TEXT NOT NULL,prior_view_id TEXT NOT NULL,prior_generation TEXT NOT NULL,PRIMARY KEY(view_id,generation,prior_view_id,prior_generation)) WITHOUT ROWID"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_contains_storage_d",
+  "tbl_name": "memory_recall_contains",
+  "sql": "CREATE TRIGGER memory_recall_contains_storage_d AFTER DELETE ON memory_recall_contains BEGIN UPDATE memory_recall_storage SET bytes=bytes-512 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_contains_storage_i",
+  "tbl_name": "memory_recall_contains",
+  "sql": "CREATE TRIGGER memory_recall_contains_storage_i BEFORE INSERT ON memory_recall_contains BEGIN\n SELECT CASE WHEN (SELECT bytes FROM memory_recall_storage WHERE id=1)+512>536870912 THEN RAISE(ABORT,'MEMORY_RECALL_STORAGE_LIMIT') END;\n UPDATE memory_recall_storage SET bytes=bytes+512 WHERE id=1; END"
+ },
+ {
+  "type": "index",
+  "name": "memory_recall_context_view",
+  "tbl_name": "memory_recall_contexts",
+  "sql": "CREATE INDEX memory_recall_context_view ON memory_recall_contexts(view_id,generation)"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_contexts",
+  "tbl_name": "memory_recall_contexts",
+  "sql": "CREATE TABLE memory_recall_contexts(context_key TEXT PRIMARY KEY,view_id TEXT NOT NULL,generation TEXT NOT NULL) WITHOUT ROWID"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_epoch",
+  "tbl_name": "memory_recall_epoch",
+  "sql": "CREATE TABLE memory_recall_epoch(id INTEGER PRIMARY KEY CHECK(id=1),epoch INTEGER NOT NULL,projection_floor INTEGER NOT NULL DEFAULT 0)"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_excluded",
+  "tbl_name": "memory_recall_excluded",
+  "sql": "CREATE TABLE memory_recall_excluded(thread_id TEXT PRIMARY KEY) WITHOUT ROWID"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_external_project_settings_delete",
+  "tbl_name": "project_settings",
+  "sql": "CREATE TRIGGER memory_recall_external_project_settings_delete AFTER DELETE ON project_settings BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_external_project_settings_insert",
+  "tbl_name": "project_settings",
+  "sql": "CREATE TRIGGER memory_recall_external_project_settings_insert AFTER INSERT ON project_settings BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_external_project_settings_update",
+  "tbl_name": "project_settings",
+  "sql": "CREATE TRIGGER memory_recall_external_project_settings_update AFTER UPDATE ON project_settings BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_external_team_identities_delete",
+  "tbl_name": "team_identities",
+  "sql": "CREATE TRIGGER memory_recall_external_team_identities_delete AFTER DELETE ON team_identities BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_external_team_identities_insert",
+  "tbl_name": "team_identities",
+  "sql": "CREATE TRIGGER memory_recall_external_team_identities_insert AFTER INSERT ON team_identities BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_external_team_identities_update",
+  "tbl_name": "team_identities",
+  "sql": "CREATE TRIGGER memory_recall_external_team_identities_update AFTER UPDATE ON team_identities BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_job_d",
+  "tbl_name": "memory_jobs",
+  "sql": "CREATE TRIGGER memory_recall_job_d AFTER DELETE ON memory_jobs BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('job',OLD.id,0); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_job_i",
+  "tbl_name": "memory_jobs",
+  "sql": "CREATE TRIGGER memory_recall_job_i AFTER INSERT ON memory_jobs BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('job',NEW.id,0); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_job_u",
+  "tbl_name": "memory_jobs",
+  "sql": "CREATE TRIGGER memory_recall_job_u AFTER UPDATE ON memory_jobs BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('job',NEW.id,0); END"
+ },
+ {
+  "type": "index",
+  "name": "memory_recall_jobs_id",
+  "tbl_name": "memory_recall_view_jobs",
+  "sql": "CREATE INDEX memory_recall_jobs_id ON memory_recall_view_jobs(view_id,generation,job_id)"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_membership_d",
+  "tbl_name": "memory_recall_view_scopes",
+  "sql": "CREATE TRIGGER memory_recall_membership_d BEFORE DELETE ON memory_recall_view_scopes WHEN EXISTS(SELECT 1 FROM memory_recall_views WHERE view_id=OLD.view_id AND generation=OLD.generation AND state='ready') BEGIN SELECT RAISE(ABORT,'IMMUTABLE_RECALL_MEMBERSHIP'); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_membership_i",
+  "tbl_name": "memory_recall_view_scopes",
+  "sql": "CREATE TRIGGER memory_recall_membership_i BEFORE INSERT ON memory_recall_view_scopes WHEN EXISTS(SELECT 1 FROM memory_recall_views WHERE view_id=NEW.view_id AND generation=NEW.generation AND state='ready') BEGIN SELECT RAISE(ABORT,'IMMUTABLE_RECALL_MEMBERSHIP'); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_membership_u",
+  "tbl_name": "memory_recall_view_scopes",
+  "sql": "CREATE TRIGGER memory_recall_membership_u BEFORE UPDATE ON memory_recall_view_scopes WHEN EXISTS(SELECT 1 FROM memory_recall_views WHERE (view_id=NEW.view_id AND generation=NEW.generation OR view_id=OLD.view_id AND generation=OLD.generation) AND state='ready') BEGIN SELECT RAISE(ABORT,'IMMUTABLE_RECALL_MEMBERSHIP'); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_meta",
+  "tbl_name": "memory_meta",
+  "sql": "CREATE TRIGGER memory_recall_meta AFTER UPDATE OF policy_revision,deletion_epoch ON memory_meta WHEN OLD.policy_revision!=NEW.policy_revision OR OLD.deletion_epoch!=NEW.deletion_epoch BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "index",
+  "name": "memory_recall_pending_record",
+  "tbl_name": "memory_recall_view_pending",
+  "sql": "CREATE INDEX memory_recall_pending_record ON memory_recall_view_pending(view_id,generation,record_id,version)"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_projection_d",
+  "tbl_name": "memory_projection_receipts",
+  "sql": "CREATE TRIGGER memory_recall_projection_d AFTER DELETE ON memory_projection_receipts BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('record',OLD.record_id,OLD.record_version); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_projection_i",
+  "tbl_name": "memory_projection_receipts",
+  "sql": "CREATE TRIGGER memory_recall_projection_i AFTER INSERT ON memory_projection_receipts BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('record',NEW.record_id,NEW.record_version); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_projection_u",
+  "tbl_name": "memory_projection_receipts",
+  "sql": "CREATE TRIGGER memory_recall_projection_u AFTER UPDATE OF record_id,record_version,lexical_status ON memory_projection_receipts WHEN OLD.record_id IS NOT NEW.record_id OR OLD.record_version IS NOT NEW.record_version OR OLD.lexical_status IS NOT NEW.lexical_status AND NOT EXISTS(SELECT 1 FROM memory_recall_change_cover c WHERE c.id=1 AND c.sequence=(SELECT max(sequence) FROM memory_recall_changes) AND (NEW.record_id,NEW.record_version)>=(c.lo_id,c.lo_version) AND (NEW.record_id,NEW.record_version)<=(c.hi_id,c.hi_version)) BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('record',NEW.record_id,NEW.record_version); INSERT INTO memory_recall_changes(kind,object_id,version) SELECT 'record',OLD.record_id,OLD.record_version WHERE OLD.record_id IS NOT NEW.record_id OR OLD.record_version IS NOT NEW.record_version; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_record_d",
+  "tbl_name": "memory_records",
+  "sql": "CREATE TRIGGER memory_recall_record_d AFTER DELETE ON memory_records BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('record',OLD.id,OLD.version); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_record_i",
+  "tbl_name": "memory_records",
+  "sql": "CREATE TRIGGER memory_recall_record_i AFTER INSERT ON memory_records BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('record',NEW.id,NEW.version); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_record_u",
+  "tbl_name": "memory_records",
+  "sql": "CREATE TRIGGER memory_recall_record_u AFTER UPDATE ON memory_records BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('record',OLD.id,OLD.version); INSERT INTO memory_recall_changes(kind,object_id,version) SELECT 'record',NEW.id,NEW.version WHERE NEW.id IS NOT OLD.id OR NEW.version IS NOT OLD.version; END"
+ },
+ {
+  "type": "index",
+  "name": "memory_recall_records_kind",
+  "tbl_name": "memory_recall_view_records",
+  "sql": "CREATE INDEX memory_recall_records_kind ON memory_recall_view_records(view_id,generation,kind,record_id,version)"
+ },
+ {
+  "type": "index",
+  "name": "memory_recall_records_pins",
+  "tbl_name": "memory_recall_view_records",
+  "sql": "CREATE INDEX memory_recall_records_pins ON memory_recall_view_records(view_id,generation,pinned,state,record_id,version)"
+ },
+ {
+  "type": "index",
+  "name": "memory_recall_records_recent",
+  "tbl_name": "memory_recall_view_records",
+  "sql": "CREATE INDEX memory_recall_records_recent ON memory_recall_view_records(view_id,generation,sequence DESC,record_id,version)"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_roster_proof",
+  "tbl_name": "memory_recall_roster_proof",
+  "sql": "CREATE TABLE memory_recall_roster_proof(id INTEGER PRIMARY KEY CHECK(id=1),epoch INTEGER NOT NULL,hash TEXT NOT NULL)"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_roster_proof_delete",
+  "tbl_name": "memory_scope_bindings",
+  "sql": "CREATE TRIGGER memory_recall_roster_proof_delete AFTER DELETE ON memory_scope_bindings WHEN OLD.id='memory-roster-policy' BEGIN DELETE FROM memory_recall_roster_proof; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_roster_proof_insert",
+  "tbl_name": "memory_scope_bindings",
+  "sql": "CREATE TRIGGER memory_recall_roster_proof_insert AFTER INSERT ON memory_scope_bindings WHEN NEW.id='memory-roster-policy' BEGIN DELETE FROM memory_recall_roster_proof; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_roster_proof_update",
+  "tbl_name": "memory_scope_bindings",
+  "sql": "CREATE TRIGGER memory_recall_roster_proof_update AFTER UPDATE ON memory_scope_bindings WHEN OLD.id='memory-roster-policy' OR NEW.id='memory-roster-policy' BEGIN DELETE FROM memory_recall_roster_proof; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_scope_delete",
+  "tbl_name": "memory_scopes",
+  "sql": "CREATE TRIGGER memory_recall_scope_delete AFTER DELETE ON memory_scopes BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_scope_insert",
+  "tbl_name": "memory_scopes",
+  "sql": "CREATE TRIGGER memory_recall_scope_insert AFTER INSERT ON memory_scopes BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_scope_update",
+  "tbl_name": "memory_scopes",
+  "sql": "CREATE TRIGGER memory_recall_scope_update AFTER UPDATE ON memory_scopes BEGIN UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1; END"
+ },
+ {
+  "type": "index",
+  "name": "memory_recall_scopes_reverse",
+  "tbl_name": "memory_recall_view_scopes",
+  "sql": "CREATE INDEX memory_recall_scopes_reverse ON memory_recall_view_scopes(scope_id,view_id,generation)"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_storage",
+  "tbl_name": "memory_recall_storage",
+  "sql": "CREATE TABLE memory_recall_storage(id INTEGER PRIMARY KEY CHECK(id=1),bytes INTEGER NOT NULL CHECK(bytes>=0))"
+ },
+ {
+  "type": "index",
+  "name": "memory_recall_terms_record",
+  "tbl_name": "memory_recall_view_terms",
+  "sql": "CREATE INDEX memory_recall_terms_record ON memory_recall_view_terms(view_id,generation,record_id,version,term)"
+ },
+ {
+  "type": "index",
+  "name": "memory_recall_terms_source",
+  "tbl_name": "memory_recall_view_terms",
+  "sql": "CREATE INDEX memory_recall_terms_source ON memory_recall_view_terms(record_id,version,view_id,generation,term,sequence)"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_thread_readers",
+  "tbl_name": "memory_recall_thread_readers",
+  "sql": "CREATE TABLE memory_recall_thread_readers(view_id TEXT NOT NULL,generation TEXT NOT NULL,eligible INTEGER NOT NULL,PRIMARY KEY(view_id,generation)) WITHOUT ROWID"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_view_jobs",
+  "tbl_name": "memory_recall_view_jobs",
+  "sql": "CREATE TABLE memory_recall_view_jobs(view_id TEXT NOT NULL,generation TEXT NOT NULL,sequence INTEGER NOT NULL,job_id TEXT NOT NULL,PRIMARY KEY(view_id,generation,sequence,job_id)) WITHOUT ROWID"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_view_jobs_storage_d",
+  "tbl_name": "memory_recall_view_jobs",
+  "sql": "CREATE TRIGGER memory_recall_view_jobs_storage_d AFTER DELETE ON memory_recall_view_jobs BEGIN UPDATE memory_recall_storage SET bytes=bytes-512 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_view_jobs_storage_i",
+  "tbl_name": "memory_recall_view_jobs",
+  "sql": "CREATE TRIGGER memory_recall_view_jobs_storage_i BEFORE INSERT ON memory_recall_view_jobs BEGIN\n SELECT CASE WHEN (SELECT bytes FROM memory_recall_storage WHERE id=1)+512>536870912 THEN RAISE(ABORT,'MEMORY_RECALL_STORAGE_LIMIT') END;\n UPDATE memory_recall_storage SET bytes=bytes+512 WHERE id=1; END"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_view_pending",
+  "tbl_name": "memory_recall_view_pending",
+  "sql": "CREATE TABLE memory_recall_view_pending(view_id TEXT NOT NULL,generation TEXT NOT NULL,sequence INTEGER NOT NULL,record_id TEXT NOT NULL,version INTEGER NOT NULL,PRIMARY KEY(view_id,generation,sequence,record_id,version)) WITHOUT ROWID"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_view_pending_storage_d",
+  "tbl_name": "memory_recall_view_pending",
+  "sql": "CREATE TRIGGER memory_recall_view_pending_storage_d AFTER DELETE ON memory_recall_view_pending BEGIN UPDATE memory_recall_storage SET bytes=bytes-512 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_view_pending_storage_i",
+  "tbl_name": "memory_recall_view_pending",
+  "sql": "CREATE TRIGGER memory_recall_view_pending_storage_i BEFORE INSERT ON memory_recall_view_pending BEGIN\n SELECT CASE WHEN (SELECT bytes FROM memory_recall_storage WHERE id=1)+512>536870912 THEN RAISE(ABORT,'MEMORY_RECALL_STORAGE_LIMIT') END;\n UPDATE memory_recall_storage SET bytes=bytes+512 WHERE id=1; END"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_view_records",
+  "tbl_name": "memory_recall_view_records",
+  "sql": "CREATE TABLE memory_recall_view_records(view_id TEXT NOT NULL,generation TEXT NOT NULL,record_id TEXT NOT NULL,version INTEGER NOT NULL,sequence INTEGER NOT NULL,kind TEXT NOT NULL,pinned INTEGER NOT NULL,state TEXT NOT NULL,scope_id TEXT NOT NULL,PRIMARY KEY(view_id,generation,record_id,version)) WITHOUT ROWID"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_view_records_storage_d",
+  "tbl_name": "memory_recall_view_records",
+  "sql": "CREATE TRIGGER memory_recall_view_records_storage_d AFTER DELETE ON memory_recall_view_records BEGIN UPDATE memory_recall_storage SET bytes=bytes-512 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_view_records_storage_i",
+  "tbl_name": "memory_recall_view_records",
+  "sql": "CREATE TRIGGER memory_recall_view_records_storage_i BEFORE INSERT ON memory_recall_view_records BEGIN\n SELECT CASE WHEN (SELECT bytes FROM memory_recall_storage WHERE id=1)+512>536870912 THEN RAISE(ABORT,'MEMORY_RECALL_STORAGE_LIMIT') END;\n UPDATE memory_recall_storage SET bytes=bytes+512 WHERE id=1; END"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_view_scopes",
+  "tbl_name": "memory_recall_view_scopes",
+  "sql": "CREATE TABLE memory_recall_view_scopes(view_id TEXT NOT NULL,generation TEXT NOT NULL,scope_id TEXT NOT NULL,lineage_only INTEGER NOT NULL DEFAULT 0,person_scope INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(view_id,generation,scope_id)) WITHOUT ROWID"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_view_scopes_storage_d",
+  "tbl_name": "memory_recall_view_scopes",
+  "sql": "CREATE TRIGGER memory_recall_view_scopes_storage_d AFTER DELETE ON memory_recall_view_scopes BEGIN UPDATE memory_recall_storage SET bytes=bytes-512 WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_view_scopes_storage_i",
+  "tbl_name": "memory_recall_view_scopes",
+  "sql": "CREATE TRIGGER memory_recall_view_scopes_storage_i BEFORE INSERT ON memory_recall_view_scopes BEGIN\n SELECT CASE WHEN (SELECT bytes FROM memory_recall_storage WHERE id=1)+512>536870912 THEN RAISE(ABORT,'MEMORY_RECALL_STORAGE_LIMIT') END;\n UPDATE memory_recall_storage SET bytes=bytes+512 WHERE id=1; END"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_view_terms",
+  "tbl_name": "memory_recall_view_terms",
+  "sql": "CREATE TABLE memory_recall_view_terms(view_id TEXT NOT NULL,generation TEXT NOT NULL,term TEXT NOT NULL,sequence INTEGER NOT NULL,record_id TEXT NOT NULL,version INTEGER NOT NULL,PRIMARY KEY(view_id,generation,term,sequence,record_id,version)) WITHOUT ROWID"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_view_terms_storage_d",
+  "tbl_name": "memory_recall_view_terms",
+  "sql": "CREATE TRIGGER memory_recall_view_terms_storage_d AFTER DELETE ON memory_recall_view_terms BEGIN UPDATE memory_recall_storage SET bytes=bytes-(512+4*length(CAST(OLD.term AS BLOB))) WHERE id=1; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_recall_view_terms_storage_i",
+  "tbl_name": "memory_recall_view_terms",
+  "sql": "CREATE TRIGGER memory_recall_view_terms_storage_i BEFORE INSERT ON memory_recall_view_terms BEGIN\n SELECT CASE WHEN (SELECT bytes FROM memory_recall_storage WHERE id=1)+(512+4*length(CAST(NEW.term AS BLOB)))>536870912 THEN RAISE(ABORT,'MEMORY_RECALL_STORAGE_LIMIT') END;\n UPDATE memory_recall_storage SET bytes=bytes+(512+4*length(CAST(NEW.term AS BLOB))) WHERE id=1; END"
+ },
+ {
+  "type": "table",
+  "name": "memory_recall_views",
+  "tbl_name": "memory_recall_views",
+  "sql": "CREATE TABLE memory_recall_views(view_id TEXT NOT NULL,generation TEXT NOT NULL,authority_epoch INTEGER NOT NULL,roster_revision INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('building','ready')),scope_count INTEGER NOT NULL,digest TEXT NOT NULL,room_reader INTEGER NOT NULL,watermark INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(view_id,generation)) WITHOUT ROWID"
+ },
+ {
+  "type": "table",
+  "name": "memory_session_change_log",
+  "tbl_name": "memory_session_change_log",
+  "sql": "CREATE TABLE memory_session_change_log(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL)"
+ },
+ {
+  "type": "index",
+  "name": "memory_session_change_log_id",
+  "tbl_name": "memory_session_change_log",
+  "sql": "CREATE INDEX memory_session_change_log_id ON memory_session_change_log(id,seq)"
+ },
+ {
+  "type": "table",
+  "name": "memory_session_check_cites",
+  "tbl_name": "memory_session_check_cites",
+  "sql": "CREATE TABLE memory_session_check_cites (\n thread_id TEXT NOT NULL,driver_instance TEXT NOT NULL,native_session TEXT NOT NULL,\n kind TEXT NOT NULL CHECK(kind IN ('record','source')),ref_id TEXT NOT NULL,ref_version INTEGER NOT NULL,bundle_id TEXT NOT NULL,\n PRIMARY KEY(thread_id,driver_instance,native_session,kind,ref_id,ref_version)) WITHOUT ROWID"
+ },
+ {
+  "type": "index",
+  "name": "memory_session_check_cites_ref",
+  "tbl_name": "memory_session_check_cites",
+  "sql": "CREATE INDEX memory_session_check_cites_ref ON memory_session_check_cites(kind,ref_id)"
+ },
+ {
+  "type": "table",
+  "name": "memory_session_check_messages",
+  "tbl_name": "memory_session_check_messages",
+  "sql": "CREATE TABLE memory_session_check_messages (\n thread_id TEXT NOT NULL,driver_instance TEXT NOT NULL,native_session TEXT NOT NULL,source_thread TEXT NOT NULL,message_id TEXT NOT NULL,\n PRIMARY KEY(thread_id,driver_instance,native_session,source_thread,message_id)) WITHOUT ROWID"
+ },
+ {
+  "type": "table",
+  "name": "memory_session_checks",
+  "tbl_name": "memory_session_checks",
+  "sql": "CREATE TABLE memory_session_checks (\n thread_id TEXT NOT NULL,driver_instance TEXT NOT NULL,native_session TEXT NOT NULL,reader_key TEXT NOT NULL,\n up_to INTEGER NOT NULL,log_seq INTEGER NOT NULL,recall_epoch INTEGER NOT NULL,\n view_id TEXT,view_generation TEXT,view_digest TEXT,policy_revision INTEGER NOT NULL,deletion_epoch INTEGER NOT NULL,\n footprint TEXT NOT NULL,cites INTEGER NOT NULL,seeding INTEGER NOT NULL DEFAULT 0,checked INTEGER NOT NULL,\n PRIMARY KEY(thread_id,driver_instance,native_session,reader_key)) WITHOUT ROWID"
+ },
+ {
+  "type": "index",
+  "name": "memory_session_checks_checked",
+  "tbl_name": "memory_session_checks",
+  "sql": "CREATE INDEX memory_session_checks_checked ON memory_session_checks(checked)"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_deny_generation",
+  "tbl_name": "memory_lineage_lsn_meta",
+  "sql": "CREATE TRIGGER memory_session_proof_deny_generation AFTER UPDATE OF value ON memory_lineage_lsn_meta\n WHEN NEW.key='deny_generation' AND NEW.value IS NOT OLD.value\n BEGIN INSERT INTO memory_session_change_log(id) VALUES('deny-gen:'||NEW.value); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_deny_insert",
+  "tbl_name": "memory_deny",
+  "sql": "CREATE TRIGGER memory_session_proof_deny_insert AFTER INSERT ON memory_deny\n BEGIN INSERT INTO memory_session_change_log(id) VALUES('deny-'||NEW.kind||':'||NEW.id); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_deny_update",
+  "tbl_name": "memory_deny",
+  "sql": "CREATE TRIGGER memory_session_proof_deny_update AFTER UPDATE ON memory_deny\n BEGIN INSERT INTO memory_session_change_log(id) VALUES('deny-'||NEW.kind||':'||NEW.id); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_line_delete",
+  "tbl_name": "messages",
+  "sql": "CREATE TRIGGER memory_session_proof_line_delete AFTER DELETE ON messages\n BEGIN INSERT INTO memory_session_change_log(id) VALUES('line:'||OLD.thread_id||char(0)||OLD.id); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_line_update",
+  "tbl_name": "messages",
+  "sql": "CREATE TRIGGER memory_session_proof_line_update AFTER UPDATE ON messages\n WHEN (OLD.json IS NOT NEW.json AND (instr(OLD.json,'withheldFromBots')>0 OR instr(NEW.json,'withheldFromBots')>0 OR instr(OLD.json,'copyOf')>0 OR instr(NEW.json,'copyOf')>0)\n   AND CASE WHEN json_valid(OLD.json) AND json_valid(NEW.json)\n     THEN json_extract(OLD.json,'$.copyOf') IS NOT json_extract(NEW.json,'$.copyOf') OR json_extract(OLD.json,'$.withheldFromBots') IS NOT json_extract(NEW.json,'$.withheldFromBots')\n     ELSE 1 END) AND CASE WHEN json_valid(OLD.json) AND json_valid(NEW.json)\n THEN json_extract(OLD.json,'$.copyOf') IS NOT json_extract(NEW.json,'$.copyOf') OR\n (json_extract(NEW.json,'$.withheldFromBots') IS NOT NULL AND json_extract(NEW.json,'$.withheldFromBots') NOT IN (0,'')) ELSE 1 END\n BEGIN INSERT INTO memory_session_change_log(id) VALUES('line:'||OLD.thread_id||char(0)||OLD.id); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_receipt",
+  "tbl_name": "memory_disclosures",
+  "sql": "CREATE TRIGGER memory_session_proof_receipt AFTER UPDATE ON memory_disclosures\n WHEN OLD.state IS NOT NEW.state AND NEW.state='revoked'\n BEGIN INSERT INTO memory_session_change_log(id) VALUES('receipt:'||NEW.bundle_id); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_receipt_bind",
+  "tbl_name": "memory_disclosures",
+  "sql": "CREATE TRIGGER memory_session_proof_receipt_bind AFTER UPDATE OF native_session ON memory_disclosures\n WHEN OLD.native_session IS NOT NEW.native_session AND EXISTS (\n  SELECT 1 FROM memory_session_checks c WHERE c.thread_id=NEW.thread_id AND c.driver_instance=NEW.driver_instance\n   AND c.native_session=NEW.native_session AND c.up_to>=NEW.rowid)\n BEGIN INSERT INTO memory_session_change_log(id) VALUES('receipt:'||NEW.bundle_id); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_receipt_line_insert",
+  "tbl_name": "memory_receipt_lines",
+  "sql": "CREATE TRIGGER memory_session_proof_receipt_line_insert AFTER INSERT ON memory_receipt_lines WHEN NEW.session_no IS NOT NULL BEGIN\n DELETE FROM memory_session_checks WHERE up_to=0 AND (thread_id,driver_instance,native_session) IN\n (SELECT thread_id,driver_instance,native_session FROM memory_session_no WHERE no=NEW.session_no); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_receipt_line_update",
+  "tbl_name": "memory_receipt_lines",
+  "sql": "CREATE TRIGGER memory_session_proof_receipt_line_update AFTER UPDATE OF session_no ON memory_receipt_lines WHEN NEW.session_no IS NOT NULL BEGIN\n DELETE FROM memory_session_checks WHERE up_to=0 AND (thread_id,driver_instance,native_session) IN\n (SELECT thread_id,driver_instance,native_session FROM memory_session_no WHERE no=NEW.session_no); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_record",
+  "tbl_name": "memory_records",
+  "sql": "CREATE TRIGGER memory_session_proof_record AFTER UPDATE ON memory_records\n WHEN OLD.state IS NOT NEW.state OR OLD.scope_id IS NOT NEW.scope_id OR OLD.version IS NOT NEW.version\n BEGIN INSERT INTO memory_session_change_log(id) VALUES('record:'||OLD.id); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_root_insert",
+  "tbl_name": "memory_session_roots",
+  "sql": "CREATE TRIGGER memory_session_proof_root_insert AFTER INSERT ON memory_session_roots WHEN NEW.set_id!='' BEGIN\n DELETE FROM memory_session_checks WHERE up_to=0 AND thread_id=NEW.thread_id AND driver_instance=NEW.driver_instance AND native_session=NEW.native_session; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_root_update",
+  "tbl_name": "memory_session_roots",
+  "sql": "CREATE TRIGGER memory_session_proof_root_update AFTER UPDATE OF set_id ON memory_session_roots WHEN NEW.set_id!='' BEGIN\n DELETE FROM memory_session_checks WHERE up_to=0 AND thread_id=NEW.thread_id AND driver_instance=NEW.driver_instance AND native_session=NEW.native_session; END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_source",
+  "tbl_name": "memory_sources",
+  "sql": "CREATE TRIGGER memory_session_proof_source AFTER UPDATE ON memory_sources\n WHEN OLD.state IS NOT NEW.state OR OLD.revision IS NOT NEW.revision OR OLD.scope_id IS NOT NEW.scope_id\n BEGIN INSERT INTO memory_session_change_log(id) VALUES('source:'||OLD.id); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_tombstone",
+  "tbl_name": "memory_tombstones",
+  "sql": "CREATE TRIGGER memory_session_proof_tombstone AFTER INSERT ON memory_tombstones\n WHEN NEW.target_type IN ('source','record')\n BEGIN INSERT INTO memory_session_change_log(id) VALUES(NEW.target_type||':'||NEW.target_id); END"
+ },
+ {
+  "type": "trigger",
+  "name": "memory_session_proof_trim",
+  "tbl_name": "memory_session_change_log",
+  "sql": "CREATE TRIGGER memory_session_proof_trim AFTER INSERT ON memory_session_change_log BEGIN\n DELETE FROM memory_session_change_log WHERE seq=NEW.seq-262144; END"
+ },
+ {
+  "type": "table",
+  "name": "memory_session_state",
+  "tbl_name": "memory_session_state",
+  "sql": "CREATE TABLE memory_session_state (\n thread_id TEXT NOT NULL,driver_instance TEXT NOT NULL,native_session TEXT NOT NULL,had_frame INTEGER NOT NULL,\n PRIMARY KEY(thread_id,driver_instance,native_session)) WITHOUT ROWID"
+ }
+]

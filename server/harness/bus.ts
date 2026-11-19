@@ -269,8 +269,9 @@ export class EventBus {
   private audienceListeners = new Map<(event: AudienceEmission) => void, { durable?: boolean }>();
   private audienceByExecution = new WeakMap<object, readonly AudienceEmission[]>();
   private maskedByExecution = new WeakMap<object, boolean>();
+  private secretMaskedByExecution = new WeakMap<object, boolean>();
   private listeners = new Set<RuntimeEventListener>();
-  private unsubscribes: Array<{ instanceId: string; unsubscribe: () => void }> = [];
+  private subscriptions = new Map<string, { adapter: ProviderInstance["adapter"]; unsubscribe: () => void }>();
   private readonly appendLog: typeof appendFileSync;
   /** Every listener is durable by default (the fold, terminal cleanup and the waiters all write or follow writes): its
    * deliveries wait out the writer gate and are retried on a locked database, never dropped. `{ durable: false }` opts out. */
@@ -313,12 +314,13 @@ export class EventBus {
 
   attach(instances: ProviderInstance[]) {
     for (const instance of instances) {
+      if (this.subscriptions.get(instance.instanceId)?.adapter === instance.adapter) continue;
+      this.detach(new Set([instance.instanceId]));
       const attachment = this.collector.attach(instance.instanceId);
       this.hostDriverKinds.set(instance.instanceId, instance.driverKind);
-      const previous = this.attachments.get(instance.instanceId);
-      if (previous) this.collector.detach(previous);
       this.attachments.set(instance.instanceId, attachment);
-      const unsub = instance.adapter.onEvent((event, source) => {
+      const unsubscribe = instance.adapter.onEvent((event, source) => {
+        if (this.attachments.get(instance.instanceId) !== attachment || (source && source.attachment !== attachment)) return;
         // hard invariant borrowed from correlateRuntimeEventWithInstance:
         // an adapter may only emit events for its own driver kind
         if (descriptorLogEvent(event).provider !== instance.driverKind) {
@@ -333,9 +335,9 @@ export class EventBus {
           ...Object.getOwnPropertyDescriptors(event), providerInstanceId: { value: instance.instanceId, enumerable: true },
         }) as RuntimeEvent;
         chargeExecutionEvent(stamped, event);
-        this.publish(stamped, source?.attachment === attachment ? source : undefined);
+        this.publish(stamped, source);
       });
-      this.unsubscribes.push({ instanceId: instance.instanceId, unsubscribe: unsub });
+      this.subscriptions.set(instance.instanceId, { adapter: instance.adapter, unsubscribe });
     }
   }
 
@@ -383,6 +385,8 @@ export class EventBus {
   }
 
   audienceMaskedFor(event: RuntimeEvent): boolean { return this.maskedByExecution.get(event) ?? true; }
+  /** The mask came from the turn's own secret scan (RuntimeAudienceCollector.maskedBySecret), not a fence. */
+  audienceSecretMaskedFor(event: RuntimeEvent): boolean { return this.secretMaskedByExecution.get(event) === true; }
   audienceFor(event: RuntimeEvent): readonly AudienceEmission[] { return this.audienceByExecution.get(event) ?? []; }
 
   publish(event: RuntimeEvent, source?: SourceContext) {
@@ -399,6 +403,7 @@ export class EventBus {
     if (source) this.executionSources.set(event, source);
     this.audienceByExecution.set(event, result.audience);
     this.maskedByExecution.set(event, this.collector.masked(source));
+    if (this.collector.maskedBySecret(source)) this.secretMaskedByExecution.set(event, true);
     if (route.type === "item.completed" && route.itemType === "tool") checkAllHookCanon("V-ANY");
     observeTurnEvent(route);
     const write = !this.omitThread(route.threadId) && persistsEvent(route) && !threadLogClosed(route.threadId);
@@ -612,20 +617,19 @@ export class EventBus {
   }
 
   detachAll() {
-    for (const attachment of this.attachments.values()) this.collector.detach(attachment);
-    this.attachments.clear();
-    for (const { unsubscribe } of this.unsubscribes.splice(0)) unsubscribe();
+    this.detach(new Set(this.attachments.keys()));
   }
 
   /** Stop delivering only these instances' events; every other engine stays
    * attached (a scoped provider reload, server/index.ts reloadProviders). */
   detach(instanceIds: ReadonlySet<string>) {
-    const kept: Array<{ instanceId: string; unsubscribe: () => void }> = [];
-    for (const entry of this.unsubscribes) {
-      if (instanceIds.has(entry.instanceId)) { const attachment = this.attachments.get(entry.instanceId); if (attachment) this.collector.detach(attachment); this.attachments.delete(entry.instanceId); entry.unsubscribe(); }
-      else kept.push(entry);
+    for (const instanceId of instanceIds) {
+      const attachment = this.attachments.get(instanceId);
+      if (attachment) this.collector.detach(attachment);
+      this.attachments.delete(instanceId);
+      this.subscriptions.get(instanceId)?.unsubscribe();
+      this.subscriptions.delete(instanceId);
     }
-    this.unsubscribes = kept;
   }
 }
 

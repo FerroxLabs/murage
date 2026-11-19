@@ -4,6 +4,7 @@ import "../shared/win-hide-child-process.mjs";
 import {childFinishKey,isOwnChildIoAcknowledgement} from "./sentinel/io-child-receipts.ts";
 // The leaf module, never ledger-refusal.ts: this file is loaded by every spawned proxy before it answers `initialize`.
 import { LEDGER_REFUSAL_LINE } from "./ledger-refusal-line.ts";
+import { logSwallowedConsumingError } from "./consuming-error-log.ts";
 import type { ProxyFrame, ReleaseEnvelope } from "./consuming-turn-ingress.ts";
 
 export const TURN_RELEASE_VERDICT_PATH = "/api/internal/turn-release/v1/verdict";
@@ -28,6 +29,8 @@ export function createProxyTurnRelease(instanceId: string, ports: ProxyReleasePo
   let queue: Promise<void> = Promise.resolve();
   const refuse = (id: string | number | null): never => {
     if (!sealed) {
+      // The stack names the check that refused; the error itself carries no frame or token.
+      logSwallowedConsumingError("proxy.refuse", new Error("PROXY_RELEASE_REFUSED"));
       sealed = true;
       try { ports.seal(); } catch { /* supervisor EOF still seals the parent lease */ }
       try { ports.terminal(terminalProxyRefusal(id)); } catch { /* no content fallback */ }
@@ -65,7 +68,11 @@ export function createProxyTurnRelease(instanceId: string, ports: ProxyReleasePo
             })(),
             new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); try { refuse(id); } catch (error) { reject(error); } }, 5000); timer.unref?.(); }),
           ]);
-        } catch { refuse(id); } finally { if (timer) clearTimeout(timer); controller.abort(); }
+        } catch (error) {
+          // The child's stderr is the only place the first cause of this refusal can be seen.
+          if (!sealed) logSwallowedConsumingError("proxy.release", error);
+          refuse(id);
+        } finally { if (timer) clearTimeout(timer); controller.abort(); }
       });
       const complete = task.finally(() => { queuedBytes -= bytes; queuedFrames--; });
       queue = complete.catch(() => {});
@@ -118,7 +125,7 @@ export function processProxyRelease(role: string) {
       return new Promise<void>((resolve, reject) => {
         if (closed || !process.connected) { reject(new Error("MEMORY_CONTEXT_REVOKED")); return; }
         acknowledgements.set(value.sequence, { resolve, reject: () => reject(new Error("MEMORY_CONTEXT_REVOKED")) });
-        process.stdout.write(serialized, error => { if (error) lost(); });
+        process.stdout.write(serialized, error => { if (error) lost("stdout-write"); });
       });
     },
     seal() { closed = true; for (const pending of acknowledgements.values()) pending.reject(); acknowledgements.clear(); },
@@ -134,16 +141,21 @@ export function processProxyRelease(role: string) {
       else if (process.connected) process.disconnect?.();
     },
   });
-  const lost = () => { try { release.transportLost(); } catch { /* terminal already sent; never a local reply */ } };
+  const lost = (cause: string) => {
+    if (!release.sealed) logSwallowedConsumingError(`proxy.lost:${cause}`, new Error("TRANSPORT_LOST"));
+    try { release.transportLost(); } catch { /* terminal already sent; never a local reply */ }
+  };
   process.on("message", (message: unknown) => {
     if(isOwnChildIoAcknowledgement(message))return;
     const ack = message as { type?: string; instanceId?: string; sequence?: number };
-    if (ack?.type !== "turn-release-ack" || ack.instanceId !== instanceId || !Number.isSafeInteger(ack.sequence)) { lost(); return; }
+    if (ack?.type !== "turn-release-ack" || ack.instanceId !== instanceId || !Number.isSafeInteger(ack.sequence)) {
+      lost(`ipc-unexpected type=${typeof ack?.type === "string" ? ack.type.slice(0, 40) : typeof message}`); return;
+    }
     const pending = acknowledgements.get(ack.sequence!);
-    if (!pending) { lost(); return; }
+    if (!pending) { lost("ipc-unknown-ack"); return; }
     acknowledgements.delete(ack.sequence!); pending.resolve();
   });
-  process.once("disconnect", lost); process.stdin.once("end", () => { stdinEnded = true; lost(); }); process.stdout.once("error", lost);
+  process.once("disconnect", () => lost("disconnect")); process.stdin.once("end", () => { stdinEnded = true; lost("stdin-end"); }); process.stdout.once("error", () => lost("stdout-error"));
   processReleases.set(role, release);
   return release;
 }
@@ -174,7 +186,10 @@ function callerCancelled(signal: AbortSignal | null | undefined, error: unknown)
 export async function proxyFetch(role: string, input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> {
   const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
   try { return proxyUpstreamResponse(role, await fetch(input, init), signal); }
-  catch (error) { if (!callerCancelled(signal, error)) proxyTransportLost(role); throw error; }
+  catch (error) {
+    if (!callerCancelled(signal, error)) { logSwallowedConsumingError("proxy.fetch", error); proxyTransportLost(role); }
+    throw error;
+  }
 }
 
 /** The child's local cap is only staging protection. Authorization to examine
@@ -188,7 +203,10 @@ export async function reserveProxyUpstream(role: string, bytes: number): Promise
       body: JSON.stringify({ operation: "upstream", instanceId, bytes }) });
     void response.body?.cancel().catch(() => {});
     if (!response.ok || processProxyRelease(role).sealed) throw new Error("MEMORY_CONTEXT_REVOKED");
-  } catch (error) { proxyTransportLost(role); throw error; }
+  } catch (error) {
+    if (!processProxyRelease(role).sealed) logSwallowedConsumingError("proxy.reserveUpstream", error);
+    proxyTransportLost(role); throw error;
+  }
 }
 
 export function proxyUpstreamResponse(role: string, response: Response, signal?: AbortSignal | null): Response {
@@ -231,5 +249,8 @@ export async function collectProxyUpstream(role: string, stream: AsyncIterable<U
       chunks.push(chunk);
     }
     return Buffer.concat(chunks);
-  } catch (error) { proxyTransportLost(role); throw error; }
+  } catch (error) {
+    if (!processProxyRelease(role).sealed) logSwallowedConsumingError("proxy.reserveUpstream", error);
+    proxyTransportLost(role); throw error;
+  }
 }

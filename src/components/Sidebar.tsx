@@ -210,7 +210,9 @@ import { hiddenPatchFrom } from "@/lib/record-numbers";
 import { hasRoutineAttention } from "@/lib/routine-attention";
 import { copyOrReport } from "@/lib/copy-text";
 import { preloadGroupView } from "@/lib/group-view-preload";
+import { useClearOfComposer, useNoticeTurn } from "@/lib/notice-lane";
 import { raiseTransientError } from "@/state/chat-error";
+import { reconnectNotice, useReconnectLine } from "./ReconnectAppsBanner";
 
 /** Help opens once the drawer's close has handed focus back (two frames), so help remembers a control that is still there. */
 function openHelpAfterDrawer() {
@@ -322,8 +324,15 @@ export function TeamFeedbackToast({
   // system already knows is there, rather than re-reading a field it would
   // then have to be told again is not null.
   const { undo, restoreBot, restoreGroup } = feedback;
+  // One floating notice at a time (lib/notice-lane.ts): this waits while the Undo toast is up, never stacks under it.
+  const turn = useNoticeTurn("team-feedback", true);
+  const frame = useRef<HTMLDivElement>(null);
+  const clear = useClearOfComposer(frame, turn);
+  if (!turn) return null;
   return (
     <div
+      ref={frame}
+      style={clear}
       role="status"
       className={cn(
         "fixed bottom-4 left-4 z-[60] max-w-[300px] rounded-xl border px-3.5 py-2.5 text-[13px] shadow-xl",
@@ -356,7 +365,8 @@ export function TeamFeedbackToast({
             Undo
           </button>
         )}
-        {onDismiss && feedbackStays(feedback) && (
+        {/* Every corner notice can be closed (1.0.20); one that stays (an archive note) waits for it. */}
+        {onDismiss && (
           <button
             type="button"
             onClick={onDismiss}
@@ -2209,6 +2219,8 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   // Row menus and inline rename do not call this callback.
   const onNavigate = () => { if (open) onClose(); };
   const narrow = useNarrowViewport();
+  // An app to sign in again: the Needs you door keeps a dot until it is, whether or not the line is put away.
+  const reconnectLine = useReconnectLine();
   const asideRef = useRef<HTMLElement>(null);
   const wasOpen = useRef(open);
   // Before paint, so focus moves before the now inert drawer drops it.
@@ -3132,6 +3144,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
           needs={needs}
           iconsOnly={density === "icons"}
           routinesAttention={hasRoutineAttention(state.routineRuns, state.routines, state.bots, state.groups)}
+          reconnect={reconnectNotice(reconnectLine.apps)}
           onOpen={(door) => { openDoor(door); onNavigate(); }}
         />
       </div>

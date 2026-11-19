@@ -5,6 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { noteViewCandidates, noteViewText, readableRecallView, type RecallViewHandle } from './recall-view.ts';
 import { wordTerms } from './postings.ts';
 import type { IndexHit } from './index.ts';
+import { PIP_ALL_KINDS_SQL } from './pip-kinds.ts';
 
 export const RECALL_RAW_LIMIT=16_384, RECALL_TEXT_LIMIT=8*1024*1024;
 export class RecallWorkBudget {
@@ -24,8 +25,13 @@ export const VIEW_RECORD_PAGE_SQL=`SELECT record_id AS id,version,sequence AS ro
   WHERE view_id=? AND generation=? AND (record_id,version)>(?,?) ORDER BY record_id,version LIMIT ?`;
 export const VIEW_RECENT_PAGE_SQL=`SELECT record_id AS id,version,sequence AS rowid FROM memory_recall_view_records INDEXED BY memory_recall_records_recent
   WHERE view_id=? AND generation=? AND sequence<? ORDER BY sequence DESC LIMIT ?`;
-export const VIEW_PENDING_PAGE_SQL=`SELECT record_id AS id,version,sequence AS rowid FROM memory_recall_view_pending
-  WHERE view_id=? AND generation=? AND sequence>? ORDER BY sequence,record_id,version LIMIT ?`;
+/** Pending receipts of this view's records, in key order (record_id, record_version). One statement per pending status, each a keyed range read of the
+ * receipts' own memory_projection_pending index (the drain already maintains it, so the page costs the drain nothing); pip kinds only count when their
+ * removal is owed, as projectRecord used to decide. Callers walk the page to the first record the reader may read, so any stable total order serves. */
+export const VIEW_PENDING_STATUSES=['pending','pending-archive','delete-pending'] as const;
+export const VIEW_PENDING_PAGE_SQL=VIEW_PENDING_STATUSES.map(status=>`SELECT r.record_id AS id,r.record_version AS version,r.rowid AS rowid,(v.record_id IS NOT NULL${status==='delete-pending'?'':` AND v.kind NOT IN ${PIP_ALL_KINDS_SQL}`}) AS hit FROM memory_projection_receipts r INDEXED BY memory_projection_pending
+  LEFT JOIN memory_recall_view_records v ON v.view_id=?1 AND v.generation=?2 AND v.record_id=r.record_id AND v.version=r.record_version
+  WHERE r.lexical_status='${status}' AND (r.record_id,r.record_version)>(?3,?4) ORDER BY r.record_id,r.record_version LIMIT ?5`);
 export const VIEW_JOBS_PAGE_SQL=`SELECT job_id AS id,sequence AS rowid FROM memory_recall_view_jobs
   WHERE view_id=? AND generation=? AND sequence<? ORDER BY sequence DESC LIMIT ?`;
 export const VIEW_TERM_PAGE_SQL=`SELECT record_id AS id,version,sequence AS rowid FROM memory_recall_view_terms
@@ -41,9 +47,32 @@ export function recentViewPage(db: DatabaseSync,view: RecallViewHandle,before: n
   view=readableRecallView(db,view);
   const rows=db.prepare(VIEW_RECENT_PAGE_SQL).all(view.viewId,view.generation,before,Math.min(limit,budget.remaining));budget.candidates(rows.length);return refs(rows);
 }
-export function pendingViewPage(db: DatabaseSync,view: RecallViewHandle,after: number,limit: number,budget=new RecallWorkBudget()): ViewRef[] {
+/** The LIMIT of each statement is applied to RAW receipts (before the view-membership and pip filters), and every raw receipt read is charged to the
+ * budget, so a backlog of pending receipts that belong to other views costs the request its allowance, never unbounded time. A window that holds no
+ * member of this view is followed by the next one; a statement's rows count as settled only up to the least key every unfinished statement has reached. */
+export function pendingViewPage(db: DatabaseSync,view: RecallViewHandle,cursor: string,limit: number,budget=new RecallWorkBudget()): ViewRef[] {
   view=readableRecallView(db,view);
-  const rows=db.prepare(VIEW_PENDING_PAGE_SQL).all(view.viewId,view.generation,after,Math.min(limit,budget.remaining));budget.candidates(rows.length);return refs(rows);
+  let id='',version=-1;
+  if(cursor!=='') { try { const pair=JSON.parse(cursor);if(!Array.isArray(pair)||typeof pair[0]!=='string'||!Number.isInteger(pair[1]))throw 0;[id,version]=pair; } catch { throw new Error('INVALID_MEMORY_CURSOR'); } }
+  const binary=(a:string,b:string)=>a<b?-1:a>b?1:0,order=(a:{id:string;version:number},b:{id:string;version:number})=>binary(a.id,b.id)||a.version-b.version;
+  const reads=VIEW_PENDING_PAGE_SQL.map(sql=>({stmt:db.prepare(sql),from:{id,version},done:false}));
+  const found=new Map<string,ViewRef>();
+  const unfinished=()=>reads.filter(read=>!read.done).sort((a,b)=>order(a.from,b.from))[0];
+  const settled=()=>{ const open=unfinished();return [...found.values()].filter(ref=>!open||order(ref,open.from)<=0).sort(order).slice(0,limit); };
+  for(let open=unfinished();open;open=unfinished()) {
+    const n=Math.min(limit,budget.remaining);
+    if(n<=0)break;
+    for(const read of reads) {
+      if(read.done||order(read.from,open.from)!==0)continue;
+      const rows=read.stmt.all(view.viewId,view.generation,read.from.id,read.from.version,n);budget.candidates(rows.length);
+      for(const row of rows) { const ref={id:String(row.id),version:Number(row.version),rowid:Number(row.rowid)},key=JSON.stringify([ref.id,ref.version]),seen=found.get(key);
+        if(Number(row.hit)===1&&(!seen||ref.rowid<seen.rowid))found.set(key,ref); }
+      if(rows.length<n)read.done=true;
+      if(rows.length)read.from={id:String(rows[rows.length-1].id),version:Number(rows[rows.length-1].version)};
+    }
+    const page=settled();if(page.length)return page;
+  }
+  return settled();
 }
 export function catchUpViewPage(db: DatabaseSync,view: RecallViewHandle,before: number,limit: number,budget=new RecallWorkBudget()): Array<{id:string;rowid:number}> {
   view=readableRecallView(db,view);

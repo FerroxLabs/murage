@@ -3375,6 +3375,8 @@ function requestProof(id: string, reader: ProofReader | null = null): string {
  * (CONFIRM_TRIES + RECOVER_SLICES_MAX per send); null outside. */
 let proofActivation: { record: string; budget: number } | null = null;
 export function setProofActivationContext(context: { record: string; budget: number } | null): void { proofActivation = context; }
+/** A warmer confirm is running: the checks it reads are the ones the next real entry will find, so they are settled rather than coalesced. */
+export const warmConfirmActive = (): boolean => proofActivation !== null;
 let activationsExhausted: (record: string) => void = () => {};
 /** Told when a proof stops because its record's activations ran out (the record reads RECOVERING-exhausted, "checking"). */
 export function onProofActivationsExhausted(hook: ((record: string) => void) | null): void { activationsExhausted = hook ?? (() => {}); }

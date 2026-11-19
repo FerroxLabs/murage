@@ -9405,6 +9405,10 @@
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "de0c837a48dcf84badd13457e368fe5472bd15d2085666a445a4b104367b9756"
     },
+    "de:memoryRecall.murageNotStarted": {
+      "review": "2026-11-18-ctxstop-lease-a2-5580f71089f4",
+      "sha256": "5cfcd407e114f3f3f97151b39e45c88056e3f31f30b5a55ba394bf5b515ddf1e"
+    },
     "de:memoryRecall.pinOverflow": {
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "ad9000c2d31d3f5c573618633cb9ac6057a3d5b0c496169f45dc582287ca3ad2"
@@ -18561,6 +18565,10 @@
       "review": "2026-11-07-cf-fixes-pass2-567371b250eb",
       "sha256": "c3d539f48d55fac453837f11a471f1cee2dc3e20da75bfc342d4e104ecf7bff5"
     },
+    "de:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "3e1ecf1ca2382eec86e4c3bada75b55ae45d84857fdc9fa6ce42265d52284a14"
+    },
     "de:updateRecovery.cleanup-stopped": {
       "review": "2026-11-07-cf-fixes-pass4-0da5fb53c3b1",
       "sha256": "edd4bee1da6b8d3a53d60f45d493ea0171420f1a4af125d24f0ded64f10a4dff"
@@ -18573,6 +18581,10 @@
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "4db6b7ceb3922c8e78e3047de8616a4d65d755b341fc43243ee43576324addbb"
     },
+    "de:updateRecovery.lease-busy": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "b652366fa9225a98f67f1f8217d0cddaa266735895b1537d892634f0880ba5e6"
+    },
     "de:updateRecovery.quit": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "60935a92d7da7cd1ef8cfca61330e94d3baeaccbcda25a6198b41e8644001696"
@@ -18584,6 +18596,14 @@
     "de:updateRecovery.return-unconfirmed": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "6a963e3d4e4fd0138b59679a1a2544dab12284fbabcee1442f3a771d5774a16b"
+    },
+    "de:updateRecovery.set-aside-foreign": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "dccb39a0d82d9d85b2d857086f1581d9026def9f3390f3d31ffbb56ffae04ca5"
+    },
+    "de:updateRecovery.set-aside-foreign-note": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "f60d39e45bde607e3fff8386244e7fa4c4cf7d6da099dba292476afa0f2c17b8"
     },
     "de:updateRecovery.settled-stopped": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
@@ -20592,6 +20612,26 @@
     "de:ux.l2a.you.healthLevel": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
       "sha256": "a0df2709572f2b41e6db375711af0275c01ce03fe6f35cb1ed0d678614f6fce6"
+    },
+    "de:ux.l2b.disk.readOnly": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "8c8c3b1e7f1ef62acc1bab2e78b375ba12c5a46c866378e4eecdc36252100808"
+    },
+    "de:ux.l2b.disk.refusing": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "fd085cde045b1c9a3796f6a5ffb4f548b2683fc9f21ec54675b19de7dc9dee36"
+    },
+    "de:ux.l2b.disk.restart": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "1692d89ffa920af7f48b4d89203f754c0f6b40569b3b74d4e8e79b786cfc306d"
+    },
+    "de:ux.l2b.disk.restartFallback": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "adae7a4cc12dab569bf8f651c52fc69a192dbc42ae8d651669a4c8578e207135"
+    },
+    "de:ux.l2b.disk.section": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "5acc0f589a62f95f3c2dc100a79f145a9ae16fa403df0e5ab17ac6c928d415b7"
     },
     "de:ux.l2b.door.cameBack": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
@@ -34201,6 +34241,10 @@
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "2940ee3461545286253178e73e6d7f895e4f0791991915cf0840cdf8bc1bcaf6"
     },
+    "en:memoryRecall.murageNotStarted": {
+      "review": "2026-11-18-ctxstop-lease-a2-5580f71089f4",
+      "sha256": "26abf428e1045a47636ea32ba7485766b6dc7bd88a0618d0d6347669a8912890"
+    },
     "en:memoryRecall.pinOverflow": {
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "7ecf0f253189a23168fc16d7ce8dfe50d4151bdc73de16a190930f284bddfa7f"
@@ -43357,6 +43401,10 @@
       "review": "2026-11-07-cf-fixes-pass2-567371b250eb",
       "sha256": "c9a8723b8c92ec3443bcb2afb19acc432dfa9a436ee9558ebec9b59e2aa004c9"
     },
+    "en:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "af84736e45df2f03ed215e8d4175ceefc65284d0c9a46cf1e139b1c013821fd2"
+    },
     "en:updateRecovery.cleanup-stopped": {
       "review": "2026-11-07-cf-fixes-pass4-0da5fb53c3b1",
       "sha256": "8ab03d539a1407aaaee4cc70a272fd43b4230004e7153afbf28318931ee6ff83"
@@ -43369,6 +43417,10 @@
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "f0462be392ea48580e48d27d6cb7176c7948a03328167e865a020fdadad38341"
     },
+    "en:updateRecovery.lease-busy": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "7f6267b534e7c0c8062588a2591c1d7e2d72e9240a6cb0ee47dc1109e227212c"
+    },
     "en:updateRecovery.quit": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "b3eb37acb66ba4bbe8fb1ba296815daf194be94f5a5fb50dab2fb5e4a57ba29e"
@@ -43380,6 +43432,14 @@
     "en:updateRecovery.return-unconfirmed": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "5ee2e16925f8dfd94376edcb1be061cda63150abd33e49e5739eed5c946565c5"
+    },
+    "en:updateRecovery.set-aside-foreign": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "fa41abaede42ac76455cf2d125f68a4075a9a2074469259441710a36ff41069e"
+    },
+    "en:updateRecovery.set-aside-foreign-note": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "661c7d21f4b16e40c82f50801fac4181273e8d2e8c228e1f67d2e9e31295b04d"
     },
     "en:updateRecovery.settled-stopped": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
@@ -45388,6 +45448,26 @@
     "en:ux.l2a.you.healthLevel": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
       "sha256": "390b9633afdfc9246354a3155143a6e41da86e48ed82fe513b1f8246e92e8eb4"
+    },
+    "en:ux.l2b.disk.readOnly": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "d7021a4500c685ecdbaa07cc9ce69b09f01c172ed0eb902a03658013cbbc163a"
+    },
+    "en:ux.l2b.disk.refusing": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "6316ce253a4884b0e098f6877ce9c04c8fd42068229dd84e1a0e21ab7d7577d3"
+    },
+    "en:ux.l2b.disk.restart": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "e36f80a9fcb458f2ed1ae2285a563fb6edd6035710c87776964d7b27c0e93bbd"
+    },
+    "en:ux.l2b.disk.restartFallback": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "9f9d1131566b285588476a91b7183b5f7a01de7e871f3e8556ec2ab51b67e650"
+    },
+    "en:ux.l2b.disk.section": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "133e37b5b8b85545feee6b7b6f7bbe57cb0f94e59b44e976004170295637dd38"
     },
     "en:ux.l2b.door.cameBack": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
@@ -58997,6 +59077,10 @@
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "dc62e6f5c73667e73d29ea08a814eb4fb16200027797fb3a49e30ee9aec4aba3"
     },
+    "es:memoryRecall.murageNotStarted": {
+      "review": "2026-11-18-ctxstop-lease-a2-5580f71089f4",
+      "sha256": "e01e55f286ac730c0acc9b1f71ed53fc015e5b5b4eb56052e929320fd0337b1a"
+    },
     "es:memoryRecall.pinOverflow": {
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "d059a82bade6d7a8dc886ef2e1b44e4b670abf3eef5ee4787b21692802e3f55c"
@@ -68153,6 +68237,10 @@
       "review": "2026-11-07-cf-fixes-pass2-567371b250eb",
       "sha256": "680a70729b761c2915721d0451238c3db67b3d9c7899d56305429a55c58aa3c0"
     },
+    "es:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "80036536ae24d5b6b0f514b238c6269a11a2e848d054fc9acf0ab70bb400b272"
+    },
     "es:updateRecovery.cleanup-stopped": {
       "review": "2026-11-07-cf-fixes-pass4-0da5fb53c3b1",
       "sha256": "cbf310a55d582dabfe2b22a0f5c43212d2838f3de2ff1842715a4141ca05edc9"
@@ -68165,6 +68253,10 @@
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "cc00997f914140b0ba3f0d66c0920dc7ce6cb1504623c81de0025d09ea3adde0"
     },
+    "es:updateRecovery.lease-busy": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "1061d45b4bcdfef023051cc7c819413c8bb81bc4a6390f7e83d1dd6aee4cd2e5"
+    },
     "es:updateRecovery.quit": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "93fffbf7ce799f33fad9caff872294abcb4af5caf558cdd879ec5140ad674256"
@@ -68176,6 +68268,14 @@
     "es:updateRecovery.return-unconfirmed": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "2a15cdd25e2140172441f0f79c9b52698c74688ade13c2e5e9ceefdae9695d59"
+    },
+    "es:updateRecovery.set-aside-foreign": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "1c6cce681c73dcee68b400823daefa1a65d988c9597782e19a2e37628fd5d679"
+    },
+    "es:updateRecovery.set-aside-foreign-note": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "990f7a40bcc1fddd5ebffba4f6cc2520d18304920056098352deabda85d929a7"
     },
     "es:updateRecovery.settled-stopped": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
@@ -70184,6 +70284,26 @@
     "es:ux.l2a.you.healthLevel": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
       "sha256": "c915033778e65423213a7d4f45fa003eedccbd0aa583ba0e062d71c724ac4bc6"
+    },
+    "es:ux.l2b.disk.readOnly": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "85e1be92f2227f2aadcec1f9f570b2547abb98dd3ca8ceba0c849e4ead0ae635"
+    },
+    "es:ux.l2b.disk.refusing": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "1228d448af813ccd559eb4dc09ff784dc9583b377876e66454b4c753539bf906"
+    },
+    "es:ux.l2b.disk.restart": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "edc59c6bcd1133c388fdff71e1c8283659ef8223264a04a499d360623ec6c147"
+    },
+    "es:ux.l2b.disk.restartFallback": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "e3a54d0a329244e1fa7e5d2d33ca47cd4ce263f3cc2734d421f542737ef99c4f"
+    },
+    "es:ux.l2b.disk.section": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "8938a9b3568a67af796bd64965ef4bdf3fe47584a655060c60679468711282b1"
     },
     "es:ux.l2b.door.cameBack": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
@@ -83793,6 +83913,10 @@
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "51530feca66b1e4ce75c45c003d40d61d14a0b97415f8f3cf0f61f36e8fe8b9a"
     },
+    "fr:memoryRecall.murageNotStarted": {
+      "review": "2026-11-18-ctxstop-lease-a2-5580f71089f4",
+      "sha256": "bbf5883eba0e908ca99411ab262cf9c7b1ad8437872ff788622ea7ecc57d6b0e"
+    },
     "fr:memoryRecall.pinOverflow": {
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "9e4231900cb51b91e13847052eb84e265da11be1c74aea6ff98eca78864a44b6"
@@ -92949,6 +93073,10 @@
       "review": "2026-11-07-cf-fixes-pass2-567371b250eb",
       "sha256": "a5979e1cc9cc50238428c1a68c78ead11cc3b5b74486b95167de46d798c25680"
     },
+    "fr:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "623ecf78ffca90ca483b5df6f9cf66019b73c6e67a1b47036614ea2d8d300ecd"
+    },
     "fr:updateRecovery.cleanup-stopped": {
       "review": "2026-11-07-cf-fixes-pass4-0da5fb53c3b1",
       "sha256": "ed9458210052820ceb680d2d31e9e5846b5e404145592bef851fe5750727ed48"
@@ -92961,6 +93089,10 @@
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "5928dd250be803e3df57e08f288bf27f9364218efa42eb9b70d864d09feb21ff"
     },
+    "fr:updateRecovery.lease-busy": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "6764f8b50f8392edfff978f681a155358a89a75531f999572a877f4b27cc43d8"
+    },
     "fr:updateRecovery.quit": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "4974161dd85499c38bccc0490e9591a119ceb5b37d1496bf0ba34e0dd6cac681"
@@ -92972,6 +93104,14 @@
     "fr:updateRecovery.return-unconfirmed": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "95915288b295d5d5c18a8823d4868acfe833a472d6ed8659bd03c18817a2fc89"
+    },
+    "fr:updateRecovery.set-aside-foreign": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "b72fc6837f8c2e82da2b92fc607ba0da3a738dcd1502a785b1f8082a82ec84cd"
+    },
+    "fr:updateRecovery.set-aside-foreign-note": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "d0daff057c38c1555aa141e6bbd65acbf68f2f76f312f799b3c58fc78f428aa5"
     },
     "fr:updateRecovery.settled-stopped": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
@@ -94980,6 +95120,26 @@
     "fr:ux.l2a.you.healthLevel": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
       "sha256": "b224bba33e14aef9e66bcf716e1fb1778b2d1de285a1ae1f9c9732c43fa38f83"
+    },
+    "fr:ux.l2b.disk.readOnly": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "7de623bbcdc2221e6cab92067c081ef3659da28a0cfbc63d08a1604fdddfeacb"
+    },
+    "fr:ux.l2b.disk.refusing": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "0030c5685934ee097edf2397bba0dbc11a8f6c8f5092ff3592368579a63eb448"
+    },
+    "fr:ux.l2b.disk.restart": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "e6c9caa7f7f6e78d9d47c59d4d2196f0a797de8cd2b8799d40f6d2cce9f4ad76"
+    },
+    "fr:ux.l2b.disk.restartFallback": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "ff4d7a1742ddc6ca502de76da12ee644970a8a747b11405df7f8e909abc956ef"
+    },
+    "fr:ux.l2b.disk.section": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "e294fe92062280a77b1d4f836728ec50585c95912c5e0ef188f5fd1994b43254"
     },
     "fr:ux.l2b.door.cameBack": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
@@ -108589,6 +108749,10 @@
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "9f02a3c5a472108d947665550b7264104487da1adc0b5b61e05c547f569c1b51"
     },
+    "hi:memoryRecall.murageNotStarted": {
+      "review": "2026-11-18-ctxstop-lease-a2-5580f71089f4",
+      "sha256": "961ec80b0972938baaabf0641264cc572fc4225154a3bb11607d9ec7e48c3a9e"
+    },
     "hi:memoryRecall.pinOverflow": {
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "5854cadbfad21bbc61ffd2218c7f5b43b90c4ebdb63c6d2aad3bf720aaec5904"
@@ -117745,6 +117909,10 @@
       "review": "2026-11-07-cf-fixes-pass2-567371b250eb",
       "sha256": "e0537c38b89044928dd2557eeeaa6c5c1beb1f1ba3e13b9a580c26e9732ca787"
     },
+    "hi:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "19fcf92cbbe3bbaa627bbac8397744f729637d1f99139a036b2bdf4e165b3426"
+    },
     "hi:updateRecovery.cleanup-stopped": {
       "review": "2026-11-07-cf-fixes-pass4-0da5fb53c3b1",
       "sha256": "b1c32de3932ea15bfe8d0a81e2b26a2ab59f4de870bc289df69d0bf6df59ac3b"
@@ -117757,6 +117925,10 @@
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "b7b69239bd71ec49b0cdaa15f83326b750b69f9989a7a6f20ff3fea14bd60d73"
     },
+    "hi:updateRecovery.lease-busy": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "638ac38dfea652fd5735e3df6c48aa5169ef041d14b328b8cfd46e89c5af3ed2"
+    },
     "hi:updateRecovery.quit": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "ef9cca4a55ee043090d3e9cdd265290e84d656e43f00e9de974299ebe5f85755"
@@ -117768,6 +117940,14 @@
     "hi:updateRecovery.return-unconfirmed": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "9a35f005f793a3633d5d852952b3e9a38f84ff3a045b46c0c5c93de84f3ab9ea"
+    },
+    "hi:updateRecovery.set-aside-foreign": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "be51d02af77a8e2e08ffdd0293d26e534ffd8e23e66691f42502ab11ab0e5bc0"
+    },
+    "hi:updateRecovery.set-aside-foreign-note": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "f0f233a7646b4813f3620acbf317db01fceaff094123edf3e64041768d86585a"
     },
     "hi:updateRecovery.settled-stopped": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
@@ -119776,6 +119956,26 @@
     "hi:ux.l2a.you.healthLevel": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
       "sha256": "2113de782a33d58a776c45fa4beb844f9d38464011b35d917366b7067aa39a0f"
+    },
+    "hi:ux.l2b.disk.readOnly": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "920634f4d6deade8c254e212d263e7fbe83be39c198401d0c2331b02b1da80fb"
+    },
+    "hi:ux.l2b.disk.refusing": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "bfcff1500fe186081113602c476e67d75f4336b2fb0301c6f1a3fc3d104a8c75"
+    },
+    "hi:ux.l2b.disk.restart": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "16fa1d1ae42d1d52c1b08f6fc998d7e69e8b49551262e1372ab284b7521edf34"
+    },
+    "hi:ux.l2b.disk.restartFallback": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "d6f9475b91cbed3abba4ed001209d964fe05c869664c66e6396616ad960e278a"
+    },
+    "hi:ux.l2b.disk.section": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "880139f7926225f4fe9ee332325ddf08fb2c20362bebeafb9248ef3b591ff6ed"
     },
     "hi:ux.l2b.door.cameBack": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
@@ -133385,6 +133585,10 @@
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "666f70d0b88e72decefb5f4a87fb9e5bad27afc7e3a3acf3bb4a3cfa501da172"
     },
+    "ja:memoryRecall.murageNotStarted": {
+      "review": "2026-11-18-ctxstop-lease-a2-5580f71089f4",
+      "sha256": "8cc2c46a9e10ea8f67de1283c1321e84998a53de33c8ac43deec6990ae507a13"
+    },
     "ja:memoryRecall.pinOverflow": {
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "b260e03ca55a2fa99513555a1d9cee36957488df5da1ca7c20d6301c44be55f6"
@@ -142541,6 +142745,10 @@
       "review": "2026-11-07-cf-fixes-pass2-567371b250eb",
       "sha256": "91e0a7ab41ccbe48002541b05e5fd00d9745f556fdec4eaef9fb1c0a8a1eb402"
     },
+    "ja:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "1bc442b745e468e6092428bf1cfe04959e854795a40d0eb9bf7e93d6eaa6d75d"
+    },
     "ja:updateRecovery.cleanup-stopped": {
       "review": "2026-11-07-cf-fixes-pass4-0da5fb53c3b1",
       "sha256": "f51da934b507e8f2ddb6d0e61b532fd56b22cd3ff0836fe88ece503438ccf380"
@@ -142553,6 +142761,10 @@
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "6725f98953e85830a3f5fb053e5f01558b29cc1038e49e28e0243efdb45b9251"
     },
+    "ja:updateRecovery.lease-busy": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "8dd8f8f6fc8b4daa348cf20a193b6e946f9f98d1a73c4cc6553ddcc5fd0d1f2d"
+    },
     "ja:updateRecovery.quit": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "8f26d438109c877447c80b84eb7e4ba1e6768ebcfc5408f0bc3c0725956bf039"
@@ -142564,6 +142776,14 @@
     "ja:updateRecovery.return-unconfirmed": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "5fed8d72ec4b03b7495355d14dea30aaed4da05110d7ccb78cb1fca65cb7a0b5"
+    },
+    "ja:updateRecovery.set-aside-foreign": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "b440aeab3b2d6818fc0730f5c099f1fceade22eaccdb9bf54514acd4d2dc83b0"
+    },
+    "ja:updateRecovery.set-aside-foreign-note": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "1c60e07ae677f8449cd0e00c9649e698d3205baa81e12e7e1232b43423090f4a"
     },
     "ja:updateRecovery.settled-stopped": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
@@ -144572,6 +144792,26 @@
     "ja:ux.l2a.you.healthLevel": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
       "sha256": "595cd4e5267d87617a4b09d0e092628f6f65e3dd2f70030708607524ff31f99d"
+    },
+    "ja:ux.l2b.disk.readOnly": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "258520cf7547421ac56eea9cd261c2255772246fbafd44f79486ae64162b042e"
+    },
+    "ja:ux.l2b.disk.refusing": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "672eac34c9d105129ae21377a175912b7811881ec729c2550a79ddd01430971a"
+    },
+    "ja:ux.l2b.disk.restart": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "fea385e530b69036a447bc2156f782dfa4a6e20afac001752476ec685632eb70"
+    },
+    "ja:ux.l2b.disk.restartFallback": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "fa4539969efbaf2c6c5e382542771a9a0a7fb47f02b5cfaabe75d58b2f098a55"
+    },
+    "ja:ux.l2b.disk.section": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "e5fadcabffdd56c254cd889d71c7f37e701ad71020ff1d699d95ec6e7bf9c60e"
     },
     "ja:ux.l2b.door.cameBack": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
@@ -158181,6 +158421,10 @@
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "40af6ce7a307ebfd153fa59dd5aee88f439ff5fd36d91afdc7a5c7866d22a143"
     },
+    "pt-br:memoryRecall.murageNotStarted": {
+      "review": "2026-11-18-ctxstop-lease-a2-5580f71089f4",
+      "sha256": "31f472ae7aa9902f1097afe22945e951acedeadd129a907472f42fe3f74158eb"
+    },
     "pt-br:memoryRecall.pinOverflow": {
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "c0f6ea7e6544cfd414be46e05ade0595cbafa91ff51f50224fb728bc980e270f"
@@ -167337,6 +167581,10 @@
       "review": "2026-11-07-cf-fixes-pass2-567371b250eb",
       "sha256": "8e3295009b3342357e5b23faa9e5f3c8c14d0aae48586593d3e6a8a04ad3b8e1"
     },
+    "pt-br:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "5bd19d1043cbc2f55d0ab6d18dd699d5347afdc0b0847c3e3153f681777e9a0a"
+    },
     "pt-br:updateRecovery.cleanup-stopped": {
       "review": "2026-11-07-cf-fixes-pass4-0da5fb53c3b1",
       "sha256": "5e0909c83168277de828bf4a7f950bd72f8fec50873b05da94bc84e21bb460ba"
@@ -167349,6 +167597,10 @@
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "69f6dc9205b55b61680182aebf6ebd68e16f758e6d8d0a5244ea036ebadda5fb"
     },
+    "pt-br:updateRecovery.lease-busy": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "afddc9d3274104d9f68e2e0b35a8acc3c899f428bceaa35d2b581ebc3057b75d"
+    },
     "pt-br:updateRecovery.quit": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "2d023dea2a9d93793dcee75a664d3396a73269adb273bdac8733c6ccba59b154"
@@ -167360,6 +167612,14 @@
     "pt-br:updateRecovery.return-unconfirmed": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "d51b94d4af9f62c1991249cd56fce3493bc55d53f65c8ebb5b370d2e61e54608"
+    },
+    "pt-br:updateRecovery.set-aside-foreign": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "591807906da15fb7270cc50826aad84f748ed23433e92c673e4d66c609cfbaf5"
+    },
+    "pt-br:updateRecovery.set-aside-foreign-note": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "87a403e8b40946edde59f61891669b2d593df9a3ce30eedde3042a786b9a9f5a"
     },
     "pt-br:updateRecovery.settled-stopped": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
@@ -169368,6 +169628,26 @@
     "pt-br:ux.l2a.you.healthLevel": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
       "sha256": "980bdd0de277502e066addfa7a433ab1e722a3b52a703acf01c568f59ebb8d22"
+    },
+    "pt-br:ux.l2b.disk.readOnly": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "27feb65b46ceb6b4f44adc0a5e6054b6737579a7a857c818ddb01294996a3a4e"
+    },
+    "pt-br:ux.l2b.disk.refusing": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "f8c23baf5395bdb3fc345e5632d6350043d5112faff95298a42dd3658d7c938c"
+    },
+    "pt-br:ux.l2b.disk.restart": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "77a11050136cb2b18d2c28213a4a96c8e8891d8b212cad0b7b7a0d16de9d77d9"
+    },
+    "pt-br:ux.l2b.disk.restartFallback": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "386e172fa4a454198f6f0fb2b4230c78bbecf3cfb925db5ebf72c30eb3ea35f2"
+    },
+    "pt-br:ux.l2b.disk.section": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "ab7aba09297570ff2a0b149227cb75cc0783bc23e505c25cd0b94b4667bd0fb9"
     },
     "pt-br:ux.l2b.door.cameBack": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
@@ -187361,6 +187641,10 @@
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "186ec01ee8e5bdebf8281f138ab330f038f18fcb64fb68dc130e4a9e52a11325"
     },
+    "zh:memoryRecall.murageNotStarted": {
+      "review": "2026-11-18-ctxstop-lease-a2-5580f71089f4",
+      "sha256": "054ede78f7f6beaeee55bf186615db9b6bce04ba953705a34d614abd944439c9"
+    },
     "zh:memoryRecall.pinOverflow": {
       "review": "2026-11-14-recall-s1s2c-c18844c970c9",
       "sha256": "0eae1bba851375426729f0310d598ba8c0685ccc151c29feb9eee520f33e2e3a"
@@ -196517,6 +196801,10 @@
       "review": "2026-11-07-cf-fixes-pass2-567371b250eb",
       "sha256": "8aada1dedcfe5d565c2c0d6aca02e418e8cb9cbbeb598a71550f11ccbd6cc3b0"
     },
+    "zh:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "372bd25c34a8cf845be1f10b823b9726530cff8d54e65d534fc4a39825af32d1"
+    },
     "zh:updateRecovery.cleanup-stopped": {
       "review": "2026-11-07-cf-fixes-pass4-0da5fb53c3b1",
       "sha256": "7c2dd29917b495ca3bf5b92984ccaa31921939a97431d6a5e1de6699006f2ff0"
@@ -196529,6 +196817,10 @@
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "f82aac53bbd63a3d13f19207dd5b1b808aa11ba4b82ebf8049a4347e78e7649b"
     },
+    "zh:updateRecovery.lease-busy": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "8a0885c926e1ad5159b0b19ee45ac9a3a94c50e8ccf38573d967e37d44d0b924"
+    },
     "zh:updateRecovery.quit": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "498e1d59b4d787ee29cafe969574585589db49a4c02c093e8fca5e3b50600764"
@@ -196540,6 +196832,14 @@
     "zh:updateRecovery.return-unconfirmed": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
       "sha256": "ff790e6bf5a31d631928b9eb3e9539ef4d49ea3856cf425ed39dc7c93de6ec2f"
+    },
+    "zh:updateRecovery.set-aside-foreign": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "6e04a1f780c44e933a7a881da3ae792cf067ee29b8a522257ab4fac830138c8a"
+    },
+    "zh:updateRecovery.set-aside-foreign-note": {
+      "review": "2026-11-18-recovery-lease-setaside-08c5ea03694a",
+      "sha256": "7c107508d5eab1de0847e85b5af09e86714dc93f1a5f13111becf89d794c7a8d"
     },
     "zh:updateRecovery.settled-stopped": {
       "review": "2026-11-07-cf-highlevel-and-b9-3a006cf5b457",
@@ -198548,6 +198848,26 @@
     "zh:ux.l2a.you.healthLevel": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
       "sha256": "9920f60fedeb0fa2b4a2dd1adc8da7810b5b925a02743571f994508fb8e71457"
+    },
+    "zh:ux.l2b.disk.readOnly": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "d80c9d6921f3e1093cfb6da6951c750eaf0a04b44a005f97fde5c705ef82f1e4"
+    },
+    "zh:ux.l2b.disk.refusing": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "0cc9fbf9650cc41431b887e886cbe7985d7642be9d86b656a8cd39740c9431b1"
+    },
+    "zh:ux.l2b.disk.restart": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "881d20ba6a5778fe4319a024c197fa7b80e5f1dfb102db4472b640f11322b16c"
+    },
+    "zh:ux.l2b.disk.restartFallback": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "1122fb08b5cc75114c5feefbd639b99dcac07f20d6d84f82f8d0dc2bfe5654e8"
+    },
+    "zh:ux.l2b.disk.section": {
+      "review": "2026-11-18-disk-copy-4fb241030cb5",
+      "sha256": "ba142d17d8625821c701dd0d4050b7b52a2c63ab4d6abae00232d3fab0b41615"
     },
     "zh:ux.l2b.door.cameBack": {
       "review": "2026-11-06-l-copy-final-4f9b825938fb",
@@ -202768,8 +203088,8 @@
       "sha256": "3ff4375ad85231c4b3120ffab036916b95189731094df87d10662e80163f08a7"
     },
     "reviewers.json": {
-      "review": "2026-11-18-g9-browser-help-243c39c42662",
-      "sha256": "7ef1e787099792993e285ed0230f46f454316e55b8fabadd24c63b44fa80b072"
+      "review": "2026-11-18-ctxstop-lease-a2-5580f71089f4",
+      "sha256": "91b395a2fe8db5c6abc99095b1a50f3828dec2b8726807b55d8c899f09214fa0"
     },
     "same-as-english.json": {
       "review": "2026-11-11-int19m11-stale-policy-fe9cb1f4d2a7",

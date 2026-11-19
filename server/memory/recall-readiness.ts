@@ -4,12 +4,14 @@
 // Consumer owner: recall-smoke (direct and room dispatch, before-submit fences).
 import { database, databaseGeneration } from '../database.ts';
 import { ownerPinIndexPresent } from './schema.ts';
-import { RecallPreparationPending, MemoryPinProjectionPending, recallPreparationFailure } from './recall-recovery.ts';
+import { RecallCapacityPending, RecallPreparationPending, MemoryPinProjectionPending, recallPreparationFailure } from './recall-recovery.ts';
 
 export class RecallHeld extends RecallPreparationPending {}
 export class RecallDispatchPending extends Error {
   constructor() { super('This reply is still being prepared, so this message was not sent. Send it again in a moment.'); }
 }
+/** R01 owner: recall-reclaim-r2. Every recall view is in use, so the send is refused on its card and never runs without recall. */
+export class RecallCapacityRefused extends RecallDispatchPending {}
 /** Reads references only, through the partial index. Missing index means unknown. */
 export function noPins(): boolean {
   const db = database();
@@ -65,6 +67,7 @@ export class RecallReadiness {
   private proof?: { generation: number };
   private readmitted = false;
   private heldIssued = false;
+  private capacity = false;
   /** MAIN RULING 1117T01:23Z (a): a redispatch after a roster or authority change (the prepared context was revoked) reads a context
    *  that did not exist when the earlier probes ran, so it gets a fresh probe schedule with the same 300/2000 ms per wait. The held
    *  and readmission tickets stay spent: one held send and one readmission per logical send. The redispatch count stays bounded. */
@@ -88,10 +91,16 @@ export class RecallReadiness {
       if (offset > wait.waited) { await waitFor(offset - wait.waited, signal); wait.waited = offset; }
       signal.throwIfAborted();
       try { return read(); }
-      catch (error) { if (!(recallPreparationFailure(error) instanceof RecallPreparationPending)) throw error; }
+      catch (error) {
+        const failure = recallPreparationFailure(error);
+        if (!(failure instanceof RecallPreparationPending)) throw error;
+        this.capacity = failure instanceof RecallCapacityPending;
+      }
     }
     signal.throwIfAborted();
     if (noPins()) {
+      // A full view store is not a fresh home: held mode would drop recall without saying so.
+      if (this.capacity) throw new RecallCapacityRefused();
       if (this.heldIssued) throw new RecallDispatchPending();
       this.heldIssued = true;
       this.proof = { generation: databaseGeneration() };

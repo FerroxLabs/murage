@@ -10,6 +10,7 @@ import { chmodSync, statSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { refuseConsumingTurn } from "../consuming-turn-response.ts";
+import { logSwallowedConsumingError } from "../consuming-error-log.ts";
 import { isMemoryRefusal } from "./engine-input.ts";
 import type { SendTurnInput } from "../contracts.ts";
 import { CLOUD_BROKER_DIR } from "../cloud-home/turn-process.ts";
@@ -43,9 +44,20 @@ export class RelayedMount {
       if (this.pendingBarrier()) { this.retire(); this.failed(); }
     });
     mount.ingress.supervise(child);
-    child.on("message", message => { if(!isObservedChildIoMessage(child,message))this.fail(); });
+    child.on("message", message => {
+      if (isObservedChildIoMessage(child, message)) return;
+      // Name only the shape: a frame or token never reaches the log.
+      const shape = message && typeof message === "object" ? message as Record<string, unknown> : {};
+      // turn-release-terminal = the child's own release refused (its stderr names why, e.g. "bridge failures=1 code=ENOENT").
+      if (!this.stopping) console.warn(`[mount-relay] mount ipc message seals the relay type=${typeof shape.type === "string" ? shape.type.slice(0, 40) : typeof message}`
+        + ` keys=${Object.keys(shape).slice(0, 8).join(",").slice(0, 120)}`);
+      this.fail();
+    });
     child.on("error", error => this.fail(error));
-    child.once("exit", () => this.fail(transportClosed()));
+    child.once("exit", (code, signal) => {
+      if (!this.stopping) console.warn(`[mount-relay] mount child exited code=${code ?? "-"} signal=${signal ?? "-"}`);
+      this.fail(transportClosed());
+    });
     child.stdin?.on("error", error => this.fail(error));
     child.stderr?.on("error", () => {}); child.stderr?.resume();
     child.stdout?.on("error", error => this.fail(error));
@@ -69,7 +81,10 @@ export class RelayedMount {
     try {
       if (!this.child.stdin || this.child.stdin.writableNeedDrain || this.child.stdin.destroyed) throw new Error("MEMORY_CONTEXT_REVOKED");
       this.mount.ingress.request(frame, () => { entered = true; this.child.stdin!.write(frame + "\n"); }, "\n");
-    } catch (error) { this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error); }
+    } catch (error) {
+      if (!this.stopping) logSwallowedConsumingError(entered ? "relay.mount:entered" : "relay.mount", error);
+      this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error);
+    }
   }
   data(chunk: Buffer): void {
     if (this.stopping) return;
@@ -99,7 +114,10 @@ export class RelayedMount {
           } catch (error) { this.fail(error ?? transportClosed()); }
         }
       }
-    } catch (error) { this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error); }
+    } catch (error) {
+      if (!this.stopping) logSwallowedConsumingError(entered ? "relay.mount:entered" : "relay.mount", error);
+      this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error);
+    }
   }
 }
 
@@ -272,12 +290,18 @@ export class CliMountRelay {
           const socket = relay.#connections.get(name);
           if (!socket || socket.destroyed || socket.writableNeedDrain) throw new Error("MEMORY_CONTEXT_REVOKED");
           socket.write(frame);
-        }, (error, refusal) => relay.seal(error, refusal), () => descendants.track(), () => !!relay.#onTicketFailure);
+        }, (error, refusal) => {
+          // Name the mount whose child, IPC or frame sealed the relay (name and cause kind only).
+          if (!relay.#stopping && !relay.#sealed) console.warn(`[mount-relay] mount failure seals the relay mount=${name.slice(0, 64)}`
+            + ` cause=${error !== undefined ? "native" : refusal !== undefined ? "refusal" : "none"}`);
+          relay.seal(error, refusal);
+        }, () => descendants.track(), () => !!relay.#onTicketFailure);
         relay.mounts.set(name, transport); relay.#children.push({ transport, descendants, teardown });
         descendants.track();
       }
       return relay;
     } catch (error) {
+      logSwallowedConsumingError("relay.build", error);
       const memoryRefusal = (error as { code?: string } | null)?.code === "MEMORY_CONTEXT_REVOKED"
         || (error as { message?: string } | null)?.message === "MEMORY_CONTEXT_REVOKED";
       if (previous) relay.retire();
@@ -311,14 +335,21 @@ export class CliMountRelay {
     let name: string | undefined;
     let buffer = Buffer.alloc(0);
     const timer = setTimeout(() => socket.destroy(), 5000); timer.unref();
-    socket.on("error", error => { if (name && !this.#stopping) this.seal(error); });
+    socket.on("error", error => {
+      if (name && !this.#stopping && !this.#sealed) console.warn(`[mount-relay] engine connection error seals the relay mount=${name.slice(0, 64)}`);
+      if (name && !this.#stopping) this.seal(error);
+    });
     socket.on("close", () => {
       clearTimeout(timer); this.#sockets.delete(socket);
+      if (name && !this.#stopping && !this.#sealed) console.warn(`[mount-relay] engine connection closed seals the relay mount=${name.slice(0, 64)}`);
       if (name && !this.#stopping) this.seal(transportClosed());
     });
     socket.on("data", (chunk: Buffer) => {
       if (this.#stopping || this.#sealed) { socket.destroy(); return; }
-      if (buffer.length + chunk.length > CHAT_MCP_FRAME_CAP_BYTES) { if (name) this.seal(); socket.destroy(); return; }
+      if (buffer.length + chunk.length > CHAT_MCP_FRAME_CAP_BYTES) {
+        if (name) { console.warn(`[mount-relay] engine frame over the cap seals the relay mount=${name.slice(0, 64)}`); this.seal(); }
+        socket.destroy(); return;
+      }
       buffer = Buffer.concat([buffer, chunk]);
       for (;;) {
         const end = buffer.indexOf(10); if (end < 0) return;
@@ -337,7 +368,10 @@ export class CliMountRelay {
               socket.destroy(); return;
             }
             // Authentication precedes association: strangers cannot refuse a turn.
-            if (this.#connections.has(auth.server)) { this.seal(); socket.destroy(); return; }
+            if (this.#connections.has(auth.server)) {
+              if (!this.#stopping && !this.#sealed) console.warn(`[mount-relay] second engine connection for one mount seals the relay mount=${auth.server.slice(0, 64)}`);
+              this.seal(); socket.destroy(); return;
+            }
             name = auth.server as string; this.#connections.set(name, socket); clearTimeout(timer);
           } catch { socket.destroy(); return; }
         } else this.mounts.get(name)!.request(line);
@@ -354,6 +388,9 @@ export class CliMountRelay {
     }
     this.#sealed = true;
     this.#nativeFailure = nativeError; this.#refusal = refusal;
+    // The first cause of a sealed relay: a native transport failure, a ledger refusal, or neither (a protocol seal).
+    logSwallowedConsumingError(nativeError !== undefined ? "relay.seal:native" : refusal !== undefined ? "relay.seal:refusal" : "relay.seal",
+      nativeError ?? refusal ?? new Error("RELAY_SEALED"));
     if (nativeError !== undefined) {
       // Invalidate every mount before teardown; native failure is not a ledger denial.
       for (const mount of this.mounts.values()) mount.retire();

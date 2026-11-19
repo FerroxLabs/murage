@@ -526,9 +526,11 @@ export function runMcpBridge(options: BridgeOptions): void {
     child.stderr.on("data", touch);
   }
 
-  child.on("error", () => {
+  child.on("error", (error: NodeJS.ErrnoException) => {
+    // Name the launch failure before the release seals: code, syscall and the command's base name only.
+    const command = typeof error?.path === "string" ? error.path.split(/[\\/]/).pop()!.slice(0, 60) : "-";
+    process.stderr.write(`bridge failures=1 code=${String(error?.code ?? "-").slice(0, 32)} syscall=${String(error?.syscall ?? "-").split(" ")[0]!.slice(0, 32)} command=${command}\n`);
     if (options.releaseRole) proxyTransportLost(options.releaseRole);
-    process.stderr.write("bridge failures=1\n");
     process.exitCode = 1;
     watchdog?.stop();
     detach();
