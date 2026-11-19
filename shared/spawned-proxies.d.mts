@@ -22,7 +22,6 @@ export declare const SPAWNED_PROXY_FILES: Readonly<{
   wipeMcp: string;
   phone: string;
   phoneJobs: string;
-  highlevel: string;
   browser: string;
   headlessBrowser: string;
   unifiedBrowser: string;

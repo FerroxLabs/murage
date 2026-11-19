@@ -1035,11 +1035,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.phoneJobs) {
           mount("phoneJobs", turn.integrations.phoneJobs, true, "own:phoneJobs");
         }
-        // native HighLevel (HL-S2): pre-approved (OWN_UNASKED); the host grant and Murage's own review card are the gate.
-        if (turn.integrations?.highlevel) {
-          // All family tools reach the host; only it may authorize an operation or send reviewed values.
-          mount("highlevel", turn.integrations.highlevel, true, "own:highlevel");
-        }
         // A custom server named like one in the owner's own config.toml would
         // be MERGED with it by the `-c` override, not replace it: a stdio
         // command over a remote `url` entry is "invalid configuration" and
@@ -1051,7 +1046,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // The servers that actually get mounted, chosen BEFORE any name is
         // allocated: a skipped server must not reserve its name, and a moved
         // server must not land on a sibling's.
-        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs") || (Boolean(turn.integrations?.highlevel) && name === "highlevel"))
+        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs"))
           .map((mount): [string, { command: string; args: string[]; env: Record<string, string> }] => [mount.name, { command: mount.command, args: mount.args, env: mount.env }])
           // Rule 11: a name holding `__` cannot be told apart from its tools,
           // so it is not mounted and no record is written for it.
@@ -1706,6 +1701,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           active.delete(threadId);
           endPrewarm();
           if (state.total) settledTotals.set(threadId, state.total);
+          if (ok && !stopRequested) relay?.reportUnavailable(() => base(threadId, turnId), emit);
           // a refusal, a gate incident and a shutdown that did not confirm are the turn's own end under any Stop (Verdict.final)
           entry.finish({
             ok,

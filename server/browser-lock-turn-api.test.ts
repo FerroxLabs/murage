@@ -32,6 +32,9 @@ const binary = path.join(dataDir, 'fake-agent-browser');
 fs.writeFileSync(binary, '#!/bin/sh\\nexit 0\\n', { mode: 0o755 });
 process.env.MURAGE_AGENT_BROWSER_PATH = binary;
 const sensitive = path.join(dataDir, 'page-is-sensitive');
+const everyTab = path.join(dataDir, 'every-tab-is-sensitive');
+const reached = path.join(dataDir, 'reached.log');
+const engineDown = path.join(dataDir, 'engine-is-down');
 const file = path.join(dataDir, 'config.json');
 const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
 cfg.features = { browser: true };
@@ -39,12 +42,20 @@ fs.writeFileSync(file, JSON.stringify(cfg));
 process.env.FAKE_CLAUDE_DUMP_EACH_TURN = '1';
 registerHooks({ load(url, context, nextLoad) {
   if (url.endsWith('/browser-native-relay.ts')) return { format: 'module', shortCircuit: true, source: \`
-    import { existsSync } from 'node:fs';
+    import { existsSync, appendFileSync } from 'node:fs';
+    // Tabs: the engine acts on its active tab. "page-is-sensitive" protects the first tab only; "every-tab-is-sensitive" every tab.
+    // reached.log records each tool call and the tab it reached.
+    const tabs = ['fixture-tab-1']; let active = 'fixture-tab-1';
     export function createNativeBrowser() { return {
-      request: async (method) => method === 'tools/list'
-        ? { tools: [{ name: 'agent_browser_snapshot', inputSchema: { type: 'object', properties: {} } }, { name: 'agent_browser_open', inputSchema: { type: 'object', properties: {} } }] }
-        : { content: [{ type: 'text', text: 'fixture page' }] },
-      protected: async () => existsSync(\${JSON.stringify(sensitive)}),
+      request: async (method, call) => {
+        if (method === 'tools/list' && existsSync(\${JSON.stringify(engineDown)})) throw new Error('Headless browser request refused or unavailable; the turn may have ended or control changed.');
+        if (method === 'tools/list') return { tools: [{ name: 'agent_browser_snapshot', inputSchema: { type: 'object', properties: {} } }, { name: 'agent_browser_open', inputSchema: { type: 'object', properties: {} } }] };
+        if (call?.name === 'agent_browser_tab_new') { active = 'fixture-tab-' + (tabs.length + 1); tabs.push(active); }
+        appendFileSync(\${JSON.stringify(reached)}, call?.name + '@' + active + String.fromCharCode(10));
+        return { content: [{ type: 'text', text: 'fixture page' }] };
+      },
+      pages: async () => tabs.map(id => ({ id, url: 'about:blank' })),
+      protected: async (_armed, skip) => existsSync(\${JSON.stringify(everyTab)}) || (existsSync(\${JSON.stringify(sensitive)}) && !skip?.has('fixture-tab-1')),
       resetStream() {}, input() {}, command: async () => '',
       connect: async () => 'fixture-stream', close: async () => {},
     }; }
@@ -76,6 +87,10 @@ const api = async (method: string, path: string, body?: unknown) => {
 };
 const dump = () => { try { return withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))); } catch { return null; } };
 const sensitiveFlag = () => join(fixture.info.dataDir, "page-is-sensitive");
+const everyTabFlag = () => join(fixture.info.dataDir, "every-tab-is-sensitive");
+const reachedTabs = () => { try { return readFileSync(join(fixture.info.dataDir, "reached.log"), "utf8").trim().split("\n").filter(Boolean); } catch { return []; } };
+const lockNotes = async (bot: any) => (await api("GET", `/api/threads/${bot.threadId}/messages?limit=200`)).body.messages.filter((message: any) => message.tool?.name?.startsWith("browser unavailable: browser-cause:builtin_page_locked:0|"));
+const engineDownFlag = () => join(fixture.info.dataDir, "engine-is-down");
 /** Start a turn that holds its browser authority until it is interrupted. */
 const holdTurn = async (bot: any, label: string) => {
   rmSync(fixture.fixtureDumpPath, { force: true });
@@ -163,15 +178,36 @@ it("keeps the browser's tools listed once its page is protected, and every refus
     await client.close(); client = undefined;
     await stopTurn(bot);
 
-    // d9d9f8e08f refuses admission to an already protected document. The
-    // active turn above retains tools; a later turn gets a typed quiet note.
+    // Sean 1.0.20 ruling (replaces d9d9f8e08f's refused admission, which sent the owner a "Reopen blank page" notice every
+    // turn): the owner is never asked to hand a browser back. The next turn leaves the protected tab untouched, gives the bot a
+    // new blank tab of its own, silently, and mounts the browser as usual.
     const second = await holdTurn(bot, "after-the-lock");
-    expect(second.mcpConfig?.mcpServers?.browser).toBeUndefined();
-    expect(second.systemPrompt).toContain("browser-cause:builtin_page_locked:0|");
-    const messages = (await api("GET", `/api/threads/${bot.threadId}/messages?limit=200`)).body.messages;
-    expect(messages.filter((message: any) => message.tool?.name?.startsWith("browser unavailable: browser-cause:builtin_page_locked:0|"))).toHaveLength(1);
-    expect(messages.filter((message: any) => message.tool?.name?.startsWith("error:"))).toHaveLength(0);
+    expect(second.mcpConfig?.mcpServers?.browser, "the bot keeps its browser").toBeTruthy();
+    expect(second.systemPrompt).not.toContain("browser-cause:builtin_page_locked");
+    expect(second.systemPrompt).not.toContain("is locked");
+    expect(await lockNotes(bot)).toHaveLength(0);
+    expect((await api("GET", `/api/threads/${bot.threadId}/messages?limit=200`)).body.messages.filter((message: any) => message.tool?.name?.startsWith("error:"))).toHaveLength(0);
+    client = await openBrowser(second);
+    expect(((await client.request("tools/call", { name: "agent_browser_snapshot", arguments: {} })) as any).content[0].text).toBe("fixture page");
+    // Privacy: nothing ever reached the protected tab; the bot works in its new one.
+    expect(reachedTabs()).toEqual(["agent_browser_tab_new@fixture-tab-2", "agent_browser_snapshot@fixture-tab-2"]);
+    await client.close(); client = undefined;
     await stopTurn(bot);
+
+    // No tab can be opened at all (every tab is protected): the chat says so once, not every turn.
+    writeFileSync(everyTabFlag(), "1");
+    const lockedAgain = await holdTurn(bot, "every-tab-locked");
+    client = await openBrowser(lockedAgain);
+    expect(((await client.request("tools/call", { name: "agent_browser_snapshot", arguments: {} })) as any).isError).toBe(true);
+    await client.close(); client = undefined;
+    await stopTurn(bot);
+    for (const label of ["no-tab-1", "no-tab-2"]) {
+      const turn = await holdTurn(bot, label);
+      expect(turn.mcpConfig?.mcpServers?.browser).toBeUndefined();
+      await stopTurn(bot);
+    }
+    expect(await lockNotes(bot)).toHaveLength(1);
+    rmSync(everyTabFlag(), { force: true });
 
     // The authenticated owner explicitly reopens a blank page, then returns
     // control. Clearing a fixture detector alone must not erase the lock.
@@ -191,6 +227,30 @@ it("keeps the browser's tools listed once its page is protected, and every refus
   } finally {
     await client?.close();
     if (existsSync(sensitiveFlag())) rmSync(sensitiveFlag());
+    rmSync(everyTabFlag(), { force: true });
+    await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
+  }
+}, 120_000);
+
+// MACMOUNTS-1020 (Mac 12:33Z): an engine that could not list its tools threw an uncoded error, the route answered
+// an uncoded 500, and the proxy sealed the whole turn ~1 s after dispatch with nothing in the server log.
+it("MACMOUNTS-ROUTE: an engine that cannot list its tools is answered browser_not_running, and the turn keeps its proxy", async () => {
+  const created = await api("POST", "/api/bots", { name: "Engine down fixture", modelSelection: { instanceId: "verification", model } });
+  expect(created.status).toBe(201);
+  const bot = created.body.bot;
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", composio: false })).status).toBe(200);
+  let client: EngineClient | undefined;
+  try {
+    const turn = await holdTurn(bot, "engine-down");
+    writeFileSync(engineDownFlag(), "1");
+    client = await openBrowser(turn);
+    await expect(client.request("tools/list", {})).rejects.toThrow("Murage's browser is not running right now");
+    // Not sealed: the same connection answers once the engine is back.
+    rmSync(engineDownFlag(), { force: true });
+    expect(((await client.request("tools/list", {})) as any).tools).toHaveLength(2);
+  } finally {
+    await client?.close();
+    rmSync(engineDownFlag(), { force: true });
     await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
   }
 }, 120_000);

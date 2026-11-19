@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { WHATS_NEW_PAGES } from "./whats-new-pages";
 
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { runWhatsNewAction } = await import("./WhatsNewHost");
 const page = WHATS_NEW_PAGES["1.0.19"]!;
 const notes = readFileSync(new URL("../../release-notes/1.0.19.md", import.meta.url), "utf8");

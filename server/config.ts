@@ -373,7 +373,8 @@ const appConfigSchema = z.object({
    * Absent keeps engine search. Only desktop Murage-specific key variables
    * are imported; ambient engine/MCP provider credentials remain separate. */
   webSearch: z.object({ provider: z.enum(["engine", "auto", "flux", "tavily", "exa", "firecrawl", "off"]).optional(), tavilyApiKey: optionalText, exaApiKey: optionalText, firecrawlApiKey: optionalText }).strict().optional(),
-  /** Native HighLevel (HL-S2): the owner's Private Integration token. Write-only workspace state kept in the secret
+  /** Murage's own HighLevel (removed in 1.0.20): the section stays in the schema only so a save never drops the owner's
+   *  stored token from disk (cleanup is a 1.0.21 row, with consent). Nothing reads it. Was: the owner's Private Integration token. Write-only workspace state kept in the secret
    * store (credentials.bin / the Cloud supervisor); a location is live only after the owner checks and confirms it. */
   highlevel: z.object({ privateToken: optionalText }).strict().optional(),
   /** Flux Router key. Workspace-scoped on purpose: FLUX_API_KEY is listed in
@@ -788,7 +789,6 @@ function loadConfigWithoutOverlay(): AppConfig {
     if (process.env.MURAGE_EXA_SEARCH_KEY !== undefined) cfg.webSearch.exaApiKey = process.env.MURAGE_EXA_SEARCH_KEY;
     if (process.env.MURAGE_FIRECRAWL_SEARCH_KEY !== undefined) cfg.webSearch.firecrawlApiKey = process.env.MURAGE_FIRECRAWL_SEARCH_KEY;
   }
-  if (process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN !== undefined) cfg.highlevel = { ...cfg.highlevel, privateToken: process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN };
   cfg.flux = { ...cfg.flux };
   if (process.env.FLUX_API_KEY !== undefined) cfg.flux.apiKey = process.env.FLUX_API_KEY;
   if (process.env.MURAGE_FLUX_CONNECTION_ALIASES !== undefined) cfg.flux.connectionAliases = appConfigSchema.shape.flux.unwrap().shape.connectionAliases.parse(JSON.parse(process.env.MURAGE_FLUX_CONNECTION_ALIASES));
@@ -827,7 +827,6 @@ export function syncCredentialEnv(patch: ConfigWritePatch): void {
     [patch.webSearch?.tavilyApiKey, "MURAGE_TAVILY_SEARCH_KEY"],
     [patch.webSearch?.exaApiKey, "MURAGE_EXA_SEARCH_KEY"],
     [patch.webSearch?.firecrawlApiKey, "MURAGE_FIRECRAWL_SEARCH_KEY"],
-    [patch.highlevel?.privateToken, "MURAGE_HIGHLEVEL_PRIVATE_TOKEN"],
     [patch.flux?.apiKey, "FLUX_API_KEY"],
   ];
   for (const [value, name] of secrets) {
@@ -886,8 +885,6 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "MURAGE_TAVILY_SEARCH_KEY",
   "MURAGE_EXA_SEARCH_KEY",
   "MURAGE_FIRECRAWL_SEARCH_KEY",
-  // The owner's HighLevel Private Integration token: only the harness's native HighLevel client sends it.
-  "MURAGE_HIGHLEVEL_PRIVATE_TOKEN",
   // Flux Router. The whole point of listing it: the raw workspace key must
   // never ride into a spawned CLI's env. Routing injects it post-strip.
   "FLUX_API_KEY",

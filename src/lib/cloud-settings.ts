@@ -73,7 +73,6 @@ export const CLOUD_COMPUTER_ONLY_CARDS: ReadonlySet<string> = new Set([
   "updates-heading", // About: the updater is this computer's (the Cloud window has no window.muragebox).
   "diagnostics-heading", // About: the diagnostics export is this computer's.
   "skill-recorder-heading", // Skills: the recorder runs on this computer.
-  "voice-key-heading", // Skills: the AssemblyAI key is this computer's.
   "mcp-servers-heading", // Connected apps: this computer's MCP servers (mcp-servers:*).
   "claude-code-import-heading", // Connected apps: copies Claude Code's files from this computer's home folder.
 ]);

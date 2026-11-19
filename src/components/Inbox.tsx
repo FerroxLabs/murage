@@ -20,6 +20,7 @@ import { t } from "@/lib/i18n";
 import { DiskLowCard } from "./DiskLowCard";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { InboxEngineSignInRow } from "./InboxEngineSignInRow";
+import { ReconnectAppsNeedsYou } from "./ReconnectAppsBanner";
 import { NeedsRow } from "./needs/NeedsRow";
 import { offerSnoozeUndo } from "./needs/snooze-undo";
 import { BotAvatar } from "./Avatar";
@@ -834,6 +835,8 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
         rather than an item: there is no message under it to open, read or
         snooze. The run carrying the error is the only evidence there is, so
         that is what it offers. */}
+    {/* An app to sign in again, listed here too, so the reconnect line can be put away without losing the way back. */}
+    <ReconnectAppsNeedsYou dispatch={store?.dispatch} label={t("settings.group.reach")} />
     {restoreRows.length > 0 && (
       <InboxSection label="Connections to restore">
         <ul className="space-y-2" aria-label="Connections to restore">

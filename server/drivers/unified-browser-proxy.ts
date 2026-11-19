@@ -25,13 +25,13 @@ export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.en
   const gate = transport === "builtin" ? new BuiltinFloorGate() : undefined;
   const forward = async (method: string | undefined, params: Record<string, unknown> | undefined): Promise<unknown> => {
     const response = await proxyFetch("unifiedBrowser", url, { method: "POST", headers: { authorization: `Bearer ${turnSecret("MURAGE_CONTROL_TOKEN", env)}`, "content-type": "application/json" }, body: JSON.stringify({ method, params }), redirect: "error", signal: AbortSignal.timeout(callTimeout) });
-    if (!response.ok) { throw Object.assign(new Error(), { refusal: await readBrowserRefusal(response) }); }
-    if (!response.body) throw new Error();
+    if (!response.ok) { throw Object.assign(new Error(), { refusal: await readBrowserRefusal(response), lostReason: `http-${response.status}` }); }
+    if (!response.body) throw Object.assign(new Error(), { lostReason: "no-body" });
     const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
     try { for (;;) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.length; if (size > 16 * 1024 * 1024) throw new Error(); chunks.push(chunk.value); } }
     catch (error) { await reader.cancel(); throw error; }
     finally { reader.releaseLock(); }
-    return JSON.parse(Buffer.concat(chunks).toString());
+    try { return JSON.parse(Buffer.concat(chunks).toString()); } catch { throw Object.assign(new Error(), { lostReason: "decode" }); }
   };
   const drain = async () => {
     for (const line of lines.splice(0)) {
@@ -62,7 +62,8 @@ export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.en
         const failure = (error as { refusal?: { code: string; text: string } } | undefined)?.refusal;
         // A recognized policy answer is an application response. Transport,
         // decoding and unknown failures still seal before any local fallback.
-        if (!failure) { proxyTransportLost("unifiedBrowser"); return; }
+        // The terminal message names this cause (a status or code word, never the body).
+        if (!failure) { proxyTransportLost("unifiedBrowser", `${rpc.method === "tools/list" ? "tools-list" : rpc.method === "tools/call" ? "tools-call" : "rpc"}:${(error as { lostReason?: unknown } | undefined)?.lostReason ?? "error"}`); return; }
         const text = failure.text;
         // A tool call fails as a tool result the model reads. Anything else
         // (tools/list above all) fails as a JSON-RPC error: a "result" with

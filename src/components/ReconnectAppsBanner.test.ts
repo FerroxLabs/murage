@@ -47,7 +47,9 @@ describe("the reconnect line as rendered", () => {
   });
   it("shows one named button per app when several need it", () => {
     const html = render([gmail, cal]);
-    expect(html).toContain("Gmail needs you to sign in again. Google Calendar needs you to sign in again");
+    // 1.0.20: one row per app, each sentence beside its own button (was one run-on sentence).
+    expect([...html.matchAll(/<li data-reconnect-app="([^"]+)"[^>]*><span[^>]*>([^<]*)<\/span>/g)].map((m) => [m[1], m[2]])).toEqual([
+      ["gmail", "Gmail needs you to sign in again"], ["googlecalendar", "Google Calendar needs you to sign in again"]]);
     expect(buttons(html).map((m) => m[1])).toEqual(["Reconnect Gmail", "Reconnect Google Calendar"]);
     expect(html).toContain('aria-label="Reconnect Gmail"');
     expect(html).toContain('aria-label="Reconnect Google Calendar"');

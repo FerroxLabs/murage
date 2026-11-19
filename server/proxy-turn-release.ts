@@ -4,6 +4,7 @@ import "../shared/win-hide-child-process.mjs";
 import {childFinishKey,isOwnChildIoAcknowledgement} from "./sentinel/io-child-receipts.ts";
 // The leaf module, never ledger-refusal.ts: this file is loaded by every spawned proxy before it answers `initialize`.
 import { LEDGER_REFUSAL_LINE } from "./ledger-refusal-line.ts";
+import { logSwallowedConsumingError } from "./consuming-error-log.ts";
 import type { ProxyFrame, ReleaseEnvelope } from "./consuming-turn-ingress.ts";
 
 export const TURN_RELEASE_VERDICT_PATH = "/api/internal/turn-release/v1/verdict";
@@ -17,8 +18,14 @@ export interface ProxyReleasePorts {
   /** Internal supervisor channel, never an engine's stdin. */
   envelope(envelope: ReleaseEnvelope): Promise<void>;
   seal(): void;
-  terminal(frame: ReturnType<typeof terminalProxyRefusal>): void;
+  /** `reason` is a bare code word naming the first refusing check (never frame text or a token). */
+  terminal(frame: ReturnType<typeof terminalProxyRefusal>, reason: string): void;
   close(): void;
+}
+/** A bare code word for the terminal message and log: lower-case letters, digits and -_:=. only, bounded. */
+export function terminalReasonWord(value: unknown): string {
+  const word = typeof value === "string" ? value.toLowerCase().replace(/[^a-z0-9_:=.-]+/g, "-").slice(0, 64) : "";
+  return word || "unknown";
 }
 /** Serialize releases across concurrent tool completions. Any failure permanently seals
  * this instance; there is no local JSON-RPC fallback and no refreshed environment binding. */
@@ -26,11 +33,13 @@ export function createProxyTurnRelease(instanceId: string, ports: ProxyReleasePo
   let sealed = false, sequence = 0;
   let queuedBytes = 0, queuedFrames = 0;
   let queue: Promise<void> = Promise.resolve();
-  const refuse = (id: string | number | null): never => {
+  const refuse = (id: string | number | null, reason = "release-refused"): never => {
     if (!sealed) {
+      // The stack names the check that refused; the error itself carries no frame or token.
+      logSwallowedConsumingError("proxy.refuse", new Error("PROXY_RELEASE_REFUSED"));
       sealed = true;
       try { ports.seal(); } catch { /* supervisor EOF still seals the parent lease */ }
-      try { ports.terminal(terminalProxyRefusal(id)); } catch { /* no content fallback */ }
+      try { ports.terminal(terminalProxyRefusal(id), terminalReasonWord(reason)); } catch { /* no content fallback */ }
       try { ports.close(); } catch { /* sealed remains permanent */ }
     }
     throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
@@ -39,39 +48,43 @@ export function createProxyTurnRelease(instanceId: string, ports: ProxyReleasePo
     release(id: string | number | null, frame: Omit<ProxyFrame, "instanceId" | "sequence">): Promise<void> {
       let bytes = 0;
       try {
-        if (sealed || !frame || !Array.isArray(frame.refs) || typeof frame.frame !== "string") refuse(id);
+        if (sealed || !frame || !Array.isArray(frame.refs) || typeof frame.frame !== "string") refuse(id, sealed ? "sealed" : "frame-shape");
         bytes = Buffer.byteLength(frame.frame);
-        if (queuedFrames >= 64 || queuedBytes + bytes > 8 * 1024 * 1024) refuse(id);
+        if (queuedFrames >= 64 || queuedBytes + bytes > 8 * 1024 * 1024) refuse(id, "queue-cap");
         frame = Object.freeze({ ...frame, refs: Object.freeze([...frame.refs]) });
         queuedBytes += bytes; queuedFrames++;
       } catch { try { refuse(id); } catch (error) { return Promise.reject(error); } }
       const task = queue.then(async () => {
-        if (sealed) refuse(id);
+        if (sealed) refuse(id, "sealed");
         const controller = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           const rpc = JSON.parse(frame.frame);
           if (!instanceId || !rpc || rpc.jsonrpc !== "2.0" || Array.isArray(rpc) || (rpc.id ?? null) !== id
             || (id !== null && !(typeof id === "string" && id.length > 0 && Buffer.byteLength(id) <= 128 || typeof id === "number" && Number.isSafeInteger(id)))
-            || Buffer.byteLength(frame.frame) > 8 * 1024 * 1024 || /[\r\n]/.test(frame.frame)) refuse(id);
+            || Buffer.byteLength(frame.frame) > 8 * 1024 * 1024 || /[\r\n]/.test(frame.frame)) refuse(id, "frame-invalid");
           const request = { ...frame, instanceId, sequence: ++sequence };
           await Promise.race([
             (async () => {
               const envelope = await ports.verdict(request, controller.signal);
               if (sealed || controller.signal.aborted || envelope.instanceId !== instanceId || envelope.sequence !== sequence || envelope.frame !== frame.frame
-                || typeof envelope.permit !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(envelope.permit)) refuse(id);
+                || typeof envelope.permit !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(envelope.permit)) refuse(id, "verdict-mismatch");
               // The receiving ingress rechecks immediately before actual engine delivery.
               await ports.envelope(envelope);
             })(),
-            new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); try { refuse(id); } catch (error) { reject(error); } }, 5000); timer.unref?.(); }),
+            new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); try { refuse(id, "verdict-timeout"); } catch (error) { reject(error); } }, 5000); timer.unref?.(); }),
           ]);
-        } catch { refuse(id); } finally { if (timer) clearTimeout(timer); controller.abort(); }
+        } catch (error) {
+          // The child's stderr is the only place the first cause of this refusal can be seen.
+          if (!sealed) logSwallowedConsumingError("proxy.release", error);
+          refuse(id, "verdict-failed");
+        } finally { if (timer) clearTimeout(timer); controller.abort(); }
       });
       const complete = task.finally(() => { queuedBytes -= bytes; queuedFrames--; });
       queue = complete.catch(() => {});
       return complete;
     },
-    transportLost: () => refuse(null),
+    transportLost: (reason = "transport-lost") => refuse(null, reason),
     get sealed() { return sealed; },
   });
 }
@@ -118,11 +131,12 @@ export function processProxyRelease(role: string) {
       return new Promise<void>((resolve, reject) => {
         if (closed || !process.connected) { reject(new Error("MEMORY_CONTEXT_REVOKED")); return; }
         acknowledgements.set(value.sequence, { resolve, reject: () => reject(new Error("MEMORY_CONTEXT_REVOKED")) });
-        process.stdout.write(serialized, error => { if (error) lost(); });
+        process.stdout.write(serialized, error => { if (error) lost("stdout-write"); });
       });
     },
     seal() { closed = true; for (const pending of acknowledgements.values()) pending.reject(); acknowledgements.clear(); },
-    terminal(frame) { process.send?.({ type: "turn-release-terminal", instanceId, frame }); },
+    // `reason` names the refusing check for the parent's log; the frame itself is the fixed refusal.
+    terminal(frame, reason) { process.send?.({ type: "turn-release-terminal", instanceId, frame, reason }); },
     close() {
       for (const hook of closeHooks) { try { hook(); } catch { /* sealed remains permanent */ } }
       // Without an admitted spawn there is no owned process channel to close.
@@ -134,16 +148,21 @@ export function processProxyRelease(role: string) {
       else if (process.connected) process.disconnect?.();
     },
   });
-  const lost = () => { try { release.transportLost(); } catch { /* terminal already sent; never a local reply */ } };
+  const lost = (cause: string) => {
+    if (!release.sealed) logSwallowedConsumingError(`proxy.lost:${cause}`, new Error("TRANSPORT_LOST"));
+    try { release.transportLost(`lost:${cause}`); } catch { /* terminal already sent; never a local reply */ }
+  };
   process.on("message", (message: unknown) => {
     if(isOwnChildIoAcknowledgement(message))return;
     const ack = message as { type?: string; instanceId?: string; sequence?: number };
-    if (ack?.type !== "turn-release-ack" || ack.instanceId !== instanceId || !Number.isSafeInteger(ack.sequence)) { lost(); return; }
+    if (ack?.type !== "turn-release-ack" || ack.instanceId !== instanceId || !Number.isSafeInteger(ack.sequence)) {
+      lost(`ipc-unexpected type=${typeof ack?.type === "string" ? ack.type.slice(0, 40) : typeof message}`); return;
+    }
     const pending = acknowledgements.get(ack.sequence!);
-    if (!pending) { lost(); return; }
+    if (!pending) { lost("ipc-unknown-ack"); return; }
     acknowledgements.delete(ack.sequence!); pending.resolve();
   });
-  process.once("disconnect", lost); process.stdin.once("end", () => { stdinEnded = true; lost(); }); process.stdout.once("error", lost);
+  process.once("disconnect", () => lost("disconnect")); process.stdin.once("end", () => { stdinEnded = true; lost("stdin-end"); }); process.stdout.once("error", () => lost("stdout-error"));
   processReleases.set(role, release);
   return release;
 }
@@ -162,8 +181,8 @@ export function releaseProxyFrame(role: string, value: unknown): Promise<void> {
 export function sendProxyFrame(role: string, value: unknown): void {
   void releaseProxyFrame(role, value).catch(() => {});
 }
-export function proxyTransportLost(role: string): void {
-  try { processProxyRelease(role).transportLost(); } catch { /* sealed before return */ }
+export function proxyTransportLost(role: string, reason?: string): void {
+  try { processProxyRelease(role).transportLost(reason); } catch { /* sealed before return */ }
 }
 /** Only a rejection caused by the supplied caller cancellation may leave the
  * mount alive. A deadline or an unrelated transport error still seals it. */
@@ -174,9 +193,20 @@ function callerCancelled(signal: AbortSignal | null | undefined, error: unknown)
 export async function proxyFetch(role: string, input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> {
   const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
   try { return proxyUpstreamResponse(role, await fetch(input, init), signal); }
-  catch (error) { if (!callerCancelled(signal, error)) proxyTransportLost(role); throw error; }
+  catch (error) {
+    if (!callerCancelled(signal, error)) { logSwallowedConsumingError("proxy.fetch", error); proxyTransportLost(role, `fetch:${fetchErrorWord(error)}`); }
+    throw error;
+  }
 }
 
+/** The connection-level cause of a failed fetch (ECONNREFUSED, TimeoutError, ...): a code word, never a message. */
+function fetchErrorWord(error: unknown): string {
+  // undici wraps the socket error as `cause`, or as `cause.errors` when several addresses were tried.
+  const cause = (error as { cause?: { code?: unknown; errors?: Array<{ code?: unknown }>; name?: unknown } } | null)?.cause;
+  const word = [cause?.code, cause?.errors?.[0]?.code, (error as { code?: unknown } | null)?.code, cause?.name, (error as { name?: unknown } | null)?.name]
+    .find(value => typeof value === "string" && value);
+  return terminalReasonWord(word ?? "error");
+}
 /** The child's local cap is only staging protection. Authorization to examine
  * each chunk comes from the original server-owned generation counters. */
 export async function reserveProxyUpstream(role: string, bytes: number): Promise<void> {
@@ -188,7 +218,10 @@ export async function reserveProxyUpstream(role: string, bytes: number): Promise
       body: JSON.stringify({ operation: "upstream", instanceId, bytes }) });
     void response.body?.cancel().catch(() => {});
     if (!response.ok || processProxyRelease(role).sealed) throw new Error("MEMORY_CONTEXT_REVOKED");
-  } catch (error) { proxyTransportLost(role); throw error; }
+  } catch (error) {
+    if (!processProxyRelease(role).sealed) logSwallowedConsumingError("proxy.reserveUpstream", error);
+    proxyTransportLost(role, "upstream-reserve"); throw error;
+  }
 }
 
 export function proxyUpstreamResponse(role: string, response: Response, signal?: AbortSignal | null): Response {
@@ -211,7 +244,7 @@ export function proxyUpstreamResponse(role: string, response: Response, signal?:
         }
         controller.enqueue(next.value);
       } catch (error) {
-        if (!callerCancelled(signal, error)) proxyTransportLost(role);
+        if (!callerCancelled(signal, error)) proxyTransportLost(role, "upstream-body");
         void reader.cancel().catch(() => {}); controller.error(error);
       }
     },
@@ -231,5 +264,8 @@ export async function collectProxyUpstream(role: string, stream: AsyncIterable<U
       chunks.push(chunk);
     }
     return Buffer.concat(chunks);
-  } catch (error) { proxyTransportLost(role); throw error; }
+  } catch (error) {
+    if (!processProxyRelease(role).sealed) logSwallowedConsumingError("proxy.reserveUpstream", error);
+    proxyTransportLost(role); throw error;
+  }
 }

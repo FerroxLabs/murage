@@ -20,7 +20,7 @@ import { modelsCards } from "./pages/ModelsPage";
 import { webSearchCards } from "./pages/SearchImagesDictationPage";
 import { skillsCards } from "./pages/SkillsPage";
 import { InAdvanced, Part, PartSlot, PartsHost } from "../SettingsPrimitives";
-import { VoiceNotesStatus } from "../TranscriptionSettings";
+import { OwnTranscriptionKey, VoiceNotesStatus } from "../TranscriptionSettings";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 /** Section 2.4 of the split with SETPAGES-B: connections.phone-calls renders on Calls. The registry line is B's; until the
@@ -133,17 +133,38 @@ describe("Models & engines in Simple and Advanced", () => {
   });
 });
 
-describe("the AssemblyAI key has one home, on Skills", () => {
-  it("is a Skills card with its old id, next to Teach a skill, and the Search page has no key card", () => {
-    expect(skillsCards(on).map((card) => card.id)).toEqual(["skills.recorder", "webSearch.voice-key", "skills.library", "skills.scan-rules"]);
-    expect(webSearchCards(on).map((card) => card.id)).not.toContain("webSearch.voice-key");
-    expect(SETTINGS_CARDS.find((card) => card.id === "webSearch.voice-key")).toMatchObject({ section: "skills", anchor: "voice-key-heading" });
+describe("no transcription key card unless an old one is in use (Sean 11-06, standing 11-19)", () => {
+  it("Skills never lists it; it is an Advanced card on Search, images and dictation", () => {
+    expect(skillsCards(on).map((card) => card.id)).toEqual(["skills.recorder", "skills.library", "skills.scan-rules"]);
+    expect(read("./pages/SkillsPage.tsx")).not.toMatch(/TranscriptionKey|voice-key/);
+    expect(webSearchCards(on).map((card) => card.id)).toContain("webSearch.voice-key");
+    expect(SETTINGS_CARDS.find((card) => card.id === "webSearch.voice-key")).toMatchObject({ section: "webSearch", anchor: "voice-key-heading", advanced: true });
+  });
+  it("renders nothing when Flux or any engine transcribes, or when no key was saved", () => {
+    const html = (route: string | null | undefined, keySaved: boolean | null) => renderToStaticMarkup(createElement(OwnTranscriptionKey, { route, keySaved }));
+    for (const route of ["flux", "groq", "openai"]) {
+      expect(html(route, true), route).toBe("");
+      expect(html(route, false), route).toBe("");
+    }
+    expect(html(undefined, true)).toBe("");
+    expect(html(null, false)).toBe("");
+    expect(html(null, null)).toBe("");
+  });
+  it("an old saved key with no engine shows plainly, with no vendor name and no dashboard link", () => {
+    const out = renderToStaticMarkup(createElement(OwnTranscriptionKey, { route: null, keySaved: true }));
+    expect(out).toContain("Your own transcription key, optional");
+    expect(out).not.toMatch(/assemblyai|dashboard/i);
+  });
+  it("the dictation card names no vendor and points at no key", () => {
+    const source = read("../TranscriptionSettings.tsx");
+    expect(source).not.toMatch(/assemblyai/i);
+    expect(source).not.toMatch(/dashboard/i);
+    for (const route of ["flux", null]) expect(renderToStaticMarkup(createElement(VoiceNotesStatus, { route }))).not.toMatch(/assemblyai|transcription key/i);
   });
   it("mounts the key field once and marks one control for it", () => {
     const pages = readdirSync(new URL("./pages", import.meta.url)).map((file) => read(`./pages/${file}`)).join("\n");
-    expect(pages.match(/<TranscriptionKey \/>/g)).toHaveLength(1);
+    expect(pages.match(/<OwnTranscriptionKeyCard \/>/g)).toHaveLength(1);
     expect(read("../TranscriptionSettings.tsx").match(/data-setting-control="voice-key-heading"/g)).toHaveLength(1);
-    expect(read("./pages/SearchImagesDictationPage.tsx")).not.toContain("TranscriptionKey");
   });
 });
 
@@ -209,6 +230,6 @@ describe("cards made of pieces of one component (pages 5 to 7)", () => {
     expect(read("../MemorySettings.tsx")).toContain('id="memory-browser-heading"');
   });
   it("Search, images and dictation lists Web search, Images and Dictation in that order", () => {
-    expect(webSearchCards(on).map((card) => card.id)).toEqual(["webSearch.search", "webSearch.provider-keys", "webSearch.images", "webSearch.daily-check", "webSearch.voice"]);
+    expect(webSearchCards(on).map((card) => card.id)).toEqual(["webSearch.search", "webSearch.provider-keys", "webSearch.images", "webSearch.daily-check", "webSearch.voice", "webSearch.voice-key"]);
   });
 });
