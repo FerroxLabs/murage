@@ -46,6 +46,8 @@ const INVENTORY: ReadonlyArray<readonly [string, string, number, string]> = [
   ["/^\\/api\\/connector-incidents\\/([0-9a-f-]{36})$/", "requestSurface(req.headers,url.searchParams)!==\"desktop\"", 1, "scoping"],
   ["functionrosterAudience", "requestSurface(req.headers,url.searchParams)===\"desktop\"", 1, "scoping"],
   ["functionmayReadThread", "requestSurface(req.headers,url.searchParams)===\"desktop\"", 1, "scoping"],
+  // 1.0.20 redacted-race: the owner-only transcript view is for the desktop or a paired phone; an owner browser reads the shared (masked) view
+  ["functionownerOnlyTranscript", "requestSurface(req.headers,url.searchParams)!==\"desktop\"", 1, "scoping"],
   ["functionmayApprove", "requestSurface(req.headers,url.searchParams)===\"desktop\"", 1, "admits"],
   ["functionrequestOrigin", "requestSurface(req.headers,url.searchParams)===\"desktop\"", 1, "admits"],
   ["/api/", "requestSurface(req.headers,url.searchParams)===\"desktop\"", 1, "scoping"],

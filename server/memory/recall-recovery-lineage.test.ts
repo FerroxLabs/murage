@@ -28,8 +28,9 @@ function admit(venue: 'direct' | 'room', f: WritetimeFixture, turn: TurnLineage)
   const end = statement?.getEnd() ?? -1;
   expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
   const callback = stripTypeScriptTypes(source.slice(start, end));
-  const invoke = new Function('prepareRetainedFence', 'supersedeMemberTurns', 'freezeLineageReader', 'turnLineage', 'roomTurnLineage', 'submissionBoundary', 'ledgerLease', 'database', 'roomOwnerAudience',
-    callback + `return ${name};`)(prepareRetainedFence, supersedeMemberTurns, freezeLineageReader, turn, turn, new TurnSubmissionBoundary(), { onLedgerRefused: vi.fn() }, () => f.db, true);
+  const invoke = new Function('prepareRetainedFence', 'supersedeMemberTurns', 'freezeLineageReader', 'turnLineage', 'roomTurnLineage', 'submissionBoundary', 'ledgerLease', 'database', 'roomOwnerAudience', 'continueOwnerPending',
+    // 1.0.20 A-5: the direct callback's new free variable; undefined is the non-owner default (no pending continuation)
+    callback + `return ${name};`)(prepareRetainedFence, supersedeMemberTurns, freezeLineageReader, turn, turn, new TurnSubmissionBoundary(), { onLedgerRefused: vi.fn() }, () => f.db, true, undefined);
   return venue === 'direct' ? invoke(CONTENT) : invoke(['s-room']);
 }
 

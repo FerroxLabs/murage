@@ -153,13 +153,6 @@
    }
   ],
   "general.startup::Background status line": "no-model-control",
-  "general.analytics::Send usage analytics": [
-   {
-    "dim": "default",
-    "shipped": true,
-    "spec": false
-   }
-  ],
   "general.about-me::Character counter": "no-model-control",
   "general.about-me::Save": "no-model-control",
   "general.about-me::Undo changes": "no-model-control",
@@ -770,7 +763,6 @@
   "webSearch.images::Check this model now (+ confirm / cancel)": "no-model-control",
   "webSearch.images::Refresh connections": "no-model-control",
   "webSearch.images::Setup / Library tabs": "no-model-control",
-  "webSearch.voice::Open AssemblyAI dashboard": "no-model-control",
   "webSearch.provider-keys::Tavily API key": [
    {
     "dim": "kind",
@@ -822,7 +814,7 @@
    }
   ],
   "webSearch.provider-keys::Key saved / No key state": "no-model-control",
-  "webSearch.voice-key::AssemblyAI API key": [
+  "webSearch.voice-key::Your own transcription key": [
    {
     "dim": "default",
     "shipped": "",
@@ -1705,19 +1697,6 @@
      "default": false,
      "source": "src/components/CallsSettings.tsx:88",
      "modelControl": "off-today"
-    }
-   ]
-  },
-  "general.analytics": {
-   "home": "general.analytics",
-   "controls": [
-    {
-     "control": "Send usage analytics",
-     "kind": "switch",
-     "key": "localStorage murage-analytics-opt-out (\"1\" = off, \"0\" = on); in-process choice outranks storage",
-     "default": true,
-     "source": "src/components/SettingsModal.tsx:329; src/lib/analytics.ts:37,53,72",
-     "modelControl": "analytics"
     }
    ]
   },
@@ -3273,20 +3252,12 @@
    "home": "voice.voice",
    "controls": [
     {
-     "control": "AssemblyAI transcription status (dot + Connected)",
+     "control": "Voice notes transcription status (configured route)",
      "kind": "readout",
-     "key": "read-only: window.muragebox.transcription.status().configured",
+     "key": "read-only: /api/config tts.routes.transcribe",
      "default": null,
-     "source": "src/components/TranscriptionSettings.tsx:44-48",
+     "source": "src/components/TranscriptionSettings.tsx:47-58",
      "modelControl": "route"
-    },
-    {
-     "control": "Open AssemblyAI dashboard",
-     "kind": "button",
-     "key": "none (navigation only, external link)",
-     "default": null,
-     "source": "src/components/TranscriptionSettings.tsx:78",
-     "modelControl": null
     }
    ]
   },
@@ -3361,19 +3332,19 @@
    "home": "voice.voice-key",
    "controls": [
     {
-     "control": "AssemblyAI API key",
+     "control": "Your own transcription key",
      "kind": "password",
-     "key": "window.muragebox.transcription.setKey(value) (OS-protected store); disabled outside the desktop app",
+     "key": "window.muragebox.transcription.setKey(value) (OS-protected store); rendered only for a saved key with no engine that transcribes",
      "default": "",
-     "source": "src/components/TranscriptionSettings.tsx:56-66",
+     "source": "src/components/TranscriptionSettings.tsx:100-112",
      "modelControl": "key"
     },
     {
      "control": "Save / Clear (button turns Clear when field empty and key saved)",
      "kind": "button",
-     "key": "same as AssemblyAI API key (empty value clears)",
+     "key": "same as Your own transcription key (empty value clears)",
      "default": null,
-     "source": "src/components/TranscriptionSettings.tsx:67-78",
+     "source": "src/components/TranscriptionSettings.tsx:113-123",
      "modelControl": "key"
     }
    ]

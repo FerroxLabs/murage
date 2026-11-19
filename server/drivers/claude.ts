@@ -182,7 +182,7 @@ import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { BROKER_UNAVAILABLE_NOTE, brokerPathForArgv } from "../permission-pipe.ts";
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
-import { engineClosedLine, mountNeverConnectedLine } from "./stop-copy.ts";
+import { engineClosedLine, mountStopCause, mountStoppedDetails, mountStoppedLine } from "./stop-copy.ts";
 import { createStopGate, GateStopped, type GateEntry, type Verdict } from "./stop-gate.ts";
 import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
@@ -5715,7 +5715,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         queueMicrotask(() => {
           if (sessions.get(threadId) !== session || !session.turn || session.turn.stopRequested || session.turn.settled) return;
           if (session.turn.submission === null) {
-            turnError({ message: mountNeverConnectedLine(ENGINE) });
+            // 1.0.20 item 5: the card names the real cause; only an app's own native failure blames a connected app.
+            const live = session.turn;
+            const cause = mountStopCause(_nativeError, refusal, live.fenced ?? fencedRefusalRegistry.byGeneration((live.releaseBinding as { identity?: { dispatchGeneration?: string | number } } | null | undefined)?.identity?.dispatchGeneration));
+            turnError({ message: mountStoppedLine(ENGINE, cause), details: mountStoppedDetails(ENGINE, cause) });
             void settle(false, "mcp_unavailable");
           } else closeSession(threadId, "mount-relay-sealed");
         });

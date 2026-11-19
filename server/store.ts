@@ -961,7 +961,9 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       take(copy, fields);
     }
   }
-  const safe = sanitizeDisplayTextUnit(textFields.map(field => field.text));
+  // A reply holding one inline «redacted …» span (the turn policy's own
+  // redaction) is stored with that span, not as a bare marker for the whole row.
+  const safe = sanitizeDisplayTextUnit(textFields.map(field => field.text), undefined, { markerStays: true });
   textFields.forEach((field, i) => { field.target[field.key] = safe[i]; });
   // The unit has already crossed the shared mask on its original bytes.
   // Re-masking a generated marker can turn a scalar label into a wrapped

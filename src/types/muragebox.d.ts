@@ -327,6 +327,10 @@ type SkillRecordingPayload = {
         onData(listener: (payload: { id: string; data: Uint8Array }) => void): () => void;
         onClosed(listener: (payload: { id: string; reason: string }) => void): () => void;
       };
+      /** The launch id this launch's engine puts in every answer (x-murage-launch); "" when main has none. */
+      serverLaunch?: string;
+      /** The chat on screen, so a window that follows a restarted engine reopens it. */
+      reportOpenChat?(threadId: string): void;
       getCapabilities(): Promise<DesktopCapabilities>;
       onCapabilitiesChanged(cb: (capabilities: DesktopCapabilities) => void): () => void;
       /** Whether the engine is alive, and whether it is coming back. A dead

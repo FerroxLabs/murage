@@ -54,7 +54,7 @@ import { noteFluxCaptureHold } from "./flux-capture-hold.ts";
 import { threadKey as keyOfThread, LINE_TEXT } from "./branch-index.ts";
 import { lineClassesOf } from "./line-classes.ts";
 import { TURN_CANDIDATE, TURN_EXPR, TURN_INDEX, TURN_INDEX_LEGACY_EXPR, TURN_INDEX_LEGACY_CANDIDATE, TURN_INDEX_NOT_READY, TurnIndexNotReadyError } from "./message-tables.ts";
-import { optionalIndexReady } from "./memory/optional-index.ts";
+import { optionalIndexReady, preListenIndexDeferred } from "./memory/optional-index.ts";
 import { boundedBranchWalk, isPrepared as isThreadPrepared, branchRows, branchTester, childRowids, requirePrepared, afterInsert, afterSpliceAfter, afterSpliceBefore, afterUpdate, forgetThread } from "./branch-store.ts";
 import { closeThreadTurns, currentTurnLineage, extendLineage, markThreadNotReady, noLineageToken, openTurnsBegan, openTurnsParents, readyImportedThread, runningTurnFor, turnOfProvider, turnsOfProviderAnywhere, writeLineage, writerTurnFor } from "./memory/lineage-write.ts";
 import { isMurageLine } from "./murage-line.ts";
@@ -277,12 +277,24 @@ export { TURN_INDEX_NOT_READY, TurnIndexNotReadyError };
 /** The one read of a turn's rows. INDEXED BY: the planner may not pick another path, whatever its statistics say. */
 export const TURN_ROWS_SQL = `SELECT seq, json FROM messages INDEXED BY ${TURN_INDEX} WHERE thread_id = ? AND ${TURN_CANDIDATE} AND ${TURN_EXPR} = ? ORDER BY rowid`;
 
+/** The same read while the index build is left until after listen and the file has no prior definition of it: the thread's rows, in the same order. */
+export const TURN_ROWS_DEFERRED_SQL = `SELECT seq, json FROM messages INDEXED BY messages_thread WHERE thread_id = ? AND ${TURN_CANDIDATE} AND ${TURN_EXPR} = ? ORDER BY rowid`;
+
 /** The rows of one turn, oldest first, every one, through messages_turn: the work is that turn's rows, never the thread's history, and it is exact
  * for any writer. No derived table is read, so a thread being filled answers the same. Empty when the turn wrote nothing. The decoded check drops
  * a non-text turn id, which the index also holds. */
 export function turnRows(threadId: string, turnId: string): Message[] {
-  if (!optionalIndexReady(db(), TURN_INDEX)) throw new TurnIndexNotReadyError();
   const out: Message[] = [];
+  // Only a start that declared the build left until after listen reads without the index (1.0.20 T1): the same rows, the same order, found
+  // through the thread's own rows (messages_thread) until the build lands. In any other state the absence is the fault it always was.
+  if (preListenIndexDeferred(db(), TURN_INDEX) && !optionalIndexReady(db(), TURN_INDEX)) {
+    for (const row of db().prepare(TURN_ROWS_DEFERRED_SQL).iterate(threadId, turnId) as Iterable<{ json: string }>) {
+      const message = rowToMessage(row);
+      if (message.turnId === turnId) out.push(message);
+    }
+    return out;
+  }
+  if (!optionalIndexReady(db(), TURN_INDEX)) throw new TurnIndexNotReadyError();
   // A failed atomic replacement leaves an exact prior index usable. Select
   // its indexed expression, never a history scan. Both forms bound the read by
   // this turn's rows, including after rollback on a locked or full database.
@@ -804,9 +816,7 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
     return next;
   });
   messages = messages.map((message, place) => ({ message, place })).sort((a, b) => (Number.isFinite(a.message.at) && Number.isFinite(b.message.at) ? a.message.at - b.message.at : 0) || a.place - b.place).map(item => item.message);
-  const insert = db().prepare(
-    "INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  );
+  const insert = messageWrite(db(), MESSAGE_REPLACE_SQL);
   // IMMEDIATE: the allocation in replaceRow reads MAX(seq) and writes the next number in one write transaction (r7 R1)
   db().exec("BEGIN IMMEDIATE");
   try {
@@ -837,6 +847,21 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
     } catch {}
   } catch {}
   return { messages, activeLeafId };
+}
+
+/** The two per-write statements on messages. Each write fires the messages triggers (the card and rowid guards), and SQLite compiles
+ * every trigger program into each statement that fires it: preparing per write paid that compile on every streamed line. They are compiled once per connection and reused; SQLite re-prepares a held
+ * statement itself after any schema change, and a reopened database is a new connection with its own statements. */
+const MESSAGE_REPLACE_SQL = "INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+const MESSAGE_PATCH_SQL = "UPDATE messages SET at=?, role=?, kind=?, text=?, json=? WHERE thread_id=? AND id=?";
+const messageWrites = new WeakMap<DatabaseSync, Map<string, StatementSync>>();
+/** The held statement for one of the two message writes on this connection. */
+export function messageWrite(database: DatabaseSync, sql: typeof MESSAGE_REPLACE_SQL | typeof MESSAGE_PATCH_SQL): StatementSync {
+  let held = messageWrites.get(database);
+  if (!held) { held = new Map(); messageWrites.set(database, held); }
+  let statement = held.get(sql);
+  if (!statement) { statement = database.prepare(sql); held.set(sql, statement); }
+  return statement;
 }
 
 /** INSERT OR REPLACE one row and keep its search-index entry in step: a
@@ -1078,7 +1103,7 @@ function writeMessage(threadId: string, message: Message, lineage: LineageToken,
     else delete message.memoryNote;
   }
   replaceRow(
-    db().prepare("INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
+    messageWrite(db(), MESSAGE_REPLACE_SQL),
     threadId,
     message,
     structure,
@@ -1197,7 +1222,7 @@ export function updateMessage(threadId: string, message: Message, within?: () =>
     const replayUnchanged = prior?.replay_json !== null && prior !== undefined
       && (message.copyOf || message.kind === "text" || prior.kind === "text")
       && prior.replay_json === database.prepare("SELECT json_remove(?, '$.dispatchedIn', '$.turnTerminal', '$.turnHelpers') AS shape").get(encoded)?.shape;
-    database.prepare("UPDATE messages SET at=?, role=?, kind=?, text=?, json=? WHERE thread_id=? AND id=?")
+    messageWrite(database, MESSAGE_PATCH_SQL)
       .run(message.at,message.role,message.kind,message.text??null,encoded,threadId,message.id);
     // A generated line patched inside its turn (a streamed reply growing) also rests on what its turn was shown since it was first written:
     // only the refs it does not carry yet are added. A row that is not that turn's engine output (a routine card turned Completed) adds only

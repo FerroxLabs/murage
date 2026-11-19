@@ -43,7 +43,7 @@ import { legacyGlobKeyRead } from "../shared/legacy-glob-key-read.ts";
 import { requiredFields } from "./drivers/contracts.ts";
 import { homedir } from "node:os";
 import { realPathInOrder, win32Canonical, type PlaceOptions } from "../shared/in-project.ts";
-import { isOwnAlwaysAsk, isOwnComputerRead, isOwnHandlerCarded, isOwnQuiet, isOwnUnasked, ownAlwaysAskByName } from "../shared/own-servers.ts";
+import { isOwnAlwaysAsk, isOwnComputerRead, isOwnHandlerCarded, isOwnQuiet, isOwnUnasked, ownAlwaysAskByName, ownWebSearchRunsUnasked } from "../shared/own-servers.ts";
 import { APP_LOOKUPS, ownAppTool } from "../shared/app-action-words.ts";
 import { pinOverrideIn, promptVerdict, type PromptFacts } from "../shared/prompt-capable.ts";
 import { bareToolName, isBareCommandGrant, isCommandTool, isQuestionGrant, isQuestionTool } from "../shared/grant-tool-names.ts";
@@ -1916,7 +1916,10 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     // A connected-app lookup is a read on an ordinary turn. On a routine's own run the four lookups are what the
     // routine remembers (Rule 76a): each is answered only by its own saved key (the routine grants, below), so a
     // remembered search never answers a schema read or any other lookup.
-    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined && context?.routineLevel !== true : isOwnQuiet(resolved.mountId, resolved.tool);
+    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined && context?.routineLevel !== true : isOwnQuiet(resolved.mountId, resolved.tool)
+      // CODEX-WEB-1020: own web_search on the free default provider is a read of the public web with no card at any level
+      // (the same answer the Codex hook gives); on a paid provider this is false and the always-ask card stands
+      || ownWebSearchRunsUnasked(resolved.mountId, resolved.tool);
     // a handler-carded own tool (bot email's send tools) reaches its handler at every level: the handler applies the bot's email setting and
     // holds on Murage's own card, so no engine card stands in front of it (BOT-EMAIL-MURAGE-109 3.2)
     if (read || (app === undefined && isOwnHandlerCarded(resolved.mountId, resolved.tool)) || (bot.autoApprove && isOwnUnasked(resolved.mountId, resolved.tool))) {

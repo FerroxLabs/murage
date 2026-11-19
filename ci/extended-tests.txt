@@ -150,6 +150,7 @@ server/browser-extension-round5.test.ts	delete (pending review; runs here until 
 server/browser-extension-snapshot.test.ts	extended
 server/browser-floor-recipients.test.ts	extended
 server/browser-is-the-place.test.ts	extended
+server/browser-macos-pinned-assets.test.ts	nightly (real pinned browser assets: needs network or the MURAGE_PIN_FIXTURE_DIR fixture cache; network-free gate lanes leave it out)
 server/browser-native-relay.test.ts	extended
 server/browser-preview-capture.test.ts	extended
 server/browser-profile-precondition-api.test.ts	extended
@@ -238,6 +239,7 @@ server/decision-log-wiring.test.ts	extended
 server/default-engine-boot.test.ts	extended
 server/delegation-failure-detail.test.ts	extended
 server/delegation-receipt-reload.test.ts	extended
+server/demo-replay-1118-api.test.ts	extended
 server/direct-screen-settlement-api.test.ts	extended
 server/dm-title.test.ts	extended
 server/drivers/acp/build-key.test.ts	extended
@@ -1552,3 +1554,4 @@ server/low-disk-channels.test.ts	extended
 server/approval-attention-race.test.ts	extended
 server/testing/fake-acp-mcp-timeout.test.ts	extended
 server/approval-attention-boot.test.ts	extended
+src/components/backup-switch.test.ts	extended

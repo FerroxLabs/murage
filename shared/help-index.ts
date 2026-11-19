@@ -2825,16 +2825,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Settings → General → Advanced → Start at login and run in the background\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/general/startup"
   },
   {
-    "id": "features/every-setting#general-advanced-send-usage-analytics",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "General, Advanced: Send usage analytics",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → General → Advanced → Send usage analytics",
-    "url": "https://murage.ai/docs/features/every-setting#general-advanced-send-usage-analytics",
-    "text": "Settings → General → Advanced → Send usage analytics\n\nAddress: murage://settings/app/general/analytics"
-  },
-  {
     "id": "features/every-setting#general-about-me-for-every-bot",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
@@ -2933,16 +2923,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Skills → Teach a skill",
     "url": "https://murage.ai/docs/features/every-setting#skills-teach-a-skill",
     "text": "Settings → Skills → Teach a skill\n\nOn the computer running Murage.\n\nWhen it is off: Off. Turn it on to let bots learn a skill from a recording or /learn.\n\nAddress: murage://settings/app/skills/recorder"
-  },
-  {
-    "id": "features/every-setting#skills-advanced-voice-transcription-key",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Skills, Advanced: Voice transcription key",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Skills → Advanced → Voice transcription key",
-    "url": "https://murage.ai/docs/features/every-setting#skills-advanced-voice-transcription-key",
-    "text": "Settings → Skills → Advanced → Voice transcription key\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/voice-key"
   },
   {
     "id": "features/every-setting#skills-skills-library-and-import",

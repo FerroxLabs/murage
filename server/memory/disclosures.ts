@@ -4,12 +4,12 @@ import { sourceDenied } from "./deny.ts";
 import { verdictStore } from "./verdict-store.ts";
 import { database, onDatabaseClose, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
-import { accessIncludesRoom, assertMemoryAccess, lineageReaderAudience, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, lineageReaderAudience, revalidateMemoryAccess, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
 import { authorityStamp } from "./authority-epoch.ts";
-import { integrityUntrusted, isLineageLimit, LineageAllowance, contentRevoked, messageCopy, messageSourceForgotten, recordSessionRoots, replayExclusions, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
+import { integrityUntrusted, isLineageLimit, LineageAllowance, contentRevoked, messageCopy, forgottenMessageSources, recordSessionRoots, replayExclusions, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
-import { denyGeneration, denyLookup, denyReadMeter, lineageLive } from "./deny-read.ts";
+import { denyGeneration, denyLookup, denyReadMeter, lineageLive, sessionLookup } from "./deny-read.ts";
 import { totalChanges } from "./revoke-marker.ts";
 import { STALE_MEM_LSN, type LineageReader, type LineageRef, type TurnLineage } from "./lineage-types.ts";
 import { addTurnParents, checkedOpenTurns, currentLsn, extendLineage, runningTurnFor } from "./lineage-write.ts";
@@ -61,10 +61,12 @@ export function deliverMemoryDisclosure(bundleId: string, access: MemoryAccess, 
 /** The receipt still holds under the dispatch's authority: what delivery
  * checks, and what every later adapter write checks again (dispatch.ts). */
 export function assertMemoryDisclosureCurrent(bundleId: string, access: MemoryAccess) {
-  assertMemoryAccess(access);
-  const row = database().prepare("SELECT * FROM memory_disclosures WHERE bundle_id=? AND thread_id=?").get(bundleId,access.threadId);
-  // one receipt, read in full: its own allowance (a receipt that cannot be proven within it is refused, as a revoked one is)
-  if (!row || revoked(LineageAllowance.tool(), row, access)) throw new Error("MEMORY_CONTEXT_REVOKED");
+  return inMemoryAccessPass(() => {
+    assertMemoryAccess(access);
+    const row = database().prepare("SELECT * FROM memory_disclosures WHERE bundle_id=? AND thread_id=?").get(bundleId,access.threadId);
+    // one receipt, read in full: its own allowance (a receipt that cannot be proven within it is refused, as a revoked one is)
+    if (!row || revoked(LineageAllowance.tool(), row, access)) throw new Error("MEMORY_CONTEXT_REVOKED");
+  });
 }
 
 function revoked(allowance: LineageAllowance, row: Disclosure, access: MemoryAccess, seen?: Seen): boolean {
@@ -81,13 +83,6 @@ export function revokedReason(allowance: LineageAllowance, row: Disclosure, acce
   if (row.deletion_epoch !== access.deletionEpoch) return "deletion-epoch";
   let step = "parse";
   try {
-    const records: Array<{id:string;version:number}> = JSON.parse(String(row.record_versions));
-    // One session's receipts cite the same records again and again: each is looked at once per check.
-    for (const record of records) {
-      const key = `${record.id}@${record.version}`;
-      if (seen?.records.has(key)) continue;
-      step = `record ${key}`; allowance.spendNodes(String(row.thread_id), 1); hydrateDisclosedMemoryRecord(record.id,record.version,access,{allowance}); seen?.records.add(key); seen?.added?.push(key);
-    }
     const sources: Array<{id:string;revision:number}> = JSON.parse(String(row.source_versions));
     for (const source of sources) {
       step = `source ${source.id}@${source.revision}`;
@@ -101,6 +96,13 @@ export function revokedReason(allowance: LineageAllowance, row: Disclosure, acce
       if (database().prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision)) return `${step} tombstoned`;
       assertMemoryAccess(access,String(current.scope_id));
       seen?.sources.add(step); seen?.addedSources?.push(step);
+    }
+    const records: Array<{id:string;version:number}> = JSON.parse(String(row.record_versions));
+    // One session's receipts cite the same records again and again: each is looked at once per check.
+    for (const record of records) {
+      const key = `${record.id}@${record.version}`;
+      if (seen?.records.has(key)) continue;
+      step = `record ${key}`; allowance.spendNodes(String(row.thread_id), 1); hydrateDisclosedMemoryRecord(record.id,record.version,access,{allowance}); seen?.records.add(key); seen?.added?.push(key);
     }
     return null;
   } catch (error) {
@@ -259,7 +261,7 @@ export function readerAudience(allowance: LineageAllowance, access: MemoryAccess
     // generation: that renews every turn and defeated the cache (1.0.2 r2 P2). The live capability is checked by assertMemoryAccess
     // before and after every replay (filterMemoryReplay), so a stale generation cannot ride a kept verdict.
     // kept verdicts are shared only by a reader judged on its own: one carrying `seen` has its answers shaped by what the pass saw before
-    ...(seen ? {} : { cacheKey: JSON.stringify([access.botId, access.policyRevision, access.deletionEpoch, access.view, access.threadId, access.humanPrincipal, memoryAccessIsOwnerAudience(access), memoryAccessNotOwnerAudience(access)]) }),
+    ...(seen ? {} : { cacheKey: JSON.stringify([access.botId, access.policyRevision, access.deletionEpoch, access.view, access.scopeDigest, access.threadId, access.humanPrincipal, memoryAccessIsOwnerAudience(access), memoryAccessNotOwnerAudience(access)]) }),
     revoked: row => {
     const key = JSON.stringify([row.state, row.policy_revision, row.deletion_epoch, row.record_versions, row.source_versions]);
     let verdict = verdicts.get(key);
@@ -348,10 +350,11 @@ export function filterDirectReplay<T extends ReplayMessage & {kind?: string; tex
     if (!ownerChat) return filterMemoryReplay(allowance, threadId, fresh, access, { failClosed: true });
     const pendingIds = new Set<string>();
     const held = roomReplayWithheld(allowance, threadId, fresh, pendingIds);
-    for (const message of fresh) if (held.has(message.id)) {
-      withheld.add(message.id);
-      if (messageSourceForgotten(threadId, message.id)) forgotten.add(message.id);
-      else if (pendingIds.has(message.id)) checking.add(message.id);
+    const heldIds = fresh.filter(message => held.has(message.id)).map(message => message.id), gone = forgottenMessageSources(threadId, heldIds);
+    for (const id of heldIds) {
+      withheld.add(id);
+      if (gone.has(id)) forgotten.add(id);
+      else if (pendingIds.has(id)) checking.add(id);
     }
     return options.withheldLine ? fresh : fresh.filter(message => !held.has(message.id));
   };
@@ -415,10 +418,7 @@ export function roomReplayWithheld(allowance: LineageAllowance, threadId: string
   const withheld = replayExclusions(allowance, threadId, messages, null, { failClosed: true, ...(checking ? { checking } : {}) });
   // A line the owner forgot from memory is withheld itself, receipt or not. The
   // owner's own forgotten words are excluded by replayExclusions (1.0.2 revoke-bounded r3).
-  for (const message of messages) {
-    if (message.role === "user" || withheld.has(message.id)) continue;
-    if (messageSourceForgotten(threadId, message.id)) { withheld.add(message.id); checking?.delete(message.id); }
-  }
+  for (const id of forgottenMessageSources(threadId, messages.filter(m => m.role !== "user" && !withheld.has(m.id)).map(m => m.id))) { withheld.add(id); checking?.delete(id); }
   // the write-time layer: a room message is a room record, judged on content (no audience: marks and direct facts, no watermark or footprint)
   for (const id of writetimeReplayWithheld(threadId, messages, { audience: null }, checking)) withheld.add(id);
   return withheld;
@@ -456,7 +456,7 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
   let reader: LineageReader | undefined;
   return (threadId, messageId, allowance, verdict) => {
     const now = readerRuleStamp();
-    if (now === undefined || now !== stamp) { verdicts.clear(); stamp = now; reader = undefined; }
+    if (now === undefined || now !== stamp) { access = revalidateMemoryAccess(access); verdicts.clear(); stamp = now; reader = undefined; }
     const key = `${threadId}\u0000${messageId}`;
     if (threadId === access.threadId) {
       let known = verdicts.get(key);
@@ -510,7 +510,20 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
 
 // ---- the entry points of the lineage reads, each timed (see LineageAllowance.timed) ----
 /** continuationMemoryRevoked, timed against the allowance's wall-clock budget (1.0.2 lineage-cold r3: nodes bound the count, this bounds the time), with one second look when the clock stopped it. */
-export function continuationMemoryRevoked(allowance: LineageAllowance, threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why: { reason?: string } = {}): boolean { assertMemoryAccess(access); const proof=proveRetainedSession(allowance,sessionKeyOf(threadId,driverInstance,nativeSession),{access,disclosed:true}); const key=sessionHoldKey(threadId,driverInstance,nativeSession,access);if(proof.kind==='fresh'){verdictStore.loseHold(key,'consumed');why.reason=proof.cause==='checking'?(proof.reason==='checking'&&proof.detail?`checking:${proof.detail}`:'lineage-warming'):proof.reason;return true;}if(!closeHooked){closeHooked=true;onDatabaseClose(resetSessionHolds);}if(verdictStore.getHold(key))verdictStore.touchHold(key);else verdictStore.setHold(key,{stamp:authorityStamp()},SESSION_HOLDS_MAX);return false; }
+/** T3 (DESIGN-T3.md, MAIN approved): the non-destructive probe before the one real continuation check. It reads only the retained
+ * session's write-time verdict: no hold is lost or granted, no receipt is marked. True only for exactly checking:pending. */
+export function continuationPendingProbe(threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess): boolean {
+  try {
+    assertMemoryAccess(access);
+    const reader: LineageReader = ownerDirectChat(threadId, access) ? { audience: null } : { audience: lineageReaderAudience(access) };
+    const verdict = sessionLookup(database(), sessionKeyOf(threadId, driverInstance, nativeSession), reader);
+    return verdict.state === "checking" && verdict.reason === "pending";
+  } catch { return false; }
+}
+/** keepPending (T3: an owner-audience direct turn only): a proof that is exactly checking:pending (a revoke walk not finished, never a
+ * settled deny, never lineage-warming or another checking cause) keeps the session. It neither consumes nor grants the hold, sets
+ * why.kept, and returns false; the caller sends without new remembered context and the next turn checks again. */
+export function continuationMemoryRevoked(allowance: LineageAllowance, threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why: { reason?: string; kept?: boolean } = {}, keepPending = false): boolean { assertMemoryAccess(access); const proof=proveRetainedSession(allowance,sessionKeyOf(threadId,driverInstance,nativeSession),{access,disclosed:true}); const key=sessionHoldKey(threadId,driverInstance,nativeSession,access);if(proof.kind==='fresh'&&keepPending&&proof.cause==='checking'&&proof.reason==='checking'&&proof.detail==='pending'){why.reason='checking:pending';why.kept=true;return false;}if(proof.kind==='fresh'){verdictStore.loseHold(key,'consumed');why.reason=proof.cause==='checking'?(proof.reason==='checking'&&proof.detail?`checking:${proof.detail}`:'lineage-warming'):proof.reason;return true;}if(!closeHooked){closeHooked=true;onDatabaseClose(resetSessionHolds);}if(verdictStore.getHold(key))verdictStore.touchHold(key);else verdictStore.setHold(key,{stamp:authorityStamp()},SESSION_HOLDS_MAX);return false; }
 
 /** A receipt as a write-time ref (DESIGN-WRITETIME 2.2, "receipts"): its lsn for the watermark, and the scopes of the records and sources it
  * holds for the footprint. A receipt already stale against the current policy revision or deletion epoch takes STALE_MEM_LSN, below every
@@ -521,10 +534,20 @@ export function receiptLineageRef(db: ReturnType<typeof database>, bundleId: str
   const row = db.prepare("SELECT d.record_versions AS rv,d.source_versions AS sv,d.policy_revision AS p,d.deletion_epoch AS e,m.policy_revision AS mp,m.deletion_epoch AS me FROM memory_disclosures d, memory_meta m WHERE m.id=1 AND d.bundle_id=?").get(bundleId);
   if (!row) return null;
   const scopes = new Set<string>();
-  for (const scope of db.prepare("SELECT DISTINCT r.scope_id AS s FROM json_each(?) j JOIN memory_records r ON r.id=j.value->>'id' AND r.version=j.value->>'version'").all(String(row.rv))) scopes.add(String(scope.s));
+  const cited = (JSON.parse(String(row.rv)) as Array<{ id: string; version: number }>).map(ref => [ref.id, ref.version] as const);
+  for (const scope of citedScopes(db, cited)) scopes.add(scope.id);
   for (const scope of db.prepare("SELECT DISTINCT s.scope_id AS s FROM json_each(?) j JOIN memory_sources s ON s.id=j.value->>'id'").all(String(row.sv))) scopes.add(String(scope.s));
   const stale = Number(row.p) !== Number(row.mp) || Number(row.e) !== Number(row.me);
   return { kind: "receipt", bundleId, lsn: stale ? STALE_MEM_LSN : currentLsn(db), scopeIds: [...scopes].sort() };
+}
+
+/** The notebooks that exact record versions rest in: (id, kind, owner_key) for tuple refs [[record id, version], ...]. Driven from the cited
+ * tuples (one primary-key seek on the record, one on its scope), so the work follows the citations, never the history of the file. A ref
+ * naming no record contributes nothing; the scope of an orphaned record is returned only if the scope row exists. */
+export function citedScopes(db: ReturnType<typeof database>, refs: ReadonlyArray<readonly [string, number]>): Array<{ id: string; kind: string; owner_key: string }> {
+  if (!refs.length) return [];
+  return db.prepare("SELECT DISTINCT s.id,s.kind,s.owner_key FROM json_each(?) p CROSS JOIN memory_records r ON r.id=p.value->>0 AND r.version=p.value->>1 CROSS JOIN memory_scopes s ON s.id=r.scope_id")
+    .all(JSON.stringify(refs)).map(row => ({ id: String(row.id), kind: String(row.kind), owner_key: String(row.owner_key) }));
 }
 
 /** A receipt the running turn of (thread, bot) was handed (a frame, a lookup): it joins that turn's parents, so every note, record or session

@@ -11,7 +11,7 @@ import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
 import { CallOverlaySlot } from "@/components/CallControls";
 import { BotCallRing } from "@/components/BotCallRing";
-import { initAnalytics } from "@/lib/analytics";
+import { startupPrivacy } from "@/lib/legacy-analytics-cleanup";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { preloadConnectedApps } from "@/lib/connected-apps-preload";
@@ -481,6 +481,8 @@ function Shell() {
       {desktop === true && cloudBrowser && <RemoteConnectionBanner connected={state.connected} signedOut={state.signedOut === true} />}
       {/* The saved Flux key is not one, or Flux refused it: say so, with the fix. */}
       {desktop === true && <FluxKeyProblemBanner />}
+      {/* A connected app to sign in again: a band with the rest, so it never covers the rail or the composer. It can be put away (ReconnectAppsBanner.tsx). */}
+      <ReconnectAppsBanner enabled />
       {/* Only after the door itself said 401 (lib/session-check.ts). */}
       {state.signedOut && <SignedOutCard />}
       {/* UX 1.0.13 band slot: no internet on this device. Bots on the computer keep working; it says what waits. */}
@@ -607,7 +609,6 @@ function Shell() {
             <SettingsModal />
         </LazyOverlay>
       )}
-      <div className="fixed bottom-4 left-4 z-40 max-w-sm"><ReconnectAppsBanner enabled /></div>
       {state.reconnectIncidentId && <ConnectorReconnectDialog key={state.reconnectIncidentId} incidentId={state.reconnectIncidentId} />}
       <NewBotSignInStep />
       {state.pluginsOpen && <LazyOverlay name="plugins" kind="window" covers="always" onRetry={PluginsPanelLazy.retry} onDismiss={() => dispatch({ type: "togglePlugins", open: false })}><PluginsPanel /></LazyOverlay>}
@@ -672,8 +673,10 @@ export default function App() {
   // Its answer is the server's `view.firstRun`, which no phone's empty
   // localStorage can get wrong, and it is still withheld on `undefined`.
   const desktop = useDesktopSurface();
+  // Murage sends no usage analytics; an upgraded install drops what the old
+  // client stored (src/lib/legacy-analytics-cleanup.ts).
   useEffect(() => {
-    initAnalytics();
+    startupPrivacy();
   }, []);
   // One listener for the whole app: publishes --vvh/--kb/data-keyboard on
   // <html> so #root tracks the visual viewport instead of the layout viewport.

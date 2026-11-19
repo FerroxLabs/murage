@@ -18,6 +18,7 @@ import { Card } from "../../SettingsPrimitives";
 import { ComputerOnlyStub } from "../../SettingsStub";
 import { PageCards } from "../PageCards";
 import { PluginsPanel } from "../../PluginsPanel";
+import { ReconnectAppsNeedsYou } from "../../ReconnectAppsBanner";
 import { McpServersPanel } from "../../McpServersPanel";
 import { ChannelsPageBody, channelsCards } from "./ChannelsPage";
 import { BotEmailReadout } from "./BotEmailReadout";
@@ -34,6 +35,8 @@ export function ConnectedAppsCard({ readOnly = false }: { readOnly?: boolean }) 
     <>
       <Card title={t("settings.section.connections")} subtitle={t(state.config?.composio?.mode === "managed" ? "settings.connections.noteManaged" : "settings.connections.note")}>
         <div className="flex flex-col gap-4">
+          {/* An app to sign in again, first: the reconnect line can be put away, this stays until it is done (1.0.20). */}
+          {!readOnly && <ReconnectAppsNeedsYou dispatch={dispatch} label={t("connectorHealth.reconnect")} />}
           <PluginsPanel embedded readOnly={readOnly} />
           {state.config?.composio?.mode === "managed" ? (
             <div className="rounded-lg border border-success/25 bg-success/10 px-3 py-2 text-[13px] text-success">{t("settings.connections.ready")}</div>

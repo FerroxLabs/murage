@@ -2,7 +2,6 @@ import { LearningConsentNotice } from "./LearningConsentNotice";
 import { BotReviewSheet } from './BotReviewSheet';
 import { useSlashSkills } from "@/lib/use-slash-skills";
 import { CallMeWhenDone } from "./CallMeWhenDone";
-import { track } from "@/lib/analytics";
 import { closedComposerLine } from "@/lib/shared-teams";
 import { FOCUS_COMPOSER_EVENT } from "./useTrayIntents";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -1110,7 +1109,6 @@ export function Composer({
         mode: groupMode,
         onError: failedSend,
       });
-      track("message_sent", { room: true, mode: effectiveChannelMode, queued: busy });
     } else if (bot) {
       // A SETUP QUESTION ON THE TABLE HEARS THE ANSWER. IT DOES NOT TAKE IT.
       //
@@ -1161,7 +1159,6 @@ export function Composer({
           if (outcome === "recorded") setIntakeNotice(null);
           else if (outcome === "refused") setIntakeNotice(INTAKE_NOT_RECORDED);
         });
-      track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer });
     }
     };
     void beginDraftSend(draftId, shown, (sendId, content): DraftOutboxEntry => ({

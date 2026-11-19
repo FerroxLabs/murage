@@ -164,6 +164,16 @@ export class InternalCapabilities {
     }
   }
 
+  /** Q2 (int-1020q-n1 DECISIONS): a re-validation that replaced an intermediate view releases that one lease, so a live reader holds
+   * its issued view and its latest view, never one lease per past epoch move. */
+  releaseMemoryView(claim: InternalCapability, key: string): void {
+    const views = this.#memoryViews.get(claim);
+    const release = views?.get(key);
+    if (!views || !release) return;
+    views.delete(key);
+    release();
+  }
+
   #releaseMemoryViews(claim: InternalCapability): void {
     const views = this.#memoryViews.get(claim);
     this.#memoryViews.delete(claim);

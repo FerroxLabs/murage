@@ -23,6 +23,7 @@ import { CliMountRelay, mountedTurn, assertRelayAvailable, prepareCliMounts, rel
 import { freshMcpMountAdmission, assertConsumingMountAdmission } from "../mcp-mounts.ts";
 import { refuseConsumingTurn } from "../../consuming-turn-response.ts";
 import { LEDGER_REFUSAL_LINE } from "../../ledger-refusal.ts";
+import { fenceRefusalDiagnosis } from "../../memory/send-fence.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { recordOutsideInstallChange } from "../../outside-wire.ts";
 import { openAcpSession } from "./open-session.ts";
@@ -125,10 +126,12 @@ import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../sh
 import { enginePathFromEnv, noteEnginePath } from "../../outside-scan.ts";
 import { CLI_CALLER_DEADLINE_MS, cliContainment, describeSpawnFailure, engineJob, engineProcessPid, engineWrapsHostPower, execCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused, killCliTree, spawnCli } from "../../procs.ts";
 import { cachedCliVersion } from "../../cli-version-cache.ts";
+import { runningAppVersion } from "../../memory/app-version.ts";
 import { claudeExecutableIdentity } from "../claude-guards.ts";
 import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, ChildTeardown, combine, type TeardownWait } from "../child-teardown.ts";
 import {
   createLifecycleRecorder,
+  lifecycleVersion,
   errnoCategory,
   type LifecycleFields,
   type LifecycleStopReason,
@@ -1287,6 +1290,9 @@ export function engineStderrLastWords(captured: string, truncated: boolean): str
   return acpEngineExitStderrText(acpEngineStderrCapture(captured, truncated));
 }
 
+/** The engine lines that explain nothing (the error card's own "generic" set, src/components/RuntimeErrorCard.tsx). */
+const GENERIC_ENGINE_LINE = /^(?:internal error|unknown error|ACP request failed|request failed)[.!]?$/i;
+
 /** Fuigo's typed failure kind, a snake_case token. Read only from
  * `error.data.error_kind`: it travels as its own field so nothing has to
  * recover it from text the engine wrote. */
@@ -1867,6 +1873,8 @@ const mcpOwnReadyWaitMs = () => Math.min(mcpReadyWaitMs(), envOr("MURAGE_ACP_MCP
  *  so every turn keeps its wait until a notification, a settled list or the bound releases it. A new build has a
  *  new key and is asked afresh. */
 const acpMcpListUnsupported = new Set<string>();
+/** The engine version each driver's last `initialize` answer named in this process: lifecycle identity only. */
+const acpKnownEngineVersion = new Map<string, string>();
 const methodNotFound = (error: unknown): boolean => (error as { code?: unknown } | null)?.code === -32601;
 /** The direct readiness signal (mcp-listed.ts): Murage's own servers (agents,
  *  memory, connected apps) are its own processes, so each one writes a marker
@@ -2317,7 +2325,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       /** nativecrash LLD-acp: a refusal this driver raises itself, with no engine request behind it. There is no driver target to close
        *  (target null), so the lease takes the close at once; the error is rethrown unchanged for the caller's own path. */
       const refuseDirect = (turn: Pick<SendTurnInput, "threadId" | "releaseBinding">, line: string): never => {
-        try { return refuseConsumingTurn(turn.releaseBinding!); }
+        // 1.0.20 busy: the verdict says the driver raised it. With the turn's context still current, the direct turn's lease ends the
+        // turn at once (admitLedgerLease "ledger"): a rebuild would start the same engine into the same refusal, behind the full wait.
+        try { return refuseConsumingTurn(turn.releaseBinding!, { state: "checking", reason: "not-built", driverRaised: true }); }
         catch (error) {
           refusalFor(error, `acp.direct.${line}`, { engine: DRIVER_KIND, threadId: turn.threadId, binding: turn.releaseBinding, target: null, kind: "turn" });
           throw error;
@@ -3385,7 +3395,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }
 
         // R1-T8: one bounded, allowlisted lifecycle trace per child generation.
-        const lifecycle = createLifecycleRecorder({ threadId, driver: DRIVER_KIND, instanceId, turnId });
+        // meetgreet 1.0.19: the identity fields were null on every event. The app's version is the build's; the engine's is
+        // the last `initialize` answer this driver had in this process (no probe per turn), updated when this one answers.
+        const lifecycle = createLifecycleRecorder({ threadId, driver: DRIVER_KIND, instanceId, turnId,
+          appVersion: lifecycleVersion(runningAppVersion()), engineVersion: acpKnownEngineVersion.get(DRIVER_KIND) ?? null });
+        const noteEngineVersion = (init: any) => {
+          const version = lifecycleVersion((init?.agentInfo ?? init?._meta?.agentInfo)?.version);
+          if (!version) return;
+          acpKnownEngineVersion.set(DRIVER_KIND, version);
+          lifecycle.setEngineVersion(version);
+        };
         // The child is spawned by `launch()` below — synchronously for most
         // turns, and only after the owner has answered a folder-trust card
         // when the folder needs one (FUIGOTRUST1). Until then there is no
@@ -6919,6 +6938,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               mountRelay = await CliMountRelay.create(turn, preparedMounts!, {}, null);
               mountRelay.attach(child!, error => {
                 if (state.settled) return;
+                if (error === undefined) console.warn("[memory] ledger refusal cause=acp-mount-relay-denied");
                 emit({ ...base(threadId, turnId), type: "runtime.error", message: error === undefined ? LEDGER_REFUSAL_LINE : "The mounted tool connection stopped." });
                 settle(false, error === undefined ? "memory-refused" : "error");
               });
@@ -7053,6 +7073,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // fresh process instead, in this same turn.
               init = proc!.initResult;
               pinHermes(init?.agentInfo?.version);
+              noteEngineVersion(init);
               retryDiscard = acpRetryDiscard(init);
               if (!crossThread && proc!.sessionKey === sessionKey) {
                 mcpEstablished = false;
@@ -7135,6 +7156,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (externalHalt()) { settleHalted(); return; }
             proc!.initResult = init;
             pinHermes(init?.agentInfo?.version);
+            noteEngineVersion(init);
             seedLanded();
             recordProbedImages(imagesKey(), init);
             retryDiscard = acpRetryDiscard(init);
@@ -7909,6 +7931,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   try { turn.beforePrepare(); } catch { boundaryRefused = true; }
                   if (boundaryRefused) { settle(false, "submission_refused"); return; }
                 }
+                console.warn(`[memory] ledger refusal cause=${fenceRefusalDiagnosis(e).refused} site=acp-prompt`);
                 emit({ ...base(threadId, turnId), type: "runtime.error", message: LEDGER_REFUSAL_LINE });
                 settle(false, "memory-refused");
                 return;
@@ -7950,10 +7973,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // inside the transcript's own length. Classification above still
               // reads the raw message, and a line that sanitises to nothing is
               // the generic failure text rather than the raw one.
+              // meetgreet 1.0.19: a rejection that explains nothing ("Internal error", "Request failed.", or no message at all)
+              // and carries no typed kind for the card to explain is still a reason the owner can act on: the engine's
+              // service failed. One plain line naming the engine and the next step, never the bare JSON-RPC word.
+              const engineLine = fluxRefusal ? message : engineText ?? acpEngineErrorText(message);
+              const unexplained = !fluxRefusal && !errorKind && (engineLine === undefined || GENERIC_ENGINE_LINE.test(engineLine.trim()));
               emit({
                 ...eventBase,
                 type: "runtime.error",
-                message: fluxRefusal ? message : engineText ?? acpEngineErrorText(message) ?? `${ENGINE} could not finish this turn.`,
+                message: unexplained ? `${ENGINE}'s service returned an error. Try again, or switch engine.` : engineLine ?? `${ENGINE} could not finish this turn.`,
                 ...(errorKind ? { errorKind } : {}),
                 ...(acpEngineErrorCode(e) ? { engineCode: acpEngineErrorCode(e) } : {}),
                 // Read from the raw error and its data, before the text above is sanitised (Flux's code sits in error.state,

@@ -47,7 +47,6 @@ const GENERAL: SettingsCard[] = [
   card("send-key", "general", "send-key-heading", { keywords: ["sending messages", "send", "enter", "shift enter", "return key", "new line", "newline", "keyboard"], surface: "any" }),
   card("notifications", "general", "notifications-heading", { keywords: ["notifications", "sound", "sounds", "mute", "chime", "quiet hours", "at night", "night", "do not disturb", "privacy", "previews", "alert", "alerts", "notify", "ping", "badge"] }),
   card("startup", "general", "startup-heading", { keywords: ["startup", "background", "tray", "login", "sign in", "launch", "autostart", "open at login"], advanced: true }),
-  card("analytics", "general", "analytics-heading", { keywords: ["analytics"], surface: "any", advanced: true }),
   card("about-me", "general", "about-me-heading", { keywords: ["about me", "profile", "who i am", "my name", "myself", "time zone", "preferences", "every bot"] }),
   card("bring-your-ai", "general", "bring-your-ai-heading", { keywords: ["bring what you already use", "bring your ai", "import", "grok bot", "chatgpt", "claude", "dots", "duet", "learn about me", "export"] }),
 ];
@@ -70,8 +69,6 @@ const BOT_DEFAULTS: SettingsCard[] = [
 // ---- Skills (L1) ----
 const SKILLS: SettingsCard[] = [
   card("recorder", "skills", "skill-recorder-heading", { keywords: ["teach", "teach a skill", "skill recorder", "record", "workflow", "learn", "early", "experimental"] }),
-  // The AssemblyAI key is one field on Skills, next to Teach a skill (MurageMain ruling 11-10); the id stays webSearch.voice-key.
-  card("voice-key", "skills", "voice-key-heading", { idSection: "webSearch", keywords: ["assemblyai key", "transcription key", "voice key", "api key"], advanced: true }),
   card("library", "skills", "skills-settings-title", { keywords: ["skills", "skill", "import", "library", "instructions"] }),
   card("scan-rules", "skills", "skill-scan-rules-heading", { keywords: ["scan", "scan rules", "import check"], advanced: true }),
 ];
@@ -114,6 +111,9 @@ const TOOLS: SettingsCard[] = [
   card("voice", "webSearch", "voice-settings-heading", { keywords: ["voice", "transcription", "transcribe", "assemblyai", "voice notes", "speech", "dictation", "narration", "dictate", "speak", "talk"] }),
   card("provider-keys", "webSearch", "search-keys-heading", { keywords: ["search keys", "provider keys", "tavily", "exa", "firecrawl", "api key", "web search key"], advanced: true }),
   card("daily-check", "webSearch", "image-daily-check-heading", { keywords: ["daily check", "image check", "daily image check", "probe", "test image model"], advanced: true }),
+  // A transcription key saved by an older version (Sean 11-06): Advanced, rendered only while it is in use with no engine
+  // that transcribes, and never a search result (OWN_TRANSCRIPTION_KEY_ANCHOR in settings-search).
+  card("voice-key", "webSearch", "voice-key-heading", { keywords: ["own transcription key"], advanced: true }),
 ];
 
 // ---- Connected apps and Messaging apps (L1) ----

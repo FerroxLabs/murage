@@ -1,11 +1,11 @@
 {
   "generatedBy": "src/lib/settings-controls.test.ts (SETTINGS_CONTROLS_WRITE=1)",
   "counts": {
-    "app": 84,
+    "app": 83,
     "bot": 39,
     "botIndexed": 39,
     "dataSetting": 39,
-    "controlAnchors": 70,
+    "controlAnchors": 69,
     "dynamicControlAnchors": 16
   },
   "dataSetting": [
@@ -53,7 +53,6 @@
     "about-me-heading",
     "about-version-heading",
     "advanced-mode-heading",
-    "analytics-heading",
     "announcements-heading",
     "backups-heading",
     "bot-email-heading",
@@ -133,10 +132,6 @@
     {
       "anchor": "advanced-mode-heading",
       "owner": "general.mode"
-    },
-    {
-      "anchor": "analytics-heading",
-      "owner": "general.analytics"
     },
     {
       "anchor": "announcements-heading",
@@ -684,15 +679,6 @@
       "modelControl": null
     },
     {
-      "card": "general.analytics",
-      "control": "Send usage analytics",
-      "kind": "switch",
-      "key": "localStorage murage-analytics-opt-out (\"1\" = off, \"0\" = on); in-process choice outranks storage",
-      "default": true,
-      "source": "src/components/SettingsModal.tsx:329; src/lib/analytics.ts:37,53,72",
-      "modelControl": "analytics"
-    },
-    {
       "card": "general.about-me",
       "control": "About me (rich editor, plain textarea fallback)",
       "kind": "textarea",
@@ -943,24 +929,6 @@
       "default": true,
       "source": "src/components/SettingsModal.tsx:466-495; src/lib/feature-flags.ts:8",
       "modelControl": "on"
-    },
-    {
-      "card": "webSearch.voice-key",
-      "control": "AssemblyAI API key",
-      "kind": "password",
-      "key": "window.muragebox.transcription.setKey(value) (OS-protected store); disabled outside the desktop app",
-      "default": "",
-      "source": "src/components/TranscriptionSettings.tsx:56-66",
-      "modelControl": "key"
-    },
-    {
-      "card": "webSearch.voice-key",
-      "control": "Save / Clear (button turns Clear when field empty and key saved)",
-      "kind": "button",
-      "key": "same as AssemblyAI API key (empty value clears)",
-      "default": null,
-      "source": "src/components/TranscriptionSettings.tsx:67-78",
-      "modelControl": "key"
     },
     {
       "card": "skills.library",
@@ -2197,21 +2165,12 @@
     },
     {
       "card": "webSearch.voice",
-      "control": "AssemblyAI transcription status (dot + Connected)",
+      "control": "Voice notes transcription status (configured route)",
       "kind": "readout",
-      "key": "read-only: window.muragebox.transcription.status().configured",
+      "key": "read-only: /api/config tts.routes.transcribe",
       "default": null,
-      "source": "src/components/TranscriptionSettings.tsx:44-48",
+      "source": "src/components/TranscriptionSettings.tsx:47-58",
       "modelControl": "route"
-    },
-    {
-      "card": "webSearch.voice",
-      "control": "Open AssemblyAI dashboard",
-      "kind": "button",
-      "key": "none (navigation only, external link)",
-      "default": null,
-      "source": "src/components/TranscriptionSettings.tsx:78",
-      "modelControl": null
     },
     {
       "card": "webSearch.provider-keys",
@@ -2275,6 +2234,24 @@
       "default": false,
       "source": "src/components/ImageSettings.tsx:232",
       "modelControl": "on"
+    },
+    {
+      "card": "webSearch.voice-key",
+      "control": "Your own transcription key",
+      "kind": "password",
+      "key": "window.muragebox.transcription.setKey(value) (OS-protected store); rendered only for a saved key with no engine that transcribes",
+      "default": "",
+      "source": "src/components/TranscriptionSettings.tsx:100-112",
+      "modelControl": "key"
+    },
+    {
+      "card": "webSearch.voice-key",
+      "control": "Save / Clear (button turns Clear when field empty and key saved)",
+      "kind": "button",
+      "key": "same as Your own transcription key (empty value clears)",
+      "default": null,
+      "source": "src/components/TranscriptionSettings.tsx:113-123",
+      "modelControl": "key"
     },
     {
       "card": "connections.apps",
@@ -4463,19 +4440,6 @@
       }
     },
     {
-      "id": "general.analytics",
-      "section": "general",
-      "anchor": "analytics-heading",
-      "advanced": true,
-      "surface": "any",
-      "label": "Send usage analytics",
-      "home": {
-        "page": "general",
-        "card": "general.analytics",
-        "mode": "Advanced"
-      }
-    },
-    {
       "id": "general.about-me",
       "section": "general",
       "anchor": "about-me-heading",
@@ -4602,19 +4566,6 @@
       "home": {
         "page": "skills",
         "card": "skills.recorder",
-        "mode": "Advanced"
-      }
-    },
-    {
-      "id": "webSearch.voice-key",
-      "section": "skills",
-      "anchor": "voice-key-heading",
-      "advanced": true,
-      "surface": "desktop",
-      "label": "Voice transcription key",
-      "home": {
-        "page": "voice",
-        "card": "voice.voice-key",
         "mode": "Advanced"
       }
     },
@@ -4992,6 +4943,19 @@
       "home": {
         "page": "images",
         "card": "images.daily-check",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "webSearch.voice-key",
+      "section": "webSearch",
+      "anchor": "voice-key-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Voice transcription key",
+      "home": {
+        "page": "voice",
+        "card": "voice.voice-key",
         "mode": "Advanced"
       }
     },

@@ -73,6 +73,8 @@ export default defineConfig({
       "src/components/PinToEdgeMenuItem.test.tsx",
       "src/pill/Pill.test.tsx",
       "src/components/DataFolderSettings.test.tsx",
+      "src/components/ReconnectAppsBanner.panel.test.tsx",
+      "src/components/notice-lane.test.tsx",
       "shared/**/*.test.ts",
       "tools/**/*.test.ts",
       "companion/**/*.test.ts",

@@ -11,6 +11,8 @@ import { createDeferredStartup } from "./deferred-startup.mjs";
 import { settleDesktopStartup, fallbackDesktopStartup, terminalDesktopStartup, startupFailureCode } from "./startup-settle.mjs";
 import {backupStartupDispatch, explicitBackupReturn} from "./backup-startup.mjs";
 import { createSentinelHost } from "./sentinel-host.mjs";
+import { sentinelNames } from "./sentinel-schedule.mjs";
+import { createUpdateLaunchPause } from "./update-launch-pause.mjs";
 import { FluxSigninError, assertFluxDesktopSigninEnabled, cancelFluxDesktopSignin, readEmailOwnerToken, runFluxDesktopSignin } from "./flux-desktop-signin.mjs";
 import { writeCallTrace } from "./call-trace.mjs";
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
@@ -18,7 +20,8 @@ import { closedVolumeProblem } from "./backup-closed-volume.mjs";
 import { portAvailable } from "./port-availability.mjs";
 import { launchSecretVia, sendLaunchSecretParent } from "./launch-secret.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
-import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
+import { CRASH_WINDOW_MS, createServerSupervisor, exitCodeNote } from "./server-supervisor.mjs";
+import { launchIdOf, openChatThread, restartedWindowTarget } from "./server-follow.mjs";
 import { compileCacheEnvironment } from "./compile-cache.mjs";
 import { createDesktopTrace } from "./desktop-trace.mjs";
 import { app, BaseWindow, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell as electronShell, systemPreferences, utilityProcess, webContents } from "electron";
@@ -118,8 +121,9 @@ import { harnessResourceEnvironment, packagedGepaManifestEnvironment } from "./h
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { createLocalEngineLogin, registerLocalEngineLoginIpc } from "./engine-login-local.mjs";
 import { launchRecipeTerminal } from "./engine-login-terminal.mjs";
-import { attachUpdaterWindow, checkForUpdatesNow, startUpdater, registerUpdaterIpc, reportUpdateNotice } from "./updater.mjs";
+import { attachUpdaterWindow, checkForUpdatesNow, startUpdater, registerUpdaterIpc, reportUpdateNotice, useUpdateLaunchPause } from "./updater.mjs";
 import { hasCustomUpdaterProfile, prepareUpdaterRestart } from "./updater-restart.mjs";
+import { quitAnnouncement } from "./quit-notice.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
 import { createMacInstallerFallback, nativeContractSupported, observeRequestedInstall, decideRequestedInstall, landedArgument, LANDED_ARGUMENT_PREFIX, newer, OFFER_MAX_AGE_MS } from "./mac-install-guard.mjs";
 import { runStartGate, refusal } from "./update-start-gate.mjs";
@@ -142,13 +146,17 @@ import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnost
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
 import { clearMemoryUpgradeStatus, copiedBytes, describeBytes, isOneTimeIndexNote, MEMORY_INDEX_STOPPED, memoryUpgradeBlockedSentence, readMemoryUpgradeStatus, upgradeTimeoutCode, watchMemoryUpgrade } from "./memory-upgrade-status.mjs";
+import { watchBootProgress } from "./boot-progress-watch.mjs";
 import { createUpgradeScreen } from "./upgrade-screen.mjs";
+import { openNewerDataWindow } from "./newer-data-window.mjs";
+import { newerDataVersion, readDataVersion, showsNewerDataScreen } from "../shared/data-version-marker.mjs";
 import { restoreWindowOpenOnDisk } from "./restore-window.mjs";
-import { acquireDataDirLease, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
+import { acquireDataDirLease, dataDirLeasePaths, foreignDataDirLeaseSetAsideAvailable, inspectDataDirLease, setAsideForeignDataDirLease } from "./data-dir-lease.mjs";
 import { migrateLegacyDataDirectory } from "./data-dir-migration.mjs";
 import { assertRestoreReviewed } from "./restore-review.mjs";
 import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserPartition } from "./restored-connections.mjs";
 import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
+import { startupRecoveryReason } from "./installation-recovery-controller.mjs";
 import { backupProgressKind, openBackupProgressWindow } from "./backup-progress-window.mjs";
 import { createBackupReturn, createReturnAuthority, joinExplicitQuit, revokeReturn, runOfflineBackup } from "./backup-offline-return.mjs";
 import { runInstallationRecoveryWorker } from "./installation-recovery-runner.mjs";
@@ -661,7 +669,7 @@ async function initializeSentinelHost({closed=false}={}){
   try{
     sentinelHost=createSentinelHost({
       dataDir:ownedDesktopDataDir(),resourcesPath:process.resourcesPath,closed,
-      executable:fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe")),
+      executable:process.platform==="darwin"?app.getPath("exe"):fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe")),
       home:app.getPath("home"),userData:app.getPath("userData"),env:process.env,
       configHome:path.isAbsolute(process.env.XDG_CONFIG_HOME??"")?process.env.XDG_CONFIG_HOME:undefined,
       captureActive:()=>{try{return SENTINEL_CAPTURE_PHASES.has(backupScheduleHost?.internalStatus().phase);}catch{return true;}},
@@ -794,6 +802,18 @@ function finishClosedBackup(result){
   })();return closedBackupFinish;
 }
 let desktopUpdater=null;
+// The OS jobs that start this executable on a timer are taken down for the
+// install and put back after it (electron/update-launch-pause.mjs). The
+// updater takes the same instance, so a later quitAndInstall pauses them.
+let updateLaunchPause=null;
+function desktopUpdateLaunchPause(){
+  if(!updateLaunchPause){
+    updateLaunchPause=createUpdateLaunchPause({home:app.getPath("home"),markerPath:path.join(app.getPath("userData"),"update-launch-pause.json"),
+      windowsTasks:()=>{const id=sentinelHost?.installationId;return id?[sentinelNames(id).task]:[];},log:line=>slog(line)});
+    useUpdateLaunchPause(updateLaunchPause);
+  }
+  return updateLaunchPause;
+}
 function ensureDesktopUpdater(scheduleChecks=true){
   const fallback=process.platform==="darwin"?createMacInstallerFallback({execPath:process.execPath,getuid:()=>process.getuid(),offerFile:path.join(app.getPath("userData"),"installer-offer.json"),
     recover:async()=>{if(returnAuthority.userQuitRequested)return {status:"stopped"};if(!cuaCleanedUp){cleanupFailed(refusal("BACKUP_UPGRADE_CLEANUP_FAILED"));return;}return returnToWorkspaceAfterBackup();},log:line=>slog(line)}):null;
@@ -1553,6 +1573,8 @@ function superviseServerChild(proc, lifecycle) {
           if (serverReady) {
             slog("server supervisor: engine back up");
             publishServerLifecycle({ state: "running", since: Date.now(), attempt: decision.attempt });
+            // The window goes where the replacement is, with this launch's proof (server-follow.mjs).
+            followRestartedServer();
             // Only once it has answered health checks does it stop counting
             // against the loop guard; a child that dies during boot is the
             // loop this guards.
@@ -1570,6 +1592,29 @@ function superviseServerChild(proc, lifecycle) {
       })();
     }, decision.delayMs);
   });
+}
+/** The chat the main window last reported open, so a moved window reopens it. */
+let openChat = null;
+const FOLLOW_RETRIES = 10;
+const FOLLOW_RETRY_MS = 1000;
+
+/** After a replacement engine answers, the main window reloads at the engine's
+ *  origin, or is replaced by a window created for it when the port moved. It is
+ *  never left on a dead origin: until the swap can happen it shows the
+ *  reconnecting page and tries again. */
+function followRestartedServer(triesLeft = FOLLOW_RETRIES) {
+  const win = mainWindow;
+  if (!app.isPackaged || desktopShutdownStarted || !win || win.isDestroyed()) return;
+  const target = restartedWindowTarget({ windowOrigin: win.murageRendererOrigin, serverOrigin: `http://127.0.0.1:${SERVER_PORT}`, openThread: openChat });
+  if (target.mode === "reload") {
+    slog("server supervisor: main window reloads for the new engine launch");
+    void win.loadURL(target.url).catch(() => {});
+    return;
+  }
+  slog(`server supervisor: main window moves to port ${SERVER_PORT}`);
+  if (replaceMainWindow("server-moved", target.url)) return;
+  if (!win.isDestroyed()) void win.loadURL(splashPage({ dark: nativeTheme.shouldUseDarkColors, line: RECONNECTING_LINE })).catch(() => {});
+  if (triesLeft > 1) setTimeout(() => followRestartedServer(triesLeft - 1), FOLLOW_RETRY_MS);
 }
 let desktopRecoveryMode = false;
 let recoveryWindow = null;
@@ -1636,6 +1681,8 @@ function trackOwnedServerChild(proc, options) {
 // type a header. Held in memory in this process only — never written to
 // userData, never logged, never put in a child environment.
 let desktopSurfaceSecret = "";
+/** The launch id the current engine puts in every answer (server-follow.mjs LAUNCH_HEADER); the renderer refuses any other responder. */
+let serverLaunchId = "";
 
 function receiveDesktopSurfaceSecret(message) {
   if (message?.type !== "murage:desktop-secret") return false;
@@ -2844,7 +2891,7 @@ async function startServerOn(port) {
     // restart invalidates them before any replacement child receives the
     // browser descriptor.
     browserHost?.clearCapabilities();
-    slog(`exited code=${code}`);
+    slog(`exited code=${code}${exitCodeNote(code)}`);
   });
   // wait for the port to answer (fresh machine: first boot writes data dirs).
   // Identity check is by the launch nonce: a dev harness server has the same API shape,
@@ -2862,6 +2909,8 @@ async function startServerOn(port) {
   const upgradeWatch = desktopDataDir
     ? watchMemoryUpgrade({ dataDir: desktopDataDir, pid: () => proc.pid, onReading: showMemoryUpgradeProgress })
     : null;
+  // every step before listen writes its own note (server/boot-progress.ts): while it is this child's and moving, the 5-minute limit waits
+  const bootWatch = desktopDataDir ? watchBootProgress({ dataDir: desktopDataDir, pid: () => proc.pid }) : null;
   try {
     identity = await Promise.race([pollServerIdentity({
     extendWhile: () => upgradeWatch?.active() ?? false,
@@ -2869,18 +2918,19 @@ async function startServerOn(port) {
     isSuspended: () => bootSystemSuspended,
     progressFresh: () => upgradeWatch?.fresh() ?? false,
     liveWithoutLimit: () => (upgradeWatch?.fresh() ?? false) && isOneTimeIndexNote(upgradeWatch?.status()),
+    bootProgressFresh: () => bootWatch?.fresh() ?? false,
     port,
     // The launch nonce, not the pid: the pid is public, so a foreign listener could echo it.
     nonce: () => bootNonce,
     bootTimeoutMs: SERVER_BOOT_SLOW_LIMIT_MS,
     isExited: () => exited || lifecycle.failed || desktopShutdownStarted,
-    }), lifecycle.exit.then(() => ({ outcome: "exited" }))]).finally(() => clearTimeout(slowNote));
+    }), lifecycle.exit.then(() => ({ outcome: "exited" }))]).finally(() => { clearTimeout(slowNote); bootWatch?.stop(); });
     // The note must be read before the watcher stops: a child that ended on a
     // blocked upgrade has already written why.
     const finalNote = desktopDataDir ? readMemoryUpgradeStatus(desktopDataDir, { pid: proc.pid }) : null;
     upgradeWatch?.stop();
     closeMemoryUpgradeWindow(identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted);
-    if (identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted) return { proc, lifecycle };
+    if (identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted) return { proc, lifecycle, launch: launchIdOf(bootNonce) };
     // The 30-minute cap ran out with the upgrade still running: another port or
     // another try would start the same upgrade from the beginning again.
     const upgradeSeen = finalNote?.state === "upgrading";
@@ -2937,6 +2987,7 @@ async function startServerPackaged() {
       if (started.proc) {
         serverProc = started.proc;
         SERVER_PORT = port;
+        serverLaunchId = started.launch ?? "";
         superviseServerChild(started.proc, started.lifecycle);
         attentionWiring?.serverChanged(); // a new server run: tokens minted against the old one die
         attentionMain?.serverChanged();
@@ -3550,6 +3601,19 @@ ipcMain.on("desktop:surface-secret", (event) => {
   event.returnValue = desktopSurfaceSecret;
 }, { refusedReturnValue: "" });
 
+// Synchronous for the same reason: the first answer the page reads is already
+// checked against this launch (src/lib/live-events.ts responderIsOurs).
+ipcMain.on("desktop:server-launch", (event) => {
+  event.returnValue = serverLaunchId;
+}, { refusedReturnValue: "" });
+
+// The chat on screen, so a window that follows a moved engine reopens it (followRestartedServer).
+ipcMain.on("desktop:open-chat", (event, threadId) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return;
+  const thread = openChatThread(threadId);
+  if (thread) openChat = thread;
+});
+
 ipcMain.on("desktop:unread-count", (event, value) => {
   const cloudId = cloudHome?.senderHomeId(event); // B3 WP4: a Cloud window reports its own count; the badge lives on the main window
   if (cloudId) {
@@ -3648,11 +3712,26 @@ ipcMain.handle("update:prepare-previous-version", (_event, ...args) => {
 });
 
 let recoveryAttempt = null;
+let newerDataWindow = null;
+/** The start stopped on data a newer Murage saved (memory-upgrade-status.mjs note): one plain screen naming the version to install (the
+ * data folder's data-version.json, when newer than this build) with the download page and Quit. Closing it ends Murage: no second start. */
+function showNewerDataScreen() {
+  if (newerDataWindow && !newerDataWindow.isDestroyed()) { newerDataWindow.focus(); return newerDataWindow; }
+  const version = newerDataVersion(desktopDataDir ? readDataVersion(desktopDataDir) : null, app.getVersion());
+  slog(`start stopped: data saved by a newer Murage (${memoryUpgradeBlocked?.code}; newest recorded ${version ?? "unknown"}); showing the install screen`);
+  newerDataWindow = openNewerDataWindow({ BrowserWindow, openExternal: url => osShell.openExternal(url), language: systemLanguage(), version, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, onQuit: requestOwnerQuit }).window;
+  deferredStartup.presented();
+  closeStartupSplash();
+  return newerDataWindow;
+}
 function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
   if(descriptor.updatePause)updateRecoveryDescriptor={...descriptor,reasonCode};
   startupDecisionPending=false;
   desktopRecoveryMode = true;
   serverReady = false;
+  // Data a newer Murage saved is not damaged: its one screen says what to install, never the restore page. A memory object this build
+  // does not know, with no newer release recorded for the folder, is not newer data: it gets the recovery window as before.
+  if (reasonCode === "MEMORY_UPGRADE_BLOCKED" && showsNewerDataScreen(memoryUpgradeBlocked?.code, desktopDataDir ? readDataVersion(desktopDataDir) : null, app.getVersion())) return showNewerDataScreen();
   if (recoveryWindow && !recoveryWindow.isDestroyed()) {
     if(!descriptor.updatePause){recoveryWindow.focus();return recoveryWindow;}
     recoveryWindow.destroy();recoveryWindow=null;
@@ -3674,6 +3753,8 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
       + "You are in Backup mode. Your bots, schedules and messaging apps are paused while you are here. Restore a backup or make one, or choose Return to workspace."
     : reasonCode === "LEASE_FOREIGN_HOST"
     ? "Murage's data folder says it was last used on a computer with a different name. That does not mean anything is damaged, and reinstalling Murage won't change it."
+    : reasonCode === "LEASE_BUSY"
+    ? words["lease-busy"]
     : reasonCode === "RESTORE_REVIEW_REQUIRED"
     ? "Your restored copy is paused until you review it. Your previous data is kept as it was."
     : reasonCode === "MEMORY_UPGRADE_BLOCKED"
@@ -3691,6 +3772,13 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
     context: { reason, returnRevoked:descriptor.returnRevoked===true, updateMessages:words, updatePause:descriptor.updatePause===true, ownership, backupMode: reasonCode === "BACKUP_REQUESTED", oneTimeStep: reasonCode === "MEMORY_UPGRADE_BLOCKED" && memoryUpgradeBlocked?.code === MEMORY_INDEX_STOPPED, dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
     isAvailable: () => Boolean(desktopDataOwner && desktopDataDir && !desktopShutdownStarted),
     canRestoreSeparate: canRestoreSeparateInstallation,
+    canSetAsideForeign: canSetAsideForeignLease,
+    setAsideForeign: async () => {
+      if (!canSetAsideForeignLease()) throw Object.assign(new Error("LEASE_TAKEOVER_REFUSED"), { code: "LEASE_TAKEOVER_REFUSED" });
+      const moved = setAsideForeignDataDirLease(desktopDataDir);
+      slog(`data folder lock set aside by the owner (${moved} files renamed, none deleted)`);
+      await explicitBackupReturn(backupScheduleHost,returnToWorkspaceAfterBackup);
+    },
     canCaptureSeparate: canCaptureSeparateInstallation,
     runCaptureSeparate: runSnapshotDesktopRecovery,
     planSeparate: () => planSeparateInstallation(app.getPath("userData"), desktopRequestedDataDir, desktopDataDir),
@@ -3731,6 +3819,13 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
     });
   }
   return recoveryWindow;
+}
+
+/** "This is my computer, continue": only in the recovery window this start
+ * opened for a foreign claim, before any owner, on a local volume. */
+function canSetAsideForeignLease() {
+  return Boolean(desktopRecoveryMode && !desktopShutdownStarted && !desktopDataOwner && desktopDataDir &&
+    foreignDataDirLeaseSetAsideAvailable(desktopDataDir));
 }
 
 function canRestoreSeparateInstallation() {
@@ -4016,7 +4111,7 @@ function ownedMainContents() {
   return mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
 }
 
-function createWindow({quiet=false}={}) {
+function createWindow({quiet=false,url=null}={}) {
   if (app.isPackaged && desktopRecoveryMode) return showDesktopRecovery();
   const primary = screen.getPrimaryDisplay();
   const displays = [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)];
@@ -4025,6 +4120,7 @@ function createWindow({quiet=false}={}) {
   // the OS is doing right now, which is also what the renderer's "auto" default
   // will resolve to. Either way the very first frame is the right colour.
   persistedSkin = readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light");
+  const rendererOrigin = trustedRendererOrigin();
   const win = new BrowserWindow({
     ...restored.bounds,
     minWidth: 900,
@@ -4050,6 +4146,8 @@ function createWindow({quiet=false}={}) {
       additionalArguments: [...rendererOriginArguments(trustedRendererOrigin()), ...(cloudHome ? ["--murage-cloud=1"] : [])],
     },
   });
+  // The origin this window was created for: its preload's bridge belongs to that origin only (B6, followRestartedServer).
+  win.murageRendererOrigin = rendererOrigin;
   mainWindow = win;
   win.on("focus", () => cloudLive.probeOnFocus());
   win.webContents.on("did-finish-load", () => startupIpc.deliver());
@@ -4134,7 +4232,12 @@ function createWindow({quiet=false}={}) {
       const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/health`, { signal: AbortSignal.timeout(2000) });
       return res.ok;
     },
-    reload: (target) => { if (!win.isDestroyed()) void win.loadURL(target).catch(() => {}); },
+    reload: (target) => {
+      if (win.isDestroyed()) return;
+      // A window created for another port has no bridge on this one: it is replaced, never reloaded there.
+      if (app.isPackaged && win === mainWindow && win.murageRendererOrigin !== trustedRendererOrigin()) { followRestartedServer(); return; }
+      void win.loadURL(target).catch(() => {});
+    },
     log: slog,
   }));
   win.webContents.on("did-finish-load", () => { deliverPackageInstall(win); cloudLinks.drain(); appReadiness.flush(win.webContents); });
@@ -4172,6 +4275,7 @@ function createWindow({quiet=false}={}) {
       // A window whose GPU process died with it stays black on macOS even after
       // a reload (measured: page running, nothing painted); a fresh window paints.
       if (win === mainWindow && Date.now() - gpuLostAt < GPU_LOSS_REPLACE_WINDOW_MS && lastWindowReplaceAt < gpuLostAt && replaceMainWindow("gpu-lost")) return;
+      if (app.isPackaged && win === mainWindow && win.murageRendererOrigin !== trustedRendererOrigin()) { followRestartedServer(); return; }
       void win.loadURL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).catch(() => {});
     },
     showRecovery: () => { showDesktopRecovery("STARTUP_FAILED"); },
@@ -4341,7 +4445,9 @@ function createWindow({quiet=false}={}) {
   }
 
   if (app.isPackaged) {
-    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : buildErrorPage({ allPortsOccupied: serverStartConflictOnly }));
+    // A window that follows a moved engine opens at the chat it had (followRestartedServer), on this window's own origin only.
+    const start = url && new URL(url).origin === rendererOrigin ? url : `http://127.0.0.1:${SERVER_PORT}`;
+    win.loadURL(serverReady ? start : buildErrorPage({ allPortsOccupied: serverStartConflictOnly }));
   } else {
     win.loadURL(DEV_URL);
   }
@@ -5591,6 +5697,9 @@ const desktopStartup = app.whenReady().then(async () => {
     void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>{closedTrace("run");return backupScheduleHost.runClosedDue();}).then(result=>{closedTrace(`result ${result?.status}${result?.reason?" "+result.reason:""}`);return finishClosedBackup(result);}).catch(()=>{closedTrace("failed");return finishClosedBackup({status:"unavailable"});});
     return;
   }
+  // An install this app (any version since 1.0.20) started paused these jobs;
+  // whatever runs next puts them back, before the closed-app job is rebuilt.
+  if (app.isPackaged) desktopUpdateLaunchPause().resume();
   // Show something now: browser host, backup check and server boot (up to the
   // 60s health cap) all run before the real window can load. Not for login
   // launches, which start quietly, nor for backup-mode relaunches.
@@ -5962,8 +6071,7 @@ const startupSettleDeps = {
   packaged: () => app.isPackaged,
   shutdownStarted: () => desktopShutdownStarted,
   closeSplash: closeStartupSplash,
-  showRecovery: error => showDesktopRecovery(error?.code === "RESTORE_REVIEW_REQUIRED" ? "RESTORE_REVIEW_REQUIRED"
-    : error?.code === "LEASE_FOREIGN_HOST" ? "LEASE_FOREIGN_HOST" : "STARTUP_FAILED"),
+  showRecovery: error => showDesktopRecovery(startupRecoveryReason(error?.code)),
   showError: () => dialog.showErrorBox("Murage could not open this installation", "Murage could not finish desktop startup. Installation data was preserved. Check the local startup diagnostics, then reopen Murage."),
   cleanup: cleanupDesktopForExit,
   retain: retry => {
@@ -6154,7 +6262,7 @@ app.on("child-process-gone", (_event, details) => {
 
 /** Swap the main window for a fresh one at the same place, shown only once it
  * has painted. The old window stays up until then. False when nothing was done. */
-function replaceMainWindow(reason) {
+function replaceMainWindow(reason, url = null) {
   const old = mainWindow;
   if (pendingSwap || replacingMainWindow || desktopShutdownStarted || quitRequested || !old || old.isDestroyed()) return false;
   replacingMainWindow = true;
@@ -6164,7 +6272,7 @@ function replaceMainWindow(reason) {
   const revealWasPending = pendingRevealWindows.has(old);
   pendingRevealWindows.delete(old);
   let fresh = null;
-  try { fresh = createWindow({ quiet: true }); } catch (error) { slog(`main window: replacement failed ${error?.message ?? error}`); }
+  try { fresh = createWindow({ quiet: true, url }); } catch (error) { slog(`main window: replacement failed ${error?.message ?? error}`); }
   replacingMainWindow = false;
   if (!fresh || fresh === old || fresh.isDestroyed?.()) {
     if (mainWindow !== old && !old.isDestroyed()) mainWindow = old;
@@ -6219,6 +6327,16 @@ function replaceMainWindow(reason) {
 }
 
 app.on("before-quit", () => { browserPopouts.closeAll(); cloudHome?.browserPopouts.closeAll(); });
+// meetgreet 1.0.19 (quit-notice.mjs): one line per quit naming its cause and profile; a separate-profile copy that is quit by
+// someone else (another app's quit to the shared bundle id, the system, automation) says so on screen before it closes.
+let quitAnnounced = false;
+function announceQuit(cause) {
+  if (quitAnnounced) return;
+  quitAnnounced = true;
+  const { log, notice } = quitAnnouncement({ cause, customProfile: hasCustomUpdaterProfile(process.env) });
+  slog(log);
+  if (notice) { try { if (Notification.isSupported()) new Notification({ title: notice.title, body: notice.body, silent: true }).show(); } catch { /* the log line stands */ } }
+}
 app.on("before-quit", (e) => {
   const backupInternalQuit=internalBackupQuit||returnAuthority.internalQuit;
   if(!backupInternalQuit)backupScheduleHost?.noteStop?.();
@@ -6228,6 +6346,7 @@ app.on("before-quit", (e) => {
     if (shutdownCause === "unclassified") slog("desktop quit unclassified");
   }
   noteShutdownCause(shutdownCause);
+  announceQuit(shutdownCause);
   app.murageShutdownCause=shutdownCause;
   quitRequested = true;
   backgroundLifecycle?.beginQuit();

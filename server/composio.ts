@@ -2045,6 +2045,8 @@ async function retireReplacedAccounts(cfg: AppConfig, slug: string, ids: Readonl
 /** The name the bot and the chat show for an app: the curated or monogram
  * label (never one the broker supplied), letters, digits and spaces only. */
 function reconnectLabel(slug: string): string {
+  // The catalog name for this app does not read as the product's own name.
+  if (slug === "highlevel") return "HighLevel";
   const clean = (text: string) => text.replace(/[^A-Za-z0-9 ]+/g, " ").replace(/ {2,}/g, " ").trim().slice(0, 40).trim();
   return clean(knownApps(null, [slug])[slug]?.label ?? "") || clean(slug) || "A connected app";
 }
@@ -2577,12 +2579,21 @@ function loadInventory(cfg: AppConfig, owner: string, signal?: AbortSignal): () 
       }
       for (const [slug, service] of Object.entries(services)) {
         for (const account of service.accounts) if (account.expiresAt !== undefined && account.expiresAt <= Date.now()) account.status = "EXPIRED";
-        const failed = service.accounts.filter(a => !/^ACTIVE$/i.test(a.status));
-        if (failed.length || /^(EXPIRED|REVOKED|NEEDS_RECONNECT)$/i.test(service.status)) {
+        // "Sign in again" is only for a sign-in that worked and stopped. A sign-in still in progress or never
+        // finished, and an account the owner switched off, are not connected: they never ask (1.0.19 owner report).
+        const neverLapsed = new Set(service.accounts.filter(a => NOT_A_LAPSED_SIGN_IN.test(a.status)).map(a => a.id));
+        const failed = service.accounts.filter(a => !/^ACTIVE$/i.test(a.status) && !neverLapsed.has(a.id));
+        if (failed.length || (!service.accounts.length && /^(EXPIRED|REVOKED|NEEDS_RECONNECT)$/i.test(service.status))) {
           markNeedsReconnect(owner, slug, "sign-in no longer accepted", accountKeyOf(service.accounts));
           const merged = new Map((healthMark(owner, slug)?.accounts ?? []).map(a => [a.id, a]));
-          for (const { id, alias } of failed.length ? failed : service.accounts) merged.set(id, { id, ...(alias ? { alias } : {}) });
+          for (const { id, alias } of failed) merged.set(id, { id, ...(alias ? { alias } : {}) });
           updateMark(owner, slug, { accounts: [...merged.values()] });
+        }
+        // An incident an earlier read opened for such an account ends here, so it cannot stay or come back.
+        const held = healthMark(owner, slug)?.accounts;
+        if (held?.some(a => neverLapsed.has(a.id))) {
+          const kept = held.filter(a => !neverLapsed.has(a.id));
+          if (kept.length) updateMark(owner, slug, { accounts: kept }); else clearNeedsReconnect(owner, slug);
         }
       }
       withAppHealth(cfg, owner, services);
@@ -2590,6 +2601,9 @@ function loadInventory(cfg: AppConfig, owner: string, signal?: AbortSignal): () 
     return services;
   };
 }
+
+/** Inventory states that are not a lapsed sign-in: one in progress, one that never finished, one switched off. */
+const NOT_A_LAPSED_SIGN_IN = /^(INITIATED|INITIALIZING|PENDING|FAILED|INACTIVE)$/i;
 
 type PreflightOutcome = "stale" | "unknown" | "reconnect" | "healthy" | "outage";
 

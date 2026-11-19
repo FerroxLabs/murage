@@ -241,3 +241,4 @@ src/components/cloud/cloud-banner-waiting.test.ts	extended	linux	Presentation co
 src/components/setup-feedback.dom.test.ts	extended	linux	Presentation coverage; no data or authority boundary
 server/drivers/antigravity-relay-hooks-cap.test.ts	gate	all	a hostile workspace hooks.json over 1 MiB is refused, never parsed, so a growing file cannot stall or bypass the Antigravity hook-load check
 server/announcements-unreachable.test.ts	gate	all	an unreachable announcements host never shows an error, logs, retries early or delays start-up
+server/message-write-statements.test.ts	gate	all	Streamed message writes reuse one compiled statement per connection instead of recompiling every messages trigger per line
