@@ -1,10 +1,6 @@
 // Lane E (1.0.2 scale): the bot list does not redo work for dispatches that did not touch a row.
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-vi.mock("@/lib/analytics", () => ({
-  analyticsEnabled: () => false, optAction: () => "none" as const, setAnalyticsEnabled: () => {}, initAnalytics: () => {},
-  track: () => {}, identifyEmail: () => {}, emailGateDone: () => false, setEmailGateDone: () => {},
-}));
 (globalThis as unknown as { window?: unknown }).window ??= {};
 const { BotListItem, sidebarBotPreview } = await import("./Sidebar");
 import { initialState, messageVersions, reducer, visibleMessages, type Bot, type Message } from "@/state/store";

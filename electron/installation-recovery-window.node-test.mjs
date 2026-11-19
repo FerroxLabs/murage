@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import vm from "node:vm";
 import test from "node:test";
 import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
+import { updateRecoveryWords } from "./update-recovery-copy.mjs";
 
 test("encrypted key selection and lazy reread await host verification", async () => {
   for (const failAt of [1, 2]) {
@@ -136,4 +137,36 @@ test('F9 update pause hides whole restore sections and uses update waiting copy'
  context.state={busy:true,context:{updatePause:true,updateMessages:{'update-wait':'Please wait for this step.'}}};vm.runInContext('render(state)',context);
  for(const id of ['legacy-recovery','activation-section']){assert.match(html,new RegExp('<section id="'+id+'"'));assert.equal(elements.get(id)?.hidden,true);}
  assert.equal(elements.get('status').textContent,'Please wait for this step.');assert.doesNotMatch(elements.get('status').textContent,/large backup/);
+});
+
+// 1.0.19 stuck users (RECOVERY-STUCK-FABLE T2): the ownership box offers "This is my computer, continue" only when the host does.
+test("foreign ownership shows the set-aside button only when offered, in the page's language", () => {
+  const html = readFileSync(new URL("./recovery/index.html", import.meta.url), "utf8");
+  assert.match(html, /<div id="set-aside" hidden>[\s\S]*<button data-action="set-aside-foreign" id="set-aside-foreign" class="primary">This is my computer, continue<\/button>/);
+  const elements = new Map(), buttons = ["set-aside-foreign", "retry", "diagnostics"].map(action => ({ dataset: { action }, addEventListener() {} }));
+  const context = { document: { documentElement: { dataset: {} }, querySelectorAll: () => buttons, getElementById: id => { if (!elements.has(id)) elements.set(id, { dataset: {} }); return elements.get(id); } }, murageRecoveryMessages: { sentence: () => "", skippedLines: () => [] } };
+  vm.createContext(context);
+  const renderer = readFileSync(new URL("./recovery/renderer.js", import.meta.url), "utf8");
+  vm.runInContext(renderer.slice(0, renderer.indexOf("async function action(")), context);
+  const ownership = { claimKind: "primary", recordedHost: "old-name", currentHost: "new-name" };
+  const words = updateRecoveryWords("de");
+  for (const [setAsideAvailable, shown] of [[false, false], [true, true]]) {
+    context.state = { allowedActions: ["state", "diagnostics", "retry", "set-aside-foreign"], available: false, setAsideAvailable, context: { ownership, updateMessages: words } };
+    vm.runInContext("render(state)", context);
+    assert.equal(elements.get("set-aside").hidden, !shown);
+    assert.equal(elements.get("ownership-leave").hidden, shown);
+    assert.equal(buttons[0].disabled, !shown);
+    assert.equal(elements.get("set-aside-foreign").textContent, words["set-aside-foreign"]);
+    assert.equal(elements.get("set-aside-note").textContent.includes(words["set-aside-foreign"]), true);
+  }
+  context.state = { allowedActions: ["state", "diagnostics", "retry", "set-aside-foreign"], available: false, setAsideAvailable: true, context: { ownership: null, updateMessages: words } };
+  vm.runInContext("render(state)", context);
+  assert.equal(elements.get("set-aside").hidden, true);
+});
+test("lease refusals on the recovery page read as another copy open or a set-aside refused", () => {
+  const context = {};
+  vm.runInNewContext(readFileSync(new URL("./recovery/messages.js", import.meta.url), "utf8"), context);
+  const { sentence } = context.murageRecoveryMessages;
+  for (const code of ["LEASE_BUSY", "LEASE_CHILD_BUSY"]) assert.equal(sentence(code), updateRecoveryWords("en")["lease-busy"]);
+  assert.equal(sentence("LEASE_TAKEOVER_REFUSED"), updateRecoveryWords("en").LEASE_TAKEOVER_REFUSED);
 });

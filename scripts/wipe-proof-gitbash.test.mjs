@@ -9,7 +9,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpath
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { fastPathBudgetMs } from '../server/wipe-proof/adapter.mjs';
+import { fastPathBlocks, fastPathBudgetMs, medianBlock } from '../server/wipe-proof/adapter.mjs';
 
 const file = name => new URL(`../${name}`, import.meta.url);
 const read = name => readFileSync(file(name), 'utf8');
@@ -24,6 +24,8 @@ export function seamContract(runner, driver) {
   if (!driver.includes("posixStatus } from '../adapter.mjs'")) problems.push('driver import the caller extends is gone');
   if (!runner.includes(`"'fast-path-at-most-10ms', overheadMs <= fastPathBudgetMs(process.platform, median(timings.real))"`)) problems.push('fast path is not held to the shared budget');
   if (!driver.includes("'fast-path-under-5ms', overheadMs < 5")) problems.push('driver timing row the caller replaces is gone');
+  if (!driver.includes('for (let block = 0; block < fastPathBlocks; block++) {')) problems.push('fast path is timed in one block');
+  if (!driver.includes('const { timings, overheadMs } = medianBlock(blocks);')) problems.push('fast path is not judged on the median block');
   return problems;
 }
 
@@ -80,6 +82,32 @@ describe.skipIf(process.platform !== 'linux')('the real wrapper under Git Bash s
     expect(refused.status).toBe(126);
     expect(refused.stdout).toBe('');
     expect(refused.stderr).toBe("murage-exec: the turn environment is not Murage's\n");
+  });
+});
+
+it.each([
+  ['const { timings, overheadMs } = medianBlock(blocks);', 'const { timings, overheadMs } = blocks.at(-1);'],
+  ['for (let block = 0; block < fastPathBlocks; block++) {', 'for (let block = 0; block < 1; block++) {'],
+])('T-WIPE-FAST-BLOCKS mutant: a driver with "%s" changed goes red', (anchor, replacement) => {
+  const driver = read('server/wipe-proof/posix/driver.mjs');
+  expect(driver).toContain(anchor);
+  expect(seamContract(read('ci/run-real-proof.mjs'), driver.replace(anchor, replacement)).length).toBeGreaterThan(0);
+});
+
+describe('T-WIPE-FAST-BLOCKS: the fast path is judged on the median of independent blocks, never widened', () => {
+  const judge = overheads => medianBlock(overheads.map(overheadMs => ({ overheadMs }))).overheadMs;
+  it('an odd number of at least three blocks, so the median is one measured block', () => {
+    expect(fastPathBlocks).toBeGreaterThanOrEqual(3);
+    expect(fastPathBlocks % 2).toBe(1);
+  });
+  it('one block spoiled by host load (the 11.07 ms macOS row) does not fail a 5 ms shim', () => {
+    for (const order of [[11.07, 5.12, 5.3], [5.12, 11.07, 5.3], [5.12, 5.3, 11.07]]) expect(judge(order)).toBe(5.3);
+    expect(judge([11.07, 5.12, 5.3])).toBeLessThanOrEqual(fastPathBudgetMs('darwin', 3.99));
+  });
+  it('a shim over budget in most blocks still fails the unchanged 10 ms ruling', () => {
+    expect(judge([11.07, 10.5, 5.12])).toBe(10.5);
+    expect(judge([11.07, 10.5, 5.12])).toBeGreaterThan(fastPathBudgetMs('darwin', 3.99));
+    expect(judge([12, 11, 10.01])).toBeGreaterThan(fastPathBudgetMs('linux', 2));
   });
 });
 

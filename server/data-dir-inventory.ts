@@ -212,6 +212,10 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // on every start. The recovery is idempotent (a restored reply is found by its id and left alone), so a missing note reads the file again
   // from the start and changes nothing a second time; it is keyed on rowids a restored copy need not keep, so it never travels.
   "frozen-replies-recovery.json": excluded("Start-up note saying how far the recovery of earlier withheld delegated replies has read; read again from the start when absent, changing nothing a second time"),
+  "boot-progress.json": excluded("Start-up note naming the step before listen this start is in (server/boot-progress.ts); removed at listen, read by the next start when left behind"),
+  // The newest Murage version that opened this data (shared/data-version-marker.mjs), so an older build can say which version to install.
+  // It describes this folder only: a restore leaves the destination's own.
+  "data-version.json": excluded("Which Murage version last wrote this data folder at the newest; written again by each start; not restored"),
   "memory-upgrade-status.json": excluded("Start-up note written while the memory upgrade runs (progress, or why it could not run); removed when the upgrade finishes"),
   // Installation-local recovery notice obligations must not replay in a restored installation.
   "fence-notices": excluded(RUNTIME),
@@ -389,7 +393,9 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // start deletes it), and the status note's own temp file.
   { pattern: /^messages\.pre-memory-v[234]\.db\.partial(?:-settle)?(?:-journal|-wal|-shm)?$/, entry: excluded(LEFTOVER), example: "messages.pre-memory-v3.db.partial-journal" },
   { pattern: /^memory-upgrade-(?:overall|counts)\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-overall.json.4242.tmp" },
+  { pattern: /^boot-progress\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "boot-progress.json.4242001.tmp" },
   { pattern: /^memory-upgrade-status\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-status.json.4242.tmp" },
+  { pattern: /^data-version\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "data-version.json.4242.tmp" },
   // A skill index build stopped before its rename (skill-search.ts).
   { pattern: /^skill-index\.db\.\d+\.[a-z0-9]{1,8}\.tmp(?:-journal|-wal|-shm)?$/, entry: excluded(DERIVED_SKILLS), example: "skill-index.db.1268.ffjn5f.tmp" },
   // writeFileAtomic (atomic.ts) writes `<name>.<pid>.<uuid>.tmp` beside the

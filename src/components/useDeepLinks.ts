@@ -5,7 +5,7 @@ import { useStore, visibleNotificationThread } from "@/state/store";
 import { applyComposeLink } from "@/lib/compose-link";
 import { createDeepLinkQueue, openDeepLink, openHashHref, parseOpenHash } from "@/lib/deep-link";
 import { callNative, nativeAvailable, onNativeEvent } from "@/lib/native-shell";
-import { reportRoute } from "@/lib/native-route";
+import { reportDesktopRoute, reportRoute } from "@/lib/native-route";
 
 export function useDeepLinks() {
   const { state, dispatch } = useStore();
@@ -63,5 +63,6 @@ export function useDeepLinks() {
   const onScreen = state.hydrated ? visibleNotificationThread(state) : null;
   useEffect(() => {
     reportRoute(onScreen);
+    reportDesktopRoute(onScreen);
   }, [onScreen]);
 }

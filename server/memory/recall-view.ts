@@ -4,7 +4,7 @@ import { seedSessionChecksSlice } from './session-proof.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Producer owner: store-patchbot (roster revision); consumer owner: recall-scope (views, admission, indexes and lineage).
 // Scheduling recovery repair owner: c4-misc-a2; authority/view owner: recall-scope.
-import { RecallPreparationPending } from './recall-recovery.ts';
+import { RecallCapacityPending, RecallPreparationPending } from './recall-recovery.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { database, databaseGeneration, onDatabaseClose, transaction } from '../database.ts';
@@ -31,7 +31,18 @@ interface Held { handle: RecallViewHandle; scopes: readonly string[]; room: bool
 function scopeMark(db: DatabaseSync): number { return Number(db.prepare('SELECT max(rowid) AS n FROM memory_scopes').get()?.n ?? 0); }
 const held = new WeakMap<DatabaseSync, WeakMap<MemoryRoster, Map<string,Held>>>();
 const storagePressure=new WeakMap<DatabaseSync,boolean>();
-interface Reader {view:RecallViewHandle;viewId:string;contextKey:string;active:()=>boolean;binding:RecallViewBinding;roster?:()=>MemoryRoster;issued:boolean}
+// R01 owner: recall-reclaim-r2. Contexts whose waiting build was refused because every view is live; cleared only when
+// that context publishes a view or its build fails for another reason. A mark is one context key and outlives its parked
+// demand: the parked queue is bounded, and a demand pushed out of it must still read as refused until its own view exists.
+// Like the known room contexts below, the marks are bounded by the roster's contexts, not by a constant.
+const capacityRefused=new WeakMap<DatabaseSync,Set<string>>();
+function clearCapacityRefusal(db:DatabaseSync,key:string):void {capacityRefused.get(db)?.delete(key);}
+const RECALL_VIEW_LIMIT=128;
+// Only these refusals mean "every view slot is taken". The quota trigger, the scope ceiling and the construction budget raise the same
+// message for a build that cannot fit at all; parking those re-runs a full build on every wake, forever (1.0.20 canary write storm).
+function viewCapRefusal():Error {return Object.assign(new Error('MEMORY_RECALL_STORAGE_LIMIT'),{recallViewCap:true});}
+const isViewCapRefusal=(error:unknown)=>error instanceof Error && (error as {recallViewCap?:unknown}).recallViewCap===true;
+interface Reader {databaseGeneration:number;view:RecallViewHandle;viewId:string;contextKey:string;active:()=>boolean;binding:RecallViewBinding;roster?:()=>MemoryRoster;issued:boolean}
 // One registry per process, not per connection: a reader's lease belongs to its turn, and a turn outlives a reopen of the database file.
 // A reader whose issued view is not in the open file (another file at this path) is dropped where views are recomputed.
 const activeReaders=new Set<Reader>();
@@ -51,8 +62,12 @@ const latestBuilds=new WeakMap<DatabaseSync,Map<string,string>>();
 // Timer upkeep must not change a persisted snapshot while hydration compares it.
 // Counts also cover independent background preparations of the same candidate.
 const hydratingViews=new WeakMap<DatabaseSync,Map<string,number>>();
-function activeBuild(build:Build,active:boolean) {let set=activeBuilds.get(build.db);if(!set)activeBuilds.set(build.db,set=new Set());if(active)set.add(build.handle.viewId);else {set.delete(build.handle.viewId);build.budget.release();}}
+function activeBuild(build:Build,active:boolean) {let set=activeBuilds.get(build.db);if(!set)activeBuilds.set(build.db,set=new Set());if(active)set.add(build.handle.viewId);else {set.delete(build.handle.viewId);build.budget.release();wakeParkedContexts(build.db);}}
 const acknowledged=new WeakMap<MemoryRoster,{epoch:number;revision:number}>();
+function currentRosterRevision(roster:MemoryRoster,known:Held):boolean {
+  return roster.memoryRosterRevision!==undefined && (known.revision===roster.memoryRosterRevision
+    || acknowledged.get(roster)?.revision===roster.memoryRosterRevision && acknowledged.get(roster)?.epoch===known.epoch);
+}
 const poisoned = new WeakMap<readonly string[],readonly string[]>();
 const counters = { oracleComputes: 0, scopeCopies: 0, membershipProbes: 0, candidateVisits: 0, textBytes: 0, readerVisits: 0 };
 export function recallViewCounters(): Readonly<typeof counters> { return {...counters}; }
@@ -75,7 +90,8 @@ export function recallAuthorityEpoch(db: DatabaseSync): number {
   if (!row || !Number.isSafeInteger(row.epoch)) throw new RecallPreparationPending();
   return Number(row.epoch);
 }
-export function assertRecallView(db: DatabaseSync, view: RecallViewHandle, binding?: RecallViewBinding): void {
+export function assertRecallView(db: DatabaseSync, view: RecallViewHandle, binding?: RecallViewBinding): number {
+  // A live issued reader may finish on its superseded view; bound admission still requires the current publication.
   // Read every live fence in one SQLite snapshot, including foreign commits; no authority answer is memoized.
   const row=db.prepare(`SELECT v.authority_epoch,v.state,v.digest,v.scope_count,v.watermark,
     (SELECT projection_floor FROM memory_recall_epoch WHERE id=1) AS projection_floor,
@@ -84,34 +100,48 @@ export function assertRecallView(db: DatabaseSync, view: RecallViewHandle, bindi
     EXISTS(SELECT 1 FROM memory_scope_bindings WHERE id='memory-roster-policy' AND state='granted') AS granted,
     (?3 IS NULL OR EXISTS(SELECT 1 FROM memory_recall_contexts WHERE context_key=?3 AND view_id=v.view_id AND generation=v.generation)) AS bound
     FROM memory_recall_views v WHERE v.view_id=?1 AND v.generation=?2`).get(view.viewId,view.generation,binding?recallContextKey(binding):null);
-  if (!row || Number(row.watermark)<Number(row.projection_floor??Infinity) || !row.context || row.state!=='ready' || row.digest!==view.digest || Number(row.scope_count)<=0 || !Number.isSafeInteger(row.epoch) || Number(row.authority_epoch)!==Number(row.epoch) || !row.granted) throw new RecallPreparationPending();
+  if (!row || Number(row.watermark)<Number(row.projection_floor??Infinity) || (!row.context && (binding!==undefined || !hasActiveReader(db,view.viewId))) || row.state!=='ready' || row.digest!==view.digest || Number(row.scope_count)<=0 || !Number.isSafeInteger(row.epoch) || Number(row.authority_epoch)!==Number(row.epoch) || !row.granted) throw new RecallPreparationPending();
   if (binding && !row.bound) throw new RecallPreparationPending();
+  return Number(row.epoch);
 }
 /** A handle is metadata, never a tool capability. The caller must validate its private claim first. */
 export function resolveRecallView(binding: RecallViewBinding, roster: MemoryRoster, issued = false): Held {
   const db=database(), key=recallContextKey(binding), known=cache(db,roster).get(key);
   // Only a structurally revisioned roster can prove that an immutable view still describes its current audience.
-  if (roster.memoryRosterRevision===undefined || !known || known.revision!==roster.memoryRosterRevision && (acknowledged.get(roster)?.revision!==roster.memoryRosterRevision || acknowledged.get(roster)?.epoch!==known.epoch)) {
-    queueRecallContext(binding,roster); throw new RecallPreparationPending();
+  // A capacity refusal stays typed, so a waiting turn ends on its card and never runs without recall unannounced.
+  const capacity=()=>{if(capacityRefused.get(db)?.has(key))throw new RecallCapacityPending();};
+  if (!known || !currentRosterRevision(roster,known)) {
+    queueRecallContext(binding,roster); capacity(); throw new RecallPreparationPending();
   }
-  try { assertRecallView(db,known.handle,binding); }
-  catch { queueRecallContext(binding,roster); throw new RecallPreparationPending(); }
+  try { if(assertRecallView(db,known.handle,binding)!==known.epoch)throw new RecallPreparationPending(); }
+  catch { queueRecallContext(binding,roster); capacity(); throw new RecallPreparationPending(); }
   // `issued`: the caller already holds an access issued from a view and only checks it against this one. A scope row created since is in
   // neither, so the reader goes on while the rebuild is queued; a new issuance waits for the rebuilt view.
-  if (known.mark!==scopeMark(db)) { queueRecallContext(binding,roster); if (!issued) throw new RecallPreparationPending(); }
+  if (known.mark!==scopeMark(db)) { queueRecallContext(binding,roster); if (!issued) { capacity(); throw new RecallPreparationPending(); } }
   return known;
 }
 /** Reader lease owner: askcards-flake-b; release owner: the issuing capability's turn teardown. */
 export function retainRecallView(view:RecallViewHandle,binding:RecallViewBinding,active:()=>boolean,roster?:()=>MemoryRoster,issued=false):()=>void {
   const db=database();assertIssuedRecallView(db,view);
   const readers=activeReaders;
-  const reader:Reader={view,viewId:view.viewId,contextKey:recallContextKey(binding),active,binding,roster,issued};
+  const reader:Reader={databaseGeneration:databaseGeneration(),view,viewId:view.viewId,contextKey:recallContextKey(binding),active,binding,roster,issued};
   readers.add(reader);
   // DESIGN-B5-PROOF F3: the registry itself holds at most RECALL_LIVE_READERS_MAX entries, issued or not, so a recompute never inspects
   // more, whatever the history. The oldest entry goes (normally a lease on an earlier generation); it gets no recompute, so after the
   // next epoch move its view is stale and refuses: an evicted reader never reads wider.
   if(readers.size>RECALL_LIVE_READERS_MAX)readers.delete(readers.values().next().value!);
-  return ()=>{readers.delete(reader);};
+  return ()=>{
+    if(!readers.delete(reader))return;
+    try {
+      if(storagePressure.get(db)!==true || reader.databaseGeneration!==databaseGeneration())return;
+      // Retiring a lease can free obsolete rows without evicting another context.
+      storagePressure.delete(db);
+      try {
+        for(let slice=0;slice<RECLAIM_SLICES_PER_TICK&&!collectRecallViewSlice(db);slice++){/* bounded reclamation batch */}
+        if(Number(db.prepare('SELECT count(*) AS n FROM memory_recall_views').get()!.n)>=RECALL_VIEW_LIMIT)storagePressure.set(db,true);
+      } catch(error){storagePressure.set(db,true);reportMaintenanceError(db,error);}
+    } finally {wakeParkedContexts(db);}
+  };
 }
 function hasActiveReader(_db:DatabaseSync,viewId:string,contextKey?:string):boolean {
   for(const reader of activeReaders)if((reader.viewId===viewId || reader.contextKey===contextKey) && reader.active())return true;
@@ -164,12 +194,18 @@ function startBuild(binding: RecallViewBinding,roster: MemoryRoster,waiting=true
   const db=database(); assertHumanPrincipal(binding.humanPrincipal);
   if (roster.memoryRosterRevision===undefined) throw new RecallPreparationPending();
   const started=transaction(()=>{
+    const prior=db.prepare('SELECT view_id,generation FROM memory_recall_contexts WHERE context_key=?').get(recallContextKey(binding)) as Build['prior'];
     const viewCount=()=>Number(db.prepare('SELECT count(*) AS n FROM memory_recall_views').get()!.n);
     if(viewCount()>=128) {
       storagePressure.set(db,waiting || storagePressure.get(db)===true);
-      // A waiting build reclaims in place, at most one bounded tick's batch: orphans first, then one idle context's slot. The cap stays 128.
-      if(waiting)for(let slice=0;slice<RECLAIM_SLICES_PER_TICK&&viewCount()>=128&&!collectRecallViewSlice(db);slice++){/* bounded reclamation batch */}
-      // Still full: refuse after this transaction commits, so the eviction and the rows already freed survive for the next build or tick.
+      // Every waiting build reclaims in place (orphans first, then one idle context's slot), a new context's too. A context with
+      // a live reader on any of its views retires only unheld generations, never another context's publication.
+      if(waiting) {
+        const live=hasActiveReader(db,prior?.view_id??'',recallContextKey(binding));
+        if(live)storagePressure.delete(db);
+        for(let slice=0;slice<RECLAIM_SLICES_PER_TICK&&viewCount()>=128&&!collectRecallViewSlice(db);slice++){/* bounded reclamation batch */}
+        if(live && viewCount()>=128)storagePressure.set(db,true);
+      }
       if(viewCount()>=128)return undefined;
     }
     const handle={viewId:randomUUID(),generation:randomUUID(),digest:''};
@@ -179,7 +215,7 @@ function startBuild(binding: RecallViewBinding,roster: MemoryRoster,waiting=true
     let order=viewOrder.get(db);if(!order)viewOrder.set(db,order=new Map());
     order.set(handle.viewId,++viewSequence);
     const build:Build={db,databaseGeneration:databaseGeneration(),binding,roster,key:recallContextKey(binding),handle,epoch,revision,mark,
-      verifyAfter:'',verified:0,prior:db.prepare('SELECT view_id,generation FROM memory_recall_contexts WHERE context_key=?').get(recallContextKey(binding)) as Build['prior'],containsAfter:'',containsPrior:true,
+      verifyAfter:'',verified:0,prior,containsAfter:'',containsPrior:true,
       scopes:[],lineage:[],personScopes:new Set(),room:false,scopeAt:0,lineageAt:0,recordAfter:0,jobAfter:0,
       watermark:Number(db.prepare('SELECT coalesce(max(sequence),0) AS n FROM memory_recall_changes').get()!.n),phase:'oracle',oracle:undefined!,budget:new ConstructionBudget(true)};
     build.oracle=constructMembership(build);
@@ -187,7 +223,7 @@ function startBuild(binding: RecallViewBinding,roster: MemoryRoster,waiting=true
     if(latest.size>=128&&!latest.has(build.key))latest.delete(latest.keys().next().value!);
     latest.set(build.key,handle.viewId);return build;
   }, { busyMs: BACKGROUND_BUSY_MS, op: 'recall-view' });
-  if(!started)throw new Error('MEMORY_RECALL_STORAGE_LIMIT');
+  if(!started)throw viewCapRefusal();
   return started;
 }
 function* constructMembership(build:Build): Generator<void> {
@@ -235,6 +271,8 @@ function projectRecord(db: DatabaseSync,view: RecallViewHandle,id: string,versio
   // Authoritative text stays shared. Terms are derived metadata, and are never exposed without readRecord's gates.
   const rolled=row.kind==='checkpoint' && row.state!=='active' && !!db.prepare('SELECT 1 FROM memory_records WHERE id=? AND version>? LIMIT 1').get(id,version);
   if(!isPipKind(String(row.kind)) && !rolled)for (const term of wordTerms(String(row.text))) add.run(view.viewId,view.generation,term,row.seq,id,version);
+  // Read here through the receipts' own index; still written, exactly as 1.0.19 writes it, so a 1.0.19 that opens this file reads a whole view
+  // (recall-view-schema.ts RECALL_PENDING_OBJECTS).
   const receipt=db.prepare('SELECT rowid AS seq,lexical_status FROM memory_projection_receipts WHERE record_id=? AND record_version=?').get(id,version);
   if (receipt && (!isPipKind(String(row.kind)) || receipt.lexical_status==='delete-pending') && ['pending','pending-archive','delete-pending'].includes(String(receipt.lexical_status)))
     db.prepare('INSERT INTO memory_recall_view_pending VALUES(?,?,?,?,?)').run(view.viewId,view.generation,receipt.seq,id,version);
@@ -353,6 +391,7 @@ export function subscribeRecallViewPublication(listener:(event:Readonly<RecallVi
 function cachePublication(db:DatabaseSync,roster:MemoryRoster,binding:RecallViewBinding,handle:RecallViewHandle,
   values:string[],room:boolean,epoch:number,revision:number,mark:number):void {
   const key=recallContextKey(binding),currentCache=cache(db,roster),scopes=scopeSnapshot(values);
+  clearCapacityRefusal(db,key);
   if(currentCache.size>=128 && !currentCache.has(key)) {
     const idle=[...currentCache].find(([contextKey,value])=>!hasActiveReader(db,value.handle.viewId,contextKey));
     if(idle)currentCache.delete(idle[0]);
@@ -487,6 +526,8 @@ export function prepareActiveRecallReaders(): void {
       if(!reader.active()){activeReaders.delete(reader);continue;}
       live.add(viewKey(reader.view));
       if(!reader.roster)continue;
+      // a lease taken on another open of this path never drives a rebuild here; its view is not in this file, so its reads refuse
+      if(reader.databaseGeneration!==databaseGeneration())continue;
       let now=current.get(reader.contextKey);
       if(now!==undefined && !reader.issued)continue;
       if(now===undefined) {
@@ -521,69 +562,132 @@ export function prepareRecallContextSync(botId: string,threadId: string,roster: 
   if(roster.memoryRosterRevision===undefined)return;
   const binding={botId,threadId,humanPrincipal:threadHumanPrincipal(threadId),notOwnerAudience};
   const known=cache(database(),roster).get(recallContextKey(binding));
-  if(known && known.epoch===recallAuthorityEpoch(database()) && known.revision===roster.memoryRosterRevision && known.mark===scopeMark(database())){try{assertRecallView(database(),known.handle,binding);return;}catch{/* Rebuild only at this explicit preparation boundary. */}}
+  if(known && known.epoch===recallAuthorityEpoch(database()) && currentRosterRevision(roster,known) && known.mark===scopeMark(database())){try{assertRecallView(database(),known.handle,binding);return;}catch{/* Rebuild only at this explicit preparation boundary. */}}
   const build=startBuild(binding,roster);activeBuild(build,true);
-  try{while(!buildRecallViewSlice(build)){ /* Explicit structural/fixture preparation only. */ }publishRecallView(build);}finally{activeBuild(build,false);}
+  try{
+    while(!buildRecallViewSlice(build)){ /* Explicit structural/fixture preparation only. */ }
+    publishRecallView(build);
+    storagePressure.delete(build.db);
+    while(!collectRecallViewSlice(build.db)){ /* Synchronous preparation also drains reader-free superseded storage. */ }
+  }finally{activeBuild(build,false);}
 }
-/** Background-only work for one key. A single worker advances one slice, then chooses priority again. */
-function* prepareContextSteps(binding:RecallViewBinding,roster:MemoryRoster,waiting=true):Generator<void> {
-  const source=roster as CertifiedRoster,generation=databaseGeneration(),revision=roster.memoryRosterRevision;
+/** Background-only work for one key. A single worker advances one slice, then chooses priority again.
+ * `hydrateOnly` (the startup sweep, fablehunt-1020q T2): a context that already has a persisted view is hydrated or left alone, never rebuilt.
+ * A full build copies every record and term of the reader's scopes; the startup sweep rebuilding every persisted context after any epoch move
+ * wrote 12-21 GB per start. A stale persisted context stays refused (fail closed) until a reader demands it (resolveRecallView queues a
+ * waiting build) or a structural writer queues the roster again. Contexts that have no persisted view yet are still built (first start). */
+function* prepareContextSteps(binding:RecallViewBinding,roster:MemoryRoster,waiting=true,hydrateOnly:()=>boolean=()=>false):Generator<void> {
+  const source=roster as CertifiedRoster,db=database(),generation=databaseGeneration(),revision=roster.memoryRosterRevision;
   if(source.recallRosterCertificate) {
     source.queueRecallRosterCertification?.();
     const until=Date.now()+20_000;
     while(!source.recallRosterCertificate()) {
       if(generation!==databaseGeneration() || revision!==roster.memoryRosterRevision || Date.now()>until)throw new RecallPreparationPending();
-      yield;
+      contextStepIdle=true;yield;
     }
     if(yield* hydrateRecallViewSteps(binding,roster))return;
   }
+  if(hydrateOnly() && db.prepare('SELECT 1 FROM memory_recall_contexts WHERE context_key=?').get(recallContextKey(binding)))return;
+  // Advance bounded reclamation with construction; timer-only cleanup can lag behind new generations.
+  // Collection may retire this publication without turning its existing demand into a new admission.
+  const prior=db.prepare('SELECT view_id FROM memory_recall_contexts WHERE context_key=?').get(recallContextKey(binding));
+  let reclaimed=false;
+  while(Number(db.prepare('SELECT count(*) AS n FROM memory_recall_views').get()!.n)>=128) {
+    if(generation!==databaseGeneration() || revision!==roster.memoryRosterRevision)throw new Error('MEMORY_CONTEXT_REVOKED');
+    // At the cap, a live-roster write that already published this audience's current view leaves nothing to build or refuse.
+    const current=cache(db,roster).get(recallContextKey(binding));
+    if(current && current.epoch===recallAuthorityEpoch(db) && currentRosterRevision(roster,current)){try{assertRecallView(db,current.handle,binding);return;}catch{/* build below */}}
+    storagePressure.set(db,waiting || storagePressure.get(db)===true);
+    if(!waiting)throw viewCapRefusal();
+    if(hasActiveReader(db,String(prior?.view_id??''),recallContextKey(binding)))storagePressure.delete(db);
+    if(collectRecallViewSlice(db)){storagePressure.set(db,true);throw viewCapRefusal();}
+    reclaimed=true;
+    yield;
+  }
+  storagePressure.delete(db);
   const build=startBuild(binding,roster,waiting);activeBuild(build,true);
   try {while(!buildRecallViewSlice(build))yield;publishRecallView(build);}
   finally {activeBuild(build,false);}
+  if(reclaimed)for(let slice=0;slice<RECLAIM_SLICES_PER_TICK&&!collectRecallViewSlice(db);slice++)yield;
 }
 export async function prepareRecallContext(botId: string,threadId: string,roster: MemoryRoster,notOwnerAudience=false): Promise<void> {
   const steps=prepareContextSteps({botId,threadId,humanPrincipal:threadHumanPrincipal(threadId),notOwnerAudience},roster);
   try {while(!steps.next().done)await new Promise<void>(resolve=>setImmediate(resolve));}
   finally {steps.return(undefined);}
 }
-interface QueuedContext {binding:RecallViewBinding;roster:MemoryRoster;revision:number;steps?:Generator<void>}
-interface ContextQueue {waiting:Map<string,QueuedContext>;speculative:Map<string,QueuedContext>;scheduled:boolean}
+// Set by a step that only waits on other work (roster certification), so the queue does not spin for it.
+let contextStepIdle=false;
+interface QueuedContext {binding:RecallViewBinding;roster:MemoryRoster;revision:number;steps?:Generator<void>;startup?:boolean}
+interface ContextQueue {waiting:Map<string,QueuedContext>;speculative:Map<string,QueuedContext>;parked:Map<string,QueuedContext>;scheduled:boolean;generation:number}
 const queued=new WeakMap<DatabaseSync,ContextQueue>();
-function queueRecallContext(binding: RecallViewBinding,roster: MemoryRoster,waiting=true): void {
+function queueRecallContext(binding: RecallViewBinding,roster: MemoryRoster,waiting=true,startup=false): void {
   if(roster.memoryRosterRevision===undefined)return;
-  const db=database(),generation=databaseGeneration();let queue=queued.get(db);
-  if(!queue)queued.set(db,queue={waiting:new Map(),speculative:new Map(),scheduled:false});
+  const db=database();let queue=queued.get(db);
+  if(!queue)queued.set(db,queue={waiting:new Map(),speculative:new Map(),parked:new Map(),scheduled:false,generation:databaseGeneration()});
   const key=recallContextKey(binding),known=cache(db,roster).get(key);
-  if(known && known.epoch===recallAuthorityEpoch(db) && known.revision===roster.memoryRosterRevision && known.mark===scopeMark(db)){try{assertRecallView(db,known.handle,binding);return;}catch{/* stale context */}}
-  let item=queue.waiting.get(key)??queue.speculative.get(key);
-  if(item && (item.roster!==roster || item.revision!==roster.memoryRosterRevision)){item.steps?.return(undefined);queue.waiting.delete(key);queue.speculative.delete(key);item=undefined;}
-  if(!item)item={binding,roster,revision:roster.memoryRosterRevision};
-  if(waiting){queue.speculative.delete(key);queue.waiting.set(key,item);}else if(!queue.waiting.has(key))queue.speculative.set(key,item);
+  if(known && known.epoch===recallAuthorityEpoch(db) && currentRosterRevision(roster,known) && known.mark===scopeMark(db)){try{assertRecallView(db,known.handle,binding);return;}catch{/* stale context */}}
+  let item=queue.waiting.get(key)??queue.speculative.get(key)??queue.parked.get(key);
+  if(item && (item.roster!==roster || item.revision!==roster.memoryRosterRevision)){item.steps?.return(undefined);queue.waiting.delete(key);queue.speculative.delete(key);queue.parked.delete(key);item=undefined;}
+  if(!item)item={binding,roster,revision:roster.memoryRosterRevision,startup};
+  // Demand (or a structural queue) for a key the startup sweep holds takes the ordinary path from its next start.
+  else if(item.startup && (waiting || !startup))item.startup=false;
+  // A parked demand asks again for a waiting reader; warming never wakes it.
+  if(waiting){queue.speculative.delete(key);queue.parked.delete(key);queue.waiting.set(key,item);}else if(!queue.waiting.has(key)&&!queue.parked.has(key))queue.speculative.set(key,item);
+  scheduleContextQueue(db,queue);
+}
+/** A waiting demand refused by a store full of live views rests here. A released reader, a finished build or
+ * the existing upkeep tick asks again for it; nothing polls and no timer is added. */
+function wakeParkedContexts(db:DatabaseSync,limit=RECALL_VIEW_LIMIT):void {
+  const queue=queued.get(db);
+  if(!queue?.parked.size)return;
+  if(queue.generation!==databaseGeneration()){queue.parked.clear();return;}
+  for(const [key,item] of queue.parked) {
+    if(limit--<=0)break;
+    queue.parked.delete(key);
+    if(!queue.waiting.has(key))queue.waiting.set(key,item);
+  }
+  scheduleContextQueue(db,queue);
+}
+function scheduleContextQueue(db:DatabaseSync,queue:ContextQueue):void {
   if(queue.scheduled)return;
   queue.scheduled=true;
   const advance=()=>{
-    if(generation!==databaseGeneration()) {for(const items of [queue!.waiting,queue!.speculative]){for(const entry of items.values())entry.steps?.return(undefined);items.clear();}queue!.scheduled=false;return;}
-    const items=queue!.waiting.size?queue!.waiting:queue!.speculative;
+    if(queue.generation!==databaseGeneration()) {for(const items of [queue.waiting,queue.speculative,queue.parked]){for(const entry of items.values())entry.steps?.return(undefined);items.clear();}queue.scheduled=false;return;}
+    const items=queue.waiting.size?queue.waiting:queue.speculative;
     const next=items.entries().next();
-    if(next.done){queue!.scheduled=false;return;}
+    if(next.done){queue.scheduled=false;return;}
     const [key,item]=next.value;
+    contextStepIdle=false;
     try {
       // Presentation saves also advance the roster revision. Cancel the old proof,
       // but retain this demand under the live revision even when no structural
       // publication follows that save. Every fence still applies to the new proof.
       if(item.revision!==item.roster.memoryRosterRevision) {
         item.steps?.return(undefined);
-        items.set(key,{binding:item.binding,roster:item.roster,revision:item.roster.memoryRosterRevision!});
+        items.set(key,{binding:item.binding,roster:item.roster,revision:item.roster.memoryRosterRevision!,startup:item.startup});
       } else if(activeBuilds.get(db)?.has(latestBuilds.get(db)?.get(key)??'') && !item.steps){items.delete(key);}
-      else if(items===queue!.speculative && !item.steps && !db.prepare('SELECT 1 FROM memory_recall_contexts WHERE context_key=?').get(key)
+      else if(items===queue.speculative && !item.steps && !db.prepare('SELECT 1 FROM memory_recall_contexts WHERE context_key=?').get(key)
         && Number(db.prepare("SELECT count(*) AS n FROM memory_recall_views v WHERE v.state='building' OR EXISTS(SELECT 1 FROM memory_recall_contexts c WHERE c.view_id=v.view_id AND c.generation=v.generation)").get()!.n)>=127) {
         // Speculation leaves a replacement slot and cannot evict an admitted reader.
         items.delete(key);
-      } else {item.steps??=prepareContextSteps(item.binding,item.roster,items===queue!.waiting);if(item.steps.next().done)items.delete(key);}
-    } catch {item.steps?.return(undefined);items.delete(key);/* Refused until the next demand or structural event. */}
-    setImmediate(advance).unref();
+      } else {const current=item;item.steps??=prepareContextSteps(item.binding,item.roster,items===queue.waiting,()=>current.startup===true);if(item.steps.next().done)items.delete(key);}
+    } catch(error) {
+      item.steps?.return(undefined);items.delete(key);/* Refused until the next demand or structural event. */
+      // A waiting reader refused only because every view is live is parked and marked, never dropped.
+      if(items===queue.waiting && isViewCapRefusal(error) && item.revision===item.roster.memoryRosterRevision
+        && Number(db.prepare('SELECT count(*) AS n FROM memory_recall_views').get()!.n)>=RECALL_VIEW_LIMIT) {
+        let refused=capacityRefused.get(db);if(!refused)capacityRefused.set(db,refused=new Set());
+        // The oldest parked demand makes room; its mark stays, so its turn still ends on the card and its next ask builds it.
+        if(queue.parked.size>=RECALL_VIEW_LIMIT&&!queue.parked.has(key))queue.parked.delete(queue.parked.keys().next().value!);
+        refused.add(key);queue.parked.set(key,{binding:item.binding,roster:item.roster,revision:item.revision});
+      } else if(items===queue.waiting)clearCapacityRefusal(db,key);
+    }
+    again(contextStepIdle);
   };
-  setImmediate(advance).unref();
+  // A turn is waiting on a waiting demand, so its bounded steps run on the next loop turn even when nothing else
+  // wakes the process. Warming and steps that only wait on other work never hold the loop.
+  const again=(idle:boolean)=>{const next=setImmediate(advance);if(idle||!queue.waiting.size)next.unref();};
+  again(false);
 }
 /** Structural/startup hook. Enumerate cooperatively, including every new task's own context. */
 const scheduledRosters=new WeakMap<MemoryRoster,{revision:number;generation:number}>();
@@ -633,7 +737,7 @@ export function prepareRosterRecallViews(roster: MemoryRoster): void {
       const item=pending.next();if(item.done){if(scheduledRosters.get(roster)===stamp)scheduledRosters.delete(roster);return;}
       if(item.value) {
         const [bot,thread,notOwner,added]=item.value;
-        queueRecallContext({botId:bot,threadId:thread,humanPrincipal:threadHumanPrincipal(thread),notOwnerAudience:notOwner},roster,added);
+        queueRecallContext({botId:bot,threadId:thread,humanPrincipal:threadHumanPrincipal(thread),notOwnerAudience:notOwner},roster,added,startup&&!added);
       }
     } catch { /* A failed generation stays unavailable; no legacy fallback. */ }
     setImmediate(next).unref();
@@ -709,6 +813,8 @@ export function startRecallViewMaintenance(): void {
       let row=db.prepare('SELECT context_key,view_id,generation FROM memory_recall_contexts WHERE context_key>? ORDER BY context_key LIMIT 1').get(upkeepKey);
       if(!row){upkeepKey='';row=db.prepare('SELECT context_key,view_id,generation FROM memory_recall_contexts ORDER BY context_key LIMIT 1').get();}
       for(let slice=0;slice<RECLAIM_SLICES_PER_TICK&&!collectRecallViewSlice(db);slice++){/* bounded reclamation batch */}
+      // A lease can end without a release call; upkeep lets the oldest parked reader ask again (one per tick).
+      wakeParkedContexts(db,1);
       collectSessionChecksSlice(db);
       seedSessionChecksSlice();
       if(row){upkeepKey=String(row.context_key);const view=db.prepare('SELECT digest FROM memory_recall_views WHERE view_id=? AND generation=?').get(row.view_id,row.generation);
@@ -757,7 +863,7 @@ export function collectRecallViewSlice(db: DatabaseSync): boolean {
       contexts.sort((a,b)=>(order?.get(String(a.view_id))??0)-(order?.get(String(b.view_id))??0));
       const victim=contexts.find(row=>idle(String(row.view_id),String(row.context_key)));
       if(victim)db.prepare('DELETE FROM memory_recall_contexts WHERE context_key=?').run(victim.context_key);
-      return false;
+      return !victim;
     }
     return true;
   }

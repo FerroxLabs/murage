@@ -7,10 +7,11 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { createFloatWindows, createFloatSurface, WAYLAND_REASON } from "./float-windows.mjs";
 import { createAttentionWindowHost } from "./attention-window-host.mjs";
+import { createNotifySurfaces } from "./notify-surfaces.mjs";
 import { createAttentionActions } from "./attention-actions.mjs";
 
 const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
-function fixture({ platform = "linux", session = "x11", on = true, protect = true, loading } = {}) {
+function fixture({ platform = "linux", session = "x11", on = true, protect = true, loading, prefs } = {}) {
   const windows = [], registrations = new Map(), unregistered = [], timers = new Map();
   let time = 0, timerId = 0, displaysRead = 0;
   let p = { surfaces: { bubble: on, dock: on }, pinnedBotId: "alpha" };
@@ -40,7 +41,7 @@ function fixture({ platform = "linux", session = "x11", on = true, protect = tru
   screen.getPrimaryDisplay = () => displays[0];
   screen.getAllDisplays = () => { displaysRead++; return displays; };
   const manager = createFloatWindows({ BrowserWindow: Window, screen, platform,
-    capabilities: () => ({ session }), prefs: () => p, presence: () => quiet, botStates: () => rows,
+    capabilities: () => ({ session }), prefs: prefs ?? (() => p), presence: () => quiet, botStates: () => rows,
     attentionIpc: { register: (id, kind) => registrations.set(id, kind), unregister: id => { registrations.delete(id); unregistered.push(id); } },
     loadUrlFor: kind => `file:///fixture/${kind}.html`, now: () => time,
     setTimer: (callback, delay) => { const id = ++timerId; timers.set(id, { callback, at: time + delay }); return id; },
@@ -259,4 +260,18 @@ test("roster changes remove hidden bots, retain display windows and publish once
     assert.equal(f.manager.readState({ kind: "dock", windowId: dock.webContents.id }).bots.length, 1);
   }
   assert.equal(f.timers.size, 0); f.manager.destroy();
+});
+
+test("saving a bot for an already-enabled bubble opens just that bot", async () => {
+  const profile = createNotifySurfaces({ profileDir: null, platform: "darwin" });
+  const f = fixture({ platform: "darwin", prefs: profile.get });
+  profile.set("surfaces.bubble", true);
+  await f.manager.sync();
+  assert.equal(f.active("bubble").length, 0);
+  profile.set("pinnedBotId", "beta");
+  await f.manager.sync();
+  const [bubble] = f.active("bubble");
+  assert.ok(bubble?.visible);
+  assert.deepEqual(f.manager.readState({ kind: "bubble", windowId: bubble.webContents.id }).bots.map(bot => bot.botId), ["beta"]);
+  f.manager.destroy();
 });

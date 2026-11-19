@@ -124,6 +124,10 @@ jobs:
         if: runner.os == 'Windows'
       - name: Reject private operational records in Git
         run: node scripts/check-repository-custody.mjs
+      - name: Every module the packaged main process imports is packaged
+        # Node built-ins only, so it runs before install and fails in seconds. 1.0.20 rehearsal: shared/data-version-marker.mjs
+        # was imported by electron/main.mjs but missing from electron-builder.yml, and the packaged app died on launch.
+        run: node scripts/check-packaged-shared-imports.mjs
       - name: Validate scoped CI confirmation input
         shell: bash
         env:
@@ -1062,7 +1066,9 @@ jobs:
           python3 -I native/gepa/build-linux.py "$RUNNER_TEMP/gepa-linux"
       - name: Package from the verified offline CUA stage
         env:
-          NODE_OPTIONS: --max-old-space-size=4300
+          # Same compiler headroom as the release jobs (1.0.20; split is a 1.0.21 item).
+          NODE_OPTIONS: --max-old-space-size=8192
+          MURAGE_TYPECHECK_CAP_MIB: "8192"
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           pnpm package:linux:offline "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"

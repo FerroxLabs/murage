@@ -87,7 +87,7 @@ export function freshIndexPorts(context?: InternalPortContext): StatePort[] {
     "ownerSurfacesByThread", "decisionLevelWork", "decisionSharedSaves", "decisionWakeSaves",
     "decisionQueuePorts", "decisionQueueSyncRemovers", "directTurnDispatchClaims", "directTurnCancellationProofs", "coordinationSlots", "guestBrowserBindings",
     "userChromeProxies", "userChromeForgetting", "userChromeClosing", "browserCapabilitiesByThread",
-    "closingHeadlessBrowsers", "lateMemoryRedispatches", "refusedBeforeHandback", "routineRunByTurn",
+    "closingHeadlessBrowsers", "lateMemoryRedispatches", "lateRebuildWatches", "refusedBeforeHandback", "routineRunByTurn",
     "ownerStartedRuns", "seatWaitRunByTurn", "callRunByTurn", "syncAskRequests",
     "limitSuccessors", "limitActiveDispatches", "limitDispatches",
     "sessionAudienceByThread", "legacyToolNamesByThread", "generatedImagesByTurn", "computerControlRevision",
@@ -101,7 +101,7 @@ export function freshIndexPorts(context?: InternalPortContext): StatePort[] {
     "delegationWatch", "screenPollers", "pendingConnectorResumes", "pendingBrowserCapabilityRevocations",
     "roomRetainedMemory", "taskAllowanceSuggestions", "phoneDispatchFacts", "hostComputerThreads",
     "unifiedBrowserThreads", "extensionBrowserThreads", "headlessBrowsersByThread", "turnBrowsers",
-    "directAttemptBatches", "highlevelOwnerStartedAt", "turnUsage", "vpsRelayBindings",
+    "directAttemptBatches", "turnUsage", "vpsRelayBindings",
     "turnRefusalNotes", "awaitingHandback", "pendingRoomTurnRequests", "unifiedBrowserBindings",
     "pendingUnifiedBrowserBindings",
     "stopInterrupts", "stopAskedInterrupts", "recallWaits", "refusedLeaseTerminals",
@@ -111,10 +111,11 @@ export function freshIndexPorts(context?: InternalPortContext): StatePort[] {
     "ledgerRefusalAwaitingHandback", "refusedTerminalDecisions",
     "outsideFlights", "owedRoutineDeliveries", "queuedRoutineDeliveries", "toolStartedTurns",
     "cappedRoomRoots", "reportedUnconfirmedDirectStops", "desktopActionCalls", "desktopActionWithdrawn", "userChromeConnected", "rebindAfterHold", "lastResortMessages",
-    "highlevelProvenRuns", "highlevelDesktopRuns", "stillWaitingNoted", "sseClients",
+    "stillWaitingNoted", "sseClients",
     "imagesNotSentNoted", "routineOriginThreads", "localVmLifecycleBusy", "checkpointRestoreLeases",
     "heldDispatches", "heldScans", "askerWakeRetry", "delegationRetryBots",
     "finalizingDelegations", "deferredDelegationRetries", "leadAtDispatch", "sharedApprovedRequests", "heldScanAgain",
+    "pageLockNoted",
   ];
   const weakmaps = [
     // The real ledger-admission writer owns every completion source entry.
@@ -126,7 +127,7 @@ export function freshIndexPorts(context?: InternalPortContext): StatePort[] {
     "foreignResponses", "settledRefusedLeases",
   ];
   const ports: StatePort[] = [
-    ...["refusalStopJoins", "refusalStopGenerations"].map(name => ({ name, fresh: () => new PendingTurnKeys(), reason: "Real bounded production Stop join state; seeded only by extracted writers." })),
+    ...["refusalStopJoins", "refusalStopGenerations", "confirmedStopGenerations"].map(name => ({ name, fresh: () => new PendingTurnKeys(), reason: "Real bounded production Stop join state; seeded only by extracted writers." })),
     { name: "shellSessions", fresh: () => new ShellSessionRegistry(), reason: "Real production shell session registry; no prepared shell authority." },
     { name: "ROOM_LEDGER_REFUSAL_NOTES_MAX", fresh: () => indexSourceData("ROOM_LEDGER_REFUSAL_NOTES_MAX"), reason: "The unchanged production refusal-note bound." },
     {name:"cfg",fresh:loadConfig,reason:"Actual isolated configuration I/O; available before any optional service is constructed."},
@@ -176,6 +177,9 @@ export function freshIndexPorts(context?: InternalPortContext): StatePort[] {
     { name: "lastSeq", fresh: () => 0, reason: "Fresh per-case primitive state with the production default." },
     { name: "turnDispatchClosed", fresh: () => false, reason: "Fresh per-case primitive state with the production default." },
     { name: "REQUEST_ENDED_LINE", fresh: () => indexSourceData("REQUEST_ENDED_LINE"), reason: "Fresh per-case primitive state with the production default." },
+    { name: "OWNER_PENDING_HURRY_MS", fresh: () => indexSourceData("OWNER_PENDING_HURRY_MS"), reason: "Production's exact bounded wait for an owner's pending check (1.0.20 T3)." },
+    { name: "MURAGE_NOT_STARTED_LINE", fresh: () => indexSourceData("MURAGE_NOT_STARTED_LINE"), reason: "Production's literal not-started line (1.0.20 T1/B2)." },
+    { name: "MURAGE_INTERNAL_CODES", fresh: () => indexSourceData("MURAGE_INTERNAL_CODES"), reason: "Production's literal list of Murage's own setup codes, read from the source; never an empty or case-supplied set." },
     { name: "coordinationDrainScheduled", fresh: () => false, reason: "Fresh per-case primitive state with the production default." },
     { name: "coordinationDrainCursor", fresh: () => "", reason: "Fresh per-case primitive state with the production default." },
     { name: "localVmImageBusy", fresh: () => false, reason: "Fresh per-case primitive state with the production default." },
@@ -211,7 +215,6 @@ export function freshIndexPorts(context?: InternalPortContext): StatePort[] {
     { name: "IMAGE_PRESETS", fresh: () => indexSourceData("IMAGE_PRESETS"), reason: "Production's literal preset list." },
     { name: "LEGACY_IMAGE_IDS", fresh: () => indexSourceData("LEGACY_IMAGE_IDS"), reason: "Production's literal legacy identifiers." },
     { name: "AGENTS_NODE_FLAG", fresh: () => indexSourceData("AGENTS_NODE_FLAG"), reason: "Production's literal child environment flag." },
-    { name: "HL_OWNER_TICKET", fresh: () => Symbol("highlevel owner ticket"), reason: "Fresh unforgeable per-case ticket, minted only by real production writers." },
     { name: "PHONE_TICKET", fresh: () => Symbol("phone ticket"), reason: "Fresh unforgeable per-case ticket, minted only by real production writers." },
     { name: "STREAM_ID", fresh: () => randomUUID().slice(0, 8), reason: "Fresh random stream identifier with production's shape." },
     ...(context ? dispatchStatePorts(context) : []),

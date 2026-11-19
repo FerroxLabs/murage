@@ -172,7 +172,7 @@ export async function runBrowserCheck<R extends CheckResult>(
   if (unavailable && !stillValid()) { if (check.id) turns.stopped(threadId, check.id); return null as R; }
   if (!check.id) return result;
   if (result === null) { turns.stopped(threadId, check.id); return result; }
-  if (unavailable) {
+  if (unavailable && !("noted" in result)) {
     const phase = turns.continueWithout(threadId, check.id, String((result as { unavailable: string }).unavailable), stillValid);
     return phase === "unavailable-continue" ? { ...result, noted: true } : (null as R);
   }

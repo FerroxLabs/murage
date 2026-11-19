@@ -145,12 +145,13 @@ inline void Cleanup(void* data) {
   delete state;
 }
 
-inline napi_value Install(napi_env env, napi_value exports, napi_property_descriptor* properties) {
+template <size_t Count>
+inline napi_value Install(napi_env env, napi_value exports, napi_property_descriptor (&properties)[Count]) {
   auto* state = new (std::nothrow) State();
   if (!state) return nullptr;
   if (napi_add_env_cleanup_hook(env, Cleanup, state) != napi_ok) { delete state; return nullptr; }
   properties[1].data = state;
-  if (napi_define_properties(env, exports, 2, properties) != napi_ok) {
+  if (napi_define_properties(env, exports, Count, properties) != napi_ok) {
     napi_remove_env_cleanup_hook(env, Cleanup, state);
     delete state;
     return nullptr;

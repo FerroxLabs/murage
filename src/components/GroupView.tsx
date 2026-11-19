@@ -103,11 +103,11 @@ import { ProjectHome } from "./ProjectHome";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { CHANNEL_PROJECT_GOAL_MAX } from "../../shared/project";
 import { channelProjectStatusLabel } from "@/lib/channel-surface";
-import { groupActivityRuns, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
+import { groupActivityRuns, interimSteps, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
 import { TranscriptTail } from "./TranscriptTail";
 import { tailOf } from "@/lib/transcript-tail";
 import { VirtualTranscript } from "./VirtualTranscript";
-import { ActivityRun } from "./ActivityRun";
+import { ActivityRun, InterimStepsRow } from "./ActivityRun";
 import { HelpersLine, HelpersSummary } from "./HelpersLine";
 import { pickSubtasks } from "@/lib/subtasks";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -324,6 +324,8 @@ export const Transcript = memo(function Transcript({
   // finished ones the same way a 1:1 chat does.
   const helperRuns = useStreaming().helpers.runs[group.threadId];
   const items = useMemo(() => groupActivityRuns(messages, helperRuns), [messages, helperRuns]);
+  // 1020: with Tool calls off, a step between two texts of one member's turn stays named between them (a room never folds turns)
+  const stepsBetween = useMemo(() => showToolCalls ? new Map<string, Message[]>() : interimSteps(messages, false), [messages, showToolCalls]);
   // What each bot turn answers, read over the whole room so a target above
   // the mounted window still resolves.
   const replyTargets = useMemo(() => new Map(transcript.flatMap((message) => { const target = sameThreadReply(message, transcript); return target ? [[message.id, target] as const] : []; })), [transcript]);
@@ -715,6 +717,7 @@ export const Transcript = memo(function Transcript({
             )}
             {actor === "routine" && <span className="text-[12px] text-ink-secondary">Routine</span>}
             {actor === "person" && <span className="text-[12px] text-ink-secondary">Person</span>}
+            {stepsBetween.has(m.id) && <InterimStepsRow messages={stepsBetween.get(m.id)!} />}
             {row}
           </div>
         );

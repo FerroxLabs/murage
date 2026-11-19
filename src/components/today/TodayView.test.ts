@@ -288,7 +288,7 @@ describe("what Today reads on open", () => {
 describe("Your day", () => {
   const routine = (id: string, name: string, at: number | null, extra: Record<string, unknown> = {}) => ({ id, botId: "b", name, enabled: true, schedule: { type: "daily" }, nextRunAt: at, ...extra }) as never;
   const day = (routines: never[]) => renderToStaticMarkup(createElement(YourDay, { timeline: dayTimeline(routines, NOW), now: NOW, botNames: { b: "Max" }, chiefName: "Ember", onOpenRoutines: vi.fn() }));
-  it("rows from now to midnight, then the meetings placeholder", () => {
+  it("rows from now to midnight, and no promise of a coming update (1.0.20 Mac walk)", () => {
     const html = day([routine("r1", "Inbox brief", NOW + 3_600_000)]);
     expect(html).toContain("Your day");
     expect(html).toContain("Now");
@@ -296,7 +296,9 @@ describe("Your day", () => {
     expect(html).toContain("Inbox brief");
     expect(html).toContain("Max");
     expect(html).toContain("Midnight");
-    expect(html).toContain("Your own meetings will show here in a coming update.");
+    // A placeholder that promises a future feature is not part of the owner's day.
+    expect(html).not.toContain("coming update");
+    expect(html).not.toContain('data-day="meetings"');
   });
   it("empty: the next run, or no routines at all", () => {
     const tomorrow = new Date(2026, 10, 5, 8, 0).getTime();
@@ -304,7 +306,7 @@ describe("Your day", () => {
     expect(emptyDayLine(dayTimeline([], NOW), NOW, "Ember")).toBe("No routines yet. Tell Ember what you want done every day.");
     const html = day([]);
     expect(html).toContain("No routines yet. Tell Ember what you want done every day.");
-    expect(html).toContain("Your own meetings will show here in a coming update.");
+    expect(html).not.toContain("coming update");
   });
 });
 

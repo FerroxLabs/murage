@@ -4,10 +4,9 @@
 // 0.1.60 low (Windows RE-TEST 4 L2): a channel whose setup was never
 // finished is left out of "Choose a channel", and the picker said "Create a
 // channel from the sidebar first" about a channel sitting in the sidebar.
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { goalChannelHint } = await import("./RoutineCalendarPage");
 
 const channel = (name: string, extra: Record<string, unknown> = {}) => ({ id: name, name, memberIds: [], messages: [], ...extra }) as never;

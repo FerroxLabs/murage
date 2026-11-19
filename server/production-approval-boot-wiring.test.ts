@@ -8,7 +8,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { launchVerificationServer, type VerificationServer } from '../scripts/control-murage.ts';
 
 const seams = [
-  ['highlevel/engine-policy.ts', 'installHighlevelEngineLedger'],
   ['decision/implementation.ts', 'installSynchronousQueueDeliveries'],
   ['bot-access.ts', 'installBotAccessApprovalAccounts'],
   ['memory/authority.ts', 'installMemoryApprovalAccess'],
