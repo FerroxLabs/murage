@@ -109,17 +109,23 @@ describe("server wiring", () => {
   const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8");
 
   it("guards everything after a direct turn's admission", () => {
-    const admit = source.indexOf("const run=directRuns.admit(bot.id,threadId,bot,[]");
+    // MAIN RULING 1115-SOURCE-PINS B: follow the current admission claim; retain every cleanup guard.
+    const admit = source.indexOf("const run=directRuns.admit(bot.id,threadId,{...routingBot,tasks:[task]},[]");
     expect(admit).toBeGreaterThan(0);
     // the admission line carries the rebuild takeover (DELETION-DRAIN-V2: takeOver), so the window reaches past it
-    expect(source.slice(admit, admit + 900)).toMatch(/void startAdmittedTurn\(\(\) => \{/);
+    // 1.0.20 (ctxstop-lease 60b8718354, 47d2ac6f53): directHumanInput and the lease checks now sit between the admission and the start,
+    // so the start is found after the admission, in the same top-level function, instead of inside a byte count
+    const start = source.indexOf("void startAdmittedTurn(async () => {", admit);
+    expect(start).toBeGreaterThan(admit);
+    expect(source.slice(admit, start)).not.toMatch(/\n(?:async )?function \w+/);
     expect(source).toMatch(/\}, \(error, phase\) => \{ allowance\.close\(\); giveBackAdmittedTurn\(run, bot\.id, threadId, admitted, phase, error, opts\?\.onDispatchError\); \}\);/);
     // the unconfirmed-stop branch marks the thread kept before anything in it can throw, and each report is remembered
     expect(source).toMatch(/if\(acceptedTurnCleanupFailed\) \{\s*admitted\.keepThread = true;/);
-    // (1.0.4 SETUP-LAST-RESORT 4f168ca49 added the third: a rebuild stopped while its revoke settled). Every report after the admission is one of them.
+    // REDSP2-DESIGN section 3.4 adds a fourth report: superseded after a rebuild's answer. Every callback has its own once-only mark.
     const guarded = source.slice(admit, source.indexOf("giveBackAdmittedTurn(run, bot.id, threadId, admitted, phase, error, opts?.onDispatchError)", admit));
-    expect(guarded.match(/opts\?\.onDispatchError\?\.\(/g)?.length).toBe(3);
-    expect(guarded.match(/opts\?\.onDispatchError\?\.\([^;]*\);\s*admitted\.reported = true;/g)?.length).toBe(3);
+    expect(guarded.match(/opts\?\.onDispatchError\?\.\(/g)?.length).toBe(4);
+    expect(guarded.match(/admitted\.dispatchErrorCalled = true;\s*opts\?\.onDispatchError\?\.\(/g)?.length).toBe(4);
+    expect(guarded.match(/opts\?\.onDispatchError\?\.\([^;]*\);\s*admitted\.reported = true;/g)?.length).toBe(4);
   });
 
   it("creates the routine-run map before the scheduler exists, and starts the scheduler after the last module state", () => {
@@ -131,7 +137,8 @@ describe("server wiring", () => {
     // routine work dispatches only after the module's last step opens it, right before the scheduler starts
     expect(source.indexOf("let routineDispatchOpen = false;")).toBeLessThan(source.indexOf("routines = new RoutineManager("));
     expect(source).toMatch(/routineDispatchOpen = true;\nif \(!homeExecutionGate \|\| homeExecutionGate\.open\(\)\) routines\.start\(\);/);
-    expect(source).toContain("dispatchOpen: () => routineDispatchOpen,");
+    // 4628abcf45: dispatch also waits while Signal custody replays.
+    expect(source).toContain("dispatchOpen: () => routineDispatchOpen && !signalAuthorityReplayHeld,");
     // no module-level const, let or var is declared after the scheduler starts
     expect(source.slice(start).split("\n").filter((line) => /^(export\s+)?(const|let|var)\s/.test(line))).toEqual([]);
     // and nothing awaits at module level after it: a due run could otherwise dispatch before the module finished

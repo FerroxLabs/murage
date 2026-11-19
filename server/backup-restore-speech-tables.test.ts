@@ -29,6 +29,7 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 import { initializeReplySchema } from "./tts/reply-schema.ts";
 import { ReplyState, speechTransaction } from "./tts/reply-state.ts";
 import { stopWalMaintenance } from "./wal-maintenance.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
 
 type Row = { type: string; name: string; tbl_name: string; sql: string | null };
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
@@ -64,10 +65,10 @@ function asInstallation(dir: string): void {
 }
 
 describe("the real open path and the snapshot registry", () => {
-  beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
-  afterEach(() => { closeDatabase(); });
+  beforeEach(async () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+  afterEach(async () => { closeDatabase(); });
 
-  it("structural guard: every table, index and trigger a fresh database holds is one the snapshot registry or the memory schema knows", () => {
+  it("structural guard: every table, index and trigger a fresh database holds is one the snapshot registry or the memory schema knows", async () => {
     const db = database();
     const memory = validateMemorySchema(db), known = registeredSnapshotObjects();
     const unknown = schemaOf(db).filter(row => !memory.has(row.name) && !isInboxProjectionObject(row) && !known.has(row.name)).map(row => `${row.type}:${row.name}`);
@@ -75,7 +76,7 @@ describe("the real open path and the snapshot registry", () => {
     expect(() => inspectInstallationDatabase(db)).not.toThrow();
   });
 
-  it("the downgrade's speech list is exactly what initializeReplySchema makes, and the open path makes all of it", () => {
+  it("the downgrade's speech list is exactly what initializeReplySchema makes, and the open path makes all of it", async () => {
     const blank = new DatabaseSync(":memory:");
     try {
       initializeReplySchema(blank);
@@ -89,11 +90,22 @@ describe("the real open path and the snapshot registry", () => {
     for (const name of [...SPEECH_TABLES_AFTER_117, ...SPEECH_INDEXES_AFTER_117]) expect(registeredSnapshotObjects().has(name), name).toBe(true);
   });
 
-  it("a 1.0.18 data dir with a row in every speech table passes the restore check, rows intact", () => {
+  it("a 1.0.18 data dir with a row in every speech table passes the restore check, rows intact", async () => {
     const db = database();
     withSpeechRows(db);
     expect(() => inspectInstallationDatabase(db)).not.toThrow();
     expect(counts(db)).toEqual(ONE_EACH);
+  });
+
+  it("D24-SPEECH-RETENTION: an earlier 1.0.18 database without speech_generation_bot passes the restore check, and the next open makes it", () => {
+    const db = database();
+    withSpeechRows(db);
+    db.exec("DROP INDEX speech_generation_bot");
+    expect(() => inspectInstallationDatabase(db)).not.toThrow();
+    closeDatabase();
+    const reopened = database();
+    expect(reopened.prepare("SELECT 1 FROM sqlite_schema WHERE type='index' AND name='speech_generation_bot'").get()).toBeTruthy();
+    expect(counts(reopened)).toEqual(ONE_EACH);
   });
 
   it.skipIf(!rawAgeHost)("backs up and restores a 1.0.18 data dir opened by the real path, every speech row intact", { timeout: 120_000 }, async () => {
@@ -102,8 +114,10 @@ describe("the real open path and the snapshot registry", () => {
     withSpeechRows(source);
     const before = rows(source);
     closeDatabase();
-    // closeDatabase() starts the WAL checkpointer's exit without waiting (database.ts closeDatabase, void stopWalMaintenance); that thread still touches -wal and -shm, and the backup refuses SOURCE_CHANGED if it does so while the snapshot reads them. Production waits for it (stopDataWriters), so the test does too.
+    // Both workers can still touch the source after closeDatabase() starts their shutdown.
+    // Production joins them before taking a snapshot; the fixture must join them too.
     await stopWalMaintenance();
+    expect(await stopSearchIndex()).toBe(true);
     asInstallation(DATA_DIR);
     const parent = mkdtempSync(join(tmpdir(), "murage-speech-backup-test-"));
     try {
@@ -122,13 +136,13 @@ describe("the real open path and the snapshot registry", () => {
     } finally { removeTempDirSync(parent); }
   });
 
-  it("the downgrade (memory-downgrade --to 10) leaves no speech object behind", () => {
+  it("the downgrade (memory-downgrade --to 10) leaves no speech object behind", async () => {
     const db = database();
     initializeImageOperations(db);
     ensureForgetTable(db);
     withSpeechRows(db);
     closeDatabase();
-    expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
+    expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
     const after = readOnly(join(DATA_DIR, "messages.db"));
     try {
       const left = schemaOf(after).filter(row => row.tbl_name.startsWith("speech_") || row.name.startsWith("speech_")).map(row => row.name);
@@ -138,7 +152,7 @@ describe("the real open path and the snapshot registry", () => {
 });
 
 describe("a 1.0.17 archive (no speech tables)", () => {
-  it("passes the restore check", () => {
+  it("passes the restore check", async () => {
     const f = backupFixture();
     try {
       for (const name of SPEECH_TABLES_AFTER_117) expect(f.db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name), name).toBeUndefined();
@@ -168,14 +182,14 @@ describe("a 1.0.17 archive (no speech tables)", () => {
 describe("a voice reply still finishing holds the downgrade back (Astra r3/r4: a downgrade and quick return must not speak sooner than a restart)", () => {
   const MIN10 = 600_000;
   const at = 1_800_000_000_000;
-  const refusal = (run: () => unknown): { code?: string; message: string } | undefined => {
-    try { run(); } catch (error) { return error as { code?: string; message: string }; }
+  const refusal = async (run: () => unknown): Promise<{ code?: string; message: string } | undefined> => {
+    try { await run(); } catch (error) { return error as { code?: string; message: string }; }
     return undefined;
   };
-  beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
-  afterEach(() => { closeDatabase(); });
+  beforeEach(async () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+  afterEach(async () => { closeDatabase(); });
 
-  it("the hold: an attempt in flight holds ten minutes from now; the newest attempt holds its rate window; an account hold holds; old ones hold nothing", () => {
+  it("the hold: an attempt in flight holds ten minutes from now; the newest attempt holds its rate window; an account hold holds; old ones hold nothing", async () => {
     const db = new DatabaseSync(":memory:");
     try {
       withSpeechRows(db);
@@ -190,30 +204,30 @@ describe("a voice reply still finishing holds the downgrade back (Astra r3/r4: a
     } finally { db.close(); }
   });
 
-  it("refuses while an attempt is in flight or an account is held, with the minutes left and nothing changed; goes ahead once it passes", () => {
+  it("refuses while an attempt is in flight or an account is held, with the minutes left and nothing changed; goes ahead once it passes", async () => {
     const db = new DatabaseSync(":memory:");
     try {
       withSpeechRows(db);
       db.exec(`UPDATE speech_attempts SET reserved_at=${at - 60_000}, state='streaming'`);
-      expect(refusal(() => downgradeSpeechTablesTo117(db, at))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_10", message: "Murage is finishing a voice reply. Try again in about 10 min." });
+      expect(await refusal(() => downgradeSpeechTablesTo117(db, at))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_10", message: "Murage is finishing a voice reply. Try again in about 10 min." });
       expect(counts(db)).toEqual(ONE_EACH);
       db.exec(`UPDATE speech_attempts SET state='complete', reserved_at=${at - 20 * MIN10}; UPDATE speech_accounts SET hold_until=${at + 3 * MIN10 - 1}`);
-      expect(refusal(() => assertNoSpeechHeld(db, at))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_30" });
-      expect(refusal(() => assertNoSpeechHeld(db, at + 3 * MIN10 - 60_000))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_1" });
-      expect(refusal(() => assertNoSpeechHeld(db, at + 3 * MIN10))).toBeUndefined();
+      expect(await refusal(() => assertNoSpeechHeld(db, at))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_30" });
+      expect(await refusal(() => assertNoSpeechHeld(db, at + 3 * MIN10 - 60_000))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_1" });
+      expect(await refusal(() => assertNoSpeechHeld(db, at + 3 * MIN10))).toBeUndefined();
       expect(downgradeSpeechTablesTo117(db, at + 3 * MIN10).dropped).toBeGreaterThan(0);
       expect(schemaOf(db).filter(row => row.name.startsWith("speech_"))).toEqual([]);
     } finally { db.close(); }
   });
 
-  it("Astra r3's counterexample: a reply cut short, then Prepare to reinstall inside ten minutes, is refused before any change, and the next start holds the account as an ordinary restart does", () => {
+  it("Astra r3's counterexample: a reply cut short, then Prepare to reinstall inside ten minutes, is refused before any change, and the next start holds the account as an ordinary restart does", async () => {
     const db = database();
     initializeImageOperations(db);
     ensureForgetTable(db);
     withSpeechRows(db);
     db.exec(`UPDATE speech_attempts SET reserved_at=${Date.now() - 60_000}, state='streaming'`);
     closeDatabase();
-    expect(refusal(() => downgradeInstallationMemorySchema(DATA_DIR, 10))?.code).toMatch(/^DOWNGRADE_VOICE_FINISHING_(9|10)$/);
+    expect((await refusal(() => downgradeInstallationMemorySchema(DATA_DIR, 10)))?.code).toMatch(/^DOWNGRADE_VOICE_FINISHING_(9|10)$/);
     const after = database();
     expect(counts(after)).toEqual(ONE_EACH);
     // The return is this same build starting again: boot interrupts the attempt and holds its account, so no new reply, automatic or
@@ -223,7 +237,7 @@ describe("a voice reply still finishing holds the downgrade back (Astra r3/r4: a
     expect(state.account("binding", "v1").holdUntil).toBeGreaterThan(Date.now() + 9 * 60_000);
   });
   // MurageMain ruling on Astra r5's Medium: a crash leaves an attempt reserved or streaming; 1.0.18 cannot start; the downgrade must still end.
-  it("a crash left an attempt in flight: the downgrade marks it interrupted and holds ten minutes, durably, then refuses; the refusal ends ten minutes later (fake clock)", () => {
+  it("a crash left an attempt in flight: the downgrade marks it interrupted and holds ten minutes, durably, then refuses; the refusal ends ten minutes later (fake clock)", async () => {
     const db = new DatabaseSync(":memory:");
     try {
       withSpeechRows(db);
@@ -231,15 +245,15 @@ describe("a voice reply still finishing holds the downgrade back (Astra r3/r4: a
       expect(markInFlightSpeechInterrupted(db, at)).toBe(1);
       expect((db.prepare("SELECT state FROM speech_attempts").get() as { state: string }).state).toBe("interrupted");
       expect((db.prepare("SELECT hold_until FROM speech_accounts").get() as { hold_until: number }).hold_until).toBe(at + MIN10);
-      expect(refusal(() => assertNoSpeechHeld(db, at))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_10" });
-      expect(refusal(() => assertNoSpeechHeld(db, at + MIN10 - 60_000))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_1" });
+      expect(await refusal(() => assertNoSpeechHeld(db, at))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_10" });
+      expect(await refusal(() => assertNoSpeechHeld(db, at + MIN10 - 60_000))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_1" });
       // ten minutes on, with no start in between (the build cannot start), nothing holds and the downgrade goes ahead
-      expect(refusal(() => assertNoSpeechHeld(db, at + MIN10))).toBeUndefined();
+      expect(await refusal(() => assertNoSpeechHeld(db, at + MIN10))).toBeUndefined();
       expect(downgradeSpeechTablesTo117(db, at + MIN10).dropped).toBeGreaterThan(0);
     } finally { db.close(); }
   });
 
-  it("a second downgrade inside the ten minutes does not extend the hold", () => {
+  it("a second downgrade inside the ten minutes does not extend the hold", async () => {
     const db = new DatabaseSync(":memory:");
     try {
       withSpeechRows(db);
@@ -247,12 +261,12 @@ describe("a voice reply still finishing holds the downgrade back (Astra r3/r4: a
       expect(markInFlightSpeechInterrupted(db, at)).toBe(1);
       expect(markInFlightSpeechInterrupted(db, at + 5 * 60_000)).toBe(0);
       expect((db.prepare("SELECT hold_until FROM speech_accounts").get() as { hold_until: number }).hold_until).toBe(at + MIN10);
-      expect(refusal(() => assertNoSpeechHeld(db, at + 5 * 60_000))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_5" });
-      expect(refusal(() => assertNoSpeechHeld(db, at + MIN10))).toBeUndefined();
+      expect(await refusal(() => assertNoSpeechHeld(db, at + 5 * 60_000))).toMatchObject({ code: "DOWNGRADE_VOICE_FINISHING_5" });
+      expect(await refusal(() => assertNoSpeechHeld(db, at + MIN10))).toBeUndefined();
     } finally { db.close(); }
   });
 
-  it("the hold is not dropped: an attempt still in flight (no mark) keeps now + ten minutes, so a live reply is never cut off by the downgrade", () => {
+  it("the hold is not dropped: an attempt still in flight (no mark) keeps now + ten minutes, so a live reply is never cut off by the downgrade", async () => {
     const db = new DatabaseSync(":memory:");
     try {
       withSpeechRows(db);
@@ -262,14 +276,14 @@ describe("a voice reply still finishing holds the downgrade back (Astra r3/r4: a
     } finally { db.close(); }
   });
 
-  it("through the real memory downgrade: the first call refuses, the attempt is interrupted on disk, and once the hold has passed the next call goes ahead without any start in between", () => {
+  it("through the real memory downgrade: the first call refuses, the attempt is interrupted on disk, and once the hold has passed the next call goes ahead without any start in between", async () => {
     const db = database();
     initializeImageOperations(db);
     ensureForgetTable(db);
     withSpeechRows(db);
     db.exec(`UPDATE speech_attempts SET reserved_at=${Date.now() - 3 * 60 * MIN10}, state='streaming', outcome=NULL; UPDATE speech_accounts SET hold_until=0`);
     closeDatabase();
-    expect(refusal(() => downgradeInstallationMemorySchema(DATA_DIR, 10))?.code).toMatch(/^DOWNGRADE_VOICE_FINISHING_(9|10)$/);
+    expect((await refusal(() => downgradeInstallationMemorySchema(DATA_DIR, 10)))?.code).toMatch(/^DOWNGRADE_VOICE_FINISHING_(9|10)$/);
     const mid = readOnly(join(DATA_DIR, "messages.db"));
     try {
       expect((mid.prepare("SELECT state FROM speech_attempts").get() as { state: string }).state).toBe("interrupted");
@@ -277,13 +291,13 @@ describe("a voice reply still finishing holds the downgrade back (Astra r3/r4: a
     } finally { mid.close(); }
     // a second call inside the ten minutes still refuses and does not move the hold
     const before = (() => { const d = readOnly(join(DATA_DIR, "messages.db")); try { return (d.prepare("SELECT hold_until FROM speech_accounts").get() as { hold_until: number }).hold_until; } finally { d.close(); } })();
-    expect(refusal(() => downgradeInstallationMemorySchema(DATA_DIR, 10))?.code).toMatch(/^DOWNGRADE_VOICE_FINISHING_/);
+    expect((await refusal(() => downgradeInstallationMemorySchema(DATA_DIR, 10)))?.code).toMatch(/^DOWNGRADE_VOICE_FINISHING_/);
     const again = (() => { const d = readOnly(join(DATA_DIR, "messages.db")); try { return (d.prepare("SELECT hold_until FROM speech_accounts").get() as { hold_until: number }).hold_until; } finally { d.close(); } })();
     expect(again).toBe(before);
     // time passes (the hold and the rate window are now in the past); the build still has not started
     const w = new DatabaseSync(join(DATA_DIR, "messages.db"));
     try { w.exec(`UPDATE speech_accounts SET hold_until=${Date.now() - 1000}`); } finally { w.close(); }
-    expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
+    expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
   });
 
 });
@@ -299,7 +313,7 @@ describe("a tampered speech object is refused", () => {
     ["an unknown speech_ table", "CREATE TABLE speech_extra (id TEXT)"],
   ];
   for (const [label, sql] of cases) {
-    it(label, () => {
+    it(label, async () => {
       const f = backupFixture();
       try {
         withSpeechRows(f.db);

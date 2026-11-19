@@ -1,0 +1,32 @@
+{
+  "owner": "sc-safety",
+  "reviewOwner": "independent reviewing seat",
+  "base": "56a6de3569a51c4b4d7735d70e2899548e7f27ae",
+  "seams": [
+    {
+      "file": "server/memory/learning-send-boundary.test.ts",
+      "function": "program",
+      "baselineSha256": "1b3f554a1160c18e8ba6c4bd5bf96ae6a4e5420811b264333cabe9068b8c1d4e"
+    },
+    {
+      "file": "server/memory/learning-send-boundary.test.ts",
+      "function": "scan",
+      "baselineSha256": "314c2855573ceb566016968a3b03840e873909dc289d1a9f59b737656ea2dc26"
+    },
+    {
+      "file": "server/memory/learning-send-boundary.test.ts",
+      "function": "lintHop",
+      "baselineSha256": "62a5a70c31b9533acba0d1f1f7579281d1df15831c55788991b648254cf8f361"
+    },
+    {
+      "file": "server/memory/learning-send-boundary.test.ts",
+      "function": "diff",
+      "baselineSha256": "00789648769d87de5e1abc06c4163c4e54fdd05068002692d36ef201920d50d0"
+    },
+    {
+      "file": "server/memory/learning-send-boundary.test.ts",
+      "function": "lintChains",
+      "baselineSha256": "dbb5d476ebbcab372e66f8adab080e654209d05dc118e6fc8d04b57d5fe91685"
+    }
+  ]
+}

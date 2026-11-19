@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The io-budget's write readings, as a leaf (Node built-ins only), so the memory helper and the copy/snapshot sinks can count their
-// writes without the budget's import graph (observe, health, net-meter). io-budget.ts re-exports these and drains takeWrittenBytes.
-//
-// Windows (WIN-IOB-QUICK, 1.0.18): resourceUsage().fsWrite there is GetProcessIoCounters' WriteOperationCount, which counts every
-// handle (pipes, IPC, sockets), not disk blocks: 2000 child.send calls read as 2000 "blocks". So the OS floor is 0 on win32 and the
-// verdict comes from application bytes only: WAL frames of instrumented databases and of the memory helper's index, and the logical
-// output sizes noted here (skill index build, health stats DB, VACUUM INTO and backup copies). Page rewrites, rollback journals,
-// checkpoints and temp spills stay unseen on win32 until the full meter (WIN-IOMETER, 1.0.19).
+// Leaf write accounting for the budget, helper and copy sinks. WIN-IOMETER
+// counts SQLite xWrite and routed file writes in the shared native meter. The
+// old resourceUsage fsWrite count remains zero on Windows because it includes
+// pipe/IPC traffic. Coverage gaps are explicit in io-meter.ts and keep Windows
+// verdicts unknown; measured bytes are still charged. WAL/output estimates are
+// retained for source builds without the meter, never added beside native bytes.
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { endianness } from "node:os";
+
+/** The meter installs this narrow adapter after loading. The accounting leaf
+ * itself keeps no dependency on application/native-addon loader modules. */
+interface WrittenMeter { active(): boolean; snapshot(): {buckets: Array<[string,number]>} | null }
+let writtenMeter: WrittenMeter | undefined;
+export function setWrittenMeter(meter: WrittenMeter): void { writtenMeter = meter; }
 
 /** On non-Windows OSes, resourceUsage().fsWrite is getrusage's block-output count, charged at 512 bytes per block. */
 export const BLOCK_BYTES = 512;
@@ -23,7 +27,10 @@ export function osWriteBlocks(usage: { fsWrite: number } = process.resourceUsage
  *  Bounded by name: at most WRITTEN_NAMES names, then "other-files". */
 const written = new Map<string, number>();
 const WRITTEN_NAMES = 32;
+const meteredPrevious=new Map<string,number>();
 export function noteWrittenBytes(source: string, bytes: number): void {
+  // Once writes are metered at their boundary, output-size/WAL estimates would double charge them.
+  if (writtenMeter?.active()) return;
   if (!Number.isFinite(bytes) || bytes <= 0) return;
   const name = written.has(source) || written.size < WRITTEN_NAMES ? source : "other-files";
   written.set(name, (written.get(name) ?? 0) + bytes);
@@ -36,6 +43,18 @@ export function noteWrittenFile(source: string, path: string): void {
 export function takeWrittenBytes(): Array<[string, number]> {
   const taken = [...written];
   written.clear();
+  if(writtenMeter?.active()){
+    const snapshot=writtenMeter.snapshot();
+    if(snapshot)for(const [name,total] of snapshot.buckets){
+      // Database buckets already have transaction-boundary attribution. This
+      // adds disjoint plain-file/native buckets only; total process bytes are
+      // still a maximum at the judge, so the same write is never added twice.
+      if(name.startsWith("database:"))continue;
+      const before=meteredPrevious.get(name)??0;
+      if(total>before)taken.push([name,total-before]);
+      meteredPrevious.set(name,total);
+    }
+  }
   return taken;
 }
 

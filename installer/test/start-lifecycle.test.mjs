@@ -27,6 +27,9 @@ function fixture({ slowProbe = false, sidecarExit = false, ignoreTerm = false, m
   mkdirSync(join(installed, "bin"), { recursive: true });
   cpSync(join(INSTALLER, "lib"), join(installed, "lib"), { recursive: true });
   cpSync(join(INSTALLER, "bin", "murage.mjs"), join(installed, "bin", "murage.mjs"));
+  // bin/murage.mjs and lib/companion.mjs import the Windows child-process hiding module from the repository's shared/.
+  mkdirSync(join(dir, "shared"));
+  for (const name of ["win-hide-child-process.mjs", "win-hide-child-process.cjs"]) cpSync(join(INSTALLER, "..", "shared", name), join(dir, "shared", name));
   const harness = join(dir, "harness.mjs");
   const sidecar = join(dir, "sidecar.mjs");
   const tailscale = join(dir, "tailscale-stub");

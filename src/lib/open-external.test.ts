@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { nativeHello, resetNativeShellForTest } from "./native-shell";
-import { nativeClickAction, openExternalPage, routeNativeClicks } from "./open-external";
+import { nativeClickAction, openedInBrowser, openExternalPage, openInstallerPage, routeNativeClicks } from "./open-external";
 import { SAVE_FAILED_EVENT } from "./save-file";
 
 afterEach(() => {
@@ -156,4 +156,53 @@ it("is installed only inside the phone app", async () => {
   const { readFileSync } = await import("node:fs");
   const main = readFileSync(new URL("../main.tsx", import.meta.url), "utf8");
   expect(main).toContain("if (inNativeShell()) routeNativeClicks();");
+});
+
+describe("saying whether a page opened in the system browser", () => {
+  const URL_ = "https://example.test/Murage.dmg";
+  it("is true when the shell opens it, and passes the link through", async () => {
+    const openExternal = vi.fn(async () => true);
+    vi.stubGlobal("window", { muragebox: { openExternal } });
+    expect(await openedInBrowser(URL_)).toBe(true);
+    expect(openExternal).toHaveBeenCalledWith(URL_);
+  });
+  it("is true when the shell answers nothing", async () => {
+    vi.stubGlobal("window", { muragebox: { openExternal: vi.fn(async () => undefined) } });
+    expect(await openedInBrowser(URL_)).toBe(true);
+  });
+  it("is false when the shell refuses the link", async () => {
+    vi.stubGlobal("window", { muragebox: { openExternal: vi.fn(async () => false) } });
+    expect(await openedInBrowser(URL_)).toBe(false);
+  });
+  it("is false when the hand-off rejects", async () => {
+    vi.stubGlobal("window", { muragebox: { openExternal: vi.fn(async () => { throw new Error("no browser"); }) } });
+    expect(await openedInBrowser(URL_)).toBe(false);
+  });
+  it("is false where there is no desktop bridge", async () => {
+    vi.stubGlobal("window", {});
+    expect(await openedInBrowser(URL_)).toBe(false);
+  });
+});
+
+describe("the installer download buttons' click", () => {
+  const URL_ = "https://example.test/Murage.dmg";
+  it("shows the failure line when the page does not open, and clears it when a retry opens it", async () => {
+    const answers = [false, true];
+    const openExternal = vi.fn(async () => answers.shift());
+    vi.stubGlobal("window", { muragebox: { openExternal } });
+    const shown: boolean[] = [];
+    await openInstallerPage(URL_, (failed) => shown.push(failed));
+    expect(shown).toEqual([false, true]);
+    await openInstallerPage(URL_, (failed) => shown.push(failed));
+    expect(shown).toEqual([false, true, false]);
+    expect(openExternal).toHaveBeenCalledTimes(2);
+  });
+  it("shows the failure line when the hand-off rejects or there is no desktop bridge", async () => {
+    vi.stubGlobal("window", { muragebox: { openExternal: vi.fn(async () => { throw new Error("refused"); }) } });
+    const shown: boolean[] = [];
+    await openInstallerPage(URL_, (failed) => shown.push(failed));
+    vi.stubGlobal("window", {});
+    await openInstallerPage(URL_, (failed) => shown.push(failed));
+    expect(shown).toEqual([false, true, false, true]);
+  });
 });

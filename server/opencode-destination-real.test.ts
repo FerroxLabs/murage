@@ -1,5 +1,5 @@
 // Rig-only: real debug config, real bot config preparation, no prompt/provider call.
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it as baseIt, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, symlinkSync, chmodSync, utimesSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -13,6 +13,9 @@ import { createOpenCodeDriver, isolateOpenCodeFromPersonalSetup, isolateOpenCode
 import { isolationStats, resetIsolationCache } from "./drivers/isolation-cache.ts";
 import { resetScopeBookkeeping, scopeLockPath } from "./drivers/scoped-cli-home.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+// Real-engine test: skips cleanly unless the rig supplies the real OpenCode binary.
+const REAL = Boolean(process.env.MURAGE_X4_REAL_OPENCODE);
+const it = REAL ? baseIt : baseIt.skip;
 const dirs: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 function fixture() {

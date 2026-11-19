@@ -1,3 +1,5 @@
+import { boundProxyState, spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
+import { readMcpCatalog } from "./mcp-listed.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -40,6 +42,8 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
   let requests = 0;
   let silenceMs = 4_000;
   let beats = 0;
+  let holdBody = false;
+  const heldResponses = new Set<import("node:http").ServerResponse>();
   const running = new Set<ChildProcess>();
   let proxy: ChildProcess | null = null;
   const results = new Map<number, any>();
@@ -62,9 +66,18 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
         }
         if (!url.pathname.endsWith("/commands")) return res.writeHead(404).end("{}");
         const command = JSON.parse(body || "{}").command ?? "";
+        if (holdBody) {
+          // the first command request: headers and a partial JSON body, then silence until the test ends
+          holdBody = false;
+          res.writeHead(200, { "content-type": "application/json" });
+          res.write('{"exitCode":0,"stdo');
+          heldResponses.add(res);
+          return;
+        }
         // round trips that carry a command's state (not the record cleanup after it)
         if (command.includes("EXEC_STATE")) requests += 1;
         const child = spawn("bash", ["-c", command], {
+          windowsHide: true,
           env: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin" },
           detached: true,
           stdio: ["ignore", "pipe", "pipe"],
@@ -108,13 +121,17 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
     proxy = null;
     silenceMs = 4_000;
     beats = 0;
+    holdBody = false;
+    for (const held of heldResponses) held.destroy();
+    heldResponses.clear();
     results.clear();
     // leave nothing behind between cases
     await new Promise((r) => setTimeout(r, 200));
   });
 
-  const start = (env: Record<string, string> = {}) => {
-    proxy = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
+  const start = async (env: Record<string, string> = {}) => {
+    proxy = await spawnBoundProxy("computer", process.execPath, ["--experimental-strip-types", PROXY], {
+      windowsHide: true,
       env: {
         ...process.env,
         MURAGEBOX_BOX_API: `http://127.0.0.1:${boxPort}`,
@@ -184,7 +201,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
   };
 
   it("keeps a command running past one request's limit while it prints, and returns its whole result", async () => {
-    start();
+    await start();
     exec(1, "for i in 1 2 3 4 5 6; do echo tick $i; sleep 1; done; echo finished >&2; exit 3");
     const res = await waitFor(1);
     const text = res.result.content[0].text as string;
@@ -199,7 +216,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
   }, 40_000);
 
   it("a quick command still answers in one round trip and leaves nothing on the computer", async () => {
-    start({ MURAGE_EXEC_FIRST_WAIT_SEC: "5" });
+    await start({ MURAGE_EXEC_FIRST_WAIT_SEC: "5" });
     const before = requests;
     exec(2, "echo hello");
     const res = await waitFor(2);
@@ -210,7 +227,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
 
   it("a busy command that prints nothing is working, not silent", async () => {
     silenceMs = 3_000;
-    start();
+    await start();
     exec(3, "echo go; end=$((SECONDS+7)); while [ $SECONDS -lt $end ]; do :; done; echo busy-done");
     const res = await waitFor(3);
     expect(res.result.content[0].text).toContain("busy-done");
@@ -218,7 +235,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
 
   it("stops a command after the silence limit with no output or work, and its processes are gone", async () => {
     silenceMs = 4_000;
-    start();
+    await start();
     const pidFile = join(home, "silent.pid");
     exec(4, `echo started; sleep 120 & echo $! > ${pidFile}; wait`);
     const sleeper = await untilFile(pidFile);
@@ -233,7 +250,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
 
   it("Stop (MCP cancel) ends the command at once and sends no result", async () => {
     silenceMs = 600_000;
-    start();
+    await start();
     const pidFile = join(home, "stop.pid");
     exec(5, `sleep 120 & echo $! > ${pidFile}; wait`);
     const sleeper = await untilFile(pidFile);
@@ -244,10 +261,50 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
     rmSync(pidFile, { force: true });
   }, 40_000);
 
+  it("c11-cancel computer P-4: a cancelled computer_exec call gets no frame and the catalog still certifies from the next tools/list", async () => {
+    silenceMs = 600_000;
+    const marker = join(home, "generation.computer");
+    await start({ MURAGE_MCP_LISTED_FILE: marker });
+    const pidFile = join(home, "stop-catalog.pid");
+    exec(15, `sleep 120 & echo $! > ${pidFile}; wait`);
+    const sleeper = await untilFile(pidFile);
+    rpc({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 15, reason: "stop" } });
+    expect(await untilDead(sleeper)).toBe(true);
+    rpc({ jsonrpc: "2.0", id: 16, method: "tools/list" });
+    const listed = await waitFor(16).catch(error => {
+      console.error("cancel catalog diagnostic", JSON.stringify({ state: boundProxyState(proxy!), resultIds: [...results.keys()] }));
+      throw error;
+    });
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(results.has(15)).toBe(false);
+    expect(boundProxyState(proxy!)).toEqual({ sealed: false, refusals: 0 });
+    expect(readMcpCatalog(marker)).toMatchObject({ complete: true, tools: listed.result.tools.map((tool: { name: string }) => tool.name) });
+    rmSync(pidFile, { force: true });
+  }, 40_000);
+
+  it("cancelling while the box response body is still being read leaves the mount unsealed and the next tools/list answered", async () => {
+    silenceMs = 600_000;
+    holdBody = true;
+    await start();
+    exec(25, "echo HOLD_BODY");
+    const deadline = Date.now() + 10_000;
+    while (!heldResponses.size && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    expect(heldResponses.size).toBe(1);
+    // let the proxy receive the headers and partial body before cancelling
+    await new Promise((r) => setTimeout(r, 500));
+    rpc({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 25, reason: "stop" } });
+    await new Promise((r) => setTimeout(r, 1_000));
+    rpc({ jsonrpc: "2.0", id: 26, method: "tools/list" });
+    const listed = await waitFor(26);
+    expect(listed.result.tools.length).toBeGreaterThan(0);
+    expect(results.has(25)).toBe(false);
+    expect(boundProxyState(proxy!)).toEqual({ sealed: false, refusals: 0 });
+  }, 40_000);
+
   it("the engine closing the tool (stdin end or SIGTERM) ends its command", async () => {
     for (const how of ["stdin", "sigterm"] as const) {
       silenceMs = 600_000;
-      const child = start();
+      const child = await start();
       const pidFile = join(home, `close-${how}.pid`);
       exec(6, `sleep 120 & echo $! > ${pidFile}; wait`);
       const sleeper = await untilFile(pidFile);
@@ -267,7 +324,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
       // Earlier cases in this file may leave their own records; this case checks only its own.
       const earlier = new Set(jobDirs());
       const ownJobs = () => jobDirs().filter((id) => !earlier.has(id));
-      start();
+      await start();
       exec(20, `cat '${file}'; cat '${file}' >&2`);
       const res = await waitFor(20);
       const text = res.result.content[0].text as string;
@@ -283,7 +340,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
   }
 
   it("a chatty command keeps only a bounded prefix on the computer's disk", async () => {
-    start({ MURAGE_EXEC_OUTPUT_CAP: "524288" });
+    await start({ MURAGE_EXEC_OUTPUT_CAP: "524288" });
     exec(8, "echo beginning; for i in 1 2 3 4 5; do head -c 400000 /dev/zero | tr '\\0' a; echo; sleep 1; done; echo END");
     const res = await waitFor(8);
     const text = res.result.content[0].text as string;
@@ -294,7 +351,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
 
   it("a quiet build of many short-lived steps is working, not silent", async () => {
     silenceMs = 3_000;
-    start();
+    await start();
     exec(11, "echo build; end=$((SECONDS+7)); while [ $SECONDS -lt $end ]; do bash -c 'x=0; while [ $x -lt 3000 ]; do x=$((x+1)); done'; done; echo built");
     const res = await waitFor(11, 40_000);
     expect(res.result.content[0].text).toContain("built");
@@ -302,7 +359,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
 
   it("an idle foreground server is not working: it is stopped as silent", async () => {
     silenceMs = 4_000;
-    start();
+    await start();
     exec(9, "echo listening; while :; do sleep 1; done");
     const res = await waitFor(9, 40_000);
     expect(res.result.isError).toBe(true);
@@ -312,7 +369,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
 
   it("Stop also ends a process the command moved into a session of its own", async () => {
     silenceMs = 600_000;
-    start();
+    await start();
     const pidFile = join(home, "escaped.pid");
     exec(10, `setsid sleep 120 & echo $! > ${pidFile}; wait`);
     const sleeper = await untilFile(pidFile);
@@ -323,7 +380,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
 
   it("a command whose proxy was killed outright stops on its own once nobody checks on it", async () => {
     silenceMs = 600_000;
-    const child = start({ MURAGE_EXEC_LEASE_SEC: "3" });
+    const child = await start({ MURAGE_EXEC_LEASE_SEC: "3" });
     const pidFile = join(home, "orphan.pid");
     exec(7, `sleep 120 & echo $! > ${pidFile}; wait`);
     const sleeper = await untilFile(pidFile);

@@ -50,7 +50,7 @@ describe.skipIf(process.platform === "win32")("memory refusal at a late submissi
     await api("PATCH", `/api/bots/${bot.id}`, { section: "Revoke after the tool" });
     writeFileSync(gate, "");
     const messages = async () => ((await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages as any[]);
-    const card = (message: any) => /could not start this reply/.test(`${message.text ?? ""} ${message.tool?.name ?? ""}`);
+    const card = (message: any) => /(?:could not|couldn't) start this reply/.test(`${message.text ?? ""} ${message.tool?.name ?? ""}`);
     await expect.poll(async () => (await messages()).some(card), { timeout: 20000 }).toBe(true);
     // a rebuild would dispatch again (and wait on a fresh gate): give it the time it would take, then count
     await new Promise(resolve => setTimeout(resolve, 1500));

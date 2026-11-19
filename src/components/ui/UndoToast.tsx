@@ -10,6 +10,7 @@
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { X } from "lucide-react";
 import { localeVersion, subscribeLocale, t } from "@/lib/i18n";
+import { NOTICE_CORNER, useClearOfComposer, useNoticeTurn } from "@/lib/notice-lane";
 import { connectUndoHost, undoHost, useUndoToast, type UndoHold, type UndoHost, type UndoToastView } from "@/lib/undo";
 
 export interface UndoToastProps {
@@ -24,10 +25,14 @@ const BUTTON = "inline-flex min-h-11 min-w-11 items-center justify-center rounde
 
 /** The card itself: headline, Undo, the optional action, Dismiss, and any lines underneath. */
 export function UndoToast({ view, onUndo, onAction, onDismiss, onHold }: UndoToastProps) {
+  const frame = useRef<HTMLDivElement>(null);
+  const clear = useClearOfComposer(frame, true);
   return (
     <div
+      ref={frame}
       data-undo-toast=""
-      className="fixed bottom-4 left-4 right-4 z-[60] rounded-xl border border-hairline/50 bg-card px-3.5 py-1.5 text-[13px] text-ink shadow-xl sm:right-auto sm:max-w-[300px]"
+      style={clear}
+      className={`${NOTICE_CORNER} rounded-xl border border-hairline/50 bg-card px-3.5 py-1.5 text-[13px] text-ink shadow-xl`}
       onPointerEnter={() => onHold?.("pointer", true)}
       onPointerLeave={() => onHold?.("pointer", false)}
       onFocus={() => onHold?.("focus", true)}
@@ -76,6 +81,8 @@ export function UndoToast({ view, onUndo, onAction, onDismiss, onHold }: UndoToa
 /** Mount once, before <main>. Wires the page lifecycle and Cmd/Ctrl+Z and Esc to the host. */
 export function UndoToastHost({ host = undoHost }: { host?: UndoHost }) {
   const view = useUndoToast(host);
+  // The one floating notice at a time (lib/notice-lane.ts): Undo answers what the person just did, so it goes first.
+  const turn = useNoticeTurn("undo", view !== null);
   // Re-render on a language change: the copy comes from t().
   useSyncExternalStore(subscribeLocale, localeVersion, localeVersion);
   const region = useRef<HTMLDivElement>(null);
@@ -126,7 +133,7 @@ export function UndoToastHost({ host = undoHost }: { host?: UndoHost }) {
         }
       }}
     >
-      {view && (
+      {view && turn && (
         <UndoToast
           view={view}
           onUndo={(id) => host.undo(id)}

@@ -19,10 +19,13 @@ import { InternalCapabilities } from "./internal-capabilities.ts";
 import { capabilitiesHaveTools, capabilityHash, engineProfile, engineStamp, instanceRouteHasTools, routeHasTools, type EngineProfile } from "./engine-profile.ts";
 import { routeHasTools as flagsRouteHasTools } from "./engine-capabilities.ts";
 import { DIRECT_REPLAY_LINES, REPLAY_BUDGET_CAP_BYTES, filterDirectReplay, replayBudgetBytes, replayWindow } from "./memory/disclosures.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "./testing/recall-access-fixture.ts";
 import { ROUTE_POLICY } from "./route-policy.ts";
 import { transcriptText } from "./replies.ts";
 import { Store, type Message } from "./store.ts";
+import { writeRoutineRunCard, type RoutineCardDeps } from "./routine-run-card.ts";
+import type { RoutineRun } from "./routines.ts";
 import { buildTurnContext, engineIsFresh, runHeaders, transcriptForDriver, type TranscriptEntry } from "./turn-context.ts";
 import { lineSource } from "./testing/bot-row.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
@@ -385,24 +388,31 @@ describe("CF-5 history is fixed (I-24)", () => {
       // readdirSync joins nested names with the platform separator; compare as posix
       .map((file) => String(file).replaceAll("\\", "/"))
       .filter((file) => file.endsWith(".ts") && !file.includes(".test.") && !file.startsWith("testing/"))
-      .filter((file) => /\b(?:patchMessage|updateMessage|deleteMessage|removeMessage)\(/.test(source(file)))
+      .filter((file) => /\b(?:patchMessage(?:Point)?|updateMessage|deleteMessage|removeMessage)\(/.test(source(file)))
       .sort();
     expect(writers).toEqual([
       // a bot call's own card row (BOT-CALLS-109 8): each transition rewrites that call's card, never another row
+      "bot-call-authority.ts", // 4f6495f025: only its own card authority/pass, never historical text
       "bot-calls-card.ts",
       // the compile-time guard's own examples of a write that must not compile, and the boundary's one non-text link to a row (never its words)
       "bot-egress.expect-errors.ts",
+      "bot-review-notices.ts", // 4f6495f025: marks its own review notice answered
       "boundary-ports.ts",
       "browser-extension-approvals.ts",
-      "browser-extension-setup.ts",
       // a bot widget's own row (QW Q4): an update or a settle rewrites that widget and its text form, never another row
       "chat-widgets.ts",
       // a queued hand-off's Messaged row gains its room link when the room exists (S6 rule 6); never its words
       "comms-visibility.ts",
+      // MAIN RULING INT-CONFLICT-DEFAULT f685e86827e / 6e2c2b41763: the central
+      // decision writer owns only approval/question terminal metadata. Count point writes too.
+      "decision-wiring/runtime-fixture.ts", // source-only decision doubles, never shipped authority
+      "decision/answer-as-send.ts",
+      "decision/implementation.ts",
       "delegations.ts",
       // a held reply's own dres- row: the settle sets or clears its withheldFromBots flag (REPLY-WITHHELD-CONTRACT C4); never its words
       "held-replies.ts",
-      "host-computer-consent.ts",
+      // HighLevel settles only its own review card metadata, preserving the conversation words.
+      "highlevel/review-cards.ts",
       "image-operations.ts",
       "index.ts",
       "message-db.ts",
@@ -411,10 +421,36 @@ describe("CF-5 history is fixed (I-24)", () => {
       // a routine run's own result card (ROUTINE-DELIVER-1010, stable id routineResultId(run.id)): a retry rewrites that card, never another row
       "routine-delivery.ts",
       "routine-requests.ts",
+      // a routine run's own lifecycle card (boot tolerance E2: writeRoutineRunCard moved here from index.ts unchanged): a replayed transition patches
+      // that run's card (kind routine.run, matched by runId), never another row
+      "routine-run-card.ts",
       "steer-late.ts",
       "steer-queue.ts",
       "store.ts",
     ]);
+  });
+
+  it("routine-run-card.ts rewrites only its own run's card (MAIN 2026-11-17 Q5): other runs' cards and every other row are never patched", () => {
+    const rows = [
+      { id: "m-ask", kind: "text" }, { id: "c-run-0", kind: "routine.run", routineRun: { runId: "run-0" } },
+      { id: "c-run-1", kind: "routine.run", routineRun: { runId: "run-1" } }, { id: "c-run-2", kind: "routine.run", routineRun: { runId: "run-2" } },
+    ] as unknown as Message[];
+    const patched: string[] = [], added: string[] = [];
+    const deps: RoutineCardDeps = {
+      newestSince: (_threadId, _at, test) => rows.filter(test).at(-1),
+      patchMessage: (threadId, messageId) => { patched.push(`${threadId} ${messageId}`); },
+      appendMessage: (threadId, message) => { added.push(`${threadId} ${message.kind}`); },
+      patchGroup: () => undefined, patchTask: () => undefined, notifyChanged: () => undefined,
+    };
+    const source = { threadId: "t-room", bot: { id: "b1", name: "Painter", color: "#000" }, group: { id: "g1" } };
+    const run = (id: string) => ({ id, routineId: "routine-1", routineName: "Morning", target: "bot", botId: "b1", status: "completed", manual: false,
+      scheduledFor: 0, createdAt: 1, sourceThreadId: "t-room", output: "done", delivery: { state: "pending" } }) as unknown as RoutineRun;
+    writeRoutineRunCard(run("run-1"), source, deps);
+    expect(patched).toEqual(["t-room c-run-1"]);
+    expect(added).toEqual([]);
+    writeRoutineRunCard(run("run-3"), source, deps);     // no card of its own yet: a new row, nothing rewritten
+    expect(patched).toEqual(["t-room c-run-1"]);
+    expect(added).toEqual(["t-room routine.run"]);
   });
 
   it("registers no agent tool that writes messages", () => {
@@ -422,6 +458,6 @@ describe("CF-5 history is fixed (I-24)", () => {
       .map(String)
       .filter((file) => file.endsWith(".ts") && !file.includes(".test.") && /(?:^|\/)mcp-[\w-]*\.ts$|(?:^|\/)[\w-]*-tools\.ts$/.test(file));
     expect(tools.length).toBeGreaterThan(5);
-    for (const file of tools) expect(source(file), file).not.toMatch(/\b(?:patchMessage|updateMessage|deleteMessage|removeMessage)\(/);
+    for (const file of tools) expect(source(file), file).not.toMatch(/\b(?:patchMessage(?:Point)?|updateMessage|deleteMessage|removeMessage)\(/);
   });
 });

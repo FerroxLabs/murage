@@ -136,7 +136,7 @@ describe("pinned against the server's actual strings and codes", () => {
   });
 
   it("the door's device-auth refusal (server/index.ts ~11386): 401, code desktop_only", () => {
-    const line = 'if (!desktop && !paired) return json(res, 401, { error: "browser owner authentication required", code: "desktop_only" });';
+    const line = 'if (!principal) return json(res, 401, { error: "browser owner authentication required", code: "desktop_only" });';
     expect(index).toContain(line);
     const message = line.match(/error: "([^"]*)"/)?.[1];
     const code = line.match(/code: "([^"]*)"/)?.[1];

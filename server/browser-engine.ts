@@ -1,9 +1,11 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Adapted from upstream 2e6701eb (Apache-2.0): optional headless browser.
 // Murage adds bounded downloads, fail-closed key ownership, installation
 // realms, isolated child storage, and explicit session cleanup.
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { accessSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, opendirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { accessSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, opendirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { browserBundlePaths, browserBundleSpec } from "./browser-bundle-release.ts";
@@ -15,9 +17,10 @@ import { browserLockTurnNote, type BrowserProtection } from "./browser-lock.ts";
 import { BEFOREUNLOAD_GUARD_SCRIPT } from "./browser-beforeunload-guard.ts";
 import { murageTool } from "./murage-tool-surface.ts";
 import { DATA_DIR } from "./config.ts";
-import { AGENT_BROWSER_VERSION, agentBrowserReleaseVersion, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset, type AgentBrowserReleaseAsset } from "./browser-engine-release.ts";
+import { AGENT_BROWSER_VERSION, agentBrowserReleaseVersion, agentBrowserReleaseUrl, agentBrowserVersionOutputAccepted, resolveAgentBrowserReleaseAsset, type AgentBrowserReleaseAsset } from "./browser-engine-release.ts";
 import { browserLaunchFailure, CLOUD_BROWSER_BOT, spawnCloudBrowser } from "./cloud-home/browser-process.ts";
 import { cloudHomeCopy } from "./cloud-home/copy.ts";
+import { CONTROL_TOKEN_ENV, newControlToken } from "./browser-control-token.ts";
 
 const KEY_FILE = "browser-engine-key";
 type ResolveOptions = { dataDir?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; arch?: string; musl?: boolean; /** false: read what is already known and never launch a signature check. */ startCheck?: boolean; /** Windows' signature check (test seam); default: the packaged engine-exclusion addon. */ authenticode?: NativeAuthenticode | null };
@@ -62,7 +65,7 @@ export const ADMISSION_CACHE_TTL_MS = 10 * 60_000;
  * (the "racily clean" rule). */
 const ADMISSION_RACY_WINDOW_MS = 2_000;
 const admittedBundles = new Map<string, { binary: string; at: number }>();
-export function clearBrowserAdmissionCache(): void { admittedBundles.clear(); }
+export function clearBrowserAdmissionCache(): void { admittedBundles.clear(); closeAdmissions.clear(); }
 /** The sealed app payload `codesign --verify` on Murage.app covers: the asar
  * (electron-builder `asar: true` puts it at <Resources>/app.asar), its
  * unpacked dir and every native .node inside it, Info.plist, the main
@@ -165,24 +168,60 @@ function matchesPin(file: string, options: ResolveOptions): boolean {
     return createHash("sha256").update(readFileSync(file)).digest("hex") === asset.sha256;
   } catch { return false; }
 }
+/** Close only uses admission evidence already established by the resolver. No
+ * manifest extension, discovery command or signature check runs during close. */
+type CloseAdmission = { path: string; stamp: string; asset: AgentBrowserReleaseAsset };
+const closeAdmissions = new Map<string, CloseAdmission>();
+// Test-only admission fixture; production close never calls this seam.
+export const closeCapabilitySeam = { admission: (_spec: AgentBrowserSpec): CloseAdmission | null => null };
+// darwin-x64 is deliberately absent until R5 qualifies it. Other Linux
+// targets have no desktop close gate; sharing a vendor revision is insufficient.
+export const CLOSE_PROTOCOL: Record<string, { protocol: "legacy-v1"; targets: ReadonlySet<string> }> = {
+  "0.36.0-omb.2": { protocol: "legacy-v1", targets: new Set(["darwin-arm64"]) },
+  "0.36.0-omb.3": { protocol: "legacy-v1", targets: new Set(["win32-x64"]) },
+  "0.36.0-omb.4": { protocol: "legacy-v1", targets: new Set(["linux-x64"]) },
+};
+function rememberCloseAdmission(binary: string, options: ResolveOptions): string {
+  const path = resolve(binary), stamp = agentBrowserStamp(path);
+  const platform = options.platform ?? process.platform;
+  const asset = resolveAgentBrowserReleaseAsset(platform, options.arch ?? process.arch, options.musl ?? isMusl(platform));
+  if (stamp && asset) closeAdmissions.set(path, { path, stamp, asset });
+  return binary;
+}
+export function closeCapability(spec: AgentBrowserSpec): { cap: "legacy-v1" } | { refuse: "engine_unverified" } {
+  const refused = { refuse: "engine_unverified" } as const;
+  if (spec.env.MURAGE_AGENT_BROWSER_PATH?.trim()) return refused;
+  const path = resolve(spec.command);
+  const admission = (process.env.NODE_ENV === "test" ? closeCapabilitySeam.admission(spec) : null) ?? closeAdmissions.get(path);
+  const verified = verifiedAgentBrowsers.get(path);
+  if (!admission || admission.path !== path || admission.stamp !== agentBrowserStamp(path)
+    || verified?.stamp !== admission.stamp || verified.output === undefined
+    || !agentBrowserVersionOutputAccepted(verified.output, admission.asset)) return refused;
+  const row = CLOSE_PROTOCOL[agentBrowserReleaseVersion(admission.asset)];
+  return row?.targets.has(admission.asset.target) ? { cap: row.protocol } : refused;
+}
 /** Explicit invalid overrides refuse fallback, so a typo cannot silently
  * launch a different executable. Only downloaded binaries claim the pin. */
 export function resolveAgentBrowserBinary(options: ResolveOptions = {}): string | null {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const override = env.MURAGE_AGENT_BROWSER_PATH?.trim();
-  if (override) return executable(resolve(override), platform) ? resolve(override) : null;
+  if (override) {
+    closeAdmissions.delete(resolve(override));
+    return executable(resolve(override), platform) ? resolve(override) : null;
+  }
   const resources = env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH;
   if (resources) {
     try {
       const target = `${platform}-${options.arch ?? process.arch}`;
       const bundle = browserBundlePaths(join(resources, "browser-engine"), target);
       const pin = browserBundleSpec(target);
+      closeAdmissions.delete(resolve(bundle.engine));
       const key = admissionIdentity(resources, bundle, target);
       const hit = key ? admittedBundles.get(key) : undefined;
       // Fast path ONLY for a byte-identical, already-admitted bundle: every
       // stat field below changes on any write, replace, chmod or re-sign.
-      if (key && hit && Date.now() - hit.at < ADMISSION_CACHE_TTL_MS && executable(bundle.engine, platform) && executable(bundle.chrome, platform)) return hit.binary;
+      if (key && hit && Date.now() - hit.at < ADMISSION_CACHE_TTL_MS && executable(bundle.engine, platform) && executable(bundle.chrome, platform)) return rememberCloseAdmission(hit.binary, options);
       // Both images are looked at every time, so Windows checks the engine and Chrome together.
       const engine = matchesPin(bundle.engine, options);
       const chrome = executable(bundle.chrome, platform) && (platform === "win32"
@@ -198,17 +237,21 @@ export function resolveAgentBrowserBinary(options: ResolveOptions = {}): string 
         const after = admissionIdentity(resources, bundle, target);
         if (after === key) admittedBundles.set(key, { binary: admitted, at: Date.now() });
       }
-      return admitted;
+      return admitted ? rememberCloseAdmission(admitted, options) : null;
     } catch { return null; }
   }
   const pinned = pinnedBinaryPath(options.dataDir, platform);
-  if (matchesPin(pinned, options)) return pinned;
+  closeAdmissions.delete(resolve(pinned));
+  if (matchesPin(pinned, options)) return rememberCloseAdmission(pinned, options);
   const path = platform === "win32" ? Object.entries(env).findLast(([key]) => key.toUpperCase() === "PATH")?.[1] : env.PATH;
   for (const part of (path ?? "").split(platform === "win32" ? ";" : ":")) {
     const dir = part.trim().replace(/^"|"$/gu, "");
     if (!dir) continue;
     const candidate = resolve(dir, platform === "win32" ? "agent-browser.exe" : "agent-browser");
-    if (platform === "win32" ? matchesPin(candidate, options) : executable(candidate, platform)) return candidate;
+    if (platform === "win32" ? matchesPin(candidate, options) : executable(candidate, platform)) {
+      closeAdmissions.delete(candidate);
+      return candidate;
+    }
   }
   return null;
 }
@@ -394,17 +437,14 @@ export const engineNeedsOwnDialogAnswers = (platform: NodeJS.Platform): boolean 
 export { BEFOREUNLOAD_GUARD_SCRIPT };
 const BEFOREUNLOAD_GUARD_FILE = "beforeunload-guard.js";
 
-/** Child-only home is necessary: pinned agent-browser stores saved state in
- * ~/.agent-browser; it has no AGENT_BROWSER_HOME override. Namespace alone
- * would still write outside the installation. No parent env is modified. */
-export function agentBrowserIntegration(input: {
-  binaryPath: string; session: string; encryptionKey: string; dataDir: string; realmId: string;
-  persistent?: boolean; env?: NodeJS.ProcessEnv;
-  botId?: string;
-  /** The owner's running Chrome (server/user-chrome.ts). Only ever passed
-   * explicitly by the caller; AGENT_BROWSER_CDP is never inherited. */
-  attachCdpUrl?: string;
-}): AgentBrowserSpec {
+/** Like the host-power seam, this is process memory, never an environment switch.
+ * Only an unpackaged test process may inject a host for fake-browser workflows. */
+export const BROWSER_HOST_TEST = Symbol.for("murage.browserHost.testHost");
+export interface BrowserHost { assertSandbox(): void }
+export function assertBrowserHostSandbox(): void {
+  const fakeHost = (globalThis as Record<symbol, unknown>)[BROWSER_HOST_TEST] as BrowserHost | undefined;
+  if (process.env.NODE_ENV === "test" && !process.env.MURAGE_PACKAGED && !process.env.MURAGE_RESOURCES_PATH && !process.env.OMB_RESOURCES_PATH
+    && fakeHost && typeof fakeHost.assertSandbox === "function") return fakeHost.assertSandbox();
   // Pinned upstream silently adds --no-sandbox in root/container environments.
   // Refuse those hosts rather than weakening Murage's production sandbox.
   let cgroup = "";
@@ -421,6 +461,20 @@ export function agentBrowserIntegration(input: {
   if (browserHostRequiresSandboxBypass({ platform: process.platform, uid: process.getuid?.(), cgroup,
     markerPresent: ["/.dockerenv", "/run/.containerenv"].some(file => { try { return lstatSync(file).isFile(); } catch { return false; } }),
   })) throw new Error("The browser engine requires a sandbox-capable non-container host");
+}
+
+/** Child-only home is necessary: pinned agent-browser stores saved state in
+ * ~/.agent-browser; it has no AGENT_BROWSER_HOME override. Namespace alone
+ * would still write outside the installation. No parent env is modified. */
+export function agentBrowserIntegration(input: {
+  binaryPath: string; session: string; encryptionKey: string; dataDir: string; realmId: string;
+  persistent?: boolean; env?: NodeJS.ProcessEnv;
+  botId?: string;
+  /** The owner's running Chrome (server/user-chrome.ts). Only ever passed
+   * explicitly by the caller; AGENT_BROWSER_CDP is never inherited. */
+  attachCdpUrl?: string;
+}): AgentBrowserSpec {
+  assertBrowserHostSandbox();
   if (!/^[a-f0-9]{64}$/u.test(input.encryptionKey)) throw new Error("Invalid browser encryption key");
   if (!/^[A-Za-z0-9_-]{1,80}$/u.test(input.session) || !input.realmId) throw new Error("Invalid browser session or authentication realm");
   if (process.env.MURAGE_CLOUD_ROLE === "home") {
@@ -429,6 +483,8 @@ export function agentBrowserIntegration(input: {
     const env = { [CLOUD_BROWSER_BOT]: input.botId, HOME: home, USERPROFILE: home,
       AGENT_BROWSER_SOCKET_DIR: `${home}/sockets`, AGENT_BROWSER_SESSION: input.session,
       AGENT_BROWSER_ENCRYPTION_KEY: input.encryptionKey,
+      // BRTOKEN19: one control token per launch, for the engine's stream port and Windows daemon port. Env only, never argv.
+      [CONTROL_TOKEN_ENV]: newControlToken(),
       AGENT_BROWSER_RESTORE_SAVE: input.persistent === false || input.session.startsWith("guest-") ? "never" : "auto" };
     return { command: input.binaryPath, args: ["mcp", "--tools", "core", "--no-webmcp"], env: {
       ...env, ...(env.AGENT_BROWSER_RESTORE_SAVE === "auto" ? { AGENT_BROWSER_RESTORE: input.session } : {}) } };
@@ -452,6 +508,8 @@ export function agentBrowserIntegration(input: {
     AGENT_BROWSER_SESSION: input.session,
     AGENT_BROWSER_RESTORE_SAVE: input.persistent === false || input.session.startsWith("guest-") ? "never" : "auto",
     AGENT_BROWSER_ENCRYPTION_KEY: input.encryptionKey,
+    // BRTOKEN19: one control token per launch, for the engine's stream port and Windows daemon port. Env only, never argv.
+    [CONTROL_TOKEN_ENV]: newControlToken(),
     AGENT_BROWSER_HEADED: "0",
     AGENT_BROWSER_NO_WEBMCP: "1",
     AGENT_BROWSER_IDLE_TIMEOUT_MS: "60000",
@@ -496,7 +554,7 @@ export function agentBrowserIntegration(input: {
 function runEngine(binary: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<string> {
   return new Promise((resolveRun, reject) => {
     const child = spawnCloudBrowser(args, env) ?? (() => {
-      const child = spawn(binary, args, { env, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      const child = spawn(binary, [...args], withHideInherit({ env, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true }));
       return child;
     })();
     let output = "";
@@ -524,15 +582,16 @@ function runEngine(binary: string, args: string[], env: NodeJS.ProcessEnv, timeo
  * runs without the browser — so the budget bounds how long a turn waits
  * before going on without it, not whether it runs at all. */
 const AGENT_BROWSER_VERIFY_TIMEOUT_MS = 20_000;
-async function checkAgentBrowserVersion(binary: string, env: NodeJS.ProcessEnv): Promise<void> {
+async function checkAgentBrowserVersion(binary: string, env: NodeJS.ProcessEnv): Promise<string> {
   const output = await runEngine(binary, ["--version"], env, AGENT_BROWSER_VERIFY_TIMEOUT_MS);
-  if (output !== `agent-browser ${AGENT_BROWSER_VERSION}` && output !== `agent-browser ${agentBrowserReleaseVersion(resolveAgentBrowserReleaseAsset())}`) throw new Error(`agent-browser ${AGENT_BROWSER_VERSION} is required`);
+  if (!agentBrowserVersionOutputAccepted(output, resolveAgentBrowserReleaseAsset())) throw new Error(`agent-browser ${AGENT_BROWSER_VERSION} is required`);
+  return output;
 }
 /** Successful (or in-flight) checks, per resolved binary path. The stamp is
  * the file's identity and content shape, so replacing or updating the engine
  * re-checks it. A failed check is dropped, never cached: the next turn tries
  * again rather than inheriting one slow start forever. */
-const verifiedAgentBrowsers = new Map<string, { stamp: string; check: Promise<void> }>();
+const verifiedAgentBrowsers = new Map<string, { stamp: string; check: Promise<void>; output?: string }>();
 function agentBrowserStamp(path: string): string | null {
   try {
     const info = statSync(path);
@@ -542,14 +601,15 @@ function agentBrowserStamp(path: string): string | null {
 export async function verifyAgentBrowserBinary(binary: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const path = resolve(binary);
   const stamp = agentBrowserStamp(path);
-  if (!stamp) return checkAgentBrowserVersion(binary, env);
+  if (!stamp) { await checkAgentBrowserVersion(binary, env); return; }
   const known = verifiedAgentBrowsers.get(path);
   if (known?.stamp === stamp) return known.check;
-  const check = checkAgentBrowserVersion(binary, env);
-  const entry = { stamp, check };
+  const entry: { stamp: string; check: Promise<void>; output?: string } = {
+    stamp, check: checkAgentBrowserVersion(binary, env).then(output => { entry.output = output; }),
+  };
   verifiedAgentBrowsers.set(path, entry);
   try {
-    await check;
+    await entry.check;
   } catch (error) {
     if (verifiedAgentBrowsers.get(path) === entry) verifiedAgentBrowsers.delete(path);
     throw error;

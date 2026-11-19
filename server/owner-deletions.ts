@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { oweFluxBotDeletion, oweFluxThreadForget } from "./flux-memory-spaces.ts";
 import { endLiveRequestsOfThread } from "./handoff-pair.ts";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -27,6 +28,9 @@ export const botDeletionKey = (botId: string): string => `bot:${botId}`;
  * the queue rows go (started ones too: their turn needs no second chance once its conversation is gone), in the same commit. A database
  * without the table has nothing to remove. */
 function dropHandoffsOfDeletedThread(db: DatabaseSync, threadId: string): void {
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='delegation_packs'").get()) {
+    db.prepare("DELETE FROM delegation_packs WHERE source_thread_id=? OR destination_thread_id=?").run(threadId, threadId);
+  }
   if (db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='pending_delegations'").get()) {
     // The request of a hand-off that shared work or a room would run is executable on its own: it is cancelled in this same commit (whatever live state it is
     // in), so the row's going cannot leave work behind that dispatch would still start.
@@ -35,12 +39,23 @@ function dropHandoffsOfDeletedThread(db: DatabaseSync, threadId: string): void {
   }
 }
 
-export function recordOwnerDeletion(db: DatabaseSync, threadId: string, now: number = Date.now()): void {
+/** `fluxAttempt`: the deletion attempt's token for the Flux tombstones and forgets this writes (a failed bot save withdraws only
+ * its own rows). Returns whether THIS call wrote the deletion record: a record an earlier, committed deletion wrote is not this
+ * attempt's to withdraw (FLUX-SPACES-CAPTURE-FORGET-106 R4.8). */
+export function recordOwnerDeletion(db: DatabaseSync, threadId: string, now: number = Date.now(), fluxAttempt?: string): boolean {
   initializeOwnerDeletions(db);
-  db.prepare("INSERT OR IGNORE INTO owner_deleted_threads (thread_id, deleted_at) VALUES (?, ?)").run(threadId, now);
-  if (!threadId.startsWith("bot:") && !threadId.startsWith("group:")) dropHandoffsOfDeletedThread(db, threadId);
+  const inserted = Number(db.prepare("INSERT OR IGNORE INTO owner_deleted_threads (thread_id, deleted_at) VALUES (?, ?)").run(threadId, now).changes) > 0;
+  if (threadId.startsWith("bot:")) {
+    // the bot's Flux space is tombstoned and owed a DELETE, in this same commit (flux-memory-forget.ts)
+    oweFluxBotDeletion(db, threadId.slice(4), fluxAttempt, now);
+  } else if (!threadId.startsWith("group:")) {
+    dropHandoffsOfDeletedThread(db, threadId);
+    // the conversation is tombstoned and owed a thread forget in every Flux space it was captured to, in this same commit
+    oweFluxThreadForget(db, threadId, fluxAttempt, now);
+  }
   wakeRetainedFor(db, threadId);
   for (const listener of listeners) { try { listener(threadId); } catch { /* a listener never decides whether the deletion was recorded */ } }
+  return inserted;
 }
 
 /** Code that keeps parked work in memory (delegations.ts) listens for recorded deletions, so a tombstone settles what it names at once instead of

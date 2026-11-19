@@ -1,3 +1,6 @@
+import type { EngineTransport } from "../../shared/engine-transport.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { botFolderOrThrow } from "../bot-folder.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
@@ -8,8 +11,10 @@ import { botFolderOrThrow } from "../bot-folder.ts";
 // environment (never process.env stripped), is tracked by a ChildTeardown from the moment it exists, and is stopped by
 // markStopRequested then killCliTree. Nothing a server writes to stderr is ever read, and no server error text or stderr
 // reaches a caller: every failure carries one of the fixed ChatMcpError messages (section 8).
+import { RelayedMount } from "./cli-mount-relay.ts";
 import type { ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { admittedMcpMount, type AdmittedMcpMount } from "./mcp-mounts.ts";
 
 import { augmentedPath } from "../env-path.ts";
 import {
@@ -17,6 +22,8 @@ import {
 } from "../procs.ts";
 import { ChildTeardown } from "./child-teardown.ts";
 import { descendantIdentitiesKeepingUnknown, processParentsAndArgs, type ProcessIdentities } from "./process-tree.ts";
+import { linuxDescendantIdentities, linuxParentsAndArgs } from './linux-process-snapshot.ts';
+import { platformProcessHooks } from '../platform-process-hooks.ts';
 
 export const CHAT_MCP_PROTOCOL_VERSION = "2025-06-18";
 /** One frame (one line) may hold at most this many bytes; a longer line kills the session. */
@@ -58,6 +65,8 @@ export interface ChatMcpSession {
   readonly teardown: ChildTeardown;
   callTool(name: string, args: Record<string, unknown>, opts: ChatMcpCallOptions): Promise<ChatMcpCallResult>;
   close(): void;
+  /** Retire ingress before intentionally removing a mount mid-turn. */
+  retire(): void;
   readonly closed: boolean;
 }
 export interface OpenChatMcpOptions {
@@ -134,9 +143,10 @@ function parseEntry(entry: unknown): Launch | null {
 }
 
 const defaultSpawn = (command: string, args: string[], env: Record<string, string>, cwd: string): ChildProcess =>
-  spawnCli(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env }, engineJob());
+  !env.MURAGE_RELEASE_INSTANCE
+    ? spawnCli(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env }, engineJob())
+    : spawnCli(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe", "ipc"], env }, engineJob());
 
-const noop = () => { /* drained */ };
 const validId = (id: unknown): boolean => typeof id === "number" || typeof id === "string" || id === null;
 
 interface Pending { resolve(value: unknown): void; reject(error: ChatMcpError): void }
@@ -182,6 +192,7 @@ const linuxZombie = async (pid: number): Promise<boolean> => {
 export class ChatMcpDescendants {
   readonly #root: number | undefined;
   readonly #active: boolean;
+  readonly #local: boolean;
   readonly #known: ProcessIdentities = new Map();
   #frozen = false;
   /** The stop's own snapshot gave no answer in time: what escaped is unknown, so nothing can confirm the tree gone (Astra code-r2). */
@@ -198,6 +209,7 @@ export class ChatMcpDescendants {
   constructor(child: ChildProcess, platform: NodeJS.Platform = process.platform) {
     this.#root = child.pid;
     this.#active = platform !== "win32" && typeof child.pid === "number";
+    this.#local = platform === 'linux' && !platformProcessHooks().listTree;
   }
 
   /** False on Windows (the job holds the tree) and for a child the OS never created: nothing to track. */
@@ -207,7 +219,8 @@ export class ChatMcpDescendants {
   #take(): Promise<boolean> {
     const root = this.#root;
     if (!this.#active || root === undefined) return Promise.resolve(true);
-    return descendantIdentitiesKeepingUnknown(root).then((found) => {
+    const snapshot=this.#local?Promise.resolve(linuxDescendantIdentities(root)):descendantIdentitiesKeepingUnknown(root);
+    return snapshot.then((found) => {
       if (!found) return false;
       if (this.#frozen) return true;
       // an unreadable start is no identity: such a pid is never signalled, and nothing can later prove it gone, so the tree can no
@@ -277,7 +290,7 @@ export class ChatMcpDescendants {
   /** The remembered descendants still running as themselves (pruning the rest); null when the probe gave no answer. */
   async #remaining(): Promise<ProcessIdentities | null> {
     if (!this.#known.size) return this.#known;
-    const rows = await processParentsAndArgs(this.#known.keys()).catch(() => null);
+    const rows = this.#local?linuxParentsAndArgs(this.#known.keys()):await processParentsAndArgs(this.#known.keys()).catch(() => null);
     if (!rows) return null;
     this.#verified.clear();
     for (const [pid, start] of [...this.#known]) {
@@ -309,7 +322,7 @@ export class ChatMcpDescendants {
 }
 
 /** The server's teardown: the group's confirmation (after the stop's snapshot) AND every remembered descendant gone. */
-function chatMcpTeardown(child: ChildProcess, descendants: ChatMcpDescendants): ChildTeardown {
+export function chatMcpTeardown(child: ChildProcess, descendants: ChatMcpDescendants): ChildTeardown {
   return new ChildTeardown(
     child,
     (target) => Promise.all([descendants.ready().then(() => awaitCliTreeStopped(target)), descendants.stop()]).then(([tree, rest]) => tree && rest),
@@ -318,7 +331,9 @@ function chatMcpTeardown(child: ChildProcess, descendants: ChatMcpDescendants): 
   );
 }
 
-class ChatMcpConnection implements ChatMcpSession {
+export class ChatMcpConnection implements ChatMcpSession, EngineTransport {
+  readonly engineTransport = true as const;
+  readonly #mount: AdmittedMcpMount;
   readonly server: string;
   readonly teardown: ChildTeardown;
   readonly #child: ChildProcess;
@@ -326,28 +341,18 @@ class ChatMcpConnection implements ChatMcpSession {
   #closed = false;
   #nextId = 1;
   readonly #pending = new Map<number, Pending>();
-  #parts: Buffer[] = [];
-  #partsBytes = 0;
+  readonly #transport: RelayedMount;
   #frames = 0;
 
   readonly #descendants: ChatMcpDescendants;
 
-  constructor(server: string, child: ChildProcess, teardown: ChildTeardown, descendants: ChatMcpDescendants = new ChatMcpDescendants(child, "win32")) {
+  constructor(server: string, child: ChildProcess, teardown: ChildTeardown, descendants: ChatMcpDescendants, mount: AdmittedMcpMount) {
+    this.#mount = mount;
     this.server = server;
     this.#child = child;
     this.teardown = teardown;
     this.#descendants = descendants;
-    const { stdin, stdout, stderr } = child;
-    child.on("error", () => this.close());
-    // A reply already in the pipe can be reported after `exit`; the stream's own end closes at once.
-    child.once("exit", () => { const timer = setTimeout(() => this.close(), 50); timer.unref?.(); });
-    // stderr may carry credentials: drained and discarded, never read into anything.
-    if (stderr) { stderr.on("error", noop); stderr.resume(); }
-    if (!stdin || !stdout) { this.close(); return; }
-    stdin.on("error", () => this.close());
-    stdout.on("error", () => this.close());
-    stdout.on("end", () => this.close());
-    stdout.on("data", (chunk: Buffer | string) => this.#onData(typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk));
+    this.#transport = new RelayedMount(child, mount, frame => this.#acceptFrame(frame), error => { if (error !== undefined) this.retire(); this.close(); });
   }
 
   get tools(): ChatMcpToolDef[] { return this.#tools; }
@@ -356,6 +361,8 @@ class ChatMcpConnection implements ChatMcpSession {
 
   /** Remember the server's current descendants (H6); called after startup and after each answered call. */
   trackDescendants(): void { this.#descendants.track(); }
+
+  retire(): void { this.#mount.ingress.retire(); }
 
   /** Idempotent. Every pending request rejects; the child is marked stop-requested, then its whole tree is killed. On POSIX
    *  (H6) stdin ends and the group is signalled only after the stop's descendant snapshot (bounded by CHAT_MCP_SNAPSHOT_CAP_MS),
@@ -369,10 +376,11 @@ class ChatMcpConnection implements ChatMcpSession {
   #shutdown(graceMs: number): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#transport.retire();
+    this.#mount.close();
     const pending = [...this.#pending.values()];
     this.#pending.clear();
-    this.#parts = [];
-    this.#partsBytes = 0;
+
     const child = this.#child;
     const kill = () => {
       try { child.stdin?.end(); } catch { /* already closed */ }
@@ -408,7 +416,9 @@ class ChatMcpConnection implements ChatMcpSession {
   #write(message: Record<string, unknown>): boolean {
     if (this.#closed) return false;
     try {
-      this.#child.stdin?.write(`${JSON.stringify(message)}\n`);
+      const frame = JSON.stringify(message);
+      this.#transport.request(frame);
+      if (this.#closed) return false;
       return true;
     } catch {
       this.close();
@@ -439,7 +449,8 @@ class ChatMcpConnection implements ChatMcpSession {
       const stop = (kind: "aborted" | "timeout") => {
         if (!this.#pending.delete(id)) return;
         cleanup();
-        this.notify("notifications/cancelled", { requestId: id, reason: kind === "timeout" ? "timed out" : "cancelled" });
+        try { this.#mount.ingress.cancel(id, frame => { this.#child.stdin?.write(frame + "\n"); }); }
+        catch { this.#mount.ingress.seal(); }
         this.#shutdown(CHAT_MCP_CANCEL_GRACE_MS);
         reject(new ChatMcpError(kind));
       };
@@ -456,38 +467,17 @@ class ChatMcpConnection implements ChatMcpSession {
   async callTool(name: string, args: Record<string, unknown>, opts: ChatMcpCallOptions = {}): Promise<ChatMcpCallResult> {
     const timeoutMs = typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
       ? opts.timeoutMs : CHAT_MCP_CALL_TIMEOUT_MS;
-    const result = await this.request("tools/call", { name, arguments: args }, { signal: opts.signal, timeoutMs });
+    const result = await NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", this.request("tools/call", { name, arguments: args }, { signal: opts.signal, timeoutMs }));
     this.trackDescendants();
     return callResultOf(result, opts.scrub);
   }
 
-  #onData(chunk: Buffer): void {
-    let start = 0;
-    while (!this.#closed && start < chunk.length) {
-      const newline = chunk.indexOf(0x0a, start);
-      if (newline === -1) {
-        const rest = chunk.subarray(start);
-        if (this.#partsBytes + rest.length > CHAT_MCP_FRAME_CAP_BYTES) { this.close(); return; }
-        this.#parts.push(rest);
-        this.#partsBytes += rest.length;
-        return;
-      }
-      const piece = chunk.subarray(start, newline);
-      start = newline + 1;
-      if (this.#partsBytes + piece.length > CHAT_MCP_FRAME_CAP_BYTES) { this.close(); return; }
-      const line = this.#parts.length ? Buffer.concat([...this.#parts, piece]) : piece;
-      this.#parts = [];
-      this.#partsBytes = 0;
-      this.#onLine(line.toString("utf8"));
-    }
-  }
-
-  #onLine(text: string): void {
+  #acceptFrame(text: string): void {
     const line = text.trim();
     if (!line) return;
     if (++this.#frames > CHAT_MCP_MAX_FRAMES) { this.close(); return; }
     let message: unknown;
-    try { message = JSON.parse(line); } catch { this.close(); return; }
+    try { message = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { this.close(); return; }
     if (!isRecord(message) || message.jsonrpc !== "2.0") { this.close(); return; }
     const { id, method } = message;
     if (method !== undefined) {
@@ -495,7 +485,11 @@ class ChatMcpConnection implements ChatMcpSession {
       if (id === undefined) return; // a notification: nothing this client acts on
       if (!validId(id)) { this.close(); return; }
       // This client serves no server-initiated request (sampling, roots, elicitation, ping).
-      this.#write({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
+      // Ingress acceptance currently owns the SQLite writer. This reply is a
+      // distinct release: enqueue its fresh admission after that owner exits.
+      queueMicrotask(() => {
+        if (!this.#closed) this.#write({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
+      });
       return;
     }
     if (id === undefined || !validId(id) || ("result" in message) === ("error" in message)) { this.close(); return; }
@@ -535,20 +529,20 @@ function toolDefOf(raw: unknown): ChatMcpToolDef | null {
 }
 
 async function startSession(connection: ChatMcpConnection): Promise<ChatMcpToolDef[]> {
-  const init = await connection.request("initialize", {
+  const init = await NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", connection.request("initialize", {
     protocolVersion: CHAT_MCP_PROTOCOL_VERSION,
     capabilities: {},
     clientInfo: { name: "murage", version: "1" },
-  });
+  }));
   if (!isRecord(init)) throw new ChatMcpError("failed");
-  connection.notify("notifications/initialized");
+  NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", connection.notify("notifications/initialized"));
   const tools: ChatMcpToolDef[] = [];
   const names = new Set<string>();
   const cursors = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; ; page++) {
     if (page >= CHAT_MCP_MAX_LIST_PAGES) throw new ChatMcpError("failed");
-    const listed = await connection.request("tools/list", cursor === undefined ? undefined : { cursor });
+    const listed = await NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", connection.request("tools/list", cursor === undefined ? undefined : { cursor }));
     if (!isRecord(listed) || (listed.tools !== undefined && !Array.isArray(listed.tools))) throw new ChatMcpError("failed");
     for (const raw of (listed.tools as unknown[] | undefined) ?? []) {
       const tool = toolDefOf(raw);
@@ -572,24 +566,30 @@ export async function openChatMcpServers(
 ): Promise<{ sessions: ChatMcpSession[]; failed: string[] }> {
   const { signal } = options;
   if (signal?.aborted) return { sessions: [], failed: [] };
+  const admitted = new Map<string, AdmittedMcpMount>();
+  try { for (const [name, entry] of Object.entries(servers ?? {})) admitted.set(name, admittedMcpMount(entry)); }
+  catch (error) { for (const mount of admitted.values()) mount.close(); throw error; }
   const cwd = botFolderOrThrow(options);
-  const spawn = options.spawn ?? defaultSpawn;
+  const launchMcp = options.spawn ?? defaultSpawn;
   const startupMs = typeof options.startupMs === "number" && options.startupMs > 0 ? options.startupMs : CHAT_MCP_STARTUP_MS;
   const slots: Array<{ name: string; connection?: ChatMcpConnection }> = [];
   // Everything is spawned and reported synchronously, before the first await.
   for (const [name, entry] of Object.entries(servers ?? {})) {
+    const mount = admitted.get(name)!;
     const launch = parseEntry(entry);
-    if (!launch) { slots.push({ name }); continue; }
+    if (!launch) { mount.close(); slots.push({ name }); continue; }
     let child: ChildProcess;
     try {
-      child = spawn(launch.command, launch.args, chatMcpChildEnv(launch.env), cwd);
+      child = launchMcp(launch.command, launch.args, chatMcpChildEnv(launch.env), cwd);
     } catch {
+      mount.ingress.retire();
+      mount.close();
       slots.push({ name });
       continue;
     }
     const descendants = new ChatMcpDescendants(child);
     const teardown = chatMcpTeardown(child, descendants);
-    const connection = new ChatMcpConnection(name, child, teardown, descendants);
+    const connection = new ChatMcpConnection(name, child, teardown, descendants, mount);
     try {
       options.onSpawn?.(name, teardown);
     } catch {

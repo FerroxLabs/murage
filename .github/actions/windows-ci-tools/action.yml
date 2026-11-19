@@ -1,0 +1,42 @@
+name: Windows CI tools
+description: Bootstrap Node, a writable pnpm store, pinned PowerShell and Git Bash before package setup.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24
+    - name: Prepare Windows package and shell tools
+      shell: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $store = Join-Path $env:RUNNER_TEMP 'pnpm-store'
+        New-Item -ItemType Directory -Force -Path $store | Out-Null
+        "npm_config_store_dir=$store" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        $version = '7.4.13'
+        $directory = Join-Path $env:RUNNER_TEMP "pwsh-$version"
+        $archive = Join-Path $env:RUNNER_TEMP "pwsh-$version.zip"
+        node scripts/fetch-build-input.mjs D079 $archive
+        if ($LASTEXITCODE -ne 0) { throw 'Pinned PowerShell download failed' }
+        Expand-Archive $archive $directory -Force
+        $actual = & "$directory/pwsh.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command '$PSVersionTable.PSVersion.ToString()'
+        if ($LASTEXITCODE -ne 0 -or $actual -ne $version) { throw 'Pinned PowerShell did not answer' }
+        $directory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    # `shell: bash` resolves bash from PATH. A runner service whose PATH holds
+    # only Git\cmd (git.exe, no bash.exe) fails every bash step with
+    # "bash: command not found" before it starts, so expose the bash.exe that
+    # ships next to that git.exe. No Git Bash at all stays a hard failure.
+    - name: Expose Git Bash to bash steps
+      shell: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $git = (Get-Command git.exe -CommandType Application | Select-Object -First 1).Source
+        $directory = Split-Path -Parent $git
+        $bin = $null
+        for ($i = 0; $i -lt 3 -and $directory -and -not $bin; $i++) {
+          $candidate = Join-Path $directory 'bin'
+          if (Test-Path -LiteralPath (Join-Path $candidate 'bash.exe') -PathType Leaf) { $bin = $candidate }
+          $directory = Split-Path -Parent $directory
+        }
+        if (-not $bin) { throw "Git Bash (bin\bash.exe) not found next to $git" }
+        $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append

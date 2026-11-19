@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - name: Restore the pinned tool download cache
         # Primary source for age, restic, cloudflared and the other pinned helpers: served by the
         # Actions cache, not github.com release hosting. Files are named by their pinned sha256 and
@@ -166,7 +168,7 @@ jobs:
           echo "commit:  $(git rev-parse HEAD)"
           ls -lh release/*.exe release/*.yml 2>/dev/null || true
       - name: Record installer identity and verify publisher
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $installers = @(Get-ChildItem -LiteralPath release -Filter 'Murage-*-setup.exe' -File)
           if ($installers.Count -ne 1) { throw 'Expected exactly one versioned Murage installer' }
@@ -328,9 +330,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
-          sparse-checkout: ci
+          sparse-checkout: |
+            ci
+            .github/actions/windows-ci-tools
+            scripts
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - name: Download the installer artifact
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
@@ -345,7 +352,7 @@ jobs:
           "installer=$($exe[0].Name) sha256=$((Get-FileHash C:\inst\setup.exe).Hash) sig=$($sig.Status)"
           if ($sig.Status -ne 'Valid') { throw 'installer signature not Valid' }
       - name: Create the standard user (password never printed)
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $chars = [char[]]([char]'a'..[char]'z' + [char]'A'..[char]'Z' + [char]'0'..[char]'9')
           $bytes = [byte[]]::new(24); [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
@@ -368,7 +375,7 @@ jobs:
           "node=$((Get-Command node).Source)"
           "NODE_EXE=$((Get-Command node).Source)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - name: Run the check as the standard user
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $sec = ConvertTo-SecureString $env:STD_PW -AsPlainText -Force
           $cred = [pscredential]::new($env:STD_USER, $sec)
@@ -391,7 +398,7 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "standard-user check failed, exit $($p.ExitCode)" }
       - name: Clean up the user
         if: always()
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $prof = if ($env:STD_PROFILE) { $env:STD_PROFILE } else { 'C:\Users\mrgstd' }
           Get-Process | Where-Object { $_.Path -like "$prof\*" } | Stop-Process -Force -ErrorAction SilentlyContinue

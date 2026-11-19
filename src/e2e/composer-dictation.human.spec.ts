@@ -12,7 +12,7 @@
 // call-host.human.spec.ts). The fake recognizer's stop is held until the test settles it.
 import { test, expect, type Page, type Locator } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";

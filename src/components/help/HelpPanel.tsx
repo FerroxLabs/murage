@@ -20,7 +20,7 @@
 // language, that language's Help pack on this device,
 // src/lib/help-pack-search.ts); links; and the feedback
 // form, last, so asking for help always comes first.
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useRegisterHelpDock } from "@/lib/help-dock";
 import { HelpCircle, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
@@ -41,6 +41,11 @@ import { FeedbackForm, type SendFeedback } from "./FeedbackForm";
 import { HelpTips } from "./HelpTips";
 import { hx, modWord } from "./help-copy";
 import { HelpFrame, useHintsReset } from "./HelpHost";
+
+// Ask is loaded when Help opens; fixture controls remain build-mode only.
+const HelpAsk = lazy(() => import.meta.env.MODE === "help-fixture"
+  ? import("./HelpAskL13Fixture")
+  : import("./HelpAsk"));
 
 // The always-loaded part, named here too so callers and tests have one place.
 export {
@@ -224,7 +229,14 @@ export function HelpPanel(props: HelpPanelProps) {
   const [width, setWidth] = useState(readWidth);
   const [feedbackOpen, setFeedbackOpen] = useState(initialFeedbackOpen);
   const showHints = useHintsReset();
-  useEffect(() => { headingRef.current?.focus(); }, []);
+  useEffect(() => {
+    // The opt-in Ask fixture opens at its question box. On a warm reopen its
+    // textarea mounts before this parent's effect, so focusing the heading
+    // here would undo React's autofocus. Ordinary Help keeps its heading target.
+    const question = import.meta.env.MODE === "help-fixture"
+      ? asideRef.current?.querySelector<HTMLTextAreaElement>("[data-help-ask] textarea") : null;
+    (question ?? headingRef.current)?.focus();
+  }, []);
   // The desktop width rides a property the stylesheet reads at 600 px and up; the phone sheet ignores it.
   useLayoutEffect(() => { asideRef.current?.style.setProperty("--help-w", `${width}px`); }, [width]);
   useRegisterHelpDock(asideRef);
@@ -422,7 +434,18 @@ function HelpOpenBody({ surface, noEngines, enginesOff, firstRun, askSlot, onClo
       // Engines switched off: no ask, since nothing could answer it (the gate line says why).
       chiefName={enginesOff ? undefined : chief?.name}
       onAskChief={askChief}
-      askSlot={askSlot}
+      askSlot={askSlot ?? <Suspense fallback={null}><HelpAsk screenTitle={feedbackEnvelopeForScreen(screen).title} onOpenChat={(botId: string, threadId?: string, messageId?: string) => {
+        dispatch({ type: "toggleAppSettings", open: false });
+        dispatch({ type: "toggleSettings", open: false });
+        dispatch({ type: "togglePlugins", open: false });
+        dispatch({ type: "toggleComputer", open: false });
+        dispatch({ type: "toggleInspector", open: false });
+        dispatch({ type: "select", id: botId, threadId });
+        const held = state.bots.find(b => b.id === botId);
+        if (threadId && held?.threadId !== threadId) dispatch({ type: "switchTask", botId, threadId });
+        if (threadId && messageId) dispatch({ type: "focusMessage", threadId, messageId });
+        onDismiss();
+      }} /></Suspense>}
     />
   );
 }

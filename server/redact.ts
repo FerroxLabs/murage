@@ -12,7 +12,10 @@
 // enough to debug "the proxy got no token" without the token being there.
 
 import { maskFinancialIdentifiers } from "../shared/financial-ids.ts";
-import { maskSecretLabelsToEnd } from "../shared/md-secret-label.mjs";
+import { maskSecretLabelsToEnd, scan, SECRET_SCAN_BUDGET, type ScanCharge, type SecretScanResult, type SecretSpan } from "../shared/md-secret-label.mjs";
+
+import { basicSpans, basicStage, tracked, runStages, maskVendorLast, replaceTracked, type EditCollector, type TrackedRule } from "../shared/basic-auth-mask.ts";
+import * as secretLabels from "../shared/md-secret-label.mjs";
 
 /** Key names whose value is a credential. Matched case-insensitively as a
  * substring, so KEY catches ANTHROPIC_API_KEY and x-api-key. */
@@ -43,6 +46,13 @@ const mask = (value: string) => (REDACTION_MARKER.test(value) ? value : `«redac
 // transcript, so only shapes that are unmistakably credentials match.
 
 export const KEY_PREFIXES: RegExp[] = [
+  // SendGrid SG.<22-char key id>.<43-char secret> and PyPI/TestPyPI macaroons with
+  // upstream's 85-character floor after "pypi-". Adapted from OpenMausBot 7dea8644e,
+  // 5bce12634 and 09856b05b.
+  // They run first: an earlier prefix rule (sk-, gsk_) found inside one would
+  // mask only part of it and leave the rest readable (Astra r2 Medium).
+  /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g, // SendGrid
+  /\bpypi-AgE[A-Za-z0-9_-]{82,}/g, // PyPI
   /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/g, // anthropic / openai / stripe
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g, // github classic
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g, // github fine-grained
@@ -114,7 +124,7 @@ const PEM_OPEN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
 /** A PEM private-key header anywhere, for screens that refuse rather than mask. */
 export const PEM_PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 const PEM_CLOSE = /-----END [A-Z ]*PRIVATE KEY-----/g;
-function redactPemBlocks(text: string): string {
+function redactPemBlocks(text: string, edits?: EditCollector): string {
   let out = "";
   let pos = 0;
   for (;;) {
@@ -125,7 +135,9 @@ function redactPemBlocks(text: string): string {
     PEM_CLOSE.lastIndex = bodyAt;
     const close = PEM_CLOSE.exec(text);
     if (!close) break;
-    out += `${text.slice(pos, open.index)}${open[0]}\n${mask(text.slice(bodyAt, close.index).trim())}\n${close[0]}`;
+    const replacement = `${open[0]}\n${mask(text.slice(bodyAt, close.index).trim())}\n${close[0]}`;
+    edits?.({ start: open.index, end: close.index + close[0].length, length: replacement.length });
+    out += text.slice(pos, open.index) + replacement;
     pos = close.index + close[0].length;
   }
   return out + text.slice(pos);
@@ -199,39 +211,105 @@ const NUMERIC_VALUE = /^\d+$/;
  * in the word `Bearer`, and masking that first would hide the token after it
  * from BEARER. JWT stays ahead of the prefixes for the reason above: a `-sk-…`
  * run inside a signature must not split the token. */
-export const TEXT_RULES: readonly (readonly [string, (text: string) => string])[] = [
+export const TEXT_RULES: readonly (readonly [string, TrackedRule])[] = [
   ["PEM_BLOCK", redactPemBlocks],
-  ["BEARER", (text) => text.replace(BEARER, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`)],
-  ["KEY_VALUE", (text) => text.replace(
+  ["BEARER", (text, edits) => replaceTracked(text, BEARER, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`, edits)],
+  ["KEY_VALUE", (text, edits) => replaceTracked(text,
     KEY_VALUE,
     (_m, _q: string, leadA: string | undefined, keyA: string | undefined, leadB: string | undefined, keyB: string | undefined, sep: string, quote: string, value: string) =>
-      `${leadA ?? leadB}${keyA ?? keyB}${sep}${quote}${mask(value)}${quote}`,
+      `${leadA ?? leadB}${keyA ?? keyB}${sep}${quote}${mask(value)}${quote}`, edits,
   )],
-  ["QUERY_KEY", (text) => text.replace(QUERY_KEY, (match: string, lead: string, value: string) => (NUMERIC_VALUE.test(value) ? match : `${lead}${mask(value)}`))],
-  ["JWT", (text) => text.replace(JWT, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`)],
-  ...KEY_PREFIXES.map((re, index) => [`KEY_PREFIXES[${index}]`, (text: string) => text.replace(re, (m) => mask(m))] as const),
+  ["QUERY_KEY", (text, edits) => replaceTracked(text, QUERY_KEY, (match: string, lead: string, value: string) => (NUMERIC_VALUE.test(value) ? match : `${lead}${mask(value)}`), edits)],
+  ["JWT", (text, edits) => replaceTracked(text, JWT, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`, edits)],
+  ...KEY_PREFIXES.map((re, index) => [`KEY_PREFIXES[${index}]`, (text: string, edits?: EditCollector) => replaceTracked(text, re, (m) => mask(m), edits)] as const),
   // Bank, card, account and personal id numbers keep their shape and lose
   // their digits, byte for byte (shared/financial-ids.ts). Last, so a secret
   // rule above sees the text as typed.
-  ["FINANCIAL_ID", maskFinancialIdentifiers],
+  ["FINANCIAL_ID", (text, edits) => {
+    const shown = keepDecimalNumbers(text, maskFinancialIdentifiers(text));
+    for (let at = 0; at < text.length;) {
+      if (text[at] === shown[at]) { at++; continue; }
+      const start = at++; while (at < text.length && text[at] !== shown[at]) at++;
+      edits?.({ start, end: at, length: at - start });
+    }
+    return shown;
+  }],
 ];
 
-export function redactSecretsInText(text: string): string {
-  if (!text || text.length < 8) return text;
-  let out = text;
-  for (const [, rule] of TEXT_RULES) out = rule(out);
+
+/** A decimal number is not a card. The card rule reads any 13 to 19 digit
+ * Luhn-valid run "wherever it stands" and takes a dot as a group separator, so
+ * about one float in ten with a long fraction (a search score such as
+ * `4.718623638153076` in a tool's JSON result) was masked as a card, and that
+ * one hit latched the whole turn for its audience. Kept as typed: a digit run
+ * that is exactly ONE decimal literal (one to three digits, one dot, ten to
+ * eighteen digits; no digit, letter, `_` or further group joined on either
+ * side) and that the rules mask standing alone, i.e. with no context word. A
+ * card in any real grouping (three or more groups, spaces, dashes, a four
+ * digit first group) and every number beside a bank or id word stay masked. */
+const DECIMAL_LITERAL = /(?<![A-Za-z0-9_])(?<!\d[ \t.\/-]{1,2})\d{1,3}\.\d{10,18}(?![A-Za-z0-9_])(?![ \t.\/-]{1,2}\d)/g;
+function keepDecimalNumbers(text: string, shown: string): string {
+  if (shown === text) return shown;
+  let out = shown;
+  for (const m of text.matchAll(DECIMAL_LITERAL)) {
+    const start = m.index, end = start + m[0].length;
+    if (shown.slice(start, end) === m[0]) continue;
+    // Only the context-free hit: the literal alone masks the same way.
+    if (maskFinancialIdentifiers(m[0]) !== shown.slice(start, end)) continue;
+    out = out.slice(0, start) + m[0] + out.slice(end);
+  }
   return out;
 }
 
-/** The mask extent A writes: always a fresh marker over the whole rest. */
-const sinkMask = (rest: string) => `«redacted ${rest.length} chars»`;
+const USER_TEXT_WORK = 1_048_576;
+type TextScanResult = ReturnType<typeof scan>;
+function redactUserLabels(text: string): TextScanResult {
+  try { return scan(text, { mode: "user", providers: false, budget: USER_TEXT_WORK }); }
+  catch { return { text: "«redacted»", detected: true, exhausted: true, candidates: [], spans: [], workUnits: USER_TEXT_WORK }; }
+}
+/** Forward the shared scanner's original spans through subsequent Basic masking. */
+const trackedUserLabels: TrackedRule = (text, edits) => {
+  const result = redactUserLabels(text);
+  if (result.exhausted) {
+    edits?.({ start: 0, end: text.length, length: result.text.length });
+    return result.text;
+  }
+  for (const span of result.spans ?? []) {
+    const detail = span as typeof span & { wrapped?: boolean; pem?: boolean };
+    const rest = text.slice(span.from, span.to);
+    if ((detail.wrapped || detail.pem) && secretLabels.isExactMarker(rest.trim())) continue;
+    const length = detail.pem ? 2 + `«redacted ${rest.trim().length} chars»`.length
+      : (detail.wrapped ? 1 : 0) + `«redacted ${rest.length} chars»`.length;
+    edits?.({ start: span.from, end: span.to, length });
+  }
+  return result.text;
+};
 
-/** MACHINE sinks only (logs, the native protocol log): a secret label wrapped
- * in markdown marks masks everything after it to the end of the text, then the
- * usual rules run. User-visible text keeps `redactSecretsInText`. */
-export function redactSecretsForSink(text: string): string {
-  if (!text) return text;
-  return redactSecretsInText(maskSecretLabelsToEnd(text, sinkMask));
+/** Credential pass for complete engine diagnostic captures. The audience boundary applies the turn policy after this formatting pass. */
+const textMarker = (n:number) => `«redacted ${n} chars»`;
+const textRules = TEXT_RULES.map(([,rule])=>rule);
+export const TEXT_SECRET_STAGES = [basicStage([trackedUserLabels,...textRules],textMarker)];
+const sinkMask = (rest:string)=>`«redacted ${rest.length} chars»`;
+export const SINK_SECRET_STAGES = [basicStage([
+  (value,edits,discardCarry)=>maskSecretLabelsToEnd(value,sinkMask,undefined,edits,discardCarry),...textRules,
+],textMarker)];
+const formatDiagnostic:TrackedRule=(text,edits)=>replaceTracked(text,
+  /((?:api[ _-]?key|apikey|secret|token|password|passwd|authorization|auth[ _-]?token|access[ _-]?key|private[ _-]?key)s?)[ \t]*[=:][ \t]*(«redacted \d{1,9} chars»)/gi,
+  (_m,name,mark)=>`${name} ${mark}`,edits);
+export const DIAGNOSTIC_SECRET_STAGES = [basicStage(textRules,textMarker),tracked(formatDiagnostic),...TEXT_SECRET_STAGES];
+export const baseSecretsInText=(text:string)=>runStages(text,TEXT_SECRET_STAGES);
+export const baseSecretsForSink=(text:string)=>runStages(text,SINK_SECRET_STAGES);
+export const baseDiagnosticCredentials=(text:string)=>runStages(text,DIAGNOSTIC_SECRET_STAGES);
+export function redactEngineDiagnosticCredentials(text:string):string {
+  return maskVendorLast(text,DIAGNOSTIC_SECRET_STAGES,textMarker);
+}
+export function redactSecretsInText(text:string):string {
+  if(!text)return text;
+  return maskVendorLast(text,TEXT_SECRET_STAGES,textMarker);
+}
+export function redactSecretsForSink(text:string):string {
+  if(!text)return text;
+  return maskVendorLast(text,SINK_SECRET_STAGES,textMarker);
 }
 
 /** `redactSecrets` for machine sinks: every string leaf, the depth fallback and
@@ -332,4 +410,57 @@ function redactWalk(input: unknown, depth: number, card: boolean, sink = false):
     out[key] = redactWalk(value, depth + 1, card, sink);
   }
   return out;
+}
+
+/** B3: each native compatibility pass reserves its input traversal before it
+ * runs. A single dispatch scan avoids twenty passes over ordinary prose.
+ * Original-coordinate spans keep a prior replacement from hiding a match. */
+function compatibilitySpans(text: string, spend: ScanCharge): SecretSpan[] {
+  spend(text.length);
+  const hints = new Set<string>();
+  for (const m of text.matchAll(/authorization|Bearer|[=:]|[?&]|eyJ|-----BEGIN|sk-|(?:ghp|gho|ghu|ghs|ghr)_|github_pat_|gl(?:pat|dt|rtr?)-|xox[abposr]-|xapp-|AKIA|AIza|npm_|xai-|gsk_|hf_|[0-9]/gi)) hints.add(m[0].toLowerCase());
+  const out: SecretSpan[] = [];
+  if (hints.has("authorization")) {
+    // basicSpans exposes bounded visits; reserve the native input pass, then
+    // charge its additional counted visits under the very same cap.
+    spend(text.length);
+    const work = { visits: 0, allocations: 0 };
+    const spans = basicSpans(text, work); spend(work.visits - text.length);
+    out.push(...spans.map(s => ({ from: s.start, to: s.end })));
+  }
+  // The primary scanner already performed every per-line label scan, on the
+  // original input. Repeating maskSecretLabelsToEnd would duplicate that work.
+  for (const [name, rule] of TEXT_RULES) {
+    const needed = name === "PEM_BLOCK" ? hints.has("-----begin")
+      : name === "BEARER" ? hints.has("bearer")
+      : name === "KEY_VALUE" ? hints.has(":") || hints.has("=")
+      : name === "QUERY_KEY" ? hints.has("?") || hints.has("&")
+      : name === "JWT" ? hints.has("eyj")
+      : name === "FINANCIAL_ID" ? [...hints].some(h => /^[0-9]$/.test(h))
+      : [...hints].some(h => /^(sk-|gh[pousr]_|github_pat_|gl|xox|xapp-|akia|aiza|npm_|xai-|gsk_|hf_)/.test(h));
+    if (!needed) continue;
+    spend(text.length);
+    rule(text, e => { spend(); out.push({ from: e.start, to: e.end }); });
+  }
+  return out;
+}
+
+/** The complete turn checker has ONE SSB cap, including all legacy passes.
+ * Meter totals are returned by scan(), even when a later pass exhausts. */
+export function scanTurnText(text: string, options: { mode?: "turn"; budget?: number; vendor?: boolean } = {}): SecretScanResult {
+  return scan(text, { mode: "turn", budget: options.budget ?? SECRET_SCAN_BUDGET, vendor: options.vendor, turnComplete: true }, (original, result, spend) => {
+    const spans = [...(result.spans ?? []), ...compatibilitySpans(original, spend)];
+    spend(spans.length * (1 + Math.ceil(Math.log2(spans.length + 1))));
+    spans.sort((a, b) => a.from - b.from || b.to - a.to);
+    const merged: { from: number; to: number }[] = [];
+    for (const span of spans) {
+      const last = merged.at(-1);
+      if (last && span.from <= last.to) last.to = Math.max(last.to, span.to);
+      else merged.push({ ...span });
+    }
+    const parts: string[] = []; let at = 0;
+    for (const span of merged) { parts.push(original.slice(at, span.from), "«redacted»"); at = span.to; }
+    parts.push(original.slice(at));
+    return { ...result, spans: merged, text: parts.join(""), detected: merged.length > 0 };
+  });
 }

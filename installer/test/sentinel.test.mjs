@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -57,6 +57,9 @@ test("writes this installation's descriptor at every start with the next revisio
   assert.equal(first.revision, 1);
   assert.equal(first.installationId, boundary.sentinelInstallationId(fx.dataDir));
   assert.equal(first.outputRoot, join(fx.env.XDG_STATE_HOME, "MurageSentinel", first.installationId));
+  // The rig's state folder is not the one this process resolves, so the receipt barrier is never opened under it
+  // (whether or not a native helper is loadable here): coverage stays unknown and the start is not refused.
+  assert.equal(existsSync(join(fx.dataDir, "sentinel-io")), false, "no receipt barrier under a state folder this process does not resolve");
   const loaded = boundary.loadDescriptor(first.descriptorPath, { platform: "linux" });
   assert.equal(loaded.ok, true, JSON.stringify(loaded));
   assert.equal(loaded.value.inputRoot, join(fx.dataDir, "health"));
@@ -71,6 +74,27 @@ test("writes this installation's descriptor at every start with the next revisio
   assert.deepEqual({ ok: updated.ok, written: updated.written, revision: updated.revision }, { ok: true, written: true, revision: 3 });
   const descriptor = JSON.parse(readFileSync(updated.descriptorPath, "utf8"));
   assert.equal(descriptor.scheduleRevision, 3);
+});
+
+test("with the state folder this process resolves, every start is accepted and an opened receipt barrier is complete", { skip: POSIX_ONLY }, async () => {
+  const fx = rig();
+  const saved = { XDG_STATE_HOME: process.env.XDG_STATE_HOME, MURAGE_SENTINEL_STATE_DIR: process.env.MURAGE_SENTINEL_STATE_DIR };
+  process.env.XDG_STATE_HOME = fx.env.XDG_STATE_HOME;
+  delete process.env.MURAGE_SENTINEL_STATE_DIR;
+  try {
+    const first = await prepareSentinel({ payload: fx.payload, dataDir: fx.dataDir, env: fx.env, execPath: "/usr/local/bin/node", loadBoundary });
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(first.outputRoot, boundary.defaultOutputRoot(first.installationId), "the launcher and this process agree on the folder");
+    // With a loadable native helper the barrier is opened and enrolled against this descriptor; without one it is
+    // not opened at all. It is never left half-made.
+    const barrier = name => existsSync(join(fx.dataDir, "sentinel-io", name));
+    assert.equal(barrier("receipt.json"), barrier("enrollment.json"));
+    const again = await prepareSentinel({ payload: fx.payload, dataDir: fx.dataDir, env: fx.env, execPath: "/usr/local/bin/node", loadBoundary });
+    assert.deepEqual({ ok: again.ok, revision: again.revision }, { ok: true, revision: 2 }, JSON.stringify(again));
+    assert.equal(barrier("receipt.json"), barrier("enrollment.json"));
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
 });
 
 test("a missing data directory or an unloadable boundary is a waiting reason, never a throw", async () => {

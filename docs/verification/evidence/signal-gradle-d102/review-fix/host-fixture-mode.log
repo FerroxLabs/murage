@@ -1,0 +1,7 @@
+test_both_production_attempts_stage_exact_inputs_and_invoke_strict_gradle (regression.ProductionWiring.test_both_production_attempts_stage_exact_inputs_and_invoke_strict_gradle) ... ok
+test_missing_reviewed_input_fails_before_gradle (regression.ProductionWiring.test_missing_reviewed_input_fails_before_gradle) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.880s
+
+OK

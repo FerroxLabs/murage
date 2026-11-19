@@ -7,6 +7,7 @@
 // by then the quoted reply can be withheld (its source revoked), and a check
 // made then would record nothing for text the engine already has.
 import { doorReader } from "./bot-read.ts";
+import { onRollback } from "./tx-scope.ts";
 import type { Message } from "./store.ts";
 import type { SteerDelivery } from "./contracts.ts";
 import { LineageAllowance, mergeOutputRoots, outputRootsBad, outputRootsFor, outputRootsShallow, recordSessionRoots, type OutputRoots } from "./memory/replay-lineage.ts";
@@ -14,7 +15,7 @@ import { steerBusyDesk } from "./project-card-executor.ts";
 import { collectRendered, type EgressOrigin, type SourceRange } from "./released-text.ts";
 import { storedPosition, threadRangeNow, turnSourceCopiesBackfilled, type HeldRange } from "./turn-source-holds.ts";
 import { database } from "./database.ts";
-import { addTurnParents } from "./memory/lineage-write.ts";
+import { proposeTurnParents, commitTurnParents } from "./memory/lineage-write.ts";
 import { refsLookup } from "./memory/deny-read.ts";
 import { verdictShows, type LineageReader, type LineageRef, type LineageVerdict, type TurnLineage } from "./memory/lineage-types.ts";
 import { buildPrompt, noneRef, promptPart } from "./memory/prompt-parts.ts";
@@ -68,6 +69,7 @@ export function turnSources(lines: Iterable<ShownLine>, withheldNow: (line: Show
  * is already carried; past it (a line written since), the range is carried on to it. Any other line is named. */
 export function addSourcesToRunningTurn(lineage: RunningTurnLineage | undefined, lines: ReadonlyArray<ShownLine>): void {
   if (!lineage || lineage.sources === undefined || lineage.sources === "over") return;
+  rollbackRunningAttribution(lineage);
   const known = new Set(lineage.sources.map(line => `${line.threadId}\u0000${line.id}`));
   for (const line of lines) {
     if (line.role === "user" || known.has(`${line.threadId}\u0000${line.id}`)) continue;
@@ -117,6 +119,7 @@ function widestRange(ranges: readonly HeldRange[], threadId: string): HeldRange 
 /** Ranges a running turn takes in after it began (a note it was shown rests on them): they join its ranges, each once. */
 export function addRangesToRunningTurn(lineage: RunningTurnLineage | undefined, ranges: ReadonlyArray<SourceRange>): void {
   if (!lineage || lineage.sources === undefined || lineage.sources === "over" || !ranges.length) return;
+  rollbackRunningAttribution(lineage);
   const held = lineage.ranges ??= [];
   for (const range of ranges) {
     if (held.some(kept => kept.threadId === range.threadId && kept.upTo === range.upTo && kept.since <= range.since)) continue;
@@ -242,11 +245,27 @@ export function shownLinesRoots(allowance: LineageAllowance, lines: ReadonlyArra
 export function addRootsToRunningTurn(threadId: string, lineage: RunningTurnLineage | undefined, added: OutputRoots): void {
   if (!lineage) return;
   if (!added.over && !added.roots.size) return;
+  rollbackRunningAttribution(lineage);
   lineage.roots = mergeOutputRoots(lineage.roots, added);
   if (lineage.session) {
     try { recordSessionRoots(threadId, lineage.instanceId, lineage.session, added); }
     catch (error) { console.warn(`[memory] session lineage not recorded (${error instanceof Error ? error.message.slice(0, 80) : "error"})`); }
   }
+}
+
+/** Restore the exact captured target, including aliases to its arrays/ranges. */
+function rollbackRunningAttribution(lineage: RunningTurnLineage): void {
+  const sources = lineage.sources, rows = Array.isArray(sources) ? [...sources] : undefined;
+  const ranges = lineage.ranges, held = ranges?.map(range => ({ target: range, value: { ...range } }));
+  const roots = lineage.roots;
+  onRollback(() => {
+    if (Array.isArray(sources)) sources.splice(0, sources.length, ...rows!);
+    if (ranges) {
+      for (const { target, value } of held!) Object.assign(target, value);
+      ranges.splice(0, ranges.length, ...held!.map(item => item.target));
+    }
+    Object.assign(lineage, { sources, ranges, roots });
+  });
 }
 
 type SteerAdapter = Parameters<typeof steerBusyDesk>[0];
@@ -300,6 +319,10 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
    *  line was written, so it carries a fresh one on top of the owner's words. */
   now?: string;
 }): Promise<"steer" | "queue" | "uncertain"> {
+  // No running turn to take the words yet (the bot is already busy for a turn that has not started, e.g. the follow-up a
+  // delegated reply opens): nothing is written to the engine, and the line waits in the durable queue as its own turn.
+  // It used to reject here with no status, which the send route reported as "could not record that message" (503).
+  if (!opts.turn) return Promise.resolve("queue");
   // the steer's own allowance: its quote is checked when it is rendered and again at the write boundary
   const allowance = LineageAllowance.steer();
   const quoted = opts.quote ? shownLinesRoots(allowance, [opts.quote]) : undefined;
@@ -326,10 +349,11 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
       catch { verdict = undefined; }
       if (steerQuoteRefused(verdict)) throw new Error("MEMORY_CONTEXT_REVOKED");
     }
+    const proposal = opts.turn ? proposeTurnParents(opts.turn, refs) : undefined;
+    if (proposal) commitTurnParents(proposal);
     if (quoted) addRootsToRunningTurn(threadId, opts.lineage, quoted);
     if (opts.quote) addSourcesToRunningTurn(opts.lineage, [opts.quote]);
     // a steer adds parents to the running turn (every later reply and its session carry them); it never moves the turn's turnLsn
-    if (opts.turn && refs.length) addTurnParents(opts.turn, refs);
     opts.onFence?.();
-  }, opts.steerId, undefined, opts.onLate, { reader }).finally(() => allowance.close());
+  }, opts.steerId, undefined, opts.onLate, { reader, retained: opts.turn }).finally(() => allowance.close());
 }

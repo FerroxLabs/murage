@@ -26,7 +26,8 @@
 // file's installation id, so a memory file with a different installation id is repaired again. Every step is idempotent, so a run cut short
 // is simply run again.
 import type { DatabaseSync } from "node:sqlite";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { AFTER_LISTEN_BUSY_ATTEMPTS, AFTER_LISTEN_BUSY_RETRY_MS, trackBootJob } from "../after-listen.ts";
 import { awaitWriterGate, beginBackground, FOREGROUND_GATE_MAX_MS, isDatabaseBusy } from "../db-busy.ts";

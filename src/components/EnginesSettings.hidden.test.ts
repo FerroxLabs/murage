@@ -53,3 +53,20 @@ describe("hiding an engine in Settings", () => {
     expect(markup).toMatch(/data-unhide-engine="pi"[^>]*>Unhiding…</);
   });
 });
+
+describe("when the hidden-engine list cannot be read", () => {
+  it("says so with a retry instead of showing nothing", () => {
+    const onRetry = vi.fn();
+    const markup = renderToStaticMarkup(createElement(HiddenEnginesList, { hidden: [], busy: null, error: null, onUnhide: () => {}, readFailed: true, onRetry }));
+    expect(markup).toMatch(/<div role="alert" data-hidden-engines-read-failed[^>]*><span>Murage could not read which engines are hidden, so this list may be incomplete\.<\/span><button type="button" data-hidden-engines-retry[^>]*>Try again<\/button>/);
+    expect(markup).not.toContain("data-hidden-engines-title");
+  });
+  it("keeps the engines it already knows, each with Unhide, beside the warning", () => {
+    const markup = renderToStaticMarkup(createElement(HiddenEnginesList, {
+      hidden: [{ instanceId: "hermes", displayName: "Hermes" }], busy: null, error: null, onUnhide: () => {}, readFailed: true, onRetry: () => {},
+    }));
+    expect(markup).toContain("Hidden (1)");
+    expect(markup).toMatch(/data-unhide-engine="hermes"[^>]*>Unhide</);
+    expect(markup).toContain("data-hidden-engines-read-failed");
+  });
+});

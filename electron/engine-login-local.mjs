@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -157,7 +158,7 @@ export function createLocalEngineLogin({ api, spawn, killTree, launchTerminal, t
     // The recipe's env is the whole environment: nothing of this process passes. The names it left out are named again as a belt.
     const env = { ...recipe.env };
     for (const name of recipe.unsetKeys ?? []) delete env[name];
-    try { child = spawn(recipe.argv[0], recipe.argv.slice(1), { env, stdio: ["ignore", "ignore", "ignore"], windowsHide: true, shell: false, detached: process.platform !== "win32" }); }
+    try { child = spawn(recipe.argv[0], [...recipe.argv.slice(1)], withHideInherit({ env, stdio: ["ignore", "ignore", "ignore"], windowsHide: true, shell: false, detached: process.platform !== "win32" })); }
     catch { return false; }
     session.child = child;
     child.once("error", () => { session.exited = true; for (const done of session.onExit.splice(0)) done(); void finish(session, "failed"); });

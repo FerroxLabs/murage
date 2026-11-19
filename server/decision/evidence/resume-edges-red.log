@@ -1,0 +1,100 @@
+it-remote: bld-nolim-s1 on murage-vt2 (load here 31)
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/budget.test.ts > R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/budget.test.ts (11 tests | 1 failed) 1876ms
+   ✓ A12a M64 50MB content hashes stably without an unbounded clone; depth/key bounds 118ms
+   ✓ R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives  433ms
+   ✓ A12a prune walks settled index in batches of 500  331ms
+   ✓ M64 projection never calls structuredClone before enforcing bounds 4ms
+   ✓ M36 one cumulative reader budget covers outer scripts and all nested executables 3ms
+   ✓ A12a UTF-8 byte bounds apply to content heads, values and oversized keys 18ms
+   ✓ A12a content heads share the same one MB registration budget 7ms
+   ✓ R18 600 concurrent registrations enforce the process cap without evicting a live wipe  446ms
+   ✓ R18 64 and 65 executables and five nested interpreters remain bounded and retain earlier wipe evidence 8ms
+   ✓ R18 1,000 changing deny revisions keep exact lookup work and retain a late deny  495ms
+   × A12a content streaming hashes the original Unicode bytes at every chunk boundary 11ms
+stdout | server/decision/ingress.test.ts > A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/ingress.test.ts > A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=60 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+stdout | server/decision/ingress.test.ts > R12 ten and ten-thousand message histories have identical deny lookup cost and zero message reads
+[sqlite] slow op=WITH RECURSIVE n(x) AS(VALUES(?) UNION ALL SELECT x+? FROM n WHERE x<?) INSERT I ms=137 source=caller:ingress.test.ts:36<ingress.test.ts:36
+
+ ❯ server/decision/ingress.test.ts (9 tests | 1 failed) 3206ms
+   ✓ A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts  424ms
+   ✓ A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected  400ms
+   ✓ R16 actor substitution ignored and all authority objects frozen at registration  340ms
+   ✓ R12 decision never reads message history  316ms
+   ✓ service execution joins concurrent calls, retains frozen content and never uses caller mutations  327ms
+   ✓ ingress duplicate event envelope metadata does not change input identity  330ms
+   ✓ R16 service request keys are scoped to their verified conversation, never another owner handle  309ms
+   ✓ R12 ten and ten-thousand message histories have identical deny lookup cost and zero message reads  440ms
+   × A2 BASE conflict reads the latest bounded snapshot and keeps reader faults inside policy 318ms
+stdout | server/decision/settle-states.test.ts > R9 never resolving transport retries same answerId, interrupts by 20s and ignores late completion
+[memory] index build before listen name=memory_records_pinned ms=0
+[memory] index build before listen name=memory_source_lsn_created ms=0
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/settle-states.test.ts (8 tests) 2676ms
+   ✓ R9 never resolving transport retries same answerId, interrupts by 20s and ignores late completion  379ms
+   ✓ R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send  329ms
+   ✓ R19 Ask→No limits answers open owner BASE before returning; webhook stays BASE  312ms
+   ✓ R19 a retained wipe card is reclassified when owner moves into No limits  329ms
+   ✓ native request.resolved retires the captured generation and preserves its replacement  309ms
+   ✓ native turn.completed retires the captured generation and preserves its replacement  324ms
+   ✓ R19 non-owner open BASE records stay untouched on a move into No limits  316ms
+   ✓ R18 ninth question refuses under a bounded reply and leaves the eight FIFO records intact  375ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/budget.test.ts > A12a content streaming hashes the original Unicode bytes at every chunk boundary
+AssertionError: expected '182346f6ef5d8542172393c20b84b8f1369a2…' to be 'dee49d7c67f6171e6db3254451cb1ec6e7469…' // Object.is equality
+
+Expected: "dee49d7c67f6171e6db3254451cb1ec6e7469cfaf31db77183e1d4478a5f561a"
+Received: "182346f6ef5d8542172393c20b84b8f1369a23c5a0cd416faadc19b434065f3f"
+
+ ❯ server/decision/budget.test.ts:72:53
+     70|  const {createHash}=await import('node:crypto');
+     71|  const body='x'.repeat(32767)+'😀'+'y'.repeat(70000);
+     72|  expect(boundedProjection({body}).body.contentHash).toBe(createHash('s…
+       |                                                     ^
+     73| });
+     74|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/decision/ingress.test.ts > A2 BASE conflict reads the latest bounded snapshot and keeps reader faults inside policy
+AssertionError: expected [Function] to not throw an error but 'Error: fixture-late-reader' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"Error: fixture-late-reader"
+
+ ❯ server/decision/ingress.test.ts:44:43
+     42|  expect(d.decide(h,base).kind).toBe('card');
+     43|  const action=await import('./action.ts');const spy=vi.spyOn(action,'d…
+     44|  try{expect(()=>d.decide(h,baseCard)).not.toThrow();}finally{spy.mockR…
+       |                                           ^
+     45| });
+     46|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  2 failed | 26 passed (28)
+   Start at  08:09:12
+   Duration  14.71s (transform 4.04s, setup 6.17s, import 415ms, tests 7.76s, environment 0ms)
+

@@ -1,6 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
+// Producer owner: recall-s3 (revalidated ceilings); consumer owner: recall-s1s2g (live lineage and continuation fences).
+//
 // Write-time privacy (DESIGN-WRITETIME.md, Murage 1.0.2): the shared types of the lane, fixed by S0. Every slice (S1 to S5) imports its
 // lineage vocabulary from here and calls only the functions exported by lineage-write.ts, deny-read.ts, revoke-commit.ts, prompt-parts.ts
 // and lineage-backfill.ts. The table names are in schema.ts (WRITETIME_TABLES). WRITETIME-API.md at the repository root lists every name.
@@ -79,9 +81,15 @@ export type LineageRef =
       readonly copyOfShown?: true }
   /** A thread read wholesale up to headLsn (taken at write when absent): a `prefix` carry (project read_messages, conversation reads). */
   | { readonly kind: "prefix"; readonly threadId: string; readonly headLsn?: number;
+      /** Unlisted retained history through this lsn. null means a fresh, fully listed prompt; absent keeps legacy wholesale accounting. */
+      readonly held?: number | null;
+      /** First prompt head of the retained session, read from its lineage row. Absent keeps legacy wholesale accounting. */
+      readonly heldFrom?: number;
       /** The lines of the thread a prompt showed in words (a replay): the send fence asks the marks of these again, so a line the owner
        * forgot after the prompt was built is caught (they were judged when it was built; a thread read wholesale lists none). */
       readonly shown?: readonly string[];
+      /** Canonical per-line judgments after lossless prefix union. Missing entries are strict. */
+      readonly shownJudges?: Readonly<Record<string, "content" | "audience">>;
       /** The prompt's own thread read by content at the send fence, whatever the fence's reader: a room turn whose whole audience is the owner
        * (roomOwnerAudience), as the owner's direct chat is read (1.0.3 revoke storm, M1). An audience-only revoke (a receipt flip) then never
        * holds the room's own transcript; a content revoke still does. Every other ref of the prompt keeps the fence's reader. */
@@ -201,20 +209,22 @@ export type RevokeRoot =
 
 /** The reader a lookup judges for. audience null: content checks only (direct facts and marks; no watermark, no footprint). An owner
  * audience skips the footprint check (as copyOriginRevoked does today). */
-export interface LineageAudience { readonly owner: boolean; readonly scopeIds: readonly string[] }
+export interface LineageAudience { readonly scopeCeiling?: readonly string[]; readonly recallOnly?: boolean; readonly personOnly?: boolean; readonly view?: import('./recall-view.ts').RecallViewHandle; readonly owner: boolean; readonly scopeIds: readonly string[] }
 /** ownFlag (LINEAGE-DESIGN-S6 15b, default true): whether the stored owner's note (withheldFromBots) and the caller's flag withhold a line
  * ("own-flag"). The reader door (bot-read.ts) sets it false and reads the committed verdicts the note mirrors. */
 export interface LineageReader { readonly audience: LineageAudience | null; readonly ownFlag?: boolean }
 
 /** Why a line is withheld. */
 export type DenyReason = "own-flag" | "tombstone" | "thread-deny" | "deny-line" | "deny-range" | "watermark" | "footprint"
-  | "deny-session" | "session-forgotten" | "deny-memory" | "scope-deny" | "murage-anchor" | "door-epoch";
+  | "deny-session" | "session-forgotten" | "deny-memory" | "scope-deny" | "murage-anchor" | "door-epoch" | "pack-ineligible";
 /** Why a line reads "checking" (withheld, with the lincold2 copy). Every unknown maps here (DESIGN-WRITETIME 3). */
-export type CheckingReason = "no-lineage" | "thread-not-ready" | "pending" | "footprint-wide" | "lookup-error" | "not-built";
+export type CheckingReason = "no-lineage" | "thread-not-ready" | "pending" | "footprint-wide" | "lookup-error" | "not-built" | "retained-over" | "retained-budget";
 export type LineageVerdict =
   | { readonly state: "shown" }
   | { readonly state: "withheld"; readonly reason: DenyReason }
-  | { readonly state: "checking"; readonly reason: CheckingReason };
+  /** `driverRaised`: an engine driver refused the turn itself, with no ledger verdict behind it (the engine did not list or ready Murage's
+   * servers, a capacity or session rule): the engine state, not the context, refused, so it is never proof that a rebuild can succeed. */
+  | { readonly state: "checking"; readonly reason: CheckingReason; readonly driverRaised?: true };
 /** True only for "shown": withheld and checking both keep the text from the engine. */
 export const verdictShows = (verdict: LineageVerdict): boolean => verdict.state === "shown";
 /** The stricter of two verdicts (withheld > checking > shown). */
@@ -250,6 +260,16 @@ export interface TurnLineage {
   readonly denyGeneration: number;
 }
 
+/** Bounded preparation evidence, local to one concrete turn and reader. */
+export interface PreparedWindow {
+  readonly reader: LineageReader;
+  readonly generation: number;
+  /** The pending-window identity at preparation; null above the 512-row bound (no prepared exception then: refs are judged strictly). */
+  readonly identity: string | null;
+  readonly memoryKeys: Set<string>;
+  open: boolean;
+}
+
 /** Returned by writeLineage and required by writeMessage (S1): a message cannot be stored without its lineage row. Only lineage-write.ts
  * makes one. */
 export type LineageToken = { readonly threadId: string; readonly messageId: string; readonly lsn: number } & { readonly [lineageTokenBrand]: true };
@@ -268,7 +288,20 @@ export type BuiltPrompt = {
   readonly ownGenerations?: (db: import("node:sqlite").DatabaseSync, above: number, upTo: number) => number;
 } & { readonly [builtPromptBrand]: true };
 /** A tool handler's result text with what it rests on. Every tool handler returns this. Only prompt-parts.ts makes one (toolText). */
-export type ToolText = { readonly text: string; readonly lineageOf: readonly LineageRef[] } & { readonly [toolTextBrand]: true };
+export type ToolText = { readonly text: string; readonly lineageOf: readonly LineageRef[];
+  /** When known, the exact consuming handle captured by the producer. */
+  readonly consumingTurn?: TurnLineage } & { readonly [toolTextBrand]: true };
+
+/** Response attribution is inert until the consuming emitter accepts every
+ * prospective member. commit must be synchronous and must not append parents. */
+export interface StagedResultProvenance {
+  readonly refs: readonly LineageRef[];
+  readonly consumingTurn?: TurnLineage;
+  /** Receipt-row preparation in the emitter's rollbackable transaction. All
+   * parent additions are captured and checked before the transaction commits. */
+  readonly prepare?: () => void;
+  readonly commit?: () => void;
+}
 
 /** Limits fixed by the design. */
 export const FOOTPRINT_SCOPE_CAP = 32;        // more scopes than this intern to FOOTPRINT_STAR

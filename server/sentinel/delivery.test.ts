@@ -503,3 +503,31 @@ describe("the digest's content", () => {
     expect(localDate(Date.UTC(2026, 9, 27, 3, 0), "Asia/Tokyo")).toBe("2026-10-27");
   });
 });
+
+describe("a start writes the ledger only when something changed (boot tolerance, quiet start)", () => {
+  const ledgerBytes = (dir: string) => readFileSync(join(dir, "sentinel-delivery.json"));
+  it("two starts of an unchanged ledger leave the file byte-equal, and the owner still holds a new generation", () => {
+    const first = owner();
+    const before = ledgerBytes(first.dir);
+    const second = owner(first.dir);
+    const third = owner(first.dir);
+    expect(ledgerBytes(first.dir).equals(before)).toBe(true);
+    expect(second.delivery.generation).toBe(first.delivery.generation + 1);
+    expect(third.delivery.generation).toBe(first.delivery.generation + 1); // nothing was written under the second owner's number
+  });
+  it("a start that makes an attempted claim uncertain writes once, with its new generation", () => {
+    const store = fakeStore();
+    const first = owner();
+    store.commit([{ n: 1 }]);
+    first.delivery.sync(store.reader);
+    expect(first.delivery.claimNextPage()).not.toBeNull();
+    const second = owner(first.dir);
+    const onDisk = JSON.parse(ledgerBytes(first.dir).toString("utf8")) as { generation: number; entries: Array<{ state: string }> };
+    expect(onDisk.generation).toBe(second.delivery.generation);
+    expect(onDisk.entries.map(entry => entry.state)).toEqual(["uncertain"]);
+  });
+  it("a missing ledger is written by the first start", () => {
+    const first = owner();
+    expect((JSON.parse(ledgerBytes(first.dir).toString("utf8")) as { generation: number }).generation).toBe(first.delivery.generation);
+  });
+});

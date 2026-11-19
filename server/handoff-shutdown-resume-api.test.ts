@@ -74,7 +74,7 @@ posixOnly("a hand-off cut short by a quit or a restart", () => {
       process.env.NODE_ENV='test';globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;
       const fs=await import('node:fs');const path=await import('node:path');
       const data=process.env.MURAGE_DATA_DIR;const file=path.join(data,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
-      const ready={FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized'};
+      const ready={FAKE_ACP_MCP_LIST:'all:ready',FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized'};
       const cli=${JSON.stringify(FAKE_ACP)};
       cfg.instances.lead={driver:'grokAgent',displayName:'Lead fixture',environment:{...ready,FAKE_ACP_MODE:'delegate-peer',FAKE_ACP_PROMPT_DUMP:path.join(data,'lead-prompt.json')},config:{cli,fullAuto:true}};
       cfg.instances.gated={driver:'grokAgent',displayName:'Gated fixture',environment:{...ready,FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'teammate-gate')},config:{cli,fullAuto:true}};
@@ -198,9 +198,11 @@ posixOnly("a hand-off cut short by a quit or a restart", () => {
       const lead = await createBot(stopFirst ? "CsStopLead" : "CsLead", "lead"), helper = await createBot(stopFirst ? "CsStopHelper" : "CsHelper", "codexHold");
       await onlyThese(lead.id, helper.id);
       expect((await api("POST", `/api/bots/${lead.id}/messages`, { text: "please pick this up" })).status).toBe(202);
+      // what the hand-off did instead, when it is not accepted: both conversations, every hand-off row and receipt on disk
+      const before = async () => `${await dump(lead.threadId, helper.threadId)}\n${JSON.stringify(rows("SELECT id, phase, origin, started_at, accepted_turn_id, submitted_at, start_attempts, retry_at, item FROM pending_delegations"))}\n${JSON.stringify(rows("SELECT id, verb, state, outcome_note FROM room_requests ORDER BY created_at"))}`;
       // the hand-off is accepted on the teammate, whose fake Codex then holds its turn on a command it never finishes
-      await expect.poll(() => acceptedOn(helper.id), { timeout: 60_000 }).toBe(1);
-      await expect.poll(() => busy(helper.id), { timeout: 30_000 }).toBe(true);
+      await expect.poll(() => acceptedOn(helper.id), { timeout: 60_000 }).toBe(1).catch(async error => { throw new Error(`${error}\n${await before()}`); });
+      await expect.poll(() => busy(helper.id), { timeout: 30_000 }).toBe(true).catch(async error => { throw new Error(`${error}\n${await before()}`); });
       await new Promise(resolve => setTimeout(resolve, 1_000));
       if (stopFirst) expect((await api("POST", `/api/bots/${helper.id}/interrupt`, {})).status).toBe(200);
 

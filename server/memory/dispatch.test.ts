@@ -8,12 +8,14 @@ import { buildMemoryBundle } from "./bundle.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged } from "./dispatch.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { prepareRecallContextSync } from "./recall-view.ts";
 
 beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 async function fixture(){
-  const roster={bots:[{id:"bot",threadId:"thread"}],groups:[]};reconcileMemoryRoster(roster);
+  const roster={memoryRosterRevision:1,bots:[{id:"bot",threadId:"thread"}],groups:[]};reconcileMemoryRoster(roster);
   const registry=new InternalCapabilities(),generation=registry.begin("bot","thread");
   const token=registry.mint({botId:"bot",threadId:"thread",generation,depth:10,kind:"memory",skillAuthoring:false});
+  prepareRecallContextSync("bot","thread",roster);
   const access=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);
   const bundle=await buildMemoryBundle("query",access,{search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool()});
   return {registry,generation,receipt:new MemoryDispatchReceipt(bundle,access,"driver")};

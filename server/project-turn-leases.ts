@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ProviderAdapter } from "./contracts.ts";
 import { ProjectFolderLeaseError, ProjectFolderLeases, type ProjectFolderLease } from "./project-folder-leases.ts";
 
 export const PROJECT_TURN_TOMBSTONE_LIMIT = 4096;
@@ -9,6 +10,8 @@ export const describeThrow = (error: unknown): string => {
   if (error instanceof Error) return `${error.name}: ${error.message}`;
   return typeof error === "string" ? error : Object.prototype.toString.call(error);
 };
+/** What releaseStopHeld reads of the engine that ran the turn. */
+export type StopHeldEvidence = Pick<ProviderAdapter, "awaitTurnTeardown" | "awaitTurnClose" | "turnChildTracked" | "knowsTurnClose">;
 interface TurnLease {
   threadId: string;
   dispatched: boolean;
@@ -20,6 +23,12 @@ interface TurnLease {
    * is "requested, not observed" (contracts.ts) and the child may still be
    * writing while it closes. */
   stopRequested?: boolean;
+  /** An owner's Stop was asked for this turn (markStopAsked), before the
+   * engine answered. Durable: the turn's terminal event no longer releases
+   * the writer lease on its own (an unconfirmed stop still ends the turn);
+   * only the engine's confirmed close (confirmClosed) does. */
+  stopAsked?: boolean | string;
+  closeUnconfirmed?: boolean;
 }
 
 /** Outcome of a restore admission (STOPRESTORE1).
@@ -39,7 +48,7 @@ export type RestoreAdmission =
    * `invalid-path`, ...) so a caller can tell a busy folder from an unusable
    * path (STOPRESTORE2: the workspace editor answers `bot-writing` for the
    * former and `root-changed` for the latter). */
-  | { ok: false; reason: "conflict"; code: ProjectFolderLeaseError["code"] }
+  | { ok: false; reason: "conflict"; code: ProjectFolderLeaseError["code"]; closeUnconfirmed?: true }
   | { ok: false; reason: "error"; error: unknown };
 
 /** Writer admission bookkeeping for provider generations, not an OS lock.
@@ -49,6 +58,8 @@ export class ProjectTurnLeases {
   private readonly owners = new Map<string, TurnLease>();
   private readonly providers = new Map<string, string>();
   private readonly completed = new Set<string>();
+  /** Engines of tombstoned turns no generation was bound to yet (complete). */
+  private readonly completedAdapters = new Map<string, StopHeldEvidence>();
   private readonly releaseWaiters = new Set<() => void>();
 
   acquire(threadId: string, generation: string, cwd: string): ProjectFolderLease {
@@ -105,8 +116,24 @@ export class ProjectTurnLeases {
     const owner = this.owners.get(generation);
     if (!owner || owner.threadId !== threadId || !turnId) return false;
     const key = JSON.stringify([threadId, turnId]);
+    // Legacy instance-owned Stop callers retain their idempotent bind receipt.
+    if (owner.providerKey === key && (!this.completed.has(key) || typeof owner.stopAsked === "string")) return true;
     // A provider may emit completion before sendTurn reveals its id.
     if (this.completed.has(key)) {
+      // A Stop-held owner keeps its folder through a late or repeated bind:
+      // only its engine's evidence (releaseStopHeld) releases it. Bound now
+      // when the terminal event came first, so that evidence is read here.
+      if (owner.stopAsked) {
+        if (owner.providerKey === undefined && this.providers.get(key) === undefined) {
+          owner.providerKey = key;
+          owner.dispatched = true;
+          this.providers.set(key, generation);
+          const adapter = this.completedAdapters.get(key);
+          this.completedAdapters.delete(key);
+          this.releaseStopHeld(threadId, turnId, adapter);
+        }
+        return false;
+      }
       this.release(generation);
       return false;
     }
@@ -118,13 +145,86 @@ export class ProjectTurnLeases {
     return true;
   }
 
-  complete(threadId: string, turnId: string): void {
+  /** `adapter`: the engine that ended the turn, kept with its tombstone so a
+   * Stop-held generation that binds after this terminal event is released on
+   * that engine's evidence (bind), not on the tombstone alone. */
+  complete(threadId: string, turnId: string, adapter?: StopHeldEvidence): { heldFor: string; generation: string } | undefined {
     if (!threadId || !turnId) return;
     const key = JSON.stringify([threadId, turnId]);
     this.completed.add(key);
-    while (this.completed.size > PROJECT_TURN_TOMBSTONE_LIMIT) this.completed.delete(this.completed.values().next().value!);
+    while (this.completed.size > PROJECT_TURN_TOMBSTONE_LIMIT) {
+      const oldest = this.completed.values().next().value!;
+      this.completed.delete(oldest);
+      this.completedAdapters.delete(oldest);
+    }
     const generation = this.providers.get(key);
+    if (generation === undefined && adapter) this.completedAdapters.set(key, adapter);
+    // A turn whose Stop was asked keeps the folder past its terminal event:
+    // only confirmClosed (the engine's confirmed close) releases it.
+    if (generation !== undefined) {
+      const heldFor = this.owners.get(generation)?.stopAsked;
+      if (!heldFor) this.release(generation);
+      else if (typeof heldFor === "string") return { heldFor, generation };
+    }
+  }
+
+  /** The owner's Stop reached this generation's turn: set BEFORE the engine is
+   * asked, so however the turn then ends (stopped, or settled as not stopped
+   * when the close is unconfirmed) its writer lease is held until
+   * confirmClosed. Returns whether a lease is held. */
+  markStopAsked(generation: string, instanceId?: string): boolean {
+    const owner = this.owners.get(generation);
+    if (!owner) return false;
+    owner.stopAsked = instanceId ?? true;
+    return true;
+  }
+
+  /** True when this provider turn's writer lease is held by an asked Stop
+   * (its terminal event alone does not release it). */
+  heldByStop(threadId: string, turnId: string): boolean {
+    const generation = this.providers.get(JSON.stringify([threadId, turnId]));
+    return generation !== undefined && Boolean(this.owners.get(generation)?.stopAsked);
+  }
+
+  /** The engine confirmed that this provider turn's child closed: release a
+   * lease an asked Stop held past the terminal event. */
+  confirmClosed(threadId: string, turnId: string): void {
+    const generation = this.providers.get(JSON.stringify([threadId, turnId]));
     if (generation !== undefined) this.release(generation);
+  }
+
+  /** The bounded teardown of a held turn (`complete` returned it) did not
+   * confirm the close. The lease stays held; a refused writer is told that
+   * the stopped turn's engine has not confirmed it closed. */
+  markCloseUnconfirmed(threadId: string, turnId: string): void {
+    const generation = this.providers.get(JSON.stringify([threadId, turnId]));
+    const owner = generation === undefined ? undefined : this.owners.get(generation);
+    if (owner?.stopAsked !== undefined) owner.closeUnconfirmed = true;
+  }
+
+  /** At a Stop-held turn's terminal event (heldByStop): release its writer
+   * lease on the engine's evidence. Released at once when the adapter has no
+   * teardown receipt (the terminal event is all it gives, as before) or says
+   * it holds no child of this turn (turnChildTracked false: the Stop raced
+   * the turn's own end or found no running turn). Otherwise released by the
+   * confirmed teardown or the child's later confirmed close; a child that
+   * never closes keeps the folder (fail closed), said once in the log, and
+   * the owner already holds Stop's provider_stop_unconfirmed answer. */
+  releaseStopHeld(threadId: string, turnId: string,
+    adapter: StopHeldEvidence | undefined): void {
+    const release = () => this.confirmClosed(threadId, turnId);
+    if (!adapter?.awaitTurnTeardown) return release();
+    if ((adapter.knowsTurnClose ? adapter.knowsTurnClose(threadId, turnId) : adapter.turnChildTracked?.(threadId, turnId)) === false) return release();
+    // Captured before the bounded wait: the adapter forgets a child once it closed.
+    const lateClose = adapter.awaitTurnClose?.(threadId, turnId);
+    if (lateClose) void lateClose.catch(() => {});
+    const retain = () => {
+      this.markCloseUnconfirmed(threadId, turnId);
+      warn(`stopped turn ${turnId} keeps its folder until the engine's child exits`);
+      if (lateClose) void lateClose.then(release, error => warn(`late close: ${describeThrow(error)}`));
+    };
+    void adapter.awaitTurnTeardown(threadId, turnId).then(result => result.closeConfirmed ? release() : retain(), retain)
+      .catch(error => warn(`release failed: ${describeThrow(error)}`));
   }
 
   /** Pre-dispatch cancellation is safe to release. Once sendTurn was called,
@@ -142,6 +242,15 @@ export class ProjectTurnLeases {
     const owner = this.owners.get(generation);
     if (!owner) return false;
     owner.stopRequested = true;
+    return true;
+  }
+
+  /** The engine's close of a stopped generation's turn was confirmed: nothing
+   * writes any more, so its writer lease releases now instead of waiting for a
+   * terminal event. Returns whether a lease was held. */
+  releaseClosed(generation: string): boolean {
+    if (!this.owners.has(generation)) return false;
+    this.release(generation);
     return true;
   }
 
@@ -173,14 +282,20 @@ export class ProjectTurnLeases {
       catch (error) { return error instanceof ProjectFolderLeaseError ? { ok: false, reason: "conflict", code: error.code } : unexpected("conflict listing", error); }
       // Released between the refusal and this check: acquire on the next pass.
       if (blockers.length === 0) continue;
-      if (!blockers.every(lease => lease.mode === "writer" && (this.owners.get(lease.ownerId)
-        ?? [...this.owners.values()].find(owner => owner.outputOwnerId === lease.ownerId || owner.additionalOwnerIds?.includes(lease.ownerId)))?.stopRequested === true)) {
+      const holders = blockers.map(lease => lease.mode === "writer" ? this.ownerOf(lease.ownerId) : undefined);
+      if (holders.every(owner => owner?.closeUnconfirmed === true)) return { ok: false, reason: "conflict", code: "conflict", closeUnconfirmed: true };
+      if (!holders.every(owner => owner?.stopRequested === true)) {
         return { ok: false, reason: "conflict", code: "conflict" };
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) return { ok: false, reason: "still-closing" };
       await this.nextRelease(remaining);
     }
+  }
+
+  private ownerOf(leaseOwnerId: string): TurnLease | undefined {
+    return this.owners.get(leaseOwnerId)
+      ?? [...this.owners.values()].find(owner => owner.outputOwnerId === leaseOwnerId || owner.additionalOwnerIds?.includes(leaseOwnerId));
   }
 
   /** Resolves on the next writer release, or after `ms` — whichever first. */

@@ -1,16 +1,26 @@
+import { HighLevelCallLedger } from "./highlevel/call-ledger.ts";
+import { appendFixtureMessage } from './testing/approval-card.ts';
+import { BotOutsideWrites } from "./bot-outside-writes.ts";
 import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 import { isRestoreHeld, releaseHeldContinuation, runnableContinuation } from "./restore-fence.ts";
 import { heldScanYield } from "./held-scan.ts";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
-import { describe, expect, it, vi } from "vitest";
+import * as ts from "typescript";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as decision from "./decision/index.ts";
 import { database, transaction } from "./database.ts";
-import { bindProviderTurn, closeTurnLineage, memberTurnId, openTurnLineage, runningTurnFor, turnOfProvider, writeSessionLineage } from "./memory/lineage-write.ts";
+import { bindProviderTurn, checkedOpenTurns, closeTurnLineage, memberTurnId, openTurnLineage, runningTurnFor, turnOfProvider, writeSessionLineage } from "./memory/lineage-write.ts";
+import { noteSessionFrame } from './memory/session-proof-schema.ts';
+import { RecallReadiness } from './memory/recall-readiness.ts';
 import { heldQueueWaiting } from "./external-context-delivery.ts";
 import { Store, threadSealed, type Message } from "./store.ts";
+import { InternalCapabilities } from "./internal-capabilities.ts";
+import { cardAttention, type AttentionOpen } from "./approval-attention.ts";
+import { ProjectTurnLeases } from "./project-turn-leases.ts";
 import { checkReplyActions, completedToolAction, startedToolAction, toolAction } from "./reply-action-guard.ts";
 import { renderDriverReplay, replayMetadata } from "./turn-context.ts";
 import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
@@ -33,14 +43,38 @@ import { QUESTION_FENCE } from "../shared/ask-wording.ts";
 import { fromQuestionFence } from "./question-normalize.ts";
 import { showWidget } from "./chat-widgets.ts";
 import { RetainedCloses } from "./reload-retain.ts";
+import { IndependentThreadRuns } from "./independent-thread-runs.ts";
+import { outsideAuthorityForExecution } from "./outside-wire.ts";
+import { EventBus } from "./harness/bus.ts";
+import { createReplySpeakerTurns } from "./reply-speaker-guard.ts";
+import type { RuntimeEvent, SourceContext } from "./contracts.ts";
+import { ShellSessionRegistry } from "./shell-session-state.ts";
+import { TurnUsageRoutines } from "./turn-usage-routine.ts";
+
+type FixtureRun = { id: string; threadId: string; status: string };
+function fixtureRoutines(listRuns: () => FixtureRun[] = () => []) {
+  return {
+    listRuns,
+    runById(id: string) { return this.listRuns().find(run => run.id === id); },
+    newestLiveRunInThread(threadId: string) { return this.listRuns().find(run => run.threadId === threadId && ["running", "waiting"].includes(run.status)); },
+    getEventBudget: () => ({ closed: false }),
+  };
+}
 
 /** Every name index.ts imports (a value, not a type) that the fold reads, bound to the module index.ts imports it from: the fold runs
  * with the same helpers production hands it, so a new import in index.ts needs no edit here. The fixture's own scope entries below
  * (inert outside services, isolated storage) win over these. */
 const INDEX_SOURCE = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+// Subscribe wrappers may change without changing the fold. Extract the actual
+// declaration, so an absent trailing substring cannot pull server startup in.
+const INDEX_AST = ts.createSourceFile("index.ts", INDEX_SOURCE, ts.ScriptTarget.Latest, true);
+const FOLD_SOURCE = [...INDEX_AST.statements.filter(statement => ts.isFunctionDeclaration(statement)
+  && ["runtimeMessageWriter", "prepareTerminalEvent", "terminalDirectContext", "terminalDispatchFor"].includes(statement.name?.text ?? "")),
+  INDEX_AST.statements.find(statement => ts.isVariableStatement(statement)
+    && statement.declarationList.declarations.some(declaration => ts.isIdentifier(declaration.name) && declaration.name.text === "foldRuntimeEvent"))!
+].map(statement => statement.getText(INDEX_AST)).join("\n");
 const productionImports: Record<string, unknown> = await (async () => {
-  const start = INDEX_SOURCE.indexOf("const foldRuntimeEvent =");
-  const fold = INDEX_SOURCE.slice(start, INDEX_SOURCE.indexOf("\nbus.subscribe(foldRuntimeEvent)", start));
+  const fold = FOLD_SOURCE;
   const out: Record<string, unknown> = {};
   for (const match of INDEX_SOURCE.matchAll(/^import\s+\{([^}]*)\}\s+from\s+"(\.{1,2}\/[^"]+)";/gm)) {
     const names = match[1]!.split(",").map((part) => part.trim()).filter((part) => part && !part.startsWith("type "))
@@ -55,6 +89,9 @@ const productionImports: Record<string, unknown> = await (async () => {
 
 /** Execute the production event fold with isolated storage and inert outside
  * services. This is a behavior test, not a census of source substrings. */
+const decisionReleases: Array<() => void> = [];
+afterEach(() => { for (const release of decisionReleases.splice(0).reverse()) release(); });
+
 function foldFixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "one" }));
   const bot = store.createBot({}, { seedMessages: false });
@@ -62,12 +99,73 @@ function foldFixture() {
   const stamp = engineStamp(instance, "one");
   const stamps = new Map([[bot.threadId, stamp]]);
   const noop = () => undefined;
+  const bus = new EventBus();
+  bus.omitLog(() => true);
+  bus.attach([{ ...instance, adapter: { ...instance.adapter, onEvent: () => noop } }]);
+  let requestEvent: decision.RequestOpenedEvent | undefined;
+  decisionReleases.push(decision.installDecisionHost({ store, view: () => ({ title: "Fixture request", subtitle: "Fixture" }) }));
+  decision.installEngineApprovalBuilder(registration => ({ options: registration.snapshot?.event.choices ?? ["Allow", "Deny"] }));
+  decision.installProvenanceReader({
+    turnGenerationFor: threadId => requestEvent?.threadId === threadId ? requestEvent.turnId : undefined,
+    provenance: () => requestEvent ? { generation: requestEvent.turnId!, threadId: bot.threadId, botId: bot.id, principal: "owner", roomOwnerOnly: true, at: 1, initiator: { k: "owner-typed" } } : undefined,
+    live: threadId => requestEvent?.threadId === threadId ? { botId: bot.id, turnId: requestEvent.turnId!, providerInstanceId: "fixture", principal: "owner", owner: true, level: "ask" } : undefined,
+  });
+  decision.installDenySources({ revision: () => [], resolve: () => [] });
+  decisionReleases.push(decision.installRequestIngress({ subscribe: listener => bus.subscribeExecution(event => {
+    if (event.type === "request.opened") requestEvent = event;
+    listener(event);
+  }, { durable: false }) }));
+  // design1019-approval-attention: handleDecisionRequest hands every card to the real attention module before it presents it.
+  // The module is real; only its outside ports are fixture recorders (no board, one bot), so the fold sees production's
+  // register -> present -> ask path and a test can read what reached the owner.
+  const notices: AttentionOpen[] = [];
+  const activity = new Map<string, string>();
+  const approvalAttention = cardAttention({
+    ownsActivity: () => true,
+    activity: (botId, threadId) => activity.get(`${botId}:${threadId}`),
+    setActivity: (botId, threadId, next) => { activity.set(`${botId}:${threadId}`, next); },
+    boardRun: () => undefined, parkBoard: noop, resumeBoard: noop,
+    notify: open => { notices.push({ ...open }); },
+    wait: noop,
+  });
   const scope: Record<string, unknown> = {
-    ...productionImports,
+    ...productionImports, ...decision,
+    approvalAttention,
+    // The fold's shell-judgement maps (index.ts module declarations): empty, as before any shell permission was prepared.
+    shellPrepared: new WeakMap(), shellPreparedRecord: new WeakMap(), shellPreparing: new WeakSet(),
+    // the project card-run leases the terminal fold completes (index.ts module declaration): none held by this fixture
+    projectTurnLeases: new ProjectTurnLeases(),
+    baseEngineVerdict: () => ({ approve: null, source: "always-ask" }), shouldReview: () => false, autoAnsweredAsks: new Set(),
+    shellSessions: new ShellSessionRegistry(),
+    terminalPreparations: new WeakMap(), ledgerLeasesByAdmission: new WeakMap(), ledgerCompletionSources: new WeakMap(), ledgerProviderInstances: new WeakMap(),
+    bus, queueMicrotask, replySpeakerTurns: createReplySpeakerTurns(), roomLiveTurns: new Map(), turnStartedAtMs: new Map(),
+    highlevelCallLedger: new HighLevelCallLedger(threadId => store.threadHighLevelMarked(threadId) !== "unmarked"),
+    turnUsageRoutines: new TurnUsageRoutines(() => undefined), projectRoutineRunOfRoomTurn: () => null,
+    legacyToolNamesByThread: new Map(),
+    releaseLocalVmThread: noop, retiredProviderTurns: new Set(), removeGroupGoalCoordinatorTurn: noop,
+    turnUsage: new Map(), lateMemoryRedispatches: new Map(), lateRebuildWatches: new Map(), turnRefusalNotes: new Map(),
+    takeReleasedStoppedTurn: () => false, consumeReleasedStoppedTurn: noop, settleDirectAttempts: noop,
+    recordReplyActionCheck: noop, desktopActionCaughtByStop: () => false, hostStopNotedSinceLastUserMessage: () => false,
+    browserCheckTurns: { terminal: () => false }, callRunByTurn: new Map(), delegationWatch: new Map(),
+    outputPublisher: { publishTerminalOutputs: async () => {} }, terminalPublications: new Map(), routinePublicationStarted: noop,
+    activeVpsThreads: new Map(), activeProviderSelections: new Map(), askTurnDevices: new Map(),
+    fluxSpend: { markStale: noop }, spendGate: { endTurn: noop, onSettled: noop },
+    drainQueuedSends: noop, finishDirectAttemptEffects: noop, retryDelegationsWaitingOn: noop, finalizeDelegationWatch: noop,
+    turnReplyCopy: () => undefined, refusedBeforeHandback: new Map(), TURN_REFUSAL_NOTES_MAX: 4096,
+    randomUUID, screenPollers: new Map(), generatedImageTurnKey: (threadId: string, turnId?: string) => `${threadId}:${turnId ?? "active"}`,
+    engineLabelOf: () => "Fixture", filesTouchedSince: () => [],
+    pokeScreenPoller: noop, providerConnections: { resolve: noop }, modelSignIns: { has: () => false },
+    turnAttribution: { attempt: noop }, serviceThreadNoLimits: () => false,
+    // The isolated fold owns no admitted engine lease or dispatched run. Keep
+    // the same registries production reads before it handles every event.
+    admittedLedgerLeases: new Map(), internalTurnOwners: new Map(), directRuns: new IndependentThreadRuns(),
+    // Match an installation that has not accepted No limits terms; the real terms guard still runs.
+    cfg: {},
     // callSpeech: D24's call speech coordinator; no call is live, so no provider turn feeds call speech here
     callSpeech: { provider: () => undefined },
+    botOutsideWrites: new BotOutsideWrites(store, () => null),
     store, toolAction, startedToolAction, completedToolAction, engineStamp, plainConnectedAppMessage: (row: unknown) => row,
-    internalCapabilities: { activeGeneration: () => undefined },
+    internalCapabilities: new InternalCapabilities(),
     // what index.ts imports for every permission event (engine-env.ts Rule 74a, shared/exact-command.ts): the real ones, as in production
     noteStartupFileEvent, handedPinsOf, promptFactsOf, commandCwdFromToolInput, commandFromToolInput, turnCwdByThread: new Map(), turnDriverByThread: new Map(), routineCardFields, grantRequestFor,
     // the window's copy of every runtime event (runtime-event-out.ts), the real one, as in production
@@ -76,7 +174,10 @@ function foldFixture() {
     toolStartedTurns: new Set(), TOOL_STARTED_TURNS_MAX: 4096,
     // which tools are shell commands (auto-approve.ts), the real one, as in production
     isCommandTool,
+    fluxMemoryCapture: { begin() {}, observe() {} },
     fluxFirstTokenProbe: { observe: noop, begin: noop },
+    // fc43c2145c routes waiting through browser execution; this fixture owns neither a browser nor a watchdog.
+    setWaitingOnHuman: noop,
     accountProjectEvent: noop, shouldIgnoreProviderEvent: () => false, replyGuardContext: () => null,
     accountPresentedProjectEvent: () => true, presentedRequests: { publish: noop },
     localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => null,
@@ -85,21 +186,31 @@ function foldFixture() {
     // the model Flux reported serving each thread's turn (usage-tags: stored on the reply), empty: these fixtures are no Flux turn
     turnServedModelByThread: new Map(),
     toolMessageByItem: new Map(), toolRowByItem: new Map(), narrateTool: () => "Sending", screenTouchingTool: () => false,
-    turnOutputRoots: new Map(), isMemoryProvenanceEcho: () => false, lastReply: new Map(), sessionAudienceByThread: new Map(), registry: { get: () => instance },
+    turnOutputRoots: new Map(), freshReplayConfirmations: new WeakMap(), isMemoryProvenanceEcho: () => false, lastReply: new Map(), sessionAudienceByThread: new Map(), registry: { get: () => instance },
     isUnattended: () => false, exactAllowKeyFor: noop, routineRunLevel: () => null,
     routinePeerSources: new Map(), routinePeerApprover: (value: unknown) => value,
     questionFromChoices: (summary: string, choices: string[]) => ({ question: summary, options: choices }),
     lowRiskStamp: () => ({}), askMessageByRequest: new Map(), resolveAutoReviewMode: () => "off",
     createHash, retainSession, adoptStagedImages, memoryEchoDecision, generatedImagesByTurn: new Map(), memoryEchoReplies: new Map(),
+    // MAIN RULING 1115-RECALL-GROK-Q1Q2: extracted native events use the actual frame marker and live-turn validation.
+    noteSessionFrame, checkedOpenTurns,
     performance, providerReplyOf, murageLine, database, sessionKeyOf, latestIncarnation, allocateIncarnation, startFreshSession, threadSealed, appendDecision: noop, turnIsBackground, addSourcesToRunningTurn: noop, DATA_DIR: "fixture", workAdmission: { liveTurns: () => [] }, notify: noop, buildNotification: noop,
   };
   const source = INDEX_SOURCE;
+  // This local production closure carries the driver and Cloud execution
+  // authority into the tool-start fold; evaluate it with this fixture's maps.
+  const authorityStart = source.indexOf("const outsideAuthorityOf =");
+  scope.outsideAuthorityOf = runInNewContext(stripTypeScriptTypes(source.slice(authorityStart, source.indexOf("\n", authorityStart))) + "\noutsideAuthorityOf;",
+    { ...scope, outsideAuthorityForExecution, process });
+  const generationStart = source.indexOf("const turnGenerationFor =");
+  scope.turnGenerationFor = runInNewContext(stripTypeScriptTypes(source.slice(generationStart, source.indexOf("\n", generationStart))) + "\nturnGenerationFor;", scope);
   const plainStart = source.indexOf("function plainConnectedAppMessage");
   scope.plainConnectedAppMessage = runInNewContext(stripTypeScriptTypes(source.slice(plainStart, source.indexOf('const SETUP_TASK_TITLE', plainStart))) + "\nplainConnectedAppMessage;", { plainConnectedAppText });
   // the memory session a session.started names (S6 rule 27), compiled in the same context so it reads the fixture's maps
-  const startsAt = source.indexOf("type SessionStart =");
-  const startsEnd = source.indexOf("\n}\n", source.indexOf("function sessionStartOf", startsAt)) + 2;
-  scope.sessionStartOf = runInNewContext(stripTypeScriptTypes(source.slice(startsAt, startsEnd)) + "\nsessionStartOf;", scope);
+  const sessionStartSource = INDEX_AST.statements.find(statement => ts.isFunctionDeclaration(statement)
+    && statement.name?.text === "sessionStartOf")!.getText(INDEX_AST);
+  scope.sessionStarts = new WeakMap();
+  scope.sessionStartOf = runInNewContext(stripTypeScriptTypes(sessionStartSource) + "\nsessionStartOf;", scope);
   // QW Q2/Q4: the fold's fence step (index.ts), compiled from production with its real parsers; this fixture runs no internal turn,
   // so a fence here is refused and stays the bot's text (the fence cards themselves are pinned in ask-user-answer-api.test.ts)
   const fenceStart = source.indexOf("const fencedMessages = new Set<string>();");
@@ -108,26 +219,116 @@ function foldFixture() {
     store, closedFences, QUESTION_FENCE, WIDGET_FENCE, fromQuestionFence, showWidget, isUnattended: () => false,
     internalTurnOwners: new Map(), turnAttribution: { attempt: () => undefined }, openAnswerAsSendCard: noop,
   });
-  const start = source.indexOf("const foldRuntimeEvent =");
-  const end = source.indexOf("\nbus.subscribe(foldRuntimeEvent)", start);
-  const code = stripTypeScriptTypes(source.slice(start, end)) + "\nfoldRuntimeEvent;";
-  const production = runInNewContext(code, scope) as (event: Record<string, unknown>) => void;
+  const decisionSource = INDEX_AST.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === "handleDecisionRequest")!.getText(INDEX_AST);
+  scope.handleDecisionRequest = runInNewContext(stripTypeScriptTypes(decisionSource) + "\nhandleDecisionRequest;", scope);
+  // The card's project run and a provider event's attention scope, compiled from production in this scope (both are index.ts
+  // module declarations, so productionImports cannot bind them).
+  for (const name of ["liveProjectRun", "eventAttentionScope"]) {
+    const declaration = INDEX_AST.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === name)!.getText(INDEX_AST);
+    scope[name] = runInNewContext(stripTypeScriptTypes(declaration) + `\n${name};`, scope);
+  }
+  const code = stripTypeScriptTypes(FOLD_SOURCE) + "\n({ fold: foldRuntimeEvent, prepare: prepareTerminalEvent });";
+  const production = runInNewContext(code, scope) as { fold(event: RuntimeEvent): void; prepare(event: RuntimeEvent): unknown };
   // Production events each carry their own eventId, and the fold derives a message's stable id from it (so a redelivery of the SAME
   // event adds nothing twice). These fixtures reuse one literal eventId across many distinct events, so every distinct event
   // object gets its own suffix here; passing the same object again is a redelivery and keeps its id.
   const issued = new WeakMap<object, string>();
+  const executions = new WeakMap<object, RuntimeEvent>();
+  const sources = new Map<string, SourceContext>();
   let issuedCount = 0;
   const fold = (event: Record<string, unknown>) => {
     let id = issued.get(event);
     if (!id) { id = `${String(event.eventId ?? "event")}#${++issuedCount}`; issued.set(event, id); }
-    production({ ...event, eventId: id });
+    const key = `${event.threadId}\0${event.turnId ?? ""}`;
+    if (!sources.has(key) || event.type === "turn.started") sources.set(key, bus.admitNewTurn("fixture", String(event.threadId)));
+    let execution = executions.get(event);
+    if (!execution) { execution = { ...event, eventId: id } as RuntimeEvent; executions.set(event, execution); }
+    // Populate the real collector's separately projected display view before
+    // folding the unchanged execution graph, just as subscribeExecution does.
+    bus.publish(execution, sources.get(key));
+    if (execution.type === "turn.completed" && !(scope.terminalPreparations as WeakMap<object, unknown>).has(execution)) {
+      const registry = scope.internalCapabilities as InternalCapabilities;
+      const generation = registry.begin(bot.id, String(execution.threadId));
+      if (execution.turnId) registry.bindProviderTurn(execution.threadId, generation, execution.turnId);
+      const lease = { identity: { threadId: execution.threadId, dispatchGeneration: generation }, providerTurnId: execution.turnId };
+      const source = sources.get(key)!;
+      (scope.ledgerLeasesByAdmission as WeakMap<object, unknown>).set(source.admission!, lease);
+      (scope.ledgerCompletionSources as WeakMap<object, unknown>).set(lease, source);
+      (scope.ledgerProviderInstances as WeakMap<object, string>).set(lease, "fixture");
+      try {
+        const prepared = production.prepare(execution);
+        if (prepared) (scope.terminalPreparations as WeakMap<object, unknown>).set(execution, prepared);
+      } finally { if (execution.turnId) registry.completeProviderTurn(execution.threadId, execution.turnId); }
+    }
+    production.fold(execution);
   };
-  return { store, bot, fold, stamps, instance, scope };
+  return { store, bot, fold, stamps, instance, scope, approvalAttention, notices, activity };
 }
 
-it("F3 production fold stamps tool start, completion and options rows for the guard", () => {
-  const { store, bot, fold } = foldFixture();
+it("an unowned session event cannot bind a successor send attempt", () => {
+  const { bot, fold, scope } = foldFixture();
+  const attach = vi.fn();
+  scope.directRuns = { get: () => ({ generation: "successor", phase: "dispatching" }) };
+  scope.directAttemptProvider = attach;
+  fold({ type: "session.started", threadId: bot.threadId, turnId: "older-turn", providerInstanceId: "fixture" });
+  expect(attach).not.toHaveBeenCalled();
+});
+
+it("a delayed native session cannot allocate an incarnation under its successor", () => {
+  const { bot, scope } = foldFixture();
+  const replacement = { instanceId: "fixture", generation: "successor" };
+  const allocate = vi.fn(() => 1);
+  scope.turnOutputRoots = new Map([[bot.threadId, replacement]]);
+  scope.terminalDispatchFor = () => ({ identity: { dispatchGeneration: "older" } });
+  scope.allocateIncarnation = allocate;
+  scope.turnOfProvider = () => undefined;
+  scope.runningTurnFor = () => undefined;
+  scope.noteSessionFrame = () => {};
+  scope.recordSessionRoots = () => {};
+  const start = scope.sessionStartOf as (event: Record<string, unknown>, instance: string) => { applies: boolean };
+  const event = { type: "session.started", threadId: bot.threadId, turnId: "older-turn", providerInstanceId: "fixture", sessionId: "native-session" };
+  expect(start(event, "fixture").applies).toBe(false);
+  expect(allocate).not.toHaveBeenCalled();
+  expect(replacement).not.toHaveProperty("session");
+  scope.terminalDispatchFor = () => ({ identity: { dispatchGeneration: "successor" } });
+  expect(start({ ...event, turnId: "current-turn" }, "fixture").applies).toBe(true);
+  expect(allocate).toHaveBeenCalledOnce();
+  expect(replacement).toHaveProperty("session", "native-session");
+});
+
+
+it.each(["marker", "coordinator"] as const)("terminal preparation failure at %s retains one public coordinator reply on presentation retry", failure => {
+  const { store, bot, fold, scope } = foldFixture();
+  const coordinator = { turnId: "fixture-turn", assistantItems: ["private-coordinator-envelope"] };
+  scope.groupGoalCoordinatorTurnForEvent = () => coordinator;
+  scope.parseGroupGoalDecision = () => ({ visibleText: "Public fixture reply." });
+  const mark = vi.spyOn(store, "markTerminalAssistantMessage");
+  const append = store.appendMessage.bind(store);
+  const pushes = vi.spyOn(store, "appendMessage");
+  if (failure === "marker") mark.mockImplementationOnce(() => { throw Error("fixture terminal write failed"); });
+  else {
+    pushes.mockImplementationOnce((...args) => {
+      append(...args);
+      throw Error("fixture terminal write failed");
+    });
+  }
+  const event = { type: "turn.completed", eventId: "fixture-end", createdAt: "2026-01-01T00:00:00.000Z",
+    providerInstanceId: "fixture", threadId: bot.threadId, turnId: "fixture-turn", ok: true };
+  expect(() => fold(event)).toThrow("fixture terminal write failed");
+  expect((scope.internalCapabilities as InternalCapabilities).activeGeneration(bot.threadId)).toBeUndefined();
+  expect(() => fold(event)).not.toThrow();
+  const replies = store.messagesFor(bot.threadId).filter(row => row.role === "bot" && row.kind === "text");
+  expect(replies.map(row => row.text)).toEqual(["Public fixture reply."]);
+  expect(JSON.stringify(store.messagesFor(bot.threadId))).not.toContain("private-coordinator-envelope");
+  expect(mark).toHaveBeenCalledTimes(failure === "marker" ? 1 : 0);
+  expect(pushes).toHaveBeenCalledTimes(failure === "marker" ? 1 : 2);
+});
+
+it("F3 production fold stamps tool start, completion and options rows for the guard", async () => {
+  const { store, bot, fold, approvalAttention, notices, activity } = foldFixture();
   const base = { threadId: bot.threadId, turnId: "turn", providerInstanceId: "fixture", eventId: "event" };
+  // The fixture's provenance names "turn" as the request's generation; admission gives that generation its attention scope.
+  const attentionScope = approvalAttention.admit(bot.threadId, "turn");
   fold({ ...base, type: "item.started", itemType: "tool", itemId: "tool", title: "send_message" });
   const started = store.activePath(bot.threadId).at(-1)!;
   expect(started.turnId).toBe("turn"); expect(started.tool?.action?.outcome).toBe("pending");
@@ -135,6 +336,29 @@ it("F3 production fold stamps tool start, completion and options rows for the gu
   expect(store.activePath(bot.threadId).at(-1)).toMatchObject({ turnId: "turn", tool: { ok: true, action: { classes: ["send"], outcome: "completed" } } });
   fold({ ...base, type: "request.opened", requestType: "question", requestId: "question", tool: "AskUserQuestion", summary: "Which format?", choices: ["Short", "Long"] });
   expect(store.activePath(bot.threadId).at(-1)).toMatchObject({ kind: "options", turnId: "turn" });
+  expect(decision.openApprovals(bot.threadId)).toMatchObject([{ why: "base", state: "open", requestId: "question" }]);
+  fold({ ...base, type: "request.opened", requestType: "permission", requestId: "permission", tool: "write_file", summary: "Save fixture", toolCall: { name: "write_file", input: { path: "fixture.txt" } } });
+  expect(store.activePath(bot.threadId).at(-1)).toMatchObject({ kind: "options", turnId: "turn" });
+  // Both cards reach WAITING in the admitted scope and the owner hears about each once, through the attention notify port,
+  // each naming its request, its visible card, its record's bot and its frozen turn id (H1/H2 of the attniso-race review: the
+  // notification left handleDecisionRequest for that port). This fixture's question is decided as a card ("base"), so it is
+  // an approval notice, exactly as the train's `outcome.kind === 'card'` notifyApproval branch sent it.
+  const cards = decision.openApprovals(bot.threadId);
+  await vi.waitFor(() => expect(notices).toHaveLength(2));
+  // The visible card each record presented: an options row on the thread under the record's chat message id.
+  const cardOf = (requestId: string) => {
+    const id = cards.find(card => card.requestId === requestId)?.chatMessageId;
+    expect(store.activePath(bot.threadId).find(row => row.id === id)).toMatchObject({ kind: "options", turnId: "turn" });
+    return id;
+  };
+  const botOf = (requestId: string) => cards.find(card => card.requestId === requestId)?.botId;
+  expect(notices.map(open => ({ requestId: open.requestId, messageId: open.messageId, notice: open.notice, botId: open.botId }))).toEqual([
+    { requestId: "question", messageId: cardOf("question"), notice: { kind: "approval", requestTurnId: "turn" }, botId: botOf("question") },
+    { requestId: "permission", messageId: cardOf("permission"), notice: { kind: "approval", requestTurnId: "turn" }, botId: botOf("permission") },
+  ]);
+  expect(notices.every(open => typeof open.messageId === "string" && open.messageId !== "")).toBe(true);
+  for (const card of cards) expect(approvalAttention.state(attentionScope, { kind: "engine", approvalId: card.ref.approvalId })).toBe("WAITING");
+  expect(activity.get(`${botOf("permission")}:${bot.threadId}`)).toBe("waiting-on-you");
   fold({ ...base, type: "item.completed", itemType: "assistant_text", text: "I sent it." });
   fold({ ...base, type: "item.started", itemType: "tool", itemId: "ask", title: "mcp__team__ask_bot" });
   fold({ ...base, type: "item.completed", itemType: "tool", itemId: "ask", ok: true });
@@ -176,7 +400,7 @@ it("F2 resumes held requests through their original dispatcher after authority r
   const start = source.indexOf("const heldDispatches =");
   const end = source.indexOf("\nstore.onChange(change =>", start);
   const scope = { store, roomEngine: { ready: true }, registry: { get: () => ({ adapter: { capabilities: { agentsMcp: true } } }) }, routeHasTools: () => true,
-    threadHumanPrincipal: () => principal, routines: { listRuns: () => [{ id: "original-run", threadId: bot.threadId, status: "waiting" }], getEventBudget: () => ({ closed: false }) },
+    threadHumanPrincipal: () => principal, routines: fixtureRoutines(() => [{ id: "original-run", threadId: bot.threadId, status: "waiting" }]),
     startTurn: async (...args: unknown[]) => { calls.push(args); }, startCardContinuation: async () => { throw new Error("wrong dispatcher"); }, noteHeldQueue: () => {}, heldScanYield, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null };
   const drain = runInNewContext(stripTypeScriptTypes(source.slice(start, end)) + "\ndrainHeldContinuations;", scope);
   await drain(bot.id);
@@ -233,14 +457,14 @@ it("F7 production ACP recovery preserves headers, omissions and the continuity r
 it("F1 room card continuations stay in a visible durable queue before prompt construction", async () => {
   const { store, bot } = foldFixture();
   const group = store.createGroup("Room fixture", [bot.id]);
-  const card = store.appendMessage(group.threadId, { role: "bot", kind: "options", card: { title: "Request", subtitle: "Continue this request", options: ["Continue"], requestId: "room-card" } });
+  const card = appendFixtureMessage(store, group.threadId, { role: "bot", kind: "options", card: { title: "Request", subtitle: "Continue this request", options: ["Continue"], requestId: "room-card" } });
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const start = source.indexOf("async function startCardContinuation(");
   const end = source.indexOf("\n/** T22", start);
   const queueStart = source.indexOf("function noteHeldQueue(");
   const queueEnd = source.indexOf("\nconst heldDispatches", queueStart);
   const scope = { store, connectorThread: () => ({ bot, group }), registry: { get: () => ({ adapter: { capabilities: {} } }) },
-    routeHasTools: () => false, threadHumanPrincipal: () => ({ kind: "owner" }), routines: { listRuns: () => [] },
+    routeHasTools: () => false, threadHumanPrincipal: () => ({ kind: "owner" }), routines: fixtureRoutines(),
     botPermissionMode: () => "ask", routinePeerSource: () => undefined, turnSessionAudience: () => "original-room-audience", latestRoomUserMessage: () => ({ origin: "desktop" }),
     heldQueueText: (count: number) => `Waiting for a tool-capable engine: ${count} item(s). Open now`, heldQueueWaiting,
     runGroupMemberTurn: () => { throw new Error("A held request reached the room engine"); } };
@@ -258,21 +482,22 @@ it("F11 room continuation admission preserves the originating connection card", 
   const { store, bot } = foldFixture();
   const group = store.createGroup("Connection room", [bot.id]);
   const original = store.appendMessage(group.threadId, { role: "bot", kind: "activity", text: "Original connection" });
-  store.appendMessage(group.threadId, { role: "bot", kind: "options", card: { title: "Other request", subtitle: "Unrelated", options: [], requestId: "other" } });
+  appendFixtureMessage(store, group.threadId, { role: "bot", kind: "options", card: { title: "Other request", subtitle: "Unrelated", options: [], requestId: "other" } });
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  const start = source.indexOf("async function runGroupMemberTurn(");
+  const start = source.indexOf("async function runGroupMemberTurnDispatch(");
   const end = source.indexOf("  // One admission arbiter", start);
+  if (start < 0 || end <= start) throw new Error("Production room dispatch boundary moved");
   // the real provenance seam: a room turn is told its automation by memberTurnAutomation, so it is extracted, not stubbed
   const memberStart = source.indexOf("function memberTurnAutomation(");
   const memberEnd = source.indexOf("/** The message the owner pinned", memberStart);
-  const scope = { LineageAllowance, store, homeExecutionGate: undefined, memberTurnProvenance, turnIsBackground, isLiveRoutineRunStatus, backupRestartAdmission: { held: () => false }, routineRunLevel: () => null, roomRounds: new Map(), cfg: {},
+  const scope = { RecallReadiness, LineageAllowance, store, homeExecutionGate: undefined, memberTurnProvenance, turnIsBackground, isLiveRoutineRunStatus, backupRestartAdmission: { held: () => false }, routineRunLevel: () => null, roomRounds: new Map(), cfg: {}, decisionServiceContext: { exit: (work: () => unknown) => work() },
     registry: { get: () => ({ adapter: { capabilities: {} } }) }, routeHasTools: () => false,
-    threadHumanPrincipal: () => ({ kind: "owner" }), routines: { listRuns: () => [] },
+    threadHumanPrincipal: () => ({ kind: "owner" }), routines: fixtureRoutines(),
     botPermissionMode: () => "ask", resolveTurnFor: (_task: unknown, profile: { modelSelection: unknown }) => ({ selection: profile.modelSelection }), routinePeerSource: () => undefined, turnSessionAudience: () => "audience", latestRoomUserMessage: () => undefined, noteHeldQueue: () => {}, heldScanYield, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null,
     // CANCEL-TREE-104 R1: the setup reads its own room row before the claim; no room request is bound to this turn here
     roomTurnRequestKey: (thread: string, botId: string) => `${thread}:${botId}`, roomTurnRequests: new Map(), pendingRoomTurnRequests: new Map(),
     roomSetupRowEnded: () => { throw new Error("no room row is bound to this turn"); }, settleRoomTurnRequest: () => { throw new Error("no room row is bound to this turn"); } };
-  const run = runInNewContext(stripTypeScriptTypes(source.slice(memberStart, memberEnd) + source.slice(start, end) + "\n}") + "\nrunGroupMemberTurn;", scope);
+  const run = runInNewContext(stripTypeScriptTypes(source.slice(memberStart, memberEnd) + source.slice(start, end) + "\n}") + "\nrunGroupMemberTurnDispatch;", scope);
   // noMentionChain (mobile lane) precedes memoryRedispatch, heldContinuation and continuationCardId
   expect(await run(group.id, group.threadId, bot.id, 0, new Set(), "Continue", undefined, undefined, undefined, undefined, undefined, undefined, false, false, undefined, original.id)).toBe(false);
   expect(store.continuationHolder(bot.id, group.threadId)?.heldContinuations?.[0].cardId).toBe(original.id);
@@ -296,7 +521,7 @@ it.each(["pi", "codex", "acp"])("N9/N10 %s production events preserve action evi
   const { recordEvents } = await import("./testing/events.ts");
   const { ensureDirs } = await import("./config.ts");
   ensureDirs();
-  const acp = createAcpDriver({ driverKind: "guardFixture", displayName: "Guard fixture", defaultCli: "fixture",
+  const acp = createAcpDriver({ driverKind: "guardFixture", fluxReach: () => "elsewhere" as const, displayName: "Guard fixture", defaultCli: "fixture",
     nativeSource: "fixture.acp", models: { default: "one", options: [{ id: "one", label: "One" }] },
     loginNote: "fixture", spawnArgs: () => [], pickAuthMethod: () => null, authFailure: "continue", isAuthenticated: () => true });
   const driver = engine === "pi" ? PiDriver : engine === "codex" ? CodexDriver : acp;
@@ -354,12 +579,12 @@ it("N10 an ACP execute kind remains shell evidence with a stamped engine tool na
  * what is saved, and what a reload reads, is text before the row, the row,
  * text after it. */
 describe("Fuigo hosted tool rows in the saved transcript", () => {
-  const transcript = async (variant: string) => {
+  const transcript = async (variant: string, streamed = false) => {
     const { createAcpDriver } = await import("./drivers/acp/core.ts");
     const { recordEvents } = await import("./testing/events.ts");
     const { ensureDirs } = await import("./config.ts");
     ensureDirs();
-    const driver = createAcpDriver({ driverKind: "hostedFixture", displayName: "Hosted fixture", defaultCli: "fixture",
+    const driver = createAcpDriver({ driverKind: "hostedFixture", fluxReach: () => "elsewhere" as const, displayName: "Hosted fixture", defaultCli: "fixture",
       nativeSource: "fuigo.acp", models: { default: "one", options: [{ id: "one", label: "One" }] },
       loginNote: "fixture", spawnArgs: () => [], pickAuthMethod: () => null, authFailure: "continue", isAuthenticated: () => true });
     const instance = await driver.create({ instanceId: "fixture", displayName: "Fixture", enabled: true,
@@ -370,8 +595,17 @@ describe("Fuigo hosted tool rows in the saved transcript", () => {
       const { store, bot, fold } = foldFixture();
       await instance.adapter.sendTurn({ threadId: bot.threadId, text: "fixture", cwd: process.env.HOME });
       expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+      if (streamed) {
+        const completed = recorder.events.filter(event => event.type === "item.completed" && event.itemType === "assistant_text");
+        for (const event of completed) {
+          expect(event.itemId).toEqual(expect.any(String));
+          const deltas = recorder.events.flatMap(delta => delta.type === "content.delta" && delta.streamKind === "assistant_text" && delta.itemId === event.itemId ? [delta.delta] : []);
+          expect(deltas.join("")).toBe(event.text);
+        }
+        expect(new Set(completed.map(event => event.itemId)).size).toBe(completed.length);
+      }
       for (const event of recorder.events) {
-        if (event.type === "item.started" || (event.type === "item.completed" && (event.itemType === "tool" || event.itemType === "assistant_text"))) {
+        if (event.type === "item.started" || event.type === "item.completed" || (streamed && ["content.delta", "content.reset", "turn.completed"].includes(event.type))) {
           fold({ ...event, providerInstanceId: "fixture" } as unknown as Record<string, unknown>);
         }
       }
@@ -381,6 +615,17 @@ describe("Fuigo hosted tool rows in the saved transcript", () => {
       return { live: shape(store.activePath(bot.threadId)), reloaded: shape(reloaded.activePath(bot.threadId)) };
     } finally { recorder.stop(); await instance.dispose(); }
   };
+
+  it.each([
+    ["hosted-ok", ["text:Let me search.", "row:web_search:ok", "text:Here is what I found."]],
+    ["hosted-local", ["text:Let me read.", "row:read:ok", "text:A", "row:web_search:ok", "text:B"]],
+  ] as const)("full streamed ACP history survives completion and reload: %s", async (variant, expected) => {
+    // Include every delta, reset and terminal event through the real audience
+    // policy. A completion-only replay cannot detect a stranded stream.
+    const { live, reloaded } = await transcript(variant, true);
+    expect(live).toEqual(expected);
+    expect(reloaded).toEqual(expected);
+  });
 
   it("an ordinary hosted search saves and reloads as text, row, text", async () => {
     const { live, reloaded } = await transcript("hosted-ok");
@@ -441,11 +686,28 @@ it("a hosted row's lead-in still lands before it after 600 earlier tool rows in 
     fold({ ...base, type: "item.started", itemType: "tool", itemId: `read-${index}`, title: "read" });
     fold({ ...base, type: "item.completed", itemType: "tool", itemId: `read-${index}`, ok: true });
   }
+  const lastRead = store.activePath(bot.threadId).at(-1)!.id;
+  const earlier = store.activePath(bot.threadId);
+  expect(earlier).toHaveLength(600);
+  expect(new Set(earlier.map(row => row.id)).size).toBe(600);
+  expect(earlier.every(row => row.kind === "activity" && row.tool?.ok === true)).toBe(true);
   fold({ ...base, type: "item.started", itemType: "tool", itemId: "hosted", title: "web_search" });
+  const hosted = store.activePath(bot.threadId).at(-1)!.id;
   fold({ ...base, type: "item.completed", itemType: "tool", itemId: "hosted", ok: true });
   fold({ ...base, type: "item.completed", itemType: "assistant_text", text: "Let me search.", beforeItemId: "hosted" });
-  const tail = store.activePath(bot.threadId).slice(-3).map(row => row.kind === "text" ? `text:${row.text}` : `row:${row.tool?.name}`);
-  expect(tail).toEqual(["row:read", "text:Let me search.", "row:web_search"]);
+  const rows = store.activePath(bot.threadId).slice(-3);
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 f013bcef74: 600 execution anchors keep their exact positions.
+  // The words: a long clean turn stays shown (owner rule, MAIN 21:22Z GO of fix/1020-redact-acp-fable 832aa2ad61;
+  // the full field table lets go of its oldest settled field instead of masking the turn), so they are no longer «redacted».
+  expect(rows.map(row => row.id)).toEqual([lastRead, expect.any(String), hosted]);
+  expect(rows.map(row => row.kind === "text" ? `text:${row.text}` : `row:${row.tool?.name}`)).toEqual(["row:read", "text:Let me search.", "row:web_search"]);
+  const path = store.activePath(bot.threadId), tail = path.slice(-3);
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 over f013bcef74: all 600 rows and hosted insertion order remain exact by durable id.
+  expect(path.slice(0, 600).map(row => row.id)).toEqual(earlier.map(row => row.id));
+  expect(path).toHaveLength(602);
+  expect(tail.map(row => row.id)).toEqual([earlier.at(-1)!.id, path.find(row => row.kind === "text")!.id, hosted]);
+  expect(tail.map(row => row.kind === "text" ? `text:${row.text}` : `row:${row.tool?.name}`)).toEqual(["row:read", "text:Let me search.", "row:web_search"]);
+  expect(JSON.stringify(path)).not.toContain("«redacted»");
 }, 120_000);
 
 /** Hosted-row anchors held for a thread, whatever shape the map keeps. */
@@ -484,6 +746,7 @@ describe("provider reload retires hosted-row anchors", () => {
   const reload = async (anchors: Map<string, unknown>, scope?: Set<string>, scopedReload: () => Promise<void> = async () => undefined) => {
     const run = { threadId: "scoped-thread", botId: "bot", snapshot: { modelSelection: { instanceId: "off" } } };
     const given: Record<string, unknown> = {
+      shellSessions: new ShellSessionRegistry(),
       toolRowByItem: anchors, providerFleetReady: true, browserSetup: undefined, browserExtension: undefined, cfg: {},
       store: { bots: [{ id: "bot", threadId: "room-thread", busy: false }], retireFuigoResumeState: () => undefined }, // S5 site 26: a reload retires the Fuigo resume state of an instance it removed
       directRuns: { forBot: () => [run], current: () => false },

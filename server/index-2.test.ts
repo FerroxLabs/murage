@@ -8,7 +8,8 @@
 // and exercises the shadow-instance behavior end to end.
 // Part 2 of 4.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { readBotPackageArchive } from "./bot-package-archive.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,8 +23,60 @@ import { parseBotPackage } from "./bot-package.ts";
 // budget (server/memory/revoke-budget.ts) has its own tests; here it is lifted in the server child, as revoke-bounded.test.ts lifts
 // it in-process, so a turn is not held behind marker work the budget is pacing. Set before the harness module starts the child.
 vi.hoisted(() => { process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET = "1"; });
-import { BASE, DESKTOP_HEADERS, PAIRED_PHONE, SERVER_DIR, STATE_ONLY_SELECTION, api, delayedJsonBody, desktopApi, fakeClaudeDump, home, readJsonFileWhenReady, startInternalFixtureTurn } from "./testing/index-harness.ts";
+import { BASE, DESKTOP_HEADERS, PAIRED_PHONE, SERVER_DIR, STATE_ONLY_SELECTION, indexDisplayApis, delayedJsonBody, fakeClaudeDump, home, readJsonFileWhenReady, startInternalFixtureTurn } from "./testing/index-harness.ts";
+const { api, desktopApi } = indexDisplayApis();
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
+
+const dumpCursor = () => {
+  try { return statSync(fakeClaudeDump + ".jsonl").size; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
+};
+
+const readBotDump = async (botId: string, cursor: number) => {
+  let dump: { systemPrompt?: string; mcpConfig?: { mcpServers?: Record<string, { env?: { MURAGE_BOT_ID?: string } }> } };
+  let offset = cursor;
+  let pending = "";
+  let failure: unknown;
+  const decoder = new StringDecoder("utf8");
+  const chunk = Buffer.alloc(64 * 1024);
+  await expect.poll(() => {
+    try {
+      let fd: number;
+      try { fd = openSync(fakeClaudeDump + ".jsonl", "r"); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      }
+      try {
+        for (let size; (size = readSync(fd, chunk, 0, chunk.length, offset)) > 0;) {
+          offset += size;
+          pending += decoder.write(chunk.subarray(0, size));
+          for (let end; (end = pending.indexOf("\n")) !== -1;) {
+            const line = pending.slice(0, end);
+            pending = pending.slice(end + 1);
+            dump = withTurnSecrets(JSON.parse(line));
+            const servers = dump.mcpConfig?.mcpServers;
+            const id = servers?.agents?.env?.MURAGE_BOT_ID ?? servers?.murage_connectors?.env?.MURAGE_BOT_ID;
+            if (id === botId) return id;
+          }
+        }
+      } finally {
+        closeSync(fd);
+      }
+      return undefined;
+    } catch (error) {
+      // Exit the poll before rethrowing: expect.poll otherwise retries malformed complete lines and fs errors.
+      failure = error;
+      return botId;
+    }
+  }, { timeout: 5_000 }).toBe(botId);
+  if (failure) throw failure;
+  return dump!;
+};
 
 
 describe("harness HTTP API", () => {
@@ -1330,6 +1383,9 @@ describe("harness HTTP API", () => {
       expect([
         "(kind === \"not-started\" ? backupRefusalMessage(submissionBoundary.refusedWith) : undefined) ?? turnRefusedLine(engineNameOf(instance), kind)",
         "lateMemoryRefusalLine(engine)",
+        // refusalKind() answers one of the fixed TurnRefusedKind words, so no engine text reaches the line (the early-refusal path always has a kind).
+        "turnRefusedLine(engineNameOf(instance), refusalKind())",
+        "submissionBoundary.hasReleasedSubmission ? turnRefusedLine(engine, refusalKind()) : lateMemoryRefusalLine(engine)",
       ], `turn-failed banner body ${body}`).toContain(definition);
     }
     expect(backupRefusalMessage(new Error("engine refused: Authorization: Bearer sk-live-raw"))).toBeUndefined();
@@ -1935,9 +1991,15 @@ describe("harness HTTP API", () => {
     // curling loopback) could put a fresh Mac bot in Auto on the person's
     // own desktop with no warning at all. One rule now, on the RESOLVED
     // destination, for every path to Auto.
-    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    const created = (await desktopApi("POST", "/api/bots")).body.bot;
+    // SETTINGS-LOCKED-1019 3.13 gives new bots an explicit app default. Exercise the retained unassigned-bot path.
+    const bot = (await desktopApi("PATCH", `/api/bots/${created.id}`, { computer: null })).body.bot;
     try {
-      expect(bot.computer).toBeUndefined();
+      // A new bot starts on "this computer" now (Default computer for new bots, a9e405c19 / d07962ed6): to have one that never chose, put it
+      // back on the automatic choice, which is what the fresh bot of the old behaviour was.
+      expect(bot.computer).toBe("local");
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: null })).status).toBe(200);
+      expect(((await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id) as { computer?: string }).computer).toBeUndefined();
       expect(bot.autoApprove).toBeFalsy();
       const mountsThisComputer = process.platform === "darwin";
       // FOLLOW5: the rule below runs on THIS process's platform, and the
@@ -2333,6 +2395,7 @@ describe("harness HTTP API", () => {
 
   it("mounts the verification skill into a real turn when its trigger appears", async () => {
     const bot = (await desktopApi("POST", "/api/bots", {})).body.bot;
+    const unrelated = (await desktopApi("POST", "/api/bots", {})).body.bot;
     try {
       expect((await desktopApi("PATCH", "/api/config", {
         features: { skillRecorder: true },
@@ -2340,19 +2403,35 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, {
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       })).status).toBe(200);
+      const { dump: staleSource } = await startInternalFixtureTurn(unrelated.id, undefined, "hold a stale fixture turn");
+      expect((await api("POST", `/api/bots/${unrelated.id}/interrupt`)).status).toBe(200);
+      const staleDump = { ...structuredClone(staleSource), systemPrompt: "", credFile: undefined };
+      for (const server of Object.values(staleDump.mcpConfig.mcpServers)) {
+        if (server.env?.MURAGE_BOT_ID) server.env.MURAGE_BOT_ID = bot.id;
+      }
+      appendFileSync(fakeClaudeDump + ".jsonl", JSON.stringify(staleDump) + "\n");
       rmSync(fakeClaudeDump, { force: true });
+      const cursor = dumpCursor();
+      // Another bot's real launch must not stand in for the requested skill turn.
+      const { dump: unrelatedDump } = await startInternalFixtureTurn(unrelated.id, undefined, "hold an unrelated fixture turn");
       expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, {
         text: "/create-verification-skill for my notes app",
       })).status).toBe(202);
-      await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
-      const seen = JSON.parse(readFileSync(fakeClaudeDump, "utf8"));
+      await readBotDump(bot.id, cursor);
+      writeFileSync(fakeClaudeDump, JSON.stringify(unrelatedDump));
+      const seen = await readBotDump(bot.id, cursor);
       const system = seen.systemPrompt ?? "";
       // the skill's instructions ride the system prompt the agent receives
       expect(system).toContain('<murage-skill id="create-verification-skill"');
       expect(system).toContain("skill_manage");
     } finally {
-      await api("POST", `/api/bots/${bot.id}/interrupt`);
-      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      for (const current of [bot, unrelated]) {
+        expect((await api("POST", `/api/bots/${current.id}/interrupt`)).status).toBe(200);
+        await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find(
+          (candidate: { id: string }) => candidate.id === current.id,
+        )?.busy, { timeout: 5_000 }).toBe(false);
+        expect((await desktopApi("DELETE", `/api/bots/${current.id}`)).status).toBe(200);
+      }
       await desktopApi("PATCH", "/api/config", { features: { skillRecorder: false } });
     }
   });

@@ -1,0 +1,43 @@
+set -eu
+export WINSCEN_PWSH=/work/.test-tmp/cfix5-winscen/pwsh/pwsh
+cat /proc/loadavg
+awk '{if ($1 >= 85) exit 1}' /proc/loadavg
+for check in p11c p11c-deadline p11b dry ownership finalizer admission-policy safety p11d; do
+  tag=$check; if [ "$check" = p11d ]; then tag=p11d-ps; fi
+  "$WINSCEN_PWSH" -NoProfile -File "scripts/windows/$check-check.ps1" > "scripts/windows/evidence/cfix5-$tag.log" 2>&1
+  tail -2 "scripts/windows/evidence/cfix5-$tag.log"
+done
+"$WINSCEN_PWSH" -NoProfile -File scripts/windows/p11c-check.ps1 -Witness throw > scripts/windows/evidence/cfix5-p11c-throw.log 2>&1
+gcc -shared -fPIC scripts/windows/native-timeout-fixture.c -o .test-tmp/cfix5-winscen/native-timeout.so
+WINSCEN_NATIVE_SHIM=/work/.test-tmp/cfix5-winscen/native-timeout.so WINSCEN_NATIVE_TRACE=/work/.test-tmp/cfix5-winscen/native-trace.txt "$WINSCEN_PWSH" -NoProfile -File scripts/windows/native-timeout-check.ps1 > scripts/windows/evidence/cfix5-native-timeout.log 2>&1
+WINSCEN_NATIVE_WAIT_MS=300000 WINSCEN_NATIVE_SHIM=/work/.test-tmp/cfix5-winscen/native-timeout.so WINSCEN_NATIVE_TRACE=/work/.test-tmp/cfix5-winscen/native-trace.txt "$WINSCEN_PWSH" -NoProfile -File scripts/windows/p11c-native-check.ps1 > scripts/windows/evidence/cfix5-p11c-native.log 2>&1
+python3 - <<'PY'
+from pathlib import Path
+import json,re
+base=Path('.test-tmp/cfix5-winscen/baseline'); current=Path('scripts/windows')
+for name in ('p11c.node-test.mjs','p11c-deadline-check.ps1','p11c-native-check.ps1'):
+ assert (base/name).read_bytes()==(current/name).read_bytes(),name
+ print('UNCHANGED',name)
+checks=lambda s:[line.strip() for line in s.splitlines() if line.strip().startswith('Check ')]
+assert checks((base/'p11c-check.ps1').read_text())==checks((current/'p11c-check.ps1').read_text())
+print('UNCHANGED every p11c PowerShell assertion; historical setup executor relocated only')
+assert json.loads((current/'native-scanner-fixtures.json').read_text())[:27]==json.loads((base/'native-scanner-fixtures.json').read_text())
+print('UNCHANGED all 27 prior hostile scanner fixtures')
+body=lambda p:re.search(r"(?s)-TypeDefinition @'\n(.*?)\n'@",p.read_text()).group(1)
+assert body(base/'owned-process.ps1')==body(current/'owned-process.ps1')
+print('UNCHANGED native ownership C# implementation')
+PY
+# Preserve prior committed evidence; capture this run under cfix5 names.
+python3 - <<'PY'
+from pathlib import Path
+import shutil
+out=Path('.test-tmp/cfix5-winscen/prior-evidence');out.mkdir(exist_ok=True)
+for p in Path('scripts/windows/evidence').glob('cfix4*mutant*.log'):shutil.copy2(p,out/p.name)
+PY
+trap 'python3 .test-tmp/cfix5-winscen/restore-evidence.py' EXIT
+node scripts/windows/mutate-p11c.mjs > scripts/windows/evidence/cfix5-p11c-mutants.log 2>&1
+node scripts/windows/mutate-ownership.mjs > scripts/windows/evidence/cfix5-ownership-mutants.log 2>&1
+node scripts/windows/mutate-safety.mjs > scripts/windows/evidence/cfix5-safety-mutants.log 2>&1
+node scripts/windows/mutate-p11d.mjs > scripts/windows/evidence/cfix5-mutants.log 2>&1
+node scripts/windows/scan-native.mjs > scripts/windows/evidence/cfix5-scanner.log 2>&1
+cat scripts/windows/evidence/cfix5-p11c-mutants.log scripts/windows/evidence/cfix5-ownership-mutants.log scripts/windows/evidence/cfix5-safety-mutants.log scripts/windows/evidence/cfix5-mutants.log scripts/windows/evidence/cfix5-scanner.log

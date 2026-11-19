@@ -1,0 +1,68 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connected-app-health.test.ts (25 tests | 1 failed) 643ms
+     ✓ flips Gmail to needs-reconnect while Calendar stays active 81ms
+     ✓ keeps the failed account when inventory says connected:false 16ms
+     ✓ learns an expired account from inventory without a tool call 10ms
+     ✓ a healthy second account or a newly added account cannot erase the expired account 16ms
+     ✓ clears when a call to that app succeeds 19ms
+     ✓ clears when the person signs in again (a new account) 20ms
+     ✓ is not set by an ordinary tool error, a lookup, or a broker that is dark 32ms
+     ✓ marks the one app that failed when a call touches two 11ms
+     ✓ never removes the active account before the new sign-in is active, then retires exactly that one 136ms
+     ✓ a mark made before any inventory was held still clears when a new account signs in 17ms
+     ✓ names the app by its own curated label, letters, digits and spaces only, whatever the catalog says 19ms
+     ✓ names the app that needs reconnecting, and differs from the unreachable line 13ms
+     ✓ names several apps and follows the copy rules 5ms
+     ✓ reads a single-tool error answer and an event stream 4ms
+     ✓ reads success and ordinary errors as not an authorization failure 3ms
+     ✓ does not read a 403, forbidden or a missing scope as a sign-in failure: signing in again would not change it 3ms
+     ✓ reads a row only for an app the request named, at the answer's own level 3ms
+     ✓ reads the broker's structured signal, never free words in a message 3ms
+     ✓ ignores another request's frame 2ms
+   ✓ P1-1 ACTIVE inventory cannot hide a known expired grant 7ms
+   ✓ P1-2 verified same-owner proactive renewal keeps UUID and cooldown 15ms
+   ✓ P1-3 reconnecting A never implicates healthy B 22ms
+   ✓ P1-3 success clears only its account and preserves the other incident UUID 22ms
+   ✓ P2-5 one inventory check writes once at 10 and 1000 connectors; unchanged writes zero 130ms
+   × P1-1 idle Buffer probe detects an ACTIVE revoked grant without an expiry field 15ms
+ ❯ server/connector-health-store.test.ts (4 tests | 1 failed) 41ms
+     ✓ retains identity, failed accounts and cooldown across process restarts 18ms
+     ✓ ignores a terminal MCP failure delivered after a newer sign-in projection 3ms
+     ✓ checks at boot and on a bounded schedule, without overlapping slow reads 5ms
+   × P2-5 journal bytes for one changed account are constant at 10 and 1000 incidents 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connected-app-health.test.ts > P1-1 idle Buffer probe detects an ACTIVE revoked grant without an expiry field
+TypeError: checkIdleConnectorHealth is not a function
+ ❯ server/connected-app-health.test.ts:428:9
+    426|   await connectedServices(cfg(), { fresh: true });
+    427|   rows = [{ tool_slug: "BUFFER_GET_ACCOUNT_CONTEXT", ok: false, error:…
+    428|   await checkIdleConnectorHealth(cfg());
+       |         ^
+    429|   expect(appsNeedingReconnect(cfg()).find(a => a.slug === "buffer")?.a…
+    430| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/connector-health-store.test.ts > P2-5 journal bytes for one changed account are constant at 10 and 1000 incidents
+SyntaxError: Unexpected token 'o', "torn final "... is not valid JSON
+ ❯ new ConnectorHealthStore server/connector-health-store.ts:35:82
+     33|     if (existsSync(`${file}.journal`)) {
+     34|       const lines = readFileSync(`${file}.journal`, "utf8").split("\n"…
+     35|       for (const line of lines.slice(0, -1)) if (line) for (const chan…
+       |                                                                                  ^
+     36|       this.state = schema.parse(this.state);
+     37|     }
+ ❯ server/connector-health-store.test.ts:89:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 27 passed (29)
+   Start at  03:16:23
+   Duration  13.87s (transform 8.99s, setup 12.28s, import 419ms, tests 685ms, environment 0ms)
+

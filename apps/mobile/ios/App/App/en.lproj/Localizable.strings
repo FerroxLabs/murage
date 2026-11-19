@@ -13,3 +13,12 @@
 "Ask a bot" = "Ask a bot";
 "Open my chat" = "Open my chat";
 "From" = "From";
+"Send to %@ as you" = "Send to %@ as you";
+"Send this to %@ as you?" = "Send this to %@ as you?";
+"Confirm in Murage" = "Confirm in Murage";
+"Sent to %@ without your recent chat." = "Sent to %@ without your recent chat.";
+"Sent to %@." = "Sent to %@.";
+"Sent to %@ without your recent chat (it waited too long)." = "Sent to %@ without your recent chat (it waited too long).";
+"Sent to %@. Pair this phone again to include your recent chat." = "Sent to %@. Pair this phone again to include your recent chat.";
+"Pair this phone again so %@ can see your recent chat when you send from it." = "Pair this phone again so %@ can see your recent chat when you send from it.";
+"Couldn't reach your computer. Check it's on and try again." = "Couldn't reach your computer. Check it's on and try again.";

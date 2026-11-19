@@ -1,0 +1,18 @@
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=2 wal=2 freelist=0
+[own-write] legacy wildcard keys at boot: 0
+[folder-trust] recorded 0 folders bots were already working in as trusted (chosen before 0.1.52; Forget in the picker asks again)
+murage webhook receiver on http://127.0.0.1:20073
+murage server on http://127.0.0.1:20072
+[startup] writes before first health=0
+[memory] keep-all repair: owner-chat session marks removed=0 threads=0 open-jobs=0 cursors-cleared=0 slices=0 drainLeft=false cursorsKeptChecking=0 cursorsKeptLive=0 cursorsSkippedChanged=0
+[memory] index build start name=memory_records_canon
+[events] forgotten messages could not be read: Transcript reader stopped
+[events] forgotten messages could not be read: Transcript reader stopped
+[memory] index build done name=memory_records_canon ms=45
+[memory] identity index: database is not open; the next pass carries on
+[events] forgotten messages could not be read: Transcript reader stopped
+[events] forgotten messages could not be read: Transcript reader stopped
+[events] forgotten messages could not be read: Transcript reader stopped
+[events] the event log prune will finish at the next start

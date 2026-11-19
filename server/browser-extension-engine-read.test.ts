@@ -22,8 +22,9 @@ describe("authorized engine read compatibility", () => {
   it("reads the current protected-checked HTML and emits only the public metadata", async () => {
     const f = fixture();
     const result = await f.read({});
-    expect(result.structuredContent).toEqual({ url: ORIGIN + "/docs", finalUrl: ORIGIN + "/docs", contentType: "text/html", source: "active-tab-html", truncated: false, content: "# Active page\n\nCurrent document" });
-    expect(result.content).toEqual([{ type: "text", text: result.structuredContent.content }]);
+    expect(result.structuredContent).toMatchObject({ url: ORIGIN + "/docs", finalUrl: ORIGIN + "/docs", contentType: "text/html", source: "active-tab-html", truncated: false, content: "# Active page\n\nCurrent document" });
+    expect(result.structuredContent).toMatchObject({ handle: expect.stringMatching(/^w-/), eof: true, next_offset: null });
+    expect(result.content[0].text).toContain(result.structuredContent.content);
     expect(f.fetcher).not.toHaveBeenCalled();
     expect(() => JSON.stringify(result)).not.toThrow();
   });
@@ -39,7 +40,7 @@ describe("authorized engine read compatibility", () => {
     const f = fixture({ [ORIGIN + "/docs"]: { body: "# Kept\n\nSelected\n\n# Omitted\n\nRAW_BODY_SECRET", type: "Text/Markdown; charset=utf-8" } });
     const result = await f.read({ url: ORIGIN + "/docs", filter: "Kept" });
     expect(result.structuredContent).toMatchObject({ source: "accept-markdown-filtered", contentType: "Text/Markdown; charset=utf-8", status: 200, content: "# Kept\n\nSelected" });
-    expect(Object.keys(result.structuredContent).sort()).toEqual(["content", "contentType", "finalUrl", "source", "status", "truncated", "url"]);
+    expect(Object.keys(result.structuredContent).sort()).toEqual(["content", "contentType", "eof", "finalUrl", "handle", "next_offset", "offset", "offset_unit", "source", "source_handle", "status", "total_length", "truncated", "url"]);
     expect(JSON.stringify(result)).not.toContain("RAW_BODY_SECRET");
     expect(f.calls).toHaveLength(1);
   });

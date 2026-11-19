@@ -1,3 +1,7 @@
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
+import { initializeOwnerLimitStorage } from "./owner-limit-continuation.ts";
+import { initializeRoutineMessageLinks } from "./routine-message-links.ts";
+import { initializeApprovals } from './decision/records.ts';
 import { THREAD_SUMMARY_SQL, withChatsPreviewTransaction } from "./thread-summary.ts";
 import { dropLegacyUpgradeTables, ensureDirectTurnInflight } from "./memory/upgrade-app-tables.ts";
 import type { DatabaseSync } from "node:sqlite";
@@ -16,7 +20,45 @@ import { SEQ_INDEX_SQL, SEQ_STATE, seqIndexReady } from "./transcript-seq.ts";
 import { MESSAGE_ID_INDEX_SQL, messageIdIndexReady } from "./message-id-index.ts";
 import { ensureKeyedCardIndex, ensureOpenCardIndex, isOpenCardJson, newestRowid, readIndexState, writeIndexState, type EnsureIndexHooks } from "./transcript-backfill.ts";
 
+import { registerOptionalIndex } from "./memory/optional-index.ts";
+
 export { isOpenCardJson };
+
+/** One turn's rows (L4B-M2, 1.0.18). An index on the stored JSON itself, so SQLite keeps it inside every writer's own statement: this build, an
+ *  older build, a raw UPDATE, a restore. A read costs that turn's rows, never the thread's history. The read must carry this exact expression, or
+ *  the planner will not match it; a damaged row has a null key and still writes. */
+export const TURN_EXPR = "json_extract(json,'$.turnId')";
+export const TURN_INDEX = "messages_turn";
+/** Keep validation in the partial predicate, before extraction. SQLite then
+ * evaluates it once per old/new row rather than inside an expression as well
+ * as maintaining the full index's NULL keys. Invalid JSON remains writable.
+ * The query must carry this same predicate to use the index. */
+export const TURN_CANDIDATE = "json_valid(json)";
+export const TURN_INDEX_LEGACY_EXPR = "CASE WHEN json_valid(json) THEN json_extract(json,'$.turnId') END";
+export const TURN_INDEX_LEGACY_CANDIDATE = `(instr(json, '"turnId"') > 0 OR instr(json, char(92)) > 0)`;
+export const TURN_INDEX_PREVIOUS_DDL = `CREATE INDEX ${TURN_INDEX} ON messages(thread_id, ${TURN_INDEX_LEGACY_EXPR}) WHERE ${TURN_INDEX_LEGACY_CANDIDATE}`;
+export const TURN_INDEX_PREVIOUS_DDLS = Object.freeze([TURN_INDEX_PREVIOUS_DDL,
+  `CREATE INDEX ${TURN_INDEX} ON messages(thread_id, ${TURN_INDEX_LEGACY_EXPR}) WHERE ${TURN_INDEX_LEGACY_EXPR} IS NOT NULL`,
+  `CREATE INDEX ${TURN_INDEX} ON messages(thread_id, ${TURN_INDEX_LEGACY_EXPR})`]);
+export const TURN_INDEX_DDL = `CREATE INDEX IF NOT EXISTS ${TURN_INDEX} ON messages(thread_id, ${TURN_EXPR}) WHERE ${TURN_CANDIDATE}`;
+/** 1.0.20 T1: on a file larger than this the build (one statement over every message) is not made before listen, where a start that ends
+ * during it began it again at every launch. It is made after listen by the idle-gated worker; until then a turn is read through the prior
+ * definition when the file has one (exact and as bounded), else through its thread (message-db.ts turnRows). */
+export const TURN_INDEX_PRELISTEN_MAX_BYTES = 64 * 1024 * 1024;
+export const TURN_INDEX_REGISTRATION = registerOptionalIndex({ name: TURN_INDEX, table: "messages", sql: TURN_INDEX_DDL, previousSql: TURN_INDEX_PREVIOUS_DDLS, minSchemaVersion: 0, preListen: true, requiredBeforeListen: true, deferAboveBytes: TURN_INDEX_PRELISTEN_MAX_BYTES, logTag: "turn-index" });
+/** One turn's rows have no other indexed read: the launch builds the index before it serves or leaves it, declared, to the build after listen
+ * (optional-index.ts preListenIndexDeferred). Its absence in any other state is a fault and never an empty turn. */
+export const TURN_INDEX_NOT_READY = "TURN_INDEX_NOT_READY";
+export class TurnIndexNotReadyError extends Error {
+  readonly code = TURN_INDEX_NOT_READY;
+  constructor() { super(`${TURN_INDEX} is not ready`); this.name = "TurnIndexNotReadyError"; }
+}
+
+
+
+/** Shared with the worker and the offline legacy-schema reference builder. */
+export const MESSAGE_SEARCH_DDL = "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none)";
+
 
 /** The transcript tables every installation's messages.db carries. Owned here,
  * without DATA_DIR or any other import-time state, so the offline archive
@@ -29,18 +71,20 @@ export function initializeMessageTables(db: DatabaseSync, indexHooks: EnsureInde
       CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
       CREATE INDEX IF NOT EXISTS messages_at ON messages(at DESC);
       CREATE TABLE IF NOT EXISTS thread_state(thread_id TEXT PRIMARY KEY, active_leaf_id TEXT);`);
+  initializeRoutineMessageLinks(db);
+  initializeApprovals(db);
+  initializeOwnerLimitStorage(db);
   // Serving open creates both preview tables together with the generation.
   if (!indexHooks.defer) withChatsPreviewTransaction(db, handle => handle.exec(THREAD_SUMMARY_SQL));
   // The per-thread storage sequence (transcript-seq.ts, ROOM-ORDER-DESIGN r7 R1): appended by ALTER TABLE on every file, a fresh one
   // included, so a migrated and a fresh messages table keep one definition text. Metadata only: no row is read or rewritten.
   ensureSeqColumn(db);
-  // Substring-search candidate index (server/message-search-index.ts):
-  // contentless, keyed by messages.rowid, so it holds trigrams and no text;
-  // detail=none drops positions (about 7x smaller), so a query is an AND of
-  // its trigrams and the LIKE check in searchMessages() decides adjacency.
-  // Its shadow tables (_data, _idx, _docsize, _config) are allowlisted by name
-  // in installation-database-snapshot.ts.
-  db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none)`);
+  initializeTurnIndexTables(db);
+  // Reference-only queue. No message text, JSON, or rowid lists can enter it.
+  db.exec(`CREATE TABLE IF NOT EXISTS search_intents(
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, nonce INTEGER NOT NULL, rowid INTEGER, thread_key TEXT,
+    CHECK ((rowid IS NULL) <> (thread_key IS NULL)),
+    CHECK (thread_key IS NULL OR length(CAST(thread_key AS BLOB)) <= 72))`);
   // message_image: which rows of a thread name an image attachment, by path, so a
   // send that names an image finds the rows that bound it without reading the
   // thread (TurnImages.promote). Written with the row; filled for older rows by
@@ -81,6 +125,10 @@ export function initializeMessageTables(db: DatabaseSync, indexHooks: EnsureInde
   // has nothing to do). On a file with history it is an optional index built in an idle window (transcript-seq.ts SEQ_OPTIONAL_INDEX);
   // a file whose index was dropped (a downgrade that kept the column) walks again from the start once it is rebuilt.
   if (db.prepare("SELECT 1 AS present FROM messages LIMIT 1").get() === undefined) {
+    // Like the card and browser indexes, turn_first is maintained by every
+    // message writer from here on. An empty file has no historical rows to
+    // file; record that fact so a later restart does not walk new history.
+    if (readIndexState(db, "turn_first").done !== 1) writeIndexState(db, "turn_first", { done: 1, cursor: 0, skipped: 0 });
     if (!seqIndexReady(db)) db.exec(SEQ_INDEX_SQL);
     // the message-id index likewise (message-id-index.ts): empty table now, else built in an idle window
     if (!messageIdIndexReady(db)) db.exec(MESSAGE_ID_INDEX_SQL);
@@ -159,4 +207,39 @@ export function indexBrowserCheckChunk(db: DatabaseSync, rows = 5_000): boolean 
 /** Builds the partial index (an archive inspector's reference only: nothing at run time makes it any more). */
 export function ensureBrowserCheckIndex(db: DatabaseSync): void {
   db.exec(`CREATE INDEX IF NOT EXISTS ${PENDING_BROWSER_CHECK_INDEX} ON messages(thread_id) WHERE ${PENDING_BROWSER_CHECK_WHERE}`);
+}
+
+/** M2's exact index definition. On a populated installation A2 builds it in its
+ * worker under a writer hold; I0 never scans history or claims ready. */
+export const MESSAGES_TURN_V2_SQL = `CREATE INDEX messages_turn_v2 ON messages(thread_id,turn_id)
+  WHERE turn_id IS NOT NULL`;
+
+/** PROVISIONAL INTERFACE: the design does not name the schema initializer;
+ * initializeTurnIndexTables is the narrow schema-only entry for I/A2.
+ * Schema registration only (RULING-l8 R4). A2 installs the dirty triggers and
+ * singleton controller metadata atomically before its census. Until then there
+ * is no ready state and no new reader or admission capability is enabled. */
+export function initializeTurnIndexTables(db: DatabaseSync): void {
+  beginWrite(db, "turn_index_schema");
+  try {
+    const columns = db.prepare("PRAGMA table_info(messages)").all();
+    if (!columns.some(column => column.name === "turn_id")) db.exec("ALTER TABLE messages ADD COLUMN turn_id TEXT");
+    db.exec(`CREATE TABLE IF NOT EXISTS turn_index_dirty(
+      thread_id TEXT NOT NULL, message_id TEXT NOT NULL, ticket INTEGER NOT NULL,
+      PRIMARY KEY(thread_id,message_id));
+    CREATE TABLE IF NOT EXISTS turn_index_state(
+      id INTEGER PRIMARY KEY CHECK(id=1), protocol INTEGER NOT NULL,
+      build_id TEXT NOT NULL, schema_digest TEXT NOT NULL,
+      phase TEXT NOT NULL, cursor_thread TEXT, cursor_message TEXT,
+      epoch INTEGER NOT NULL, backfill_done INTEGER NOT NULL,
+      verified INTEGER NOT NULL);`);
+    // A fresh empty database also supplies the offline inspector's reference
+    // index. An existing named index is never treated as proof of readiness.
+    if (!db.prepare("SELECT 1 FROM messages LIMIT 1").get()
+      && !db.prepare("SELECT 1 FROM sqlite_schema WHERE name='messages_turn_v2'").get()) db.exec(MESSAGES_TURN_V2_SQL);
+    endWrite(db, "turn_index_schema");
+  } catch (error) {
+    undoWrite(db, "turn_index_schema");
+    throw error;
+  }
 }

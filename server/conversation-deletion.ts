@@ -40,6 +40,7 @@ import { configureRedo, listRedo } from "./engine-redo.ts";
 import { inScopeFolder, privateScopeHome, scopeCandidates } from "./engine-closed.ts";
 import { runEngineHistoryOffThread, startEngineHistoryJob, type EngineDiscovery, type EngineHistoryJob, type EngineHistoryOptions, type EngineHistoryResult } from "./engine-history-offthread.ts";
 import { hasContentSteps, homeKey, pathApiFor, type EnginePlanData, type HomePlanData } from "./engine-plan-core.ts";
+import { searchCleanupPending, searchRetirementPending } from "./message-search-index.ts";
 import { scrubWalAfterDelete, walScrubPending } from "./wal-maintenance.ts";
 import { runningAppVersion } from "./memory/app-version.ts";
 import { OPEN_PASS_ENGINES } from "./engine-history-run.ts";
@@ -76,7 +77,7 @@ export interface DeletionLeftover { what: string; where: string }
 export const ENGINE_LABEL: Readonly<Record<string, string>> = {
   fuigoAgent: "Fuigo", grokAgent: "Grok", claudeAgent: "Claude Code", codex: "Codex", piAgent: "Pi", opencodeGo: "OpenCode",
   geminiAgent: "Gemini CLI", qwenAgent: "Qwen Code", kimiAgent: "Kimi", cursorAgent: "Cursor", droidAgent: "Droid",
-  antigravityAgent: "Antigravity", hermesAgent: "Hermes", openclawAgent: "OpenClaw", clineAgent: "Cline", museCode: "Muse Code", copilotAgent: "GitHub Copilot", customAcp: "your custom engine",
+  antigravityAgent: "Antigravity", hermesAgent: "Hermes", openclawAgent: "OpenClaw", clineAgent: "Cline", museCode: "Muse Code", deepseekAgent: "DeepSeek Harness", copilotAgent: "GitHub Copilot", customAcp: "your custom engine",
 };
 const engineLabel = (kind: string) => ENGINE_LABEL[kind] ?? "An engine";
 /** The driver kind whose label names an engine (codex -> Codex, grok -> Grok). */
@@ -770,7 +771,10 @@ export class ConversationDeletions {
     // cleanup retries across restarts. They must never keep a removed chat in
     // the deletion journal or hold up another deletion. The WAL wait above is
     // bounded; a missing memory-worker acknowledgement is not awaited here.
-    if (walScrubPending() || this.memoryCleanupPending()) leftovers.push({ what: "Removed; finishing cleanup", where: "local memory; Murage retries automatically" });
+    const searchDb = this.options.database();
+    const retiredSearch = searchRetirementPending(searchDb);
+    if (walScrubPending() || (!retiredSearch && searchCleanupPending(searchDb)) || this.memoryCleanupPending()) leftovers.push({ what: "Removed; finishing cleanup", where: "local memory; Murage retries automatically" });
+    if (retiredSearch) leftovers.push({ what: "Removed; finishing cleanup", where: "local search index; Murage retries automatically" });
     // the homes left for Murage's next update are still owed, for the same reason
     const engines = ran && deferred.length ? {
       ...ran,
@@ -1054,7 +1058,7 @@ export class ConversationDeletions {
       const state = this.retries.get(entry.id);
       if (state?.timer) clearTimeout(state.timer);
       // the schedule starts again; the ladder of attempts lost to Murage's own turns does not (a press never lowers the rung)
-      this.retries.set(entry.id, { attempts: 0, ...(state?.ownTurnLosses ? { ownTurnLosses: state.ownTurnLosses } : {}) });
+      this.retries.set(entry.id, { attempts: 0, ...(state?.ownTurnLosses ? { ownTurnLosses: state.ownTurnLosses } : {}), ...(state?.logged !== undefined ? { logged: state.logged } : {}) });
       started++;
       try { await this.finish(entry, { allHomes: true }); } catch (error) { console.warn("conversation deletion: a retry could not finish", error); }
     }
@@ -1116,7 +1120,8 @@ export class ConversationDeletions {
   /** Replays: after the pauses of the list, one more every `slowRetryMs` (6 hours), and the next start's reconcile. */
   private readonly retries = new Map<string, { attempts: number; timer?: NodeJS.Timeout; /** the last attempt was held back by Murage's own turn */ ownTurn?: boolean;
     /** the holders of the owed homes after the last attempt (probeHomes), and the looks since that found them unchanged */ holders?: string; looks?: number;
-    /** attempts in a row lost to Murage's own running turn (engine-running): the next hold waits longer */ ownTurnLosses?: number }>();
+    /** attempts in a row lost to Murage's own running turn (engine-running): the next hold waits longer */ ownTurnLosses?: number;
+    /** the holders the "still open" line was last written for */ logged?: string }>();
   private disposed = false;
 
   /** An unfinished deletion keeps its pending record, and is tried again after a growing pause (the record is the retry
@@ -1147,7 +1152,12 @@ export class ConversationDeletions {
       // made (no worker, no pause of the background runs, no plan line in the log). The look is repeated every openRetryMs.
       if (this.heldBySameHolders(current, state)) {
         state.looks = (state.looks ?? 0) + 1;
-        if (state.looks === 1) console.warn("conversation deletion: the engine history is still open by the same program; looked at again every 10 minutes, planned again once it changes");
+        // once per deletion and holder set: an attempt the looks force (OPEN_LOOKS_MAX) zeroes `looks`, and the line came back after
+        // every one of them, all day against a program the owner keeps open (DELETE-LOOP-1020)
+        if (state.looks === 1 && state.logged !== state.holders) {
+          state.logged = state.holders;
+          console.warn("conversation deletion: the engine history is still open by the same program; looked at again every 10 minutes, planned again once it changes");
+        }
         this.retryAfter(entry, state, Math.min(this.options.openRetryMs ?? 600_000, 600_000));
         return;
       }

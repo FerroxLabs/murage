@@ -11,7 +11,10 @@ describe("model vision facts (G11)", () => {
 
   it("knows deepseek-v4-pro is text only and a Claude model sees; an alias stays unknown", () => {
     expect(knownModelVision("deepseek-v4-pro")).toBe(false);
-    expect(knownModelVision("claude-opus-5")).toBe(true);
+    // MAIN RULING 1114-MODELS-FRESH: refreshed catalog consensus keeps the
+    // positive Claude witness on Opus 5.5; Opus 5 now has a silent listing.
+    expect(knownModelVision("claude-opus-5-5")).toBe(true);
+    expect(knownModelVision("claude-opus-5")).toBeUndefined();
     expect(knownModelVision("opus")).toBeUndefined();
     expect(knownModelVision(undefined)).toBeUndefined();
   });
@@ -24,7 +27,12 @@ describe("model vision facts (G11)", () => {
   it("a catalog row's own fact wins, and a silent row falls back to the table, then to no", () => {
     expect(turnModelVision({ capabilities: { vision: true } }, "deepseek-v4-pro")).toBe(true);
     expect(turnModelVision({ capabilities: { vision: false } }, "claude-opus-5")).toBe(false);
-    expect(turnModelVision({ capabilities: {} }, "claude-opus-5")).toBe(true);
+    // MAIN RULING 1114-MODELS-FRESH: retain a positive table fallback and an
+    // explicit false overriding that positive, plus the old model's uncertainty.
+    expect(turnModelVision({ capabilities: { vision: false } }, "claude-opus-5-5")).toBe(false);
+    expect(turnModelVision({ capabilities: {} }, "claude-opus-5-5")).toBe(true);
+    expect(turnModelVision({ capabilities: {} }, "claude-opus-5")).toBe(false);
+    expect(turnModelVision({ capabilities: { vision: true } }, "claude-opus-5")).toBe(true);
     expect(turnModelVision({ capabilities: {} }, "some-private-model")).toBe(false);
   });
 });

@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "int19m2-C",
+  "date": "2026-11-11",
+  "base": "42d527c91ff0ebb38def2b81cb24fb6b762befab",
+  "scope": "sol-int19c: only the 20 corrected strings listed in int19m2-C/NEEDS-RE-REVIEW.md, read from the current locale files and checked against English, neighbouring copy and product implementation.",
+  "strings": {
+    "en:browser.extensionScope": {
+      "text": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "de:browser.extensionScope": {
+      "text": "{name} kann Tabs nutzen, die du freigibst, und ist dabei mit deinen Konten angemeldet. Du legst den Zugriff für jede Website fest und bestimmst, wie oft vor dem Klicken, Tippen, Senden oder Veröffentlichen nachgefragt wird.",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "es:browser.extensionScope": {
+      "text": "{name} puede usar las pestañas que compartas, con tu sesión iniciada. Tú eliges el acceso de cada sitio y con qué frecuencia pide confirmación antes de hacer clic, escribir, enviar o publicar.",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-extension-setup.23": {
+      "text": "Esta tarea de navegador se ha detenido. Pide al bot que inicie una nueva tarea de navegador y vuelve a elegir Continuar.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-extension-setup.24": {
+      "text": "Esta tarea de navegador se ha detenido. Pide al bot que inicie una nueva tarea de navegador y vuelve a elegir Continuar.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "fr:browser.disclosure.extension": {
+      "text": "Utilise tes sessions ouvertes ; tu choisis ses sites et la fréquence de ses demandes.",
+      "en": "Uses your logins; you choose its sites and how often it asks.",
+      "verdict": "pass"
+    },
+    "fr:browser.extensionScope": {
+      "text": "{name} peut utiliser les onglets que tu partages, connecté avec ton compte. Tu choisis l'accès pour chaque site et la fréquence à laquelle il te demande confirmation avant de cliquer, saisir du texte, envoyer ou publier.",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "hi:browser.BrowserPreflight.1": {
+      "text": "Chrome में chrome://inspect/#remote-debugging खोलें, रिमोट डीबगिंग चालू करें, Chrome को खुला रखें, और Chrome के पूछने पर अनुमति दें (Allow) पर क्लिक करें। Chrome रीस्टार्ट होने के बाद फिर से पूछता है।",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "verdict": "pass"
+    },
+    "hi:browser.BrowserSetupCard.10": {
+      "text": "Chrome में chrome://inspect/#remote-debugging खोलें, रिमोट डीबगिंग चालू करें, Chrome को खुला रखें, और Chrome के पूछने पर अनुमति दें (Allow) पर क्लिक करें।",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+      "verdict": "pass"
+    },
+    "hi:browser.extensionScope": {
+      "text": "{name} आपके शेयर किए गए टैब में आपके खाते से पहले से खुले सत्र का इस्तेमाल कर सकता है। हर साइट की एक्सेस और क्लिक करने, टाइप करने, भेजने या पोस्ट करने से पहले यह कितनी बार पूछे, यह आप चुनते हैं।",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-extension-setup.23": {
+      "text": "यह ब्राउज़र कार्य रोक दिया गया है। बॉट से नया ब्राउज़र कार्य शुरू करने को कहें, फिर दोबारा जारी रखें चुनें।",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-extension-setup.24": {
+      "text": "यह ब्राउज़र कार्य रोक दिया गया है। बॉट से नया ब्राउज़र कार्य शुरू करने को कहें, फिर दोबारा जारी रखें चुनें।",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-extension-setup.25": {
+      "text": "Chrome या Murage बंद हो गया, इसलिए यह कार्य रुका हुआ है। Murage साइड पैनल में फिर शुरू करें दबाएँ, फिर दोबारा जारी रखें चुनें।",
+      "en": "Chrome or Murage closed, so this task is paused. Press Resume in the Murage side panel, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "ja:browser.disclosure.extension": {
+      "text": "ログイン済みの状態でサイトを使用します。使用するサイトと確認の頻度はあなたが選択できます。",
+      "en": "Uses your logins; you choose its sites and how often it asks.",
+      "verdict": "pass"
+    },
+    "ja:browser.extensionScope": {
+      "text": "{name} は、あなたが共有したタブをあなたとしてログインした状態で使用できます。各サイトへのアクセスと、クリック、入力、送信、投稿の前に確認する頻度はあなたが選択できます。",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.extensionScope": {
+      "text": "{name} pode usar as guias que você compartilhar, conectado como você. Você escolhe o acesso de cada site e com que frequência ele pede confirmação antes de clicar, digitar, enviar ou publicar.",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-extension-setup.23": {
+      "text": "Esta tarefa de navegador foi interrompida. Peça ao bot para iniciar uma nova tarefa de navegador e escolha Continuar novamente.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-extension-setup.24": {
+      "text": "Esta tarefa de navegador foi interrompida. Peça ao bot para iniciar uma nova tarefa de navegador e escolha Continuar novamente.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "zh:browser.disclosure.extension": {
+      "text": "使用你的登录状态；由你选择其可访问的网站以及询问频率。",
+      "en": "Uses your logins; you choose its sites and how often it asks.",
+      "verdict": "pass"
+    },
+    "zh:browser.extensionScope": {
+      "text": "{name} 可以以你的登录身份使用你共享的标签页。你可以为每个网站设置访问权限，并选择机器人在点击、输入、发送或发布前询问你的频率。",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

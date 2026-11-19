@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { childEnv } from "./testing/murage-env.mjs";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -30,7 +31,7 @@ const request = async (method: string, path: string, body?: unknown): Promise<{ 
   return { status: res.status, body: await res.json().catch(() => null) };
 };
 const cardFor = async (threadId: string) =>
-  ((await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []).find((m: any) => m.kind === "options" && m.card?.requestId) ?? null;
+  ((await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []).find((m: any) => m.kind === "options" && m.card?.requestHandle) ?? null;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function poll<T>(read: () => Promise<T | null>, ms: number): Promise<T | null> {
   const deadline = Date.now() + ms;
@@ -52,17 +53,17 @@ describe.skipIf(process.platform === "win32")("C3: an ACP permission card across
     writeFileSync(join(home, "fake-engine-setup.mjs"), "globalThis[Symbol.for('murage.hostPower.testUnwrapped')] = true;\n");
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({
-      instances: { asker: { driver: "grokAgent", environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: "printf 'tick' >> notes/log.md" }, config: { cli: FAKE_CLI, fullAuto: false } } },
+      instances: { asker: { driver: "grokAgent", environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_MCP_LIST: "all:ready", FAKE_ACP_PERMISSION_COMMAND: "printf 'tick' >> notes/log.md" }, config: { cli: FAKE_CLI, fullAuto: false } } },
     }));
     child = spawn(process.execPath, ["--import", pathToFileURL(join(home, "fake-engine-setup.mjs")).href, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
-        ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+      env: childEnv({
         HOME: home, USERPROFILE: home, NODE_ENV: "test",
         MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
         MURAGE_PERMISSION_DENY_MS: String(OLD_DENY_MS), // the old deny override: a card must ignore it now
-      },
+      }),
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stderr!.on("data", (c) => (stderr += c));

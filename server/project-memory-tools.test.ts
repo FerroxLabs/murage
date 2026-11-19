@@ -1,3 +1,4 @@
+import { fixtureMemoryAccess } from "./testing/recall-access-fixture.ts";
 import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -21,7 +22,7 @@ import { bringInToProject } from "./memory/bring-in.ts";
 import { captureSource } from "./memory/capture.ts";
 import { setMemoryCaptureRoster } from "./memory/capture-scope.ts";
 import { forgetMemory } from "./memory/forget.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { projectSummaryLayer } from "./project-layers.ts";
 import { deliveredProjectSuggestions, pendingProjectSuggestions, projectThreads, OWNER_PAGE, readProjectMessages, readProjectPage, registerProjectMemoryTools, suggestionLines, suggestToLead, updateProjectSummary } from "./project-memory-tools.ts";
@@ -31,6 +32,8 @@ import type { Message } from "./store.ts";
 import { writtenWithReceipts } from "./memory/testing/legacy-file-model.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { closeTurnLineage, openTurnLineage } from "./memory/lineage-write.ts";
+import { acceptFixtureResponse, bindFixtureTurn } from "./testing/consuming-fixture.ts";
 
 const NOW = 1_790_000_000_000;
 type Roster = MemoryRoster & { bots: Array<MemoryRoster["bots"][number] & { name: string }> };
@@ -67,7 +70,7 @@ function say(threadId: string, text: string, extra: Partial<Message> = {}) {
 function access(botId: string, thread: string) {
   const registry = new InternalCapabilities(); registry.begin(botId, thread, "g");
   const token = registry.mint({ botId, threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false });
-  return memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
+  return fixtureMemoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
 }
 
 it("T30 project pages retain the exact legacy JSON, message-id cursor, marks and shown order", () => {
@@ -297,8 +300,14 @@ it("Astra r2 #16: what read-messages returns is recorded on the consuming turn's
   // the reading bot's record: a project page reads nothing to a bot not on the roster (project-page-door.test.ts)
   setExecutionStore({ bot: (id: string) => roster.bots.find(bot => bot.id === id) } as never);
   onTestFinished(() => setExecutionStore(undefined as never));
-  const result = projectToolHandlers.get("read-messages")!({ db: database(), groupId: "launch", botId: "dax", role: "member", request: { targetThreadId: "launch-chat", rootThreadId: "launch-chat" } as never, memberIds: ["dax", "finch"], ownerAudience: true, now: NOW }, {});
+  // The receipt note is staged on the consuming response and runs only when the real writer accepts it.
+  const turn = openTurnLineage(database(), { threadId: "launch-chat", turnId: "read-turn" });
+  const bound = bindFixtureTurn(database(), turn, "dax");
+  onTestFinished(() => closeTurnLineage(turn));
+  const result = projectToolHandlers.get("read-messages")!({ db: database(), groupId: "launch", botId: "dax", role: "member", request: { targetThreadId: "launch-chat", rootThreadId: "launch-chat" } as never, consumingTurn: turn, memberIds: ["dax", "finch"], ownerAudience: true, now: NOW }, {});
   expect(result.status).toBe(200);
+  expect(shown).toHaveLength(0);
+  expect(acceptFixtureResponse(bound.binding, result.status, result.body).status).toBe(200);
   expect(shown).toHaveLength(1);
   expect(shown[0]!.threadId).toBe("launch-chat");
   expect(shown[0]!.messages).toEqual([{ threadId: "launch-chat", messageId: (result.body as { messages: Array<{ id: string }> }).messages[0]!.id }]);

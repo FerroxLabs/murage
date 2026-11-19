@@ -1,3 +1,5 @@
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Factory Droid harness support — the `droid` CLI over ACP stdio
 // (`droid exec -o acp`), on the Factory login (~/.factory/auth.v2.file) or a
 // FACTORY_API_KEY. The generic protocol runtime lives in acp/core.ts; this
@@ -16,7 +18,8 @@
 // options set over the wire (session/set_model, session/set_mode), which is
 // why both live in configureSession() below and NOT in spawnArgs.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../../counted-fs.ts";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -26,6 +29,7 @@ import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { SendTurnInput } from "../../contracts.ts";
 import { pathExists, readText } from "../isolation-cache.ts";
 import { currentScopeHome, engineUpdateRequired, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
+import { engineReach } from "../../flux-engine-reach.ts";
 
 // FACTORY_HOME_OVERRIDE replaces the HOME the CLI resolves, NOT the data root:
 // droid builds every path as <home>/.factory/… (verified against 0.196.0 —
@@ -93,7 +97,7 @@ export function ensureDroidInjectModel(
   const path = join(dir, "settings.json");
   let settings: FactorySettings & Record<string, unknown> = {};
   try {
-    settings = JSON.parse(readFileSync(path, "utf8")) as FactorySettings & Record<string, unknown>;
+    settings = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(path, "utf8"))) as FactorySettings & Record<string, unknown>;
   } catch (error) {
     if (existsSync(path)) throw error;
   }
@@ -160,7 +164,7 @@ export function applyDroidLocalAuthEnv(
 }
 
 function readSettings(env: Record<string, string | undefined>): FactorySettings {
-  return JSON.parse(readFileSync(join(factoryHome(env), ".factory", "settings.json"), "utf8")) as FactorySettings;
+  return registerBusyloopPayloadSite("read", JSON.parse(readFileSync(join(factoryHome(env), ".factory", "settings.json"), "utf8"))) as FactorySettings;
 }
 
 async function resolveModels(env: Record<string, string | undefined>) {
@@ -204,7 +208,7 @@ async function applySetting(
   what: string,
 ) {
   try {
-    await request(method, params);
+    await NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", request(method, params));
   } catch (e) {
     throw new Error(
       `Droid rejected ${what} via ${method}: ${(e as Error).message}. ` +
@@ -224,10 +228,73 @@ const MODE_FULL_AUTO = "auto-high";
 // 43). Custom models from ~/.factory/settings.json are per-machine and carry a
 // `custom:` prefix, so they can't be enumerated statically; a bot can still be
 // switched onto one through the model picker (PATCH /api/bots/:id).
+// Exact IDs: https://docs.factory.com/models (2026-11-14). Native discovery still wins.
 const MODELS = {
   default: "claude-opus-5",
   options: [
     { id: "auto", label: "Auto (Factory picks)" },
+    { id: "claude-fable-5.2", label: "Claude Fable 5.2" },
+    { id: "claude-fable-5.1", label: "Claude Fable 5.1" },
+    { id: "claude-fable-5", label: "Claude Fable 5" },
+    { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
+    { id: "claude-opus-5-5-fast", label: "Claude Opus 5.5 Fast" },
+    { id: "claude-opus-5-fast", label: "Claude Opus 5 Fast" },
+    { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
+    { id: "claude-opus-4-8-fast", label: "Claude Opus 4.8 Fast" },
+    { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
+    { id: "claude-opus-4-6", label: "Claude Opus 4.6" },
+    { id: "claude-opus-4-5-20251101", label: "Claude Opus 4.5" },
+    { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+    { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+    { id: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5" },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+    { id: "gpt-6-astra", label: "GPT-6 Astra" },
+    { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
+    { id: "gpt-6.1-sol-ultrafast", label: "GPT-6.1 Sol Ultra Fast" },
+    { id: "gpt-6-sol", label: "GPT-6 Sol" },
+    { id: "gpt-6-sol-fast", label: "GPT-6 Sol Fast" },
+    { id: "gpt-5.6-sol-fast", label: "GPT-5.6 Sol Fast" },
+    { id: "gpt-6-luna", label: "GPT-6 Luna" },
+    { id: "gpt-6-luna-fast", label: "GPT-6 Luna Fast" },
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+    { id: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
+    { id: "gpt-5.5", label: "GPT-5.5" },
+    { id: "gpt-5.5-fast", label: "GPT-5.5 Fast" },
+    { id: "gpt-5.5-pro", label: "GPT-5.5 Pro" },
+    { id: "gpt-5.4", label: "GPT-5.4" },
+    { id: "gpt-5.4-fast", label: "GPT-5.4 Fast" },
+    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+    { id: "gpt-5.4-mini-fast", label: "GPT-5.4 Mini Fast" },
+    { id: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
+    { id: "gpt-5.3-codex-fast", label: "GPT-5.3-Codex Fast" },
+    { id: "gpt-5.2", label: "GPT-5.2" },
+    { id: "gemini-4-hydrogen", label: "Gemini 4 Hydrogen" },
+    { id: "gemini-4-carbon", label: "Gemini 4 Carbon" },
+    { id: "gemini-4-argon", label: "Gemini 4 Argon" },
+    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+    { id: "gemini-3-flash-preview", label: "Gemini 3 Flash" },
+    { id: "grok-4.7", label: "Grok 4.7" },
+    { id: "grok-4.5", label: "Grok 4.5" },
+    { id: "inkling", label: "Inkling" },
+    { id: "mistral-large-4", label: "Mistral Large 4" },
+    { id: "mistral-medium-3.5", label: "Mistral Medium 3.5" },
+    { id: "glm-5.3-flash", label: "GLM-5.3-Flash" },
+    { id: "glm-5.3", label: "GLM-5.3" },
+    { id: "glm-5.2-fast", label: "GLM-5.2 Fast" },
+    { id: "kimi-k3.1-pro", label: "Kimi K3.1 Pro" },
+    { id: "qwen3.8-max", label: "Qwen3.8 Max" },
+    { id: "nemotron-3.5-super", label: "Nemotron 3.5 Super" },
+    { id: "nemotron-3-ultra", label: "Nemotron 3 Ultra" },
+    { id: "deepseek-v4.1-flash-1017", label: "DeepSeek V4.1 Flash 1017" },
+    { id: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash" },
+    { id: "minimax-m3.1-flash", label: "MiniMax M3.1 Flash" },
+    { id: "minimax-m3", label: "MiniMax M3" },
+    { id: "muse-spark-1.3", label: "Muse Spark 1.3" },
+    { id: "muse-spark-1.2", label: "Muse Spark 1.2" },
+    { id: "beam-1.0", label: "Beam 1.0" },
     { id: "claude-opus-5", label: "Claude Opus 5" },
     { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
     { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
@@ -285,7 +352,7 @@ function droidScopeSpec(realFactory: string, botId?: string): ScopedCliHomeSpec 
         const path = join(realFactory, name);
         let settings: Record<string, unknown> = {};
         try {
-          const parsed = JSON.parse(readText(path)) as unknown;
+          const parsed = registerBusyloopPayloadSite("read", JSON.parse(readText(path))) as unknown;
           if (isPlainObject(parsed)) settings = { ...parsed };
         } catch { pathExists(path); if (name === "settings.local.json") continue; }
         for (const key of DROID_PERSONAL_SETTINGS_KEYS) delete settings[key];
@@ -334,7 +401,7 @@ export function applyDroidHostComputerGrant(turn: Pick<SendTurnInput, "integrati
   const local = turn.integrations?.localComputer?.scope === "local-computer" ? turn.integrations.localComputer : undefined;
   let doc: Record<string, unknown> = {};
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const parsed = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(path, "utf8"))) as unknown;
     if (isPlainObject(parsed)) doc = { ...parsed };
   } catch { /* none yet, or unreadable: start from an empty document */ }
   const perms = isPlainObject(doc.persistentPermissions) ? { ...doc.persistentPermissions } : {};
@@ -355,6 +422,8 @@ export function applyDroidHostComputerGrant(turn: Pick<SendTurnInput, "integrati
 
 export const droidSupport: AcpSupport = {
   driverKind: "droidAgent",
+  // U05: custom models (baseUrl) live in ~/.factory settings; none is Factory's own backend.
+  fluxReach: (env) => engineReach(env, { configFiles: [join(factoryHome(env), ".factory", "settings.json"), join(factoryHome(env), ".factory", "config.json")], compiledDefault: "https://api.factory.ai" }),
   // Droid starts the servers handed at session/new (rig 0.238.0: only Murage's
   // servers start once the owner's are scoped out), with no readiness signal.
   mcpListedWait: true,
@@ -377,10 +446,11 @@ export const droidSupport: AcpSupport = {
   // No model/mode flags here on purpose: see the header note. `-o acp` is the
   // ACP entry point; everything else is negotiated over the protocol.
   // The host-computer grant is written here: after the scoped home is set (applyMountEnv) and before the spawn.
-  spawnArgs: (_config, turn, ctx) => { applyDroidHostComputerGrant(turn, ctx?.env); return ["exec", "-o", "acp"]; },
+  spawnArgs: (_config, turn, ctx) => { applyDroidHostComputerGrant(turn, ctx?.env); return ["exec", "-o", "acp", ...(turn.integrations?.agents && !(turn.permissionNow?.() ?? turn).noLimits ? ["--remove-tools", "FetchUrl"] : [])]; },
   hostComputerAskedByMurage: true,
   // The version gates the scoped home below.
   spawnNeedsCliVersion: true,
+  scopeVersionRequired: true,
   credentialEnv: ["FACTORY_API_KEY"],
   // After resolveTurnModel, so a local model is written to the real settings.json first.
   scopeKind: "droid",

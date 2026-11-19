@@ -1,0 +1,12 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync,writeFileSync,unlinkSync} from 'node:fs';import {EventEmitter} from 'node:events';import {spawnSync} from 'node:child_process';
+test('reviewer Desktop snapshot native helper exceeds 300 seconds',async()=>{
+ const s=readFileSync('scripts/windows/packaged-scenario.mjs','utf8');const body=s.slice(s.indexOf('function native('),s.indexOf('const ps=join'));
+ let kill=0;const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>kill++;
+ const native=new Function('spawn','env','owned','setTimeout','clearTimeout',`${body};return native;`)(()=>child,{},[],fn=>{queueMicrotask(fn);return 1;},()=>{});
+ await assert.rejects(native('powershell.exe',['-File','snapshot.ps1'],300000),/timeout/);
+ assert.equal(kill,0,'reviewer witness: timeout must terminate the owned job, never the child directly');
+});
+for(const [name,code] of [['lowercase-js','child.kill();'],['taskkill-test','taskkill.exe /PID 123 /F'],['cim-terminate','Invoke-CimMethod -InputObject $process -MethodName Terminate']])test(`reviewer scanner witness ${name}`,()=>{
+ const file=`scripts/windows/reviewer-${name}.${name==='lowercase-js'?'mjs':'ps1'}`;
+ try {writeFileSync(file,code);const r=spawnSync(process.execPath,['--test','scripts/windows/p11b.node-test.mjs'],{encoding:'utf8'});assert.notEqual(r.status,0,`unsafe source evades the original scanner: ${code}`);}finally{unlinkSync(file);}
+});

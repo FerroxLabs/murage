@@ -70,6 +70,59 @@ describe("LazyBoundary", () => {
   });
 });
 
+// SETTINGS-P-LAZY-FAILURE-1019 section 1: an inline load failure the owner can
+// close shows Close beside Retry, as the render-error branch always has; one
+// nobody can close (a card in a list) keeps Retry alone.
+describe("an inline load failure", () => {
+  const chunk = new TypeError("Failed to fetch dynamically imported module: http://127.0.0.1:8799/assets/ModelPickerDialog-abc.js");
+  const failed = (props: Partial<ConstructorParameters<typeof LazyBoundary>[0]> = {}) => {
+    const instance = new LazyBoundary({ children: createElement("span", null, "panel"), onRetry: vi.fn(), inline: true, ...props });
+    instance.state = { ...instance.state, ...LazyBoundary.getDerivedStateFromError(chunk) };
+    return instance;
+  };
+  type Button = ReactElement<{ onClick?: () => void; children?: unknown }>;
+  const buttons = (node: unknown): Button[] => {
+    if (Array.isArray(node)) return node.flatMap(buttons);
+    if (!isValidElement(node)) return [];
+    const element = node as ReactElement<{ children?: unknown }>;
+    if (typeof element.type === "function") return buttons((element.type as (props: unknown) => unknown)(element.props));
+    return [...(element.type === "button" ? [element as Button] : []), ...buttons(element.props.children)];
+  };
+  const close = (node: unknown) => buttons(node).find((button) => button.props.children === "Close");
+
+  it("shows Retry and Close when it can be dismissed, and Close calls onDismiss without a reload", () => {
+    const onDismiss = vi.fn(), reload = vi.fn();
+    const instance = failed({ onDismiss, reload });
+    const tree = instance.render();
+    const html = renderToStaticMarkup(tree as ReactElement);
+    expect(html).toContain("Couldn&#x27;t open this. Tap to retry.");
+    expect(html).toContain('role="alert"');
+    expect(html).toMatch(/>Close<\/button>/);
+    expect(html).not.toContain("fixed inset-0");
+    close(tree)!.props.onClick!();
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(reload).not.toHaveBeenCalled();
+    instance.retry();
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it("keeps Retry alone when nothing can dismiss it", () => {
+    const html = renderToStaticMarkup(failed().render() as ReactElement);
+    expect(html).toContain("Couldn&#x27;t open this. Tap to retry.");
+    expect(html).not.toContain("Close");
+  });
+
+  it("draws Close inside the surface's own frame", () => {
+    const onDismiss = vi.fn();
+    const tree = failed({ onDismiss, frame: (alert) => createElement("section", { "data-test-frame": "" }, alert) }).render();
+    const html = renderToStaticMarkup(tree as ReactElement);
+    expect(html.startsWith("<section data-test-frame")).toBe(true);
+    expect(html.indexOf(">Close</button>")).toBeLessThan(html.indexOf("</section>"));
+    close(tree)!.props.onClick!();
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+});
+
 // 0.1.60 audit L1: any render error was treated as a failed chunk load, and
 // its "retry" reloaded the whole window (ending a live call).
 describe("a panel that throws while rendering is not a failed load", () => {

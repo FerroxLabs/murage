@@ -32,7 +32,9 @@ function fixture() {
   setMemoryMode("active");
   reconcileMemoryRoster({ bots: [{ id: "b", threadId: thread }], groups: [] });
   appendMessage(thread, message("plain"));
-  appendMessage(thread, message("line", { murageLine: true } as Partial<Message>));
+  // Both anchors belong to the same branch. Omitting this parent abandons
+  // and revokes the plain anchor before the receipt content checks run.
+  appendMessage(thread, message("line", { parentId: "plain", murageLine: true } as Partial<Message>));
   const db = database(), scope = ensureScope("conversation", thread);
   db.exec("BEGIN");
   const source = db.prepare("INSERT INTO memory_sources(id,scope_id,thread_id,message_id,turn_id,revision,content_hash,kind,speaker,outcome,branch_id,state) VALUES(?,?,?,?,NULL,2,'hash','text','bot:b','settled',NULL,'active')");

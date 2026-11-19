@@ -9,9 +9,11 @@ beforeAll(async () => {
   server = createServer((req, res) => { res.setHeader("Content-Type", req.url === "/app.js" ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8"); res.end(req.url === "/app.js" ? script : '<div id="root"></div><script src="/app.js"></script>'); });
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
   url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  // Offline runners provision the browser separately from the disposable test
+  // home. Keep Playwright's cache default unless an explicit binary is supplied.
+  browser = await chromium.launch({ executablePath: process.env.MURAGE_TEST_BROWSER_EXECUTABLE, headless: true, args: ["--no-sandbox"] });
 }, 120_000);
-afterAll(async () => { await browser?.close(); await new Promise<void>(done => server?.close(() => done())); });
+afterAll(async () => { await browser?.close(); if (server) await new Promise<void>(done => server.close(() => done())); });
 const A = { epoch: "A", rev: 0 }, next = { epoch: "A", rev: 1 }, restored = { epoch: "B", rev: 0 };
 async function answer(page: Page, pattern: string, gen = A, text = "secret old text") {
   await page.waitForFunction(pattern => (window as any).fixture.pending().some((path: string) => path.includes(pattern)), pattern, { timeout: 5000 }).catch(async error => { console.error("Pending", await page.evaluate(() => (window as any).fixture?.pending()), "DOM", await page.locator("body").innerText()); throw error; });

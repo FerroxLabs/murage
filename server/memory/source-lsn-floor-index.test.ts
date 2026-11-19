@@ -14,8 +14,11 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { SOURCE_FLOOR_SQL, sourceUnstampedBound } from "./deny-read.ts";
-import { buildPreListenIndexes, OPTIONAL_INDEXES, optionalIndexReady } from "./optional-index.ts";
+import { buildPreListenIndexes, REQUIRED_INDEXES, OPTIONAL_INDEXES, optionalIndexReady } from "./optional-index.ts";
 import { downgradeMemorySchema, MEMORY_SCHEMA_VERSION, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
+import { checkpointSchemaObjects, dropEmptyCheckpointSchema } from "./checkpoint-schema.ts";
+import { dropRecallViewSchema } from "./recall-view-schema.ts";
+import { dropSessionProofSchema, ensureSessionProofSchema, sessionProofSchemaObjects } from "./session-proof-schema.ts";
 import { sqlWork } from "./testing/sql-work.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -32,6 +35,11 @@ function file17(stamps: number): DatabaseSync {
   const db = new DatabaseSync(join(dir, "messages.db")); dbs.push(db);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON");
   migrateMemorySchema(db, "active");
+  // 1.0.17 predates the derived recall view, the checkpoint family tables and the session proofs, despite sharing schema version 13.
+  // Keep this historical fixture historical; the current-file removal is checked below.
+  dropRecallViewSchema(db);
+  dropSessionProofSchema(db);
+  dropEmptyCheckpointSchema(db);
   db.prepare(`INSERT INTO memory_source_lsn(source_id,revision,created_lsn) WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
     SELECT printf('s%07d',(i*7919)%1000003),1,1000+i FROM n`).run(stamps);
   return db;
@@ -95,10 +103,12 @@ it("the downgrade to v12 takes the index with the stamps; the next v13 open is v
 it("the step back to 1.0.17 (--to 13) takes only the floor index, in one step, and keeps every stamp; the next pre-listen build makes it again", () => {
   const db = file17(5000);
   expect(db.prepare("SELECT 1 AS ok FROM sqlite_schema WHERE type='table' AND name='memory_thread_flow_last'").get()).toEqual({ ok: 1 }); // a v13 table the step to 12 would take; this step keeps it
-  const tables = () => (db.prepare("SELECT type,name,sql FROM sqlite_schema WHERE type<>'index' ORDER BY name").all() as Array<Record<string, unknown>>).map(row => JSON.stringify(row));
+  const tables = () => (db.prepare("SELECT type,name,sql FROM sqlite_schema WHERE type<>'index' AND name<>'memory_capture_deferred' ORDER BY name").all() as Array<Record<string, unknown>>).map(row => JSON.stringify(row));
   const stamps = () => db.prepare("SELECT count(*) AS n, min(created_lsn) AS lo, sum(created_lsn) AS sum FROM memory_source_lsn").get();
   expect(buildPreListenIndexes(db, { log: false })).toContain(INDEX);
-  const before = { tables: tables(), stamps: stamps(), indexes: (db.prepare("SELECT name FROM sqlite_schema WHERE type='index' AND name<>? ORDER BY name").all(INDEX) as Array<{ name: string }>).map(row => row.name) };
+  const known117 = new Set(["memory_disclosures_live", "memory_records_pinned", "memory_records_canon", "memory_details_identity", "memory_records_waiting_review", "memory_bindings_scope"]);
+  const newerIndexes = new Set(["memory_capture_deferred_order", ...[...REQUIRED_INDEXES,...OPTIONAL_INDEXES].filter(index=>index.table.startsWith('memory_')&&!known117.has(index.name)).map(index=>index.name)]);
+  const before = { tables: tables(), stamps: stamps(), indexes: (db.prepare("SELECT name FROM sqlite_schema WHERE type='index' ORDER BY name").all() as Array<{ name: string }>).map(row => row.name).filter(name=>!newerIndexes.has(name)) };
   expect(before.stamps).toMatchObject({ n: 5000, lo: 1001 });
   expect(downgradeMemorySchema(db, 13)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 13 });
   expect(optionalIndexReady(db, INDEX)).toBe(false);
@@ -106,21 +116,50 @@ it("the step back to 1.0.17 (--to 13) takes only the floor index, in one step, a
   // every stamp and the flow table stay, whichever version the file came from
   expect(stamps()).toEqual(before.stamps);
   expect(db.prepare("SELECT 1 AS ok FROM sqlite_schema WHERE type='table' AND name='memory_thread_flow_last'").get()).toEqual({ ok: 1 });
-  // the same-version step (a v13 tree) takes nothing else: every table, trigger and other index is as it was. A newer tree reaches 13
+  // The derived capture queue and indexes unknown to 1.0.17 leave. Every authoritative table, trigger and older index stays. A newer tree reaches 13
   // through its own step, which takes that version's own objects as well.
   if (MEMORY_SCHEMA_VERSION === 13) {
     expect(tables()).toEqual(before.tables);
     expect((db.prepare("SELECT name FROM sqlite_schema WHERE type='index' ORDER BY name").all() as Array<{ name: string }>).map(row => row.name)).toEqual(before.indexes);
   }
   // no 1.0.18 optional index on a memory table is left for 1.0.17's validator to refuse
-  const known117 = new Set(["memory_disclosures_live", "memory_records_pinned", "memory_records_canon", "memory_details_identity", "memory_records_waiting_review", "memory_bindings_scope"]);
-  for (const index of OPTIONAL_INDEXES) if (index.table.startsWith("memory_") && !known117.has(index.name)) expect(optionalIndexReady(db, index.name)).toBe(false);
+  expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_capture_deferred'").get()).toBeUndefined();
+  expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_capture_deferred_order'").get()).toBeUndefined();
+  for (const index of [...REQUIRED_INDEXES,...OPTIONAL_INDEXES]) if (index.table.startsWith("memory_") && !known117.has(index.name)) expect(optionalIndexReady(db, index.name)).toBe(false);
   expect(() => validateMemorySchema(db)).not.toThrow();
   expect(downgradeMemorySchema(db, 13)).toMatchObject({ status: "already-v13", from: 13, to: 13 });
   // the next 1.0.18 start: the build makes it again before listen, over the same stamps, and the floor is unchanged
   migrateMemorySchema(db, "active");
   expect(buildPreListenIndexes(db, { log: false })).toContain(INDEX);
   expect(Number((db.prepare(FLOOR).get() as { m: number }).m)).toBe(1001);
+  expect(stamps()).toEqual(before.stamps);
+  expect(() => validateMemorySchema(db)).not.toThrow();
+});
+
+// A current file has additional derived objects: the old validator must never see them.
+it("a current v13 downgrade removes recall views and the next migration rebuilds them without losing source stamps", () => {
+  const db = file17(5000);
+  migrateMemorySchema(db, "active");
+  ensureSessionProofSchema(db);
+  const objects = () => db.prepare("SELECT type,name,sql FROM sqlite_schema WHERE name LIKE 'memory_recall_%' ORDER BY name").all();
+  const proofs = () => db.prepare("SELECT type,name,sql FROM sqlite_schema WHERE name IN (SELECT value FROM json_each(?)) ORDER BY name").all(JSON.stringify([...sessionProofSchemaObjects().keys()]));
+  const checkpoints = () => db.prepare("SELECT type,name,sql FROM sqlite_schema WHERE name IN (SELECT value FROM json_each(?)) ORDER BY name").all(JSON.stringify([...checkpointSchemaObjects().keys()]));
+  const stamps = () => db.prepare("SELECT source_id,revision,created_lsn FROM memory_source_lsn ORDER BY source_id,revision").all();
+  const before = { objects: objects(), proofs: proofs(), checkpoints: checkpoints(), stamps: stamps() };
+  expect(before.objects.length).toBeGreaterThan(0);
+  expect(before.checkpoints.length).toBeGreaterThan(0);
+  expect(before.proofs.length).toBeGreaterThan(0);
+  downgradeMemorySchema(db, 13);
+  expect(objects()).toEqual([]);
+  expect(proofs()).toEqual([]);
+  expect(checkpoints()).toEqual([]);
+  expect(stamps()).toEqual(before.stamps);
+  expect(() => validateMemorySchema(db)).not.toThrow();
+  migrateMemorySchema(db, "active");
+  ensureSessionProofSchema(db);
+  expect(objects()).toEqual(before.objects);
+  expect(proofs()).toEqual(before.proofs);
+  expect(checkpoints()).toEqual(before.checkpoints);
   expect(stamps()).toEqual(before.stamps);
   expect(() => validateMemorySchema(db)).not.toThrow();
 });

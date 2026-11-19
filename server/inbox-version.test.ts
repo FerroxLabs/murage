@@ -1,3 +1,4 @@
+import { insertFixtureMessage, answerFixtureMessage } from './testing/approval-card.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -31,9 +32,9 @@ describe("inbox version and database pragmas", () => {
     updateMessage("t", msg("a", { kind: "text", text: "streaming more" }));
     insertMessage("t", msg("u", { role: "user", kind: "text" }));
     expect(messagesVersion()).toBe(before);
-    insertMessage("t", msg("c", { kind: "options", card: { requestId: "r", options: ["Allow"], tool: "Bash" } }));
+    insertFixtureMessage("t", msg("c", { kind: "options", card: { requestId: "r", options: ["Allow"], tool: "Bash" } }));
     expect(messagesVersion()).toBe(before + 1);
-    updateMessage("t", msg("c", { kind: "options", card: { requestId: "r", answered: "Allowed", options: [] } }));
+    answerFixtureMessage("t", "c", { answered: "Allowed" });
     expect(messagesVersion()).toBe(before + 2);
     insertMessage("t", msg("f", { kind: "text", artifactIds: ["a".repeat(36)] }));
     expect(messagesVersion()).toBe(before + 3);
@@ -45,9 +46,9 @@ describe("inbox version and database pragmas", () => {
   it("a real write through message-db reaches the cached Inbox", () => {
     const db = database();
     expect(listInboxCached(db, { view: "decisions" }, access).decisions).toBe(0);
-    insertMessage("t", msg("c", { kind: "options", card: { requestId: "r", options: ["Allow"], tool: "Bash" } }));
+    insertFixtureMessage("t", msg("c", { kind: "options", card: { requestId: "r", options: ["Allow"], tool: "Bash" } }));
     expect(listInboxCached(db, { view: "decisions" }, access).decisions).toBe(1);
-    updateMessage("t", msg("c", { kind: "options", card: { requestId: "r", answered: "Allowed", options: [] } }));
+    answerFixtureMessage("t", "c", { answered: "Allowed" });
     expect(listInboxCached(db, { view: "decisions" }, access).decisions).toBe(0);
   });
 

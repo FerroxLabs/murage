@@ -162,9 +162,8 @@ The engine's stdio, cwd, and environment are the spawn's. The profile text is fi
   (global-name "com.apple.logind")
   (global-name "com.apple.PowerManagement.control")
   (global-name "com.apple.iokit.powerdxpc"))
-(deny iokit-open-service
-  (iokit-registry-entry-class "IOPMrootDomain"))
-(deny iokit-open-user-client
+(deny iokit-open
+  (iokit-registry-entry-class "IOPMrootDomain")
   (iokit-user-client-class "RootDomainUserClient"))
 (deny appleevent-send
   (appleevent-destination "com.apple.loginwindow")
@@ -173,6 +172,10 @@ The engine's stdio, cwd, and environment are the spawn's. The profile text is fi
 ```
 
 The Mach names and the IOKit classes are the power-assertion set the system profile grants to apps (`/System/Library/Sandbox/Profiles/appsandbox-common.sb:663-670`), plus `com.apple.logind`, which `application.sb` looks up beside that set (`/System/Library/Sandbox/Profiles/application.sb:728` and `:734`). The Apple event filter is the form already used for Finder (`/System/Library/Sandbox/Profiles/com.apple.StorageManagement.Service.sb:95`), here as a deny, for the three destinations a shutdown script targets.
+
+Compatibility correction (1.0.19): the profile is version 1. [Apple's WebKit macOS sandbox definitions](https://github.com/apple-oss-distributions/WebKit/blob/main/Source/WebKit/Shared/Sandbox/macOS/common.sb) map both IOKit open operations to `iokit-open` unless `USE(SANDBOX_VERSION_3)` is enabled. Use that operation with both existing class filters; do not put the version-3 split operation names in this version-1 profile. The profile contains no `power-assertion` operation. A rejection of the profile happens before Muse can request a power assertion. The old generic warning alone does not establish whether a specific Mac rejected the operation names or refused sandbox application with EPERM; retain its bounded, redacted diagnostic once per failing executable until a successful launch.
+
+Muse shares refusal backoff across catalog, version and session launches: 30, 60, 120, 240, then at most 300 seconds between attempts. Status polls during that window return one stable unavailable reason, without spawning. Concurrent version polls share a probe. A successful initialization or version probe resets the backoff. No unwrapped retry is allowed.
 
 `(allow default)` keeps files, exec, and the network, including loopback. Apple events to Finder, System Events, and loginwindow fail, including events that are not power. `open` and ordinary shell commands are not those events. There is no card and no replay. A denied lookup is denied.
 

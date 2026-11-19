@@ -1,0 +1,36 @@
+{
+ "noRemoveDuringKeep#2": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "line 1940: a.scope.target only guards keepsOn(prev, a.scope.target); KeepOp.target is never null so keepsOn(prev, null) is [] already."
+ },
+ "noRemoveDuringKeep#9": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "line 1945: t may be null (requestTarget) but keepsOn(prev, null) is [] already, since KeepOp.target is never null."
+ },
+ "environmentWellFormed#62": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-environmentWellFormed-62-apply-unsent-request",
+  "by": "ownerAuthorityForEveryDestructiveSend",
+  "byLine": 1294,
+  "argument": "an apply of an unknown request is the only history where r is undefined; ownerAuthorityForEveryDestructiveSend rejects it."
+ },
+ "noRemoveDuringKeep#7": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-noRemoveDuringKeep-7-delete-without-authority",
+  "by": "ownerAuthorityForEveryDestructiveSend",
+  "byLine": 1299,
+  "argument": "a DELETE/REVOKE with no authority is the only history where a is undefined; ownerAuthorityForEveryDestructiveSend rejects it."
+ },
+ "keyTargetEntriesNeverDropped#2": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-keyTargetEntriesNeverDropped-2-prep-drops-live-target",
+  "by": "restorePrepParksEverything",
+  "byLine": 1766,
+  "argument": "a prep may only drop a key target whose key stays referenced (exempt by clause anyway) or departed; an unreferenced live key lost by prep is rejected by restorePrepParksEverything."
+ }
+}

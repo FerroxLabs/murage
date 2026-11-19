@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../shared/win-hide-child-process.mjs";
 // Model Context Protocol (MCP) Server for Murage
 // Standard JSON-RPC 2.0 stdio transport for external agent orchestration (Hermes, Claude Desktop, Cursor, etc.).
 import { homedir } from "node:os";
@@ -705,7 +706,7 @@ async function taskBelongsTo(
 }
 
 function messageNeedsInput(message: Record<string, any>): boolean {
-  const card = isRecord(message.card) && message.card.requestId && !message.card.answered && !message.card.dismissed;
+  const card = isRecord(message.card) && (message.card.requestId || message.card.requestHandle) && !message.card.answered && !message.card.dismissed;
   const connector = isRecord(message.connector) &&
     !message.connector.dismissed &&
     !message.connector.resumed &&

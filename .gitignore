@@ -84,3 +84,17 @@ server/testing/.git-ls-files.fixture
 
 # design scratch (handoffs, mockups) never enters the tree
 .design/
+/.v118-ref/
+
+# Pinned shipped 1.0.18 inspector for downgrade compatibility tests.
+/.vrel-ref/
+
+# Isolated sc-activate qualification inputs and output.
+/.sc-r3/
+
+# Generated package qualification receipts, like dist-native build receipts.
+/qualification-evidence/
+
+# integrator/test scratch (never tracked)
+__pycache__/
+.sw*.txt
