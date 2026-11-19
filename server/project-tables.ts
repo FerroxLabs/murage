@@ -354,6 +354,17 @@ export function initializeProjectTables(db: DatabaseSync): void {
   if (!columns.includes("handoff")) db.exec("ALTER TABLE room_requests ADD COLUMN handoff INTEGER");
   initializeRoomRequestOwed(db);
   initializeSharedReady(db);
+  // A spend park keeps its reason here and wears the unresolved marker, which every runnable index leaves out (room-requests.ts deferRetainedRoomRequest).
+  // Appended after shared_work (initializeSharedReady adds it), so a fresh file and an upgraded one hold the columns in the same order: the
+  // snapshot reference (APP_TABLES `optional`, in order) accepts no other.
+  if (!columns.includes("parked_refusal")) db.exec("ALTER TABLE room_requests ADD COLUMN parked_refusal TEXT");
+  // C-I1 for every writer, whoever it is (a project ending, a card cancelled, a deleted conversation, an expiry, a restore): a row that leaves the
+  // queue is no park any more, so its kept reason returns to `refusal` (what the row showed before the park column existed) and the column empties.
+  db.exec(`CREATE TRIGGER IF NOT EXISTS room_request_park_left AFTER UPDATE OF state ON room_requests WHEN NEW.state<>'queued' AND NEW.parked_refusal IS NOT NULL
+    BEGIN UPDATE room_requests SET refusal=NEW.parked_refusal, parked_refusal=NULL WHERE id=NEW.id; END`);
+  // Parks written before the column existed: bounded by the retry set, never the history. Idempotent.
+  db.exec(`UPDATE room_requests SET refusal='retained_unresolved', parked_refusal='spend_limit'
+    WHERE id IN (SELECT request_id FROM room_request_retry) AND state='queued' AND refusal='spend_limit'`);
   ensureHandoffPairGuard(db);
 }
 

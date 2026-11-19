@@ -1,0 +1,61 @@
+test_exact_limit_is_not_truncated (__main__.KeyRetrieval.test_exact_limit_is_not_truncated) ... ok
+test_export_failure_is_fatal (__main__.KeyRetrieval.test_export_failure_is_fatal) ... ok
+test_import_failure_is_fatal_and_diagnostic_is_retained (__main__.KeyRetrieval.test_import_failure_is_fatal_and_diagnostic_is_retained) ... FAIL
+test_local_process_failure_is_fatal (__main__.KeyRetrieval.test_local_process_failure_is_fatal) ... FAIL
+test_local_write_failure_is_fatal (__main__.KeyRetrieval.test_local_write_failure_is_fatal) ... FAIL
+test_network_fallback_retains_retrieval_diagnostics (__main__.KeyRetrieval.test_network_fallback_retains_retrieval_diagnostics) ... FAIL
+test_oversized_response_is_fatal_and_never_imported (__main__.KeyRetrieval.test_oversized_response_is_fatal_and_never_imported) ... FAIL
+test_unavailable_network_keeps_both_diagnostics (__main__.KeyRetrieval.test_unavailable_network_keeps_both_diagnostics) ... FAIL
+
+======================================================================
+FAIL: test_import_failure_is_fatal_and_diagnostic_is_retained (__main__.KeyRetrieval.test_import_failure_is_fatal_and_diagnostic_is_retained)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/scripts/signal-gradle-verification.test.py", line 114, in test_import_failure_is_fatal_and_diagnostic_is_retained
+    with self.assertRaises(subprocess.CalledProcessError):
+AssertionError: CalledProcessError not raised
+
+======================================================================
+FAIL: test_local_process_failure_is_fatal (__main__.KeyRetrieval.test_local_process_failure_is_fatal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/scripts/signal-gradle-verification.test.py", line 110, in test_local_process_failure_is_fatal
+    with self.assertRaisesRegex(OSError, 'process infrastructure failure'):
+AssertionError: OSError not raised
+
+======================================================================
+FAIL: test_local_write_failure_is_fatal (__main__.KeyRetrieval.test_local_write_failure_is_fatal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/scripts/signal-gradle-verification.test.py", line 106, in test_local_write_failure_is_fatal
+    with self.assertRaisesRegex(OSError, 'local write failure'):
+AssertionError: OSError not raised
+
+======================================================================
+FAIL: test_network_fallback_retains_retrieval_diagnostics (__main__.KeyRetrieval.test_network_fallback_retains_retrieval_diagnostics)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/scripts/signal-gradle-verification.test.py", line 94, in test_network_fallback_retains_retrieval_diagnostics
+    self.assertIn('404', self.log.getvalue())
+AssertionError: '404' not found in '0123456789ABCDEF imported\n'
+
+======================================================================
+FAIL: test_oversized_response_is_fatal_and_never_imported (__main__.KeyRetrieval.test_oversized_response_is_fatal_and_never_imported)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/scripts/signal-gradle-verification.test.py", line 79, in test_oversized_response_is_fatal_and_never_imported
+    with self.assertRaisesRegex(RuntimeError, 'exceeds|oversiz'):
+AssertionError: RuntimeError not raised
+
+======================================================================
+FAIL: test_unavailable_network_keeps_both_diagnostics (__main__.KeyRetrieval.test_unavailable_network_keeps_both_diagnostics)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/scripts/signal-gradle-verification.test.py", line 102, in test_unavailable_network_keeps_both_diagnostics
+    self.assertIn(text, self.log.getvalue())
+AssertionError: 'synthetic offline first' not found in '0123456789ABCDEF unavailable; SHA256 required\n'
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.049s
+
+FAILED (failures=6)

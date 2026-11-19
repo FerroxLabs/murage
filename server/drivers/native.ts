@@ -1,12 +1,13 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Native (un-normalized) protocol tee — the debugging trick from upstream's
 // EventNdjsonLogger and agentcal's onRaw: every provider-native message is
 // retained next to the canonical stream, within a bounded diagnostic window.
-import { appendFileSync, chmodSync, closeSync, openSync, readdirSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "../counted-fs.ts";
+import { chmodSync, closeSync, openSync, readdirSync, readSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { NATIVE_DIR } from "../config.ts";
-import { redactSecrets, redactSecretsForSinkWalk, redactSecretsInText } from "../redact.ts";
-import { createLabelStream, MD_STREAM_CAP, scanLabelDelta, type LabelStream } from "../../shared/md-secret-label.mjs";
+import { redactSecrets, redactSecretsForSinkWalk } from "../redact.ts";
 import { redactPageOutputDeep } from "../browser-output-redaction.ts";
 import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
 import { nativeTraceFrame } from "../runtime-event-out.ts";
@@ -90,7 +91,7 @@ function capExisting(file: string): number {
       retained.push(marker("native_trace_record_omitted", { reason: "legacy record exceeds byte limit" }));
       continue;
     }
-    try { JSON.parse(record); retained.push(record + "\n"); }
+    try { registerBusyloopPayloadSite("read", JSON.parse(record)); retained.push(record + "\n"); }
     catch { /* A trailing partial legacy record is not valid NDJSON. */ }
   }
   const encoded = marker("native_trace_retention", { reason: "legacy trace exceeded segment limit", previousBytes: bytes }) + retained.join("");
@@ -142,6 +143,7 @@ function namesPhoneTool(value: unknown, depth = 0): boolean {
   }
   return false;
 }
+const PHONE_BLOCK_THREADS_MAX = 256;
 const openPhoneBlocks = new Map<string, Set<number>>();
 function phoneFrame(threadId: string, msg: unknown): boolean {
   if (!msg || typeof msg !== "object") return false;
@@ -150,7 +152,7 @@ function phoneFrame(threadId: string, msg: unknown): boolean {
   if (inner && typeof inner.index === "number") {
     const open = openPhoneBlocks.get(threadId);
     if (inner.type === "content_block_start" && namesPhoneTool(inner.content_block)) {
-      if (openPhoneBlocks.size >= STREAM_TAIL_THREADS && !open) openPhoneBlocks.delete(openPhoneBlocks.keys().next().value!);
+      if (openPhoneBlocks.size >= PHONE_BLOCK_THREADS_MAX && !open) openPhoneBlocks.delete(openPhoneBlocks.keys().next().value!);
       (open ?? openPhoneBlocks.set(threadId, new Set()).get(threadId)!).add(inner.index);
       return true;
     }
@@ -162,85 +164,8 @@ function phoneFrame(threadId: string, msg: unknown): boolean {
   return namesPhoneTool(msg);
 }
 
-/** 09-A5: a streamed reply reaches this log a few characters per frame. A credential the model echoes arrives as a
- * short prefix in one frame and the rest in the next, and each frame alone is too short or too plain to match. So
- * each text-bearing delta is read together with the unmasked text that came just before it on the same
- * conversation, and the part of the result that belongs to this frame is what is stored. */
-const STREAM_TAIL_CHARS = 512;
-const STREAM_TAIL_THREADS = 256;
+// Recognition only: delta frames retain the full phone/projection path even when oversized.
 const STREAM_FIELDS = ["text", "partial_json", "thinking"] as const;
-
-/** REDACT-MD-SINKS §3: a secret label wrapped in markdown marks LATCHES its (thread, field): from there on nothing of
- * that stream is written but a mask, until the thread's next prompt or tool result. Every path that loses line context (eviction,
- * the 64 KiB line cap, the latched-table cap) latches instead of dropping the context, so it fails closed. */
-type PendingStream = { tail: string; label: LabelStream };
-const pendingStreams = new Map<string, PendingStream>();
-const latchedStreams = new Map<string, number>();
-export const LATCHED_MAX = 65_536;
-let latchedOverflow = false;
-const streamKey = (threadId: string, field: string) => `${threadId}\u0000${field}`;
-const streamMask = (text: string) => `«redacted ${text.length} chars»`;
-
-function latchStream(key: string, masked = 0): void {
-  pendingStreams.delete(key);
-  if (latchedStreams.has(key)) { latchedStreams.set(key, latchedStreams.get(key)! + masked); return; }
-  if (latchedStreams.size >= LATCHED_MAX) { latchedOverflow = true; return; }
-  latchedStreams.set(key, masked);
-}
-
-function freshPending(key: string): PendingStream {
-  if (pendingStreams.size >= STREAM_TAIL_THREADS) {
-    const [oldKey, oldest] = pendingStreams.entries().next().value!;
-    pendingStreams.delete(oldKey);
-    if (oldest.label.len > 0) latchStream(oldKey);
-  }
-  const entry = { tail: "", label: createLabelStream() };
-  pendingStreams.set(key, entry);
-  return entry;
-}
-
-/** The thread's next prompt or tool result (a `type: "user"` entry) starts its streams over, except a line still unfinished
- * when it arrives: appendNative has no response-start signal, so that line may go on after the `in`, and it latches. */
-function resetStreams(threadId: string): void {
-  for (const field of STREAM_FIELDS) {
-    const key = streamKey(threadId, field), pending = pendingStreams.get(key);
-    if (pending) { if (pending.label.len > 0) latchStream(key); else { pendingStreams.delete(key); freshPending(key); } continue; }
-    if (latchedStreams.delete(key) || latchedOverflow) freshPending(key);
-  }
-}
-
-/** Today's path: the delta read with the unmasked text just before it, keeping the part that belongs to this frame. */
-function maskWithTail(entry: PendingStream, raw: string): string {
-  const combined = redactSecretsInText(entry.tail + raw);
-  const before = redactSecretsInText(entry.tail);
-  let common = 0;
-  while (common < before.length && common < combined.length && before[common] === combined[common]) common++;
-  entry.tail = (entry.tail + raw).slice(-STREAM_TAIL_CHARS);
-  return combined.slice(common);
-}
-
-function maskLatched(key: string, raw: string): string {
-  const count = (latchedStreams.get(key) ?? 0) + raw.length;
-  if (latchedStreams.has(key)) latchedStreams.set(key, count);
-  return count > MD_STREAM_CAP ? "«redacted»" : streamMask(raw);
-}
-
-function maskStreamField(threadId: string, field: string, raw: string): string {
-  const key = streamKey(threadId, field);
-  let entry = pendingStreams.get(key);
-  if (latchedStreams.has(key) || (!entry && latchedOverflow)) return maskLatched(key, raw);
-  if (entry) { pendingStreams.delete(key); pendingStreams.set(key, entry); } else entry = freshPending(key);
-  const firstLine = raw.indexOf("\n");
-  if (entry.label.len + (firstLine < 0 ? raw.length : firstLine) > MD_STREAM_CAP) {
-    latchStream(key);
-    return maskLatched(key, raw);
-  }
-  const at = scanLabelDelta(entry.label, raw);
-  if (at < 0) return maskWithTail(entry, raw);
-  const head = maskWithTail(entry, raw.slice(0, at)), rest = raw.slice(at);
-  latchStream(key, rest.length);
-  return rest ? head + streamMask(rest) : head;
-}
 
 /** The stream fields a delta frame carries, or none when the entry is not a stream delta. */
 function streamDelta(msg: unknown): { delta: Record<string, unknown>; fields: (typeof STREAM_FIELDS)[number][] } | null {
@@ -250,19 +175,6 @@ function streamDelta(msg: unknown): { delta: Record<string, unknown>; fields: (t
   if (!delta || typeof delta !== "object") return null;
   const fields = STREAM_FIELDS.filter((field) => typeof (delta as Record<string, unknown>)[field] === "string");
   return fields.length ? { delta: delta as Record<string, unknown>, fields } : null;
-}
-
-function maskStreamDelta(threadId: string, msg: unknown): unknown {
-  const found = streamDelta(msg);
-  if (!found) return msg;
-  const holder = msg as { event?: { delta?: unknown }; delta?: unknown };
-  const { delta, fields } = found;
-  const masked: Record<string, string> = {};
-  for (const field of fields) masked[field] = maskStreamField(threadId, field, (delta as Record<string, string>)[field]!);
-  const swapped = { ...(delta as Record<string, unknown>), ...masked };
-  return holder.event && typeof holder.event === "object" && holder.event.delta === delta
-    ? { ...holder, event: { ...holder.event, delta: swapped } }
-    : { ...holder, delta: swapped };
 }
 
 /** The harness ids a lifecycle row carries. Each is a random UUID the harness made, never a value a user or engine
@@ -313,13 +225,7 @@ export function appendNative(threadId: string, entry: { dir: "in" | "out" | "lif
     // scrub reads a run of digits inside a UUID as a secret number and rewrote
     // the turn id to "ab[hidden]-...", so a trace could no longer be tied to
     // its turn. Secret-name masking still applies.
-    // §3 Reset: ONLY the next prompt or tool result resets (MurageMain, 11-03). Direction cannot mark either: drivers
-    // log engine OUTPUT as dir "in" (the Claude driver writes every SDK frame as "in") and the Claude prompt goes out as
-    // dir "out" (claude.ts promptMsg). Both a prompt and an SDK tool result are a `type: "user"` message, so that is the
-    // one reset. Every other frame of the live reply (stream_event, system/thinking_tokens, assistant, tool_progress,
-    // control_*, task_*, result) and every other `out` entry keeps a latch: it fails closed.
-    if (entry.dir !== "lifecycle" && (entry.msg as { type?: unknown } | null)?.type === "user") resetStreams(threadId);
-    let encoded = JSON.stringify({ at: new Date().toISOString(), ...entry, msg: entry.dir === "lifecycle" ? redactLifecycle(entry.msg) : redactPageOutputDeep(redactSecretsForSinkWalk(maskStreamDelta(threadId, entry.msg))) }) + "\n";
+    let encoded = JSON.stringify({ at: new Date().toISOString(), ...entry, msg: entry.dir === "lifecycle" ? redactLifecycle(entry.msg) : redactPageOutputDeep(redactSecretsForSinkWalk(entry.msg)) }) + "\n";
     const encodedBytes = Buffer.byteLength(encoded);
     if (encodedBytes > RECORD_BYTES) encoded = marker("native_trace_record_omitted", { encodedBytes, limitBytes: RECORD_BYTES });
     writeRecord(threadId, encoded);
@@ -345,7 +251,7 @@ function writeRecord(threadId: string, encoded: string): void {
   sweepAfterWrite(threadId, Buffer.byteLength(encoded));
 }
 
-/** A frame whose masking or phone tracking carries state to the next frame, or that resets it: it always takes the full path. */
+/** Preserve prompt, delta and indexed-frame exemptions: phone tracking and projection take the full path. */
 function carriesStreamState(msg: unknown): boolean {
   if (!msg || typeof msg !== "object") return false;
   const { type, event } = msg as { type?: unknown; event?: unknown };

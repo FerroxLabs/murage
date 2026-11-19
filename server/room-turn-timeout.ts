@@ -71,6 +71,8 @@ export class RoomPendingStop {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private cancelled = false;
   private request: Promise<void> | undefined;
+  private requestSettled = false;
+  private retrying: Promise<void> | undefined;
   private deps: {
     current: () => boolean;
     observe?: (turnId: string) => Promise<ProviderStopResult>;
@@ -85,9 +87,28 @@ export class RoomPendingStop {
     this.request = (async () => {
       let result: void | ProviderStopResult = undefined;
       try { result = await interrupt(); } catch { /* Still owned; observe closure. */ }
+      this.requestSettled = true;
       if (!this.accept(result)) this.schedule();
     })();
     return this.request;
+  }
+
+  /** An owner's repeat Stop after the request settled unconfirmed: ask the
+   * engine again and feed that receipt through the same close handling, so a
+   * confirmed retry releases the claim exactly like a confirmed first
+   * interrupt. Stops arriving while it is in flight share it; the scheduled
+   * observer keeps watching if it is still unconfirmed. */
+  retry(interrupt: () => Promise<void | ProviderStopResult>): Promise<void> {
+    if (this.cancelled || !this.request || !this.requestSettled) return this.request ?? Promise.resolve();
+    if (this.retrying) return this.retrying;
+    const retrying = (async () => {
+      let result: void | ProviderStopResult = undefined;
+      try { result = await interrupt(); } catch { /* Still owned; the observer continues. */ }
+      this.accept(result);
+    })();
+    this.retrying = retrying;
+    void retrying.then(() => { if (this.retrying === retrying) this.retrying = undefined; });
+    return retrying;
   }
 
   /** The stopped turn's own terminal event (turn.completed or

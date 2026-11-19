@@ -13,6 +13,10 @@ COMPANION_HOST_SUFFIX=murage.test
 # wrangler.jsonc's vars.
 SENDLANE_API_KEY=replace-with-the-sendlane-v1-api-key
 SENDLANE_HASH_KEY=replace-with-the-sendlane-v1-hash-key
+# Optional. The site forwarder's shared secret (header X-Murage-Site-Token). Unset means no forwarder path.
+# SITE_FORWARDER_TOKEN=replace-with-at-least-32-random-bytes
+# Optional plaintext var: the Team/Business waitlist's own Sendlane list. Unset means waitlist signups are recorded, never sent.
+# SENDLANE_WAITLIST_LIST_ID=
 CANCELLATION_MAIL_KEY=replace-with-at-least-32-random-bytes
 
 # CP0 staging only; never share the KEK with a home.
@@ -43,14 +47,21 @@ CHECKOUT_DISCLOSURE_TOKEN_SECRET=replace-with-64-hex-characters
 # refund-identity.ts. The limit binds only customers who accepted one of them; with none listed nobody is bound.
 # REFUND_LIMIT_TERMS_VERSIONS=cloud-terms-xxxxxxxxxxxx
 # B4 Flux (b4-flux.ts, b4-flux-config.ts). Every Flux route, the machine flux_renewal_due field and the Flux cron are OFF unless
-# CLOUD_FLUX_ROUTES_ENABLED is exactly 1; never set it on staging or production before Sean's go. Switched on, the owner routes
+# the Flux route switch is exactly 1; never set it on staging or production before Sean's go. Switched on, the owner routes
 # (/v1/flux/link*, /v1/homes/:id/flux*) take only the Supabase members-area token (mapped Cloud account) with a fresh trusted
 # second factor for link, key, cap and Stop. FLUX_CLOUD_SERVICE_TOKEN is a Worker secret (Flux's narrow cloud-home bearer, at
 # least 32 characters, never the Flux master key); the cron does nothing without it.
-# CLOUD_FLUX_ROUTES_ENABLED=1
+# the Flux route switch=1
 # FLUX_CLOUD_SERVICE_TOKEN=replace-with-the-flux-cloud-home-service-token
 # FLUX_API_BASE=https://api.fluxrouter.ai
 # FLUX_APP_BASE=https://fluxrouter.ai
 # FLUX_LINK_PUBLIC_KEY=replace-with-base64url-of-the-32-byte-ed25519-public-key
 # FLUX_AUTHORIZE_URL=https://fluxrouter.ai/cloud/link   (the default)
 # FLUX_B4_CONFIG={"plans":{...}}   (optional; unset means the defaults in b4-flux-config.ts)
+# Billing's Flux grant hooks (flux-live-hooks.ts, flux-grants.ts). With the Flux route switch unset billing runs on the stub and nothing
+# below is read. Switched on, a paid invoice creates the plan's grant at the Flux router, a refund adjusts it by a versioned target and a
+# non-refund reversal revokes it. Both are needed: with the token absent nothing is dispatched, whatever the URL says. The URL is the
+# router's https base (no trailing path); FLUX_CLOUD_GRANTS_TOKEN is a Worker secret of at least 32 characters, never the keys token
+# (FLUX_CLOUD_SERVICE_TOKEN) and never an sk-flux- value. Not in secrets.required until Sean's go.
+# FLUX_CLOUD_GRANTS_URL=https://replace-with-the-flux-router-base
+# FLUX_CLOUD_GRANTS_TOKEN=replace-with-the-flux-cloud-home-grants-token

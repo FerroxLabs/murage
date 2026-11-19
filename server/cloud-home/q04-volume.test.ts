@@ -71,7 +71,7 @@ print(json.dumps({"code":code,"commands":commands,"deviceChecks":device_checks,"
 function run(scenario: string) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "q04-volume-")));
   try {
-    const result = spawnSync("python3", ["-I", "-c", wrapper, program, root, scenario], { encoding: "utf8" });
+    const result = spawnSync("python3", ["-I", "-c", wrapper, program, root, scenario], { windowsHide: true, encoding: "utf8" });
     expect(result.stderr.split("\n").filter(l => l && !l.startsWith("murage-enroll: volume sample "))).toEqual([]); return {status:result.status,...JSON.parse(result.stdout)};
   } finally { removeTempDirSync(root); }
 }
@@ -144,7 +144,7 @@ except ValueError as e:print("refused",e)
 it.each([["clean", "ok"], ["first", "refused"], ["last", "refused"], ["random", "refused"]])("zero sample on a 300 MiB device: %s", (where, expected) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "q04-sample-")));
   try {
-    const result = spawnSync("python3", ["-I", "-c", sampleScript, program, join(root, "disk"), where], { encoding: "utf8" });
+    const result = spawnSync("python3", ["-I", "-c", sampleScript, program, join(root, "disk"), where], { windowsHide: true, encoding: "utf8" });
     expect(result.stdout.startsWith(expected)).toBe(true);
     expect(result.stderr).toContain(where === "clean" ? "volume sample zero ok" : "non-zero at offset");
   } finally { removeTempDirSync(root); }

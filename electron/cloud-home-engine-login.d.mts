@@ -6,7 +6,7 @@ export const ENGINE_LOGIN_ACTIONS: readonly ["login", "logout", "enroll-key"];
 export const ENGINE_KEY_ENGINES: readonly ["codex", "opencodeGo"];
 export const ENGINE_LOGIN_SHAPES: Readonly<{ bot: RegExp; provider: RegExp; secret: RegExp }>;
 export function engineLoginPath(request: { engine: string; action?: string; bot?: string; provider?: string; secret?: string }): string | null;
-export const ENGINE_LOGIN_LIMITS: Readonly<{ idleMs: number; totalMs: number; keepaliveMs: number; maxInputBytes: number; maxInputTotal: number; maxLinkLength: number }>;
+export const ENGINE_LOGIN_LIMITS: Readonly<{ idleMs: number; agyIdleMs: number; totalMs: number; keepaliveMs: number; maxInputBytes: number; maxInputTotal: number; maxLinkLength: number }>;
 /** Exact-match vendor auth hosts; src/lib/engine-login-terminal.ts keeps the same list (a test compares them). */
 export const ENGINE_LOGIN_AUTH_HOSTS: readonly string[];
 export function checkAuthUrl(value: unknown, hosts?: readonly string[]): string | null;

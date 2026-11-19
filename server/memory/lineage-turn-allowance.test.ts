@@ -125,7 +125,8 @@ it("a reader called with no allowance does not compile", () => {
 it("the turn creates its allowance, threads it to the engine send, and closes it after the output roots; the ambient allowance is gone", () => {
   const server = join(here, "..");
   const source = readFileSync(join(server, "index.ts"), "utf8");
-  expect(source).toMatch(/async function startTurn\([\s\S]{0,1800}const allowance = LineageAllowance\.turn\(\);\s*return startTurnAdmitting\(allowance, \.\.\.args\);/);
+  // f9003dd343: a rebuild of a refused turn keeps its continuation check read-only on the same allowance before admitting.
+  expect(source).toMatch(/async function startTurn\([\s\S]{0,1800}const allowance = LineageAllowance\.turn\(\);\s*(?:\/\/[^\n]*\n\s*)*if \(\(args\[2\]\?\.memoryRedispatch \?\? 0\) > 0\) forgoContinuationSettle\(allowance\);\s*return startTurnAdmitting\(allowance, \.\.\.args\);/);
   // closed when the task ends, and when a start that failed after admission gives the thread back (admitted-turn.ts)
   expect(source).toMatch(/\}\)\(\)\.finally\(\(\) => allowance\.close\(\)\);\s*\}, \(error, phase\) => \{ allowance\.close\(\); giveBackAdmittedTurn\(run, bot\.id, threadId, admitted, phase, error, opts\?\.onDispatchError\); \}\);\s*return userMessage;/);
   expect(source).toMatch(/endLineage\(\);[\s\S]{0,400}allowance\.close\(\);/);

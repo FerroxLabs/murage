@@ -1,3 +1,6 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -11,15 +14,24 @@
 // This module holds everything that does not need a running turn: the version policy, the files written into the scope, the
 // owner-hook strip of the config copy, the trust handshake, the socket, the delivery mapping, the apply_patch reader and the
 // Rule 67 tripwire table. codex.ts wires them to a turn.
+import { DATA_DIR } from "../config.ts";
+import { canonFile, prepareHookCanon, releaseHookCanon } from "../hook-safety.ts";
+import type { CanonSet } from "../hook-canon.ts";
+import { HOOK_LOADER } from "../hook-canon.ts";
+import { shellArg } from "../hook-shell-arg.ts";
+import { hookCodeOf, HOOK_CONTROL_FRAMES, CONTROL_WRITE_SOURCE, PRE_TOOL_CODES } from "./hook-control.ts";
+export { CARD_ANSWERED_NOTE, DENY_TIMEOUT_NOTE, type HookCode } from "./hook-control.ts";
+export { hookCodeOf, HOOK_CONTROL_FRAMES } from "./hook-control.ts";
 import { spawn, type ChildProcess } from "node:child_process";
+import { releaseNativeAnswer } from "./engine-input.ts";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { inProjectCheck, realPathInOrder } from "../../shared/in-project.ts";
-import { isOwnUnasked } from "../../shared/own-servers.ts";
+import { isOwnUnasked, OWN_WEB_SEARCH_TOOL, ownWebSearchRunsUnasked } from "../../shared/own-servers.ts";
 import { ABSENT_PINS } from "../../shared/arg-vocabulary.ts";
 import { GATE_MESSAGE_BYTES, HOOK_LIVENESS_MS } from "../../shared/scan-limits.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
@@ -55,6 +67,24 @@ export const CODEX_UNTRUSTED_RETIRED_MIN = [0, 149, 0] as const;
 /** Rule 68e: the only local tool Murage lets through without a judgment. Admission rule: its input schema carries no leaf Rule 56
  *  classifies path-shaped, command-shaped, URL-shaped or addressing (T100d enumerates the local tools against it). */
 export const CODEX_LOCAL_ORDINARY: readonly string[] = ["update_plan"];
+
+/** CODEX-WEB-1020: the names a GPT model calls its native web tool by (`web.run` arrives as `web__run`). Codex has no such tool on a
+ *  turn that mounts Murage's agents server (codex.ts turns native search off there), so the call cannot run. Exact names only. */
+export const CODEX_NATIVE_WEB_NAMES: readonly string[] = ["web__run", "web.run", "web_run", "web_search", "web__search", "web__search_query", "web__open", "web__find"];
+
+/** CODEX-WEB-1020, seen on a real turn (Codex 0.167.2, gate box, 2026-11-19): with native search off, a GPT model searches through
+ *  the ChatGPT apps server instead, `codex_apps` / `search_service.web_run`, which the hook receives as
+ *  `mcp__codex_apps__search_service__web_run`. It is no mount of this turn, so it raised a card nobody could remember an answer
+ *  for. It also opens URLs from the provider's side, so it is not allowed: it gets the same words as a native web name. */
+export const CODEX_APPS_SERVER = "codex_apps";
+export const CODEX_APPS_WEB_TOOLS: readonly string[] = ["search_service__web_run", "search_service.web_run", "search_service_web_run"];
+
+/** What the model is told when it calls a native web name on a turn whose search is Murage's own: the tool that works, by the
+ *  name Codex gives it. A deny, never an allow: the native call is not judged and not run. */
+export function codexWebRedirect(agentsEngineName: string): string {
+  const server = codexToolServerName(agentsEngineName);
+  return `That web tool is not on this turn. Search with mcp__${server}__${OWN_WEB_SEARCH_TOOL} and open a page with mcp__${server}__web_read.`;
+}
 
 /** Rule 74: the shell-form features pinned off, read from `codex features list` on 0.129.0, 0.149.0 and 0.163.0. A snapshot sources the
  *  owner's startup files into every shell, a zsh fork starts its own shell, and the login-shell package path adds login-shell paths:
@@ -137,27 +167,50 @@ export const HOOK_TIMEOUT_SEC = Math.ceil(HOOK_ASK_BOUND_MS / 1000) + 30;
 /** The script's own deadline: shorter than the handler timeout, so Codex never times the hook out while the script is alive. */
 export const HOOK_SCRIPT_DEADLINE_MS = HOOK_ASK_BOUND_MS + 10_000;
 
+
 /** Rule 68d. Whole body in one `try`; the only outcomes are an allow (a clean exit, silent) or a deny (printed, with its reason, and a
  *  clean exit: Codex 0.163.0 reads the printed decision only on exit 0, hooks/src/events/pre_tool_use.rs:213-244, and a Windows shell
  *  turns exit 2 into 1; only a deny that cannot be written at all, stdout gone, exits 2). A SessionStart that cannot post exits 2 with the reason on stderr (no proof: the turn is refused). The socket path and
- *  the per-turn token are read from the env file beside this script (never argv, never hooks.json). The script runs with whatever
+ *  the per-process token are read from the env file beside this script (never argv, never hooks.json). The script runs with whatever
  *  environment Codex gives a hook, so it touches nothing but its own folder and the socket. */
+// H1a-EXEMPT (LASTRESORT §§2,7): bound hooks write only fixed control frames.
+// The later fd-1 write may allow one checked call or resume once at Stop; the
+// ledger refusal handler still stops the lease and fences every later reply.
 export const CODEX_HOOK_SCRIPT = `// Murage pre-execution hook. Generated; do not edit.
 import { constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, writeSync } from "node:fs";
 import net from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const DEADLINE_MS = ${HOOK_SCRIPT_DEADLINE_MS};
 let hookEvent;
+let bound = true;
+const FRAMES = Object.freeze(${JSON.stringify(HOOK_CONTROL_FRAMES)});
+const PRE_CODES = new Set(${JSON.stringify(PRE_TOOL_CODES)});
+const STOP_CODES = new Set(["stop.end", "stop.block.card"]);
+const SESSION_CODES = new Set(["session.ok"]);
+const fixed = (code) => {
+  const bytes = Buffer.from(FRAMES[code], "utf8");
+  try { for (let at = 0; at < bytes.length;) { const n = writeSync(1, bytes, at, bytes.length - at); if (n === 0) hardBlock(); at += n; } }
+  catch { hardBlock(); }
+  process.exit(0);
+};
 // The only exit 2: a SessionStart that cannot post (no proof), or a deny that could not be written at all (stdout gone).
 const hardBlock = () => process.exit(2);
 // Every printed decision is one synchronous write of the whole line, so nothing is left in a stream buffer at process.exit.
+${CONTROL_WRITE_SOURCE}
 const print = (value) => {
   const bytes = Buffer.from(JSON.stringify(value), "utf8");
-  try { for (let at = 0; at < bytes.length;) at += writeSync(1, bytes, at, bytes.length - at); return true; } catch { return false; }
+  try { for (let at = 0; at < bytes.length;) { const n = writeSync(1, bytes, at, bytes.length - at); if (n === 0) return false; at += n; } return true; } catch { return false; }
 };
 const block = (why) => {
+  if (bound) {
+    try { writeSync(2, "Murage blocked this call\\n"); } catch {}
+    if (hookEvent === "Stop" || hookEvent === "SubagentStop") fixed("stop.end");
+    if (hookEvent === "SessionStart") hardBlock();
+    fixed("deny.unchecked");
+  }
   const reason = "Murage blocked this call: " + String(why).slice(0, 300);
   try { writeSync(2, reason + "\\n"); } catch {}
   // A Stop fails open: the turn ends as it would without this hook, and it never answers a tool call.
@@ -172,10 +225,15 @@ const block = (why) => {
 try {
   const timer = setTimeout(() => block("the check took too long"), DEADLINE_MS);
   const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
+  if (Object.prototype.hasOwnProperty.call(globalThis, "MURAGE_HOOK_STDIN")) {
+    if (!Buffer.isBuffer(globalThis.MURAGE_HOOK_STDIN)) block("invalid input cache");
+    chunks.push(globalThis.MURAGE_HOOK_STDIN);
+  } else {
+    for await (const chunk of process.stdin) chunks.push(chunk);
+  }
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   hookEvent = input && input.hook_event_name;
-  const here = dirname(fileURLToPath(import.meta.url));
+  const here = dirname(globalThis.MURAGE_HOOK_FILE ?? fileURLToPath(import.meta.url));
   // The env file of the app-server that runs this hook, named in that process's environment (one file per process, never shared).
   const named = process.env.${HOOK_ENV_VAR};
   // The env file itself is resolved to its real, final path (a link that lands outside never matches), and that file must sit in this
@@ -189,19 +247,23 @@ try {
   // handle must be the very file checked by its real path (same device and file id, on Windows the volume and file index), so a
   // swap before the check no longer matches and a swap after it is never read.
   let fd = -1;
-  try { fd = openSync(resolve(named), constants.O_RDONLY | (constants.O_NOFOLLOW || 0)); } catch { block("no socket"); }
+  try { fd = openSync(resolve(named), constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
+  catch (error) { block(error?.code === "ENOENT" ? "no socket (ENOENT)" : "no socket"); }
   const envFile = real(resolve(named));
   let sameFile = false;
   try {
     const checked = lstatSync(envFile, { bigint: true }), opened = fstatSync(fd, { bigint: true });
-    sameFile = checked.isFile() && checked.dev === opened.dev && checked.ino === opened.ino;
+    sameFile = opened.isFile() && checked.isFile() && checked.dev === opened.dev && checked.ino === opened.ino;
   } catch {}
   if (!ownDir || !envFile || dirname(envFile) !== ownDir || !sameFile) block("no socket");
   const env = {};
-  for (const line of readFileSync(fd, "utf8").split("\\n")) {
+  const envBytes = readFileSync(fd);
+  if (createHash("sha256").update(envBytes).digest("hex") !== process.env.MURAGE_CODEX_HOOK_ENV_SHA256) block("changed socket file");
+  for (const line of envBytes.toString("utf8").split("\\n")) {
     const at = line.indexOf("=");
     if (at > 0) env[line.slice(0, at)] = line.slice(at + 1);
   }
+  bound = env.MODE !== "open";
   if (!env.SOCKET || !env.TOKEN) block("no socket");
   const event = input.hook_event_name;
   const message = event === "SessionStart"
@@ -222,7 +284,17 @@ try {
     socket.on("close", () => reject(new Error("the socket closed")));
   });
   clearTimeout(timer);
-  if (event === "SessionStart") process.exit(0);
+  if (bound) {
+    const code = answer && typeof answer === "object" && !Array.isArray(answer)
+      && Object.keys(answer).length === 1 && typeof answer.code === "string" ? answer.code : null;
+    if (event === "SessionStart") {
+      if (!SESSION_CODES.has(code)) hardBlock();
+      fixed("session.ok");
+    }
+    if (event === "Stop" || event === "SubagentStop") fixed(STOP_CODES.has(code) ? code : "stop.end");
+    fixed(PRE_CODES.has(code) ? code : "deny.unchecked");
+  }
+  if (event === "SessionStart") { if (!answer || answer.ok !== true) block("Murage could not confirm its tool check"); process.exit(0); }
   if (event === "Stop" || event === "SubagentStop") {
     // A printed block keeps the turn going with the reason as the model's next input; silence ends it.
     if (answer && answer.decision === "block" && typeof answer.reason === "string") print({ decision: "block", reason: answer.reason.slice(0, 2000) });
@@ -254,9 +326,10 @@ try {
  *  environment surviving Codex, and Codex's own commands never inherit it (an Electron app the owner runs from a turn stays an app).
  *  Under plain node the variable is ignored. */
 export const HOOK_RUN_AS_NODE = "ELECTRON_RUN_AS_NODE";
-/** The hook's launch line (POSIX): `/usr/bin/env` sets the variable and runs Murage's runtime on the script, each path quoted. The
- *  same in sh, bash, zsh and fish, and still right if a Codex build splits the line into argv instead of handing it to a shell. */
-export const hookLaunchLine = (execPath: string, scriptPath: string): string => `/usr/bin/env ${HOOK_RUN_AS_NODE}=1 "${execPath}" "${scriptPath}"`;
+/** The POSIX shell command: env enables the runtime's node mode; single-quoted
+ * paths are encoded independently of the shell-safe loader and literal hash.
+ * Direct executable/argv invocations must pass raw paths instead. */
+export const hookLaunchLine = (execPath: string, scriptPath: string): string => `/usr/bin/env ${HOOK_RUN_AS_NODE}=1 ${shellArg(execPath, "posix", "Codex")} -e "${HOOK_LOADER.codex}" ${shellArg(scriptPath, "posix", "Codex")} ${createHash("sha256").update(CODEX_HOOK_SCRIPT).digest("hex")}`;
 
 /** The runtime every hook runs on: Murage's own program (process.execPath). Tests point it at a stand-in to model a slow first exec. */
 let hookRuntimeForTests: string | undefined;
@@ -293,7 +366,7 @@ export function warmHookRunner(runtime: string = hookRuntime(), capMs: number = 
       const env: NodeJS.ProcessEnv = { [HOOK_RUN_AS_NODE]: "1" };
       for (const name of ["PATH", "HOME", "TMPDIR", "SystemRoot", "SYSTEMROOT", "TEMP", "TMP"]) if (process.env[name]) env[name] = process.env[name];
       try {
-        child = spawn(runtime, ["-e", ""], { env, stdio: "ignore", windowsHide: true });
+        child = spawn(runtime, ["-e", ""], withHideInherit({ env, stdio: "ignore", windowsHide: true }));
       } catch { finish("error"); return; }
       // past the cap the turn goes on; the child is stopped for good and never holds the server open (Astra r1 #2)
       timer = setTimeout(() => { child.kill("SIGKILL"); child.unref(); finish("cap"); }, capMs);
@@ -320,7 +393,7 @@ export function hookWindowsLauncher(): string {
     "@echo off",
     `if not defined ${CODEX_HOOK_EXE_ENV} exit /b 2`,
     `set "${HOOK_RUN_AS_NODE}=1"`,
-    `"%${CODEX_HOOK_EXE_ENV}%" "%~dp0${HOOK_SCRIPT_FILE}"`,
+    `"%${CODEX_HOOK_EXE_ENV}%" -e "${HOOK_LOADER.codex}" "%~dp0${HOOK_SCRIPT_FILE}" ${createHash("sha256").update(CODEX_HOOK_SCRIPT).digest("hex")}`,
     "exit /b %ERRORLEVEL%",
     "",
   ].join("\r\n");
@@ -350,7 +423,7 @@ export function codexHookWindowsCommand(systemRoot?: string): string {
   return `${windowsCmdPath(systemRoot)} /d /v:off /c %${CODEX_HOOK_LAUNCH_ENV}%`;
 }
 /** The value of MURAGE_CODEX_HOOK: the quoted launcher path, led by `@` so it never starts with a quote. */
-export const hookWindowsLaunchValue = (launcherPath: string): string => `@"${launcherPath}"`;
+export const hookWindowsLaunchValue = (launcherPath: string): string => `@${shellArg(launcherPath, "codex-scope", "Codex")}`;
 
 /** Rule 68a: the hooks.json of the scope. One matcher-free PreToolUse handler and one SessionStart handler, each a `command`
  *  handler running the script with Murage's own node. The content never changes between turns (the hash stays stable), so trust
@@ -361,7 +434,7 @@ export function codexHooksJson(execPath: string, scriptPath: string): string {
   return JSON.stringify({ hooks: { PreToolUse: [{ hooks: [handler] }], SessionStart: [{ hooks: [handler] }], Stop: [{ hooks: [handler] }], SubagentStop: [{ hooks: [handler] }] } }, null, 2) + "\n";
 }
 
-export interface HookFiles { hooksJson: string; script: string; envFile: string; launcher: string }
+export interface HookFiles { hooksJson: string; script: string; envFile: string; launcher: string; canon: CanonSet; envHash: string }
 
 /** Rule 68c: what a SessionStart proof was given under. A kept process's proof carries to the next turn only while this is unchanged. */
 export function hookConfigOf(scopedHome: string, execPath = hookRuntime()): string {
@@ -374,23 +447,24 @@ export const hookEnvPathOf = (scopedHome: string, gateId: string, pid = process.
 
 /** Writes hooks.json and the script (unchanged content is not rewritten) and this process's env file (0600) at `envFile`, which only
  *  this process's hooks read (its environment names it). */
-export function writeHookFiles(scopedHome: string, socketPath: string, token: string, envFile: string, execPath = hookRuntime()): HookFiles {
-  mkdirSync(join(scopedHome, HOOK_ENV_DIR), { recursive: true });
+export function writeHookFiles(scopedHome: string, socketPath: string, token: string, envFile: string, execPath = hookRuntime(), current?: CanonSet, binding?: import("../consuming-turn-response.ts").ConsumingTurnBinding | null): HookFiles {
   const script = join(scopedHome, HOOK_SCRIPT_FILE);
   const hooksJson = join(scopedHome, HOOKS_JSON_FILE);
   const launcher = join(scopedHome, HOOK_LAUNCHER_FILE);
-  writeIfChanged(script, CODEX_HOOK_SCRIPT, 0o600);
-  writeIfChanged(launcher, hookWindowsLauncher(), 0o600);
-  writeIfChanged(hooksJson, codexHooksJson(execPath, script), 0o600);
-  try { if (existsSync(envFile)) unlinkSync(envFile); } catch { /* replaced below */ }
-  writeFileSync(envFile, `SOCKET=${socketPath}\nTOKEN=${token}\n`, { mode: 0o600 });
-  try { chmodSync(envFile, 0o600); } catch { /* the mode was set at creation where chmod is not honoured */ }
-  return { hooksJson, script, envFile, launcher };
-}
-
-function writeIfChanged(path: string, content: string, mode: number): void {
-  try { if (existsSync(path) && readFileSync(path, "utf8") === content) return; } catch { /* rewritten below */ }
-  writeFileSync(path, content, { mode });
+  if (process.platform === "win32") {
+    shellArg(execPath, "codex-runtime", "Codex");
+    shellArg(scopedHome, "codex-scope", "Codex");
+  }
+  // Canonical bytes and the admitted root are server-owned, never read from disk.
+  const root = join(DATA_DIR, "native");
+  const envBytes = `SOCKET=${socketPath}\nTOKEN=${token}\nMODE=${binding === null ? "open" : "bound"}\n`;
+  const canon = prepareHookCanon([
+    canonFile(script, CODEX_HOOK_SCRIPT, "script", "codex", root),
+    canonFile(launcher, hookWindowsLauncher(), "launcher", "codex", root),
+    canonFile(hooksJson, codexHooksJson(execPath, script), "config", "codex", root),
+    canonFile(envFile, envBytes, "env", "codex", root),
+  ], "V-C1", "Codex", current);
+  return { hooksJson, script, envFile, launcher, canon, envHash: createHash("sha256").update(envBytes).digest("hex") };
 }
 
 /** Rule 68a: the config.toml copy without the owner's `hooks` table (the `[hooks]` definitions, `[hooks.state]`, the owner's trust
@@ -589,16 +663,22 @@ export interface HookDelivery {
   cwd?: unknown;
 }
 
-export type HookAnswer =
+export type HookAnswer = (
   | { decision: "allow"; updatedInput?: Record<string, unknown>; additionalContext?: string }
-  | { decision: "deny"; reason: string };
+  | { decision: "deny"; reason: string; source?: "owner" | "nohook" }) & { onTransport?: (accepted: boolean, error?: unknown) => void };
 
 export type HookStopAnswer = { decision: "end" } | { decision: "block"; reason: string };
 
+
 export interface HookTurn {
+  releaseBinding?: import("../consuming-turn-response.ts").ConsumingTurnBinding | null;
   token: string;
-  onSession(sessionId: string): void;
+  onSession(sessionId: string): void | boolean;
+  /** G0-HK: a fenced refusal thrown by the release at serve() :782. Runs BEFORE the transport receipt so the consumer claims (refusalFor) first. */
+  onFencedRefusal?(error: unknown, socket: net.Socket): void;
   onPreTool(delivery: HookDelivery): Promise<HookAnswer>;
+  /** Transport loss denies this delivery only, while its turn is still current. */
+  onDeliveryLost?(delivery: HookDelivery): void;
   /** CARDS-WAIT-CODEX-1013: the model wants to end the turn. Resolves when it may: `end`, or `block` to keep the turn going. */
   onStop?(): Promise<HookStopAnswer>;
 }
@@ -655,7 +735,7 @@ const processAlive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException)?.code === "EPERM"; }
 };
 
-/** One socket per app-server process, armed with one turn's token and handlers at a time. A message with another token is refused,
+/** One socket and token per app-server process, armed with one turn's handlers at a time. A message with another token is refused,
  *  and a decision reaches the hook only while the turn that received it is still the armed one (Astra r1 #1). */
 export class CodexHookGate {
   private server: net.Server | null = null;
@@ -666,11 +746,16 @@ export class CodexHookGate {
   readonly id = randomBytes(8).toString("hex");
   /** The env file of this gate's process, set by the driver at spawn. */
   envPath: string | null = null;
+  canon?: CanonSet;
 
-  constructor(path = hookSocketPath()) { this.path = path; liveHookGates.add(this.id); }
+  /** `mode` is the socket file's mode: 0600 on a desktop; 0660 on a Cloud home, where the engine runs as another user of the murage-turn group. The turn token still guards it. */
+  private readonly mode: number;
+  constructor(path = hookSocketPath(), mode = 0o600) { this.path = path; this.mode = mode; liveHookGates.add(this.id); }
 
   /** The process is confirmed gone: its env file goes and the gate leaves the live registry. A failed kill never calls this. */
   release(): void {
+    releaseHookCanon(this.canon);
+    this.canon = undefined;
     if (this.envPath) { try { unlinkSync(this.envPath); } catch { /* gone already */ } }
     liveHookGates.delete(this.id);
   }
@@ -680,13 +765,15 @@ export class CodexHookGate {
     this.server = server;
     await new Promise<void>((ok, fail) => { server.once("error", fail); server.listen(this.path, () => { server.off("error", fail); ok(); }); });
     server.on("error", () => { /* a failed accept never reaches the engine */ });
-    if (process.platform !== "win32") { try { chmodSync(this.path, 0o600); } catch { /* the token still guards it */ } }
+    if (process.platform !== "win32") { try { chmodSync(this.path, this.mode); } catch { /* the token still guards it */ } }
   }
 
-  arm(turn: HookTurn): void { this.generation++; this.turn = turn; }
-  disarm(token?: string): void { if (!token || this.turn?.token === token) { this.generation++; this.turn = null; } }
+  arm(turn: HookTurn): number { this.generation++; this.turn = turn; return this.generation; }
+  disarm(generation?: number): void { if (generation === undefined || this.generation === generation) { this.generation++; this.turn = null; } }
 
   close(): void {
+    releaseHookCanon(this.canon);
+    this.canon = undefined;
     this.generation++;
     this.turn = null;
     try { this.server?.close(); } catch { /* closing */ }
@@ -695,11 +782,35 @@ export class CodexHookGate {
   }
 
   private serve(socket: net.Socket): void {
+    const admittedTurn = this.turn;
+    const binding = admittedTurn?.releaseBinding;
+    const generation = this.generation;
+    let event = "PreToolUse";
+    let delivery: HookDelivery | undefined;
     let data = "";
     let done = false;
     socket.setEncoding("utf8");
-    const reply = (value: unknown) => { if (!done) { done = true; try { socket.end(JSON.stringify(value) + "\n"); } catch { /* peer gone */ } } };
-    socket.on("error", () => { done = true; });
+    const reply = (value: unknown) => {
+      const receipt = (value as HookAnswer | undefined)?.onTransport;
+      if (done) { receipt?.(false); return; }
+      done = true;
+      socket.once("error", () => receipt?.(false));
+      try {
+        const serialized = JSON.stringify(binding === null ? value : { code: hookCodeOf(event, value) }) + "\n";
+        releaseNativeAnswer(binding, "codex:hook-socket", serialized,
+          () => NotModelRequest("Local permission hook answer; no model request", socket.end(serialized, (error?: Error | null) => receipt?.(!error))));
+      } catch (e) { try { admittedTurn?.onFencedRefusal?.(e, socket); } finally { receipt?.(false, e); socket.destroy(); } }
+    };
+    const lost = () => {
+      if (done) return;
+      done = true;
+      if (delivery && admittedTurn && this.turn === admittedTurn && this.generation === generation) {
+        admittedTurn.onDeliveryLost?.(delivery);
+      }
+    };
+    socket.on("error", lost);
+    socket.on("end", () => { if (!done) lost(); });
+    socket.on("close", () => { if (!done) lost(); });
     socket.on("data", (chunk: string) => {
       if (done) return;
       data += chunk;
@@ -707,12 +818,13 @@ export class CodexHookGate {
       const at = data.indexOf("\n");
       if (at < 0) return;
       let message: any;
-      try { message = JSON.parse(data.slice(0, at)); } catch { return reply({ error: "malformed" }); }
-      const turn = this.turn;
-      if (!turn || typeof message?.token !== "string" || message.token !== turn.token) return reply({ error: "token" });
+      try { message = registerBusyloopPayloadSite("read", JSON.parse(data.slice(0, at))); } catch { return reply({ error: "malformed" }); }
+      event = message?.kind === "stop" ? "Stop" : message?.kind === "session" ? "SessionStart" : "PreToolUse";
+      const turn = admittedTurn;
+      if (!turn || this.turn !== turn || typeof message?.token !== "string" || message.token !== turn.token) return reply({ error: "token" });
       if (message.kind === "session") {
-        turn.onSession(typeof message.session_id === "string" ? message.session_id : "");
-        return reply({ ok: true });
+        const accepted = turn.onSession(typeof message.session_id === "string" ? message.session_id : "");
+        return reply(accepted === false ? { error: "Murage could not confirm its tool check" } : { ok: true });
       }
       if (message.kind === "stop") {
         // Fails open, as the script does: any turn but the armed one, and any failure, ends as it would without the hook.
@@ -726,8 +838,9 @@ export class CodexHookGate {
       // The decision is delivered only while this turn is still the armed one: a Stop, a settle or a newer turn in between turns it into a deny.
       const generation = this.generation;
       const current = () => this.turn === turn && this.generation === generation;
-      turn.onPreTool({ tool_name: message.tool_name, tool_input: message.tool_input, tool_use_id: message.tool_use_id, turn_id: message.turn_id, cwd: message.cwd })
-        .then((answer) => reply(current() ? answer : { decision: "deny", reason: "Murage: the turn ended" }), () => reply({ decision: "deny", reason: "Murage could not check this call" }));
+      delivery = { tool_name: message.tool_name, tool_input: message.tool_input, tool_use_id: message.tool_use_id, turn_id: message.turn_id, cwd: message.cwd };
+      turn.onPreTool(delivery)
+        .then((answer) => { if (!current()) answer.onTransport?.(false); reply(current() ? answer : { decision: "deny", reason: "Murage: the turn ended" }); }, () => reply({ decision: "deny", reason: "Murage could not check this call" }));
     });
   }
 }
@@ -914,6 +1027,8 @@ export type HookRoute =
   | { route: "ask"; tool: string; summary: string; toolCall: { name: string; input?: unknown }; toolInputMissing?: string; cwd?: string; destinations?: string[]; command?: string; filePaths?: string[]; localHold?: string };
 
 export interface RouteContext {
+  /** No limits bypasses no producer: the broker reads the full input. */
+  noLimits?: true;
   /** F4: the mounts this app-server loads; undefined = unstated, so no MCP call is proven. */
   mounts: readonly McpMountRecord[] | undefined;
   /** The project folder the turn runs in. */
@@ -942,6 +1057,10 @@ export function routeDelivery(delivery: HookDelivery, ctx: RouteContext): HookRo
   const cwd = str(delivery.cwd) ?? ctx.project;
   const input = record(delivery.tool_input);
   if (!name) return { route: "deny", reason: "Murage does not know this tool" };
+  if (ctx.noLimits === true) return { route: "ask", tool: name, summary: name, cwd,
+    toolCall: { name, ...(delivery.tool_input === undefined ? {} : { input: delivery.tool_input }) },
+    ...(delivery.tool_input === undefined ? { toolInputMissing: "tool_input" } : {}) };
+
 
   if (name === "Bash" || name === "exec_command") {
     const command = str(input?.command) ?? str(input?.cmd);
@@ -977,10 +1096,17 @@ export function routeDelivery(delivery: HookDelivery, ctx: RouteContext): HookRo
     // BOT-CALLS-1020 3f: the phone call card line (number, goal, details, limits, when, language, revision)
     const ask = (asName = name): HookRoute => ({ route: "ask", tool: tool || name, summary: phoneAskLine(name, input) ?? (tool || name), toolCall: { name: asName, ...(delivery.tool_input === undefined ? {} : { input: delivery.tool_input }) },
       ...(delivery.tool_input === undefined ? { toolInputMissing: "tool_input" } : {}) });
+    // CODEX-WEB-1020: the ChatGPT apps web tool, on a turn where no mount has that server's name and Murage's own agents mount
+    // is proven once, is denied with the working tool's name (never allowed, never a card)
+    if (matches.length === 0 && server === CODEX_APPS_SERVER && CODEX_APPS_WEB_TOOLS.includes(tool)) {
+      const agents = (ctx.mounts ?? []).filter((r) => r.provenance === "own" && r.mountId === "own:agents");
+      if (agents.length === 1) return { route: "deny", reason: codexWebRedirect(agents[0]!.engineName) };
+    }
     if (!server || !tool || matches.length !== 1) return ask();
     const mount = matches[0]!;
     // asked under the mount's own name, so the verdict proves the call on this turn's record (Rule 11)
-    if (mount.provenance === "own") return isOwnUnasked(mount.mountId, tool) ? { route: "allow", final: true, why: "own-unasked" } : ask(`mcp__${mount.engineName}__${tool}`);
+    // CODEX-WEB-1020: Murage's own web search on the free default provider is the one always-ask row let through here, read live
+    if (mount.provenance === "own") return isOwnUnasked(mount.mountId, tool) || ownWebSearchRunsUnasked(mount.mountId, tool) ? { route: "allow", final: true, why: "own-unasked" } : ask(`mcp__${mount.engineName}__${tool}`);
     // a custom or external mount: allowed here, judged by the approval path Codex still raises for it
     return { route: "allow", final: false, why: mount.provenance };
   }
@@ -998,6 +1124,12 @@ export function routeDelivery(delivery: HookDelivery, ctx: RouteContext): HookRo
   // Native search tools: judged by the verdict until the walk of build step 4 reads their roots.
   if (name === "list_dir" || name === "grep_files") {
     return { route: "ask", tool: name, summary: name, cwd, toolCall: { name, ...(input ? { input } : {}) }, ...(input ? {} : { toolInputMissing: "tool_input" }) };
+  }
+
+  // CODEX-WEB-1020: a native web call on a turn with exactly one proven own agents mount is denied with the working tool's name
+  if (CODEX_NATIVE_WEB_NAMES.includes(name)) {
+    const agents = (ctx.mounts ?? []).filter((r) => r.provenance === "own" && r.mountId === "own:agents");
+    if (agents.length === 1) return { route: "deny", reason: codexWebRedirect(agents[0]!.engineName) };
   }
 
   return { route: "deny", reason: "Murage does not know this tool" };

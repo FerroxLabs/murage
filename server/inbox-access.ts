@@ -29,6 +29,7 @@ interface TitledThread { threadId: string; title?: string }
 /** The slice of `Store` the roster needs. Structural, like `VisibilityStore`,
  *  so the tests can state the world without a data directory. */
 export interface InboxRosterStore extends VisibilityStore {
+  bot(id: string): { hidden?: boolean; staged?: unknown } | null;
   readonly bots: ReadonlyArray<{ id: string; name: string; threadId: string; tasks?: readonly TitledThread[] }>;
   readonly groups: ReadonlyArray<{ name: string; threadId: string; tasks?: readonly TitledThread[] }>;
 }

@@ -15,34 +15,35 @@
 // memory_receipt_flip into memory_receipt_flips; readers hold the receipt's lines "checking" from its first output (deny-read.ts) until
 // drainReceiptFlips commits it as a root of that drain's one audience bulk revoke (run first in every marker slice).
 import type { DatabaseSync } from "node:sqlite";
+import { accountedPrepare } from "./release-budget.ts";
 import { ensureThreadNo, threadIdOf } from "./thread-no.ts";
 import type { SessionKey } from "./lineage-types.ts";
 import { sessionKeyOf } from "./session-incarnation.ts";
 
 /** The session's interned number, taken now when it has none. */
 function ensureSessionNo(db: DatabaseSync, session: SessionKey): number {
-  const held = db.prepare("SELECT no FROM memory_session_no WHERE thread_id=? AND driver_instance=? AND native_session=?").get(session.threadId, session.driverInstance, session.nativeSession);
+  const held = accountedPrepare(db, "SELECT no FROM memory_session_no WHERE thread_id=? AND driver_instance=? AND native_session=?").get(session.threadId, session.driverInstance, session.nativeSession);
   if (held) return Number(held.no);
-  return Number(db.prepare("INSERT INTO memory_session_no(thread_id,driver_instance,native_session,no) VALUES(?,?,?,(SELECT coalesce(max(no),0)+1 FROM memory_session_no)) RETURNING no")
+  return Number(accountedPrepare(db, "INSERT INTO memory_session_no(thread_id,driver_instance,native_session,no) VALUES(?,?,?,(SELECT coalesce(max(no),0)+1 FROM memory_session_no)) RETURNING no")
     .get(session.threadId, session.driverInstance, session.nativeSession)!.no);
 }
 
 /** A receipt's output at `lsn` in `threadId`: the receipt's range starts at its earliest output; its session is recorded when known. */
 export function noteReceiptOutput(db: DatabaseSync, bundleId: string, threadId: string, lsn: number, session?: { driverInstance: string; nativeSession: string | null }): void {
   const sessionNo = session?.nativeSession ? ensureSessionNo(db, sessionKeyOf(threadId, session.driverInstance, session.nativeSession)) : null;
-  db.prepare("INSERT INTO memory_receipt_lines(bundle_id,thread_no,first_lsn,session_no) VALUES(?,?,?,?) ON CONFLICT(bundle_id) DO UPDATE SET first_lsn=min(first_lsn,excluded.first_lsn),session_no=coalesce(excluded.session_no,session_no)")
+  accountedPrepare(db, "INSERT INTO memory_receipt_lines(bundle_id,thread_no,first_lsn,session_no) VALUES(?,?,?,?) ON CONFLICT(bundle_id) DO UPDATE SET first_lsn=min(first_lsn,excluded.first_lsn),session_no=coalesce(excluded.session_no,session_no)")
     .run(bundleId, ensureThreadNo(db, threadId), lsn, sessionNo);
 }
 
 /** The engine session a receipt was bound to (bindMemoryDisclosureSession), once it is known. */
 export function noteReceiptSession(db: DatabaseSync, bundleIds: readonly string[], session: SessionKey): void {
   const no = ensureSessionNo(db, session);
-  for (const bundleId of bundleIds) db.prepare("UPDATE memory_receipt_lines SET session_no=? WHERE bundle_id=?").run(no, bundleId);
+  for (const bundleId of bundleIds) accountedPrepare(db, "UPDATE memory_receipt_lines SET session_no=? WHERE bundle_id=?").run(no, bundleId);
 }
 
 /** Where a receipt's outputs start and its session, or null when it produced no output (a receipt revoke then resets its session only). */
 export function receiptStart(db: DatabaseSync, bundleId: string): { threadId: string; firstLsn: number; session: SessionKey | null } | null {
-  const row = db.prepare("SELECT r.thread_no,r.first_lsn,s.thread_id AS st,s.driver_instance AS d,s.native_session AS n FROM memory_receipt_lines r LEFT JOIN memory_session_no s ON s.no=r.session_no WHERE r.bundle_id=?").get(bundleId);
+  const row = accountedPrepare(db, "SELECT r.thread_no,r.first_lsn,s.thread_id AS st,s.driver_instance AS d,s.native_session AS n FROM memory_receipt_lines r LEFT JOIN memory_session_no s ON s.no=r.session_no WHERE r.bundle_id=?").get(bundleId);
   if (!row) return null;
   const threadId = threadIdOf(db, Number(row.thread_no));
   if (threadId === null) return null;
@@ -58,10 +59,10 @@ export const FLIP_DRAIN_MAX = 1024;
  * it, so a crash replays it. Returns how many it committed. */
 export function drainReceiptFlips(db: DatabaseSync, commit: (bundleId: string) => void, limit = 64, fits: (bundleId: string, first: boolean) => boolean = () => true): number {
   let done = 0;
-  for (const row of db.prepare("SELECT thread_no,first_lsn,bundle_id FROM memory_receipt_flips LIMIT ?").all(limit)) {
+  for (const row of accountedPrepare(db, "SELECT thread_no,first_lsn,bundle_id FROM memory_receipt_flips LIMIT ?").all(limit)) {
     if (!fits(String(row.bundle_id), done === 0)) break;
     commit(String(row.bundle_id));
-    db.prepare("DELETE FROM memory_receipt_flips WHERE thread_no=? AND first_lsn=? AND bundle_id=?").run(Number(row.thread_no), Number(row.first_lsn), String(row.bundle_id));
+    accountedPrepare(db, "DELETE FROM memory_receipt_flips WHERE thread_no=? AND first_lsn=? AND bundle_id=?").run(Number(row.thread_no), Number(row.first_lsn), String(row.bundle_id));
     done++;
   }
   return done;

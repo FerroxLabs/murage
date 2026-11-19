@@ -5,7 +5,8 @@
 // prompt part; a Claude steer (and every other engine's) is the owner's words alone, as in 1.0.17.
 import { describe, expect, it } from "vitest";
 
-import { freshClockSteer, steerWithQuoteLineage } from "./steer-lineage.ts";
+import { freshClockSteer } from "./steer-lineage.ts";
+import { steerWithQuoteLineage } from "./testing/steer-fixture.ts";
 
 const NOW = "It is now Friday 6 November 2026, 9:12 am (09:12) in the owner's time zone, Europe/London (UTC+0).";
 

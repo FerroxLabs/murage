@@ -2232,3 +2232,13 @@ describe("LOG-CPU-LINEAGE: a stream frame and the open chat's read mark", () => 
     expect(frameShowsViewedUnread({ threadId: "other", unread: true }, "open")).toBe(false);
   });
 });
+
+it('L8 scoped Remove settles the captured pinned thread after another task was opened', () => {
+  const state = { ...initialState, bots: [{ id: 'b', threadId: 'new' } as Bot], pendingQueued: { old: [{ queueId: 'q', text: 'question' }], new: [{ queueId: 'other', text: 'other question' }] } };
+  const next = reducer(state, { type: 'cancelQueued', botId: 'b', queueId: 'q', target: { contract: 1, actionId: 'press', threadId: 'old', sendId: 's', attemptId: 'a', receiptRevision: 1, bindingEpoch: 0 } });
+  expect(next.pendingQueued.old).toBeUndefined(); expect(next.pendingQueued.new).toEqual(state.pendingQueued.new);
+});
+it('L8 dismissed action response keeps the old chip gone without affecting another send', () => {
+  const state = { ...initialState, pendingQueued: { t: [{ queueId: 'other', sendId: 'other', text: 'other question' }] } };
+  expect(reducer(state, { type: 'sendDismissed', threadId: 't', sendId: 'old' }).pendingQueued.t).toEqual(state.pendingQueued.t);
+});

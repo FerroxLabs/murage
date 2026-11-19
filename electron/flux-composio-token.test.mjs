@@ -1,3 +1,4 @@
+import { createComposioLifecycle } from "./composio-lifecycle.mjs";
 // The two-credential rule, tested where it is decided.
 //
 // Engines receive the Flux API key — the claude CLI gets it as
@@ -12,14 +13,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  brokerTokenFingerprint,
-  clearFluxComposioBrokerToken,
-  ensureFluxComposioBrokerToken,
-  fluxKeyFingerprint,
-  revokeFluxComposioBrokerToken,
-  sha256Hex,
-} from "./flux-composio-token.mjs";
+import { brokerTokenFingerprint, clearFluxComposioBrokerToken, fluxKeyFingerprint, sha256Hex } from "./flux-composio-token.mjs";
+import { ensureFluxComposioBrokerToken, revokeFluxComposioBrokerToken } from "./testing/composio-fixture.mjs";
 
 const FLUX = "https://api.fluxrouter.ai/composio";
 const TOKEN = "a".repeat(64);
@@ -390,10 +385,34 @@ describe("token minting rules", () => {
   it("review F12: with a revoke sink the old token is NOT revoked until the caller has saved the new one", async () => {
     const { impl, calls } = fakeFetch({ "/v1/tokens": minted(), "/v1/tokens/current": () => new Response(null, { status: 200 }) });
     const revokeSink = [];
-    const next = await ensureFluxComposioBrokerToken(base({ credentials: held(), fetchImpl: impl, force: true, revokeSink }));
-    expect(next.fluxComposioBrokerToken).toBe(NEXT_TOKEN);
-    expect(verbs(calls)).toEqual(["POST /v1/tokens"]);
-    expect(revokeSink).toEqual([{ fluxBrokerUrl: FLUX, previous: TOKEN, minted: NEXT_TOKEN }]);
+    let credentials = held();
+    let release, queued;
+    const gate = new Promise(resolve => { release = resolve; });
+    const pending = new Promise(resolve => { queued = resolve; });
+    let saved = false;
+    const authority = createComposioLifecycle({
+      getConfiguration: () => ({ fluxBrokerUrl: FLUX, prepareLegacy: false }),
+      getCredentials: () => ({ ...credentials, fluxApiKey: KEY }),
+      saveCredentials: async next => { credentials = next; saved = true; return true; },
+      transport: impl,
+      savePendingRevocations: async entries => {
+        if (!entries.length) return;
+        expect(saved).toBe(true);
+        revokeSink.push(...entries.map(entry => ({ fluxBrokerUrl: entry.fluxBrokerUrl, previous: entry.token, minted: credentials.fluxComposioBrokerToken })));
+        queued(); await gate;
+      },
+      now: () => NOW, monotonic: () => NOW,
+    });
+    const request = authority.request({ operation: "reconnect" });
+    try {
+      await pending;
+      const next = credentials;
+      expect(next.fluxComposioBrokerToken).toBe(NEXT_TOKEN);
+      expect(verbs(calls)).toEqual(["POST /v1/tokens"]);
+      expect(revokeSink).toEqual([{ fluxBrokerUrl: FLUX, previous: TOKEN, minted: NEXT_TOKEN }]);
+      release(); await request;
+      expect(verbs(calls)).toEqual(["POST /v1/tokens", "DELETE /v1/tokens/current"]);
+    } finally { release(); authority.dispose(); }
   });
 
   it("rule 4: a new session or client with the same key reuses the token and mints nothing", async () => {

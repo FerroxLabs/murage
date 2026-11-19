@@ -33,7 +33,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -171,7 +171,10 @@ async function plainTurn(who: Bot, text: string): Promise<void> {
 
 async function openApp(page: Page, { width = 1440 } = {}) {
   await page.setViewportSize({ width, height: 900 });
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
+  // The level-chip hint (L4C) is one per device and shows 2.5 s after a chat
+  // opens at 400 px and up, so this 1440 px app gets it in both projects. A
+  // person taps past it; Playwright's click waits behind it, so it is seen.
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
 }
 async function selectBot(page: Page, who: Bot) {

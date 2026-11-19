@@ -285,7 +285,7 @@ it("T6d process crash after durable spend cannot restore automatic allowance",as
  const {spawnSync}=await import("node:child_process");const {pathToFileURL}=await import("node:url");
  const f=requestedFixture();
  const code=`import {BackupCoordinator} from ${JSON.stringify(pathToFileURL(join(process.cwd(),"server/backup-coordinator.ts")).href)};const c=new BackupCoordinator(${JSON.stringify({stateDirectory:f.stateDirectory})});if(!c.spendLandedHop(${JSON.stringify(f.intent.id)},${JSON.stringify(f.update.candidateId)},"automatic"))process.exit(2);process.exit(0);`;
- const child=spawnSync(process.execPath,["--input-type=module","-e",code],{encoding:"utf8"});expect(child.status,child.stderr).toBe(0);
+ const child=spawnSync(process.execPath,["--input-type=module","-e",code],{ windowsHide: true,encoding:"utf8"});expect(child.status,child.stderr).toBe(0);
  expect(new BackupCoordinator(f.options).spendLandedHop(f.intent.id,f.update.candidateId,"automatic")).toBe(false);
 });
 it("T6b unresolved budget survives configure, cancellation and same-candidate readmission",()=>{
@@ -492,7 +492,7 @@ it('T-downgrade: BASE18 reads settled main without side parsing and does not rep
  source=source.replace(/from "(\.\.?\/[^\"]+)"/g,(_all,relative:string)=>`from "${pathToFileURL(resolve('server',relative)).href}"`).replace('from "zod"',`from "${pathToFileURL(require.resolve('zod')).href}"`);
  const js=stripTypeScriptTypes(source);const file=join(f.stateDirectory,'base-coordinator.mjs');writeFileSync(file,js);
  // Run the historical module through Node's TypeScript loader, outside Vitest's transformer.
- const result=execFileSync(process.execPath,['--experimental-strip-types','--input-type=module','-e',`const {BackupCoordinator}=await import(${JSON.stringify(pathToFileURL(file).href)});const c=new BackupCoordinator({stateDirectory:${JSON.stringify(f.stateDirectory)},now:()=>${f.options.now()}});const before=c.status();const after=await c.tick();console.log(JSON.stringify({before:before.job,after:after.job}));`],{encoding:'utf8'});
+ const result=execFileSync(process.execPath,['--experimental-strip-types','--input-type=module','-e',`const {BackupCoordinator}=await import(${JSON.stringify(pathToFileURL(file).href)});const c=new BackupCoordinator({stateDirectory:${JSON.stringify(f.stateDirectory)},now:()=>${f.options.now()}});const before=c.status();const after=await c.tick();console.log(JSON.stringify({before:before.job,after:after.job}));`],{ windowsHide: true,encoding:'utf8'});
  const parsed=JSON.parse(result);expect(parsed.before.phase).toBe('skipped');expect(parsed.after).toEqual(parsed.before);
 });
 
@@ -565,4 +565,19 @@ it('BF-4: a durable interrupted upgrade claiming review never consumes backup-mo
  raw.job.occurrence='1:upgrade:fixture';raw.job.phase='claiming';writeFileSync(f.file,JSON.stringify(raw));
  expect(f.fresh().reconcileStartup()).toMatchObject({phase:'needs-review',consumedNonUpgradeHandoff:false});
  expect(f.fresh().reconcileStartup()).toMatchObject({phase:'needs-review',consumedNonUpgradeHandoff:false});
+});
+it("a scheduled tick during an open restore starts nothing and the status says so, then runs after the restore closes",async()=>{
+ const f=fixture();let open=true;const c=new BackupCoordinator({...f.options,restoreWindow:()=>open});c.configure(0,choices);f.setNow("2026-09-13T03:00:00Z");
+ const during=await c.tick();expect(f.claimIdle).not.toHaveBeenCalled();expect(during.restoreDeferred).toBe(true);expect(during.phase).toBe("idle");
+ open=false;expect(c.status().restoreDeferred).toBe(false);const after=await c.tick();expect(after.phase).not.toBe("idle");
+});
+it("an unreadable restore window counts as open, and a disabled schedule reports no deferral",async()=>{
+ const f=fixture();const c=new BackupCoordinator({...f.options,restoreWindow:()=>{throw new Error("unreadable");}});expect(c.status().restoreDeferred).toBe(false);c.configure(0,choices);expect(c.status().restoreDeferred).toBe(true);
+});
+it("a capture that died mid-flight blocks a restore until startup reconciles it, and then it does not",async()=>{
+ const f=fixture(),c=new BackupCoordinator(f.options);c.configure(0,choices);f.setNow("2026-09-13T03:00:00Z");await c.tick();
+ const file=join(f.stateDirectory,"backup-coordinator.json"),state=JSON.parse(readFileSync(file,"utf8"));expect(state.job).toBeTruthy();state.job.phase="capturing";writeFileSync(file,JSON.stringify(state));
+ const next=new BackupCoordinator({stateDirectory:f.stateDirectory,now:f.options.now});expect(next.busy()).toBe(true);
+ expect(next.reconcileStartup()).toMatchObject({blocked:false,phase:"needs-review"});
+ expect(next.busy()).toBe(false);expect(next.status().message).toMatch(/needs review/);
 });

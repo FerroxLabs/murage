@@ -1,7 +1,7 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
@@ -32,7 +32,7 @@ test.beforeEach(async({page})=>{await page.route("**/*",route=>new URL(route.req
 
 test("a fresh install opens on the welcome screen despite the seeded bot, and a server restart does not create another bot",async({page},info)=>{
   expect(seeded.chiefOfStaff).not.toBe(true);
-  await page.addInitScript(()=>{localStorage.removeItem("murage-email-gate");localStorage.setItem("murage-flux-invite-dismissed","1");});
+  await page.addInitScript(()=>{localStorage.removeItem("murage-email-gate");localStorage.setItem("murage-flux-invite-dismissed","1");localStorage.setItem("help.seen.chat.level-chip","1");});
   await page.setViewportSize({width:1440,height:1000});await page.goto(origin);
   // The only thing here is the untouched seeded bot, so this is a first run.
   // The first load compiles the app in this spec's own Vite server.
@@ -49,13 +49,14 @@ test("companion surface renders profile guidance without desktop installation ac
   for(const text of ["I want cowork","That's about right"]){const messages=(await api("GET",`/api/threads/${bot.threadId}/messages?limit=200`)).messages;const question=messages.findLast((m:any)=>m.card?.intake&&m.card.answered===undefined&&!m.card.dismissed);expect(question).toBeTruthy();await api("POST",`/api/bots/${bot.id}/intake`,{messageId:question.id,text});}
   await page.route("**/api/config",async route=>{const response=await route.fetch();const data=await response.json();await route.fulfill({json:{...data,surface:"remote"}});});
   const writes:string[]=[];page.on("request",request=>{if(request.method()!=="GET"&&/\/api\/bots\/[^/]+\/(assistant-profile|skills)/.test(request.url()))writes.push(request.url());});
+  await page.addInitScript(()=>{localStorage.setItem("help.seen.chat.level-chip","1");});
   await page.setViewportSize({width:1440,height:1000});await page.goto(origin);await expect(page.getByText("Companion helper",{exact:true}).first()).toBeVisible();await page.getByText("Companion helper",{exact:true}).first().click();
   await expect(page.getByRole("textbox",{name:"Message Companion helper",exact:true})).toBeVisible();await expect(page.getByTestId("chat-scroll").getByText("Add this on your desktop",{exact:true})).toBeVisible();await expect(page.getByRole("button",{name:"Set that up",exact:true})).toHaveCount(0);expect(writes).toEqual([]);
   await expect(page.getByText(/Tell me what to call you and I will get the rest ready/i)).toHaveCount(0);expect(existsSync(fixture.fixtureDumpPath)).toBe(false);await page.screenshot({path:info.outputPath("companion-profile-guidance.png"),fullPage:true});
 });
 
 test("Tango keeps its identity/history/Chief while conversationally adopting reviewed Cowork",async({page},info)=>{
-  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage-flux-invite-dismissed","1");});
+  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage-flux-invite-dismissed","1");localStorage.setItem("help.seen.chat.level-chip","1");});
   await page.setViewportSize({width:1440,height:1000});await page.goto(origin);
   await expect(page.getByRole("button",{name:"Open Fixture Chief's profile",exact:true}).first()).toBeVisible();
   const beforeRoster=(await api("GET","/api/bots")).bots;

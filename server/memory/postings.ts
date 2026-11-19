@@ -12,24 +12,45 @@
 // that writes the tables directly, and an older build after a downgrade. A file made before this index existed is filled newest first
 // by the helper in short steps (MemoryIndex.fillPostings); until it is, `index_meta` holds `postings_below` and recall says it read
 // only the newest (`bounded`).
-import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { DatabaseSync, type StatementSync } from "../sqlite-open.ts";
 
 /** The tokenizer of the `lexical` table, and so of the postings. */
 export const WORD_TOKENIZER = "unicode61";
 
+/** MEMW r4.1 (MEMW-POSTINGS-OVERSIZE): a unit writes or drops at most this many postings inline per side. */
+export const MEMW_POSTINGS_INLINE = 256;
+/** A term longer than this many bytes never goes inline (an inline posting payload stays under the index page's overflow line X = 1,002). */
+export const MEMW_POSTING_TERM_INLINE_BYTES = 512;
+/** True when a text's words are too many (over MEMW_POSTINGS_INLINE) or one too long to be written or dropped inside the unit's own transaction. */
+export const oversizeTerms = (terms: readonly string[]): boolean => terms.length > MEMW_POSTINGS_INLINE || terms.some(term => Buffer.byteLength(term, "utf8") > MEMW_POSTING_TERM_INLINE_BYTES);
+/** The trigger form of the same gate, read from the posting_vocab the trigger has just loaded (r4.1 Q4). */
+const GATED = `((SELECT count(*) FROM posting_vocab)>${MEMW_POSTINGS_INLINE} OR EXISTS(SELECT 1 FROM posting_vocab WHERE length(CAST(term AS BLOB))>${MEMW_POSTING_TERM_INLINE_BYTES}))`;
+
 // No OR IGNORE in a trigger body: the conflict clause of the statement that fired it (upsert's INSERT OR REPLACE) would override it,
 // and a replaced posting_scopes row would get a new key. Existence is tested instead.
+// r4.1 gates: an oversize text adds nothing inline (its (scope, seq) is listed on posting_todo instead: the backfill writes it, one posting
+// per transaction) and drops nothing inline (its distinct terms are kept as debt parts on posting_drop, drained one posting per transaction).
 const addWords = (scope: string, text: string, seq: string) => `
   INSERT INTO posting_scopes(scope_id,n) SELECT ${scope},(SELECT coalesce(max(n),0)+1 FROM posting_scopes) WHERE NOT EXISTS (SELECT 1 FROM posting_scopes WHERE scope_id=${scope});
   INSERT INTO posting_words(rowid,text) VALUES(1,${text});
   INSERT INTO postings(term,scope,seq) SELECT v.term,p.n,${seq} FROM posting_vocab v JOIN posting_scopes p ON p.scope_id=${scope}
-    WHERE NOT EXISTS (SELECT 1 FROM postings o WHERE o.term=v.term AND o.scope=p.n AND o.seq=${seq});
+    WHERE NOT ${GATED} AND NOT EXISTS (SELECT 1 FROM postings o WHERE o.term=v.term AND o.scope=p.n AND o.seq=${seq});
+  INSERT INTO posting_todo(scope,seq) SELECT p.n,${seq} FROM posting_scopes p WHERE p.scope_id=${scope} AND ${GATED}
+    AND NOT EXISTS (SELECT 1 FROM posting_todo o WHERE o.scope=p.n AND o.seq=${seq});
   INSERT INTO posting_words(posting_words) VALUES('delete-all');`;
 const dropWords = (scope: string, text: string, seq: string) => `
   INSERT INTO posting_words(rowid,text) SELECT 1,${text} WHERE ${text} IS NOT NULL;
-  DELETE FROM postings WHERE term IN (SELECT term FROM posting_vocab) AND scope=(SELECT n FROM posting_scopes WHERE scope_id=${scope}) AND seq=${seq};
+  DELETE FROM postings WHERE NOT ${GATED} AND term IN (SELECT term FROM posting_vocab) AND scope=(SELECT n FROM posting_scopes WHERE scope_id=${scope}) AND seq=${seq};
+  INSERT INTO posting_drop(scope,seq,terms) SELECT n,seq,json_group_array(term) FROM (
+    SELECT p.n AS n,${seq} AS seq,v.term AS term,sum(max(8,length(CAST(v.term AS BLOB))+3)) OVER (ORDER BY v.term)/256 AS part
+    FROM posting_vocab v JOIN posting_scopes p ON p.scope_id=${scope} WHERE ${GATED}) GROUP BY part;
   DELETE FROM posting_todo WHERE seq=${seq} AND scope=(SELECT n FROM posting_scopes WHERE scope_id=${scope});
   INSERT INTO posting_words(posting_words) VALUES('delete-all');`;
+
+/** The debt of the removal of an oversize text (r4.1 S1): its distinct terms, in parts of at most 33 terms and 256 B plus the first term, each
+ * its own row keyed by id, so no step ever deletes an overflowing text and one debt never shadows another. */
+export const POSTING_DROP_SCHEMA = `CREATE TABLE IF NOT EXISTS posting_drop(id INTEGER PRIMARY KEY,scope INTEGER NOT NULL,seq INTEGER NOT NULL,terms TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS posting_drop_seq ON posting_drop(seq,scope);`;
 
 /** The to-do list of the backfill (MemoryIndex.fillPostings): one row per entry an earlier build indexed whose postings are not written
  * yet, keyed (scope, seq) so a scope's rows are one range and its newest are the end of it. It is empty in steady state (one page) and
@@ -55,20 +76,23 @@ CREATE TABLE IF NOT EXISTS posting_scopes(scope_id TEXT PRIMARY KEY,n INTEGER NO
 CREATE TABLE IF NOT EXISTS postings(term TEXT NOT NULL,scope INTEGER NOT NULL,seq INTEGER NOT NULL,PRIMARY KEY(term,scope,seq)) WITHOUT ROWID;
 CREATE VIRTUAL TABLE IF NOT EXISTS posting_words USING fts5(text,content='',tokenize='${WORD_TOKENIZER}');
 CREATE VIRTUAL TABLE IF NOT EXISTS posting_vocab USING fts5vocab(posting_words,'row');
-${POSTING_TODO_SCHEMA}${TRIGGERS}`;
+${POSTING_TODO_SCHEMA}${POSTING_DROP_SCHEMA}${TRIGGERS}`;
 
-/** A file with postings from the build before the to-do list: the list, and the three triggers that must now also clear it. Schema pages
+/** A file with postings from an earlier build: the to-do list, the debt table, and all four triggers, gated. Schema pages
  * only; no entry is read. */
-export const POSTINGS_TODO_UPGRADE = `${POSTING_TODO_SCHEMA}
-DROP TRIGGER IF EXISTS entries_postings_replace; DROP TRIGGER IF EXISTS entries_postings_delete; DROP TRIGGER IF EXISTS entries_postings_update;${TRIGGERS}`;
+export const POSTINGS_TODO_UPGRADE = `${POSTING_TODO_SCHEMA}${POSTING_DROP_SCHEMA}
+DROP TRIGGER IF EXISTS entries_postings_replace; DROP TRIGGER IF EXISTS entries_postings_insert; DROP TRIGGER IF EXISTS entries_postings_delete; DROP TRIGGER IF EXISTS entries_postings_update;${TRIGGERS}`;
+/** index_meta key: "2" once posting_drop exists and all four triggers are the gated ones (r4.1 R7). */
+export const POSTINGS_TRIGGERS_KEY = "postings_triggers";
 
-/** Fills one existing entry's postings (the backfill): the same work as the insert trigger, on the caller's transaction. */
-export function postingFiller(db: DatabaseSync): (scopeId: string, text: string, seq: number) => void {
+/** The backfill uses the same words as the insert trigger. The caller can reuse the words it already priced. */
+export function postingFiller(db: DatabaseSync): (scopeId: string, text: string, seq: number, terms?: readonly string[]) => void {
   const scope = db.prepare("INSERT INTO posting_scopes(scope_id,n) SELECT ?1,(SELECT coalesce(max(n),0)+1 FROM posting_scopes) WHERE NOT EXISTS (SELECT 1 FROM posting_scopes WHERE scope_id=?1)");
-  const words = db.prepare("INSERT INTO posting_words(rowid,text) VALUES(1,?1)");
-  const add = db.prepare("INSERT OR IGNORE INTO postings(term,scope,seq) SELECT v.term,p.n,?2 FROM posting_vocab v JOIN posting_scopes p ON p.scope_id=?1");
-  const clear = db.prepare("INSERT INTO posting_words(posting_words) VALUES('delete-all')");
-  return (scopeId, text, seq) => { scope.run(scopeId); words.run(text); add.run(scopeId, seq); clear.run(); };
+  const add = db.prepare("INSERT OR IGNORE INTO postings(term,scope,seq) SELECT word.value,p.n,?2 FROM posting_scopes p CROSS JOIN json_each(?3) word WHERE p.scope_id=?1");
+  return (scopeId, text, seq, terms = wordTerms(text)) => {
+    scope.run(scopeId);
+    add.run(scopeId, seq, JSON.stringify(terms));
+  };
 }
 
 /** The key of `index_meta` that says entries below this rowid are not yet listed in `posting_todo`: every entry at or above it either has

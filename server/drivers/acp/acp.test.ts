@@ -1,3 +1,11 @@
+import { c11FixtureIntegrations } from "../../testing/c11-mount-fixture.ts";
+import { bindFixtureAdapter, fixtureEngineFence } from "../../testing/mcp-admission-fixture.ts";
+import { fencedTurnInput } from "../engine-input.ts";
+import { buildPrompt, promptPart, noneRef } from "../../memory/prompt-parts.ts";
+import { releaseTransaction } from "../../memory/release-transaction.ts";
+import { fixtureAcpConfiguration } from "../../testing/acp-mount-configuration.ts";
+import { fileURLToPath as fixtureFilePath } from "node:url";
+const IDLE_MCP = fixtureFilePath(new URL("../../testing/fake-idle-mcp.mjs", import.meta.url));
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // ACP driver contract tests, run against the scripted fake ACP CLI in
 // server/testing/fake-acp-cli.ts. Covers the shared acp/core.ts runtime via
@@ -14,21 +22,21 @@ import { tmpdir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import { scanFolderTrustSources } from "../../folder-trust.ts";
 import type { ProviderTurnRoute } from "../../provider-routing.ts";
-import type { ProviderInstance } from "../../contracts.ts";
-import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
+import { recordAdmittedEvents as recordEvents, type EventRecorder } from "../../testing/admitted-events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { buildRemoteMount } from "../../custom-mcp-mounts.ts";
-import { acpErrorDiagnostic, acpFailedPromptLine, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, splitAcpCacheReads, type AcpSupport } from "./core.ts";
+import { acpErrorDiagnostic, acpFailedPromptLine, acpIsFluxRefusal, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, splitAcpCacheReads, type AcpSupport } from "./core.ts";
 import { redactSecretsInText } from "../../redact.ts";
 import { redactSecretsInText as redactSecretsInTextShipped } from "../../testing/redact-release-0.1.53.ts";
 import { ERROR_MESSAGE_MAX, ENGINE_ERROR_CATEGORIES } from "../../../shared/provider-error.ts";
 import { GrokAgentDriver } from "./grok.ts";
-import { FuigoAgentDriver } from "./fuigo.ts";
+import { FuigoAgentDriver, fuigoAcpSupport } from "./fuigo.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver, KIMI_LOGIN_NOTE, kimiSignedIn } from "./kimi.ts";
 import { DroidAgentDriver } from "./droid.ts";
@@ -38,11 +46,19 @@ import { QUESTION_TIMEOUT_MS } from "../../../shared/questions.ts";
 import { resolveCall, type GrantCall } from "../../../shared/app-action-grant.ts";
 import { isMountRecord } from "../../../shared/mount-identity.ts";
 import { autoVerdict } from "../../auto-approve.ts";
-import { execChecks, resetExecChecks } from "../../testing/exec-check-spy.ts";
+import { execChecks, resetExecChecks as resetProbeChecks, withExecCheckSpy } from "../../testing/exec-check-spy.ts";
 import { approveStartupWrite } from "../../testing/startup-write.ts";
 import { engineJob } from "../../procs.ts";
+import * as procs from "../../procs.ts";
 
-vi.mock("node:child_process", async (original) => (await import("../../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
+// Setup imports can retain procs before a node:child_process module mock.
+// Observe the actual probe entry, still delegating to its real pinned shell.
+function resetExecChecks(): void {
+  resetProbeChecks();
+  const probe = procs.execCli;
+  const spy = vi.spyOn(procs, "execCli").mockImplementation(withExecCheckSpy({ execFile: probe }).execFile);
+  onTestFinished(() => spy.mockRestore());
+}
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -61,6 +77,7 @@ const processAlive = (pid: number) => {
  *  engine. Real harnesses live in their own file. */
 const SELECT_MODEL_SUPPORT: AcpSupport = {
   driverKind: "selectModelTest",
+  fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
   displayName: "Select Model Test",
   models: { default: "m-one", options: [{ id: "m-one", label: "One" }, { id: "m-two", label: "Two" }] },
   defaultCli: "fake-select-model",
@@ -80,6 +97,7 @@ const FuigoDiagnosticDriver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, nativeS
 const EnvPolicyDriver = createAcpDriver({
   ...SELECT_MODEL_SUPPORT,
   driverKind: "envPolicyTest",
+  fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
   selectModel: undefined,
   transformEnv: (env, config) => {
     env.TEST_POLICY = config.fullAuto ? "auto" : "ask";
@@ -91,6 +109,7 @@ const EnvPolicyDriver = createAcpDriver({
 const AsyncAuthDriver = createAcpDriver({
   ...SELECT_MODEL_SUPPORT,
   driverKind: "asyncAuthTest",
+  fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
   selectModel: undefined,
   isAuthenticated: async () => true,
 });
@@ -98,6 +117,7 @@ const AsyncAuthDriver = createAcpDriver({
 const ClassifiedErrorDriver = createAcpDriver({
   ...SELECT_MODEL_SUPPORT,
   driverKind: "classifiedErrorTest",
+  fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
   selectModel: undefined,
   classifyError: (error) =>
     error && typeof error === "object" && (error as { code?: unknown }).code === -32000
@@ -118,6 +138,7 @@ describe("ACP decodeConfig", () => {
   it("resolves a dynamic model catalog when a support provides one", async () => {
     const support: AcpSupport = {
       driverKind: "dynamic-test",
+      fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
       displayName: "Dynamic Test",
       models: { default: "fallback", options: [{ id: "fallback", label: "Fallback" }] },
       defaultCli: FAKE_CLI,
@@ -201,14 +222,15 @@ describe("ACP decodeConfig", () => {
       config: { cli: FAKE_CLI, fullAuto: true },
     });
     expect(fullAuto.adapter.capabilities.localComputerMcp).toBe(false);
+    bindFixtureAdapter(fullAuto.adapter);
     await expect(
       fullAuto.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-full-auto-local",
         text: "click",
         integrations: {
           localComputer: {
-            command: "/cua-driver",
-            args: ["mcp"],
+            command: process.execPath,
+            args: [IDLE_MCP, "mcp"],
             env: {},
             platform: "linux",
             scope: "local-computer",
@@ -376,6 +398,40 @@ describe("ACP turns (fake CLI)", () => {
     expect(JSON.parse(readFileSync(rpcFile, "utf8")) as string[]).toContain("session/prompt");
   });
 
+  it.each([["grokAgent without a provider binding", () => GrokAgentDriver], ["another ACP driver", () => SelectModelDriver]] as const)(
+    "H1-SENDLOCK: %s writes session/prompt inside fencedWrite, and a refusal there writes nothing", async (_name, driver) => {
+    const rpcFile = join(scratch, "h1-fenced.json");
+    process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+    await create(driver());
+    const dumped = (): string[] => { try { return JSON.parse(readFileSync(rpcFile, "utf8")) as string[]; } catch { return []; } };
+    // the frame leaves inside the lock: when the write returns, session/prompt is on the engine's stdin (the fake dumps on read, so
+    // the order is checked by the call: fencedWrite was entered once and its write ran before it returned)
+    // The real wire writer is registered by fencedTurnInput. Its observer and
+    // final validation must use that retained turn's transaction, even for a
+    // native control with no provider/mount binding.
+    const nativeTurn = (threadId: string, observe: <R>(write: () => R) => R) => {
+      const fence = fixtureEngineFence(threadId);
+      return fencedTurnInput({ cwd: fixtureBotFolder(), threadId, releaseBinding: null as never,
+        prompt: buildPrompt(fence.retained!, [promptPart("hi", [noneRef("owner-turn")])]),
+        fencedWrite: (write, validate) => releaseTransaction(fence.db!, { validate, emit: () => observe(write) }),
+      }, fence);
+    };
+    let inside = 0, ran = false;
+    const ok = await instance.adapter.sendTurn(nativeTurn("t-h1", <R>(write: () => R): R => { inside++; const out = write(); ran = true; return out; }));
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === ok.turnId)).toMatchObject({ ok: true });
+    expect([inside, ran]).toEqual([1, true]);
+    expect(dumped()).toContain("session/prompt");
+    // a hide committed by another connection before the check: the gate refuses inside fencedWrite and no session/prompt is written
+    const refusedFile = join(scratch, "h1-refused.json");
+    process.env.FAKE_ACP_RPC_DUMP = refusedFile;
+    await create(driver());
+    const wrote = false;
+    const refused = await instance.adapter.sendTurn(nativeTurn("t-h1-refused", <R>(_write: () => R): R => { throw new Error("MEMORY_SEND_FENCED"); }));
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === refused.turnId)).toMatchObject({ ok: false, stopReason: "submission_refused" });
+    expect(wrote).toBe(false);
+    expect((() => { try { return JSON.parse(readFileSync(refusedFile, "utf8")) as string[]; } catch { return []; } })()).not.toContain("session/prompt");
+  });
+
   describe.each([["grokAgent", () => GrokAgentDriver], ["another ACP driver", () => SelectModelDriver]] as const)("a stop that is not a user's Stop: %s", (_name, driver) => {
     // The fake rewrites this file on each request, so a poll can land between its truncate and its write.
     const rpcs = (file: string): string[] => {
@@ -405,6 +461,23 @@ describe("ACP turns (fake CLI)", () => {
       expect(rpcs(rpcFile)).not.toContain("session/prompt");
     });
 
+    it.each(["stopAll", "interrupt"] as const)("H1-SENDLOCK: %s inside beforeSubmit never reaches fencedWrite (Stop keeps its order)", async (how) => {
+      const rpcFile = join(scratch, "stopped-h1.json");
+      process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+      await create(driver());
+      const threadId = `t-h1-${how}`;
+      let fenced = 0;
+      let stopping: Promise<unknown> | undefined;
+      const { turnId } = await instance.adapter.sendTurn({
+        cwd: fixtureBotFolder(), threadId, text: "hi", fencedWrite: <R>(write: () => R): R => { fenced++; return write(); },
+        beforeSubmit: () => { stopping = (how === "stopAll" ? instance.adapter.stopAll() : instance.adapter.interruptTurn(threadId)).catch(() => undefined); },
+      });
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+      await stopping;
+      expect(fenced).toBe(0);
+      expect(rpcs(rpcFile)).not.toContain("session/prompt");
+    });
+
     it("a request that fails after Stop All, its child still closing, is a cancelled turn", async () => {
       const rpcFile = join(scratch, "stopped-setup.json");
       const refuse = join(scratch, "refuse-session");
@@ -418,6 +491,24 @@ describe("ACP turns (fake CLI)", () => {
       expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
       writeFileSync(exit, "");
       await stopping;
+      expect(errors(turnId)).toEqual([]);
+    });
+
+    // Stop All, then a dispose, then the request's rejection while the child is still closing: the asked Stop still reads as cancelled, no engine-closed line.
+    it("a request that fails after Stop All and a dispose, its child still closing, is a cancelled turn", async () => {
+      const rpcFile = join(scratch, "stopped-setup-disposed.json");
+      const refuse = join(scratch, "refuse-session-disposed");
+      const exit = join(scratch, "exit-disposed");
+      Object.assign(process.env, { FAKE_ACP_RPC_DUMP: rpcFile, FAKE_ACP_SESSION_NEW_REFUSE_GATE: refuse, FAKE_ACP_TERM: "gate", FAKE_ACP_EXIT_GATE: exit });
+      await create(driver());
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-setup-stopped-disposed", text: "hi" });
+      await until(() => polled(rpcFile, "session/new"));
+      const stopping = instance.adapter.stopAll().catch(() => undefined);
+      const disposing = instance.dispose().catch(() => undefined);
+      writeFileSync(refuse, "");
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+      writeFileSync(exit, "");
+      await Promise.all([stopping, disposing]);
       expect(errors(turnId)).toEqual([]);
     });
 
@@ -439,6 +530,134 @@ describe("ACP turns (fake CLI)", () => {
       await until(() => polled(rpcFile, "session/prompt"));
       await instance.adapter.stopAll();
       expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(errors(turnId)).toEqual([]);
+    });
+
+    // One gated witness per ordering of the engine's end against an asked Stop (Stop All, optionally a dispose too), the child's close held
+    // until the end has been settled: the turn reads as the Stop that was asked, never as an engine failure.
+    describe.each([false, true])("an asked Stop with the engine's own end first (dispose too: %s)", (alsoDispose) => {
+      it.each([
+        ["text", "the prompt's result with a reply"],
+        ["empty", "the prompt's empty result"],
+        ["other", "the prompt's result under an engine stop reason"],
+        ["error", "the prompt's rejection"],
+      ] as const)("%s: %s before the child closes is the cancelled turn", async (kind, _what) => {
+        const rpcFile = join(scratch, `ordering-${kind}-${alsoDispose}.json`);
+        const gate = join(scratch, `ordering-gate-${kind}-${alsoDispose}`);
+        const exit = join(scratch, `ordering-exit-${kind}-${alsoDispose}`);
+        Object.assign(process.env, { FAKE_ACP_RPC_DUMP: rpcFile, FAKE_ACP_PROMPT_GATE: gate, FAKE_ACP_TERM: "gate", FAKE_ACP_EXIT_GATE: exit });
+        await create(driver(), `gated-result:${kind}`);
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-ordering-${kind}-${alsoDispose}`, text: "hi" });
+        await until(() => polled(rpcFile, "session/prompt"));
+        const stopping = instance.adapter.stopAll().catch(() => undefined);
+        const disposing = alsoDispose ? instance.dispose().catch(() => undefined) : undefined;
+        writeFileSync(gate, "");
+        const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        writeFileSync(exit, "");
+        await Promise.all([stopping, disposing]);
+        // whatever the engine answered after the Stop (a late reply is no longer read), the turn is the Stop
+        expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+        expect(JSON.stringify(recorder.events.filter((e) => "turnId" in e && e.turnId === turnId))).not.toContain("late reply");
+        expect(errors(turnId)).toEqual([]);
+      });
+    });
+
+    // An asked Stop, then an engine fault before the child closes (its close held by a gate): the turn is still the Stop, never FRAME_TOO_LARGE / spawn_error.
+    describe.each([false, true])("an asked Stop with an engine fault first (dispose too: %s)", (alsoDispose) => {
+      it("an oversized frame before the child closes is the cancelled turn", async () => {
+        const rpcFile = join(scratch, `fault-overflow-${alsoDispose}.json`);
+        const gate = join(scratch, `fault-overflow-gate-${alsoDispose}`);
+        const exit = join(scratch, `fault-overflow-exit-${alsoDispose}`);
+        Object.assign(process.env, { FAKE_ACP_RPC_DUMP: rpcFile, FAKE_ACP_PROMPT_GATE: gate, FAKE_ACP_TERM: "gate", FAKE_ACP_EXIT_GATE: exit });
+        await create(driver(), "gated-result:overflow");
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-fault-overflow-${alsoDispose}`, text: "hi" });
+        await until(() => polled(rpcFile, "session/prompt"));
+        const stopping = instance.adapter.stopAll().catch(() => undefined);
+        const disposing = alsoDispose ? instance.dispose().catch(() => undefined) : undefined;
+        writeFileSync(gate, "");
+        const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        writeFileSync(exit, "");
+        await Promise.all([stopping, disposing]);
+        expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+        expect(errors(turnId)).toEqual([]);
+      });
+
+      it("the child's own error (a kill that fails) before it closes is the cancelled turn", async () => {
+        const rpcFile = join(scratch, `fault-error-${alsoDispose}.json`);
+        const exit = join(scratch, `fault-error-exit-${alsoDispose}`);
+        Object.assign(process.env, { FAKE_ACP_RPC_DUMP: rpcFile, FAKE_ACP_TERM: "gate", FAKE_ACP_EXIT_GATE: exit });
+        const spawnCli = procs.spawnCli;
+        const children: ReturnType<typeof procs.spawnCli>[] = [];
+        const spy = vi.spyOn(procs, "spawnCli").mockImplementation(((...args: Parameters<typeof procs.spawnCli>) => { const child = spawnCli(...args); children.push(child); return child; }) as typeof procs.spawnCli);
+        onTestFinished(() => spy.mockRestore());
+        await create(driver(), "hang");
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-fault-error-${alsoDispose}`, text: "hi" });
+        await until(() => polled(rpcFile, "session/prompt"));
+        expect(children.length).toBeGreaterThan(0);
+        const stopping = instance.adapter.stopAll().catch(() => undefined);
+        const disposing = alsoDispose ? instance.dispose().catch(() => undefined) : undefined;
+        // what node emits when a signal cannot be delivered; the child is still open (its exit is gated)
+        for (const child of children) child.emit("error", Object.assign(new Error("kill EPERM"), { code: "EPERM" }));
+        const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        writeFileSync(exit, "");
+        await Promise.all([stopping, disposing]);
+        expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+        expect(errors(turnId)).toEqual([]);
+      });
+    });
+
+    // The other side of the predicate: a dispose nobody asked a Stop for (quit, restart) is not a Stop. What the engine answers before its
+    // child closes (close held by a gate) is still read and decides the turn; only an ASKED Stop drops late output.
+    describe("with no asked Stop the engine's own end stands", () => {
+      const ending = async (kind: "text" | "empty" | "other", dispose: boolean) => {
+        const rpcFile = join(scratch, `unasked-${kind}-${dispose}.json`);
+        const gate = join(scratch, `unasked-gate-${kind}-${dispose}`);
+        const exit = join(scratch, `unasked-exit-${kind}-${dispose}`);
+        Object.assign(process.env, { FAKE_ACP_RPC_DUMP: rpcFile, FAKE_ACP_PROMPT_GATE: gate, FAKE_ACP_TERM: "gate", FAKE_ACP_EXIT_GATE: exit });
+        await create(driver(), `gated-result:${kind}`);
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-unasked-${kind}-${dispose}`, text: "hi" });
+        await until(() => polled(rpcFile, "session/prompt"));
+        const disposing = dispose ? instance.dispose().catch(() => undefined) : undefined;
+        writeFileSync(gate, "");
+        const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        writeFileSync(exit, "");
+        await disposing;
+        return { done, replied: JSON.stringify(recorder.events.filter((e) => "turnId" in e && e.turnId === turnId)).includes("late reply") };
+      };
+      it("an ordinary reply, no stop at all, is the completed turn", async () => {
+        const { done, replied } = await ending("text", false);
+        expect(done).toMatchObject({ ok: true });
+        expect((done as { stopReason?: unknown }).stopReason).not.toBe("cancelled");
+        expect(replied).toBe(true);
+      });
+      it("a dispose alone, the reply arriving before the child closes: the reply is read and the turn completes", async () => {
+        const { done, replied } = await ending("text", true);
+        expect(replied).toBe(true);
+        expect(done).toMatchObject({ ok: true });
+        expect((done as { stopReason?: unknown }).stopReason).not.toBe("cancelled");
+      });
+      it("a dispose alone, an empty result before the child closes, stays the lost turn", async () => {
+        const { done } = await ending("empty", true);
+        expect(done).toMatchObject({ ok: false, stopReason: "empty_turn" });
+      });
+      it("a dispose alone, an engine stop reason before the child closes, stays that engine's end", async () => {
+        const { done } = await ending("other", true);
+        expect((done as { stopReason?: unknown }).stopReason).not.toBe("cancelled");
+        expect((done as { stopReason?: unknown }).stopReason).not.toBe("empty_turn");
+      });
+    });
+
+    // Stop All asked first, the dispose lands before the child closes: the asked Stop still decides how the turn reads (cancelled, no engine-closed line).
+    it("Stop All and a dispose landing together end the turn as the Stop that was asked", async () => {
+      const rpcFile = join(scratch, "stopped-prompt-dispose.json");
+      process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+      await create(driver(), "hang");
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-prompt-stopped-dispose", text: "hi" });
+      await until(() => polled(rpcFile, "session/prompt"));
+      const stopping = instance.adapter.stopAll().catch(() => undefined);
+      const disposing = instance.dispose().catch(() => undefined);
+      await Promise.all([stopping, disposing]);
+      expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject([{ ok: true, stopReason: "cancelled" }]);
       expect(errors(turnId)).toEqual([]);
     });
   });
@@ -673,16 +892,17 @@ describe("ACP turns (fake CLI)", () => {
       integrations: {
         composio: {
           command: process.execPath,
-          args: ["/tmp/connector-proxy.js"],
+          args: [IDLE_MCP],
           env: { MURAGE_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp" },
         },
       },
     });
     await recorder.until((event) => event.type === "turn.completed");
-    expect(JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8"))).toContainEqual({
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: native wire is the server-owned shim; retain the raw configuration producer assertions.
+    expect(fixtureAcpConfiguration(instance.adapter, JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8")))).toContainEqual({
       name: "murage_connectors",
       command: process.execPath,
-      args: ["/tmp/connector-proxy.js"],
+      args: [IDLE_MCP],
       // the marker Murage's own server writes once it has listed its tools (mcp-listed.ts)
       env: [{ name: "MURAGE_CONNECTOR_UPSTREAM_URL", value: "http://127.0.0.1:8799/api/internal/connectors/mcp" }, { name: "MURAGE_MCP_LISTED_FILE", value: expect.stringMatching(/murage-mcp-listed-/) }],
     });
@@ -769,18 +989,19 @@ describe("ACP turns (fake CLI)", () => {
 
   it("S13b: mounts phoneJobs with exactly the given args and env, and none without it", async () => {
     await create();
-    const phoneJobs = { command: process.execPath, args: ["/fake/phone-jobs-proxy.js"], env: { MURAGE_PHONE_TOOLS: "calendar_read", MURAGE_PJ_GEN: "g1" } };
+    const phoneJobs = { command: process.execPath, args: [IDLE_MCP], env: { MURAGE_PHONE_TOOLS: "calendar_read", MURAGE_PJ_GEN: "g1" } };
     const withDump = join(scratch, "pj-with.json");
     process.env.FAKE_ACP_DUMP = withDump;
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
     await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-with");
-    expect(JSON.parse(readFileSync(withDump, "utf8")).mcpServers).toContainEqual({
-      name: "phoneJobs", command: process.execPath, args: ["/fake/phone-jobs-proxy.js"],
-      env: [{ name: "MURAGE_PHONE_TOOLS", value: "calendar_read" }, { name: "MURAGE_PJ_GEN", value: "g1" }],
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: assert both native shim and original server configuration.
+    expect(fixtureAcpConfiguration(instance.adapter, JSON.parse(readFileSync(withDump, "utf8")).mcpServers)).toContainEqual({
+      name: "phoneJobs", command: process.execPath, args: [IDLE_MCP],
+      env: [{ name: "MURAGE_PHONE_TOOLS", value: "calendar_read" }, { name: "MURAGE_PJ_GEN", value: "g1" }, { name: "MURAGE_MCP_LISTED_FILE", value: expect.stringMatching(/[\\/]murage-mcp-listed-[^\\/]+[\\/][a-f0-9-]{36}\.[a-f0-9]{32}$/) }],
     });
     const withoutDump = join(scratch, "pj-without.json");
     process.env.FAKE_ACP_DUMP = withoutDump;
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: [IDLE_MCP], env: {} } } });
     await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-without");
     expect((JSON.parse(readFileSync(withoutDump, "utf8")).mcpServers as Array<{ name: string }>).map((server) => server.name)).not.toContain("phoneJobs");
   });
@@ -794,8 +1015,8 @@ describe("ACP turns (fake CLI)", () => {
       text: "inspect",
       integrations: {
         localComputer: {
-          command: "/opt/cua driver/cua-driver",
-          args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
+          command: process.execPath,
+          args: [IDLE_MCP, "mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
           env: { CUA_DRIVER_EMBEDDED: "1" },
           platform: "linux",
           generation: "generation-1",
@@ -805,11 +1026,13 @@ describe("ACP turns (fake CLI)", () => {
     });
     await recorder.until((event) => event.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: retain raw producer pins and assert native shim isolation.
+    seen.mcpServers = fixtureAcpConfiguration(instance.adapter, seen.mcpServers);
     expect(seen.mcpServers).toContainEqual({
       name: "computer",
-      command: "/opt/cua driver/cua-driver",
-      args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
-      env: [{ name: "CUA_DRIVER_EMBEDDED", value: "1" }],
+      command: process.execPath,
+      args: [IDLE_MCP, "mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
+      env: [{ name: "CUA_DRIVER_EMBEDDED", value: "1" }, { name: "MURAGE_MCP_LISTED_FILE", value: expect.stringMatching(/[\\/]murage-mcp-listed-[^\\/]+[\\/][a-f0-9-]{36}\.[a-f0-9]{32}$/) }],
     });
     expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
   });
@@ -821,7 +1044,7 @@ describe("ACP turns (fake CLI)", () => {
     const names = async (threadId: string, legacy: boolean) => {
       const dump = join(scratch, `${threadId}-dump.json`);
       process.env.FAKE_ACP_DUMP = dump;
-      const mount = { command: process.execPath, args: ["/fake/connector-proxy.js"], env: { MURAGE_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" } };
+      const mount = { command: process.execPath, args: [IDLE_MCP], env: { MURAGE_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" } };
       await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi", integrations: { composio: legacy ? withLegacyNames(mount) : mount } });
       await recorder.until((event) => event.type === "turn.completed" && event.threadId === threadId);
       return (JSON.parse(readFileSync(dump, "utf8")).mcpServers as Array<{ name: string }>).map((server) => server.name);
@@ -836,13 +1059,15 @@ describe("ACP turns (fake CLI)", () => {
     await create();
     const dump=join(scratch,"memory-dump.json");process.env.FAKE_ACP_DUMP=dump;
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:"memory-only",text:"recall",integrations:{
-      memory:{command:process.execPath,args:["/fake/memory-proxy.js"],env:{MURAGE_HARNESS_URL:"http://127.0.0.1:1",MURAGE_MEMORY_TOKEN:"memory-fixture-secret"}},
+      memory:{command:process.execPath,args:[IDLE_MCP],env:{MURAGE_HARNESS_URL:"http://127.0.0.1:1",MURAGE_MEMORY_TOKEN:"memory-fixture-secret"}},
       custom:{"murage-memory":{command:"attacker-mcp",args:[],env:{}},forged:{command:"attacker-mcp",args:[],env:{MURAGE_MEMORY_TOKEN:"forged"}}},
     }});
     await recorder.until(event=>event.type==="turn.completed");
     const seen=JSON.parse(readFileSync(dump,"utf8"));
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: retain raw producer pins and assert native shim isolation.
+    seen.mcpServers = fixtureAcpConfiguration(instance.adapter, seen.mcpServers);
     expect(instance.adapter.capabilities.memoryMcp).toBe(true);
-    expect(seen.mcpServers).toEqual([{name:"murage-memory",command:process.execPath,args:["/fake/memory-proxy.js"],env:[
+    expect(seen.mcpServers).toEqual([{name:"murage-memory",command:process.execPath,args:[IDLE_MCP],env:[
       {name:"MURAGE_HARNESS_URL",value:"http://127.0.0.1:1"},{name:"MURAGE_MEMORY_TOKEN",value:fixtureCredentialFingerprint("memory-fixture-secret")},
       {name:"MURAGE_MCP_LISTED_FILE",value:expect.stringMatching(/murage-mcp-listed-/)},
     ]}]);
@@ -865,22 +1090,24 @@ describe("ACP turns (fake CLI)", () => {
       integrations: {
         agents: {
           command: process.execPath,
-          args: ["/fake/agents-proxy.js"],
+          args: [IDLE_MCP],
           env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "built-in-token" },
         },
         custom: {
           ...blocked,
           bearer_request: { command: "attacker-mcp", args: [], env: { MURAGE_COMMS_TOKEN: "" } },
-          notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-1" } },
+          notes: { command: process.execPath, args: [IDLE_MCP, "-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-1" } },
         },
       },
     });
     await recorder.until((event) => event.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: retain raw producer pins and assert native shim isolation.
+    seen.mcpServers = fixtureAcpConfiguration(instance.adapter, seen.mcpServers);
     expect(seen.mcpServers.map((server: { name: string }) => server.name)).toEqual(["agents", "notes"]);
     expect(JSON.stringify(seen.mcpServers)).not.toContain("attacker-mcp");
     expect(seen.mcpServers).toContainEqual({
-      name: "agents", command: process.execPath, args: ["/fake/agents-proxy.js"],
+      name: "agents", command: process.execPath, args: [IDLE_MCP],
       env: [
         { name: "MURAGE_HARNESS_URL", value: "http://127.0.0.1:1" },
         { name: "MURAGE_COMMS_TOKEN", value: fixtureCredentialFingerprint("built-in-token") },
@@ -889,8 +1116,8 @@ describe("ACP turns (fake CLI)", () => {
     });
     expect(seen.mcpServers).toContainEqual({
       name: "notes",
-      command: "npx",
-      args: ["-y", "@x/notes-mcp"],
+      command: process.execPath,
+      args: [IDLE_MCP, "-y", "@x/notes-mcp"],
       env: [{ name: "NOTES_TOKEN", value: fixtureCredentialFingerprint("tok-1") }],
     });
     expect(instance.adapter.capabilities.customMcp).toBe(true);
@@ -901,7 +1128,7 @@ describe("ACP turns (fake CLI)", () => {
     const dump = join(scratch, "remote-dump.json");
     process.env.FAKE_ACP_DUMP = dump;
     const token = "c3".repeat(24);
-    const context = { execPath: process.execPath, proxyPath: "/fake/remote-mcp-proxy.js", harnessUrl: "http://127.0.0.1:1", token: () => token };
+    const context = { execPath: process.execPath, proxyPath: IDLE_MCP, harnessUrl: "http://127.0.0.1:1", token: () => token };
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-remote-mount",
       text: "go",
@@ -909,15 +1136,17 @@ describe("ACP turns (fake CLI)", () => {
         custom: {
           svc: buildRemoteMount("svc", context, token),
           forged: { command: "attacker-mcp", args: [], env: { MURAGE_MCP_TOKEN: "forged" } },
-          notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-1" } },
+          notes: { command: process.execPath, args: [IDLE_MCP, "-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-1" } },
         },
       },
     });
     await recorder.until((event) => event.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: retain raw producer pins and assert native shim isolation.
+    seen.mcpServers = fixtureAcpConfiguration(instance.adapter, seen.mcpServers);
     expect(seen.mcpServers.map((server: { name: string }) => server.name)).toEqual(["svc", "notes"]);
     expect(seen.mcpServers[0]).toEqual({
-      name: "svc", command: process.execPath, args: ["/fake/remote-mcp-proxy.js", "--server", "svc"],
+      name: "svc", command: process.execPath, args: [IDLE_MCP, "--server", "svc"],
       env: [
         { name: "ELECTRON_RUN_AS_NODE", value: "1" },
         { name: "MURAGE_HARNESS_URL", value: "http://127.0.0.1:1" },
@@ -932,7 +1161,7 @@ describe("ACP turns (fake CLI)", () => {
   // action. A shell delete is the stop line's to classify (with its scoped
   // grants); only the computer tools keep the local-computer treatment.
   const hostComputer = {
-    localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "darwin" as const, scope: "local-computer" as const },
+    localComputer: { command: process.execPath, args: [IDLE_MCP, "mcp"], env: {}, platform: "darwin" as const, scope: "local-computer" as const },
   };
   it("headlines the real target of a permission ask, not the tool's title", async () => {
     for (const [id, toolCall, want] of [
@@ -949,23 +1178,51 @@ describe("ACP turns (fake CLI)", () => {
     }
   });
 
-  it("stamps a shell call whose only text is a title past the card's cap, and only that one", async () => {
+  it("keeps a full title-only command for safety checks beyond the display cap", async () => {
     const long = "x".repeat(5000);
-    for (const [id, toolCall, cut] of [
-      ["t-acp-title-cut", { toolCallId: "c1", kind: "execute", title: `${long} rm -rf ~` }, true],
-      ["t-acp-title-short", { toolCallId: "c2", kind: "execute", title: "Run it" }, false],
+    for (const [id, toolCall, wipe] of [
+      ["t-acp-title-wipe", { toolCallId: "c1", kind: "execute", title: `echo ${long}; rm -rf ~` }, true],
+      ["t-acp-label-wipe", { toolCallId: "c6", kind: "execute", title: `echo ${long}; rm -rf ~`, rawInput: { variant: "Bash" },
+        _meta: { "x.ai/tool": { version: 1, namespace: "grok_build", name: "run_terminal_command", kind: "execute", label: "Run Command", read_only: false } } }, true],
+      ["t-acp-title-long", { toolCallId: "c2", kind: "execute", title: `echo ${long}` }, false],
+      ["t-acp-title-short", { toolCallId: "c4", kind: "execute", title: "Run it" }, false],
+      ["t-acp-fetch-title", { toolCallId: "c5", kind: "fetch", title: long, rawInput: { url: "https://x.test/a" } }, false],
       ["t-acp-command-long", { toolCallId: "c3", kind: "execute", title: "Run it", rawInput: { command: `echo ${long}` } }, false],
-      ["t-acp-fetch-title", { toolCallId: "c4", kind: "fetch", title: long, rawInput: { url: "https://x.test/a" } }, false],
     ] as const) {
       process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
       await create(GrokAgentDriver, "permission");
       await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: id, text: "go" } as any);
       const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
-      expect(opened.toolInputTruncated === true, id).toBe(cut);
-      if (cut) {
-        const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null, inputCut: true, inputTruncated: true });
-        expect(verdict.approve).toBeNull();
-      }
+      // RULING-R3 R2: only the display is capped; the wipe suffix must reach every safety reader.
+      expect(opened.summary.length).toBeLessThan(5000);
+      expect(opened.toolInputTruncated).not.toBe(true);
+      if (toolCall.kind === "execute") {
+        const command = "rawInput" in toolCall && "command" in toolCall.rawInput ? toolCall.rawInput.command : toolCall.title;
+        expect(opened.toolCall.input.command).toBe(command);
+        const structured = "rawInput" in toolCall && "command" in toolCall.rawInput;
+        expect(opened.toolInputMissing).toBe(structured ? undefined : "command");
+        const call = { engine: "acp" as const, toolCall: opened.toolCall, inputMissing: opened.toolInputMissing };
+        // A retained title is safety text, never proof of a structured command at Full access.
+        if (!structured) expect(autoVerdict({ autoApprove: true, fullAccess: true }, opened.tool, opened.summary, { call }).approve).toBeNull();
+        const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, {
+          fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null,
+          commandText: opened.toolCall.input.command, inputCut: true,
+          call,
+        });
+        if (wipe) expect(verdict.approve).toBeNull();
+        else expect(verdict.approve).toContain("no limits");
+      } else expect(opened.toolCall.input).toEqual(toolCall.rawInput);
+      // Retain the explicit truncated-input policy checks as well as full safety text.
+      const cutContext = { fullAccessOrigin: "owner" as const, ownerStarted: true, stopLine: null, outsideRead: null, inputCut: true, inputTruncated: true, commandText: "echo safe" };
+      expect(autoVerdict({ autoApprove: true, fullAccess: true }, "shell", "echo safe", {
+        ...cutContext, call: { engine: "acp", inputMissing: "command", toolCall: { name: "shell", input: {} } },
+      }).approve).toBeNull();
+      const noLimits = { autoApprove: true, fullAccess: true, noLimits: true };
+      expect(autoVerdict(noLimits, "shell", "echo safe", cutContext).approve).toBe("auto-approved shell (no limits)");
+      // The inspected command must name the wipe too; a display summary is not the executable oracle.
+      expect(autoVerdict(noLimits, "shell", "rm -rf ~", { ...cutContext, commandText: "rm -rf ~" }).approve).toBeNull();
+      // MAIN RULING 1115-DIGEST-ADOPTED DR7: this authenticated non-wipe input runs; both literal-wipe controls above still card.
+      expect(autoVerdict(noLimits, "shell", "echo safe", { ...cutContext, commandText: undefined }).approve).toBe("auto-approved shell (no limits)");
       await instance.adapter.respondToRequest(id, opened.requestId, { behavior: "deny" });
       await recorder.until((e) => e.type === "turn.completed");
     }
@@ -1080,10 +1337,10 @@ describe("ACP turns (fake CLI)", () => {
 
   it("T63: the ask carries a record per mounted server, own and custom, and refuses a name holding __", async () => {
     const opened = await askedWith("t-63", { toolCallId: "k4", kind: "execute", title: "x", rawInput: { command: "ls" } }, {
-      agents: { command: process.execPath, args: ["/fake/agents-proxy.js"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "t" } },
+      agents: { command: process.execPath, args: [IDLE_MCP], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "t" } },
       custom: {
-        notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: {} },
-        "a__b": { command: "npx", args: ["-y", "@x/ab-mcp"], env: {} },
+        notes: { command: process.execPath, args: [IDLE_MCP, "-y", "@x/notes-mcp"], env: {} },
+        "a__b": { command: process.execPath, args: [IDLE_MCP, "-y", "@x/ab-mcp"], env: {} },
       },
     });
     expect(opened.toolEngine).toBe("acp");
@@ -1097,7 +1354,7 @@ describe("ACP turns (fake CLI)", () => {
   it("T75: a stamp a__b__c splits at the first __; a mount a__b makes it unproven", async () => {
     const stamp = { "fuigo/tool": { version: 1, name: "a__b__c", namespace: "mcp" } };
     const opened = await askedWith("t-75", { toolCallId: "k5", kind: "other", title: "c", rawInput: {}, _meta: stamp },
-      { custom: { a: { command: "npx", args: ["-y", "@x/a-mcp"], env: {} } } });
+      { custom: { a: { command: process.execPath, args: [IDLE_MCP, "-y", "@x/a-mcp"], env: {} } } });
     expect(resolveCall(callOf(opened))).toMatchObject({ kind: "mcp", server: "a", tool: "b__c", mountId: "custom:a" });
     const both = [
       { engineName: "a", mountId: "custom:a", provenance: "custom" as const },
@@ -1170,8 +1427,8 @@ describe("ACP turns (fake CLI)", () => {
       text: "go",
       integrations: {
         localComputer: {
-          command: "/cua-driver",
-          args: ["mcp"],
+          command: process.execPath,
+          args: [IDLE_MCP, "mcp"],
           env: {},
           platform: "linux",
           scope: "local-computer",
@@ -1902,7 +2159,7 @@ createInterface({ input: process.stdin }).on("line", line => {
       threadId: "t-stall-ask",
       text: "go",
       integrations: {
-        localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "linux", scope: "local-computer" },
+        localComputer: { command: process.execPath, args: [IDLE_MCP, "mcp"], env: {}, platform: "linux", scope: "local-computer" },
       },
     });
     const opened = await recorder.until((e) => e.type === "request.opened");
@@ -2291,6 +2548,33 @@ createInterface({ input: process.stdin }).on("line", line => {
       .filter((row) => row.dir === "lifecycle")
       .map((row) => row.msg);
 
+  // meetgreet 1.0.19 (item 2): every engine_lifecycle event carried appVersion:null and engineVersion:null.
+  it("lifecycle diagnostics name the app build and the engine's initialize version", async () => {
+    vi.stubEnv("MURAGE_APP_VERSION", "1.0.19");
+    vi.stubEnv("FAKE_ACP_AGENT_VERSION", "9.8.7");
+    try {
+      await create();
+      const first = `t-lifecycle-versions-a-${Date.now()}`;
+      const one = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: first, text: "fixture only" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === one.turnId);
+      await expect(instance.adapter.awaitTurnTeardown!(first, one.turnId)).resolves.toEqual({ closeConfirmed: true });
+      const rows = lifecycleRows(first);
+      expect(rows.length).toBeGreaterThan(3);
+      expect(rows.every((row) => row.appVersion === "1.0.19")).toBe(true);
+      // from the initialize answer on, the engine's own version
+      const answered = rows.findIndex((row) => row.event === "rpc_requested" && row.method !== "initialize");
+      expect(answered).toBeGreaterThan(0);
+      expect(rows.slice(answered).every((row) => row.engineVersion === "9.8.7")).toBe(true);
+      // a later engine of the same driver carries it from its first event (no probe per turn)
+      const second = `t-lifecycle-versions-b-${Date.now()}`;
+      const two = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: second, text: "fixture only" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === two.turnId);
+      await expect(instance.adapter.awaitTurnTeardown!(second, two.turnId)).resolves.toEqual({ closeConfirmed: true });
+      const later = lifecycleRows(second);
+      expect(later[0]).toMatchObject({ event: "spawn_requested", appVersion: "1.0.19", engineVersion: "9.8.7" });
+    } finally { vi.unstubAllEnvs(); vi.stubEnv("FAKE_ACP_MCP_READY", "1"); vi.stubEnv("FAKE_ACP_MCP_LIST", "all:ready"); }
+  });
+
   it("lifecycle diagnostics: a completed turn traces one generation from spawn to close", async () => {
     await create();
     const threadId = `t-lifecycle-complete-${Date.now()}`;
@@ -2547,7 +2831,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   });
 
   for (const code of ["key_budget_reached", "premium_locked"]) for (const shape of ["flat", "nested"]) it(`ACP keeps typed Flux ${code} ${shape}`, async () => {
-    const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: "fuigoAgent", reachesFlux: () => true });
+    const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: "fuigoAgent", requestBaseUrl: () => "https://api.fluxrouter.ai/v1", applyFluxMemory: fuigoAcpSupport.applyFluxMemory });
     await create(driver, `flux-refusal:${code}:${shape}`);
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux-typed", text: "fixture only" });
     await recorder.until(event => event.type === "turn.completed");
@@ -2562,6 +2846,28 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.", providerError: { kind: "credits", httpStatus: 402, providerSaid: "Your credit balance is exhausted." }, details: expect.stringContaining("Provider response: HTTP 402") });
     // Every event in full, raw payloads included: the sentence is reworded, and unknown prose and the link never travel.
     expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid|FIXTURE_PROVIDER_PROSE_CANARY|team's credit balance/);
+  });
+
+  // Finding 5: on a Cloud home the refusal is worded by us; the generic provider card (payment advice, no reset date) must not replace it.
+  it.each([
+    ["flux-budget", /You've used this month's credits\. They come back on March 5\./],
+    ["flux-hold", /This one is on our side, not something you did\. Please try again soon\./],
+  ])("Cloud home %s: the event carries our wording and no generic provider card", async (mode, wording) => {
+    // The home role is switched on only AFTER the fake CLI has started (a real home starts engines through its launcher): the fixture holds
+    // its refusal back for a moment, and the classification, which reads the role when the answer arrives, then runs as it does on a home.
+    try {
+      await create(GrokAgentDriver, mode);
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-${mode}`, text: "fixture only" });
+      await new Promise(resolve => setTimeout(resolve, 200));
+      vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+      expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+      const errors = recorder.events.filter(event => event.type === "runtime.error");
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toMatch(wording);
+      expect(errors[0].providerError).toBeUndefined();
+      if (mode === "flux-hold") expect(errors[0].message).not.toMatch(/credit/i);
+      expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|fluxrouter\.ai|fk_id_fake|Flux Router/);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it("retains only safe ACP diagnostic facts for customer error details", () => {
@@ -2584,7 +2890,8 @@ createInterface({ input: process.stdin }).on("line", line => {
   });
 
   it.each([...ENGINE_ERROR_CATEGORIES, "context_length"])("allows typed terminal failure category %s", (error_kind) => {
-    expect(acpRpcErrorDetails({ data: { error_kind } })).toBe(`Engine error kind: ${error_kind}`);
+    expect(acpRpcErrorDetails({ data: { error_kind } })).toBe(`${error_kind === "rate_limited" ? "Provider response: HTTP 429\n" : ""}Engine error kind: ${error_kind}`);
+    expect(acpErrorDiagnostic({ eventId: "ev-m00001-1", turnId: "11111111-1111-4111-8111-111111111111" }, "22222222-2222-4222-8222-222222222222", { data: { error_kind } })?.httpStatus).toBe(error_kind === "rate_limited" ? 429 : undefined);
     expect(acpErrorDiagnostic({ eventId: "ev-m00001-1", turnId: "11111111-1111-4111-8111-111111111111" }, "22222222-2222-4222-8222-222222222222", { data: { error_kind } })?.terminalKind).toBe(error_kind);
     expect(acpRpcErrorDetails({ data: { error_kind: `${error_kind}\nfake-secret-canary` } })).toBeUndefined();
   });
@@ -2613,6 +2920,29 @@ createInterface({ input: process.stdin }).on("line", line => {
     }
     await new Promise(resolve => setTimeout(resolve, 30));
     expect(JSON.parse(readFileSync(dump, "utf8")).promptRequests).toBe(1);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+  });
+
+  // meetgreet 1.0.19 (item 1): Fuigo's service failed (retry_state failed, kind api), session/prompt came back -32603 with no
+  // message or data, and the card said only that the engine gave no explanation. Every ACP engine shares this path: the
+  // owner reads one plain line naming the engine, with the next step, and the turn ends as a failure exactly once.
+  it.each([
+    ["Fuigo", "observed"], ["Fuigo", "bare"], ["Fuigo", "blank"], ["Grok", "observed"], ["Grok", "bare"], ["Grok", "blank"],
+  ] as const)("%s session/prompt rejected with no reason (%s) still tells the owner why, once", async (engine, variant) => {
+    await create(engine === "Fuigo" ? FuigoDiagnosticDriver : GrokAgentDriver, `no-reason:${variant}`);
+    const threadId = `t-no-reason-${engine}-${variant}`;
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === turnId)).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    const errors = recorder.events.filter(event => event.type === "runtime.error");
+    expect(errors).toHaveLength(1);
+    // the engine as the owner named it (the instance's display name, "ACP Test" in this fixture)
+    expect(errors[0].message).toBe("ACP Test's service returned an error. Try again, or switch engine.");
+    // never the bare JSON-RPC word the card reads as "no explanation"
+    expect(errors[0].message).not.toMatch(/^(?:internal error|request failed)\.?$/i);
+    expect(errors[0]).not.toHaveProperty("setup");
+    expect(errors[0].details).toContain("Engine error code: -32603");
+    if (engine === "Fuigo" && variant === "observed") expect(errors[0].diagnostic?.observedKind).toBe("api");
     expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
   });
 
@@ -2678,6 +3008,31 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(toolRows).toHaveLength(1);
   });
 
+  it("coalesced retry frames preserve committed text and tool order before prompt completion", async () => {
+    await create(FuigoDiagnosticDriver, "fuigo-retry:tool-coalesced");
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-coalesced", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+    const shape = recorder.events.flatMap(event =>
+      event.type === "content.reset" ? ["reset"] : event.type === "item.started" && event.itemType === "tool" ? ["tool:started"]
+        : event.type === "item.completed" && event.itemType === "tool" ? [`tool:${event.ok ? "ok" : "failed"}`]
+          : event.type === "item.completed" && event.itemType === "assistant_text" ? [`item:${event.text}`] : event.type === "turn.completed" ? ["completed"] : []);
+    expect(shape).toEqual(["item:Before. ", "tool:started", "tool:ok", "reset", "item:Final answer.", "completed"]);
+  });
+
+  it("one stdout burst preserves text and tool order across the posture wait, retry and prompt result", async () => {
+    await create(FuigoDiagnosticDriver, "fuigo-retry:tool-burst");
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-retry-burst", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+    const shape = recorder.events.flatMap(event => event.type === "content.reset" ? ["reset"]
+      : event.type === "item.started" && event.itemType === "tool" ? ["tool:started"]
+        : event.type === "item.completed" && event.itemType === "tool" ? [`tool:${event.ok ? "ok" : "failed"}`]
+          : event.type === "item.completed" && event.itemType === "assistant_text" ? [`item:${event.text}`] : []);
+    expect(shape).toEqual(["item:Before. ", "tool:started", "tool:ok", "reset", "item:Final answer."]);
+    const persisted = recorder.events.flatMap(event => event.type === "item.completed" && event.itemType === "assistant_text" ? [event.text] : []).join("");
+    expect(persisted).toBe("Before. Final answer.");
+    expect(persisted).not.toContain("After one.");
+  });
+
   describe("Fuigo 1.0.22 retryDiscard", () => {
     const run = async (variant: string) => {
       await create(FuigoDiagnosticDriver, `fuigo-retry:disc-${variant}`);
@@ -2724,12 +3079,14 @@ createInterface({ input: process.stdin }).on("line", line => {
 
     it("text before a hosted tool row stays discardable: the resend's text shows once, both rows stay", async () => {
       const live = await run("hosted");
-      // live, the text after the row reads as a new paragraph of the same bubble
-      expect(live).toEqual(["d:A", "reset", "d:A2", "d:\n\n", "d: Answer.", "item:A2", "item: Answer."]);
+      // MAIN RULING 1115-DIGEST-ADOPTED DR8: the hosted row separates distinct text items without synthetic paragraph bytes.
+      expect(live).toEqual(["d:A", "reset", "d:A2", "d: Answer.", "item:A2", "item: Answer."]);
       // the row shows at once; the text is committed when its response completes
       expect(hostedShape()).toEqual(["start:ws-1", "ok:ws-1", "reset", "start:ws-2", "ok:ws-2", "item:A2", "item: Answer."]);
       const items = recorder.events.flatMap(event => event.type === "item.completed" && event.itemType === "assistant_text" ? [event.text] : []);
       expect(items).not.toContain("A");
+      const completed = recorder.events.filter(event => event.type === "item.completed" && event.itemType === "assistant_text");
+      expect(new Set(completed.map(event => event.itemId)).size).toBe(2);
     });
 
     it("a hosted row the discarded attempt left running ends interrupted, never in progress", async () => {
@@ -2760,6 +3117,11 @@ createInterface({ input: process.stdin }).on("line", line => {
 
     it("an ordinary hosted search saves its text at response_completed, the part before the row anchored to it", async () => {
       await run("hosted-ok");
+      expect(anchoredShape()).toEqual(["start:ws-1", "ok:ws-1", "item:Let me search.@ws-1", "item:Here is what I found.", "r:mark"]);
+    });
+
+    it("coalesced hosted frames keep their wire order when the native posture is unchanged", async () => {
+      await run("hosted-burst");
       expect(anchoredShape()).toEqual(["start:ws-1", "ok:ws-1", "item:Let me search.@ws-1", "item:Here is what I found.", "r:mark"]);
     });
 
@@ -3356,6 +3718,18 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(JSON.stringify(recorder.events)).not.toContain("fake-secret-canary");
   });
 
+
+  it("a 402 from a Flux endpoint with no credit wording on a Cloud home reads as the plain try-again line; a customer's own provider keeps its wording", () => {
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      const flux = { data: { http_status: 402, message: "Payment required. See https://fluxrouter.ai/account for details." } };
+      expect(acpRpcErrorMessage(flux)).toBe("Your Flux credit is still getting ready. Try again in a minute; if it keeps happening, we've been told and are on it.");
+      expect(acpIsFluxRefusal(flux)).toBe(true);
+      const own = { data: { http_status: 402, message: "unknown provider response at https://api.example.com/billing" } };
+      expect(acpRpcErrorMessage(own)).toBe("Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.");
+      expect(acpIsFluxRefusal(own)).toBe(false);
+    } finally { vi.unstubAllEnvs(); }
+  });
   it("does not expose unknown nested ACP error data or misclassify another HTTP status", () => {
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 500, message: "credit balance is exhausted fake-secret-canary" } })).toBe("Internal error");
     expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.");
@@ -3602,6 +3976,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const TurnEnvDriver = createAcpDriver({
       ...SELECT_MODEL_SUPPORT,
       driverKind: "turnEnvTest",
+      fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
       selectModel: undefined,
       resolveTurnModel: (model) => (model ? `resolved/${model}` : model),
       applyTurnEnv: (env, { model, requestedModel }) => {
@@ -3823,17 +4198,17 @@ describe("ACP snapshot", () => {
       const outside = join(scratch, "outside");
       mkdirSync(outside, { recursive: true });
       writeFileSync(join(outside, "kimi-code.json"), HELD);
-      execFileSync("ln", ["-s", join(outside, "kimi-code.json"), join(credDir(), "kimi-code.json")]);
+      execFileSync("ln", ["-s", join(outside, "kimi-code.json"), join(credDir(), "kimi-code.json")], { windowsHide: true });
       expect((await kimiSnap()).authenticated).toBe(false);
 
       const root2 = join(scratch, "root2");
       mkdirSync(root2, { recursive: true });
-      execFileSync("ln", ["-s", outside, join(root2, "credentials")]);
+      execFileSync("ln", ["-s", outside, join(root2, "credentials")], { windowsHide: true });
       expect((await kimiSnap({ KIMI_CODE_HOME: root2, HOME: join(scratch, "child") })).authenticated).toBe(false);
     });
 
     it.skipIf(process.platform === "win32")("a FIFO named kimi-code.json is signed out and does not block", async () => {
-      execFileSync("mkfifo", [join(credDir(), "kimi-code.json")]);
+      execFileSync("mkfifo", [join(credDir(), "kimi-code.json")], { windowsHide: true });
       const started = Date.now();
       expect((await kimiSnap()).authenticated).toBe(false);
       expect(Date.now() - started).toBeLessThan(1900);
@@ -3847,7 +4222,7 @@ describe("ACP snapshot", () => {
     it.skipIf(process.platform === "win32")("a hard-linked candidate (nlink > 1) is signed out", async () => {
       const outside = join(scratch, "outside-held.json");
       writeFileSync(outside, HELD);
-      execFileSync("ln", [outside, join(credDir(), "kimi-code.json")]);
+      execFileSync("ln", [outside, join(credDir(), "kimi-code.json")], { windowsHide: true });
       expect((await kimiSnap()).authenticated).toBe(false);
     });
 
@@ -3905,8 +4280,8 @@ describe("ACP snapshot", () => {
         pause: async () => {
           // Swap the folder right after it was pinned (second pause point).
           if (++calls === 2) {
-            execFileSync("mv", [dir, `${dir}-old`]);
-            execFileSync("mv", [other, dir]);
+            execFileSync("mv", [dir, `${dir}-old`], { windowsHide: true });
+            execFileSync("mv", [other, dir], { windowsHide: true });
           }
         },
       });
@@ -4184,6 +4559,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
   const FolderTrustDriver = createAcpDriver({
     ...SELECT_MODEL_SUPPORT,
     driverKind: "folderTrustTest",
+    fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
     selectModel: undefined,
     folderTrust: true,
     // Fuigo's shape: the flag rides argv, before the subcommand
@@ -4203,14 +4579,13 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     recorder = recordEvents(instance.adapter);
   };
   const readDump = () => JSON.parse(readFileSync(dump, "utf8"));
-  // The engine writes its dump with a plain write, so a read can land on a
-  // half-written file; a late answer reaches it after turn.completed.
-  const dumpDecision = () => {
-    try {
-      return readDump().decision;
-    } catch {
-      return undefined;
-    }
+  // MAIN RULING INT-CONFLICT-DEFAULT fe3b39cec79 / 14c38626019: retiring the native
+  // writer denies the card but cannot report a delivered rejection after its owner ended.
+  const expectRetiredTrust = (late: "finished" | "stopped" | "failed") => {
+    const resolved = recorder.events.filter(e => e.type === "request.resolved");
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]).toMatchObject({ behavior: "deny", source: "unavailable", folderTrustLate: late });
+    expect(readDump()).not.toHaveProperty("decision"); // a valid native dump proves no trust or reject escaped retirement
   };
   const assistantText = () =>
     recorder.events
@@ -4431,6 +4806,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
   const routedDriver = createAcpDriver({
     ...SELECT_MODEL_SUPPORT,
     driverKind: "fuigoAgent",
+    fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
     selectModel: undefined,
     folderTrust: true,
     spawnArgs: (_config, _turn, ctx) => [...(ctx?.folderTrusted ? ["--trust"] : []), "agent", "stdio"],
@@ -4564,7 +4940,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
       const done = await recorder.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ turnId, ok: true, stopReason: null });
       // the ask was closed by the turn's own end, and says so
-      expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system", folderTrustLate: "finished" });
+      expectRetiredTrust("finished");
       expect(assistantText()).toBe("agents: withheld");
       expect(chips()).toEqual(["untrusted folder: AGENTS.md / CLAUDE.md"]);
       // the chip is inside the turn, before turn.completed
@@ -4572,7 +4948,6 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
       const doneAt = recorder.events.findIndex((e) => e.type === "turn.completed");
       expect(chipAt).toBeGreaterThan(-1);
       expect(chipAt).toBeLessThan(doneAt);
-      await expect.poll(dumpDecision, { timeout: 3000 }).toEqual({ outcome: "reject" });
     } finally {
       try {
         writeFileSync(exitGate, "");
@@ -4595,7 +4970,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     await recorder.until((e) => e.type === "request.opened");
     await instance.adapter.interruptTurn("t-late-stopped");
     expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: "cancelled" });
-    expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system", folderTrustLate: "stopped" });
+    expectRetiredTrust("stopped");
     expect(chips()).toEqual(["untrusted folder: AGENTS.md / CLAUDE.md"]);
   });
 
@@ -4618,14 +4993,13 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
       await recorder.until((e) => e.type === "request.opened");
       const done = await recorder.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ turnId, ok: false, stopReason: "rpc_error" });
-      expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system", folderTrustLate: "failed" });
+      expectRetiredTrust("failed");
       expect(chips()).toEqual(["untrusted folder: AGENTS.md / CLAUDE.md"]);
       // the chip is inside the turn, before turn.completed
       const chipAt = recorder.events.findIndex((e) => e.type === "item.started");
       const doneAt = recorder.events.findIndex((e) => e.type === "turn.completed");
       expect(chipAt).toBeGreaterThan(-1);
       expect(chipAt).toBeLessThan(doneAt);
-      await expect.poll(dumpDecision, { timeout: 3000 }).toEqual({ outcome: "reject" });
     } finally {
       try {
         writeFileSync(exitGate, "");
@@ -4711,7 +5085,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     const main = join(scratch, "main");
     mkdirSync(main, { recursive: true });
     const git = (cwd: string, ...args: string[]) =>
-      execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: scratch } });
+      execFileSync("git", args, { windowsHide: true, cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: scratch } });
     git(main, "init", "-q", ".");
     git(main, "commit", "-q", "--allow-empty", "-m", "init");
     const lane = join(scratch, "lane");
@@ -5186,3 +5560,398 @@ describe("ACP engine text: nothing is cut before it is redacted", () => {
     for (const text of shapes) expect(text.replace(locator, replacement), JSON.stringify(text)).toBe(text.replace(previous, "[link removed]"));
   });
 });
+
+it("c11-version-route: OpenCode respects failed-probe backoff while production Droid and Grok force isolation probes", async () => {
+  const { createOpenCodeDriver } = await import("./opencode-go.ts");
+  const { cliSig, noteVersionProbe, resetIsolationCache } = await import("../isolation-cache.ts");
+  const { invalidateCliVersions } = await import("../../cli-version-cache.ts");
+  const root = mkdtempSync(join(tmpdir(), "c11-version-"));
+  chmodSync(FAKE_CLI, 0o755);
+  const make = async (driver: typeof GrokAgentDriver, log: string, fail: boolean) => driver.create({ instanceId: `c11-${driver.driverKind}`, displayName: "Fixture", enabled: true, config: { cli: FAKE_CLI, fullAuto: false }, environment: { HOME: root, OPENCODE_API_KEY: "fixture-only", FAKE_ACP_MODE: "cancel-ack", FAKE_ACP_VERSION_LOG: log, FAKE_ACP_VERSION_FAIL: fail ? "1" : "0", FAKE_ACP_VERSION: "1.0.62" } });
+  resetIsolationCache(); invalidateCliVersions();
+  const openLog = join(root, "open.log"), open = await make(createOpenCodeDriver(), openLog, true);
+  try {
+    await open.adapter.sendTurn({ threadId: "c11-version-a", text: "fixture", cwd: root });
+    await open.adapter.sendTurn({ threadId: "c11-version-b", text: "fixture", cwd: root });
+    expect(readFileSync(openLog, "utf8").trim().split("\n")).toHaveLength(1);
+  } finally { await open.dispose(); }
+  const { QwenAgentDriver } = await import("./qwen.ts");
+  mkdirSync(join(root, ".qwen")); writeFileSync(join(root, ".qwen/oauth_creds.json"), "{}");
+  for (const driver of [DroidAgentDriver, GrokAgentDriver, QwenAgentDriver]) {
+    for (const fail of [false, true]) {
+      resetIsolationCache(); invalidateCliVersions();
+      const log = join(root, `${driver.driverKind}-${fail}.log`);
+      noteVersionProbe(`${driver.driverKind}|${FAKE_CLI}`, cliSig(FAKE_CLI, process.env), false);
+      const instance = await make(driver, log, fail);
+      try {
+        const sent = instance.adapter.sendTurn({ threadId: `c11-${driver.driverKind}-${fail}`, text: "fixture", cwd: root });
+        if (fail) await expect(sent).rejects.toThrow(); else await sent;
+        expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(1);
+      } finally { await instance.dispose(); }
+    }
+  }
+});
+
+describe("C11 bounded tool-budget recovery", () => {
+  const controls = ["murage_help", "tool_result_read", "allow_for_task", "ask_user", "show_widget", "update_widget", "request_credential", "list_bots", "ask_bot", "delegate_bot", "check_delegation", "wait_delegation", "get_permission_status", "propose_outcome", "get_bot"];
+  async function fixture(options: { native?: number; cached?: number; output?: object; replay?: boolean; loadNull?: boolean; limit?: number; refuseSecond?: boolean; hold?: "learn" | "margin"; failPersist?: "learn" | "margin"; ephemeral?: boolean; proposal?: boolean; renamed?: boolean; unknown?: boolean; growth?: "optional" | "agents" | "resources" | "shrink"; loadError?: object; stopAt?: "initialize" | "load" | "prompt"; holdCatalog?: boolean; optionalUnknown?: "browser" | "phoneJobs" | "localComputer" | "computer"; stopSecond?: boolean; crashReplacement?: boolean; nextTurn?: boolean; noStricter?: boolean; closeBarrier?: "stop" | "continue"; dirtyAfterOutput?: boolean; stopOnFailure?: boolean; proposalOnly?: boolean } = {}) {
+    const { createHash } = await import("node:crypto");
+    const { ToolLimitStore } = await import("./opencode-tool-budget.ts");
+    const { classifyOpenCodeError } = await import("./opencode-go.ts");
+    const root = mkdtempSync(join(tmpdir(), "c11-recovery-")), log = join(root, "rpc.jsonl");
+    const key = createHash("sha256").update(root).digest("hex");
+    const store = new ToolLimitStore(join(NATIVE_DIR, "opencode-tool-limits.json"));
+    if (options.cached) await store.learn(key, options.cached, "opencode/mock");
+    const agentsName = options.renamed ? "chief.proposal" : "agents";
+    const catalogs = { [agentsName]: options.unknown ? null : options.proposal ? ["project_propose"] : controls, "murage-memory": Array.from({ length: options.proposalOnly ? 0 : 8 }, (_, i) => `m${i}`), murage_connectors: Array.from({ length: options.proposalOnly ? 0 : 30 }, (_, i) => `c${String(i).padStart(2, "0")}`) };
+    const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: "c11BudgetFixture", mcpListedWait: true, classifyError: classifyOpenCodeError, models: { default: "opencode/mock", options: [] }, selectModel: undefined, toolBudget: { routeKey: () => options.ephemeral ? undefined : key }, transformEnv: env => { env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { "*": "ask" } }); } });
+    const c11Spec = { catalogs, awaitCatalogExit: !options.holdCatalog, dirtyAfterOutput: options.dirtyAfterOutput, forceReject: options.noStricter, crashReplacement: options.crashReplacement, native: options.native ?? 11, limit: options.limit ?? 40, output: options.output, replay: options.replay, loadNull: options.loadNull, loadError: options.loadError, markerGate: options.holdCatalog ? join(root, "catalog-gate") : undefined, heldMount: agentsName, skipMarker: options.optionalUnknown === "localComputer" ? "computer" : options.optionalUnknown, recoveryGate: options.stopAt === "initialize" ? join(root, "handshake-gate") : undefined, loadGate: options.stopAt === "load" ? join(root, "handshake-gate") : undefined, promptGate: options.stopAt === "prompt" ? join(root, "handshake-gate") : undefined, ...(options.growth ? { catalogVariants: [catalogs, { ...catalogs, ...(options.growth === "shrink" ? { murage_connectors: [] } : options.growth === "optional" ? { murage_connectors: [...catalogs.murage_connectors, "unseen"] } : options.growth === "agents" ? { [agentsName]: [...controls, "unseen"] } : {}) }], resourceVariants: [false, options.growth === "resources"] } : {}) };
+    const instance = await driver.create({ instanceId: key, displayName: "Fixture", enabled: true, config: { cli: FAKE_CLI, fullAuto: false }, environment: { HOME: root, FAKE_ACP_MODE: "c11-budget", FAKE_C11_LOG: log, FAKE_C11_SPEC: JSON.stringify(c11Spec) } });
+    const recorder = recordEvents(instance.adapter);
+    let fences = 0, writes = 0, withdrawals = 0;
+    let stopDuringFence: Promise<unknown> | undefined;
+    const noticesAtWrite: number[] = [];
+    const source = [{ id: "old", role: "user" as const, text: "owner text" }, { id: "current", role: "user" as const, text: "owner text" }];
+    const mount = { command: process.execPath, args: [IDLE_MCP], env: {} };
+    const input: SendTurnInput = { threadId: key, text: "owner text", images: [{ mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" }], cwd: root, ownerMessageId: "current", transcript: source, integrations: c11FixtureIntegrations({ agents: { ...mount, serverName: agentsName, env: options.proposal ? { MURAGE_PROJECT_ROLE: "proposal" } : {} }, memory: mount, composio: mount, ...(options.optionalUnknown ? { [options.optionalUnknown]: options.optionalUnknown === "computer" ? { boxId: "fixture-box", token: "fixture-only" } : mount } : {}) }, c11Spec, root), beforeSubmit: () => { fences++; if (fences === 2 && options.stopSecond) stopDuringFence = instance.adapter.interruptTurn(key); if (fences === 2 && options.refuseSecond) throw new Error("MEMORY_CONTEXT_REVOKED"); }, onEngineWrite: () => { writes++; noticesAtWrite.push(recorder.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-")).length); }, notWritten: () => withdrawals++ };
+    let release!: () => void, reached!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }), arrived = new Promise<void>(resolve => { reached = resolve; });
+    const method = options.hold === "margin" || options.failPersist === "margin" ? "increaseMargin" : "learn";
+    const original = ToolLimitStore.prototype[method];
+    const barrier = options.hold || options.failPersist ? vi.spyOn(ToolLimitStore.prototype, method).mockImplementation(async function(this: InstanceType<typeof ToolLimitStore>, ...args: any[]) {
+      if (options.failPersist) { if (options.stopOnFailure) stopDuringFence = instance.adapter.interruptTurn(key); throw new Error("fixture durable write failure"); }
+      reached(); await gate;
+      return (original as any).apply(this, args);
+    }) : undefined;
+    const { ChildTeardown } = await import("../child-teardown.ts");
+    const originalWait = ChildTeardown.prototype.wait; let closeHeld = false;
+    const closeSpy = options.closeBarrier ? vi.spyOn(ChildTeardown.prototype, "wait").mockImplementation(async function(this: InstanceType<typeof ChildTeardown>, budget) {
+      const closed = await originalWait.call(this, budget);
+      if (!closeHeld) { closeHeld = true; reached(); await gate; }
+      return closed;
+    }) : undefined;
+    try {
+      const started = await instance.adapter.sendTurn(input);
+      if (options.closeBarrier) {
+        await arrived;
+        expect((await store.get(key))?.limit).toBe(40);
+        expect(recorder.events.some(e => e.type === "turn.completed")).toBe(false);
+        const stopping = options.closeBarrier === "stop" ? instance.adapter.interruptTurn(key, started.turnId) : undefined;
+        release(); await stopping;
+      }
+      if (options.hold) {
+        await arrived;
+        expect(recorder.events.some(e => e.type === "turn.completed")).toBe(false);
+        const beforeRelease = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+        expect(beforeRelease.filter(r => r.event === "prompt")).toHaveLength(options.hold === "learn" || options.noStricter ? 1 : 2);
+        const stopping = instance.adapter.interruptTurn(key, started.turnId);
+        release(); await stopping;
+      }
+      if (options.holdCatalog) {
+        const catalogGate = join(root, "catalog-gate");
+        await expect.poll(() => existsSync(catalogGate + ".waiting"), { timeout: 10000 }).toBe(true);
+        expect(fences).toBe(0);
+        expect(recorder.events.some(e => e.type === "runtime.error" || e.type === "turn.completed")).toBe(false);
+        const native = readFileSync(join(NATIVE_DIR, `${key}.ndjson`), "utf8").trim().split("\n").map(line => JSON.parse(line));
+        const opened = native.find(row => row.dir === "out" && row.msg?.method === "session/new");
+        expect(opened).toBeDefined();
+        expect(native.some(row => row.dir === "in" && row.msg?.id === opened.msg.id && row.msg?.result)).toBe(false);
+        writeFileSync(catalogGate, "release");
+      }
+      if (options.stopAt) {
+        const handshake = join(root, "handshake-gate");
+        await expect.poll(() => existsSync(handshake + ".waiting"), { timeout: 10000 }).toBe(true);
+        const stopping = instance.adapter.interruptTurn(key, started.turnId);
+        writeFileSync(handshake, "release"); await stopping;
+      }
+      const terminal = await recorder.until(e => e.type === "turn.completed");
+      await stopDuringFence;
+      if (options.nextTurn) {
+        const next = await instance.adapter.sendTurn(input);
+        await recorder.until(e => e.type === "turn.completed" && e.turnId === next.turnId);
+      }
+      writeFileSync(join(root, "events.json"), JSON.stringify(recorder.events, null, 2));
+      const rows = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+      return { rows, terminal, events: recorder.events, record: await store.get(key), fences, writes, withdrawals, source, noticesAtWrite, lifecycle: readFileSync(join(NATIVE_DIR, `${key}.ndjson`), "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(row => row.source === "murage.opencode-budget").map(row => row.msg) };
+    } finally { release(); closeSpy?.mockRestore(); barrier?.mockRestore(); recorder.stop(); await instance.dispose(); }
+  }
+  it("c11-review-4 retired generation markers disappear after process teardown", async () => {
+    const run = await fixture({ nextTurn: true });
+    const markers = run.rows.filter(r => r.event === "catalog").map(r => r.marker);
+    expect(markers.length).toBeGreaterThan(3);
+    expect(markers.filter(path => existsSync(path))).toEqual([]);
+  });
+  it.each([undefined, 40])("c11-review-8 shrinking catalog discloses only current omissions cached=%s", async cached => {
+    const run = await fixture({ cached, growth: "shrink" });
+    expect(run.terminal).toMatchObject({ ok: true });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts).toHaveLength(cached ? 1 : 2);
+    expect(JSON.stringify(prompts.at(-1).prompt)).not.toContain("Murage left out some tools");
+    expect(JSON.stringify(prompts.at(-1).prompt).includes("Murage is sending the previous message again")).toBe(!cached);
+    expect(run.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toHaveLength(0);
+  });
+  it("c11-known-route reuses the hint but verifies a fresh generation on the next turn", async () => {
+    const run = await fixture({ nextTurn: true });
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(3);
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts.map(r => r.count)).toEqual([64, 36, 36]);
+    expect(JSON.stringify(prompts[2].prompt)).toContain("Murage left out some tools");
+    expect(JSON.stringify(prompts[2].prompt)).not.toContain("Murage is sending the previous message again");
+    const markers = run.rows.filter(r => r.event === "catalog").map(r => r.marker);
+    expect(new Set(markers).size).toBe(markers.length);
+  });
+  it("c11-no-room-known refuses ordinary controls before a prompt", async () => {
+    const run = await fixture({ cached: 16 });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(0);
+    expect(run.record).toMatchObject({ limit: 16, margin: 4 });
+    expect(run.events.some(e => e.type === "runtime.error")).toBe(true);
+  });
+  it.each([false, true])("c11-no-stricter-reduction persists margin with Stop=%s", async stop => {
+    const run = await fixture({ cached: 40, noStricter: true, ...(stop ? { hold: "margin" as const } : {}) });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.record).toMatchObject({ limit: 40, margin: 12 });
+    if (stop) expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    else expect(run.events.some(e => e.type === "runtime.error")).toBe(true);
+  });
+  it.each(["stop", "continue"] as const)("c11-close-is-not-stop at confirmed old close: %s", async closeBarrier => {
+    const run = await fixture({ closeBarrier });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(closeBarrier === "stop" ? 1 : 2);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(closeBarrier === "stop" ? 1 : 2);
+    expect(run.withdrawals).toBe(0);
+    expect(run.record?.limit).toBe(40);
+    expect(run.terminal).toMatchObject(closeBarrier === "stop" ? { stopReason: "cancelled" } : { ok: true });
+  });
+  it("c11-learn-before-fence persists after output and a real list_changed", async () => {
+    const run = await fixture({ dirtyAfterOutput: true, output: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Already answering" } } });
+    expect(run.record?.limit).toBe(40);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(1);
+    expect(run.terminal).toMatchObject({ ok: false });
+    expect(run.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toHaveLength(0);
+  });
+  it.each(["learn", "margin"] as const)("c11-stop has precedence over persistence failure in %s", async failPersist => {
+    const run = await fixture({ failPersist, stopOnFailure: true, native: failPersist === "margin" ? 20 : 11 });
+    expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(failPersist === "margin" ? 2 : 1);
+    if (failPersist === "margin") expect(run.record).toMatchObject({ limit: 40, margin: 4 });
+    else expect(run.record).toBeUndefined();
+  });
+  it.each([15, 16])("c11-proposal learns scripted limit %s with only its required control", async limit => {
+    const run = await fixture({ proposal: true, proposalOnly: true, renamed: true, limit, noStricter: true });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(1);
+    expect(run.record).toMatchObject({ limit, margin: limit === 15 ? 4 : 12 });
+    expect(run.rows.find(r => r.event === "prompt").visible).toEqual(["chief_proposal_project_propose"]);
+    expect(run.terminal).toMatchObject({ ok: false });
+  });
+  it("c11-crash-replacement retains learning and original write", async () => {
+    const run = await fixture({ crashReplacement: true });
+    expect(run.rows.filter(r => r.event === "replacement-crash")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(1);
+    expect(run.record?.limit).toBe(40);
+    expect(run.withdrawals).toBe(0);
+    expect(run.events.some(e => e.type === "runtime.error")).toBe(true);
+  });
+  it("c11-recovers-once", async () => {
+    const run = await fixture();
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts.map(r => r.count)).toEqual([64, 36]);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(prompts[1].prompt.filter((p: any) => p.type === "image")).toEqual(prompts[0].prompt.filter((p: any) => p.type === "image"));
+    expect(prompts[1].visible.filter((s: string) => s.startsWith("agents_"))).toHaveLength(15);
+    expect(prompts[1].visible.filter((s: string) => s.startsWith("murage-memory_"))).toHaveLength(8);
+    expect(JSON.stringify(prompts[1].prompt)).toContain("Murage is sending the previous message again");
+    expect(run.terminal).toMatchObject({ ok: true });
+    expect(run.writes).toBe(2);
+    expect(run.record).toMatchObject({ limit: 40, margin: 4 });
+  });
+  it("c11-known-route and c11-notice-order disclose before the only write", async () => {
+    const run = await fixture({ cached: 40 });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts.map(r => r.count)).toEqual([36]);
+    expect(JSON.stringify(prompts[0].prompt)).toContain("Murage left out some tools");
+    expect(JSON.stringify(prompts[0].prompt)).not.toContain("sending the previous message again");
+    expect(run.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toHaveLength(1);
+    expect(run.noticesAtWrite).toEqual([1]);
+  });
+  it("c11-session-lost filters only the current owner identity", async () => {
+    const run = await fixture({ loadNull: true });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(run.rows.filter(r => r.event === "session/new")).toHaveLength(2);
+    const text = prompts[1].prompt.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n");
+    expect(text.match(/owner text/g)).toHaveLength(2);
+    expect(text.match(/Murage is sending the previous message again/g)).toHaveLength(1);
+    expect(prompts[1].prompt.filter((p: any) => p.type === "image")).toHaveLength(1);
+    expect(run.source).toEqual([{ id: "old", role: "user", text: "owner text" }, { id: "current", role: "user", text: "owner text" }]);
+  });
+  it("c11-replay-output does not fence recovery", async () => {
+    const run = await fixture({ replay: true, output: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "old thought" } } });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(2);
+    expect(run.terminal).toMatchObject({ ok: true });
+  });
+  it.each(["learn", "margin"] as const)("c11-stop-learning and c11-stop-second-margin %s", async hold => {
+    const run = await fixture({ hold, native: hold === "margin" ? 20 : 11 });
+    expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(hold === "margin" ? 2 : 1);
+    expect(run.record).toMatchObject({ limit: 40, margin: hold === "margin" ? 12 : 4 });
+  });
+  it.each(["learn", "margin"] as const)("c11-crash-store rejects failed durable %s", async failPersist => {
+    const run = await fixture({ failPersist, native: 20 });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(failPersist === "learn" ? 1 : 2);
+    expect(run.terminal).toMatchObject({ ok: false });
+    if (failPersist === "learn") expect(run.record).toBeUndefined();
+    else expect(run.record).toMatchObject({ margin: 4 });
+  });
+  it("c11-ephemeral-version does not persist an unidentified route", async () => {
+    const run = await fixture({ ephemeral: true });
+    expect(run.rows.filter(r => r.event === "prompt").map(r => r.count)).toEqual([64, 36]);
+    expect(run.record).toBeUndefined();
+  });
+  it("c11-renamed-controls retain their actual prefix", async () => {
+    const run = await fixture({ renamed: true });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts).toHaveLength(2);
+    for (const control of controls) expect(prompts[1].visible).toContain(`chief_proposal_${control}`);
+  });
+  it.each([15, 16])("c11-proposal budget at limit %s", async limit => {
+    const run = await fixture({ proposal: true, renamed: true, limit });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts).toHaveLength(limit === 15 ? 1 : 2);
+    expect(run.record).toMatchObject({ limit });
+    if (limit === 16) { expect(prompts[1].visible).toEqual(["chief_proposal_project_propose"]); expect(run.terminal).toMatchObject({ ok: true }); }
+  });
+  it("c11-review-9 recovery unknown catalog logs no-room with its reason", async () => {
+    const run = await fixture({ unknown: true, noStricter: true });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(1);
+    expect(run.terminal).toMatchObject({ ok: false });
+    expect(run.lifecycle).toContainEqual(expect.objectContaining({ stage: "recovery", outcome: "no-room", reason: "unknown-catalog" }));
+    expect(run.lifecycle.some(row => row.outcome === "unknown-catalog")).toBe(false);
+  });
+  it("c11-unknown-catalog refuses required nameless catalogs before a learned prompt", async () => {
+    const run = await fixture({ cached: 40, unknown: true });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(0);
+    expect(run.terminal).toMatchObject({ ok: false });
+    expect(run.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent." }));
+  });
+  it.each([undefined, 40])("c11-catalog-growth keeps unseen optional names hidden, cached=%s", async cached => {
+    const run = await fixture({ growth: "optional", cached });
+    expect(run.terminal).toMatchObject({ ok: true });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts.at(-1).visible).not.toContain("murage_connectors_unseen");
+    expect(prompts.at(-1).count).toBe(36);
+  });
+  it.each(["agents", "resources"] as const)("c11-catalog-growth refuses a second unsafe %s change", async growth => {
+    const run = await fixture({ growth, cached: 40 });
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(0);
+    expect(run.events.some(e => e.type === "runtime.error" && e.message.includes("tool list changed"))).toBe(true);
+  });
+  it("c11-catalog-growth revalidates a recovery replacement", async () => {
+    const run = await fixture({ growth: "agents" });
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.terminal).toMatchObject({ ok: false });
+  });
+  it("c11-session-lost explicit missing identity starts fresh", async () => {
+    const run = await fixture({ loadError: { code: -32602, message: "Session not found", data: "c11-session" } });
+    expect(run.rows.filter(r => r.event === "session/new")).toHaveLength(2);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(2);
+    expect(run.terminal).toMatchObject({ ok: true });
+  });
+  it("c11-session-lost auth refusal never falls back", async () => {
+    const run = await fixture({ loadError: { code: -32000, message: "Authentication required" } });
+    expect(run.rows.filter(r => r.event === "session/new")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.terminal).toMatchObject({ ok: false });
+  });
+  it.each([
+    { stopAt: "initialize" as const },
+    { stopAt: "load" as const },
+    { stopAt: "load" as const, loadNull: true },
+    { stopAt: "load" as const, loadError: { code: -32602, message: "Session not found", data: "c11-session" } },
+  ])("c11-stop-in-handshake %j", async options => {
+    const run = await fixture(options);
+    expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "session/new")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "session/load")).toHaveLength(0);
+    expect(run.withdrawals).toBe(0);
+    expect(run.record).toMatchObject({ limit: 40 });
+  });
+  it("c11-fresh-markers waits for the renamed required role", async () => {
+    const run = await fixture({ renamed: true, holdCatalog: true, cached: 40 });
+    expect(run.terminal).toMatchObject({ ok: true });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+  });
+  it.each(["browser", "phoneJobs", "localComputer", "computer"] as const)("c11-optional-unknown drops %s without waiting for its marker", async optionalUnknown => {
+    const run = await fixture({ optionalUnknown, cached: 40 });
+    expect(run.terminal).toMatchObject({ ok: true });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts).toHaveLength(1);
+    expect(JSON.stringify(prompts[0].prompt)).toContain("count unknown");
+    expect(run.rows.filter(r => r.event === "spawn").at(-1).overlay.permission[`${optionalUnknown === "localComputer" ? "computer" : optionalUnknown}_*`]).toBe("deny");
+  });
+  it("c11-stop-second-prompt after its actual write keeps one notice", async () => {
+    const run = await fixture({ stopAt: "prompt" });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(2);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.withdrawals).toBe(0);
+    expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    expect(run.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toHaveLength(1);
+    expect(run.events.filter(e => e.type === "turn.completed")).toHaveLength(1);
+    expect(run.events.filter(e => e.type === "content.delta")).toHaveLength(0);
+  });
+  it("c11-stop-second-prompt never withdraws the original write", async () => {
+    const run = await fixture({ stopSecond: true });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.withdrawals).toBe(0);
+    expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    expect(run.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toHaveLength(1);
+  });
+  it("c11-no-loop", async () => {
+    const run = await fixture({ native: 20 });
+    expect(run.rows.filter(r => r.event === "prompt").map(r => r.count)).toEqual([73, 45]);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.record).toMatchObject({ limit: 40, margin: 12 });
+    expect(run.terminal).toMatchObject({ ok: false });
+  });
+  it("c11-preprompt-then-reject", async () => {
+    const run = await fixture({ cached: 48, native: 14 });
+    expect(run.rows.filter(r => r.event === "spawn"), JSON.stringify({ terminal: run.terminal, rows: run.rows, lifecycle: run.lifecycle })).toHaveLength(3);
+    expect(run.rows.filter(r => r.event === "prompt").map(r => r.count)).toEqual([47, 39]);
+    expect(run.terminal).toMatchObject({ ok: true });
+  });
+  it.each([
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "live" } },
+    { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thinking" } },
+    { sessionUpdate: "plan", entries: [{ content: "step", priority: "high", status: "pending" }] },
+    { sessionUpdate: "agent_message_chunk", content: { type: "image", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" } },
+    { sessionUpdate: "tool_call", toolCallId: "fixture-call", title: "Fixture tool", kind: "read", status: "in_progress" },
+  ])("c11-learn-before-fence %j", async output => {
+    const run = await fixture({ output });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(1);
+    expect(run.record).toMatchObject({ limit: 40 });
+    expect(run.events.some(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toBe(false);
+  });
+  it("c11-no-room-learned", async () => {
+    const run = await fixture({ limit: 20 });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.record).toMatchObject({ limit: 20 });
+    expect(run.terminal).toMatchObject({ ok: false });
+  });
+  it("c11-refused-resend preserves the first actual write", async () => {
+    const run = await fixture({ refuseSecond: true });
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.withdrawals).toBe(0);
+    expect(run.terminal).toMatchObject({ stopReason: "submission_refused" });
+  });
+});
+
+beforeEach(() => { vi.stubEnv("FAKE_ACP_MCP_READY", "1"); vi.stubEnv("FAKE_ACP_MCP_LIST", "all:ready"); });
+afterEach(() => { vi.unstubAllEnvs(); });

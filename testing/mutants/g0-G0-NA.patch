@@ -1,0 +1,13 @@
+diff --git a/server/drivers/native-ask.ts b/server/drivers/native-ask.ts
+index 9f65c2f536..a0de4471b5 100644
+--- a/server/drivers/native-ask.ts
++++ b/server/drivers/native-ask.ts
+@@ -48,7 +48,7 @@ export function deliverNative(slot: NativeAskSlot, mode: AskMode, frameKey: stri
+  const receipt = Promise.resolve().then(()=>{if(!canWrite()){held=true;return false;}return write();}).catch(error => { refusedBy = { error }; return false; });
+  const writing = (retirement ? Promise.race([receipt, cancelled]) : receipt).then(async ok => {
+   let teardown: void | Promise<unknown>;
+-  if (refusedBy && refused) { try { teardown = refused(refusedBy.error); } catch { /* the refusal is already claimed */ } }
++  if (false && refusedBy && refused) { try { teardown = refused(refusedBy.error); } catch { /* the refusal is already claimed */ } }
+   if (!held && !slot.closed && (ok || mode === 'retire' || !writable() || refusedBy)) { slot.closed = true; commit(ok); }
+   if (teardown) { try { await teardown; } catch { /* teardown never rejects the ask */ } }
+   return ok;

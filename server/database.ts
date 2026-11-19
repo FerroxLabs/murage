@@ -1,3 +1,6 @@
+import { ensureExternalRecallEpoch } from './memory/recall-view-schema.ts';
+import { prepareReclaimSchema } from "./memory/root-set-reclaim.ts";
+import { initializeOwnWriteHolds } from "./own-write-holds.ts";
 // Invariants of the serving thread's database work (1.0.2 rc13, STALLS-FINAL-DESIGN section 5):
 // 1. No lock wait on the serving thread longer than BACKGROUND_BUSY_MS unless a person is waiting for that write (an owner request, a turn,
 //    a channel delivery), and then at most OWNER_BUSY_MS. Every background BEGIN IMMEDIATE goes through beginBackground() or a budgeted
@@ -10,19 +13,22 @@
 // 5. Long writers declare themselves and bracket themselves in the log (VACUUM, CREATE INDEX): a start line, holdWritersForIndexBuild(true), an end line.
 // 6. Per-pass work stays bounded: an idle visit writes at most one receipt and one mark; a slice holds the lock for at most its budget plus
 //    one chunk; nothing here scales with history.
-import { prepareThreadSummaryBackfill, withChatsPreviewTransaction } from "./thread-summary.ts";
+import { isBgDeferred } from "./bg-admission.ts";
+import { initializeChatsPreviewStorage, prepareThreadSummaryBackfill, seedReadOnlyChatsGen, withChatsPreviewTransaction } from "./thread-summary.ts";
 import { initializeTeamIdentityTables } from "./team-identities.ts";
 import { chmodSync, closeSync, existsSync, openSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-open.ts";
 import { randomUUID } from "node:crypto";
 import { DATA_DIR } from "./config.ts";
 import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_PRE_V3_SNAPSHOT, MEMORY_PRE_V4_SNAPSHOT, MEMORY_SCHEMA_VERSION, lineageRepairPending, migrateMemorySchema, repairOutputRootBackfill } from "./memory/schema.ts";
 import type { BlockingHeartbeat } from "./memory/blocking-heartbeat.ts";
-import { buildEagerIndexesBeforeListen, buildPreListenIndexes } from "./memory/optional-index.ts";
+import { setBootStep } from "./boot-progress.ts";
+import { buildEagerIndexesBeforeListen, buildPreListenIndexes, optionalIndexReady, preListenIndexDeferred, preListenIndexMissing } from "./memory/optional-index.ts";
 import { createProgressBoard, preListenHealthPort, setActivePreListenHealth, startPreListenHealth, type PreListenHealth, type ProgressBoard } from "./memory/upgrade-health.ts";
 import { UpgradeProgressTracker, nextUpgradeSeq, restampedUpgrade, upgradeCounts } from "./memory/upgrade-progress.ts";
 import { unknownUpgradeState } from "../shared/upgrade-contract.mjs";
+import { noteDataVersion } from "../shared/data-version-marker.mjs";
 import { bootLaunchId } from "./memory/boot-nonce.ts";
 import { bumpWriteEpoch, ensureWriteRevision, installWriteRevisionTriggers } from "./app-write-revision.ts";
 import { integrityPending, setIntegrityFlags } from "./memory/integrity-flags.ts";
@@ -34,21 +40,26 @@ import { initializeInbox } from "./inbox.ts";
 import { verifyDerivedRows } from "./branch-index.ts";
 import { pendingBranchChanges } from "./memory/branch-change-flag.ts";
 import { bumpMessagesVersion } from "./inbox-version.ts";
-import { inStatementReusePass, instrumentDatabase, sharedRowsStamp, ioBudget, noteBusyTimeout } from "./io-budget.ts";
-import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS, DatabaseBusyError, awaitWriterGate, backgroundSourceNow, isDatabaseBusy, noteBusy, setBusy, writersHeldForIndexBuild } from "./db-busy.ts";
+import { inStatementReusePass, instrumentDatabase, sharedRowsStamp, ioBudget, noteBusyTimeout, startWriteTrace, writeStatementCount } from "./io-budget.ts";
+import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS, DatabaseBusyError, DiskFloorRefusal, awaitWriterGate, isLowDisk, backgroundSourceNow, isDatabaseBusy, noteBusy, setBusy, writersHeldForIndexBuild } from "./db-busy.ts";
 import { noteIdentityEpoch } from "./memory/provenance-stamp.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
+import { initializeHighLevelThreadMarks } from "./highlevel/thread-marks.ts";
 import { initializeArtifacts } from "./artifacts.ts";
-import { initializeMessageTables } from "./message-tables.ts";
-import { startTranscriptBackfill, transcriptBackfillWorking, yieldTranscriptBackfillTo } from "./transcript-backfill.ts";
+import { initializeMessageTables, TURN_INDEX, TurnIndexNotReadyError } from "./message-tables.ts";
+import { isReadOnly, onReadOnly, schemaStep, skippedAtStart } from "./read-only-start.ts";
+import { removeDevTurnSpan } from "./installation-app-schema-downgrade.ts";
+import { ensureBotReviewIndex, startTranscriptBackfill, transcriptBackfillWorking, yieldTranscriptBackfillTo } from "./transcript-backfill.ts";
 import { txScopeBegin, txScopeEnd } from "./tx-scope.ts";
 import { initializeOwnerSends } from "./send-store.ts";
+import { initializeSendAttempts } from "./send-attempt-state.ts";
 import { initializeVenuePosts } from "./venue-post-held.ts";
 import { initializeReplySchema } from "./tts/reply-schema.ts";
 import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeAppTriggers } from "./app-trigger-store.ts";
 import { initializeRoomShares } from "./room-shares-schema.ts";
-import { prepareMessageSearchBackfill, settleInheritedSearchMerge } from "./message-search-index.ts";
+import { initializeDelegationPacks } from "./delegation-pack/schema.ts";
+import { prepareMessageSearchBackfill, settleInheritedSearchMerge, startSearchIndex, stopSearchIndex } from "./message-search-index.ts";
 import { startupMark } from "./startup-trace.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { upgradeRoomRequestOwed } from "./room-request-owed.ts";
@@ -60,7 +71,7 @@ import { createCountsBlock, readCountsBlock, startExactCounts, UPGRADE_COUNTS_FI
 import { clearOverall, overallWriter, readOverallFloor, STARTING_SHARE } from "./memory/upgrade-overall.ts";
 import { backfillTurnSourceCopies, initializeTurnSourceHolds, turnSourceCopiesBackfilled } from "./turn-source-holds.ts";
 import { observeLine } from "./observe.ts";
-import { startWalMaintenance, stopWalMaintenance } from "./wal-maintenance.ts";
+import { startWalMaintenance, stopWalMaintenance, assertWalWriteAdmission, diskFloorRefusing } from "./wal-maintenance.ts";
 import { pathIsWithin, registerTestHandle } from "./test-handle-registry.ts";
 
 /** A random id per opened connection: every stamp, hold and verdict cache that rests on what a connection saw carries it, so nothing judged on one
@@ -161,7 +172,13 @@ export function retryAncestryRepair(): void { if (handle) runRepair(handle, unde
 let background: BackgroundHandle | null = null;
 /** The handle whose jobs are still running (null once its `done` settles, it is stopped, or the connection closes). */
 let runningBackground: BackgroundHandle | null = null;
-function trackBackground(started: BackgroundHandle): BackgroundHandle {
+// Only the server holds worker launch; standalone tools and database fixtures
+// have no health route. Keep reset acknowledgement and idle pruning behind
+// the same gate by starting their worker only once startup writes may run.
+let searchStartHold: Promise<void> | null = null;
+export function holdSearchIndexUntil(ready: Promise<void> | null): void { searchStartHold = ready; }
+function trackBackground(started: BackgroundHandle, closeRecovery?: () => void): BackgroundHandle {
+  if (closeRecovery) void started.done.then(closeRecovery, closeRecovery);
   runningBackground = started.jobs.length ? started : null;
   if (runningBackground) void started.done.then(() => { if (runningBackground === started) runningBackground = null; }, () => { if (runningBackground === started) runningBackground = null; });
   return started;
@@ -183,7 +200,7 @@ function backgroundHooks(db: DatabaseSync, extra: BackgroundHooks = {}): Backgro
   return {
     stillOpen: () => handle === db,
     // the upgrade's writes are named to the I/O budget, and the work waits while the budget holds it back
-    defer: () => ioBudget.shouldDefer("memory-upgrade"),
+    defer: () => ioBudget.backgroundRoom()<=0,
     walPressure: walPressureGauge(() => fileBytes(`${handlePath ?? ""}-wal`)),
     withSource: run => ioBudget.withSource("memory-upgrade", run),
     onIntegrity: row => { setIntegrityFlags(db, flagsOfPass(db, row)); },
@@ -201,11 +218,16 @@ function backgroundHooks(db: DatabaseSync, extra: BackgroundHooks = {}): Backgro
  * milliseconds, the writer gate honoured before each, slower while an owner turn is live. Resumable; a second call replaces the first. */
 export function startBackgroundUpgrade(options: BackgroundHooks = {}): BackgroundHandle {
   const db = database();
+  // MAIN Q9: only this boot's initial transcript pass may use idle recovery admission; all other jobs remain BG.
+  const recovery = ioBudget.claimBootRecovery(() => !diskFloorRefusing());
+  const withSource = options.withSource;
+  options = { ...options, withSource: (run, job) => job === "message-index" && recovery
+    ? recovery.run(run) : withSource ? withSource(run, job) : ioBudget.withSource("memory-upgrade", run) };
   // An ordinary start (nothing left over from an upgrade): no counts thread, no progress tracker, no overall writer, no calibration read. What
   // remains is the empty queue, which a later call to this function (a restore, a data-dir switch) replaces.
   if (!backgroundJobsPending(db).length) {
     clearOverall(DATA_DIR);
-    background = trackBackground(startBackgroundUpgradeWork(db, backgroundHooks(db, { admit: awaitWriterGate, ...options }), () => fileBytes(handlePath ?? "")));
+    background = trackBackground(startBackgroundUpgradeWork(db, backgroundHooks(db, { admit: awaitWriterGate, ...options }), () => fileBytes(handlePath ?? "")), recovery?.close);
     return background;
   }
   // There is deliberately no checkpoint here: a synchronous wal_checkpoint(TRUNCATE) after listen blocked the first responses on a large log left by a forced
@@ -225,7 +247,7 @@ export function startBackgroundUpgrade(options: BackgroundHooks = {}): Backgroun
   // The exact counts: the thread of the blocking stage if this launch had one, else one started now (cached figures appear at once for a file nothing has written to since).
   if (!launchCounts && handlePath) { launchCounts = createCountsBlock(); startExactCounts(handlePath, join(DATA_DIR, UPGRADE_COUNTS_FILE), launchCounts); }
   const countsBlock = launchCounts;
-  background = trackBackground(startBackgroundUpgradeWork(db, backgroundHooks(db, { admit: awaitWriterGate, priorRates, onRates: keepRates, launch, countsSource: () => readCountsBlock(countsBlock ?? undefined), outside: () => upgradeOutside(db, ancestryUnrepaired(db)), onComplete: () => clearOverall(DATA_DIR), ...options }), () => fileBytes(handlePath ?? "")));
+  background = trackBackground(startBackgroundUpgradeWork(db, backgroundHooks(db, { admit: awaitWriterGate, priorRates, onRates: keepRates, launch, countsSource: () => readCountsBlock(countsBlock ?? undefined), outside: () => upgradeOutside(db, ancestryUnrepaired(db)), onComplete: () => clearOverall(DATA_DIR), ...options }), () => fileBytes(handlePath ?? "")), recovery?.close);
   if (!background.jobs.length) clearOverall(DATA_DIR);
   return background;
 }
@@ -249,6 +271,8 @@ export function memoryIntegrityStatus() {
 
 let handle: DatabaseSync | null = null;
 let handlePath: string | null = null;
+/** The handle is the in-memory store of a first-ever read-only start: its file is never made, so the file check cannot keep it. */
+let handleInMemory = false;
 let releaseIoBudget: (() => void) | null = null;
 let savepointId = 0;
 let startupMarked = false; // cold-start marks fire for the first open only
@@ -264,40 +288,54 @@ export function databaseGeneration(): number { return generation; }
  * pruning that matched nothing) leave it alone. It never opens the connection or touches the filesystem. */
 export function databaseSharedRowsStamp(): number | undefined { return handle ? sharedRowsStamp(handle) : undefined; }
 
+let writesAtOpen: { db: DatabaseSync; count: number } | undefined;
+/** The writing statements run on the first handle since its open finished; undefined once that handle is gone. */
+export function writesSinceOpen(): number | undefined { return writesAtOpen && handle === writesAtOpen.db ? writeStatementCount(handle) - writesAtOpen.count : undefined; }
 export function database(): DatabaseSync {
   const file = join(DATA_DIR, "messages.db");
   // (inside a synchronous pass the file cannot be swapped, so the existence check is not repeated for each of its thousands of statements)
-  if (handle && handlePath === file && (inStatementReusePass() || existsSync(file))) return handle;
+  if (handle && handlePath === file && (inStatementReusePass() || handleInMemory || existsSync(file))) return handle;
   closeDatabase();
   const firstOpen = !startupMarked; startupMarked = true;
   if (firstOpen) startupMark("database.begin");
   const freshInstallation = !existsSync(file);
-  closeSync(openSync(file, "a", 0o600));
-  try { chmodSync(file, 0o600); } catch { /* matches existing platform behavior */ }
-  const db = new DatabaseSync(file);
+  const readOnlyEmpty = freshInstallation && isReadOnly();
+  if (!isReadOnly()) {
+    closeSync(openSync(file, "a", 0o600));
+    try { chmodSync(file, 0o600); } catch { /* matches existing platform behavior */ }
+  }
+  // query_only refuses statements, but only a read-only handle also prevents the last close from checkpointing a retained WAL.
+  const db = new DatabaseSync(readOnlyEmpty ? ":memory:" : file, { readOnly: isReadOnly() && !freshInstallation });
   const release = instrumentDatabase(db);
   try {
+    if (isReadOnly() && !freshInstallation) db.exec("PRAGMA query_only=ON");
     // secure_delete: a deleted conversation's words are overwritten in the
     // file, not left in free space for anyone reading the raw bytes.
     // A new file frees pages back to the disk in small steps (incremental
     // vacuum, root-set-compaction.ts); it can only be chosen before the first table.
     // The wait comes before the first statement that reads the file: another connection still leaving it (a worker that opened it by
     // path, a checkpointer) may hold it for a moment, and without the wait even this first pragma fails at once with "database is locked".
+    // the start-up note names the open: a large write-ahead log is replayed by the first statements below (boot-progress.ts)
+    if (firstOpen) setBootStep("database.wal");
     db.exec("PRAGMA busy_timeout=1000");
     if (freshInstallation) db.exec("PRAGMA auto_vacuum=INCREMENTAL");
-    db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;");
+    if (!isReadOnly()) db.exec("PRAGMA journal_mode=WAL");
+    db.exec("PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;");
     // The write-ahead log keeps the size of the largest transaction it ever
     // held unless told otherwise (a 3.6 GB log after the 1.0.0 upgrade). Zero:
     // the first commit after a checkpoint has copied the whole log restarts it
     // and cuts the file back to its own frames, inside an ordinary write, so no
     // second connection ever has to take the writer lock to shrink it
     // (wal-maintenance.ts).
-    db.exec(`PRAGMA journal_size_limit=${JOURNAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=1000;`);
+    db.exec(`PRAGMA journal_size_limit=${JOURNAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=0;`);
     noteBusyTimeout(db, DEFAULT_BUSY_MS);
     // Backstop for the Inbox disk burn: a sort that outgrows the page cache must
     // spill into memory, not into a temp file opened and closed per statement.
     // cache_size is negative = KiB (32 MiB).
     db.exec("PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768;");
+    // Boot tolerance, write authority from the first statement of the open: a start that is already read-only opens an existing file closed to
+    // writes, so an initializer nobody held back is refused by the engine (the start ends, nothing changed) instead of changing bytes quietly.
+    // The held-back ones go through schemaStep (read-only-start.ts); an absent primary store is initialized in RAM.
     const upgrade = reporterFactory(DATA_DIR, basename);
     // What can hold the app closed is only the memory upgrade itself (structure, migration, commit). Everything that reads the history is
     // background work that starts when the server listens (upgrade-background.ts): the proofs about memory rows, the lineage repair, the
@@ -305,6 +343,8 @@ export function database(): DatabaseSync {
     // file, and the feature that depends on it stays held until it is done. While the migration runs, the start-up note is kept moving by
     // a heartbeat thread and, in the real server, a responder thread answers /api/health with 503 and the progress on the server's port.
     const from = memoryVersionOf(db), migrating = from !== null && from !== MEMORY_SCHEMA_VERSION;
+    // A migration copies and rewrites the file: a read-only start (read-only-start.ts) never begins one, whatever the disk would hold. Before any snapshot, count or note.
+    if (migrating && isReadOnly()) throw new DiskFloorRefusal("start-migration");
     let responder: PreListenHealth | null = null;
     if (migrating) {
       // The counter the exact counts are keyed to exists before the thread starts (it reads it in the same transaction as the figures).
@@ -328,26 +368,32 @@ export function database(): DatabaseSync {
     // a page cache sized for the migration's one large transaction, for the blocking part only (the 32 MiB the connection runs with afterwards is restored below)
     if (migrating) { try { db.exec("PRAGMA cache_size=-524288"); } catch { /* the default stays */ } }
     try {
-      initializeMessageTables(db, { defer: true });
+      schemaStep(db, "messages", local => initializeMessageTables(local, { defer: true }));
       // the hold log a turn's sources are checked against (turn-source-holds.ts): its triggers record every change from here on
-      initializeTurnSourceHolds(db);
+      schemaStep(db, "turn_source_holds", initializeTurnSourceHolds);
     }
     catch (error) { upgrade.done(); void responder?.close(); setActivePreListenHealth(null); throw error; } if (firstOpen) startupMark("database.tables");
     // the branch and line indexes name rows by rowid (a few sampled seeks): a file whose rowids moved fills them again; and memory's claim loop asks whether a
     // branch move is still being flipped: counted once here (one seek), known after
     verifyDerivedRows(db);
     pendingBranchChanges(db);
+    if (firstOpen) setBootStep("database.memory");
     try {
       migrateMemorySchema(db, freshInstallation ? "active" : "off", { snapshotPath: join(DATA_DIR, MEMORY_PRE_V2_SNAPSHOT), snapshotV2Path: join(DATA_DIR, MEMORY_PRE_V3_SNAPSHOT), snapshotV3Path: join(DATA_DIR, MEMORY_PRE_V4_SNAPSHOT), onPhase: event => upgrade.phase(event), onValidating: () => upgrade.checking(), onBlocking: (first, from) => upgrade.blocking(first, from) });
       // A migration rewrites memory tables: whatever figures an earlier launch cached are void.
       if (migrating) { try { bumpWriteEpoch(db); } catch { /* as above */ } }
+      // This release accepted the memory tables (and migrated them if it had to): the data folder records it as the newest writer, so an
+      // older build that later refuses this data can name the version to install (shared/data-version-marker.mjs). Only ever raised; a
+      // source run (no released MURAGE_APP_VERSION) and a read-only start write nothing.
+      if (!isReadOnly()) noteDataVersion(DATA_DIR, process.env.MURAGE_APP_VERSION);
       // What the connection holds back until the background work has finished.
       loadBackgroundFlags(db); if (firstOpen) startupMark("database.flags");
       // The search index tail is noted here (a seek), filled in the background; the log's high-water mark is cut back while the note is
       // still up, so a long checkpoint after a big migration is never silent.
-      withChatsPreviewTransaction(db, local => prepareThreadSummaryBackfill(local));
-      prepareMessageSearchBackfill(db); if (firstOpen) startupMark("database.search");
-      settleInheritedSearchMerge(db, firstOpen); // a pre-release build's merge settings, every open; its owed merge and scrub, first open only (message-search-index.ts)
+      // A read-only start writes neither the preview tables' schema nor an empty history's "filled" mark: the tables in the file are read as they are.
+      if (isReadOnly()) schemaStep(db, "chats_gen", initializeChatsPreviewStorage, seedReadOnlyChatsGen); else withChatsPreviewTransaction(db, local => prepareThreadSummaryBackfill(local));
+      if (!isReadOnly()) prepareMessageSearchBackfill(db); if (firstOpen) startupMark("database.search");
+      if (!isReadOnly()) settleInheritedSearchMerge(db, firstOpen); // a pre-release build's merge settings, every open; its owed merge and scrub, first open only (message-search-index.ts)
       if (migrating) {
         let beat: BlockingHeartbeat | undefined;
         try { beat = upgrade.blocking("committing", from ?? undefined); } catch { /* a status write never stops an upgrade */ }
@@ -358,15 +404,15 @@ export function database(): DatabaseSync {
       // The room-request owed set (room-request-owed.ts) is seeded from an existing history HERE, in bounded batches under the same
       // start-up screen and extended boot clock, each batch refreshing the status note: a heavy 1.0.1 history shows progress and
       // never looks like a failed start. A failure leaves the marker at its cursor; the normal initializers below resume it.
-      try { upgradeRoomRequestOwed(db, (done, total) => upgrade.indexing({ done, total }), { heartbeat: () => upgrade.blocking("backfill", undefined, undefined, "indexing") }); }
+      try { if (!isReadOnly()) upgradeRoomRequestOwed(db, (done, total) => upgrade.indexing({ done, total }), { heartbeat: () => upgrade.blocking("backfill", undefined, undefined, "indexing") }); }
       catch (error) { console.warn(`[room-requests] owed set: ${error instanceof Error ? error.message : String(error)}; the next start carries on`); }
       // The queue of handoffs a 1.0.1 build kept in delegations.json moves into its table once, under the same note (pending-delegations-schema.ts).
-      try { initializePendingDelegations(db); importLegacyDelegations(db, { heartbeat: () => upgrade.blocking("backfill", undefined, undefined, "indexing") }); }
+      try { if (!isReadOnly()) { initializePendingDelegations(db); importLegacyDelegations(db, { heartbeat: () => upgrade.blocking("backfill", undefined, undefined, "indexing") }); } }
       catch (error) { console.warn(`[delegations] queue import: ${error instanceof Error ? error.message : String(error)}; the next start carries on`); }
       // copies stored before the copy index existed join it once (one read of every row, under the start-up note and its heartbeat). Until they
       // have, a turn's own conversation is named line by line instead of as a range (steer-lineage.ts), so nothing is shown on a missing link.
       try {
-        if (!turnSourceCopiesBackfilled(db)) {
+        if (!isReadOnly() && !turnSourceCopiesBackfilled(db)) {
           let beat: BlockingHeartbeat | undefined;
           try { beat = upgrade.blocking("backfill", undefined, undefined, "indexing"); } catch { /* a status write never stops an upgrade */ }
           try { backfillTurnSourceCopies(db); } finally { try { beat?.end(); } catch { /* as above */ } }
@@ -380,27 +426,80 @@ export function database(): DatabaseSync {
         try { beat = upgrade.blocking("backfill", undefined, undefined, "indexing"); } catch { /* a status write never stops an upgrade */ }
         try { buildEagerIndexesBeforeListen(db, { log: firstOpen }); } finally { try { beat?.end(); } catch { /* as above */ } }
       }
+      if (!isReadOnly()) removeDevTurnSpan(db);
       // The owner-pin index on every launch where it is missing (one scan, once per install): without it the first turn walked every active
-      // record of its scopes for its pins (MEM-PIN-INDEX-BOOT, 1.3 to 2.0 s on the owner's data).
-      buildPreListenIndexes(db, { log: firstOpen });
+      // record of its scopes for its pins (MEM-PIN-INDEX-BOOT, 1.3 to 2.0 s on the owner's data). On a slow disk that scan outlasts the shell's
+      // 5-minute limit (538 s at 50 IOPS), so the build runs under the same note as the steps above; a new installation has nothing to read.
+      {
+        let beat: BlockingHeartbeat | undefined;
+        if (!freshInstallation && !isReadOnly() && preListenIndexMissing(db)) { try { beat = upgrade.blocking("backfill", undefined, undefined, "indexing", "indexing"); } catch { /* a status write never stops a start */ } }
+        if (isReadOnly() && !readOnlyEmpty) {
+          // No index is built in a read-only start. The turn index is required before listen, so its absence ends the start, with nothing written.
+          if (!optionalIndexReady(db, TURN_INDEX)) { console.error("[startup] read-only start: required index missing"); throw new TurnIndexNotReadyError(); }
+          skippedAtStart.push("database.preListenIndexes");
+        } else {
+          try { buildPreListenIndexes(db, { log: firstOpen }); if (!optionalIndexReady(db, TURN_INDEX) && !preListenIndexDeferred(db, TURN_INDEX)) throw new TurnIndexNotReadyError(); } finally { try { beat?.end(); } catch { /* as above */ } }
+        }
+      }
+      {
+        let beat: BlockingHeartbeat | undefined;
+        try {
+          ensureBotReviewIndex(db, {
+            onStart: progress => { beat = upgrade.blocking("backfill", undefined, undefined, "indexing"); upgrade.indexing(progress); },
+            onChunk: progress => upgrade.indexing(progress),
+          });
+        } finally { beat?.end(); }
+      }
       upgrade.done();
-    } catch (error) { upgrade.blocked(error); void responder?.close(); setActivePreListenHealth(null); throw error; } if (firstOpen) startupMark("database.noteDone");
-    initializeInbox(db);
-    initializeThreadSnooze(db);
-    initializeArtifacts(db);
-    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeReplySchema(db); initializeAppTriggers(db); initializeVenuePosts(db); initializeRoomShares(db); if (firstOpen) startupMark("database.tablesAll");
-    runOwnerHandoffMigration(db);   // admission of hand-offs is held until it succeeds (pending-delegations-schema.ts)
-    // Every counted write from here on moves the counter the upgrade screen's figures are keyed to (app-write-revision.ts).
-    installWriteRevisionTriggers(db);
-  } catch (error) { try { db.close(); } finally { release(); } throw error; }
+    } catch (error) {
+      // a full disk is not a blocked memory upgrade: it leaves no note (a note is a write, and the next start with space has nothing to resume)
+      if (isLowDisk(error)) upgrade.done(); else upgrade.blocked(error);
+      void responder?.close(); setActivePreListenHealth(null); throw error;
+    } if (firstOpen) startupMark("database.noteDone");
+    if (firstOpen) setBootStep("database.initializers");
+    if (isReadOnly() && !readOnlyEmpty) {
+      initializeOwnerSends(db); initializeOwnWriteHolds(db);
+    } else {
+      initializeInbox(db);
+      initializeThreadSnooze(db);
+      initializeHighLevelThreadMarks(db);
+      initializeArtifacts(db);
+      initializeProjectTables(db); initializeTeamIdentityTables(db); ensureExternalRecallEpoch(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializeSendAttempts(db); initializePendingDelegations(db); initializeDelegationPacks(db); initializeBotCalls(db); initializeReplySchema(db); initializeAppTriggers(db); initializeOwnWriteHolds(db); initializeVenuePosts(db); initializeRoomShares(db); if (firstOpen) startupMark("database.tablesAll");
+      runOwnerHandoffMigration(db);   // admission of hand-offs is held until it succeeds (pending-delegations-schema.ts)
+      // Every counted write from here on moves the counter the upgrade screen's figures are keyed to (app-write-revision.ts).
+      installWriteRevisionTriggers(db);
+      // Reclaim's schema inventory is connection setup, not lineage work that
+      // the first resumed turn must perform before its allowance is checked.
+      prepareReclaimSchema(db);
+    }
+  } catch (error) {
+    // a build or write that met a full disk ends the start with its own words (the data is untouched: the failed statement rolled back)
+    if (isLowDisk(error)) console.error("[startup] low disk during start: the database could not be opened; nothing was changed");
+    try { db.close(); } finally { release(); } throw error;
+  }
   connectionId(db);
-  handle = db; handlePath = file; releaseIoBudget = release; generation++;
+  handle = db; handlePath = file; handleInMemory = readOnlyEmpty; releaseIoBudget = release; generation++;
+  // Boot tolerance, write authority: in a read-only process the engine refuses every write on this connection (SQLITE_READONLY), so a writer no
+  // caller guarded changes nothing. Reads, and the checkpoint that returns log space, still run.
+  if (isReadOnly()) db.exec("PRAGMA query_only=ON");
+  // Boot tolerance (A2): a read-only start makes no write between the end of its open and listen. The count starts here, and every write
+  // in that window notes its caller, so a count over 0 names the recovery that still has to be held back.
+  if (firstOpen) { writesAtOpen = { db, count: writeStatementCount(db) }; if (isReadOnly()) startWriteTrace(); }
   // After migration and before traffic: one TRUNCATE gives back a high-water WAL, then the sizes are logged.
   startupStorage(db, file, firstOpen);
-  // From here the checkpoints run in a worker thread (PASSIVE only; it never takes the writer lock). The connection keeps
-  // wal_autocheckpoint=1000 until the worker is ready, and goes back to it if the worker ever fails.
-  startWalMaintenance(file, {
-    setAutocheckpoint: pages => { if (handle === db) db.exec(`PRAGMA wal_autocheckpoint=${Math.trunc(pages)}`); },
+  // Automatic checkpoints stay disabled through readiness and retry gaps.
+  // Migration-before-listen and revoke-budget.ts's existing bounded own-debt
+  // drain are separate protocols; search adds no checkpoint to either path.
+  if (searchStartHold) {
+    void searchStartHold.then(() => {
+      if (handle === db && !isReadOnly()) startSearchIndex(db, file);
+    }).catch(error => console.warn("[message-search] worker start failed:", error instanceof Error ? error.message : String(error)));
+  } else if (!isReadOnly()) startSearchIndex(db, file); // the search worker's start writes its owner row and its own file: not in a read-only process
+  if (!isReadOnly()) startWalMaintenance(file, {
+    // (a read-only start writes nothing, so no automatic checkpoint can fall due: its setting is left as the open found it)
+    setAutocheckpoint: pages => { if (handle === db && !isReadOnly()) db.exec(`PRAGMA wal_autocheckpoint=${Math.trunc(pages)}`); },
+    journalSizeLimit: () => (handle === db ? Number((db.prepare("PRAGMA journal_size_limit").get() as { journal_size_limit?: number } | undefined)?.journal_size_limit) : null),
+    pinJournalSizeLimit: () => { if (handle === db) db.exec(`PRAGMA journal_size_limit=${JOURNAL_SIZE_LIMIT_BYTES}`); },
     nudge: async () => {
       if (handle !== db || db.isTransaction) return false;
       await awaitWriterGate();
@@ -419,7 +518,7 @@ export function database(): DatabaseSync {
   // (bounded chunks, event loop free between them), never on the request path.
   // its own chunks wait while the history upgrade runs, as the idle memory lanes do (transcript-backfill.ts yieldTranscriptBackfillTo)
   yieldTranscriptBackfillTo(backgroundUpgradeRunning);
-  startTranscriptBackfill(db, () => handle === db);
+  if (!isReadOnly()) startTranscriptBackfill(db, () => handle === db);
   if (firstOpen) startupMark("database.open");
   bumpMessagesVersion(); // a different file (restore, data-dir switch) invalidates every memoised Inbox answer
   return db;
@@ -460,8 +559,12 @@ export function withBusyBudget<T>(busyMs: number, op: string, run: (db: Database
   const db = database();
   setBusy(db, busyMs);
   const started = performance.now();
-  try { return run(db); }
+  try { if (op !== "wal-scrub") assertWalWriteAdmission(handlePath); return run(db); }
   catch (error) {
+    if(isBgDeferred(error))throw error;
+    // a refusal already typed keeps its type and op: low disk (boot steps switch to read-only on it) and the admission gate's own
+    // "wal-recovery" / "wal-recovery-paused" (bootdesign2-probes R6). Only a raw lock error is re-labelled with this op.
+    if (error instanceof DatabaseBusyError) throw error;
     if (isDatabaseBusy(error)) { const waited = performance.now() - started; noteBusy(op, waited); throw new DatabaseBusyError(op, waited); }
     throw error;
   } finally { try { setBusy(db, DEFAULT_BUSY_MS); } catch { /* handle closed */ } }
@@ -471,6 +574,7 @@ export function withBusyBudget<T>(busyMs: number, op: string, run: (db: Database
 export function transaction<T>(operation: (db: DatabaseSync) => T, options: TransactionOptions = {}): T {
   const db = database();
   const nested = db.isTransaction;
+  if (!nested) assertWalWriteAdmission(handlePath);
   const point = `memory_tx_${++savepointId}`;
   if (!nested) noteIdentityEpoch(db);
   // a background source, or the process's own writer hold in force (a CREATE INDEX, the VACUUM holds the lock for the whole build): the background
@@ -482,6 +586,7 @@ export function transaction<T>(operation: (db: DatabaseSync) => T, options: Tran
   try {
     try { db.exec(nested ? `SAVEPOINT ${point}` : "BEGIN IMMEDIATE"); }
     catch (error) {
+      if(isBgDeferred(error))throw error;
       if (budgeted && isDatabaseBusy(error)) {
         const waited = performance.now() - waitStart, op = options.op ?? "transaction";
         noteBusy(op, waited);
@@ -495,7 +600,7 @@ export function transaction<T>(operation: (db: DatabaseSync) => T, options: Tran
       const result = operation(db);
       if (result && typeof (result as {then?: unknown}).then === "function") throw new Error("ASYNC_DATABASE_TRANSACTION");
       db.exec(nested ? `RELEASE ${point}` : "COMMIT"); txScopeEnd(true); return result;
-    } catch (error) { try { db.exec(nested ? `ROLLBACK TO ${point}; RELEASE ${point}` : "ROLLBACK"); } finally { txScopeEnd(false); } throw error; }
+    } catch (error) { try { if(db.isTransaction)db.exec(nested ? `ROLLBACK TO ${point}; RELEASE ${point}` : "ROLLBACK"); } finally { txScopeEnd(false); } throw error; }
   } finally {
     if (budgeted) { try { setBusy(db, DEFAULT_BUSY_MS); } catch { /* handle closed */ } }
   }
@@ -541,6 +646,9 @@ function startupStorage(db: DatabaseSync, file: string, log: boolean) {
   storageTimer.unref();
 }
 
+// A boot step that meets low disk turns the process read-only after the open: the live connection is closed to writes at that moment.
+onReadOnly(() => { if (handle) { try { handle.exec("PRAGMA query_only=ON"); } catch { /* handle closed: the next open sets it */ } } });
+
 export function closeDatabase() {
   launchCounts = null; // a new connection counts again (or reads the cache)
   background?.stop(); background = null; runningBackground = null;
@@ -550,9 +658,10 @@ export function closeDatabase() {
   try { handle?.close(); } catch { /* idempotent shutdown */ }
   // After the server connection has closed, so the checkpointer's is the last one and not this one.
   void stopWalMaintenance();
+  void stopSearchIndex();
   // After the handle closes, so dropping the shm descriptor cannot release a lock SQLite still holds.
   try { releaseIoBudget?.(); } catch { /* idempotent shutdown */ }
-  handle = null; handlePath = null; releaseIoBudget = null; generation++;
+  handle = null; handlePath = null; handleInMemory = false; releaseIoBudget = null; generation++;
 }
 // Under vitest only: lets test cleanup close this copy of the module even after vi.resetModules() made it a stranger.
 registerTestHandle("close", dir => { if (dir === undefined || (handlePath && pathIsWithin(handlePath, dir))) closeDatabase(); });

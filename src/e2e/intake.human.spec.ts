@@ -165,7 +165,9 @@ const openSetup = async (page: Page, name: string) => {
 const ask = async (page: Page, answer: string) => {
   const input = page.getByRole("textbox", { name: QUESTION });
   await input.fill(answer);
-  await page.getByRole("button", { name: "Find it" }).click();
+  // The intake card's own button. Since 6670125239 every open bot Settings pane ends with
+  // "Can't find it? Ask {Chief}.", whose name also contains "find it" (substring match).
+  await card(page).getByRole("button", { name: "Find it", exact: true }).click();
   await expect(page.getByRole("button", { name: "Looking…" })).toHaveCount(0, { timeout: 15_000 });
 };
 

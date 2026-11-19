@@ -14,6 +14,7 @@ import { ArrowDownToLine, Loader2, PackageOpen, RefreshCw, Sparkles, X } from "l
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
 import { createPortal } from "react-dom";
 import { closeUpdateCard, closeUpdatePopup, installerOffer, popupFocusReturn, updatePopupPlace, useUpdateCardOpen, useUpdatePopup, useUpdatePopupAnchor, type UpdatePopupPlace } from "@/lib/update-card";
+import { openInstallerPage } from "@/lib/open-external";
 import { watchModalWindow } from "@/lib/modal-window";
 import { focusableWithin } from "@/lib/focus-trap";
 import { useUndoToast } from "@/lib/undo";
@@ -21,6 +22,7 @@ import { localeVersion, subscribeLocale, t } from "@/lib/i18n";
 import { releaseHighlights } from "@/lib/release-highlights";
 import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
+import { useNoticeTurn } from "@/lib/notice-lane";
 
 // The one action button in the card. Disabled drops the accent fill for the
 // flat raised grey — the "I heard you" the click needs while the main process
@@ -48,6 +50,8 @@ export function UpdateBanner() {
   const cardOpen = useUpdateCardOpen();
   const popupUp = useUpdatePopup(s);
   const status = s?.status;
+  // The pop-up floats in the bottom-left corner: it waits while a notice above it is up (lib/notice-lane.ts), never stacks.
+  const popupTurn = useNoticeTurn("update", Boolean(popupUp && s && s.status !== "idle" && s.status !== "checking" && !(cardOpen && status !== "downloading")));
   // Closing is just closing: the round button stays while there is anything to do.
   const dismiss = () => {
     closeUpdateCard();
@@ -60,7 +64,7 @@ export function UpdateBanner() {
   }, [cardOpen, status]);
   if (!s || s.status === "idle" || s.status === "checking") return null;
   if (cardShows) return <UpdateCardLayer s={s} dismiss={dismiss} />;
-  return popupUp ? <UpdatePopup s={s} onDismiss={dismiss} /> : null;
+  return popupUp && popupTurn ? <UpdatePopup s={s} onDismiss={dismiss} /> : null;
 }
 /** Mount with the visible card so the action opener belongs to this activation. */
 function UpdateCardLayer({ s, dismiss }: { s: UpdaterState; dismiss: () => void }) {
@@ -196,7 +200,6 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
   // arrives. Latch the pressed button as busy on the same frame so it greys
   // out immediately; the incoming status clears the latch.
   const [pending, setPending] = useState<"download" | "install" | "check" | null>(null);
-  // the download page did not open: the banner says so and the buttons stay pressable
   const [openFailed, setOpenFailed] = useState(false);
   const openPage = (url: string) => {
     setOpenFailed(false);
@@ -300,7 +303,7 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
           />
         </div>
       )}
-      {openFailed && <div role="alert" className="mt-2.5 text-[12px] text-danger">{t("modelSignIn.error.browser")}</div>}
+      {openFailed && <div role="alert" className="mt-2.5 text-[12px] text-danger">{t(installer ? "updates.openFailed" : "modelSignIn.error.browser")}</div>}
       </BoxBody>
 
       {installing && (
@@ -360,7 +363,7 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
               )}
             </button>
           )}
-          {installer && <button onClick={() => openPage(installer.url)} className={primaryAction}><ArrowDownToLine size={13} /> {t("updates.downloadInstaller", { version: installer.version })}</button>}
+          {installer && <button onClick={() => void openInstallerPage(installer.url, setOpenFailed)} className={primaryAction}><ArrowDownToLine size={13} /> {t("updates.downloadInstaller", { version: installer.version })}</button>}
           {s.status === "error" && !installer && (
             <button
               onClick={() => {

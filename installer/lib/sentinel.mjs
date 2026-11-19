@@ -31,7 +31,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /** The only variables the scanner child receives (it scrubs to its own allowlist again). */
-export const SENTINEL_ENV_KEYS = Object.freeze(["HOME", "XDG_STATE_HOME", "TMPDIR", "LANG", "TZ"]);
+export const SENTINEL_ENV_KEYS = Object.freeze(["HOME", "USERPROFILE", "LOCALAPPDATA", "XDG_STATE_HOME", "TMPDIR", "TEMP", "TMP", "SystemRoot", "SYSTEMROOT", "WINDIR", "LANG", "TZ", "MURAGE_RESOURCES_PATH"]);
 
 /**
  * The scanner entry and producer boundary bundled next to the server entry, or null when this payload has none (an
@@ -51,7 +51,7 @@ export function sentinelPayload(serverEntry, exists = existsSync) {
  * Writes (or keeps) this installation's descriptor. Never throws.
  * @returns {Promise<{ ok: true, descriptorPath: string, installationId: string, outputRoot: string, revision: number, written: boolean } | { ok: false, reason: string }>}
  */
-export async function prepareSentinel({ payload, dataDir, env = process.env, home, platform = process.platform, execPath = process.execPath, loadBoundary, readBytes = readFileSync }) {
+export async function prepareSentinel({ payload, dataDir, env = process.env, home, platform = process.platform, execPath = process.execPath, loadBoundary, readBytes = readFileSync, legacyWritersDrained = false }) {
   try {
     let b;
     try { b = loadBoundary ? await loadBoundary(payload.boundary) : await import(pathToFileURL(payload.boundary).href); } catch { return { ok: false, reason: "boundary" }; }
@@ -63,6 +63,10 @@ export async function prepareSentinel({ payload, dataDir, env = process.env, hom
     if (!outputRoot) return { ok: false, reason: "output-root" };
     // A fresh service account may have no XDG state folder yet; the XDG spec says to create it 0700.
     if (platform === "linux") { try { mkdirSync(dirname(dirname(outputRoot)), { recursive: true, mode: 0o700 }); } catch { /* ensureOutputRoot reports it */ } }
+    // The receipt boundary binds its absence proof to the state folder THIS process resolves (file-receipts.ts
+    // coverageOutputRoot). A launcher handed another folder (an operator env file) must not open that barrier: the proof
+    // would never match its descriptor and every start would refuse. Coverage then stays UNKNOWN, as for a legacy root.
+    const defaultReceipts = b.defaultOutputRoot(installationId) === outputRoot && b.prepareDefaultFileReceipts?.(installationRoot) === true;
     const root = b.ensureOutputRoot(outputRoot, { platform });
     if (!root.ok) return { ok: false, reason: `output-root-${root.reason}` };
     let sha256;
@@ -80,6 +84,10 @@ export async function prepareSentinel({ payload, dataDir, env = process.env, hom
     if (!valid.ok) return { ok: false, reason: `descriptor-${valid.reason}` };
     const written = b.writeDescriptor(next, { platform });
     if (!written.ok) return { ok: false, reason: `descriptor-write-${written.reason}` };
+    // Receipt producer/consumer owner: scperf-p2. Existing installations stay
+    // UNKNOWN unless the caller has actually drained every legacy writer.
+    if (defaultReceipts && !b.prepareDefaultFileReceipts?.(installationRoot, next)) return { ok: false, reason: "receipt-enrollment" };
+    if (legacyWritersDrained === true && !b.provisionFileReceipts?.(installationRoot, { legacyExcluded: true, descriptor: next })) return { ok: false, reason: "receipt-enrollment" };
     return { ok: true, descriptorPath, installationId, outputRoot, revision: next.scheduleRevision, written: true };
   } catch {
     return { ok: false, reason: "internal" };

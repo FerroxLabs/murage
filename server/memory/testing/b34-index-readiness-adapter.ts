@@ -1,3 +1,4 @@
+// BG admission producer owner: scperf-p1. B34 readiness consumer owner: new3-g2d.
 // B34 Q06 join adapter (Claude 4 lane, T2): old episodic evidence with
 // unrelated recent context, through the runner's isolated server (scripted fake
 // Claude CLI, keyword index, no model, no network). Loaded by Claude 5's runner
@@ -42,6 +43,7 @@
 // Vitest. Check details carry identifiers, counts and statuses only. Turn text
 // avoids opaque references (word_word, ABC-1, paths, URLs; relevance.ts:9-11)
 // except the fake CLI's own hold marker on the held capability turn.
+import { NATIVE_BACKGROUND_READY_MS } from "./b34-background-readiness.ts";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -66,7 +68,8 @@ const OTHER_BOT_QUESTION = "For this bot only, how many people must approve a pr
 const ROOM_QUESTION = "For this room, how many people must approve a production rollout?";
 const DEGRADATION_REASONS = new Set(["local-model-unavailable", "semantic-index-unavailable"]);
 const MEMORY_MODES = new Set(["off", "capture", "active", "paused"]);
-const READY_TIMEOUT_MS = 45_000;
+// MAIN RULING INT-CONFLICT-DEFAULT 8f8f4e945fb b36bf61264c: processed/indexed/isolation predicates span BG admission.
+const READY_TIMEOUT_MS = NATIVE_BACKGROUND_READY_MS;
 
 type Row = Record<string, unknown>;
 type SourceState = {

@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "g9-ux-fable",
+    "account": "Fable copy seat g9-ux-fable, read-only G9 Settings copy review"
+  },
+  "author": "thrust-g9ux",
+  "date": "2026-11-18",
+  "base": "47e32b46998d44e90d4831d7f6889b3846555ade",
+  "scope": "G9 browser-off help line (settings.bot.browser.featureOff) in 8 languages, and the g9-ux-fable reviewer seat",
+  "strings": {
+    "en:settings.bot.browser.featureOff": {
+      "text": "Turn on the built-in browser in App settings → Computer & browser → Built-in browser.",
+      "en": "Turn on the built-in browser in App settings → Computer & browser → Built-in browser.",
+      "verdict": "pass",
+      "note": "Pass after change (COPY-REVIEW.md, g9-ux-fable). The gear is labelled App settings in sentence case, so the path uses that casing; Turn on replaces Enable because the control is a switch. Computer & browser and Built-in browser match settings.page.computer and the companion.browser card. No em dash; arrows are the existing path style."
+    },
+    "de:settings.bot.browser.featureOff": {
+      "text": "Aktiviere den integrierten Browser unter App-Einstellungen → Computer & Browser → Integrierter Browser.",
+      "en": "Turn on the built-in browser in App settings → Computer & browser → Built-in browser.",
+      "verdict": "pass",
+      "note": "Approved as proposed (COPY-REVIEW.md). App-Einstellungen, Computer & Browser and Integrierter Browser match nav.appSettings, settings.page.computer and the companion.browser card. No em dash."
+    },
+    "es:settings.bot.browser.featureOff": {
+      "text": "Activa el navegador integrado en Ajustes de la aplicación → Ordenador y navegador → Navegador integrado.",
+      "en": "Turn on the built-in browser in App settings → Computer & browser → Built-in browser.",
+      "verdict": "pass",
+      "note": "Pass after change (COPY-REVIEW.md). The app calls the gear Ajustes de la aplicación (nav.appSettings, settings.title Ajustes), not Configuración; Ordenador y navegador and Navegador integrado match the page and card. No em dash."
+    },
+    "fr:settings.bot.browser.featureOff": {
+      "text": "Active le navigateur intégré dans Réglages de l’application → Ordinateur et navigateur → Navigateur intégré.",
+      "en": "Turn on the built-in browser in App settings → Computer & browser → Built-in browser.",
+      "verdict": "pass",
+      "note": "Pass after change (COPY-REVIEW.md). The app says Réglages de l’application (nav.appSettings, settings.title Réglages), not Paramètres; Ordinateur et navigateur and Navigateur intégré match the page and card. No em dash."
+    },
+    "hi:settings.bot.browser.featureOff": {
+      "text": "ऐप सेटिंग → कंप्यूटर और ब्राउज़र → बिल्ट-इन ब्राउज़र में ब्राउज़र चालू करें।",
+      "en": "Turn on the built-in browser in App settings → Computer & browser → Built-in browser.",
+      "verdict": "pass",
+      "note": "Approved as proposed (COPY-REVIEW.md). ऐप सेटिंग, कंप्यूटर और ब्राउज़र and बिल्ट-इन ब्राउज़र match nav.appSettings, the page and the card; it no longer contains App Settings. No em dash."
+    },
+    "ja:settings.bot.browser.featureOff": {
+      "text": "［アプリの設定］→［コンピューターとブラウザー］→［内蔵ブラウザー］でブラウザーをオンにできます。",
+      "en": "Turn on the built-in browser in App settings → Computer & browser → Built-in browser.",
+      "verdict": "pass",
+      "note": "Approved as proposed (COPY-REVIEW.md). アプリの設定, コンピューターとブラウザー and 内蔵ブラウザー match nav.appSettings, the page and the card. No em dash."
+    },
+    "pt-br:settings.bot.browser.featureOff": {
+      "text": "Ative o navegador integrado em Configurações do app → Computador e navegador → Navegador integrado.",
+      "en": "Turn on the built-in browser in App settings → Computer & browser → Built-in browser.",
+      "verdict": "pass",
+      "note": "Approved as proposed (COPY-REVIEW.md). Configurações do app, Computador e navegador and Navegador integrado match nav.appSettings, the page and the card. No em dash."
+    },
+    "zh:settings.bot.browser.featureOff": {
+      "text": "可在“应用设置 → 电脑与浏览器 → 内置浏览器”中开启浏览器。",
+      "en": "Turn on the built-in browser in App settings → Computer & browser → Built-in browser.",
+      "verdict": "pass",
+      "note": "Approved as proposed (COPY-REVIEW.md). 应用设置, 电脑与浏览器 and 内置浏览器 match nav.appSettings, the page and the card. No em dash."
+    }
+  },
+  "files": {
+    "reviewers.json": {
+      "text": "{\n  \"version\": 1,\n  \"reviewers\": [\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol\",\n      \"account\": \"gpt-6.1-sol read-only, codex acct2 and acct6\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"claude-copyrev\",\n      \"account\": \"claude sonnet 5.5, copy-review seat for MurageMain\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"muragemain-copyrev\",\n      \"account\": \"claude opus 5.5, MurageMain copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-sc-issues-r3\",\n      \"account\": \"sc-issues-r3 independent review of inherited sc-issues copy\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-copyrev-m5-followup\",\n      \"account\": \"Independent Sol review session for the copyrev-m5 replacement titles\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"g9-ux-fable\",\n      \"account\": \"Fable copy seat g9-ux-fable, read-only G9 Settings copy review\"\n    }\n  ]\n}\n",
+      "verdict": "pass"
+    }
+  }
+}

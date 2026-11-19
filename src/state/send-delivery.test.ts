@@ -679,7 +679,7 @@ describe("a busy answer (DATABASE_BUSY, 503 with Retry-After) is retried with th
     expect(store).toContain("{ signal: action.signal });");
     expect(store).toContain("body: JSON.stringify({ text: action.text, threadId, sendId })");
     expect(store).toContain("busyTries: number = busyRetriesFor(init?.method)");
-    expect(store).toContain("return api(path, init, busyTries - 1);");
+    expect(store).toContain("return api(path, init, busyTries - 1, reconnectTries);");
     const chat = readFileSync(new URL("../components/ChatView.tsx", import.meta.url), "utf8");
     // one draft per message, one edit per message in flight, each answer keyed by its own sendId (lib/edit-drafts.test.ts)
     expect(chat).toContain("const next = beginEdit(editDraftStore.get(botId), messageId, text, newSendId());");
@@ -696,4 +696,39 @@ describe("a busy answer (DATABASE_BUSY, 503 with Retry-After) is retried with th
     expect(chat).toContain("<BubbleEditor initial={editText ?? text} saving={editSaving}");
     expect(chat).toContain("editText={editDrafts[m.id]?.text}");
   });
+});
+
+describe('L8 immutable receipt delivery', () => {
+  it('F7-ML3-LOSTACK-E2E client: definitive failed receipt is passed with failure, never acknowledged as success', async () => {
+    const storage = fakeStorage(); const seen = vi.fn(); let calls = 0;
+    const r = renderer(storage, async () => { if (++calls === 1) throw new Error('lost acknowledgement'); return { ok: false, existing: true, threadId: 't1', receipt: { state: 'failed', attemptId: 'a', receiptRevision: 2 } }; });
+    await r.delivery.submit(entry('s'), { onReceipt: seen }); r.log.timers[0](); await new Promise(resolve => setTimeout(resolve, 0));
+    expect(seen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ failure: 'failed' })); expect(r.outbox.list()).toEqual([]); expect(calls).toBe(2);
+  });
+  it('F7-ML3-COMPLETED-UNCHANGED GUARD: completed receipt still acknowledges', async () => {
+    const seen = vi.fn(); const r = renderer(fakeStorage(), async () => ({ ok: true })); await r.delivery.submit(entry('s'), { onReceipt: seen }); expect(seen).toHaveBeenCalledWith(expect.anything(), { ok: true });
+  });
+  it('UI-INDEX-RELOAD: maintenance retains the exact send beyond the ordinary give-up deadline', async () => {
+    const storage = fakeStorage(); const clock = { now: 2000 }; const e = entry('index', { noSteer: true } as any);
+    const r = renderer(storage, async () => { throw Object.assign(new Error('indexing'), { status: 503, body: { code: 'turn_index_not_ready', accepted: false, retryAfterMs: 5000 } }); }, clock);
+    await r.delivery.submit(e); clock.now += OUTBOX_GIVE_UP_MS + 1; r.log.timers[0](); await new Promise(resolve => setTimeout(resolve, 0)); expect(createOutbox(storage).list()).toHaveLength(1);
+    const posted = vi.fn(async () => ({ ok: true })); const next = renderer(storage, posted, clock); next.delivery.reconcile({ messageSendIds: new Set(), pendingSendIds: new Set() }); await new Promise(resolve => setTimeout(resolve, 0)); expect(posted).toHaveBeenCalledWith(expect.objectContaining({ sendId: e.sendId, text: e.text, draft: e.draft, noSteer: true }), expect.anything());
+  });
+});
+
+it.each(['stale_action', 'stop_required', 'duplicate_confirmation_required', 'target_dismissed'])('F7-COMPOSER fences: %s is definitive and never creates a replacement chip', async code => {
+  const storage = fakeStorage(); const received = vi.fn(); const failed = vi.fn(() => true);
+  const r = renderer(storage, async () => { throw Object.assign(Error(code), { status: 409, body: { code } }); });
+  const action = { contract: 1, actionId: 'press', threadId: 't1', sendId: 'old', attemptId: 'a', receiptRevision: 1, bindingEpoch: 1, kind: 'resend', replacementSendId: 'new', confirmDuplicate: false };
+  await r.delivery.submit(entry('new', { draft: undefined, sendAction: action } as any), { onReceipt: received, onFailed: failed });
+  expect(received).not.toHaveBeenCalled(); expect(failed).toHaveBeenCalledOnce(); expect(r.outbox.list()).toEqual([]); expect(r.log.timers).toEqual([]);
+});
+it('F7-COMPOSER-RELOAD: malformed action acknowledgement keeps the durable action for identical retry', async () => {
+  const storage = fakeStorage(); const r = renderer(storage, async () => ({ ok: true }));
+  const sendAction = { contract: 1, actionId: 'press', threadId: 't1', sendId: 'old', attemptId: 'a', receiptRevision: 1, bindingEpoch: 1, kind: 'resend', replacementSendId: 'new', confirmDuplicate: false };
+  await r.delivery.submit(entry('new', { draft: undefined, sendAction } as any)); expect(r.outbox.list()[0]).toMatchObject({ sendAction }); expect(r.log.receipts).toEqual([]);
+});
+it('F7-COMPOSER durable press: storage failure prevents the action request', async () => {
+  const storage = fakeStorage(); storage.setItem = () => { throw Error('quota'); }; const post = vi.fn(); const r = renderer(storage, post);
+  await r.delivery.submit(entry('new', { draft: undefined, sendAction: { actionId: 'press' } } as any)); expect(post).not.toHaveBeenCalled(); expect(r.log.recovered).toEqual(['new']);
 });

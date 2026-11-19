@@ -7,6 +7,9 @@ import { EngineManager, type ManagedEngineInstance } from "./engine-management.t
 import { QUALIFIED_FUIGO_VERSION } from "./fuigo-native-update.ts";
 import { nativeFixtureAsset } from "./testing/fuigo-native-fixture.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
+import { nextMajor, nextMinor, nextPatch } from "./testing/version-fixture.ts";
+
+const newerVersion = nextPatch(QUALIFIED_FUIGO_VERSION);
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeTempDir(root))); });
 async function fixture(custom = false, platform: NodeJS.Platform = "darwin", arch = "arm64") {
@@ -46,7 +49,7 @@ it("declines latest releases outside Murage's compatibility range", async () => 
   await expect(f.manager.install("fuigo")).rejects.toThrow(/not supported/); expect(f.probe).not.toHaveBeenCalled(); expect(f.activate).not.toHaveBeenCalled();
 });
 const tarballs = (f: { fetcher: { mock: { calls: unknown[][] } } }) => f.fetcher.mock.calls.map(call => String(call[0])).filter(url => !url.endsWith("/fuigo/latest"));
-it.each(["1.0.41", "1.1.0", "2.0.0"])("shows an owner on the qualified Fuigo as up to date when npm latest is %s, and never stages it", async latest => {
+it.each([newerVersion, nextMinor(QUALIFIED_FUIGO_VERSION), nextMajor(QUALIFIED_FUIGO_VERSION)])("shows an owner on the qualified Fuigo as up to date when npm latest is %s, and never stages it", async latest => {
   const f = await fixture(); f.instance.snapshot.version = `fuigo ${QUALIFIED_FUIGO_VERSION}`; f.setVersion(latest);
   const status = await f.manager.check("fuigo");
   expect(status).toMatchObject({ updateAvailable: false, releaseSupported: true, latestVersion: QUALIFIED_FUIGO_VERSION, source: "bundled" });
@@ -56,11 +59,11 @@ it.each(["1.0.41", "1.1.0", "2.0.0"])("shows an owner on the qualified Fuigo as 
   expect(f.probe).not.toHaveBeenCalledWith(expect.anything(), latest, expect.anything());
 });
 it("offers the qualified release, not a newer latest, to an owner below the cap", async () => {
-  const f = await fixture(); f.setVersion("1.0.41");
+  const f = await fixture(); f.setVersion(newerVersion);
   expect(await f.manager.check("fuigo")).toMatchObject({ updateAvailable: true, latestVersion: QUALIFIED_FUIGO_VERSION });
   await f.manager.install("fuigo");
   expect(await f.manager.status("fuigo")).toMatchObject({ source: "managed", installedVersion: QUALIFIED_FUIGO_VERSION, updateAvailable: false });
-  expect(tarballs(f).every(url => !url.includes("1.0.41"))).toBe(true);
+  expect(tarballs(f).every(url => !url.includes(newerVersion))).toBe(true);
 });
 it("still updates when npm latest is at or under the cap", async () => {
   const f = await fixture(); f.setVersion("1.0.10");
@@ -70,9 +73,9 @@ it("still updates when npm latest is at or under the cap", async () => {
   await f.manager.install("fuigo"); expect(await f.manager.status("fuigo")).toMatchObject({ installedVersion: QUALIFIED_FUIGO_VERSION, rollbackAvailable: true });
 });
 it("leaves an owner already on a newer custom Fuigo on it, even through Use managed Fuigo", async () => {
-  const f = await fixture(true); f.instance.snapshot.version = "fuigo 1.0.41"; f.setVersion("1.0.41");
+  const f = await fixture(true); f.instance.snapshot.version = `fuigo ${newerVersion}`; f.setVersion(newerVersion);
   const status = await f.manager.check("fuigo");
-  expect(status).toMatchObject({ updateAvailable: false, source: "custom", message: "You have Fuigo 1.0.41, which is newer than this Murage version offers. It stays as it is." });
+  expect(status).toMatchObject({ updateAvailable: false, source: "custom", message: `You have Fuigo ${newerVersion}, which is newer than this Murage version offers. It stays as it is.` });
   await f.manager.install("fuigo", { allowCustom: true });
   expect((await f.manager.status("fuigo")).busy).toBe(false);
   expect(f.instance.cli).toBe("/preserved/custom-cli"); expect(f.activate).not.toHaveBeenCalled(); expect(f.probe).not.toHaveBeenCalled(); expect(tarballs(f)).toEqual([]);
@@ -80,15 +83,15 @@ it("leaves an owner already on a newer custom Fuigo on it, even through Use mana
 it("keeps a managed Fuigo newer than the cap recognised, with no downgrade offered", async () => {
   // Real paths, as staging writes them (macOS tmpdir is a /var -> /private/var link).
   const f = await fixture(); await mkdir(join(f.root, "fuigo", "fuigo"), { recursive: true });
-  const directory = join(await realpath(join(f.root, "fuigo", "fuigo")), "1.0.41-0d3c1f2e-aaaa-4bbb-8ccc-123456789abc"); await mkdir(directory);
-  const cli = join(directory, "fuigo"), binary = nativeFixtureAsset("1.0.41").binary; await writeFile(cli, binary);
-  const proof = { version: "1.0.41", protocolVersion: 1, loadSession: true, sessionCreated: true };
-  await writeFile(join(directory, "manifest.json"), JSON.stringify({ schema: 1, instanceId: "fuigo", version: "1.0.41", target: "darwin-arm64", package: "@fuigo/darwin-arm64", tarball: "t", integrity: "i", binarySha256: createHash("sha256").update(binary).digest("hex"), proof }));
-  f.instance.cli = cli; f.instance.snapshot.version = "fuigo 1.0.41"; f.setVersion("1.0.41");
-  expect(await f.manager.check("fuigo")).toMatchObject({ source: "managed", installedVersion: "1.0.41", updateAvailable: false, latestVersion: QUALIFIED_FUIGO_VERSION });
+  const directory = join(await realpath(join(f.root, "fuigo", "fuigo")), `${newerVersion}-0d3c1f2e-aaaa-4bbb-8ccc-123456789abc`); await mkdir(directory);
+  const cli = join(directory, "fuigo"), binary = nativeFixtureAsset(newerVersion).binary; await writeFile(cli, binary);
+  const proof = { version: newerVersion, protocolVersion: 1, loadSession: true, sessionCreated: true };
+  await writeFile(join(directory, "manifest.json"), JSON.stringify({ schema: 1, instanceId: "fuigo", version: newerVersion, target: "darwin-arm64", package: "@fuigo/darwin-arm64", tarball: "t", integrity: "i", binarySha256: createHash("sha256").update(binary).digest("hex"), proof }));
+  f.instance.cli = cli; f.instance.snapshot.version = `fuigo ${newerVersion}`; f.setVersion(newerVersion);
+  expect(await f.manager.check("fuigo")).toMatchObject({ source: "managed", installedVersion: newerVersion, updateAvailable: false, latestVersion: QUALIFIED_FUIGO_VERSION });
   await f.manager.install("fuigo");
   expect(f.instance.cli).toBe(cli); expect(f.activate).not.toHaveBeenCalled(); expect(tarballs(f)).toEqual([]);
-  // A probe that reported no version still never downgrades: the receipt names 1.0.41.
+  // A probe that reported no version still never downgrades: the receipt names the newer release.
   f.instance.snapshot.version = null; await f.manager.install("fuigo");
   expect(f.instance.cli).toBe(cli); expect(f.activate).not.toHaveBeenCalled(); expect(tarballs(f)).toEqual([]);
 });

@@ -268,6 +268,57 @@ describe("activity-scaled warm pool", () => {
     expect(r.closed).toEqual(["1:pool budget"]);
   });
 
+  // fix/1020-warm-pool-fable: Sean's 1.0.19 log, `evict reason=background turn` on the owner's own thread.
+  it("a background turn on an engine that already served the owner hands it back: not closed, not moved up, hold kept", async () => {
+    const r = rig({ sizesMB: { 1: 100, 2: 100 }, budgetMB: 8000 });
+    const [k, m] = r.member(1);
+    await r.pool.markIdle(k, m); // the owner's turn settled
+    r.pool.release(k); // a routine's turn on the same thread reuses the engine
+    await r.pool.markIdle(k, { ...m, background: true });
+    expect(r.closed).toEqual([]);
+    expect(r.pool.idleCount()).toBe(1);
+    expect(r.logs.filter((l) => l.includes("evict"))).toEqual([]);
+    // the owner's next turn finds it and settles it as before
+    r.pool.release(k);
+    await r.pool.markIdle(k, m);
+    expect(r.closed).toEqual([]);
+    // the borrowed return earns no priority: the engine the owner used later is the spare that stays
+    const [k2, m2] = r.member(2);
+    r.pool.release(k);
+    await r.pool.markIdle(k2, m2);
+    expect(r.closed).toEqual([]); // 1 is busy with the background turn, 2 is the one idle spare
+    await r.pool.markIdle(k, { ...m, background: true });
+    expect(r.closed).toEqual(["1:spare limit"]);
+    expect(r.pool.idleCount()).toBe(1);
+  });
+
+  it("a background turn on the owner's engine keeps the thread's intent hold and does not extend the activity window", async () => {
+    const r = rig({ sizesMB: { 1: 100, 2: 100 }, budgetMB: 8000 });
+    const [k, m] = r.member(1);
+    await r.pool.markIdle(k, m);
+    r.pool.warmIntent("t1"); // the owner is typing here
+    const [k2, m2] = r.member(2);
+    r.pool.release(k);
+    await r.pool.markIdle(k2, m2); // another thread's owner turn settled meanwhile
+    await r.pool.markIdle(k, { ...m, background: true });
+    expect(r.closed).toEqual(["2:spare limit"]); // the held thread's engine is the spare kept, as before the background turn
+    r.clock.t += WINDOW + 1;
+    await r.pool.tick();
+    expect(r.closed).toEqual(["2:spare limit", "1:activity window"]); // the background turn bought no extra time
+  });
+
+  it("a background turn on a fresh engine, or on a prewarm no send followed, is still released at once", async () => {
+    const r = rig({ sizesMB: { 1: 100, 2: 100 }, budgetMB: 8000 });
+    await r.settle(1, "claude", true).p;
+    expect(r.closed).toEqual(["1:background turn"]);
+    const [k, m] = r.member(2);
+    await r.pool.markIdle(k, { ...m, hold: true }); // started on intent, no send yet
+    r.pool.release(k);
+    await r.pool.markIdle(k, { ...m, background: true });
+    expect(r.closed).toEqual(["1:background turn", "2:background turn"]);
+    expect(r.pool.idleCount()).toBe(0);
+  });
+
   it("a send after a prewarm ends its hold; a background turn never earns one", async () => {
     const r = rig({ sizesMB: { 1: 100, 2: 100 }, budgetMB: 8000 });
     const [k, m] = r.member(1);
@@ -298,11 +349,12 @@ describe("activity-scaled warm pool", () => {
   });
 
   it("remembered spawn inputs drop the message, attachments and callbacks, are bounded, and live in memory only", () => {
-    const kept = spawnInputsOf({ threadId: "t", text: "secret words", cwd: "/w", images: [{ mimeType: "image/png", data: "AAAA" }], onToolSurface: () => {}, beforeSubmit: () => {}, prewarm: true } as never);
+    const kept = spawnInputsOf({ threadId: "t", text: "secret words", cwd: "/w", images: [{ mimeType: "image/png", data: "AAAA" }], onToolSurface: () => {}, beforeSubmit: () => {}, prepareSubmit: () => {}, notWritten: () => {}, attemptWritten: () => {}, attemptUncertain: () => {}, attemptNotWritten: () => {}, attemptSettled: () => {}, prewarm: true } as never);
     expect(kept).toMatchObject({ threadId: "t", cwd: "/w", text: "" });
     expect(kept.images).toBeUndefined();
     expect(kept.onToolSurface).toBeUndefined();
     expect(kept.beforeSubmit).toBeUndefined();
+    for (const callback of [kept.prepareSubmit, kept.notWritten, kept.attemptWritten, kept.attemptUncertain, kept.attemptNotWritten, kept.attemptSettled]) expect(callback).toBeUndefined();
     expect(kept.prewarm).toBeUndefined();
     const memory = createTurnMemory<{ n: number; cursor?: string }>(2);
     memory.remember("a", { n: 1 }); memory.remember("b", { n: 2 }); memory.remember("c", { n: 3 });
@@ -383,8 +435,11 @@ describe("activity-scaled warm pool", () => {
     const start = source.indexOf("// Warm on intent: the owner focused");
     expect(start).toBeGreaterThan(-1);
     const route = source.slice(start, source.indexOf("viewer-close", start));
-    expect(route).toContain("warmPool.warmIntent(threadId)");
+    expect(route).toContain('warmThread(bot, threadId, "intent")');
     expect(route).not.toContain("noteUserActivity");
+    const warm = source.slice(source.indexOf("function warmThread("), source.indexOf("K2 step 2: the failover ended"));
+    expect(warm).toContain("warmPool.warmIntent(threadId)");
+    expect(warm).not.toContain("noteUserActivity");
   });
 
   it("settled follows the start itself, past any bounded wait", async () => {

@@ -192,6 +192,18 @@ async function probe(configPath) {
   }
 }
 
+/** The environment the probe (and through it the forked worker) runs with. The worker runs from a copy of server/ in a temporary
+ * folder, so its dist-native fallback beside the module never exists: like the app's server (electron/harness-resources.mjs, which
+ * server/memory/worker-controller.ts passes on to the worker), it finds engine-exclusion.node through MURAGE_RESOURCES_PATH, the
+ * real packaged Resources. Without it the worker fails closed with BG_ENFORCEMENT_UNAVAILABLE. */
+export function probeEnvironment({ root, home, resources, backend, systemRoot }) {
+  const env = { HOME: home, USERPROFILE: home, TMPDIR: root, TMP: root, TEMP: root, ELECTRON_RUN_AS_NODE: "1", HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", NODE_PATH: "", XDG_CACHE_HOME: join(home, "cache"), XDG_CONFIG_HOME: join(home, "config") };
+  if (systemRoot) env.SystemRoot = systemRoot;
+  if (resources) env.MURAGE_RESOURCES_PATH = resources;
+  if (backend === "wasm") env.MURAGE_MEMORY_BACKEND = "wasm";
+  return env;
+}
+
 async function main() {
   if (args.includes("--probe")) return probe(option("--probe"));
   // Imported here, not at the top: the probe runs from a lone copy of this file, beside no checkout.
@@ -220,10 +232,18 @@ async function main() {
     // Fixture setup only: the authoritative memory schema, bundled from this checkout into one module, creates the
     // authority database. The tsc copy under server/server imports modules the server resources do not carry. The
     // worker under test is still the packaged, bundled one.
-    const schemaModule = join(root, "fixture-schema.mjs");
+    // Built the way scripts/bundle-server.mjs builds the packaged server: schema.ts reaches the sentinel through
+    // ../sqlite-open.ts, so CommonJS leaves read require/__filename/__dirname (banner), the Windows hide installer
+    // stays external and relocatable (plugin), and drivers/murage-exec.ts reads its wrapper beside the bundle at load.
+    const fixtureDir = join(root, "fixture-schema");
+    const schemaModule = join(fixtureDir, "schema.mjs");
     const { build } = await import("esbuild");
-    await build({ stdin: { contents: 'export { migrateMemorySchema, validateMemorySchema } from "./server/memory/schema.ts"; export { BRANCH_TABLES_SQL } from "./server/branch-index.ts";', resolveDir: resolve(dirname(self), ".."), loader: "ts" }, bundle: true, platform: "node", target: "node20", format: "esm", outfile: schemaModule, logLevel: "error",
-      banner: { js: 'import { createRequire as __fixtureRequire } from "node:module"; const require = __fixtureRequire(import.meta.url);' } });
+    const { windowsHideBundlePlugin } = await import(pathToFileURL(join(dirname(self), "windows-hide-bundle-plugin.mjs")).href);
+    const checkout = resolve(dirname(self), "..");
+    await build({ stdin: { contents: 'export { migrateMemorySchema, validateMemorySchema } from "./server/memory/schema.ts"; export { BRANCH_TABLES_SQL } from "./server/branch-index.ts";', resolveDir: checkout, loader: "ts" }, bundle: true, platform: "node", target: "node20", format: "esm", outfile: schemaModule, logLevel: "error",
+      banner: { js: 'import { createRequire as __fixtureRequire } from "node:module"; import { fileURLToPath as __fixturePath } from "node:url"; import { dirname as __fixtureDir } from "node:path"; const require = __fixtureRequire(import.meta.url); const __filename = __fixturePath(import.meta.url); const __dirname = __fixtureDir(__filename);' },
+      plugins: [windowsHideBundlePlugin()] });
+    for (const sibling of ["murage-exec", "murage-exec.shapes"]) cpSync(join(checkout, "server/drivers", sibling), join(fixtureDir, sibling));
     const model = join(root, "model");
     for (const asset of manifest.files) {
       const source = resolve(modelArgument, asset.path), target = resolve(model, asset.path);
@@ -239,11 +259,9 @@ async function main() {
     const runner = join(root, "probe.mjs"), config = join(root, "fixture.json");
     cpSync(self, runner);
     writeFileSync(config, JSON.stringify({ root, server, model, schemaModule }), { mode: 0o600 });
-    const env = { HOME: home, USERPROFILE: home, TMPDIR: root, TMP: root, TEMP: root, ELECTRON_RUN_AS_NODE: "1", HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", NODE_PATH: "", XDG_CACHE_HOME: join(home, "cache"), XDG_CONFIG_HOME: join(home, "config") };
-    if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     const backend = option("--backend") ?? "auto";
     assert(["auto", "wasm"].includes(backend), "--backend must be auto or wasm");
-    if (backend === "wasm") env.MURAGE_MEMORY_BACKEND = "wasm";
+    const env = probeEnvironment({ root, home, resources, backend, systemRoot: process.env.SystemRoot });
     child = spawn(runtime, [runner, "--probe", config], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = "";
     child.stdout.on("data", data => { stdout = (stdout + data).slice(-64000); });
@@ -265,4 +283,6 @@ async function main() {
     safeWipeSync(root, { maxRetries: 5, retryDelay: 200 });
   }
 }
-main().catch(error => { console.error(error?.stack ?? String(error)); process.exitCode = 1; });
+// Run only as a program (the probe copy runs itself too); a test imports probeEnvironment without starting a smoke.
+const entry = (() => { try { return process.argv[1] ? realpathSync(process.argv[1]) : ""; } catch { return ""; } })();
+if (entry === realpathSync(self)) main().catch(error => { console.error(error?.stack ?? String(error)); process.exitCode = 1; });

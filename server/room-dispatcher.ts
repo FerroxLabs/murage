@@ -151,8 +151,9 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
       if (seen.has(request.id)) continue;
       seen.add(request.id);
       const parked = request.retryAttempts !== undefined;
+      const spendRetry = parked && request.refusal === "spend_limit";
       // A retry row whose request no longer carries the parked marker is stale (written by an earlier build): drop it and treat the row as runnable.
-      if (parked && request.refusal !== RETAINED_UNRESOLVED) { clearRetainedRoomRequest(db, request.id); request = { ...request, retryAttempts: undefined }; }
+      if (parked && request.refusal !== RETAINED_UNRESOLVED && !spendRetry) { clearRetainedRoomRequest(db, request.id); request = { ...request, retryAttempts: undefined }; }
       if (sharedByProvenance(db, request)) {
         // Shared work is classified by the provenance recorded when it was created, never by the live registry. Resolved (its bot and task are
         // listed): the shared drain takes it from here, every pump. Tombstoned (the owner deleted the bot, task or room): cancelled with a receipt.
@@ -166,7 +167,7 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
         }
         continue;
       }
-      if (parked) { clearRetainedRoomRequest(db, request.id); request = { ...request, refusal: null, retryAttempts: undefined }; }
+      if (parked && !spendRetry) { clearRetainedRoomRequest(db, request.id); request = { ...request, refusal: null, retryAttempts: undefined }; }
       if (!DISPATCHED_BY_ROOM.has(request.verb) || (request.verb === "wake" && request.workItemId)) continue;
       const threadId = request.targetThreadId ?? request.rootThreadId;
       const roomKey = `${request.groupId}:${threadId}`;
@@ -244,6 +245,10 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
         if (decision.retry === "never") {
           completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: decision.line });
           deps.onClosed(request, refusalLine(decision));
+        } else if (spendRetry && decision.reason === "spend_limit") {
+          // A due spend retry that is still held: back to its wait (30 s doubling), so it leaves the due set instead of being read every pump.
+          deferRetainedRoomRequest(db, request.id, deps.now(), "spend_limit");
+          continue;
         } else if (request.refusal !== decision.reason) {
           recordRoomRequestRefusal(db, request.id, decision.reason);
           deps.onRefused?.(request, decision);

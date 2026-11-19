@@ -1,9 +1,12 @@
 import { expect, it, vi } from "vitest";
-import { TelegramApprovals, type TelegramApproval } from "./telegram-approvals.ts";
+import { channelApprovalFixture } from "./testing/channel-approval-fixture.ts";
+import { durableChannelApproval, TelegramApprovals, type TelegramApproval } from "./telegram-approvals.ts";
+import { database } from "./database.ts";
+import { updateRecord } from "./decision/records.ts";
 import type { TelegramUpdate } from "./telegram-update.ts";
 function fixture() {
   let now = 1;
-  let pending: TelegramApproval[] = [{ id: "request-card", fingerprint: "exact-action", summary: "Write fixture.txt" }];
+  let pending: TelegramApproval[] = [channelApprovalFixture({ id: "request-card", fingerprint: "exact-action", summary: "Write fixture.txt" })];
   const resolve = vi.fn(async () => true);
   const sendMessage = vi.fn(async (_input: any) => ({ chatId: "7", messageId: 19 }));
   const answerCallbackQuery = vi.fn(async (_input: any) => {});
@@ -16,6 +19,27 @@ function fixture() {
     change: () => { pending = [{ ...pending[0], fingerprint: "changed-action" }]; },
     remove: () => { pending = []; }, expire: () => { now += 600001; } };
 }
+it("publishes only a live registered approval with its exact durable identity", async () => {
+  const approval = channelApprovalFixture({ id: "guard-card", fingerprint: "guard", summary: "Write fixture.txt" });
+  const sendMessage = vi.fn(async () => ({ chatId: "7", messageId: 19 }));
+  let pending: TelegramApproval[] = [];
+  const manager = new TelegramApprovals({ pending: () => pending, resolve: vi.fn(async () => true) }, { sendMessage, answerCallbackQuery: vi.fn(async () => {}) });
+  const publish = () => manager.publish({ senderId: "7", chatId: "7" }, () => true, new AbortController().signal);
+  for (const patch of [{ approvalId: undefined }, { requestRef: "foreign" }, { actionHash: "foreign" }, { id: "copied-card" }]) {
+    pending = [{ ...approval, ...patch }];
+    await publish();
+    expect(sendMessage).not.toHaveBeenCalled();
+  }
+  expect(durableChannelApproval(approval)).toBe(true);
+  pending = [approval];
+  await publish();
+  expect(sendMessage).toHaveBeenCalledTimes(1);
+  updateRecord(database(), approval.approvalId, { state: "cancelled", settled_at: 1 });
+  expect(durableChannelApproval(approval)).toBe(false);
+  manager.clear();
+  await publish();
+  expect(sendMessage).toHaveBeenCalledTimes(1);
+});
 it("owner button authorizes exactly once; never auto-resends offers", async () => {
   const f = fixture(); await f.publish(); await f.publish();
   expect(f.sendMessage).toHaveBeenCalledTimes(1);
@@ -73,7 +97,7 @@ it("offers Allow for this task only on a stop-line card, and passes it through",
   const resolve = vi.fn(async () => true);
   const sendMessage = vi.fn(async (_input: any) => ({ chatId: "7", messageId: 19 }));
   const answerCallbackQuery = vi.fn(async (_input: any) => {});
-  const pending: TelegramApproval[] = [{ id: "stop-card", fingerprint: "exact", summary: "Delete 1 item outside its folder: ~/Documents/old", taskAllow: true }];
+  const pending: TelegramApproval[] = [channelApprovalFixture({ id: "stop-card", fingerprint: "exact", summary: "Delete 1 item outside its folder: ~/Documents/old", taskAllow: true })];
   const manager = new TelegramApprovals({ pending: () => pending, resolve }, { sendMessage, answerCallbackQuery }, () => 1);
   const owner = { senderId: "7", chatId: "7" }, signal = new AbortController().signal;
   await manager.publish(owner, () => true, signal);
@@ -99,7 +123,7 @@ it("refuses a forged task tap on a card that never offered it", async () => {
 
 function questionFixture(questions: NonNullable<TelegramApproval["questions"]>) {
   let now = 1;
-  let pending: TelegramApproval[] = [{ id: "question-card", fingerprint: "exact-question", summary: "Ember has a question", questions }];
+  let pending: TelegramApproval[] = [channelApprovalFixture({ id: "question-card", fingerprint: "exact-question", summary: "Ember has a question", questions })];
   const resolve = vi.fn(async () => true);
   const answer = vi.fn(async (_approval: TelegramApproval, _reply: unknown) => ({ ok: true as const }));
   let nextMessageId = 19;
@@ -225,7 +249,7 @@ it("keeps a question in-app when it cannot be shown whole or when the harness of
   const wide = { ...closed, question: "x".repeat(2000), options: Array.from({ length: 10 }, (_, i) => ({ label: `Option ${i}`, description: "y".repeat(200) })) };
   const f = questionFixture([wide]); await f.publish();
   expect(f.sendMessage).not.toHaveBeenCalled();
-  const manager = new TelegramApprovals({ pending: () => [{ id: "q", fingerprint: "f", summary: "Ember has a question", questions: [closed] }], resolve: vi.fn(async () => true) }, { sendMessage: f.sendMessage, answerCallbackQuery: f.answerCallbackQuery }, () => 1);
+  const manager = new TelegramApprovals({ pending: () => [channelApprovalFixture({ id: "q", fingerprint: "f", summary: "Ember has a question", questions: [closed] })], resolve: vi.fn(async () => true) }, { sendMessage: f.sendMessage, answerCallbackQuery: f.answerCallbackQuery }, () => 1);
   await manager.publish({ senderId: "7", chatId: "7" }, () => true, new AbortController().signal);
   expect(f.sendMessage).not.toHaveBeenCalled();
 });

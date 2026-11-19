@@ -72,6 +72,10 @@ describe("where the id lives", () => {
 
   it("is what the desktop sends as the mint label", () => {
     const main = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "main.mjs"), "utf8");
-    expect(main).toMatch(/mintLabel\(desktopDataDir\)[\s\S]{0,400}\.\.\.\(label \? \{ label \} : \{\}\)/);
+    // 1d03322f31: the label rides the lifecycle configuration; the lifecycle spreads it into the mint options and posts it.
+    expect(main).toMatch(/createComposioLifecycle\(\{\s*getConfiguration: \(\) => \(\{[^}]*label: desktopDataDir \? mintLabel\(desktopDataDir\) : undefined,/);
+    const lifecycle = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "composio-lifecycle.mjs"), "utf8");
+    expect(lifecycle).toContain("const options = { ...config, credentials: { ...snapshot },");
+    expect(lifecycle).toContain("body: JSON.stringify({ label }),");
   });
 });

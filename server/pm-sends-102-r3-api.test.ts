@@ -87,7 +87,9 @@ function harness(features: string) {
     try { return db.prepare(query).all(...args) as T[]; } finally { db.close(); }
   };
   const chip = (sendId: string) => sql<{ status: string; restore_held: number; restore_gen: string | null }>("SELECT status, restore_held, restore_gen FROM owner_sends WHERE send_id=?", sendId)[0];
-  return { api, start, stop: async () => { await fixture?.close(); }, busyRoom, restore, failWithoutChipThenRestore, sql, chip };
+  const receipt = (sendId: string) => sql<{ attempt_id: string; revision: number; phase: string; terminal_outcome: string }>("SELECT attempt_id,revision,phase,terminal_outcome FROM send_attempts WHERE send_id=?", sendId)[0];
+  const transcript = (threadId: string) => sql("SELECT id,json FROM messages WHERE thread_id=? ORDER BY rowid", threadId);
+  return { receipt, transcript, api, start, stop: async () => { await fixture?.close(); }, busyRoom, restore, failWithoutChipThenRestore, sql, chip };
 }
 
 posixOnly("B+C restored room requests (roomsQueue on)", () => {
@@ -111,19 +113,23 @@ posixOnly("B+C restored room requests (roomsQueue on)", () => {
     const retry = await h.api("POST", `/api/groups/${room.id}/messages`, body);
     expect(retry.status).toBe(202);
     expect(retry.body).toMatchObject({ queued: true, held: true });
+    const retainedReceipt = h.receipt(body.sendId)!;
+    expect(retainedReceipt.phase).toBe("terminal");
     expect(requests()).toHaveLength(1);
     const chipRow = h.chip(body.sendId)!;
     expect(chipRow).toMatchObject({ status: "refused", restore_held: 1 });
     const token = chipRow.restore_gen!;
     expect(token).toBeTruthy();
 
+    const transcriptBefore = h.transcript(room.threadId);
+    // MAIN RULING 1115-PMSENDS-R2 item 2: every explicit press has a stable current-client actionId.
     // resend without a token, or with a guess: still held
-    expect((await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true })).body.held).toBe(true);
-    expect((await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, restoreGen: "guess" })).body.held).toBe(true);
+    expect((await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, actionId: "room-press-1" })).body.held).toBe(true);
+    expect((await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, actionId: "room-press-1", restoreGen: "guess" })).body.held).toBe(true);
     expect(requests()).toHaveLength(1);
 
     // the owner's Send again with the chip's token: a new attempt
-    const again = await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, restoreGen: token });
+    const again = await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, actionId: "room-press-1", restoreGen: token });
     expect(again.status).toBe(202);
     expect(again.body.held).toBeUndefined();
     expect(again.body.queued).toBe(true);
@@ -131,14 +137,23 @@ posixOnly("B+C restored room requests (roomsQueue on)", () => {
 
     // a second restore expires that attempt too; an automatic retry carrying the first press is stale
     h.restore();
-    const stale = await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, restoreGen: token });
+    const stale = await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, actionId: "room-press-1", restoreGen: token });
     expect(stale.body).toMatchObject({ queued: true, held: true });
     expect(requests().map((r) => r.state)).toEqual(["expired", "expired"]);
     const fresh = h.chip(body.sendId)!;
+    expect(fresh).toMatchObject({ status: "refused", restore_held: 1 });
     expect(fresh.restore_gen).not.toBe(token);
-    const second = await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, restoreGen: fresh.restore_gen });
+    const second = await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, actionId: "room-press-2", restoreGen: fresh.restore_gen });
     expect(second.body.held).toBeUndefined();
     expect(requests().map((r) => r.state)).toEqual(["expired", "expired", "queued"]);
+    expect(h.receipt(body.sendId)).toEqual(retainedReceipt);
+    // MAIN RULING 1115-PMSENDS-R2 item 2: room requests retain the original and identify each fresh queued replacement exactly.
+    expect(again.body.queueId).not.toBe(queued.body.queueId);
+    expect(second.body.queueId).not.toBe(again.body.queueId);
+    expect(h.sql("SELECT id,state FROM room_requests WHERE verb='owner_send' AND send_id=? ORDER BY rowid", body.sendId)).toEqual([
+      { id: queued.body.queueId, state: "expired" }, { id: again.body.queueId, state: "expired" }, { id: second.body.queueId, state: "queued" },
+    ]);
+    expect(h.transcript(room.threadId)).toEqual(transcriptBefore);
   }, 120000);
 });
 
@@ -161,17 +176,22 @@ posixOnly("D busy channel with roomsQueue off", () => {
     const first = held.restore_gen!;
 
     expect((await h.api("POST", `/api/groups/${room.id}/messages`, body)).body.held).toBe(true);
+    const retainedReceipt = h.receipt(body.sendId)!;
+    const transcriptBefore = h.transcript(room.threadId);
     h.restore(); // a second restore before the owner pressed anything: the first token is stale
-    expect((await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, restoreGen: first })).body.held).toBe(true);
+    expect((await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, actionId: "fallback-press-1", restoreGen: first })).body.held).toBe(true);
     expect(h.chip(body.sendId)).toMatchObject({ status: "refused", restore_held: 1 });
 
     const current = h.chip(body.sendId)!.restore_gen!;
-    const released = await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, restoreGen: current });
+    const released = await h.api("POST", `/api/groups/${room.id}/messages`, { ...body, resend: true, actionId: "fallback-press-2", restoreGen: current });
     expect(released.status).toBe(202);
     expect(released.body.held).toBeUndefined();
     expect(released.body.queued).toBe(true);
-    // the chip really left the held state: the row waits in the queue
-    expect(h.chip(body.sendId)).toMatchObject({ status: "queued", restore_held: 0 });
+    // MAIN RULING 1115-PMSENDS-R2 item 2: retained original plus an exact fresh replacement.
+    expect(h.chip(body.sendId)).toMatchObject({ status: "refused", restore_held: 1 });
+    expect(h.receipt(body.sendId)).toEqual(retainedReceipt);
+    expect(h.chip("r-fallback-press-2")).toMatchObject({ status: "queued", restore_held: 0 });
+    expect(h.transcript(room.threadId)).toEqual(transcriptBefore);
   }, 120000);
 });
 

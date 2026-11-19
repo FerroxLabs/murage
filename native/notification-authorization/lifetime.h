@@ -4,7 +4,8 @@
 #include <mutex>
 
 namespace murage_notification {
-struct Answer { int authorization; int alert; int sound; bool failed; };
+// previews and category are set only by readiness(); every other caller leaves them closed.
+struct Answer { int authorization; int alert; int sound; bool failed; int previews = -1; bool category = false; };
 struct Pending {
   std::mutex mutex;
   napi_deferred deferred = nullptr;

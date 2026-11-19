@@ -19,7 +19,7 @@
 // Both engines are the fake Claude CLI. "claude" asks for permission on
 // `__fixture_permission_tool__`; "other" is the engine that gets turned off.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +27,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GRACEFUL_CLOSE_MESSAGE } from "../electron/server-child-lifecycle.mjs";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { redactSecrets } from "./redact.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
@@ -44,6 +45,12 @@ describe("an engine change or an app close around a run waiting for the person",
   let stderr = "";
 
   const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
+    // The public card carries an opaque handle, never the engine's request id:
+    // an answer names the handle the owner was shown.
+    if (path.endsWith("/respond") && body && typeof body === "object") {
+      const answer = body as { requestId?: unknown; behavior?: unknown };
+      if (typeof answer.requestId === "string" && /^[pq]\./.test(answer.requestId) && (answer.behavior === "allow" || answer.behavior === "deny")) body = { requestHandle: answer.requestId, action: answer.behavior };
+    }
     const res = await fetch(`${base}${path}`, {
       method,
       headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
@@ -58,24 +65,30 @@ describe("an engine change or an app close around a run waiting for the person",
   const botView = async (id: string): Promise<BotView | undefined> =>
     (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: BotView) => bot.id === id);
   const messagesOf = async (threadId: string): Promise<MessageView[]> =>
-    (await api("GET", `/api/threads/${threadId}/messages?limit=50`)).body.messages;
+    ((await api("GET", `/api/threads/${threadId}/messages?limit=50`)).body.messages as any[]).map((message) => (message.card?.requestHandle ? { ...message, card: { ...message.card, requestId: message.card.requestHandle } } : message));
   const pendingApprovals = async () => (await desktopApi("GET", "/api/inbox?view=approvals")).body.approvals as number;
 
-  /** The app's shape: Electron's private parent port, one listener, fed here
+  /** The app's shape: Electron's private EventEmitter parent port, fed here
    * from the IPC channel, as main.mjs feeds it (utilityProcess postMessage). */
   const PARENT_PORT_PRELUDE = `data:text/javascript,${encodeURIComponent(`
-    let listener;
-    process.on("message", (data) => listener?.({ data }));
-    Object.defineProperty(process, "parentPort", { value: {
-      on(event, callback) { if (event === "message") listener = callback; },
-      postMessage(message) { process.send?.(message); },
-    } });
+    const { EventEmitter } = await import("node:events");
+    const port = new EventEmitter();
+    process.on("message", data => port.emit("message", { data }));
+    port.postMessage = message => {
+      if (message?.type === "murage:highlevel-bootstrap-request") {
+        queueMicrotask(() => port.emit("message", { data: { type: "murage:highlevel-bootstrap", requestId: message.requestId, error: "storage" } }));
+        return;
+      }
+      process.send?.(message);
+    };
+    Object.defineProperty(process, "parentPort", { value: port });
   `)}`;
 
   const start = async ({ packaged = false } = {}) => {
     stderr = "";
     desktopHeaders = DESKTOP_HEADERS;
     child = spawn(process.execPath, [...(packaged ? ["--import", PARENT_PORT_PRELUDE] : []), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -122,6 +135,23 @@ describe("an engine change or an app close around a run waiting for the person",
     await expect.poll(async () => (await botView(bot.id))?.activity, { timeout: 10_000 }).toBe("waiting-on-you");
     expect(await pendingApprovals()).toBeGreaterThanOrEqual(1);
     return card!;
+  };
+
+  /** What the decision log holds for one conversation (the sink redacts strings, so the id is compared redacted). */
+  const decisionsOf = (threadId: string): string[] => {
+    const path = join(home, ".murage", "decisions.ndjson");
+    if (!existsSync(path)) return [];
+    return readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { threadId?: string; decision: string })
+      .filter((row) => row.threadId === redactSecrets(threadId)).map((row) => row.decision);
+  };
+  /** The engine's own word on a permission it got an answer for ("permission: allowed" when the answer reached it). */
+  const permissionOutcomes = (messages: MessageView[]) => messages.filter((message) => message.text?.startsWith("permission:")).map((message) => message.text);
+  /** Nothing granted, nothing delivered, nothing run: the card was shown and that is all the log has, the engine never
+   * got an answer, and no run is going. */
+  const nothingGrantedOrRun = async (bot: BotView) => {
+    expect(decisionsOf(bot.threadId)).toEqual(["card-shown"]);
+    expect(permissionOutcomes(await messagesOf(bot.threadId))).toEqual([]);
+    expect((await botView(bot.id))?.busy).toBe(false);
   };
 
   const errorChips = (messages: MessageView[]) => messages.filter((message) => message.tool?.name.startsWith("error:")).map((message) => message.tool!.name);
@@ -175,6 +205,9 @@ describe("an engine change or an app close around a run waiting for the person",
       await expect.poll(async () => (await messagesOf(bot.threadId)).some((message) => message.text === "permission: allowed"), { timeout: 15_000 }).toBe(true);
       await expect.poll(async () => (await botView(bot.id))?.busy, { timeout: 10_000 }).toBe(false);
       expect(errorChips(await messagesOf(bot.threadId))).toEqual([]);
+      // what a granted, delivered answer leaves behind (the refused late answers below must leave none of it)
+      expect(decisionsOf(bot.threadId)).toEqual(["card-shown", "user-approved"]);
+      expect(permissionOutcomes(await messagesOf(bot.threadId))).toEqual(["permission: allowed"]);
     } finally {
       await desktopApi("PATCH", "/api/instances/other", { enabled: true });
       await api("POST", `/api/bots/${bot.id}/interrupt`);
@@ -193,7 +226,8 @@ describe("an engine change or an app close around a run waiting for the person",
       expect(errorChips(after)).toEqual([]);
       expect(after.map((message) => message.tool?.name)).toContain("stopped: the engine it was using was turned off or changed in Settings");
       expect(JSON.stringify(after)).not.toMatch(/provider settings/i);
-      expect(after.find((message) => message.id === card.id)?.card).toMatchObject({ answered: "unavailable", dismissed: true });
+      // MAIN ruling 2026-11-17T02:02Z Q3: the owner turned the engine off, so "Cancelled" (Expired = time ran out, unavailable = delivery failed)
+      expect(after.find((message) => message.id === card.id)?.card).toMatchObject({ answered: "Cancelled", dismissed: true });
       expect(await pendingApprovals()).toBe(0);
     } finally {
       await desktopApi("PATCH", "/api/instances/claude", { enabled: true });
@@ -246,10 +280,19 @@ describe("an engine change or an app close around a run waiting for the person",
     await expect.poll(async () => (await cardNow())?.orphaned, { timeout: 10_000 }).toBe(true);
     const left = await cardNow();
     expect(left).toMatchObject({ orphaned: true });
-    expect(left?.answered).toBeUndefined();
+    // MAIN ruling (r12): a card the dead process left open reads Expired, and a late answer on it is refused, not delivered
+    expect(left?.answered).toBe("Expired");
     expect(await pendingApprovals()).toBe(0);
-    expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card!.requestId, behavior: "allow" })).status).toBe(200);
-    await expect.poll(async () => (await messagesOf(bot.threadId)).some((message) => message.tool?.name === "Couldn't deliver that answer. The request is no longer open, so the action was not run."), { timeout: 10_000 }).toBe(true);
+    const note = "Couldn't deliver that answer. The request is no longer open, so the action was not run.";
+    const notes = async () => (await messagesOf(bot.threadId)).filter((message) => message.tool?.name === note).length;
+    const late = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card!.requestId, behavior: "allow" });
+    expect(late.status).toBe(409);
+    expect(late.body.error).toBe("request_unavailable");
+    await expect.poll(notes, { timeout: 10_000 }).toBe(1);
+    // nothing was granted or run: the card still reads Expired, never an allow
+    expect((await cardNow())?.answered).toBe("Expired");
+    expect(await pendingApprovals()).toBe(0);
+    await nothingGrantedOrRun(bot);
     await desktopApi("DELETE", `/api/bots/${bot.id}`);
   }, 90_000);
 
@@ -260,10 +303,19 @@ describe("an engine change or an app close around a run waiting for the person",
     await start();
     const respond = { requestId: card.card!.requestId, behavior: "allow" };
     const undelivered = async () => (await messagesOf(bot.threadId)).filter((message) => message.tool?.name?.startsWith("Couldn't deliver that answer")).length;
-    expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, respond)).status).toBe(200);
+    const refused = async () => {
+      const answered = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, respond);
+      expect(answered.status).toBe(409);
+      expect(answered.body.error).toBe("request_unavailable");
+    };
+    const cardAnswer = async () => (await messagesOf(bot.threadId)).find((message) => message.id === card.id)?.card?.answered;
+    await refused();
     await expect.poll(undelivered, { timeout: 10_000 }).toBe(1);
-    expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, respond)).status).toBe(200);
+    expect(await cardAnswer()).toBe("Expired");
+    await refused();
+    expect(await cardAnswer()).toBe("Expired");
     expect(await undelivered()).toBe(1);
+    await nothingGrantedOrRun(bot);
     await desktopApi("DELETE", `/api/bots/${bot.id}`);
   }, 90_000);
 });

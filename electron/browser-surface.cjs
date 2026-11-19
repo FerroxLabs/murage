@@ -46,7 +46,7 @@ const WAIT_MAX_MS = 30_000;
 const SCREENSHOT_WIDTH = 1024;
 const SCREENSHOT_QUALITY = 70;
 const MAX_TEXT = 4_000;
-const MAX_READ_CHARS = 24_000;
+const MAX_READ_BYTES = 2 * 1024 * 1024;
 const MAX_PAGE_NOTICES = 20;
 const DNS_CACHE_MS = 10_000;
 const MAX_DNS_CACHE = 256;
@@ -2279,11 +2279,12 @@ function createBrowserSurfaceManager({
       return withOperation(entry, async () => {
         await settle(entry, 0);
         const { text, state } = await safePageRead(entry);
+        if (Buffer.byteLength(text, "utf8") > MAX_READ_BYTES) throw new Error("Browser document exceeds the transport limit. No partial document was returned.");
         return {
           url: state.url,
           title: state.title,
-          text: text.length > MAX_READ_CHARS ? `${text.slice(0, MAX_READ_CHARS)}\n…(truncated at ${MAX_READ_CHARS} characters)` : text,
-          truncated: text.length > MAX_READ_CHARS,
+          text,
+          truncated: false,
         };
       });
     },

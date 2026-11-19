@@ -1,8 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 -- Murage Cloud: the members area's Supabase Custom Access Token Hook WITH the OAuth link guard (CONTRACT.md section
--- 6, 2a). Supersedes custom-access-token-hook.sql: it defines the same function, so install this file instead of that
--- one, BEFORE the first user signs up (a user created without the trigger below can never use OAuth, only email
--- codes):
+-- 6, 2a), the password fence and the one-code epoch fences. This is the ONE canonical installer; the older
+-- custom-access-token-hook.sql is deleted (a second installer would silently drop the fences below). Install it BEFORE
+-- the first user signs up (a user created without the trigger below can never use OAuth, only email codes). Apply
+-- onecode-epoch-table.sql first: the hook reads public.onecode_epoch and this file refuses to install without it.
 --
 --   [auth.hook.custom_access_token]
 --   enabled = true
@@ -40,6 +41,21 @@
 --    factor that verified the session last. Refresh does not change it; unenrolling that factor clears it
 --    (internal/models/sessions.go L349-L351). Any incoming value is overwritten. The control plane counts fresh
 --    step-up only when this factor is on the account's trusted list (src/trusted-factors.ts).
+--
+-- 5. The password fence F1 (design CLOUD-ONE-CODE-PROOF r5 section 2): refuse to issue any token whose claims.amr lists
+--    the method "password", for every user, at birth and at every refresh. GoTrue runs this hook inside the issuing
+--    transaction, so a password grant that passed its check before, during or after any rotation is refused and its
+--    session rolls back.
+--
+-- 6. The epoch fences (design r6 section 1, r7 section 1), for users that have a row in public.onecode_epoch only:
+--      E2 renewal fence: refuse unless claims.session_id is a uuid naming an auth.sessions row of this user whose
+--         created_at is not before the user's epoch_at (a missing, unknown, or null-dated session is refused).
+--      E3 email proof only: refuse unless claims.amr is a non-empty array of well-formed {method, integer timestamp}
+--         objects whose every method is an email-proof method or a second factor, and at least one is an email-proof
+--         method. So password, passkey, oauth, web3, sso/saml, anonymous and a second factor alone are refused.
+--    Users without an epoch row keep sections 1 to 5 as before. The table's read policy for supabase_auth_admin is in
+--    onecode-epoch-table.sql (without it RLS hides every row from this hook and E2 and E3 never fire).
+--    This body never writes exp or iat (premise A1 of the drain bound in r7 section 2 depends on that).
 --
 -- The hook runs as supabase_auth_admin (which owns auth.users, auth.identities and auth.sessions) inside Supabase's token transaction.
 -- Not SECURITY DEFINER. Tested on Postgres 16 with Supabase's default function grants and MakerKit's revocations by
@@ -124,6 +140,15 @@ create trigger murage_guard_identity_link
   before insert or update of user_id, provider, provider_id on auth.identities
   for each row execute function murage_auth.guard_identity_link();
 
+-- Fail loudly, at install time, if the epoch table is missing: the hook would otherwise break every sign-in at run time.
+do $$
+begin
+  if to_regclass('public.onecode_epoch') is null then
+    raise exception 'public.onecode_epoch is missing: apply onecode-epoch-table.sql before installing the hook';
+  end if;
+end
+$$;
+
 create or replace function public.custom_access_token_hook(event jsonb)
 returns jsonb
 language plpgsql
@@ -134,6 +159,12 @@ declare
   refused constant jsonb := jsonb_build_object('error', jsonb_build_object(
     'http_code', 403,
     'message', 'This account cannot use this sign-in method. Sign in with an email code, or contact support.'));
+  pw_refused constant jsonb := jsonb_build_object('error', jsonb_build_object(
+    'http_code', 403,
+    'message', 'Password sign-in is not available. Use the emailed code.'));
+  -- Epoch users (section 6): amr methods that prove a mailbox, and second factors that cannot start a session alone.
+  epoch_email_proof constant text[] := array['otp', 'magiclink', 'email/signup', 'email_change', 'recovery', 'invite'];
+  epoch_second_factor constant text[] := array['totp', 'mfa/phone', 'mfa/webauthn', 'mfa/recovery_code'];
   uuid_re constant text := '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
   -- Methods that do not come from an OAuth identity (Supabase models.AuthenticationMethod names).
   first_party constant text[] := array['otp', 'magiclink', 'email/signup', 'email_change', 'recovery', 'invite',
@@ -145,6 +176,8 @@ declare
   email_session boolean := false;
   allowed boolean;
   factor uuid;
+  epoch_ts timestamptz;
+  sess_created timestamptz;
 begin
   if jsonb_typeof(event) is distinct from 'object'
      or jsonb_typeof(event->'claims') is distinct from 'object'
@@ -160,9 +193,44 @@ begin
     return refused;
   end if;
 
+  -- 5. Password fence F1, before anything else is read.
+  if jsonb_typeof(claims->'amr') = 'array' and exists (
+       select 1 from jsonb_array_elements(claims->'amr') a(e)
+       where jsonb_typeof(a.e) = 'object' and jsonb_typeof(a.e->'method') = 'string' and a.e->>'method' = 'password') then
+    return pw_refused;
+  end if;
+
   select u.email_confirmed_at is not null into confirmed from auth.users u where u.id = uid;
   if not found then
     return refused;
+  end if;
+
+  -- 6. Epoch fences E2 and E3.
+  select e.epoch_at into epoch_ts from public.onecode_epoch e where e.user_id = uid;
+  if found then
+    if jsonb_typeof(claims->'session_id') is distinct from 'string' or (claims->>'session_id') !~ uuid_re then
+      return refused;
+    end if;
+    select s.created_at into sess_created from auth.sessions s
+     where s.id = (claims->>'session_id')::uuid and s.user_id = uid;
+    if not found or sess_created is null or sess_created < epoch_ts then
+      return refused;
+    end if;
+    if jsonb_typeof(claims->'amr') is distinct from 'array' or jsonb_array_length(claims->'amr') = 0 then
+      return refused;
+    end if;
+    if exists (
+         select 1 from jsonb_array_elements(claims->'amr') a(e)
+         where jsonb_typeof(a.e) is distinct from 'object'
+            or jsonb_typeof(a.e->'method') is distinct from 'string'
+            or not ((a.e->>'method') = any (epoch_email_proof || epoch_second_factor))
+            or jsonb_typeof(a.e->'timestamp') is distinct from 'number'
+            or (a.e->>'timestamp')::numeric <> trunc((a.e->>'timestamp')::numeric))
+       or not exists (
+         select 1 from jsonb_array_elements(claims->'amr') a(e)
+         where (a.e->>'method') = any (epoch_email_proof)) then
+      return refused;
+    end if;
   end if;
 
   -- An email-code (first-party) session: a known non-OAuth authentication_method and a non-empty amr whose every

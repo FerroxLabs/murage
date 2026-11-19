@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import type { InboundEnvelope } from "./core/protocol.ts";
 import { WhatsAppService, chatKeyOf, type ChatContext, type TransportContext, type WhatsAppSettings } from "./service.ts";
 import type { HealthEvent, LinkEvent, StatusNote, TransportHandlers, WhatsAppTransport } from "./transport.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
+import { fault, ledgerFilesIn, rawText, stored } from "../delivery-ledger-test-support.ts";
 
 const T = 1_700_000_000_000;
 const OWNER = "15550001111@s.whatsapp.net";
@@ -90,6 +91,8 @@ function peopleMock() {
   };
 }
 const read = (w: World, ...parts: string[]) => readFileSync(join(w.dir, "channels", "whatsapp", ...parts), "utf8");
+/** The ledger file path (the store key) of one chat. */
+const ledgerOf = (w: World, c: string, jid: string) => join(w.dir, "channels", "whatsapp", c, `${chatKeyOf(jid)}.json`);
 const connectionId = (w: World) => JSON.parse(read(w, "connection.json")).connectionId as string;
 
 it.each([false, true])("dedupes owner aliases without bridge history, LID first %s", async lidFirst => {
@@ -122,19 +125,19 @@ it.each(["self", "dm"])("consolidates split %s receipts on load and preserves pe
   }
   await f.service.resume();
   expect(Object.keys(JSON.parse(read(w, c, "chats.json")).chats)).toEqual([chatKeyOf(pn)]);
-  const merged = read(w, c, `${chatKeyOf(pn)}.json`);
-  expect(JSON.parse(merged).records).toHaveLength(4);
-  expect(JSON.parse(merged).tombstones).toHaveLength(2);
+  const merged = rawText(ledgerOf(w, c, pn));
+  expect(stored(ledgerOf(w, c, pn)).records).toHaveLength(4);
+  expect(stored(ledgerOf(w, c, pn)).tombstones).toHaveLength(2);
   // Replay a crash after the merged ledger was written but before the chat list.
   writeFileSync(join(dir, "chats.json"), JSON.stringify({ version: 1, chats }));
   await f.service.stop(); await f.service.resume();
-  expect(read(w, c, `${chatKeyOf(pn)}.json`)).toBe(merged);
+  expect(rawText(ledgerOf(w, c, pn))).toBe(merged);
   for (const messageId of ["DONE-PN", "DONE-LID", "DUPLICATE"]) {
     await f.deliver({ messageId, chatJid: lid, fromMe: kind === "self" });
   }
   await f.service.tick();
   expect(w.enqueued.map(row => row.deliveryId)).toEqual([`${pn}:PENDING-PN`]);
-  expect(JSON.parse(read(w, c, `${chatKeyOf(pn)}.json`)).records).toContainEqual(expect.objectContaining({ deliveryId: `${lid}:PENDING-LID`, runId: "retained-lid-run", state: "sent" }));
+  expect(stored(ledgerOf(w, c, pn)).records).toContainEqual(expect.objectContaining({ deliveryId: `${lid}:PENDING-LID`, runId: "retained-lid-run", state: "sent" }));
   await f.deliver({ messageId: "NEXT", chatJid: pn, fromMe: kind === "self" });
   await f.deliver({ messageId: "PENDING-LID", chatJid: pn, fromMe: kind === "self" });
   expect(w.enqueued).toHaveLength(2);
@@ -156,10 +159,7 @@ it.each([false, true])("resumes two 6000-tombstone ledgers with pending receipts
         occurredAt: i < 10 ? T - 8 * 86400000 : T - index })),
     }));
   }
-  const mergedRows = () => {
-    const file = join(dir, `${chatKeyOf(OWNER)}.json`), root = JSON.parse(readFileSync(file, "utf8"));
-    return [root, ...(root.overflow ?? []).map((part: string) => JSON.parse(readFileSync(`${file}.${part}`, "utf8")))];
-  };
+  const mergedRows = () => [stored(join(dir, `${chatKeyOf(OWNER)}.json`))];
   await f.service.resume();
   expect(f.service.status()).toMatchObject({ enabled: true, error: null, pending: 2 });
   const stones = mergedRows().flatMap(page => page.tombstones);
@@ -211,7 +211,7 @@ it.each(["approve", "dismiss"] as const)("%s works on a migrated LID pairing, in
     expect(w.contexts.at(-1)).toMatchObject({ role: "contact", chatKey: chatKeyOf(BOB) });
   } else {
     expect(f.sendText).not.toHaveBeenCalled();
-    expect(JSON.parse(read(w, c, `${chatKeyOf(BOB)}.json`)).records[0].state).toBe("cancelled");
+    expect(stored(ledgerOf(w, c, BOB)).records[0].state).toBe("cancelled");
     await f.service.stop(); await f.service.resume(); await f.service.tick();
     expect(f.sendText).not.toHaveBeenCalled();
   }
@@ -259,8 +259,8 @@ it("shows a pairing code for 60 seconds and validates the phone number", async (
 it("answers an owner self-chat message on the owner principal, writing the receipt before the ack", async () => {
   const w = world(), f = build(w); await f.connect();
   const ack = vi.fn(async () => {
-    const id = connectionId(w), file = readdirSync(join(w.dir, "channels/whatsapp", id)).find(n => n !== "chats.json")!;
-    expect(read(w, id, file)).toContain("SELF1");
+    const id = connectionId(w);
+    expect(rawText(ledgerFilesIn(join(w.dir, "channels/whatsapp", id))[0]!)).toContain("SELF1");
     expect(w.enqueued).toHaveLength(0);
   });
   await f.deliver({ messageId: "SELF1", chatJid: OWNER, fromMe: true, upsertType: "append", text: "hi me" }, ack);
@@ -361,7 +361,7 @@ it("two DMs and the owner chat never exchange replies, across a restart", async 
   const sentTo = f.sendText.mock.calls.map(c => [c[0].chatId, c[0].text]);
   expect(sentTo).toEqual(expect.arrayContaining([[CAROL, "answer to " + CAROL], [OWNER, "answer to " + OWNER]]));
   expect(sentTo.some(([chat]) => chat === BOB)).toBe(false);
-  expect(readdirSync(join(w.dir, "channels/whatsapp", connectionId(w))).filter(n => n !== "chats.json")).toHaveLength(3);
+  expect(ledgerFilesIn(join(w.dir, "channels/whatsapp", connectionId(w)))).toHaveLength(3);
   await f.service.stop();
   // Restart: a fresh service reopens the three ledgers from chats.json; only Bob's pending reply is outstanding.
   const g = build(w); await g.service.resume();
@@ -407,12 +407,11 @@ it("a receipt that cannot be written is loud: no ack, no task, and an intact ret
   const w = world(); const f = build(w); await f.connect();
   await f.toSelf("W1");
   const id = connectionId(w), key = chatKeyOf(OWNER), path = join(w.dir, "channels/whatsapp", id, key + ".json");
-  const original = readFileSync(path, "utf8");
-  rmSync(path); mkdirSync(path);
+  const undo = fault(path);
   const ack = await f.deliver({ messageId: "W2", chatJid: OWNER, fromMe: true, upsertType: "append", text: "second" });
   expect(ack).not.toHaveBeenCalled(); expect(w.enqueued).toHaveLength(1);
   expect(f.service.status().error).toBe("ledger-write-failed");
-  removeTempDirSync(path); writeFileSync(path, original);
+  undo();
   const retry = await f.deliver({ messageId: "W2", chatJid: OWNER, fromMe: true, upsertType: "append", text: "second" });
   expect(retry).toHaveBeenCalledTimes(1); expect(w.enqueued).toHaveLength(2);
 });
@@ -605,7 +604,8 @@ it("clears a pairing code from the receipt as soon as sending settles", async ()
   const w = world(); w.settings.mode = "contacts"; const f = build(w); await f.connect();
   await f.deliver({ messageId: "PAIR" }); await f.service.tick();
   const code = /code ([A-Z2-9]{6})/.exec(f.reserve.mock.calls[0][0].text)![1];
-  expect(read(w, connectionId(w), `${chatKeyOf(BOB)}.json`)).not.toContain(code);
+  const text = rawText(ledgerOf(w, connectionId(w), BOB));
+  expect(text).not.toBe(""); expect(text).not.toContain(code);
 });
 
 it("blocks owner intake when outbound history disappears", async () => {

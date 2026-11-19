@@ -1,3 +1,4 @@
+import { openFixtureApproval } from './testing/approval-card.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The Inbox projection's first fill on an installation that predates it runs
 // after the server listens, in short background slices, and the Inbox says it
@@ -29,7 +30,7 @@ function history(db: DatabaseSync, rows = ROWS, cards = CARDS) {
   db.exec("BEGIN");
   for (let i = 0; i < rows; i++) {
     const thread = `t${i % 40}`, id = `m${i}`, at = 1_700_000_000_000 + i * 1000;
-    if (i % every === 0) insert.run(thread, id, at, "bot", "options", null, JSON.stringify({ id, at, role: "bot", kind: "options", card: { requestId: `req${i}`, title: "Command", options: ["Allow", "Deny"], tool: "Bash" } }));
+    if (i % every === 0) insert.run(thread, id, at, "bot", "options", null, JSON.stringify(openFixtureApproval(db, thread, { id, at, role: "bot", kind: "options", card: { requestId: `req${i}`, title: "Command", options: ["Allow", "Deny"], tool: "Bash" } })));
     else insert.run(thread, id, at, "user", "text", `line ${i}`, JSON.stringify({ id, at, role: "user", kind: "text", text: `line ${i}` }));
   }
   db.exec("COMMIT");
@@ -68,7 +69,7 @@ describe("the first fill, in process", () => {
     inboxProjectionStep(db, 4_000);
     // a message written meanwhile is projected by the triggers, and kept
     db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)")
-      .run("t1", "new", 1_800_000_000_000, "bot", "options", null, JSON.stringify({ id: "new", at: 1_800_000_000_000, role: "bot", kind: "options", card: { requestId: "new", title: "Command", options: ["Allow"], tool: "Bash" } }));
+      .run("t1", "new", 1_800_000_000_000, "bot", "options", null, JSON.stringify(openFixtureApproval(db, "t1", { id: "new", at: 1_800_000_000_000, role: "bot", kind: "options", card: { requestId: "new", title: "Command", options: ["Allow"], tool: "Bash" } })));
     initializeInbox(db); // the next start: the same layout, nothing rebuilt
     while (!inboxProjectionStep(db, 1_500)) { /* next slice */ }
     expect(listInbox(db, { view: "decisions" }, access).total).toBe(101);
@@ -96,6 +97,7 @@ describe.skipIf(process.platform === "win32")("the first fill at server start", 
     seeded.close();
     let stdout = "", stderr = "";
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_TURN_TRACE: "1", MURAGE_DEV_DESKTOP_SECRET: SECRET },
       stdio: ["ignore", "pipe", "pipe"],

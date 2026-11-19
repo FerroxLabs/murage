@@ -1,3 +1,5 @@
+import { withClaudeFixtureCwd } from "../testing/claude-s2-wire-receipt.ts";
+import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // DRV / D8: idle Claude children are held by the adaptive warm pool (no fixed
@@ -14,6 +16,17 @@ import { InternalCapabilities } from "../internal-capabilities.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { ClaudeDriver } from "./claude.ts";
+import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
+import { claudeMountConfiguration } from "../testing/claude-mount-configuration.ts";
+import { createTurnCredentialStore } from "./turn-credentials.ts";
+
+// Explicit receipt injection for the scripted executable's identity I/O
+// edge; native qualification and environment handling remain production code.
+vi.mock("./claude-s2-qualification.ts", async original => {
+  const actual = await original<typeof import("./claude-s2-qualification.ts")>();
+  const { withClaudeWireReceipt } = await import("../testing/claude-s2-wire-receipt.ts");
+  return withClaudeWireReceipt(actual);
+});
 
 const cli = fileURLToPath(new URL("../testing/fake-claude-cli.ts", import.meta.url));
 const instances: Array<{ instance: ProviderInstance; recorder: EventRecorder }> = [];
@@ -33,7 +46,8 @@ afterEach(async () => {
 });
 async function create() {
   const instance = await ClaudeDriver.create({ instanceId: `drv-${instances.length}`, displayName: "Fixture Claude", enabled: true, environment: {}, config: { cli, permissionMode: "acceptEdits" } });
-  const owner = { instance, recorder: recordEvents(instance.adapter) };
+  withClaudeFixtureCwd(instance.adapter);
+  const owner = { instance, recorder: recordEvents(instance.adapter), admissionChecked: false };
   instances.push(owner);
   return owner;
 }
@@ -42,7 +56,15 @@ type Dump = { pid: number; argv: string[]; mcpConfig: { mcpServers: { browser: {
 async function turn(owner: Owner, threadId: string, extra: Partial<SendTurnInput> = {}) {
   const dumpPath = join(scratch, `${threadId}.json`);
   vi.stubEnv("FAKE_CLAUDE_DUMP", dumpPath);
-  const sent = await owner.instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "Fixture turn", ...extra });
+  // red-at-4df086541; design 397: the implicit permission mount is an
+  // external mount too. Keep all real PID/pool controls on tool-less turns.
+  if (!owner.admissionChecked) {
+    expect(() => assertConsumingMountAdmission(fixtureMountTurn({ threadId, text: "Fixture turn", ...extra }), "external", true)).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(owner.recorder.events).toEqual([]); expect(existsSync(dumpPath)).toBe(false);
+    expect(owner.instance.adapter.hasSession(threadId)).toBe(false);
+    owner.admissionChecked = true;
+  }
+  const sent = await owner.instance.adapter.sendTurn(fixtureMountTurn({ cwd: fixtureBotFolder(), threadId, text: "Fixture turn", ...extra, draftOnly: true }));
   await owner.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
   const dump = JSON.parse(readFileSync(dumpPath, "utf8")) as Dump;
   pids.add(dump.pid);
@@ -70,6 +92,33 @@ it("a background turn releases its engine as soon as it finishes", async () => {
   await expect.poll(() => alive(a.pid), { timeout: 10_000 }).toBe(false);
 });
 
+// fix/1020-warm-pool-fable (Sean's 1.0.19 log: `warm pool evict ... reason=background turn` on a thread he was chatting in).
+it("two owner turns on one thread: the second is process=reused, and a background turn in between does not close the engine", async () => {
+  vi.stubEnv("MURAGE_WARM_POOL_BUDGET_MB", "100000"); vi.stubEnv("MURAGE_WARM_POOL_MIN_FREE_MB", "0");
+  const lines: string[] = [];
+  const info = vi.spyOn(console, "info").mockImplementation((line: unknown) => { if (typeof line === "string") lines.push(line); });
+  try {
+    const owner = await create();
+    const dispatches = () => lines.filter(l => l.startsWith("claude dispatch thread=drv-hot "));
+    const a = await turn(owner, "drv-hot");
+    expect(dispatches().at(-1)).toContain("process=spawned reason=no-process");
+    const b = await turn(owner, "drv-hot", { resumeCursor: a.sessionId });
+    expect(dispatches().at(-1)).toContain("process=reused");
+    expect(b.pid).toBe(a.pid);
+    // a routine's turn lands on the same thread and runs on the owner's hot engine
+    const bg = await turn(owner, "drv-hot", { resumeCursor: a.sessionId, background: true });
+    expect(dispatches().at(-1)).toContain("process=reused");
+    expect(bg.pid).toBe(a.pid);
+    await new Promise(resolve => setTimeout(resolve, 1_500)); // the settle probe and the pool check have both answered
+    expect(alive(a.pid)).toBe(true);
+    expect(lines.filter(l => l.includes("thread=drv-hot") && (l.startsWith("warm pool evict") || l.startsWith("claude close")))).toEqual([]);
+    const c = await turn(owner, "drv-hot", { resumeCursor: a.sessionId });
+    expect(dispatches().at(-1)).toContain("process=reused");
+    expect(c.pid).toBe(a.pid);
+    expect(dispatches()).toHaveLength(4);
+  } finally { info.mockRestore(); }
+}, 40_000);
+
 it("over budget retires idle children but never an active one", async () => {
   vi.stubEnv("MURAGE_WARM_POOL_BUDGET_MB", "100000"); vi.stubEnv("MURAGE_WARM_POOL_MIN_FREE_MB", "0");
   const owner = await create();
@@ -79,7 +128,7 @@ it("over budget retires idle children but never an active one", async () => {
   vi.stubEnv("FAKE_CLAUDE_HOLD_GATE", gate);
   vi.stubEnv("FAKE_CLAUDE_HOLD_SEEN", seen);
   const active = await turn(owner, "drv-a");
-  const held = await owner.instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "drv-a", text: "hold-active", resumeCursor: active.sessionId });
+  const held = await owner.instance.adapter.sendTurn(fixtureMountTurn({ cwd: fixtureBotFolder(), threadId: "drv-a", text: "hold-active", resumeCursor: active.sessionId, draftOnly: true }));
   await expect.poll(() => existsSync(seen)).toBe(true);
   vi.stubEnv("MURAGE_WARM_POOL_BUDGET_MB", "1"); // now over budget; drv-a is mid-turn
   const b = await turn(owner, "drv-b");
@@ -90,45 +139,61 @@ it("over budget retires idle children but never an active one", async () => {
   await owner.recorder.until(event => event.type === "turn.completed" && event.turnId === held.turnId);
 });
 
+// red-at-4df086541; design line 397: neither a first nor a resumed external
+// browser mount may launch. Token rotation/clear remains a real-store control.
 it("a retained child has no live browser claim and the next turn reissues its MCP token", async () => {
   const owner = await create();
   const authority = new InternalCapabilities();
   const threadId = "drv-browser";
   let generation = "";
   // This is the harness's existing turn-capability lifecycle, not a driver-owned grant.
-  const unsubscribe = owner.instance.adapter.onEvent(event => {
-    if (event.type === "turn.started") authority.bindProviderTurn(threadId, generation, event.turnId!);
-    if (event.type === "turn.completed") authority.completeProviderTurn(threadId, event.turnId!);
-  });
   const issue = () => {
     generation = authority.begin("bot", threadId);
     return authority.mint({ botId: "bot", threadId, generation, depth: 0, kind: "computer", skillAuthoring: false });
   };
   const integrations = (token: string) => ({ browser: { command: process.execPath, args: ["fixture-browser-proxy"], env: { MURAGE_CONTROL_TOKEN: token, MURAGE_CONTROL_URL: "http://127.0.0.1:1", MURAGE_BROWSER_TRANSPORT: "extension" } } });
+  const credential = createTurnCredentialStore();
   try {
     const firstToken = issue();
     expect(authority.resolve(`Bearer ${firstToken}`)).not.toBeNull();
     // Warm Claude (mobile lane): the per-turn token never rides the MCP config or the process env;
     // it sits in the process's 0600 credential file for the turn only, emptied when the turn settles.
-    vi.stubEnv("FAKE_CLAUDE_DUMP_EACH_TURN", "1");
-    const first = await turn(owner, threadId, { integrations: integrations(firstToken) });
+    const firstInput = { threadId, text: "Fixture turn", integrations: integrations(firstToken) };
+    expect(() => assertConsumingMountAdmission(fixtureMountTurn(firstInput), "external", true)).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(owner.recorder.events).toEqual([]);
+    expect(owner.instance.adapter.hasSession(threadId)).toBe(false);
+    const first = claudeMountConfiguration(firstInput);
     expect(JSON.stringify(first.mcpConfig)).not.toContain(firstToken);
     expect(first.credFile!.content.browser.MURAGE_CONTROL_TOKEN).toBe(firstToken);
-    expect(JSON.parse(readFileSync(first.credFile!.path, "utf8"))).toEqual({});
-    expect(alive(first.pid)).toBe(true);
+    expect(existsSync(first.credFile!.path)).toBe(false);
+    credential.write(first.credFile!.content);
+    expect(JSON.parse(readFileSync(credential.path, "utf8")).browser.MURAGE_CONTROL_TOKEN).toBe(firstToken);
+    credential.clear();
+    expect(JSON.parse(readFileSync(credential.path, "utf8"))).toEqual({});
+    authority.bindProviderTurn(threadId, generation, "fixture-first");
+    authority.completeProviderTurn(threadId, "fixture-first");
     expect(authority.resolve(`Bearer ${firstToken}`)).toBeNull();
     const secondToken = issue();
     expect(secondToken).not.toBe(firstToken);
     expect(authority.resolve(`Bearer ${firstToken}`)).toBeNull();
-    const second = await turn(owner, threadId, { resumeCursor: first.sessionId, integrations: integrations(secondToken) });
-    // the retained child carries the conversation on: the next turn reissues the token into its file
-    expect(second.pid).toBe(first.pid);
+    const secondInput = { threadId, text: "Fixture turn", resumeCursor: "fixture-first", integrations: integrations(secondToken) };
+    expect(() => assertConsumingMountAdmission(fixtureMountTurn(secondInput), "external", true)).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(owner.recorder.events).toEqual([]);
+    expect(owner.instance.adapter.hasSession(threadId)).toBe(false);
+    const second = claudeMountConfiguration(secondInput);
     expect(second.credFile!.content.browser.MURAGE_CONTROL_TOKEN).toBe(secondToken);
     expect(JSON.stringify(second.credFile!.content)).not.toContain(firstToken);
     expect(JSON.stringify(second.mcpConfig)).not.toContain(firstToken);
-    expect(JSON.parse(readFileSync(second.credFile!.path, "utf8"))).toEqual({});
+    expect(existsSync(second.credFile!.path)).toBe(false);
+    credential.write(second.credFile!.content);
+    expect(JSON.parse(readFileSync(credential.path, "utf8")).browser.MURAGE_CONTROL_TOKEN).toBe(secondToken);
+    expect(readFileSync(credential.path, "utf8")).not.toContain(firstToken);
+    credential.clear();
+    expect(JSON.parse(readFileSync(credential.path, "utf8"))).toEqual({});
+    authority.bindProviderTurn(threadId, generation, "fixture-second");
+    authority.completeProviderTurn(threadId, "fixture-second");
     expect(authority.resolve(`Bearer ${secondToken}`)).toBeNull();
-  } finally { unsubscribe(); authority.revokeAll(); }
+  } finally { credential.dispose(); authority.revokeAll(); }
 });
 
 // Adapter turns in this suite use an isolated durable store.

@@ -16,7 +16,7 @@
 import { filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts";
 import type { MemoryAccess } from "./memory/policy.ts";
 import { database } from "./database.ts";
-import { messageMadeWithMemory, messageSourceForgotten, replayExclusions, threadHoldsMemoryLines, type LineageAllowance } from "./memory/replay-lineage.ts";
+import { messageMadeWithMemory, forgottenMessageSources, replayExclusions, threadHoldsMemoryLines, type LineageAllowance } from "./memory/replay-lineage.ts";
 import { GROUP_CONTEXT_MESSAGES, withholdRoomReplies } from "./room-context.ts";
 import type { Message } from "./store.ts";
 import type { LineageReader, LineageRef, PromptPart } from "./memory/lineage-types.ts";
@@ -59,7 +59,7 @@ export function roomTranscriptForTurn(allowance: LineageAllowance, threadId: str
 
 /** The withheld lines whose own source the owner forgot (the owner's own lines too: 1.0.2 revoke-bounded r3). */
 function forgottenReplies(threadId: string, messages: readonly Message[], withheld: ReadonlySet<string>): Set<string> {
-  return new Set(messages.filter(m => withheld.has(m.id) && messageSourceForgotten(threadId, m.id)).map(m => m.id));
+  return forgottenMessageSources(threadId, messages.filter(m => withheld.has(m.id)).map(m => m.id));
 }
 
 /** The transcript a member reads when memory is not active (capture only,
@@ -79,19 +79,26 @@ export function roomTranscriptWithoutMemory(allowance: LineageAllowance, threadI
   // A last resort for a non-owner audience (`reader`): the lines that reader would be refused at the send fence are dropped here too, before
   // the early return below, so a thread with nothing memory-made still gets an explicit floor. Only ever withholds more.
   const audDrop = options.reader?.audience ? audienceDrops(threadId, candidates, options.reader) : undefined;
+  // During the write-time migration, the row can already prove memory use
+  // before the legacy reader is retired. Keep that proof at this floor too.
+  const unprovenDrop = new Set(unprovenInOwnerRoom ? candidates.filter(m => m.role !== "user" && (
+    messageMadeWithMemory(threadId, m.id) || Boolean(database().prepare(`SELECT 1 FROM memory_line_lineage l
+      JOIN memory_thread_no t ON t.no=l.thread_no WHERE t.thread_id=? AND l.message_id=?
+      AND (l.mem_lsn IS NOT NULL OR l.footprint IS NOT NULL) LIMIT 1`).get(threadId, m.id))
+  )).map(m => m.id) : []);
   if (!database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? LIMIT 1").get(threadId) && !candidates.some(m => m.copyOf)
     && !threadHoldsMemoryLines(threadId)
-    && !threadHasForgottenSource(threadId)) {
+    && !threadHasForgottenSource(threadId) && !unprovenDrop.size) {
     if (!audDrop) return undefined;
     return { messages: candidates.filter(m => !audDrop.has(m.id)), withheld: new Set(), forgotten: new Set(), checking: new Set(), checked: new Set(candidates.map(m => m.id)) };
   }
   const checking = new Set<string>();
   const withheld = replayExclusions(allowance, threadId, candidates, null, { failClosed: true, checking });
   // (a forgotten owner line is already excluded by replayExclusions: 1.0.2 revoke-bounded r3)
-  for (const m of candidates) if (m.role !== "user" && !withheld.has(m.id) && messageSourceForgotten(threadId, m.id)) { withheld.add(m.id); checking.delete(m.id); }
+  for (const id of forgottenMessageSources(threadId, candidates.filter(m => m.role !== "user" && !withheld.has(m.id)).map(m => m.id))) { withheld.add(id); checking.delete(id); }
   // Words nobody proved are the owner's, in the owner's room, with no memory
   // access to check a reply against: no reply made with memory is shown.
-  if (unprovenInOwnerRoom) for (const m of candidates) if (m.role !== "user" && messageMadeWithMemory(threadId, m.id)) { withheld.add(m.id); checking.delete(m.id); }
+  for (const id of unprovenDrop) { withheld.add(id); checking.delete(id); }
   if (audDrop) for (const id of audDrop) { withheld.add(id); checking.delete(id); }
   const checked = new Set(candidates.map(m => m.id));
   if (!ownerAudience) return { messages: candidates.filter(m => !withheld.has(m.id)), withheld: new Set(), forgotten: new Set(), checking: new Set(), checked };

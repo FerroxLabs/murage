@@ -1,0 +1,7 @@
+# g0-RULES mutant: the pi handedEngineEnv fixture pinned at the pre-drift length. Applied to HEAD, stop-gate.rules.test.ts
+# "pi: every gate wrapper on the turn path is a fixture" and production scan R1-R3 go RED (RED log job/g0/base-rules.log, m1.log).
+--- a/server/drivers/stop-gate.rules.config.ts
++++ b/server/drivers/stop-gate.rules.config.ts
+@@ -249 +249 @@
+-    { key: "pi>create>runTurn", ordinal: 6, wrapper: "step", operand: "handedEngineEnv({ ...[1342]" },
++    { key: "pi>create>runTurn", ordinal: 6, wrapper: "step", operand: "handedEngineEnv({ ...[1264]" },

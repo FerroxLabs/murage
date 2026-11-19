@@ -7,7 +7,9 @@
 import { describe, expect, it } from "vitest";
 import { alwaysAskCommand } from "./always-ask.ts";
 import { autoVerdict, type AutoContext } from "./auto-approve.ts";
-import { cell, nlh0, ownerMarks } from "./testing/marks-nlh0.ts";
+import { nlh0, ownerMarks, provenInitiator, type CellSpec } from "./testing/marks-nlh0.ts";
+import { wipeOnlyCell } from "./testing/marks-wipe-only-1019.ts";
+import { expectNoLimitsOwnerOutcome } from "./testing/no-limits-1019.ts";
 
 const STUB = { realpath: (path: string) => path, stat: () => ({ isFile: () => true, isDirectory: () => false }) };
 const OWNER = { id: "narrow", autoApprove: true, fullAccess: true, noLimits: true };
@@ -40,6 +42,162 @@ const WIPE: Array<[string, string]> = [
   ["rm -rf $X; rm -rf ~", "delete-home"], ["DEV=/dev/sda; cat x > $DEV", "disk-erase"],
 ];
 
+// T4, Stage 0 rev 4.1: literal expectations confirmed against the NLH0 reads.
+// MAIN RULING 1114-NOLIMITS-OLD-ORACLES point 1: owner wipe verdicts retain the approved rule and reason.
+const T4: Record<string, CellSpec> = {
+  "STOPS rm -rf \"$X\"": {
+    "text": "rm -rf \"$X\"",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    "n2": false,
+    held: {
+      "protected-path": {"reason": "protected-path"},
+      "unreadable/held": {"reason": "value-path"},
+    },
+  },
+  "STOPS rm -rf \"$X\"/": {
+    "text": "rm -rf \"$X\"/",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    // MAIN RULING 1114-NOLIMITS-OLD-ORACLES point 1: unset expansion names a protected root.
+    "n2": true,
+    "owner": {"approve": null, "source": "always-ask", "rule": "delete-root", "reason": "delete-root"},
+    held: {
+      "unknown-target": {"reason": "unknown-target"},
+    },
+  },
+  "STOPS rm -rf ~/\"$X\"": {
+    "text": "rm -rf ~/\"$X\"",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    // MAIN RULING 1114-NOLIMITS-OLD-ORACLES point 1: unset expansion names a protected root.
+    "n2": true,
+    "owner": {"approve": null, "source": "always-ask", "rule": "delete-home", "reason": "delete-home"},
+    held: {
+      "unknown-target": {"reason": "unknown-target"},
+    },
+  },
+  "STOPS cp x /etc/\"$X\"": {
+    "text": "cp x /etc/\"$X\"",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    "n2": false,
+    held: {
+      "protected-path": {"reason": "protected-path"},
+      "unreadable/held": {"reason": "value-path"},
+    },
+  },
+  "STOPS touch ~/\"$X\"": {
+    "text": "touch ~/\"$X\"",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    "n2": false,
+    held: {
+      "protected-path": {"reason": "protected-path"},
+      "unreadable/held": {"reason": "value-path"},
+    },
+  },
+  "STOPS cp blob /w/../etc/../w/x": {
+    "text": "cp blob /w/../etc/../w/x",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    "n2": false,
+    held: {
+      "protected-path": {"reason": "protected-path"},
+      "unreadable/held": {"reason": "value-path"},
+    },
+  },
+  "STOPS sed -e 'w /etc/passwd' f": {
+    "text": "sed -e 'w /etc/passwd' f",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    "n2": false,
+    held: {
+      "protected-path": {"reason": "protected-path"},
+      "unreadable/held": {"reason": "tokenizer"},
+    },
+  },
+  "STOPS touch ../etc/passwd": {
+    "text": "touch ../etc/passwd",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    "n2": false,
+    held: {
+      "protected-path": {"reason": "protected-path"},
+      "unreadable/held": {"reason": "value-path"},
+    },
+  },
+  "STOPS python3 -c 'import shutil; shutil.rmtree(p)'": {
+    "text": "python3 -c 'import shutil; shutil.rmtree(p)'",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    "n2": false,
+    held: {
+      "protected-path": {"reason": "protected-path"},
+      "unreadable/held": {"reason": "tokenizer"},
+    },
+  },
+  "STOPS python3 -c 'open(\"/et\"+\"c/cron.d/pwn\",\"w\").write(\"x\")'": {
+    "text": "python3 -c 'open(\"/et\"+\"c/cron.d/pwn\",\"w\").write(\"x\")'",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    "n2": false,
+    held: {
+      "protected-path": {"reason": "protected-path"},
+      "unreadable/held": {"reason": "value-path"},
+    },
+  },
+  "STOPS python3 -c 'from pathlib import Path; Path(\"/etc/cron.d/pwn\").write_text(\"x\")'": {
+    "text": "python3 -c 'from pathlib import Path; Path(\"/etc/cron.d/pwn\").write_text(\"x\")'",
+    // MAIN RULING 2026-11-13 wipe-only: uncertainty or a protected file is not a concrete wipe.
+    "n2": false,
+    held: {
+      "protected-path": {"reason": "protected-path"},
+      "unreadable/held": {"reason": "value-path"},
+    },
+  },
+  "WIPE rm -rf /": {
+    "text": "rm -rf /",
+    "n2": true,
+    held: {
+      "delete-root": {"reason": "delete-root"},
+    },
+    "owner": {"approve": null, "source": "always-ask", "rule": "delete-root", "reason": "delete-root"},
+  },
+  "WIPE rm -rf ~": {
+    "text": "rm -rf ~",
+    "n2": true,
+    held: {
+      "delete-home": {"reason": "delete-home"},
+    },
+    "owner": {"approve": null, "source": "always-ask", "rule": "delete-home", "reason": "delete-home"},
+  },
+  "WIPE mkfs.ext4 /dev/sdb": {
+    "text": "mkfs.ext4 /dev/sdb",
+    "n2": true,
+    held: {
+      "disk-erase": {"reason": "disk-erase"},
+    },
+    "owner": {"approve": null, "source": "always-ask", "rule": "disk-erase", "reason": "disk-erase"},
+  },
+  "WIPE :(){ :|:& };:": {
+    "text": ":(){ :|:& };:",
+    "n2": true,
+    held: {
+      "fork-bomb": {"reason": "fork-bomb"},
+    },
+    "owner": {"approve": null, "source": "always-ask", "rule": "fork-bomb", "reason": "fork-bomb"},
+  },
+  "WIPE rm -rf $X; rm -rf ~": {
+    "text": "rm -rf $X; rm -rf ~",
+    "n2": true,
+    held: {
+      "protected-path": {"reason": "protected-path"},
+      "unreadable/held": {"reason": "value-path"},
+      "delete-home": {"reason": "delete-home"},
+    },
+    "owner": {"approve": null, "source": "always-ask", "rule": "delete-home", "reason": "delete-home"},
+  },
+  "WIPE DEV=/dev/sda; cat x > $DEV": {
+    "text": "DEV=/dev/sda; cat x > $DEV",
+    "n2": true,
+    held: {
+      "disk-erase": {"reason": "disk-erase"},
+    },
+    "owner": {"approve": null, "source": "always-ask", "rule": "disk-erase", "reason": "disk-erase"},
+  },
+};
+
 describe("FIX A: the owner's No limits turn runs what it cannot follow, and keeps its deny rules", () => {
   it.each(RUNS)("N-RUNS %s", (command) => {
     expect(owner(command)).toMatchObject({ source: "no-limits" });
@@ -61,13 +219,15 @@ describe("FIX A: the owner's No limits turn runs what it cannot follow, and keep
   });
   it("N-RUNS the strict read keeps the doubt (another origin keeps the card)", () => {
     expect(alwaysAskCommand("touch out", undefined)?.doubt).toBe("value-path");
-    expect(owner("touch out", { commandCwd: undefined, workFolder: undefined, fullAccessOrigin: "other" })).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    // MAIN RULING 2026-11-13 wipe-only: another person's turn is Ask, including a harmless command.
+    expect(owner("touch out", { commandCwd: undefined, workFolder: undefined, fullAccessOrigin: "other" })).toEqual({ approve: null, source: "no-grant" });
   });
-  it.each(STOPS)("N-STOPS %s", (command, rule) => {
+  it.each(STOPS)("N-STOPS %s", (command) => {
     // R1: the typed deny is the owner clean No limits cell; every other level and origin reads as NLH0 (pinned)
     for (const [, bot] of LEVELS) for (const [, patch] of PATCHES) {
       const verdict = autoVerdict(bot as never, "Bash", command, ctxOf(command, patch));
-      cell(`STOPS ${command}`, bot, patch, verdict, () => expect(verdict).toMatchObject({ approve: null, source: "always-ask", classification: "deny", rule }));
+      // NOLIM 1.0.19: the owner's No limits cell runs a deny row that is not a wipe (the proxy plainWipe may still card a delete word)
+      wipeOnlyCell(`STOPS ${command}`, bot, patch, verdict, autoVerdict(LEVELS[0]![1] as never, "Bash", command, ctxOf(command, patch)), T4[`STOPS ${command}`]!);
     }
   });
   it("N-STOPS an explicit command folder that is invalid, with a relative write", () => {
@@ -76,13 +236,15 @@ describe("FIX A: the owner's No limits turn runs what it cannot follow, and keep
       const verdict = autoVerdict(bot as never, "Bash", "touch out", ctxOf("touch out", patch));
       // MurageMain ruling 11-08 (N4, security): an invalid explicit command folder never runs at ANY level or turn kind, so this row is no
       // longer pinned to NLH0 outside the owner cell (NLH0 ignored the flag and ran it at Auto and Full): every cell gets the typed deny card.
-      expect(verdict, JSON.stringify(bot)).toMatchObject({ approve: null, source: "always-ask", classification: "deny", rule: "unknown-target" });
+      // NOLIM 1.0.19: every other level keeps the typed deny card; the owner's No limits turn runs it (stored origin owner)
+      if (bot.noLimits === true) expectNoLimitsOwnerOutcome(verdict, "touch out", "unknown-target", JSON.stringify(bot));
+      else expect(verdict, JSON.stringify(bot)).toMatchObject({ approve: null, source: "always-ask", classification: "deny", rule: "unknown-target" });
     }
   });
-  it.each(WIPE)("N-WIPE %s", (command, rule) => {
+  it.each(WIPE)("N-WIPE %s", (command) => {
     for (const [, bot] of LEVELS) for (const [, patch] of PATCHES) {
       const verdict = autoVerdict(bot as never, "Bash", command, ctxOf(command, patch));
-      cell(`WIPE ${command}`, bot, patch, verdict, () => expect(verdict).toMatchObject({ approve: null, source: "always-ask", classification: "deny", rule }));
+      wipeOnlyCell(`WIPE ${command}`, bot, patch, verdict, autoVerdict(LEVELS[0]![1] as never, "Bash", command, ctxOf(command, patch)), T4[`WIPE ${command}`]!);
     }
   });
   it("N-ORDER delete-home wins over unknown-target, and a value target alone keeps its doubt in the strict read (M-FIX4-order, M-FIX4-rethrow)", () => {
@@ -98,13 +260,17 @@ const SNAP_COMMANDS = [...new Set(Object.keys(SNAPSHOT).map((key) => key.split("
 describe("FIX A: every level and every other origin read the pinned commands as pristine (1320a3e29) did", () => {
   it("N-NONOWNER the verdict matrix equals the snapshot taken on the pristine tree (toEqual)", () => {
     const now: Record<string, string> = {};
+    const expected = { ...SNAPSHOT };
     for (const command of SNAP_COMMANDS) for (const [level, bot] of LEVELS) for (const [name, patch] of PATCHES) {
-      // the two value-target rows are waived on the owner's clean No limits turn (the N-RUNS row above), pristine cards them
-      if (VALUE_TARGETS.includes(command) && level === "nolimits" && name === "owner") { now[`${command}|${level}|${name}`] = SNAPSHOT[`${command}|${level}|${name}`]!; continue; }
+      const key = `${command}|${level}|${name}`;
       const verdict = autoVerdict(bot as never, "Bash", command, ctxOf(command, patch));
-      now[`${command}|${level}|${name}`] = `${verdict.approve ? "RUN" : "STOP"}:${verdict.source}:${verdict.rule ?? ""}`;
+      // MAIN RULING 2026-11-13 wipe-only: these are non-wipes. Stored owner
+      // work runs; other/unproven work equals the independently pinned Ask cell.
+      if (level === "nolimits") expected[key] = provenInitiator(patch)
+        ? "RUN:no-limits:" : SNAPSHOT[`${command}|ask|${name}`]!;
+      now[key] = `${verdict.approve ? "RUN" : "STOP"}:${verdict.source}:${verdict.rule ?? ""}`;
     }
-    expect(now).toEqual(SNAPSHOT);
+    expect(now).toEqual(expected);
   });
   it("N-NONOWNER No limits is never stricter than Full access (M-R10-monotonic)", () => {
     for (const command of [...RUNS, ...VALUE_TARGETS]) {
@@ -129,14 +295,19 @@ describe("D4: an ambiguous interpreter flag is a could-not-read", () => {
     expect(owner("perl -W ./tool.pl").approve).toBeTruthy();
   });
   it("D4-WIPE a wipe word in the text still cards it (plainWipe)", () => {
-    expect(owner("python3 -x ./tool.py; git clean -fdx")).toMatchObject({ approve: null, source: "always-ask" });
+    // MAIN RULING 1114-NOLIMITS-OLD-ORACLES: an unread script and
+    // ordinary project Git cleanup are not a protected-root wipe.
+    expect(owner("python3 -x ./tool.py; git clean -fdx")).toMatchObject({ approve: expect.any(String), source: "no-limits" });
   });
   it("D4-DENY a protected path named in the text is the deny rule", () => {
-    expect(owner("python3 -x ./tool.py; touch /etc/cron.d/pwn")).toMatchObject({ approve: null, source: "always-ask", classification: "deny", rule: "protected-path" });
+    const cmd = "python3 -x ./tool.py; touch /etc/cron.d/pwn";
+    expect(ownerMarks(() => alwaysAskCommand(cmd, "/w"))).toMatchObject({ classification: "deny", rule: "protected-path" });
+    // MAIN RULING 2026-11-13 wipe-only: a protected-file write runs on this stored owner turn.
+    expect(owner(cmd)).toMatchObject({ source: "no-limits", approve: expect.any(String) });
   });
   it("D4-STARTUP an unplaced write before a startup-file reader is the same kind of hit (FIX A ruling 2)", () => {
     const cmd = "f=$(mktemp); echo x > \"$f\"; bash -lc true";
-    nlh0("D4-STARTUP|verdict", autoVerdict(FULL as never, "Bash", cmd, ctxOf(cmd))); // R1: Full access reads as NLH0
+    nlh0("D4-STARTUP|verdict", autoVerdict(FULL as never, "Bash", cmd, ctxOf(cmd)), undefined, { reason: "value-path" }); // R1: Full access reads as NLH0
     expect(ownerMarks(() => alwaysAskCommand(cmd, "/w"))).toMatchObject({ classification: "ask" });
     expect(owner(cmd).approve).toBeTruthy();
   });

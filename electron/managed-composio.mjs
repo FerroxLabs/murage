@@ -135,6 +135,7 @@ export function managedComposioChildEnvironment(
     "MURAGE_COMPOSIO_LEGACY_CLAIM",
     // The retired own key is never handed to the harness, whatever the launching shell exported.
     "COMPOSIO_API_KEY",
+    "MURAGE_FLUX_COMPOSIO_OWNER",
     "MURAGE_CONNECTED_APPS_OWN_KEY_RETIRED",
   ]) delete next[key];
   const access = managedComposioAccess(brokerUrl, credentials, { legacyUntil, now });
@@ -146,7 +147,10 @@ export function managedComposioChildEnvironment(
   if (flux) {
     next.MURAGE_FLUX_COMPOSIO_BROKER_URL = flux;
     const fluxAccess = fluxComposioAccess(flux, credentials);
-    if (fluxAccess) next.MURAGE_FLUX_COMPOSIO_BROKER_TOKEN = fluxAccess.token;
+    if (fluxAccess) {
+      next.MURAGE_FLUX_COMPOSIO_BROKER_TOKEN = fluxAccess.token;
+      if (/^[a-f0-9]{16}$/.test(credentials?.fluxComposioBrokerTokenKeyFingerprint ?? "")) next.MURAGE_FLUX_COMPOSIO_OWNER = credentials.fluxComposioBrokerTokenKeyFingerprint;
+    }
     if (credentials?.fluxComposioAccountKind === "personal" || credentials?.fluxComposioAccountKind === "shared") {
       next.MURAGE_FLUX_COMPOSIO_ACCOUNT_KIND = credentials.fluxComposioAccountKind;
     }
@@ -202,76 +206,62 @@ export function applyComposioCredentialResult(current, snapshot, next) {
  * and persists, even if the request that followed was aborted. */
 export const MANAGED_COMPOSIO_UPDATE_OPTIONS = Object.freeze({ skipUnchanged: true });
 
-/** The optional startup derivation, run under the shared credential queue. The
- * queue performs the one atomic encrypted write after the complete document is
- * derived, so the helper's own save hook is a no-op here. */
-export function deriveManagedComposioCredentials(options) {
-  return async (credentials) => {
-    await ensureManagedComposioCredentials({ ...options, credentials, saveCredentials: async () => {} });
-    return credentials;
-  };
+/** Clear a replaced key's capability in the same local write that changes the
+ * key. The old token remains owned in the protected cleanup queue. */
+export function withComposioCredentialChange(current, next, brokerUrl) {
+  if ((current.fluxApiKey ?? "").trim() === (next.fluxApiKey ?? "").trim()) return next;
+  const token = current.fluxComposioBrokerToken;
+  const cleared = { ...next };
+  for (const key of Object.keys(cleared)) if (key.startsWith("fluxComposio")) delete cleared[key];
+  if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token)) return cleared;
+  let pending = [];
+  try { pending = JSON.parse(current.composioPendingRevocations ?? "[]"); } catch { /* The current token still remains owned. */ }
+  if (!Array.isArray(pending)) pending = [];
+  if (!pending.some(entry => entry?.token === token && entry?.fluxBrokerUrl === brokerUrl)) {
+    // The old key and its token stay in custody if cleanup is saturated. The
+    // caller's credential transaction must fail before publishing a new key.
+    if (pending.length >= 256) throw new Error("Connected apps cleanup is full. Try again after cleanup finishes.");
+    pending.push({ fluxBrokerUrl: brokerUrl, token });
+  }
+  cleared.composioPendingRevocations = JSON.stringify(pending);
+  return cleared;
 }
 
-export async function ensureManagedComposioCredentials({
-  brokerUrl,
-  credentials,
-  fetchImpl = globalThis.fetch,
-  saveCredentials,
-  log = () => {},
-  timeoutSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
-  existingCredentialTimeoutMs = 8_000,
-  registrationTimeoutMs = 15_000,
-  // False once the FluxRouter broker is configured: new installs get
-  // connected apps through a FluxRouter account, never an anonymous Worker
-  // registration. An existing Worker token is kept untouched (it may still be
-  // claimable), so this path makes no request at all.
-  registrationAllowed = true,
-}) {
-  const url = normalizeManagedComposioBrokerUrl(brokerUrl);
-  if (!url) {
-    if (brokerUrl) log("connected-apps broker URL rejected: HTTPS or a loopback HTTP URL is required");
-    return credentials;
+/** Protected custody decoding fails closed. No migration write is needed. */
+export function readComposioCustody(value) {
+  const rows = typeof value === "string" ? JSON.parse(value || "[]") : value ?? [];
+  if (!Array.isArray(rows) || rows.length > 256) throw new Error("credential_recovery_failed");
+  const seen = new Set();
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || !normalizeManagedComposioBrokerUrl(row.fluxBrokerUrl)
+      || !/^[a-f0-9]{64}$/.test(row.token ?? "")
+      || (row.previous != null && !/^[a-f0-9]{64}$/.test(row.previous))
+      || (row.after !== undefined && !/^[a-f0-9]{64}$/.test(row.after))
+      || (row.replacement !== undefined && typeof row.replacement !== "boolean")
+      || (row.attempts !== undefined && (!Number.isInteger(row.attempts) || row.attempts < 0 || row.attempts > 3))
+      || (row.retryAt !== undefined && (!Number.isFinite(row.retryAt) || row.retryAt < 0))
+      || (row.exhausted !== undefined && typeof row.exhausted !== "boolean")) throw new Error("credential_recovery_failed");
+    const key = `${normalizeManagedComposioBrokerUrl(row.fluxBrokerUrl)}|${row.token}`;
+    if (seen.has(key)) throw new Error("credential_recovery_failed");
+    seen.add(key);
   }
-  if (!registrationAllowed) return credentials;
-  if (TOKEN.test(credentials.composioBrokerToken ?? "")) {
-    try {
-      const check = await fetchImpl(`${url}/v1/me`, {
-        headers: { authorization: `Bearer ${credentials.composioBrokerToken}` },
-        redirect: "error",
-        signal: timeoutSignal(existingCredentialTimeoutMs),
-      });
-      if (check.ok) return credentials;
-      // Only a definitive auth failure rotates the credential. A transient
-      // outage keeps the existing identity so reconnecting cannot strand the
-      // user's already-authorized accounts under a new installation.
-      if (check.status !== 401) return credentials;
-      delete credentials.composioBrokerToken;
-      delete credentials.composioInstallationId;
-    } catch {
-      return credentials;
+  return rows;
+}
+
+/** Apply only the identities this authority changed while holding the store
+ * writer. Compare the observed revision so a stale pass cannot resurrect a
+ * settled identity or erase another writer's newer transition. */
+export function applyComposioCustodyDelta(current, entries, delta) {
+  if (!delta) return readComposioCustody(entries);
+  const keyOf = row => `${normalizeManagedComposioBrokerUrl(row.fluxBrokerUrl)}|${row.token}`;
+  const rows = new Map(readComposioCustody(current).map(row => [keyOf(row), row]));
+  for (const change of delta) {
+    const key = keyOf(change.entry ?? change.previous), observed = rows.get(key);
+    if (JSON.stringify(observed) !== JSON.stringify(change.previous)) {
+      if (JSON.stringify(observed) === JSON.stringify(change.entry)) continue;
+      throw new Error("credential_custody_changed");
     }
+    if (change.entry) rows.set(key, change.entry); else rows.delete(key);
   }
-  try {
-    const response = await fetchImpl(`${url}/v1/installations`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-      redirect: "error",
-      signal: timeoutSignal(registrationTimeoutMs),
-    });
-    const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
-    if (!TOKEN.test(body?.token ?? "") || typeof body?.installationId !== "string") {
-      throw new Error("the connected-apps service returned invalid credentials");
-    }
-    credentials.composioBrokerToken = body.token;
-    credentials.composioInstallationId = body.installationId;
-    await saveCredentials(credentials);
-    log("connected-apps installation registered");
-  } catch (error) {
-    // This operation always settles locally. The caller runs it after first
-    // paint, so an optional hosted integration cannot delay desktop readiness.
-    log(`connected-apps registration failed: ${error?.message ?? error}`);
-  }
-  return credentials;
+  return readComposioCustody([...rows.values()]);
 }

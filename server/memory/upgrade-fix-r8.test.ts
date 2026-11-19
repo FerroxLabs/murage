@@ -1,3 +1,4 @@
+import { withLegacyFixtureDb, insertLegacyFixtureMessage } from '../testing/approval-card.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -94,7 +95,7 @@ it("r8 (r7 P1-1): a revised source a member's receipt cites ends the proof: the 
   const db = database();
   captureSource(db, { id: "doc:secret", threadId: "C", kind: "text", speaker: "owner", outcome: "recorded", text: "the first words" });
   citedReply(db, "doc:secret");
-  expect(sessionCheck()).toEqual({ bad: true, reason: "checking" }); // not walked by the turn
+  expect(sessionCheck()).toEqual({ bad: true, reason: "checking:root" }); // not walked by the turn // MAIN RULING 1115-R5RUL-10 (GrokBuild)
   expect(passes()).toHaveLength(Math.ceil(20_001 / 4_000));
   expect(sessionCheck()).toEqual({ bad: false, reason: undefined });
   captureSource(db, { id: "doc:secret", threadId: "C", kind: "text", speaker: "owner", outcome: "recorded", text: "other words entirely" });
@@ -111,7 +112,7 @@ it("r8 (Fable P1, r7 P1-1): a branch switch in conversation A retires message:A:
   captureSource(db, { id: "message:A:M", threadId: "A", messageId: "M", kind: "text", speaker: "owner", outcome: "recorded", text: "the words" });
   expect(db.prepare("SELECT state FROM memory_sources WHERE id='message:A:M'").get()?.state).toBe("active");
   citedReply(db, "message:A:M");
-  expect(sessionCheck()).toEqual({ bad: true, reason: "checking" }); // a turn asks for the proof
+  expect(sessionCheck()).toEqual({ bad: true, reason: "checking:root" }); // a turn asks for the proof // MAIN RULING 1115-R5RUL-9 (GrokBuild)
   passes();
   expect(sessionCheck()).toEqual({ bad: false, reason: undefined });
   resetRootSetWork();
@@ -128,7 +129,7 @@ it("r8 (r7 P1-2): nothing proven before a restart is trusted after it, whatever 
   const db = database();
   captureSource(db, { id: "doc:secret", threadId: "C", kind: "text", speaker: "owner", outcome: "recorded", text: "the first words" });
   citedReply(db, "doc:secret");
-  expect(sessionCheck()).toEqual({ bad: true, reason: "checking" }); // a turn asks for the proof
+  expect(sessionCheck()).toEqual({ bad: true, reason: "checking:root" }); // a turn asks for the proof // MAIN RULING 1115-R5RUL-11 (GrokBuild)
   passes();
   expect(sessionCheck()).toEqual({ bad: false, reason: undefined });
   // a committed change that no trigger of this connection saw, then the process ends
@@ -138,7 +139,7 @@ it("r8 (r7 P1-2): nothing proven before a restart is trusted after it, whatever 
   closeDatabase(); forgetKeptLineageForTest();
   database();
   resetRootSetWork();
-  expect(sessionCheck()).toEqual({ bad: true, reason: "checking" });
+  expect(sessionCheck()).toEqual({ bad: true, reason: "checking:root" }); // MAIN RULING 1115-R5RUL-11 (GrokBuild)
   expect(rootSetWork().members).toBe(0);
   passes();
   expect(capturedMessageWithheld(LineageAllowance.tool(), "C", "reply-1")).toBe(true);
@@ -163,8 +164,8 @@ it("r8: a turn's look at an unproven set is bounded by its allowance at 20,001 a
   // past the ceiling. A huge set stays in the file (the metered handle), so the first check never reads its rows: at 20,001 and at 200,000 members
   // the large set is "not proven yet" ("checking"), withheld, and the recovery scheduler proves it. No member is judged and the read never exceeds the allowance.
   const allowanceRows = TURN_LINEAGE_NODES * ROWS_PER_NODE;
-  expect(seen[0]!.check).toEqual({ bad: true, reason: "checking" });
-  expect(seen[1]!.check).toEqual({ bad: true, reason: "checking" });
+  expect(seen[0]!.check).toEqual({ bad: true, reason: "checking:root" }); // MAIN RULING 1115-R5RUL-13 (GrokBuild)
+  expect(seen[1]!.check).toEqual({ bad: true, reason: "checking:root" }); // MAIN RULING 1115-R5RUL-13 (GrokBuild)
   for (const run of seen) { expect(run.members).toBe(0); expect(run.rows).toBeLessThanOrEqual(allowanceRows + 64); }
   expect(seen[1]!.rows).toBe(seen[0]!.rows); // flat: the size of the set does not change what a turn reads
 });
@@ -172,7 +173,7 @@ it("r8: a turn's look at an unproven set is bounded by its allowance at 20,001 a
 it("r8: the background proves a large set within ceil(n/4,000) passes, each member once, and the session then resumes with no member walked", () => {
   const db = database();
   bigSet(db, "big", 24_001); retain(db, "big");
-  expect(sessionCheck()).toEqual({ bad: true, reason: "checking" });
+  expect(sessionCheck()).toEqual({ bad: true, reason: "checking:root" }); // MAIN RULING 1115-R5RUL-14 (GrokBuild)
   const members = passes();
   console.log(`R8-BACKGROUND n=24001 passes=${members.length} members=${JSON.stringify(members)}`);
   expect(members).toHaveLength(Math.ceil(24_001 / 4_000));
@@ -189,7 +190,7 @@ it("r8: a proof survives the eviction of the verdicts it rests on, and a change 
   const db = database();
   captureSource(db, { id: "doc:secret", threadId: "C", kind: "text", speaker: "owner", outcome: "recorded", text: "the first words" });
   citedReply(db, "doc:secret");
-  expect(sessionCheck()).toEqual({ bad: true, reason: "checking" }); // a turn asks for the proof
+  expect(sessionCheck()).toEqual({ bad: true, reason: "checking:root" }); // a turn asks for the proof // MAIN RULING 1115-R5RUL-12 (GrokBuild)
   passes();
   expect(sessionCheck()).toEqual({ bad: false, reason: undefined });
   captureSource(db, { id: "doc:secret", threadId: "C", kind: "text", speaker: "owner", outcome: "recorded", text: "changed" });
@@ -222,10 +223,12 @@ it("r8 #4: reconciling an unchanged roster on a first upgrade (no owner index) m
 
 const fakeBus = () => ({ store: { bots: [], groups: [], patchMessagePoint: (thread: string, id: string, patch: Partial<Message>) => { const current = readMessage(thread, id); if (!current) return null; const next = { ...current, ...patch } as Message; updateMessage(thread, next); return next; } } }) as unknown as ApprovalBus;
 function openCards(db: DatabaseSync, n: number, tool: string) {
-  db.exec("BEGIN");
-  db.prepare(`WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM k WHERE i<?) INSERT INTO messages(thread_id,id,at,role,kind,text,json)
-    SELECT 'other','c'||i,i,'bot','options','x',json_object('id','c'||i,'at',i,'role','bot','kind','options','text','x','parentId',NULL,'card',json_object('title','c','options',json_array(),'requestId','r'||i,'tool',?)) FROM k`).run(n, tool);
-  db.exec("COMMIT");
+  withLegacyFixtureDb(db, legacy => {
+    legacy.exec("BEGIN");
+    legacy.prepare(`WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM k WHERE i<?) INSERT INTO messages(thread_id,id,at,role,kind,text,json)
+      SELECT 'other','c'||i,i,'bot','options','x',json_object('id','c'||i,'at',i,'role','bot','kind','options','text','x','parentId',NULL,'card',json_object('title','c','options',json_array(),'requestId','r'||i,'tool',?)) FROM k`).run(n, tool);
+    legacy.exec("COMMIT");
+  });
 }
 it("r8 #4: before listen the start reads one page of the open-card list, the same at 20,000 and 200,000 unrelated open cards; the rest is settled after listen", { timeout: 300_000 }, async () => {
   const read: number[] = [], after: number[] = [];
@@ -233,7 +236,7 @@ it("r8 #4: before listen the start reads one page of the open-card list, the sam
     fresh();
     const db = database();
     openCards(db, n, "Bash");
-    insertMessage("zz-owned", { id: "dead", at: n + 1, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "gone", tool: "ask_bot" } } as never);
+    insertLegacyFixtureMessage("zz-owned", { id: "dead", at: n + 1, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "gone", tool: "ask_bot" } } as never);
     db.exec("DELETE FROM open_card; DELETE FROM transcript_index_state WHERE name='open_card'");
     ensureOpenCardIndex(db);
     const owned = new Set(["zz-owned"]), kinds = [stalePeerCardKind(), staleHostConsentCardKind()], high = messagesHighWater();
@@ -251,20 +254,22 @@ it("r8 #4: before listen the start reads one page of the open-card list, the sam
 // ── #5: the list completed during the rowid sweep is handed over explicitly ────────────────────────────────────────────────────
 it("r8 #5: when the open-card list completes during the descending sweep, the old peer card is dismissed through the handoff (not orphaned), and a card of this run is untouched", async () => {
   const db = database();
-  db.exec("BEGIN");
-  const put = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
-  for (let i = 1; i <= 40_001; i++) {
-    const card = i === 40 ? { title: "c", options: [], requestId: "gone", tool: "ask_bot" } : undefined;
-    const message = { id: `m${i}`, at: i, role: "bot", kind: card ? "options" : "text", text: "x", parentId: null, ...(card ? { card } : {}) };
-    put.run("room", message.id, i, "bot", message.kind, "x", JSON.stringify(message));
-  }
-  db.exec("COMMIT");
+  withLegacyFixtureDb(db, legacy => {
+    legacy.exec("BEGIN");
+    const put = legacy.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
+    for (let i = 1; i <= 40_001; i++) {
+      const card = i === 40 ? { title: "c", options: [], requestId: "gone", tool: "ask_bot" } : undefined;
+      const message = { id: `m${i}`, at: i, role: "bot", kind: card ? "options" : "text", text: "x", parentId: null, ...(card ? { card } : {}) };
+      put.run("room", message.id, i, "bot", message.kind, "x", JSON.stringify(message));
+    }
+    legacy.exec("COMMIT");
+  });
   db.exec("DELETE FROM open_card; DELETE FROM transcript_index_state WHERE name='open_card'"); // the list is still being built at the start
   const owned = new Set(["room"]), bus = fakeBus(), high = messagesHighWater();
   // the first descending slice (the newest 20,000 rows) holds no card
   expect(dismissStalePeerCards(bus, { after: high - 20_000, upTo: high }, owned)).toBe(0);
   ensureOpenCardIndex(db); // the list completes now; the descending walk stops
-  insertMessage("room", { id: "this-run", at: 50_000, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "live", tool: "ask_bot" } } as never);
+  insertLegacyFixtureMessage("room", { id: "this-run", at: 50_000, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "live", tool: "ask_bot" } } as never);
   expect(await settleStaleCardsFromList(bus, [stalePeerCardKind()], null, high, owned, async () => {})).toBe(1);
   expect(readMessage("room", "m40")?.card).toMatchObject({ answered: "unavailable", dismissed: true });
   expect(readMessage("room", "m40")?.card?.orphaned).toBeUndefined();
@@ -281,7 +286,7 @@ it("r8 #6: deleting the newest conversation brings the sweep mark down with it, 
     for (let i = 1; i <= 50; i++) insertMessage("newest", { id: `n${i}`, at: n + i, role: "user", kind: "text", text: "x", parentId: null } as Message);
     keepCardSweepThrough(messagesHighWater()); // a start finished its sweep through the newest row
     deleteThread("newest");
-    insertMessage("q", { id: "question", at: n + 100, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "q", options: ["a"], requestId: "dead-run" } } as never);
+    insertLegacyFixtureMessage("q", { id: "question", at: n + 100, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "q", options: ["a"], requestId: "dead-run" } } as never);
     const high = messagesHighWater();
     expect(high).toBe(n + 1); // the freed number is reused
     const from = cardSweepThrough(high);

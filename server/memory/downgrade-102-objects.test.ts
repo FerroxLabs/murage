@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { downgradeMemorySchema, migrateMemorySchema, OWNER_TAIL_SCHEMA } from "./schema.ts";
-import { OPTIONAL_INDEXES } from "./optional-index.ts";
+import { OPTIONAL_INDEXES, REQUIRED_INDEXES } from "./optional-index.ts";
 import "../transcript-seq.ts"; // registers the transcript index, so every optional index 1.0.3 makes is built below
 
 type Row = { type: string; name: string; tbl_name: string; sql: string | null };
@@ -24,7 +24,7 @@ function full103(): DatabaseSync {
   migrateMemorySchema(db);
   db.exec(OWNER_TAIL_SCHEMA);
   const table = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?");
-  for (const index of OPTIONAL_INDEXES) if (table.get(index.table)) db.exec(index.sql);
+  for (const index of [...REQUIRED_INDEXES, ...OPTIONAL_INDEXES]) if (table.get(index.table)) db.exec(index.sql);
   return db;
 }
 const memoryRows = (db: DatabaseSync) => (db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as Row[])

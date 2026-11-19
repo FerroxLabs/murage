@@ -106,7 +106,8 @@ describe("phone authority wiring in server/index.ts", () => {
   it("the bot messages route states ownerActs from the owner proof, and the revoke functions revoke phone authority", () => {
     // VENUE-POST-1017 (b8b26791a) spreads the owner's Post in… pick after it; the pick is typed to its two fields, so it can never
     // carry ownerActs or typedStop past the owner proof
-    expect(source).toContain("...(viaStanding ? { ownerActs: false, ...viaStanding } : { typedStop: true, ownerActs: mayApprove(req, url) }), ...(pick ?? {}) });");
+    // MAIN RULING INT-CONFLICT-DEFAULT 5be811ddce3 09c032b6c6b: isolated sends cannot request typed Stop; the same owner proof and third-party exclusion remain.
+    expect(source).toContain("...(viaStanding ? { ownerActs: false, ...viaStanding } : { typedStop: body.noSteer !== true && body.typedStop !== false, ownerActs: mayApprove(req, url) }), ...(pick ?? {}) });");
     expect(source).toContain("function parsePostPick(raw: unknown, quote: unknown): { postTo: PostTo; quoteMessageId?: string } | undefined {");
     expect(countOf("...(pick ?? {})")).toBe(1);
     expect(bodyOf("function revokeInternalGeneration(")).toContain("phoneAuthorities.revokeGeneration(generation)");
@@ -129,6 +130,29 @@ describe("phone authority wiring in server/index.ts", () => {
   it("S13: the inline internal kind mapping knows the device path, and the device route calls phoneRpc with the live claim", () => {
     expect(source).toContain('path.startsWith("/api/internal/device/") ? "device"');
     expect(countOf('if (path === "/api/internal/device/call") {')).toBe(1);
-    expect(countOf("await phoneRpc(internalClaim,")).toBe(1);
+    // MAIN RULING INT-CONFLICT-DEFAULT af3d1e509d0 d67df5e6dff: the durable Ask callback and direct route each use the live internal claim.
+    expect(countOf("await phoneRpc(internalClaim,")).toBe(2);
+    const direct = source.slice(source.indexOf('if (path === "/api/internal/device/call") {'), source.indexOf('if (path === "/api/internal/host-computer") {'));
+    expect(direct).toContain("await phoneRpc(internalClaim,");
+    expect(direct).toContain("authorities: phoneAuthorities, registry, jobs: phoneJobs");
+    const held = bodyOf("async function prepareOwnWrite(");
+    expect(held).toContain("requireActiveInternal();");
+    expect(held).toContain("authorities.mint({ botId: row.botId, threadId: row.threadId, turnId: row.id, generation, origin: frozen.origin })");
+    expect(held).toContain("await phoneRpc(internalClaim,");
+    expect(held).toContain("authorities.revokeAll()");
   });
+});
+
+
+it("MAIN binding is unique, precedes mounts, and checks the stored profile and origin", () => {
+  expect(countOf("servicePermissions.bindServiceTurn(")).toBe(1);
+  const start=source.indexOf("servicePermissions.bindServiceTurn(");
+  const end=source.indexOf("internalTurnOwners.get(threadId)!.triggerMessageId",start);
+  const binding=source.slice(start,end);
+  expect(binding).toContain("const origin = decisionNoLimitsOrigin(dispatchProvenance);");
+  expect(binding).toContain("applyResolvedRoutineCeilings(live, [ceiling, opts?.continuationPermissionMode, opts?.askerWakeCeiling])");
+  expect(binding).toContain("hasNoLimits(effective) && noLimitsAppliesTo(origin,");
+  expect(binding).toContain("effective : store.bot(bot.id) ?? live");
+  expect(binding).not.toContain("fullAccessOrigin ===");
+  expect(start).toBeLessThan(source.indexOf("serviceNoLimits(dispatchClaimId, threadId, bot.id) && phonesOfferedNow()"));
 });

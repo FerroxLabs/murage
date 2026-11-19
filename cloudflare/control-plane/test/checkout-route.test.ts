@@ -3,7 +3,11 @@
 // country switch, the server-owned disclosure, and the new fields on the order and cloud summaries. Real workerd + D1; Stripe is a fixture.
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseItem9HoldForTests } from "../src/held-until-item9-highs";
+// ITEM 9: these cases exercise a top-up checkout as offered; the launch hold (held-until-item9-highs.ts) is released here.
+beforeAll(() => releaseItem9HoldForTests(true));
+afterAll(() => releaseItem9HoldForTests(false));
 import { createWorker } from "../src/index";
 import { fakeProvider, type ProviderAdapter } from "../src/b3-provider";
 import type { BillingDependencies } from "../src/b5-billing";
@@ -335,7 +339,7 @@ describe("GET /v1/legal/disclosure (r13, no tax quote)", () => {
     const de = (await get("plan=pro&declaredCountry=US&locale=de")).body;
     expect(de.wording.topupBox).toContain("$20 hinzufügen, sobald mein Guthaben unter $5 fällt");
     expect(de.wording.topupCharge).toContain("mit $20 zzgl. Steuern, wo sie anfallen für Flux-Guthaben im Wert von $20 zu belasten");
-    for (const b of [en, de]) { expect(b.wording.topupBox + b.wording.topupCharge).not.toContain("${"); expect(b.disclosure.renewalText).not.toMatch(/Flux/); }
+    for (const b of [en, de]) { expect(b.wording.topupBox + b.wording.topupCharge).not.toContain("${"); expect(b.disclosure.renewalText).not.toMatch(/Flux(?! Router)/); }
     // without a country the answer still has the wording (and no disclosure box)
     const bare = (await get("plan=pro&locale=de")).body;
     expect(bare.disclosure).toBeUndefined(); expect(bare.wording.topupBox).toContain("Meine Flux-Guthaben");
@@ -492,7 +496,7 @@ describe("WP4 r1-4: the terms are accepted at order completion, not at our butto
     expect(await recordAcceptanceAtCompletion(env, c.id as string, NOW + 9000)).toBe(false);
     const rows = (await env.DB.prepare("SELECT source,consent_id,accepted_at,wording FROM terms_acceptances").all()).results;
     expect(rows).toEqual([{ source: "checkout", consent_id: c.id, accepted_at: NOW + 5000,
-      wording: "You accept the [Murage Cloud terms] and [Terms of Service] when you submit your order on the payment page. [Privacy Policy]." }]);
+      wording: "You confirm you are 18 or older, and you accept the [Murage Cloud terms], [Terms of Service] and [Flux Router Terms of Service] when you submit your order on the payment page. [Privacy Policy]." }]);
     // the consent row is not completed yet (WP5 attaches the session in the same handler): not counted until it is
     expect(await latestAcceptance(env, USER)).toBeNull();
     await env.DB.prepare("UPDATE checkout_consents SET completed_at=? WHERE id=?").bind(NOW + 5000, c.id).run();

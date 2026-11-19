@@ -28,10 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { hostStoppedReason } from "../shared/host-stop.ts";
-import { browserEngineRefusesHost } from "./testing/browser-host.ts";
 
-// The fixture stubs only verifyAgentBrowserBinary; the browser engine still refuses a root or container host before it
-// (server/browser-engine.ts), so the hold never arms there.
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const posixOnly = describe.skipIf(process.platform === "win32");
 let fixture: VerificationServer, headers: Record<string, string>;
@@ -120,6 +117,9 @@ posixOnly("a refused child's late terminal event does not stop the re-dispatch",
   beforeAll(async () => {
     fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
       const fs=await import('node:fs');const path=await import('node:path');
+      // 30a1b3b2ce pattern: inject a fake host only into this disposable test process.
+      process.env.NODE_ENV = 'test';
+      globalThis[Symbol.for('murage.browserHost.testHost')] = { assertSandbox() {} };
       const { BUILT_IN_DRIVERS } = await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "drivers", "builtIn.ts")).href)});
       const { makeLateTerminalDriver } = await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-late-terminal-driver.ts")).href)});
       BUILT_IN_DRIVERS.push(makeLateTerminalDriver());
@@ -397,10 +397,6 @@ export async function verifyAgentBrowserBinary(binary, env) {
   // member's browser is switched on only after its 1:1 turn, so the room
   // turn is the first to mint (and hold) its capability.
   it("room member path: Stop while the browser capability is minted, before the room claim, drains a continuation queued for the member and idles it", async () => {
-    // The browser engine refuses root and container hosts (browser-engine.ts), so
-    // no capability is minted and the hold below never engages. Fail loudly, not
-    // silently: on a container host run with HZ_NODOCKERENV=1 (hz-test.sh).
-    if (browserEngineRefusesHost) throw new Error("RED2L needs the browser engine, which refuses root and container hosts (/.dockerenv, /run/.containerenv, uid 0). Run it on a non-container host, or with HZ_NODOCKERENV=1 in hz-test.sh.");
     const member = await createBot("Stopped before claim member"), other = await createBot("Stopped before claim other");
     const createdRoom = await api("POST", "/api/groups", { name: "Stopped before claim room", memberIds: [member.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: member.id } } });
     expect(createdRoom.status).toBe(201);
@@ -485,7 +481,8 @@ export async function verifyAgentBrowserBinary(binary, env) {
     const group = room ? (await api("POST", "/api/groups", { name: "Refused room", memberIds: [bot.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: bot.id } } })).body.group : undefined;
     const threadId = group?.threadId ?? bot.threadId;
     expect((await api("POST", room ? `/api/groups/${group.id}/messages` : `/api/bots/${bot.id}/messages`, { threadId, text: "refused by the engine" })).status).toBe(202);
-    const line = (message: any) => message.role === "bot" && message.kind === "activity" && /Refusing fixture could not start this reply\. Send it again\.$/.test(String(message.tool?.name ?? ""));
+    // 4683132ffc: an adapter's own terminal refusal does not prove an invoked submission was unwritten.
+    const line = (message: any) => message.role === "bot" && message.kind === "activity" && String(message.tool?.name ?? "").endsWith("Context changed; previous attempt may have started. Review its output before trying again.");
     await expect.poll(async () => (await messages(threadId)).some(line), { timeout: 20000 }).toBe(true);
     await expect.poll(async () => room ? (await groupState(group.id)).busyBotId ?? null : (await botState(bot.id)).busy, { timeout: 15000 }).toBe(room ? null : false);
     const thread = await messages(threadId);
