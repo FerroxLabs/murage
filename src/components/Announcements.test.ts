@@ -19,7 +19,6 @@ Object.assign(globalThis, {
     addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true,
   }),
 });
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { AnnouncementBanner, AnnouncementBody, AnnouncementCard, drawnLayout, runAnnouncementAction } = await import("./Announcements");
 const { openAnnouncementLink, ANNOUNCEMENT_ACTIONS } = await import("@/lib/announcements");
 

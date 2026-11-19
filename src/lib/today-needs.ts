@@ -22,6 +22,7 @@
 // Text is a TodayText: a design section 4 key (`ux.l2a.today.*`) plus params, or the owner's own words.
 import { formatUsd } from "@/lib/usage";
 import type { Routine, RoutineRun } from "@/lib/routines";
+import { routineErrorText } from "@/lib/routine-error";
 import { workingNow } from "@/lib/working-now";
 import type { Bot } from "@/state/store";
 import type { NeedsSummaryRow } from "@/components/shell/shell-contract";
@@ -222,7 +223,7 @@ export function needsLines(input: NeedsLinesInput): NeedsLines {
     .filter((run) => (run.status === "failed" || run.status === "missed") && !restored.has(`routine:${run.routineId}`))
     .sort((a, b) => runAt(b) - runAt(a))
     .map((run) => {
-      const error = firstLine(run.error ?? "");
+      const error = firstLine(routineErrorText(run.error) ?? "");
       const threadId = run.executionThreadId ?? run.threadId;
       return {
         id: `failed:${run.routineId}`, level: "look" as const, kind: "failed" as const,

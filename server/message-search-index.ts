@@ -36,6 +36,13 @@ export function scrubDelay(n: number): number {
 }
 export const SCRUB_BACKOFF_BASE_MS = scrubDelay(1);
 export const SCRUB_BACKOFF_CAP_MS = scrubDelay(50);
+/** Background write rate of the search index (rebuild, merges, catch-up): a step that wrote N bytes waits N / rate before the next.
+ * Owner start-up on a reset index re-indexed every message at 4-11 GB/min; the bar is under 1 GB/min for the whole process. */
+export const SEARCH_WRITE_BYTES_PER_MIN = 256 * 1048576;
+export function searchPacedDelay(bytes: unknown): number {
+  const n = Number(bytes);
+  return Number.isFinite(n) && n > 0 ? Math.max(10, Math.ceil(n * 60_000 / SEARCH_WRITE_BYTES_PER_MIN)) : 10;
+}
 export function searchRetryDelay(n: number): number { return Math.max(10, Math.min(SCRUB_BACKOFF_CAP_MS, n)); }
 export { MESSAGE_SEARCH_DDL };
 export function intentCount(db: DatabaseSync): number {
@@ -383,7 +390,7 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
   const run: SearchRun = { db, file, token, worker, reader: null, indexId: null, cache: null, stopped: false, inflight: true, recovery: { state: "HEALTHY", consecutive: 0, cycleStarts: [] },
     exited: new Promise<void>(resolve => { exited = resolve; }) };
   runs.set(db, run); live.add(run); sessions.add(run);
-  worker.on("message", (event: { type: string; token: string; index_id?: string; worked?: boolean; rebuilding?: boolean; applied?: number; retryInMs?: number; operation?: string; message?: string }) => {
+  worker.on("message", (event: { type: string; token: string; index_id?: string; worked?: boolean; rebuilding?: boolean; applied?: number; retryInMs?: number; bytes?: number; operation?: string; message?: string }) => {
     if (event.token !== token || run.stopped || runs.get(db) !== run) return;
     searchIndexTestHooks.event?.(event);
     if ((event.type === "ready" || event.type === "stepped") && run.ioState) {
@@ -439,7 +446,8 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
           });
         }
       } catch (error) { recoveryWarning(error); }
-      schedule(run, event.worked || run.nudged ? 10 : searchRetryDelay(event.retryInMs ?? 250),
+      // A step that wrote waits out its measured bytes at the search write rate; an owner append (nudge) never waits behind a rebuild's pacing.
+      schedule(run, run.nudged ? 10 : event.worked ? searchPacedDelay(event.bytes) : searchRetryDelay(event.retryInMs ?? 250),
         !event.worked && !run.nudged && event.retryInMs !== undefined);
     }
   });

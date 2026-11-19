@@ -4,12 +4,14 @@
 // Consumer owner: recall-smoke (direct and room dispatch, before-submit fences).
 import { database, databaseGeneration } from '../database.ts';
 import { ownerPinIndexPresent } from './schema.ts';
-import { RecallPreparationPending, MemoryPinProjectionPending, recallPreparationFailure } from './recall-recovery.ts';
+import { RecallCapacityPending, RecallPreparationPending, MemoryPinProjectionPending, recallPreparationFailure } from './recall-recovery.ts';
 
 export class RecallHeld extends RecallPreparationPending {}
 export class RecallDispatchPending extends Error {
   constructor() { super('This reply is still being prepared, so this message was not sent. Send it again in a moment.'); }
 }
+/** R01 owner: recall-reclaim-r2. Every recall view is in use, so the send is refused on its card and never runs without recall. */
+export class RecallCapacityRefused extends RecallDispatchPending {}
 /** Reads references only, through the partial index. Missing index means unknown. */
 export function noPins(): boolean {
   const db = database();
@@ -39,6 +41,9 @@ export interface RecallAccessOptions {
   /** A dispatch after a revoke. It never takes the receipt-less held path: it waits for its view or ends in RecallViewNotReady. */
   readonly rebuild?: boolean;
   readonly publications?: RecallPublications;
+  /** OWNERFB 1020: the turn's memory audience is the owner. When the view cannot be had in the bounded wait (quota full, not built,
+   *  every view in use, pins still projecting) the owner's turn runs held: no recall at all, with the notice. Never sealed or refused. */
+  readonly owner?: boolean;
 }
 /** One probe schedule. Every dispatch attempt that passes its own is fresh (a rebuild never shares one); a send's accesses with no explicit
  *  wait share the send's, renewed after a context change (MAIN RULING 1117T01:23Z (a)). The budget counts only time spent waiting. */
@@ -62,9 +67,10 @@ function waitForWake(at: number, signal: AbortSignal, arm: (wake: () => void) =>
 export class RecallReadiness {
   readonly hadMemories = hasMemories();
   private wait = new RecallWait();
-  private proof?: { generation: number };
+  private proof?: { generation: number; owner: boolean; omittedPins?: boolean };
   private readmitted = false;
   private heldIssued = false;
+  private capacity = false;
   /** MAIN RULING 1117T01:23Z (a): a redispatch after a roster or authority change (the prepared context was revoked) reads a context
    *  that did not exist when the earlier probes ran, so it gets a fresh probe schedule with the same 300/2000 ms per wait. The held
    *  and readmission tickets stay spent: one held send and one readmission per logical send. The redispatch count stays bounded. */
@@ -88,13 +94,25 @@ export class RecallReadiness {
       if (offset > wait.waited) { await waitFor(offset - wait.waited, signal); wait.waited = offset; }
       signal.throwIfAborted();
       try { return read(); }
-      catch (error) { if (!(recallPreparationFailure(error) instanceof RecallPreparationPending)) throw error; }
+      catch (error) {
+        const failure = recallPreparationFailure(error);
+        if (!(failure instanceof RecallPreparationPending)) throw error;
+        this.capacity = failure instanceof RecallCapacityPending;
+      }
     }
     signal.throwIfAborted();
+    if (options.owner) {
+      // OWNERFB 1020: held carries nothing recalled (no bundle, no memory mount), so there is nothing to fence; the notice says so.
+      this.heldIssued = true;
+      this.proof = { generation: databaseGeneration(), owner: true, omittedPins: !noPins() };
+      throw new RecallHeld();
+    }
     if (noPins()) {
+      // A full view store is not a fresh home: held mode would drop recall without saying so.
+      if (this.capacity) throw new RecallCapacityRefused();
       if (this.heldIssued) throw new RecallDispatchPending();
       this.heldIssued = true;
-      this.proof = { generation: databaseGeneration() };
+      this.proof = { generation: databaseGeneration(), owner: false };
       throw new RecallHeld();
     }
     throw new MemoryPinProjectionPending();
@@ -114,8 +132,13 @@ export class RecallReadiness {
       }
     } finally { wake = undefined; unsubscribe(); }
   }
-  assertHeld(): void {
-    if (!this.proof || this.proof.generation !== databaseGeneration() || !noPins()) throw new MemoryPinProjectionPending();
+  assertHeld(owner = false): void {
+    const proof = this.proof;
+    if (!proof || proof.generation !== databaseGeneration() || (proof.owner && !owner)
+      || (!proof.omittedPins && !noPins())) throw new MemoryPinProjectionPending();
+  }
+  get heldOmittedPins(): boolean {
+    return this.proof?.omittedPins === true;
   }
 }
 /** 'withheld': the message-only recovery (last resort, selective drop). It reaches dispatch without a recall admission and carries no memory reader. */

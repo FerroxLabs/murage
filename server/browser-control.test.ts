@@ -107,7 +107,9 @@ describe("a protected browser explains itself",()=>{
     const refused=await refusalOf(f.controller.dispatch("shared","tools/call",snapshot,()=>true));
     expect(refused.code).toBe("browser_protected_owner_input");
     expect(refused.message).toContain("the owner typed or clicked in it");
-    expect(refused.message).toContain("Take control, then Reopen blank page");
+    // Sean 1.0.20 ruling: the owner is never asked to hand a browser back; the bot is told it gets a new blank tab of its own.
+    expect(refused.message).toContain("your next browser call opens a new blank tab of your own");
+    expect(refused.message).not.toContain("Reopen blank page");
     expect(refused.message).toContain("Do not switch to another browser");
     expect(f.called()).toBe(0);
   });

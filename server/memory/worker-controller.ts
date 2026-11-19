@@ -19,7 +19,7 @@ import { SPAWNED_PROXIES,SERVER_ROOT } from "../proxy-paths.ts";
 import { DATA_DIR } from "../config.ts";
 import { BACKGROUND_BUSY_MS, awaitWriterGate, database,isDatabaseBusy,transaction,withBusyBudget,writersHeldForIndexBuild } from "../database.ts";
 import { BLOCK_BYTES, IO_BUDGET_BYTES_PER_MINUTE, ioBudget, withStatementReuse } from "../io-budget.ts";
-import { claimMemoryJob, deferStaleMemoryWork, hasClaimableCaptureJob, hasClaimableMemoryJob, heartbeatMemoryJob, isStaleMemoryPublication, nextMemoryJobDelay, notifyMemoryWork, onMemoryWork, publishMemoryWork, redriveTransientFailedJobs, requeueStaleMemoryWork, STALE_MEMORY_REQUEUE_LIMIT } from "./jobs.ts";
+import { claimMemoryJob, deferStaleMemoryWork, hasClaimableCaptureJob, hasClaimableMemoryJob, heartbeatMemoryJob, isStaleMemoryPublication, nextMemoryJobDelay, notifyMemoryWork, onMemoryWork, publishMemoryWork, redriveTransientFailedJobs, releaseDeadProcessLeases, requeueStaleMemoryWork, STALE_MEMORY_REQUEUE_LIMIT } from "./jobs.ts";
 import { memoryState } from "./repository.ts";
 import { sendSearch } from "./scope-set.ts";
 import { resultSchema, type MemoryWork,type MemorySearchInput,type MemorySearchResult } from "./worker-protocol.ts";
@@ -463,6 +463,36 @@ export class MemoryWorkerController {
     }
     return delay;
   }
+  /** The start's two recovery steps, each run once per start. Failed jobs whose cause says nothing about the conversation (the helper
+   * died, a timeout) get their attempts back; C6: leases a dead process held are claimable now, not after their lease_until (bounded
+   * pages; a live lease is never taken). A refused step (BgDeferred, C4) or a held write lock is retried by ONE timer at its named
+   * time, replaced by a later refusal, never left for lease_until (the W13 restart stall: the release refused at boot, logged
+   * next=later, and the dead lease held the thread's capture past the poll window). An arrival (wake) moves that one timer to now:
+   * a restarted server is idle until its first turn, and the idle rule refuses BG writes until the roll. A retry that ran wakes the queue. */
+  private bootSteps={redrive:true,release:true};
+  private bootRecoveryTimer:ReturnType<typeof setTimeout>|null=null;
+  private bootRecoveryNow=false;
+  private bootRecovery(retry=true){
+    if(this.bootRecoveryTimer)clearTimeout(this.bootRecoveryTimer);this.bootRecoveryTimer=null;this.bootRecoveryNow=false;
+    if(!this.started||this.stopping)return;
+    let retryMs:number|null=null,ran=0;
+    const step=(key:"redrive"|"release",what:string,run:()=>number)=>{
+      if(this.bootSteps[key])return;
+      try{ioBudget.withSource("memory-worker",()=>{const n=run();this.bootSteps[key]=true;ran+=n;if(n)console.log(`[memory-worker] subsystem=capture ${what}=${n}`);});}
+      catch(error){
+        // its own delay, not bgRetryMs: an idle refusal names the roll, and pacing every claim to it would hold the owner's next
+        // capture back after the owner's action has cleared idle (the arrival below retries this step at once instead)
+        if(isBgDeferred(error)){const delay=Math.max(error.retryInMs,ioBudget.nextAdmissionMs());logSwallowed("capture",error,delay);retryMs=Math.min(retryMs??delay,delay);}
+        else if(isDatabaseBusy(error)){logSwallowed("capture",error,BUSY_RETRY_MS);retryMs=Math.min(retryMs??BUSY_RETRY_MS,BUSY_RETRY_MS);}
+        else{logSwallowed("capture",error);this.bootSteps[key]=true;}
+      }
+    };
+    step("redrive","redriven",()=>redriveTransientFailedJobs());
+    step("release","released",()=>releaseDeadProcessLeases());
+    if(retryMs!==null){this.bootRecoveryTimer=setTimeout(()=>{this.bootRecoveryTimer=null;this.bootRecovery();},Math.max(1,retryMs));this.bootRecoveryTimer.unref?.();}
+    // a retry that ran wakes the queue; at start the start's own tail does (it wakes when a job is claimable)
+    if(ran&&retry)this.wake();
+  }
   private swallowed(log:WorkerSubsystem,subsystem:string,code:string,error:unknown){
     if(this.stopping)return;
     if(isBgDeferred(error)){const delay=this.bgRetryMs(error);logSwallowed(log,error,delay);this.schedule(delay);return;}
@@ -683,9 +713,7 @@ export class MemoryWorkerController {
     this.scrubOwed=indexScrubOwed()!==false;
     if(this.scrubOwed)this.openOwnerDeleteWindow();
     if(this.consolidationAbort.signal.aborted)this.consolidationAbort=new AbortController();
-    // Failed jobs whose cause says nothing about the conversation (the helper died, a timeout) get their attempts back, once.
-    try{ioBudget.withSource("memory-worker",()=>{const n=redriveTransientFailedJobs();if(n)console.log(`[memory-worker] subsystem=capture redriven=${n}`);});}
-    catch(error){logSwallowed("capture",error);}
+    this.bootSteps={redrive:false,release:false};this.bootRecovery(false);
     // Debt found at start lost its capture's in-process retry with the previous run: it keeps capture admission for the bounded wait.
     try{
       for(const row of database().prepare("SELECT id FROM memory_scope_bindings INDEXED BY memory_bindings_subject WHERE subject_type='system' AND subject_id='checkpoint-pending' ORDER BY rowid LIMIT ?").all(CAPTURE_CHECKPOINT_OWED_MAX)){
@@ -714,6 +742,11 @@ export class MemoryWorkerController {
    * check, so indexing must not consume notifications for the capture queue. */
   wake() {
     if(!this.started||this.stopping)return;
+    // An owed start recovery was refused (the restarted server was idle, so the budget named the minute roll): an arrival is the
+    // server turning active, so its one timer is moved to now instead of waiting for the roll with the dead lease in the queue.
+    if(this.bootRecoveryTimer&&!this.bootRecoveryNow){clearTimeout(this.bootRecoveryTimer);this.bootRecoveryNow=true;this.bootRecoveryTimer=setTimeout(()=>{this.bootRecoveryTimer=null;this.bootRecovery();},0);this.bootRecoveryTimer.unref?.();}
+    // the same for a refused failWork deferral (D5): its one timer moves to now, it does not wait for the roll with the lease held
+    if(this.deferredFailureTimer&&!this.deferredFailureNow&&this.deferredFailure)this.armDeferredFailure(this.deferredFailure,0);
     if(this.ticking){this.wakeOwed=true;return;}
     if(this.work)return;
     this.requested=true;
@@ -849,6 +882,7 @@ export class MemoryWorkerController {
     const paced=performance.now()<Math.max(this.nextEligibleWorkAt,this.bgRetryAt);
     const cycleStart=performance.now();
     const cycle={busy:0};
+    let cycleWork:MemoryWork|null=null;
     let clean=true,busy=false,ownerRetryMs:number|null=null,captureRetryMs:number|null=null,admissionRetryMs:number|null=null;
     try {
       this.sweepIndexQuarantines();
@@ -910,7 +944,7 @@ export class MemoryWorkerController {
         this.consolidationWake=false;this.consolidationDue=false;this.idleBlockedSince=null;
         let worked=false;
         const task=Promise.resolve().then(()=>{
-          if(this.turnHeld())return;
+          if(this.turnHeld()||(this.work&&this.work!==cycleWork))return;
           if(this.stopping)return;
           // The pass's synchronous time is charged to the same pacing deadline as a cycle's.
           const started=performance.now();
@@ -944,7 +978,7 @@ export class MemoryWorkerController {
           // Capture is pure CPU over the leased text; its publication remains
           // fenced on this process's authority and native write admission.
           const work=ioBudget.withSource("memory-capture",()=>claimMemoryJob(this.owner));
-          if(work){this.work=work;this.deadline=Date.now()+60000;this.child.send(work);this.scheduleHeartbeat(this.child);}
+          if(work){this.work=cycleWork=work;this.deadline=Date.now()+60000;this.child.send(work);this.scheduleHeartbeat(this.child);}
         }
         return;
       }
@@ -966,6 +1000,7 @@ export class MemoryWorkerController {
       // Ordinary indexing cannot settle its copy checks during the startup hold; leave that pool free for captures.
       const records=performance.now()-this.chargeStartEntry.at<(this.options.startHoldMs??CHARGE_START_HOLD_MS)
         ?pendingRecords.filter(row=>row.state==="deleted"&&Number(row.rolled)!==1):pendingRecords;
+      let indexWaitMs:number|null=null;
       if(records.length){
         const page=ioMeterPageSize(),frames=indexStepFrames(4096,page),maximum=commitCeiling(frames,4096,page)+checkpointCeiling(frames,4096,page)+4*page;
         // Keep the parent's receipt/lease writes runnable while the helper
@@ -981,23 +1016,29 @@ export class MemoryWorkerController {
         // The helper retains a paid pool across batch acknowledgements and its owed copy-back.
         // Reuse that reservation; a second maximum reservation would strand the next batch.
         const pool=[...this.helperGrants.values()].some(ticket=>ticket.bytes>=minimum&&ticket.expiresAt>ioMeterWallTime());
-        if(!pool&&ceiling<minimum){this.schedule(ioBudget.nextAdmissionMs());return;}
-        const admitted=pool?null:ioBudget.admit(ownerDelete?"FGCOPY":"BG",ceiling,0,{ownerDeletion:exempt});
-        if(!pool&&!admitted){this.schedule(ioBudget.nextAdmissionMs());return;}
-        const grantId=admitted?randomUUID():null;if(admitted)this.helperGrants.set(grantId!,admitted);
-        this.indexing=true;this.indexDeadline=Date.now()+60000;
-        this.indexRequestId=randomUUID();
-        // What each record was projected as, so its acknowledgement can be fenced against what it is when the ack lands.
-        this.indexSent=new Map(records.map(r=>[`${String(r.id)}\u0000${Number(r.version)}`,String(r.state)]));
-        this.indexRolled=new Set(records.filter(r=>Number(r.rolled)===1).map(r=>`${r.id}\u0000${r.version}`));
-        this.child.send({type:"index",...(admitted?{grant:{...admitted,id:grantId,stepBytes:ceiling,purpose:ownerDelete?"owner-delete":"bg"}}:{}),requestId:this.indexRequestId,records:records.map(r=>({id:String(r.id),version:Number(r.version),scopeId:String(r.scopeId),text:r.state==="deleted"?"":String(r.text),deleted:r.state==="deleted",archived:r.state!=="active",...Number(r.rolled)===1?{rolled:true}:{},ageKey:r.ageKey===null||r.ageKey===undefined?null:Number(r.ageKey)}))});
-        // A queued capture predating this batch has no later arrival to wake
-        // it. Revisit it after this tick's normal pacing gap.
-        if(job)this.wakeOwed=true;
-        if(memoryOn)this.maintain(true);return;
+        const admitted=pool||ceiling<minimum?null:ioBudget.admit(ownerDelete?"FGCOPY":"BG",ceiling,0,{ownerDeletion:exempt});
+        if(!pool&&!admitted){
+          // No room for an index batch this minute. A claimable capture is a turn's durable debt and needs far less than a
+          // batch: it is claimed below under its own write admission, not parked behind the index until the next minute.
+          if(!job){this.schedule(ioBudget.nextAdmissionMs());return;}
+          indexWaitMs=ioBudget.nextAdmissionMs();
+        }else{
+          const grantId=admitted?randomUUID():null;if(admitted)this.helperGrants.set(grantId!,admitted);
+          this.indexing=true;this.indexDeadline=Date.now()+60000;
+          this.indexRequestId=randomUUID();
+          // What each record was projected as, so its acknowledgement can be fenced against what it is when the ack lands.
+          this.indexSent=new Map(records.map(r=>[`${String(r.id)}\u0000${Number(r.version)}`,String(r.state)]));
+          this.indexRolled=new Set(records.filter(r=>Number(r.rolled)===1).map(r=>`${r.id}\u0000${r.version}`));
+          this.child.send({type:"index",...(admitted?{grant:{...admitted,id:grantId,stepBytes:ceiling,purpose:ownerDelete?"owner-delete":"bg"}}:{}),requestId:this.indexRequestId,records:records.map(r=>({id:String(r.id),version:Number(r.version),scopeId:String(r.scopeId),text:r.state==="deleted"?"":String(r.text),deleted:r.state==="deleted",archived:r.state!=="active",...Number(r.rolled)===1?{rolled:true}:{},ageKey:r.ageKey===null||r.ageKey===undefined?null:Number(r.ageKey)}))});
+          // A queued capture predating this batch has no later arrival to wake
+          // it. Revisit it after this tick's normal pacing gap.
+          if(job)this.wakeOwed=true;
+          if(memoryOn)this.maintain(true);return;
+        }
       }
       const work=job?ioBudget.withSource("memory-capture",()=>claimMemoryJob(this.owner)):null;
-      if(work) {this.work=work;this.deadline=Date.now()+60000;this.child.send(work);this.scheduleHeartbeat(this.child);}
+      if(work) {this.work=cycleWork=work;this.deadline=Date.now()+60000;this.child.send(work);this.scheduleHeartbeat(this.child);}
+      else if(indexWaitMs!==null)admissionRetryMs=indexWaitMs;
       if(memoryOn)this.maintain(!!work);
     } catch(error) {
       clean=false;
@@ -1603,8 +1644,11 @@ export class MemoryWorkerController {
           // The checked transaction sizes its grant to the room that remains
           // and rolls back/shrinks a refused slice. A fixed 2 MiB floor can
           // strand a small final slice despite enough admitted byte room.
+          // The owner thread never waits for the admission ledger lock: a reading taken while the checkpointer thread holds it
+          // comes back closed (no room). That is contention, not a spent minute: the same checked write is asked again a moment later.
+          const lockMisses=ioBudget.admissionHealth().lockTimeouts;
           const room=ioBudget.backgroundRoom();
-          if(room<=0){this.later(writeReceipts,ioBudget.nextAdmissionMs());return;}
+          if(room<=0){this.later(writeReceipts,ioBudget.admissionHealth().lockTimeouts>lockMisses?BUSY_RETRY_MS:ioBudget.nextAdmissionMs());return;}
           // Once a slice has committed, its measured all-in bytes per row (copy debt included) size the next one to the grant
           // the checked transaction will offer (half the room, at most 1 MiB), so a slice that cannot fit is never attempted.
           if(points.length){
@@ -1665,6 +1709,8 @@ export class MemoryWorkerController {
             next=from; // the slice rolled back
             // Row work exceeded this transaction's allowance: a smaller slice can still fit the current minute.
             if(isBgDeferred(error)&&attempted>1&&ioBudget.backgroundRoom()>0){receiptRows=Math.max(1,Math.floor(attempted/2));this.later(writeReceipts);return;}
+            // The grant was refused while the ledger lock was held (nothing was admitted without it): asked again a moment later, not at the next minute.
+            if(isBgDeferred(error)&&ioBudget.admissionHealth().lockTimeouts>lockMisses){logSwallowed("index",error,BUSY_RETRY_MS);this.later(writeReceipts,BUSY_RETRY_MS);return;}
             // The write lock is held elsewhere: the receipts are written a moment later, the job is not failed and nothing is shown.
             if(isBgDeferred(error)){const delay=this.bgRetryMs(error);logSwallowed("index",error,delay);this.later(writeReceipts,delay);return;}
             if(isDatabaseBusy(error)){logSwallowed("index",error,BUSY_RETRY_MS);this.later(writeReceipts,BUSY_RETRY_MS);return;}
@@ -1765,10 +1811,38 @@ export class MemoryWorkerController {
       // the job must not sit leased with nobody working it: release the
       // holder's own lease so the next claim picks it up at once.
       if(isStaleMemoryPublication(error))this.settleStale(error,reason);
+      // C4: a refused deferral is retried by ONE timer at the budget's named time (a later refusal replaces it), never left for
+      // lease_until; the retry is fenced by the lease generation, so a lease that moved on in between is left alone.
+      // Its own delay, not bgRetryMs (D5, as the start steps): an idle refusal names the roll, and pacing every claim to it would hold
+      // the idle capture drain and the owner's next message to the roll (re-armed each minute while idle). An arrival (wake) moves
+      // this one timer to now, as it does the start steps'.
+      else if(isBgDeferred(error)&&!this.stopping){
+        const failing=this.work,delay=this.bgRetryDelay(error);logSwallowed("capture",error,delay);
+        const retry=()=>{
+          if(this.deferredFailure!==retry)return;
+          // a second refusal re-arms this one timer at its own named time (never later()'s bgRetryMs catch); anything else ends it
+          try{withBusyBudget(BACKGROUND_BUSY_MS,"fail-work",()=>publishMemoryWork(failing,this.owner,{id:failing.id,leaseGeneration:failing.leaseGeneration,status:"deferred",nextCursor:failing.cursor,chunks:[],reason}));}
+          catch(again){
+            if(isBgDeferred(again)&&!this.stopping){const next=this.bgRetryDelay(again);logSwallowed("capture",again,next);this.armDeferredFailure(retry,next);return;}
+            this.deferredFailure=null;if(isStaleMemoryPublication(again))return;throw again;
+          }
+          this.deferredFailure=null;this.staleRequeues.delete(this.staleKey(failing));this.wake();
+        };
+        this.deferredFailure=retry;this.armDeferredFailure(retry,delay);
+      }
       // A held write lock: the lease runs out by itself and the job is claimed again with its attempts untouched.
       else logSwallowed("capture",error);
     }
     this.work=null;
+  }
+  private deferredFailure:(()=>void)|null=null;
+  private deferredFailureTimer:ReturnType<typeof setTimeout>|null=null;
+  private deferredFailureNow=false;
+  /** The one timer of a refused failWork deferral (replaced, never added to); it runs the retry through later() (turn and writer holds). */
+  private armDeferredFailure(retry:()=>void,delayMs:number){
+    if(this.deferredFailureTimer)clearTimeout(this.deferredFailureTimer);this.deferredFailureNow=delayMs<=0;
+    this.deferredFailureTimer=setTimeout(()=>{this.deferredFailureTimer=null;this.deferredFailureNow=false;if(this.deferredFailure===retry)this.later(retry);},Math.max(1,delayMs));
+    this.deferredFailureTimer.unref?.();
   }
   private staleKey(work: MemoryWork) { return `${work.id}:${work.revision}`; }
   /** A publication refused as stale: requeue the holder's own live lease with
@@ -1806,11 +1880,13 @@ export class MemoryWorkerController {
   }
   async stop() {
     this.stopping=true;this.started=false;if(this.timer)clearTimeout(this.timer);this.timer=null;this.scheduledAt=Infinity;
+    this.deferredFailure=null;if(this.deferredFailureTimer)clearTimeout(this.deferredFailureTimer);this.deferredFailureTimer=null;this.deferredFailureNow=false;
     this.requested=false;this.consolidationWake=false;this.captureOwedCheckpoints.clear();
     if(this.captureOwedTimer)clearTimeout(this.captureOwedTimer);this.captureOwedTimer=null;
     if(this.maintenanceTimer)clearInterval(this.maintenanceTimer);this.maintenanceTimer=null;
     if(this.notebookTimer)clearInterval(this.notebookTimer);this.notebookTimer=null;
     if(this.bootWarmTimer)clearTimeout(this.bootWarmTimer);this.bootWarmTimer=null;
+    if(this.bootRecoveryTimer)clearTimeout(this.bootRecoveryTimer);this.bootRecoveryTimer=null;
     this.clearInitWatch();
     this.clearHeartbeat();
     this.unsubscribe?.();this.unsubscribe=null;

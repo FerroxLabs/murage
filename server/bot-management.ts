@@ -48,6 +48,16 @@ export function organizationRevision(store: Store, sender: BotRecord, noLimits =
     .map(bot => [bot.id, managedBotProfile(bot).revision]).sort(([a], [b]) => a.localeCompare(b)));
 }
 
+/** A name instead of an id: exact, case-insensitive, among the bots this caller may inspect only. Changes stay id-only. */
+function botByName(store: Store, sender: BotRecord, name: string, noLimits: boolean, read: boolean): BotRecord {
+  const wanted = name.trim();
+  const matches = store.bots.filter(bot => bot.name.toLowerCase() === wanted.toLowerCase() && mayInspectBot(sender, bot, noLimits));
+  if (!matches.length) return fail(`No bot called ${wanted}`, 404);
+  if (!read) return fail(`Read ${matches.length === 1 ? matches[0].name : wanted} first and change it by its id.`, 400);
+  if (matches.length > 1) return fail(`${matches.length} bots are called ${wanted}: ${matches.map(bot => `${bot.name} (${bot.section ?? "No team"})`).sort((a, b) => a.localeCompare(b)).join(", ")}. Use the bot's id.`, 409);
+  return matches[0];
+}
+
 interface ManagementOptions {
   beforeEffect?: () => void;
   threadId?: string;
@@ -67,8 +77,8 @@ export function manageBot(store: Store, sender: BotRecord, input: unknown, optio
   const parsed = requestSchema.safeParse(input);
   if (!parsed.success) return fail("Invalid bot-management request. Security settings cannot be changed here.", 400);
   const request = parsed.data;
-  const target = store.bot(request.botId);
-  if (!target || !mayInspectBot(sender, target, noLimits)) return fail("That bot is not in your permitted organization.", 404);
+  const target = store.bot(request.botId) ?? botByName(store, sender, request.botId, noLimits, request.action === "get");
+  if (!mayInspectBot(sender, target, noLimits)) return fail("That bot is not in your permitted organization.", 404);
   if (!noLimits && target.partitionedAt !== undefined) {
     if (request.action === "move") assertHomeMove(target, request.section);
     if (request.action === "get") return { bot: { id: undefined, name: target.name, busy: Boolean(target.busy) } };
