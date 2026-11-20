@@ -1,0 +1,277 @@
+{
+ "source": "meetgreet-1118 real event records (shape only; no text copied)",
+ "catalog": {
+  "count": 61,
+  "fields": [
+   "builtin",
+   "name"
+  ],
+  "note": "each real entry carries a name (56 also a builtin flag) and no description or hint"
+ },
+ "commands": [
+  {
+   "name": "fixture-command-00"
+  },
+  {
+   "name": "fixture-command-01"
+  },
+  {
+   "name": "fixture-command-02"
+  },
+  {
+   "name": "fixture-command-03"
+  },
+  {
+   "name": "fixture-command-04"
+  },
+  {
+   "name": "fixture-command-05"
+  },
+  {
+   "name": "fixture-command-06"
+  },
+  {
+   "name": "fixture-command-07"
+  },
+  {
+   "name": "fixture-command-08"
+  },
+  {
+   "name": "fixture-command-09"
+  },
+  {
+   "name": "fixture-command-10"
+  },
+  {
+   "name": "fixture-command-11"
+  },
+  {
+   "name": "fixture-command-12"
+  },
+  {
+   "name": "fixture-command-13"
+  },
+  {
+   "name": "fixture-command-14"
+  },
+  {
+   "name": "fixture-command-15"
+  },
+  {
+   "name": "fixture-command-16"
+  },
+  {
+   "name": "fixture-command-17"
+  },
+  {
+   "name": "fixture-command-18"
+  },
+  {
+   "name": "fixture-command-19"
+  },
+  {
+   "name": "fixture-command-20"
+  },
+  {
+   "name": "fixture-command-21"
+  },
+  {
+   "name": "fixture-command-22"
+  },
+  {
+   "name": "fixture-command-23"
+  },
+  {
+   "name": "fixture-command-24"
+  },
+  {
+   "name": "fixture-command-25"
+  },
+  {
+   "name": "fixture-command-26"
+  },
+  {
+   "name": "fixture-command-27"
+  },
+  {
+   "name": "fixture-command-28"
+  },
+  {
+   "name": "fixture-command-29"
+  },
+  {
+   "name": "fixture-command-30"
+  },
+  {
+   "name": "fixture-command-31"
+  },
+  {
+   "name": "fixture-command-32"
+  },
+  {
+   "name": "fixture-command-33"
+  },
+  {
+   "name": "fixture-command-34"
+  },
+  {
+   "name": "fixture-command-35"
+  },
+  {
+   "name": "fixture-command-36"
+  },
+  {
+   "name": "fixture-command-37"
+  },
+  {
+   "name": "fixture-command-38"
+  },
+  {
+   "name": "fixture-command-39"
+  },
+  {
+   "name": "fixture-command-40"
+  },
+  {
+   "name": "fixture-command-41"
+  },
+  {
+   "name": "fixture-command-42"
+  },
+  {
+   "name": "fixture-command-43"
+  },
+  {
+   "name": "fixture-command-44"
+  },
+  {
+   "name": "fixture-command-45"
+  },
+  {
+   "name": "fixture-command-46"
+  },
+  {
+   "name": "fixture-command-47"
+  },
+  {
+   "name": "fixture-command-48"
+  },
+  {
+   "name": "fixture-command-49"
+  },
+  {
+   "name": "fixture-command-50"
+  },
+  {
+   "name": "fixture-command-51"
+  },
+  {
+   "name": "fixture-command-52"
+  },
+  {
+   "name": "fixture-command-53"
+  },
+  {
+   "name": "fixture-command-54"
+  },
+  {
+   "name": "fixture-command-55"
+  },
+  {
+   "name": "fixture-command-56"
+  },
+  {
+   "name": "fixture-command-57"
+  },
+  {
+   "name": "fixture-command-58"
+  },
+  {
+   "name": "fixture-command-59"
+  },
+  {
+   "name": "fixture-command-60"
+  }
+ ],
+ "threads": {
+  "121bee70": [
+   {
+    "engine": "fuigoAgent",
+    "omitted": 2,
+    "tools": 13,
+    "assistantText": 2,
+    "model": "claude-opus-5-5"
+   },
+   {
+    "engine": "claudeAgent",
+    "omitted": 2,
+    "tools": 13,
+    "assistantText": 0,
+    "model": "claude-opus-5-5"
+   },
+   {
+    "engine": "claudeAgent",
+    "omitted": 2,
+    "tools": 14,
+    "assistantText": 0,
+    "model": "claude-opus-5-5"
+   }
+  ],
+  "4a87f321": [
+   {
+    "engine": "claudeAgent",
+    "omitted": 2,
+    "tools": 14,
+    "assistantText": 0,
+    "model": "claude-opus-5-5"
+   }
+  ],
+  "8131aec3": [
+   {
+    "engine": "claudeAgent",
+    "omitted": 2,
+    "tools": 1,
+    "assistantText": 0,
+    "model": "claude-sonnet-5-5"
+   },
+   {
+    "engine": "claudeAgent",
+    "omitted": 3,
+    "tools": 3,
+    "assistantText": 0,
+    "model": "claude-sonnet-5-5"
+   }
+  ],
+  "e7adc958": [
+   {
+    "engine": "fuigoAgent",
+    "omitted": 2,
+    "tools": 16,
+    "assistantText": 3,
+    "model": "claude-opus-5-5"
+   },
+   {
+    "engine": "claudeAgent",
+    "omitted": 3,
+    "tools": 19,
+    "assistantText": 0,
+    "model": "claude-opus-5-5"
+   },
+   {
+    "engine": "claudeAgent",
+    "omitted": 3,
+    "tools": 17,
+    "assistantText": 0,
+    "model": "claude-opus-5-5"
+   },
+   {
+    "engine": "claudeAgent",
+    "omitted": 3,
+    "tools": 19,
+    "assistantText": 0,
+    "model": "claude-opus-5-5"
+   }
+  ]
+ },
+ "omittedTotal": 24
+}

@@ -3,6 +3,7 @@ import ts from "typescript";
 import vm from "node:vm";
 import { source, wiring } from "./decision-wiring/fixture.ts";
 import { isOwnerOrigin } from "./store.ts";
+import { PendingTurnKeys } from "./fold-steps.ts";
 import { RoomPendingStop } from "./room-turn-timeout.ts";
 import { stopCloseConfirmed, type ProviderInstance } from "./contracts.ts";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -72,7 +73,7 @@ function stopFixture(observe = vi.fn(async (_thread: string, _turn: string) => (
   const ledger = wiring(["admitLedgerLease"], {
     bus: { admitNewTurn: () => ({}) }, database: () => ({}),
     createLedgerLease: (_identity: unknown, deps: unknown) => deps,
-    admittedLedgerLeases: new Map(), ledgerCompletionSources: new WeakMap(),
+    admittedLedgerLeases: new Map(), ledgerCompletionSources: new WeakMap(), confirmedStopGenerations: new PendingTurnKeys(),
     retireProviderTurn: vi.fn(), stopCloseConfirmed, ledgerProviderInstances: new WeakMap(),
   }).admitLedgerLease;
   const room = roomWiring([
@@ -365,7 +366,7 @@ it.each([false, true])("ledger retry notification belongs only to a room rebuild
     createLedgerLease: (_identity: unknown, deps: unknown) => deps,
     admittedLedgerLeases: new Map(), ledgerCompletionSources: new WeakMap(), ledgerProviderInstances: new WeakMap(),
     internalTurnOwners: new Map(), refusedLeases: new Map(), revokeInternalGeneration: vi.fn(),
-    releasingEngineInput: () => false,
+    releasingEngineInput: () => false, confirmedStopGenerations: new PendingTurnKeys(),
   }).admitLedgerLease;
   const instance = { instanceId: "instance", adapter: { capabilities: { fencedWrites: true } } };
   const lease = room ? roomWiring(["ledgerLease"], {

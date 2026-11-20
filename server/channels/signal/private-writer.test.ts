@@ -54,7 +54,7 @@ test('a fresh temporary root is protected before returning to its first caller',
 test('changed reserve identity or metadata refuses without overwriting a committed file',()=>{
  const f=fixture(4),file=join(f.root,'receipts.json');f.writer.write(file,'original');
  for(const name of fs.readdirSync(f.root))if(name!== 'receipts.json')fs.writeFileSync(join(f.root,name),'foreign');
- expect(()=>f.writer.write(file,'replacement')).toThrow('Unsafe Signal private file');expect(fs.readFileSync(file,'utf8')).toBe('original');
+ expect(()=>f.writer.write(file,'replacement')).toThrow('Signal private file refused');expect(fs.readFileSync(file,'utf8')).toBe('original');
 });
 test('protection failure never writes content or publishes a target',()=>{
  const f=fixture();const run:SecurityRunner=()=>{throw new Error('denied');};
@@ -79,19 +79,19 @@ test('replacement of the closed temporary refuses before publication',()=>{
   fs.renameSync(from,from+'.held');fs.writeFileSync(from,'FOREIGN');injected++;
   (options!.rename??fs.renameSync)(from,to);
  }}));
- expect(()=>f.writer.write(file,'replacement')).toThrow('Unsafe Signal private file');expect(injected).toBe(1);expect(fs.readFileSync(file,'utf8')).toBe('original');
+ expect(()=>f.writer.write(file,'replacement')).toThrow('Signal private file refused');expect(injected).toBe(1);expect(fs.readFileSync(file,'utf8')).toBe('original');
 });
 test('append refuses multiply-linked files and exclusive log creation refuses an existing path',()=>{
  const f=fixture(),file=join(f.root,'log');f.writer.append(file,'original');
  expect(()=>f.writer.openAppend(file,true)).toThrow();fs.linkSync(file,join(f.root,'alias'));
- expect(()=>f.writer.append(file,'SECRET')).toThrow('Unsafe Signal private file');expect(fs.readFileSync(file,'utf8')).toBe('original');
+ expect(()=>f.writer.append(file,'SECRET')).toThrow('Signal private file refused');expect(fs.readFileSync(file,'utf8')).toBe('original');
 });
 
 test('failed append protection removes its empty allocation and retry must protect again',()=>{
  const f=fixture(),file=join(f.root,'failed.ndjson');let attempts=0;
  const writer=new SignalPrivateWriter({platform:'win32',sid:()=>sid,run:()=>{attempts++;throw new Error('denied');}});writers.push(writer);
  for(let i=0;i<2;i++){
-  expect(()=>writer.append(file,'SECRET')).toThrow('Unsafe Signal private file');expect(fs.existsSync(file)).toBe(false);
+  expect(()=>writer.append(file,'SECRET')).toThrow('Signal private file refused');expect(fs.existsSync(file)).toBe(false);
  }
  expect(attempts).toBe(2);
 });
@@ -100,7 +100,7 @@ test('existing append files require a strict ACL before content',()=>{
  const writer=new SignalPrivateWriter({platform:'win32',sid:()=>sid,run:(_exe,_args,opts)=>{
   reads++;expect(opts.env.MURAGE_SIGNAL_POINT).toBe('1');return JSON.stringify({path:file,attributes:0,sddl:`O:${sid}D:(A;;FA;;;WD)`});
  }});writers.push(writer);
- expect(()=>writer.append(file,'SECRET')).toThrow('Unsafe Signal private file');expect(reads).toBe(1);expect(fs.readFileSync(file,'utf8')).toBe('ORIGINAL');
+ expect(()=>writer.append(file,'SECRET')).toThrow('Signal private file refused');expect(reads).toBe(1);expect(fs.readFileSync(file,'utf8')).toBe('ORIGINAL');
 });
 
 const builtin=createRequire(import.meta.url)('node:fs') as typeof fs;
@@ -130,7 +130,7 @@ test('Windows private retry rechecks a temporary replaced after the first refusa
   if(String(to)===file){attempts++;rename(from,String(from)+'.held');fs.writeFileSync(from,'FOREIGN');throw Object.assign(new Error('locked'),{code:'EPERM'});}
   rename(from,to);
  };syncBuiltinESMExports();
- try{expect(()=>f.writer.write(file,'replacement')).toThrow('Unsafe Signal private file');}finally{builtin.renameSync=rename;syncBuiltinESMExports();}
+ try{expect(()=>f.writer.write(file,'replacement')).toThrow('Signal private file refused');}finally{builtin.renameSync=rename;syncBuiltinESMExports();}
  expect(attempts).toBe(1);expect(fs.readFileSync(file,'utf8')).toBe('original');
 });
 
@@ -152,7 +152,7 @@ for(const attack of ['inode','hard-link','content','acl','reparse'] as const)tes
   if(attack==='acl')f.acls.set(path,`O:${sid}D:P(A;;FA;;;${sid})(A;;FA;;;SY)(A;;FA;;;WD)`);
   if(attack==='reparse')f.reparse.add(path);
  }
- expect(()=>f.writer.write(file,'SECRET')).toThrow('Unsafe Signal private file');expect(fs.readFileSync(file,'utf8')).toBe('original');
+ expect(()=>f.writer.write(file,'SECRET')).toThrow('Signal private file refused');expect(fs.readFileSync(file,'utf8')).toBe('original');
 });
 
 test('pooled ACL is freshly read through the native security runner without repairing a broadened entry',()=>{
@@ -162,7 +162,7 @@ test('pooled ACL is freshly read through the native security runner without repa
   reads++;return [...new Set(JSON.parse(opts.env.MURAGE_SIGNAL_ROOTS!) as string[])].map(path=>JSON.stringify({path,attributes:0,sddl:`O:${sid}D:P(A;;FA;;;${sid})(A;;FA;;;SY)${broad?'(A;;FA;;;WD)':''}`})).join('\n');
  }});writers.push(writer);
  writer.write(file,'original');broad=true;
- expect(()=>writer.write(file,'SECRET')).toThrow('Unsafe Signal private file');
+ expect(()=>writer.write(file,'SECRET')).toThrow('Signal private file refused');
  expect(reads).toBe(2);expect(protections).toBe(1);expect(fs.readFileSync(file,'utf8')).toBe('original');
 });
 

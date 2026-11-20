@@ -10,6 +10,7 @@ export interface ServerIdentityOptions {
   fetchImpl?: typeof fetch;
   extendWhile?: () => boolean;
   progressFresh?: () => boolean;
+  bootProgressFresh?: () => boolean;
   [key: string]: unknown;
 }
 export declare function pollServerIdentity(options: ServerIdentityOptions): Promise<{ status?: string; [key: string]: unknown }>;

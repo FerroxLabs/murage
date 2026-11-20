@@ -319,7 +319,10 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
    *  line was written, so it carries a fresh one on top of the owner's words. */
   now?: string;
 }): Promise<"steer" | "queue" | "uncertain"> {
-  if (!opts.turn) return Promise.reject(Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" }));
+  // No running turn to take the words yet (the bot is already busy for a turn that has not started, e.g. the follow-up a
+  // delegated reply opens): nothing is written to the engine, and the line waits in the durable queue as its own turn.
+  // It used to reject here with no status, which the send route reported as "could not record that message" (503).
+  if (!opts.turn) return Promise.resolve("queue");
   // the steer's own allowance: its quote is checked when it is rendered and again at the write boundary
   const allowance = LineageAllowance.steer();
   const quoted = opts.quote ? shownLinesRoots(allowance, [opts.quote]) : undefined;

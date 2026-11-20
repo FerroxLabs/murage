@@ -12,6 +12,7 @@ import { OwnerLimitContinuations,LimitApplications } from "../owner-limit-contin
 import { BotOutsideWrites } from "../bot-outside-writes.ts";
 import { turnOutsideRead } from "../email/external-marks.ts";
 import { cardAttention } from "../approval-attention.ts";
+import { createOwnerStopTerminals } from "../owner-stop-terminal.ts";
 import type { InternalPortContext } from "./internal-port-context.ts";
 import type { StatePort } from "./source-extract.ts";
 import { registerPortConstructor } from "./port-integrity.ts";
@@ -59,6 +60,8 @@ export function dispatchStatePorts(context:InternalPortContext):StatePort[]{
     // design1019-approval-attention: the module-level attention service is the real cardAttention, its ports the
     // production callbacks selected from index.ts (never the initializer); scopes and cards live in this fixture only.
     port("approvalAttention",()=>cardAttention(callbacks<Parameters<typeof cardAttention>[0]>(context,"approvalAttention",{}))),
+    // 1.0.20 stop-chip: the module-level owner Stop terminal is the real createOwnerStopTerminals with the production callbacks from index.ts.
+    port("stopWithoutEngineTurn",()=>createOwnerStopTerminals(callbacks<Parameters<typeof createOwnerStopTerminals>[0]>(context,"stopWithoutEngineTurn",{}))),
     port("limitApplications",()=>new LimitApplications(context.database)),
     port("ownerLimitContinuations",()=>new OwnerLimitContinuations(context.production("ownerLimitSnapshotCurrent"))),
     port("routineRequestSourceSchema",()=>indexSourceData("routineRequestSourceSchema")),

@@ -165,6 +165,13 @@ export class TurnSubmissionBoundary {
     this.sealed = true; this.refuse(error);
     return true;
   }
+  /** Proof, for a setup failure with no provider turn handed back, that the admission never launched engine work: the same proof the
+   * unwritten seals use. The adapter declares `fencedWrites` (every write goes through beforeSubmit), no write was released, none was
+   * confirmed and no unfenced invocation happened. Anything else (an unfenced or invoked-without-fence adapter, a released or confirmed
+   * write) proves nothing: false, and the caller keeps the held thread / the turn id-checked interrupt. Reads only, never changes state. */
+  provenNotLaunched(fencedWrites: boolean | undefined): boolean {
+    return fencedWrites === true && !this.hasReleasedSubmission && !this.confirmedWrite && !this.unfencedInvocation;
+  }
   /** Writes released to the adapter, even if it later reports notWritten. */
   get releasedWrites(): number { return this.released; }
   /** Prove retryability and seal the old prompt in one synchronous step. Sealing alone is never proof. */

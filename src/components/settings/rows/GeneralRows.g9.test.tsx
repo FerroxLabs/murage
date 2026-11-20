@@ -2,8 +2,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// G9 gap check H1 and H2, on the rendered rows. H1: an analytics choice the computer could not save says so, with a
-// retry, instead of a switch that looks as if it stuck. H2: blurring a profile field writes nothing before the profile
+// G9 gap check H2, on the rendered rows (H1, the analytics switch, left with the analytics client in the 1.0.20
+// re-cut: Murage sends no usage analytics, src/lib/no-telemetry-1020.test.ts). H2: blurring a profile field writes nothing before the profile
 // has been read, and nothing when no field changed.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -15,8 +15,7 @@ const dispatch = vi.fn();
 vi.mock("@/state/store", () => ({ api: (...args: unknown[]) => api(...args), useStore: () => ({ state: { config }, dispatch }) }));
 vi.mock("@/lib/use-surface", () => ({ useDesktopSurface: () => true }));
 
-import { AnalyticsRow, ProfileFields } from "./GeneralRows";
-import { ANALYTICS_NOT_SAVED, analyticsEnabled } from "@/lib/analytics";
+import { ProfileFields } from "./GeneralRows";
 
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
@@ -42,35 +41,6 @@ const type = async (node: HTMLInputElement, value: string) => {
     node.dispatchEvent(new Event("input", { bubbles: true }));
   });
 };
-
-describe("H1: an analytics choice that could not be saved", () => {
-  it("turning analytics off on a full disk shows the switch Off, says it lasts only until restart, and retries", async () => {
-    await mount(<AnalyticsRow />);
-    const sw = container.querySelector('[aria-label="Send usage analytics"]') as HTMLButtonElement;
-    expect(sw.getAttribute("aria-checked")).toBe("true");
-    const full = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("QuotaExceededError"); });
-    await act(async () => { sw.click(); });
-    expect(sw.getAttribute("aria-checked")).toBe("false");
-    expect(analyticsEnabled()).toBe(false); // held for this session
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(ANALYTICS_NOT_SAVED);
-    // Space freed: Try again saves the same choice (still Off) and the warning goes.
-    full.mockRestore();
-    const retry = [...container.querySelectorAll("button")].find((b) => b.textContent === "Try again")!;
-    await act(async () => { retry.click(); });
-    expect(localStorage.getItem("murage-analytics-opt-out")).toBe("1");
-    expect(sw.getAttribute("aria-checked")).toBe("false");
-    expect(container.querySelector('[role="alert"]')).toBeNull();
-  });
-
-  it("a choice that saved shows no warning", async () => {
-    await mount(<AnalyticsRow />);
-    const sw = container.querySelector('[aria-label="Send usage analytics"]') as HTMLButtonElement;
-    const wasOn = sw.getAttribute("aria-checked") === "true"; // the module keeps the previous test's session choice
-    await act(async () => { sw.click(); });
-    expect(localStorage.getItem("murage-analytics-opt-out")).toBe(wasOn ? "1" : "0");
-    expect(container.querySelector('[role="alert"]')).toBeNull();
-  });
-});
 
 describe("H2: profile fields never write without an edit", () => {
   it("before the profile is read, the fields are read-only and a blur writes nothing", async () => {

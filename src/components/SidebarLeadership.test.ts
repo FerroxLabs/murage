@@ -1,5 +1,4 @@
-import { expect, it, vi } from "vitest";
-vi.mock("@/lib/analytics", () => ({ track: () => {} }));
+import { expect, it } from "vitest";
 (globalThis as unknown as { window?: unknown }).window ??= {};
 const { leadershipPromotionBlocked } = await import("./Sidebar");
 it("blocks member and individual promotions but always permits demotion", () => {

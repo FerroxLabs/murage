@@ -140,7 +140,9 @@ it('T-REC-RESET: successful rebuilds replenish only the consecutive budget',{tim
  const foreign=new DatabaseSync(file);foreign.enableDefensive(false);cleanup.push(()=>foreign.close());
  for(let i=0;i<11;i++) {
   if(i<5||i===10)search.disableMessageSearchIndex(db,Error('fixture invalidation'));
-  else foreign.exec('PRAGMA schema_version='+ (Number(foreign.prepare('PRAGMA schema_version').get()!.schema_version)+1));
+  // A bare schema-cookie bump no longer invalidates (start-up migrations move it on every start, W-SEARCH-RESTART);
+  // a rotated search owner is the foreign invalidation that still must reset.
+  else foreign.exec("UPDATE transcript_index_state SET done=hex(randomblob(16)) WHERE name='search_owner'");
   try { await oracleUntil(()=>ready===i+2&&search.recovery(db).state==='HEALTHY','T-REC-RESET'); } catch(error) { console.log('REC RESET TRACE',i,JSON.stringify(trace)); throw error; }
   expect(search.recovery(db).consecutive,'ORACLE:T-REC-RESET').toBe(0);
  }

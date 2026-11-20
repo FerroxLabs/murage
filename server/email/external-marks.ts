@@ -10,28 +10,23 @@ import { isReadOnly } from "../read-only-start.ts";
 // The mark is per thread and per turn: it is set by the read call (or by a prompt that carried a marked row) and cleared when the thread's
 // next turn starts building its prompt, which sets it again if that prompt carries a marked row.
 import { randomUUID } from "node:crypto";
-import { HIGHLEVEL_READ_TOOL_NAMES, HIGHLEVEL_WRITE_TOOLS } from "../../shared/highlevel.ts";
 import { fencePageText } from "../browser-untrusted.ts";
 import { DownloadRegistry, type RegistryRows } from "../download-registry.ts";
 
 /** A tool whose result is outside content that marks the turn, under any engine's naming (bare, mcp__server__name, server.name,
- *  server/name): email_read / email_list, and HighLevel's CRM reads (HL-S2-RO 1.0.18; its changes mark only when applied, in the host). */
+ *  server/name): email_read / email_list, and any HIGHLEVEL_* tool (1.0.20: Murage's own HighLevel is removed, so such a tool can only be
+ *  an owner MCP server's; every one of them answers with the CRM's own words, so every one marks: fail closed). */
 export function isEmailReadToolName(name: string | undefined | null): boolean {
   return typeof name === "string" && (/(?:^|__|[.:/])email_(?:read|list)$/.test(name) || isHighLevelReadToolName(name));
 }
-/** The HighLevel tools whose answer carries HighLevel's own words: every CRM read, and the connections list (the location's name). */
-const HIGHLEVEL_OUTSIDE_TOOLS: ReadonlySet<string> = new Set([...HIGHLEVEL_READ_TOOL_NAMES, "HIGHLEVEL_LIST_CONNECTIONS"]);
-/** One of those tools under any engine's naming: bare, mcp__highlevel__NAME, highlevel.NAME / highlevel:NAME / highlevel/NAME, or Pi's
- *  lowercase highlevel_highlevel_name (pi-mcp-extension.ts sanitizeToolName). Only the exact names count, never a lookalike. */
+/** A HIGHLEVEL_* tool under any engine's naming: bare, mcp__highlevel__NAME, highlevel.NAME / highlevel:NAME / highlevel/NAME, or Pi's
+ *  lowercase highlevel_highlevel_name (pi-mcp-extension.ts sanitizeToolName). */
 export function isHighLevelReadToolName(name: string | undefined | null): boolean {
-  const bare = highlevelBareName(name);
-  return bare !== undefined && HIGHLEVEL_OUTSIDE_TOOLS.has(bare);
+  return highlevelBareName(name) !== undefined;
 }
-/** A HighLevel change tool, or the change status helper, under the same namings: an applied change answers with HighLevel's own record
- *  and the status with the record id HighLevel gave (both fenced, kind highlevel-crm). */
+/** The same tools for memory capture: an answer with the CRM's own records is never captured as the owner's words. */
 export function isHighLevelChangeToolName(name: string | undefined | null): boolean {
-  const bare = highlevelBareName(name);
-  return bare !== undefined && (bare === "HIGHLEVEL_ACTION_STATUS" || HIGHLEVEL_WRITE_TOOLS.has(bare as never));
+  return highlevelBareName(name) !== undefined;
 }
 function highlevelBareName(name: string | undefined | null): string | undefined {
   if (typeof name !== "string") return undefined;
