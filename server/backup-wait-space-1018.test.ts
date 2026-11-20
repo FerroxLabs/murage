@@ -19,7 +19,8 @@ function desktopStop(host:ReturnType<typeof createBackupScheduleHost>,action:str
  let trigger!:()=>void,finish!:()=>void,settled=false;
  const pending=new Promise<void>(resolve=>{finish=resolve;});
  const noop=()=>{}, disposable={dispose:noop,invalidate:noop};
- const scope={backupScheduleHost:host,bannerNative:null,attentionSurfaces:null,internalBackupQuit:false,quitRequested:false,backgroundLifecycle:null,cuaCleanedUp:false,
+ // announceQuit (meetgreet quit notice, 1.0.20) is declared above the before-quit slice; its line is not what these tests check.
+ const scope={announceQuit:noop,backupScheduleHost:host,bannerNative:null,attentionSurfaces:null,internalBackupQuit:false,quitRequested:false,backgroundLifecycle:null,cuaCleanedUp:false,
   desktopCleanup:pending,desktopShutdownStarted:false,serverStopReason:{logOnce:noop},stopDeskPresence:noop,sentinelHost:null,
   stopAutomaticRemoteBackups:noop,localEngineLogin:{shutdown:async()=>{}},modelSignIn:disposable,mcpServers:disposable,
   notificationAuthorization:disposable,showApprovalNotification:disposable,

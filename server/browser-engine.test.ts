@@ -536,11 +536,13 @@ describe("browser prompt for a protected profile", () => {
   it("is the unchanged browser prompt while the profile is not locked", () => {
     expect(unifiedBrowserSystemPrompt(null)).toBe(UNIFIED_BROWSER_SYSTEM_PROMPT);
   });
-  it("says the owner's lock is the owner's to clear, and forbids routing around it", () => {
+  it("says the owner's page stays the owner's and the bot gets a new tab, and forbids routing around it", () => {
     const text = unifiedBrowserSystemPrompt("owner-input");
     expect(text.startsWith(UNIFIED_BROWSER_SYSTEM_PROMPT)).toBe(true);
     expect(text).toContain("Your browser is locked: the owner typed or clicked in its page");
-    expect(text).toContain("Take control and then Reopen blank page");
+    // Sean 1.0.20 ruling: the owner is never asked to hand a browser back; the bot moves to a new blank tab of its own.
+    expect(text).toContain("Your next browser call opens a new blank tab of your own;");
+    expect(text).not.toContain("Reopen blank page");
     expect(text).not.toContain("agent_browser_open with a different address");
     expect(text).toContain("never use another browser, a browser plugin, or run the browser program yourself instead");
   });

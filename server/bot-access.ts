@@ -1,9 +1,6 @@
 import type { AppAccessDenial } from "./decision/index.ts";
 import { ProducerApprovalQueue, producerBase, type ServiceAuthority } from "./narrow-denials.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { isNativeHighLevelName } from "../shared/highlevel.ts";
-import { highlevelRelayRefusal } from "./highlevel/access.ts";
-import { isComposioHighLevelId, nativeHighLevelGranted, nativeWinsCallRefused, nativeWinsRefusalText, nativeWinsStoredRefused } from "./highlevel/native-wins.ts";
 import { z } from "zod";
 import { ACCESS_REQUEST_TTL_MS, accessRequestExpired, CONNECTED_APP_TOOLS, accessGrantSchema, connectedAppAccessSchema, type AccessGrant } from "../shared/bot-access.ts";
 import { connectedAppToolId, isConnectedAppStatusTool } from "../shared/connected-app-calls.ts";
@@ -207,15 +204,10 @@ function forbiddenAuthArguments(value:unknown):boolean {
  * Discovery/workbench/proxy meta-tools can reveal other accounts or execute
  * dynamic code, so restricted mode exposes only the finite approved path.
  */
-export function assertConnectedAppCall(bot:BotRecord,input:unknown,highlevel:{connectionActive?:boolean;noLimits?:boolean}={}):void {
+export function assertConnectedAppCall(bot:BotRecord,input:unknown,options:{noLimits?:boolean}={}):void {
  if(bot.hidden||bot.staged||bot.composio===false)fail("Connected apps are off for this bot; enable them in Settings → Connections → Connected apps.");
- if(highlevel.noLimits)return;
+ if(options.noLimits)return;
  if(bot.draftOnly)assertDraftOnlyCall(input);
- // Native HighLevel names run only on Murage's own HighLevel host, in every mode (GAP-HIGHLEVEL-109 section 7).
- const nativeRefusal=highlevelRelayRefusal(input);if(nativeRefusal)fail(nativeRefusal);
- // NATIVE WINS (HL-S2-WRITES (e)): a native-granted bot never reaches Composio HighLevel, the workbench or remote bash
- // here, in any mode. COMPOSIO_PROXY_EXECUTE needs a live account lookup: the relay route runs nativeWinsProxyRefused.
- if(nativeHighLevelGranted(bot)&&nativeWinsCallRefused(input))fail(nativeWinsRefusalText(highlevel.connectionActive!==false));
  const policy=botAccessPolicy(bot);
  if(policy.mode==="unrestricted")return;
  if(!object(input))fail("Restricted connected-app access requires one explicit tool request.");
@@ -270,11 +262,9 @@ export function assertDraftOnlyCall(input:unknown):void {
  * every tool and account the action used is still granted. A restricted bot is
  * never handed a stored result whose provenance is incomplete or empty: when
  * nothing says what the action needed, nothing says the bot may see it. */
-export function assertStoredConnectedAppAccess(bot:BotRecord,used:{requirements:ReadonlyArray<{tool:string;account?:string}>;complete:boolean},highlevel:{connectionActive?:boolean;noLimits?:boolean}={}):void {
+export function assertStoredConnectedAppAccess(bot:BotRecord,used:{requirements:ReadonlyArray<{tool:string;account?:string}>;complete:boolean},options:{noLimits?:boolean}={}):void {
  if(bot.hidden||bot.staged||bot.composio===false)fail("Connected apps are off for this bot; enable them in Settings → Connections → Connected apps.");
- if(highlevel.noLimits)return;
- // NATIVE WINS: before the unrestricted shortcut, on every look (before and after any wait).
- if(nativeHighLevelGranted(bot)&&nativeWinsStoredRefused(used))fail(nativeWinsRefusalText(highlevel.connectionActive!==false));
+ if(options.noLimits)return;
  const policy=botAccessPolicy(bot);
  if(policy.mode==="unrestricted")return;
  if(!used.complete||!used.requirements.length)fail("This stored result cannot be matched to approved tools for this bot.");
@@ -291,9 +281,8 @@ export function assertStoredConnectedAppAccess(bot:BotRecord,used:{requirements:
 export function restrictedConnectorTools(bot:BotRecord,id:unknown,noLimits=false) {
  if(noLimits)return null;
  const stored=botAccessPolicy(bot);if(stored.mode!=="restricted")return null;
- // NATIVE WINS: a native-granted bot is never offered a Composio HighLevel grant.
- const policy=nativeHighLevelGranted(bot)?{...stored,grants:stored.grants.filter(grant=>!isComposioHighLevelId(grant.toolkit)&&!grant.tools.some(isComposioHighLevelId))}:stored;
- const approved=policy.grants.flatMap(grant=>grant.tools.filter(name=>!isNativeHighLevelName(name)&&CONNECTED_APP_TOOLS.some(tool=>tool.tool===name&&(!tool.writes||policy.allowWrites))));
+ const policy=stored;
+ const approved=policy.grants.flatMap(grant=>grant.tools.filter(name=>CONNECTED_APP_TOOLS.some(tool=>tool.tool===name&&(!tool.writes||policy.allowWrites))));
  return {jsonrpc:"2.0",id,result:{tools:approved.length?[{name:"COMPOSIO_MULTI_EXECUTE_TOOL",description:"Run only owner-approved connected-app tools. Each tool must include its exact approved connected-account ID. Approved scopes: "+JSON.stringify(policy.grants.map(grant=>({...grant,tools:[...new Set(grant.tools)]}))),inputSchema:{type:"object",properties:{tools:{type:"array",minItems:1,maxItems:50,items:{type:"object",properties:{tool_slug:{type:"string",enum:[...new Set(approved)]},account:{type:"string",enum:[...new Set(policy.grants.map(grant=>grant.accountId))]},arguments:{type:"object"}},required:["tool_slug","account","arguments"],additionalProperties:false}},sync_response_to_workbench:{type:"boolean",const:false}},required:["tools"],additionalProperties:false}}]:[]}};
 }
 
@@ -312,8 +301,7 @@ export function connectedAppsListScope(bot:BotRecord,connectionEpoch=0,noLimits=
  // leftover grants and write switch have no effect and are left out too.
  const restricted=!noLimits&&policy.mode==="restricted";
  const grantsNormalized=restricted?policy.grants.map(grant=>({toolkit:grant.toolkit,accountId:grant.accountId,tools:[...new Set(grant.tools)].sort()})).sort((a,b)=>(a.toolkit+"\0"+a.accountId).localeCompare(b.toolkit+"\0"+b.accountId)):[];
- // The native-granted bit (NATIVE WINS) is added only when set, so a bot with no native grant keeps its revision.
- const effective={enabled:bot.composio!==false,hidden:!!bot.hidden,mode:noLimits?"unrestricted":policy.mode,allowWrites:restricted?policy.allowWrites:null,grants:grantsNormalized,connectionEpoch,...(nativeHighLevelGranted(bot)?{highlevelNative:true}:{})};
+ const effective={enabled:bot.composio!==false,hidden:!!bot.hidden,mode:noLimits?"unrestricted":policy.mode,allowWrites:restricted?policy.allowWrites:null,grants:grantsNormalized,connectionEpoch};
  const revision=createHash("sha256").update(JSON.stringify(effective)).digest("hex").slice(0,32);
  const initial=restrictedConnectorTools(bot,null,noLimits);
  return {revision,...(initial?{initialTools:initial.result.tools as unknown[]}:{})};

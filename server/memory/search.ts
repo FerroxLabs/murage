@@ -361,13 +361,13 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     // Pending projections the reader's own scopes hold (the word index has not caught up): only a readable one counts.
     let pendingReadable=false;
     if(pendingScan){
-      for(let after=0;;){
+      for(let after='';;){
         const refs=pendingViewPage(database(),access.view,after,PENDING_PAGE,scanBudget);
         if(!refs.length){if(scanBudget.remaining===0)partial=true;break;}
         await authorizeAll(refs);
         if(refs.some(ref=>readableOf(ref)!==null)){pendingReadable=true;break;}
         if(partial){pendingReadable=true;break;}
-        after=refs[refs.length-1].rowid;
+        after=JSON.stringify([refs[refs.length-1].id,refs[refs.length-1].version]);
       }
     }
     return {ranked:ranked.map(({read,...hit})=>({...hit,...read})),incomplete:incomplete||unproven,unscored,recentReadable,meaningRead:meaning.taken.length>0,paged,pendingReadable};
@@ -433,7 +433,9 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // Final admission check follows every callback and all result construction work.
   assertMemoryAccess(access);
   return {hits:selected,...degradedReason!==undefined?{degradedReason}:{},...coverage!==undefined?{coverageComplete:coverage}:{},...lists.paged?{nextCursor:sealMemoryCursor(result.resumeAfter!,access,options.historical??false)}:{},
-    ...isPartial?{partial:true,recallMode:"keyword" as const}:{},...note?{note}:{},evolutionPolicyRevision:evolutionPolicy.revision,...lists.recentReadable?{recentFallback:true}:{},
+    ...isPartial?{partial:true,recallMode:"keyword" as const}:{},
+    // A readable record may have been missed (hydration or scan cut short, or words only before the word index is ready); words-only recall over a ready index misses none.
+    ...partial||scanCut||keywordOnly&&!lexicalReady?{missed:true as const}:{},...note?{note}:{},evolutionPolicyRevision:evolutionPolicy.revision,...lists.recentReadable?{recentFallback:true}:{},
     };
 }
 

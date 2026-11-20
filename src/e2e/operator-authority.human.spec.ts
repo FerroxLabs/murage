@@ -116,7 +116,6 @@ async function mount(page: Page, view: string, remote = false) {
   const requests: RequestRecord[] = [];
   const state = { status: vmStatus(), failure: "", releaseHeld: false, hold: null as Promise<void> | null };
   await page.addInitScript(({ proof, remote }) => {
-    localStorage.setItem("murage-analytics-opt-out", "1");
     const w = window as any;
     w.operatorEvents = [];
     w.fixtureFetches = [];

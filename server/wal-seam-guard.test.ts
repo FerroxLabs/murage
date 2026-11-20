@@ -49,6 +49,8 @@ const MUTANTS: Array<[string, { file: F; mut: (t: string) => string }, RegExp]> 
   ["P5f usable() override argument forced to true", rep(EE, "usable(addon,Boolean(explicit)&&file===explicit)&&addon.ioMeterAdd", "usable(addon,true)&&addon.ioMeterAdd"), /P5a: loadIoMeterAddon returns a non-null value/],
   ["P5f explicit = file", rep(EE, "const explicit=explicitOverride();", "const explicit=file;"), /P5: engine-exclusion.ts loadIoMeterAddon differs/],
   ["P5f unresolved operand", rep(EE, "return trimmed ? path.resolve(trimmed) : undefined;", "return trimmed ? trimmed : undefined;"), /P5: engine-exclusion.ts explicitOverride differs/],
+  ["METERDL a worker makes its own private copy", rep(EE, "  if(!isMainThread)return loadHandedIoMeter(require);\n", ""), /P5a: off the main thread loadIoMeterAddon does not return only the handed copy/],
+  ["METERDL the handed copy is required without its sha256 check", rep(EE, 'if (createHash("sha256").update(readFd(fd, st.size)).digest("hex") !== id.sha256) return null;', ""), /P5: engine-exclusion.ts loadHandedIoMeter differs from its pin/],
   ["P5c overrideAllowed called with an argument", rep(EE, "if (!overrideAllowed()) return undefined;", "if (!overrideAllowed(process.env)) return undefined;"), /P5c: overrideAllowed is called with an argument/],
   ["P5e a relative resources root resolved via cwd", rep(EE, "if (rawResources && path.isAbsolute(rawResources)) out.push", "if (rawResources) out.push"), /P5: engine-exclusion.ts candidates differs/],
   ["P5e an empty override pushed as path.resolve(\"\")", rep(EE, "if (trimmed) out.push(path.resolve(trimmed));", 'out.push(path.resolve(trimmed ?? ""));'), /P5: engine-exclusion.ts candidates differs/],

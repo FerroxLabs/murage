@@ -4,13 +4,14 @@
 import type { FreshReplaySessionConfirmation } from './fresh-replay-session.ts';
 import { database, onDatabaseClose } from '../database.ts';
 import { heldStep } from '../observe.ts';
+import { hydrateDisclosedMemoryRecord, supersededThreadCheckpoint } from './bundle.ts';
 import { authorityParts } from './authority-epoch.ts';
 import { continuationSessionVerdict } from './continuation-settle.ts';
 import { denyGeneration, doorEpochVerdict, memoryLookup } from './deny-read.ts';
 import { revokedReason, readerAudience, ownerDirectChat, type Seen } from './disclosures.ts';
 import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, lineageReaderAudience, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from './policy.ts';
 import { recallViewContains, type RecallViewHandle } from './recall-view.ts';
-import { isLineageLimit, outputRootsBad, preLineageSessionRevoked, sendReplaySessionCurrent, sessionLineageBad, sessionOutputRoots } from './replay-lineage.ts';
+import { isLineageLimit, warmConfirmActive, outputRootsBad, preLineageSessionRevoked, sendReplaySessionCurrent, sessionLineageBad, sessionOutputRoots } from './replay-lineage.ts';
 import { LineageAllowance, withSecondLook } from './lineage-allowance.ts';
 import type { LineageReader, MemoryRef, SessionKey } from './lineage-types.ts';
 import { SESSION_LOG_KEEP, sessionHadFrame } from './session-proof-schema.ts';
@@ -189,9 +190,23 @@ function proofWork(a:LineageAllowance,key:SessionKey,ctx:SessionProofContext,see
  const before={deny:denyGeneration(db),epoch:epoch(),seq:seq(),parts:authorityParts()};
  // record and source changes logged since the checkpoint that none of its cites names: a receipt newer than the checkpoint may cite them
  const loggedUncited=new Set<string>();
+ if(before.deny<0)return fresh('changed:deny','checking');
  let footprint:Set<string>|'wide'=check?(check.scopes==='wide'?'wide':new Set<string>(check.scopes)):new Set<string>();
+ let recheckedCheckpoint=false;
  if(check) {
   if(check.policy_revision!==access.policyRevision||check.deletion_epoch!==access.deletionEpoch)return fresh('writetime-watermark');
+  // A full current view cannot certify the narrower grant recorded by explicit revalidation.
+  if(access.scopeDigest) {
+   if(footprint==='wide' || footprint.size>SESSION_PROOF.FOOTPRINT_MAX)return fresh('footprint-wide','checking');
+   for(const scope of footprint)if(!scope.startsWith(EVIDENCE_SCOPE)){a.spendRows(thread,1);meter.seeks++;assertMemoryAccess(access,scope);}
+  }
+  // A committed scope mark can precede the revoke generation bump.
+  if(footprint!=='wide' && footprint.size>0 && one("SELECT 1 FROM json_each(?) f WHERE EXISTS(SELECT 1 FROM memory_deny WHERE kind='scope' AND id IN (f.value,CASE WHEN substr(f.value,1,1)=? THEN substr(f.value,2) END)) LIMIT 1",JSON.stringify([...footprint]),EVIDENCE_SCOPE))return fresh('changed:deny');
+  if(check.dg!==before.deny) {
+   if(footprint==='wide')return fresh('changed:deny','checking');
+   // An evidence-only entry is watched for a deny (above, and in the change log), never asserted as a scope this reader holds.
+   for(const scope of footprint)if(!scope.startsWith(EVIDENCE_SCOPE))assertMemoryAccess(access,scope);
+  }
   if(check.recall_epoch!==before.epoch || check.view_digest!==access.view.digest) {
    const prior:RecallViewHandle|undefined=check.view_id&&check.view_generation&&check.view_digest?{viewId:check.view_id,generation:check.view_generation,digest:check.view_digest}:undefined;
    a.spendRows(thread,1);meter.seeks++;
@@ -218,10 +233,14 @@ function proofWork(a:LineageAllowance,key:SessionKey,ctx:SessionProofContext,see
     const id=String(change.id),at=id.indexOf(':'),kind=id.slice(0,at),ref=id.slice(at+1);
     let relevant=false;
     if(kind==='record'||kind==='source') {
-     const cite=one('SELECT bundle_id FROM memory_session_check_cites WHERE thread_id=? AND driver_instance=? AND native_session=? AND kind=? AND ref_id=? LIMIT 1',...args,kind,ref);
+     const held=page(2,'SELECT bundle_id,ref_version FROM memory_session_check_cites WHERE thread_id=? AND driver_instance=? AND native_session=? AND kind=? AND ref_id=? LIMIT 2',...args,kind,ref),cite=held[0];
      relevant=!!cite;
      if(!cite)loggedUncited.add(id);
-     if(cite&&!memoryAccessNotOwnerAudience(access))db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=? AND thread_id=? AND driver_instance=? AND native_session=? AND state!='revoked'").run(cite.bundle_id,...args);
+     if(cite&&held.length===1&&kind==='record'&&supersededThreadCheckpoint(ref,Number(cite.ref_version),access)) {
+      hydrateDisclosedMemoryRecord(ref,Number(cite.ref_version),access,{allowance:a});
+      relevant=false;recheckedCheckpoint=true;
+     }
+     if(relevant&&cite&&!memoryAccessNotOwnerAudience(access))db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=? AND thread_id=? AND driver_instance=? AND native_session=? AND state!='revoked'").run(cite.bundle_id,...args);
     }
     else if(kind==='receipt')relevant=!!one('SELECT 1 FROM memory_disclosures WHERE bundle_id=? AND thread_id=? AND driver_instance=? AND native_session=?',ref,...args);
     else if(kind==='deny-thread')relevant=ref===thread || !!one('SELECT 1 FROM memory_session_check_messages WHERE thread_id=? AND driver_instance=? AND native_session=? AND source_thread=? LIMIT 1',...args,ref) || !!one('SELECT 1 FROM memory_thread_flow WHERE from_thread=? AND to_thread=? AND first_lsn<=?',ref,thread,Number(lineage.last_lsn));
@@ -267,7 +286,7 @@ function proofWork(a:LineageAllowance,key:SessionKey,ctx:SessionProofContext,see
    // A logged change to a source or record this receipt itself cites is the same cause the checkpoint's cites name as changed:<kind>;
    // which receipt disclosed it does not change the reason. A receipt-level cause (state, policy, epoch) keeps its own name.
    const receiptLevel=reason==='receipt-already-revoked'||reason==='policy-revision'||reason==='deletion-epoch';
-   const logged=receiptLevel?undefined:(sourceRefs.some((r:{id:string})=>loggedUncited.has(`source:${r.id}`))?'source':recordRefs.some((r:{id:string})=>loggedUncited.has(`record:${r.id}`))?'record':undefined);
+   const logged=receiptLevel?undefined:(sourceRefs.some((r:{id:string})=>loggedUncited.has(`source:${r.id}`))?'source':recordRefs.some((r:{id:string})=>loggedUncited.has(`record:${r.id}`))?'record':reason.startsWith('source ')?'source':undefined);
    return fresh(logged?`changed:${logged}`:`memory-changed (${reason})`);
   }
   // Cold receipts must prove their cited messages even when the old read-time
@@ -331,9 +350,9 @@ function proofWork(a:LineageAllowance,key:SessionKey,ctx:SessionProofContext,see
   // Recheck benign log tails; coalesce their writes until 64 changes or the liveness refresh.
   // CJ-5: the idle warmer's work pass (a warm allowance) folds a tail instead of coalescing it, so the next turn's proof re-reads none; a
   // proof that leaves one unfolded counts it, and the warm confirm reads that count (lineage-warm.ts: such a thread is not warm yet).
-  if(check && check.seeding===0 && rows.length===0 && before.seq>=check.log_seq && before.seq-check.log_seq<64 && check.recall_epoch===before.epoch
+  if(check && !recheckedCheckpoint && check.seeding===0 && check.dg===before.deny && rows.length===0 && before.seq>=check.log_seq && before.seq-check.log_seq<64 && check.recall_epoch===before.epoch
    && check.view_id===access.view.viewId && check.view_generation===access.view.generation && check.view_digest===access.view.digest
-   && Date.now()-check.checked<60_000 && !(a.scope==='warm'&&before.seq>check.log_seq)){if(before.seq>check.log_seq)unfoldedTails++;return {kind:'resume'};}
+   && !warmConfirmActive() && Date.now()-check.checked<60_000 && !(a.scope==='warm'&&before.seq>check.log_seq)){if(before.seq>check.log_seq)unfoldedTails++;return {kind:'resume'};}
   const lockGuard=one('SELECT total_changes() AS writes,(SELECT data_version FROM pragma_data_version) AS version');
   try{commitFault?.();}catch(error){commitError=error;throw error;}
   db.exec('BEGIN IMMEDIATE');

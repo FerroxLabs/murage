@@ -90,6 +90,7 @@ files:
   - shared/provider-secret-mask.mjs
   - shared/notify-surfaces.mjs
   - shared/outside-limits.mjs
+  - shared/data-version-marker.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs

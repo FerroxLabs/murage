@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { extractFunction, currentSourceText, preloadDeclarationAnalysis, preloadStatePortAdmission, type Resolution, type StatePort } from "./source-extract.ts";
 import { freshIndexPorts } from "./index-ports.ts";
-import { assertPortsPristine, registerPortConstructor, observePort, trackPort, protectPort, withinPortScope } from "./port-integrity.ts";
+import { assertPortsPristine, registerPortConstructor, observePort, trackPort, withinPortScope } from "./port-integrity.ts";
 import { CASE_PORTS, checkCasePort, casePortFor, resolveCaseDeclaration, overrideRefused } from "./case-ports.ts";
 import { Store, type BotRecord, type GroupRecord } from "../store.ts";
 import { InternalCapabilities, requiredInternalKind } from "../internal-capabilities.ts";
@@ -33,7 +33,6 @@ import { executionStore, setExecutionStore } from "../execution-audience.ts";
 import { isExecutionStoreFixture } from "./execution-store-fixture.ts";
 import { isDispatchAuthoritySetup } from "./internal-dispatch-fixture.ts";
 import { ChiefProposalTurns } from "../project-proposal-engines.ts";
-import { HighLevelHost } from "../highlevel/host.ts";
 import { WebhookManager } from "../webhooks.ts";
 import { ImageGenerationService } from "../image-generation.ts";
 import { ImageOperations } from "../image-operations.ts";
@@ -55,9 +54,9 @@ import { roomShareApprovalQueue } from "../room-shares.ts";
 import { botAccessApprovalQueue } from "../bot-access.ts";
 
 // Capture imported constructor and ancestor methods before any case hook.
-for (const Constructor of [CASE_PORTS, Store, InternalCapabilities, BotOutsideWrites, CoordinationBudget, ProviderRegistry, RoutineManager, IndependentThreadRuns, CallSpeechCoordinator, ChiefProposalTurns, HighLevelHost, WebhookManager, ToolResults]) if (typeof Constructor === "function") registerPortConstructor(Constructor);
+for (const Constructor of [CASE_PORTS, Store, InternalCapabilities, BotOutsideWrites, CoordinationBudget, ProviderRegistry, RoutineManager, IndependentThreadRuns, CallSpeechCoordinator, ChiefProposalTurns, WebhookManager, ToolResults]) if (typeof Constructor === "function") registerPortConstructor(Constructor);
 const realServiceClasses = {chiefProposals: ChiefProposalTurns, routines: RoutineManager, webhooks: WebhookManager, toolResults: ToolResults, imageService: ImageGenerationService, imageOperations: ImageOperations, publishOperations: PublishOperations,emailRuntime:EmailRuntime,phoneAuthorities:PhoneAuthorities,phoneRegistryOnce:PhoneRegistry,phoneJobs:PhoneJobs,hostComputer:HostComputerBroker,unifiedBrowser:UnifiedBrowserController};
-for (const Constructor of [...Object.values(realServiceClasses), HighLevelHost,EmailTools]) registerPortConstructor(Constructor);
+for (const Constructor of [...Object.values(realServiceClasses),EmailTools]) registerPortConstructor(Constructor);
 let admittedServices = new WeakSet<object>();
 function realService(name: string, value: unknown, Constructor: Function,plan?:ObserverPlan): boolean {
   if (!(value instanceof Constructor)) return false;
@@ -558,10 +557,9 @@ async function bindInternalDispatchScoped(options: InternalDispatchOptions): Pro
     }
     if(name==="fixtureObservers") {observerPlan(canonical[name]);continue;}
     if(name==="internalCapabilities")continue; // Exact real registry is validated below.
-    if(Object.hasOwn(realServiceClasses,name)||name==="highlevel") {
+    if(Object.hasOwn(realServiceClasses,name)) {
       if(canonical[name]===undefined)delete canonical[name];
-      else if(name==="highlevel" ? !canonical[name]||typeof canonical[name]!=="object"||Object.keys(canonical[name]).some(key=>key!=="host")||!(object(canonical[name]).host instanceof HighLevelHost)
-        : !(canonical[name] instanceof realServiceClasses[name as keyof typeof realServiceClasses]))throw overrideRefused(name,resolveCaseDeclaration(source,name),source);
+      else if(!(canonical[name] instanceof realServiceClasses[name as keyof typeof realServiceClasses]))throw overrideRefused(name,resolveCaseDeclaration(source,name),source);
       continue;
     }
     const port=casePortFor(resolveCaseDeclaration(source,name));
@@ -693,12 +691,6 @@ async function bindInternalDispatchScoped(options: InternalDispatchOptions): Pro
     if (supplied !== undefined && realService(name,supplied,Constructor,boundObservation)) state.set(name,supplied);
   }
   for(const [name,value]of state)state.set(name,observeFixtureState(boundObservation,name,value));
-  const suppliedHighlevel = object(canonical.highlevel);
-  if (realService("highlevel.host",suppliedHighlevel.host,HighLevelHost)) {
-    if (Object.keys(suppliedHighlevel).some(key=>key!=="host")) throw new Error("FIXTURE_OVERRIDE_REFUSED highlevel: host-only fixture required");
-    trackPort("highlevel.host",suppliedHighlevel.host,true);
-    state.set("highlevel",Object.freeze({host:protectPort(suppliedHighlevel.host)}));
-  }
   // The fixture owns private state. Migrate legacy case premises by removing
   // their state keys, never by copying a supplied map or service method into
   // a real instance. Remaining unsupported premises stay visible as RED.

@@ -61,6 +61,7 @@ it.each([
     const response = await fetch(`${fixture.info.url}/api/internal/agents`, { headers: { authorization: `Bearer ${row.token}` } });
     expect(response.status).toBe(status);
     expect(await response.text()).toBe(retire ? LEDGER_REFUSAL_LINE : JSON.stringify({ error: message }));
+    if (retire) expect(readFileSync(fixture.info.logPath, "utf8")).toContain("[memory] ledger refusal cause=consuming-http-denied");
     expect(JSON.parse(readFileSync(fault, "utf8"))).toMatchObject({ calls: 2, triggered: true });
     // A complete next control request must succeed after the terminal response.
     const doctor = await runControlMurage(["doctor", "--url", fixture.info.url], { env: { ...process.env, MURAGE_DATA_DIR: fixture.info.dataDir } });

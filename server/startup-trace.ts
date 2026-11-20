@@ -3,6 +3,7 @@
 // read. `ms` is milliseconds since this process started, so the gap between two
 // marks is the cost of the step between them. Fixed step names, never data.
 import { turnTraceEnabled } from "./turn-trace.ts";
+import { endBootProgress, setBootStep } from "./boot-progress.ts";
 
 type Sink = (line: string) => void;
 const defaultSink: Sink = line => console.log(line);
@@ -19,6 +20,8 @@ function parentNotify(): Notify | undefined {
   return undefined;
 }
 export function startupMark(step: string, sink: Sink = defaultSink, now: () => number = () => performance.now(), notify: Notify | undefined = parentNotify()): void {
+  // the start-up note (boot-progress.ts) names the step; it ends at listen
+  try { if (step === "listen") endBootProgress(); else setBootStep(step); } catch { /* a note never stops a start */ }
   if (notify && STAGES.has(step)) { try { notify({ type: "startup-stage", stage: step, ms: Math.round(now()) }); } catch { /* a progress bar never breaks startup */ } }
   if (!turnTraceEnabled()) return;
   sink(`[turn-trace] phase=startup.${step} ms=${Math.round(now())}`);
