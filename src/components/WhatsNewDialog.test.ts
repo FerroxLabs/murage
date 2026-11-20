@@ -20,7 +20,6 @@ class FakeElement {
   click() { this.clicked += 1; }
 }
 Object.assign(globalThis, { HTMLElement: FakeElement });
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { WhatsNewCard, WhatsNewDialog, whatsNewCardCount, whatsNewContent, WHATS_NEW_ART, WHATS_NEW_PAGES, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, WHATS_NEW_TILES_106, WHATS_NEW_MORE_106, WHATS_NEW_MORE_1014, WHATS_NEW_TILES_1015, WHATS_NEW_MORE_1015, WHATS_NEW_MORE_1016, WHATS_NEW_MORE_1017, WHATS_NEW_MORE_1018, whatsNewArrowStep } = await import("./WhatsNewDialog");
 const { runWhatsNewAction, openOutside, CHROME_STORE_OPEN_FAILED } = await import("./WhatsNewHost");
 

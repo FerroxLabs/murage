@@ -53,11 +53,13 @@ test("not live: scheme registered but inert; every request and IPC call refused,
     assert.equal(cloud.active(), false);
     assert.throws(() => cloud.open(HOME), /isn't available/);
     assert.equal(windows.length, 0, "no window");
-    // IPC stubs: every channel refuses, and no work runs
+    // IPC stubs: every channel that starts work refuses, and no work runs. meetgreet 1.0.19: the read-only state channel
+    // answers "off" quietly instead (its thrown error was logged on every Home render).
     const channels = new Map(); let worked = 0;
     registerCloudHomeIpc({ handle: (c, fn) => channels.set(c, fn) }, { cloudHome: { ...cloud, client: new Proxy({}, { get: () => () => { worked++; } }) }, getCpToken: () => "t", generateDeviceKeys: () => ({}) });
     assert.ok(channels.size >= 6);
-    for (const [name, fn] of channels) await assert.rejects(async () => fn({}, HOME, "123456"), /isn't available/, name);
+    assert.deepEqual(await channels.get("cloud-home:state")({}), { enabled: false });
+    for (const [name, fn] of channels) if (name !== "cloud-home:state") await assert.rejects(async () => fn({}, HOME, "123456"), /isn't available/, name);
     assert.equal(worked, 0);
     const engine = new Map(); let relayCalls = 0;
     registerEngineLoginIpc({ ipcMain: { handle: (c, fn) => engine.set(c, fn) }, active: () => cloud.active(), relay: new Proxy({}, { get: (_t, p) => (p === "isOpen" ? () => false : () => { relayCalls++; }) }) });
@@ -98,7 +100,9 @@ test("live flips on at runtime with no restart, the renderer is told, and live:f
     assert.equal(await gate.refresh(), false);
     assert.deepEqual(told, [true, false]);
     assert.equal(windows[0].closed, false, "an open Cloud window is never closed by going not-live");
-    await assert.rejects(async () => channels.get("cloud-home:state")({}), /isn't available/);
+    // meetgreet 1.0.19: state is read-only and polled, so not-live answers it quietly (enabled: false, the renderer's "off")
+    // instead of throwing into the log; every channel that starts work still refuses (open, below).
+    assert.deepEqual(await channels.get("cloud-home:state")({}), { enabled: false });
     assert.throws(() => cloud.open("22222222-2222-4222-8222-222222222222"), /isn't available/, "new opens refused");
   } finally { safeWipeSync(d); }
 });
@@ -176,7 +180,9 @@ test("going not-live keeps an open Cloud window and its work; only new opens and
     registerCloudHomeIpc({ handle: (c, fn) => channels.set(c, fn) }, { cloudHome: { ...cloud, client, senderHomeId: (e) => (e === winEvent ? HOME : null) }, getCpToken: () => "t", generateDeviceKeys: () => ({}) });
     assert.deepEqual(await channels.get("cloud-home:reachable")(winEvent), { ok: true });
     await assert.rejects(async () => channels.get("cloud-home:reachable")({}), /isn't available/, "not from an open Cloud window");
-    for (const [name, fn] of channels) if (name !== "cloud-home:reachable") await assert.rejects(async () => fn(winEvent, HOME, "123456"), /isn't available/, name);
+    // meetgreet 1.0.19: cloud-home:state starts no work; not-live answers it quietly as "off" (it was a thrown, logged error).
+    assert.deepEqual(await channels.get("cloud-home:state")(winEvent), { enabled: false });
+    for (const [name, fn] of channels) if (name !== "cloud-home:reachable" && name !== "cloud-home:state") await assert.rejects(async () => fn(winEvent, HOME, "123456"), /isn't available/, name);
     assert.equal(worked, 0);
     // A sign-in already running keeps its input, stop and link; a new sign-in is refused.
     const engine = new Map(); const relayed = [];

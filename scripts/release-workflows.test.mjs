@@ -672,7 +672,8 @@ describe("release.yml provenance gates (audit C8)", () => {
 
   it("the x64 smoke runs natively on an Intel runner with one retry", () => {
     const job = release.jobs["mac-x64"];
-    expect(job["runs-on"]).toBe("macos-15-intel");
+    expect(job["runs-on"]).toBe("${{ vars.MURAGE_MAC_INTEL_RELEASE_RUNNER || 'macos-15-intel' }}");
+    expect(release.jobs.mac["runs-on"]).toBe("${{ vars.MURAGE_MAC_RELEASE_RUNNER || 'macos-15' }}");
     const smoke = stepBy("mac-x64", "Qualify packaged WhatsApp (darwin-x64)");
     expect(smoke.run).toContain("for attempt in 1 2");
     expect(smoke.run).not.toContain("arch -x86_64");

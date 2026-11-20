@@ -97,6 +97,9 @@ export function captureFailureDiagnostic(stage,error){
 }
 
 /** Existing coordinator and native ownership/worker are injected, never duplicated. */
+/** How long Back up now may take to reach the restart before the window is
+ * told it did not start. The tool check alone may retry for about 10 s. */
+export const BACKUP_RUN_NOW_START_MS=120000;
 export function createBackupScheduleHost(host) {
   const coordinator=host.coordinator;
   let running=false,timer=null,lastError=null,upgradeRequest=null,upgradeCandidateId=null,operation=null,reconciled=false;
@@ -110,6 +113,8 @@ export function createBackupScheduleHost(host) {
     heldBy={occasion,since:heldBy?.occasion===occasion?heldBy.since:now(),bots:error.waitingOnYou};return true;
   };
   const now=()=>host.now?.()??Date.now();
+  const outcome=line=>{try{host.reportOutcome?.(line);}catch{/* Logging never changes a backup. */}};
+  const refusalCode=error=>{const code=typeof error?.code==="string"?error.code:error?.message;return typeof code==="string"&&/^[A-Z][A-Z0-9_]{1,63}$/.test(code)?code:"UNKNOWN";};
   // 1.0.9 Sentinel: tell the health publisher (server/health/backup-status.ts, bundled by the shell) about a backup
   // outcome, always AFTER the coordinator committed it, so a published verification always has its receipt on disk.
   // The hook reads the committed coordinator state itself; nothing here waits on it or changes because of it.
@@ -328,7 +333,7 @@ export function createBackupScheduleHost(host) {
       try{coordinator.failHandoff(token.intent.id);}catch{/* Marker prevents a later armed capture. */}
     }else if(token.manualId)try{coordinator.cancelManual(token.manualId);}catch{/* A stale or refused cancellation never grants capture authority. */}
   }
-  async function admit(entry,expectedRevision,upgradeId,onStage=()=>{}){
+  async function admit(entry,expectedRevision,upgradeId,onStage=()=>{},onStep=()=>{}){
     const token={cancelled:false,internalCleanup:false,committed:false};operation=token;
     try{
       const before=coordinator.status();let s=before,b,referenceError;
@@ -361,7 +366,7 @@ export function createBackupScheduleHost(host) {
         if(!host.checking?.())try{const reason=host.unavailableReason?.();if(reason)void Promise.resolve(host.announceUnavailable?.(reason)).catch(()=>{});}catch{/* Notice only. */}
         return {kind:"no-work"};
       }
-      assertRelaunchPossible();
+      assertRelaunchPossible();onStep("references");
       if(!b&&!referenceError)try{b=await checked();}catch(error){referenceError=error;}
       checkStop(token);
       if(referenceError){
@@ -373,14 +378,14 @@ export function createBackupScheduleHost(host) {
       if(entry==="closed"&&b.allowClosedApp!==true)throw Error("BACKUP_CLOSED_CONSENT_REQUIRED");
       const requirement=spaceRequirement(await spaceInputs(s,b));checkStop(token);
       if(requirement.short){coordinator.waitJob(s.job.id,{cause:"space",code:"BACKUP_DISK_FULL",drive:requirement.drive});lastError=null;return {kind:"waited"};}
-      if(entry!=="closed"){token.release=await host.prepare(entry==="manual"?"manual":"daily",token);checkStop(token);heldBy=null;}
+      onStep("prepare");if(entry!=="closed"){token.release=await host.prepare(entry==="manual"?"manual":"daily",token);checkStop(token);heldBy=null;}
       if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
       const budgetMs=await (host.chooseBudget?.(s,before)??chooseBudget(s,before));checkStop(token);
       const current=coordinator.status();if(current.revision!==s.revision||current.job?.id!==s.job.id)throw Error("BACKUP_HANDOFF_CHANGED");
       const intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};token.intent=intent;
       checkStop(token);const prepared=coordinator.prepareHandoff(s.job.id,intent);token.committed=true;token.jobId=prepared.job.id;
       if(entry==="closed"){checkStop(token);coordinator.armHandoff(intent.id);checkStop(token);onStage("capture");await captureArmed(true,budgetMs);}
-      else {stopPolling();const exit=await armBackup(intent,budgetMs,token.release,token);if(exit?.status==="stopped")return {kind:"stopped",...exit};}
+      else {stopPolling();onStep("restart");const exit=await armBackup(intent,budgetMs,token.release,token);if(exit?.status==="stopped")return {kind:"stopped",...exit};}
       checkStop(token);lastError=null;return {kind:"prepared"};
     }catch(error){if(!error?.stopped&&error?.message!=="BACKUP_WAITING")await retireAdmission(token);throw error;}
     finally{if(operation===token)operation=null;}
@@ -416,11 +421,31 @@ export function createBackupScheduleHost(host) {
    * Every precondition is proven before the workspace is asked to close. */
   async function runNow(expectedRevision){
     if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw Error("INVALID_BACKUP_REQUEST");
+    // 1.0.20 (Mac): Continue used to leave no trace when the start never
+    // settled. Every press now logs, and so does every refusal.
+    outcome("backup run-now requested");
+    try{return await runNowAdmitted(expectedRevision);}
+    catch(error){outcome(`backup run-now refused ${JSON.stringify({code:refusalCode(error)})}`);throw error;}
+  }
+  async function runNowAdmitted(expectedRevision){
     if(running)throw Error("BACKUP_BUSY");if(!host.supported())throw Error("BACKUP_UNAVAILABLE");assertRelaunchPossible();
-    running=true;let result;
-    try{result=await admit("manual",expectedRevision);}
+    running=true;let result,step="admission";
+    const admission=admit("manual",expectedRevision,undefined,undefined,name=>{step=name;outcome(`backup run-now step ${name}`);});
+    // The window waits on this answer. A start that never settles is said in
+    // plain words after the deadline instead of a page that just sits there.
+    // Only a start still before the workspace close is cancelled; one already
+    // closing is left to finish or fail on its own path, and `running` stays
+    // set until it does, so a second press never starts a second backup.
+    const settled=admission.finally(()=>{running=false;});
+    let timer;
+    const deadline=new Promise((_resolve,reject)=>{timer=setTimeout(()=>{
+      outcome(`backup run-now stalled ${JSON.stringify({step})}`);
+      const token=operation;if(token&&!token.internalCleanup){token.cancelled=true;try{token.cancelQueued?.();}catch{/* the admission retires itself */}}
+      lastError="BACKUP_START_STALLED";reject(Object.assign(Error(lastError),{code:lastError}));
+    },host.runNowStartMs??BACKUP_RUN_NOW_START_MS);timer.unref?.();});
+    try{result=await Promise.race([settled,deadline]);}
     catch(error){holdFor(error,"manual");throw error;}
-    finally{running=false;}
+    finally{clearTimeout(timer);settled.catch(()=>{});}
     if(result.kind==="stopped")return {status:"stopped"};
     if(result.kind==="review")throw Error(lastError);
     if(result.kind==="waited"||result.kind==="still-waiting")start();

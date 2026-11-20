@@ -9,11 +9,11 @@ export type IdentityStat = Omit<fs.Stats, 'dev' | 'ino'> & { dev: string; ino: s
 export type IdentityStatReader = (path: string, options: { bigint: true }) => fs.BigIntStats | fs.Stats | IdentityStat;
 
 function decimal(value: bigint | number | string): string {
-  if (typeof value === 'number' && (!Number.isSafeInteger(value) || value < 0)) throw new Error('unsafe file identity');
+  if (typeof value === 'number' && (!Number.isSafeInteger(value) || value < 0)) throw new Error('invalid file identity');
   // Node exposes Windows' 64-bit file IDs through signed BigIntStats fields.
   // Preserve their bits so signed reads match existing unsigned journal IDs.
   const text = String(typeof value === 'bigint' ? BigInt.asUintN(64, value) : value);
-  if (!/^\d+$/.test(text)) throw new Error('unsafe file identity');
+  if (!/^\d+$/.test(text)) throw new Error('invalid file identity');
   return text;
 }
 

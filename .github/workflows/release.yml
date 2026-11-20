@@ -229,14 +229,19 @@ jobs:
     name: macOS arm64 + x64 (sign, notarize, staple)
     needs: [prepare, preflight]
     if: needs.prepare.outputs.should_release == 'true'
-    runs-on: macos-15
+    # macos-15-xlarge (14 GB): the 8192 MiB compiler cap below needs it.
+    runs-on: ${{ vars.MURAGE_MAC_RELEASE_RUNNER || 'macos-15-xlarge' }}
     # package-mac-qualification.yml needs 90 for ONE architecture plus the
     # GEPA build (45-minute cap inside build-mac.py); this job packages both.
     timeout-minutes: 240
-    # Production-only compiler programs are measured below 70% of this cap;
-    # full test types run in ci-gate on the 16 GB Linux runner.
+    # 1.0.20 (MAIN ruling): server-build peaked at 3022.7 MiB here, over 70% of
+    # the recorded 4300 MiB cap. The job declares the ubuntu CI heap as its
+    # compiler cap, so the 70% rule holds against 8192 (5734 MiB). Splitting
+    # server-build before any further raise is the 1.0.21 follow-up.
+    # Full test types run in ci-gate on the 16 GB Linux runner.
     env:
-      NODE_OPTIONS: --max-old-space-size=4300
+      NODE_OPTIONS: --max-old-space-size=8192
+      MURAGE_TYPECHECK_CAP_MIB: "8192"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -666,7 +671,7 @@ jobs:
     # build. Binds its report to the final x64 bytes from the mac job.
     needs: [prepare, preflight, mac]
     if: needs.prepare.outputs.should_release == 'true'
-    runs-on: macos-15-intel
+    runs-on: ${{ vars.MURAGE_MAC_INTEL_RELEASE_RUNNER || 'macos-15-intel' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -902,6 +907,10 @@ jobs:
         run: |
           python -I native/gepa/build-windows.py "$env:RUNNER_TEMP/gepa-windows"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: List GEPA native images to sign (never Microsoft redistributables)
+        # Microsoft's VC++ runtime keeps Microsoft's own signature; verify-windows.ps1 requires it.
+        shell: pwsh
+        run: ./native/gepa/sign-list-windows.ps1 -Bundle "$pwd/dist-native/gepa/win32-x64" -List "$pwd/qualification-evidence/gepa-windows-sign-list.txt"
       - name: Sign GEPA native images before freezing their manifest
         uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         with:
@@ -911,9 +920,7 @@ jobs:
           endpoint: https://eus.codesigning.azure.net
           signing-account-name: ferrox-labs-signing
           certificate-profile-name: ferroxlabs
-          files-folder: ${{ github.workspace }}/dist-native/gepa/win32-x64
-          files-folder-filter: exe,dll,pyd
-          files-folder-recurse: true
+          files-catalog: ${{ github.workspace }}/qualification-evidence/gepa-windows-sign-list.txt
           file-digest: SHA256
           timestamp-digest: SHA256
           exclude-azure-cli-credential: true
@@ -961,7 +968,9 @@ jobs:
           }
           exit $code
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          # Same compiler headroom as the Mac job (1.0.20; split is a 1.0.21 item).
+          NODE_OPTIONS: --max-old-space-size=8192
+          MURAGE_TYPECHECK_CAP_MIB: "8192"
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -1253,7 +1262,9 @@ jobs:
         run: node scripts/stage-signal-runtime.mjs --target linux-x64 --release
       - name: Package with the frozen GEPA manifest
         env:
-          NODE_OPTIONS: --max-old-space-size=4300
+          # Same compiler headroom as the Mac job (1.0.20; split is a 1.0.21 item).
+          NODE_OPTIONS: --max-old-space-size=8192
+          MURAGE_TYPECHECK_CAP_MIB: "8192"
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           export MURAGE_REQUIRE_BUNDLED_MODEL=1

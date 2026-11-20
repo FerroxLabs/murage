@@ -73,12 +73,14 @@ it('RED-2 populated history, cache misses and pagination share hard raw and text
   expect(next.hits).toHaveLength(100);expect(next.hits[0].id).not.toBe(first.hits[0].id);
   expect(common.raw).toBeLessThanOrEqual(index.RECALL_RAW_LIMIT);
   expect(common.bytes).toBeLessThanOrEqual(index.RECALL_TEXT_LIMIT);
-  for(const sql of [index.VIEW_RECORD_PAGE_SQL,index.VIEW_RECENT_PAGE_SQL,index.VIEW_PENDING_PAGE_SQL,index.VIEW_JOBS_PAGE_SQL,index.VIEW_TERM_PAGE_SQL]) {
-    const args=sql===index.VIEW_RECORD_PAGE_SQL?[access.view.viewId,access.view.generation,'',-1,10]:sql===index.VIEW_TERM_PAGE_SQL?[access.view.viewId,access.view.generation,'commonword',Number.MAX_SAFE_INTEGER,10]:[access.view.viewId,access.view.generation,Number.MAX_SAFE_INTEGER,10];
+  for(const sql of [index.VIEW_RECORD_PAGE_SQL,index.VIEW_RECENT_PAGE_SQL,...index.VIEW_PENDING_PAGE_SQL,index.VIEW_JOBS_PAGE_SQL,index.VIEW_TERM_PAGE_SQL]) {
+    const pending=index.VIEW_PENDING_PAGE_SQL.includes(sql);
+    const args=sql===index.VIEW_RECORD_PAGE_SQL||pending?[access.view.viewId,access.view.generation,'',-1,10]:sql===index.VIEW_TERM_PAGE_SQL?[access.view.viewId,access.view.generation,'commonword',Number.MAX_SAFE_INTEGER,10]:[access.view.viewId,access.view.generation,Number.MAX_SAFE_INTEGER,10];
     const planRows=db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args);
-    expect(String(planRows[0].detail)).toMatch(/SEARCH memory_recall_view_/);
+    // The pending page drives from the receipts' own pending index (key order), then probes view membership by key.
+    expect(String(planRows[0].detail)).toMatch(pending?/SEARCH r USING (COVERING )?INDEX memory_projection_pending \(lexical_status=\?/:/SEARCH memory_recall_view_/);
     const plan=planRows.map(row=>String(row.detail)).join(' | ');
-    expect(plan).toMatch(/SEARCH memory_recall_view_/);expect(plan).toMatch(/view_id=\? AND generation=\?/);expect(plan).not.toMatch(/SCAN memory_records|TEMP B-TREE/);
+    expect(plan).toMatch(/SEARCH (memory_recall_view_|v USING PRIMARY KEY \(view_id=\? AND generation=\?)/);expect(plan).toMatch(/view_id=\? AND generation=\?/);expect(plan).not.toMatch(/SCAN memory_records|TEMP B-TREE/);
   }
 },120_000);
 it('RED-4 raw limits precede residual authorization, and oversized text is never hydrated', async () => {

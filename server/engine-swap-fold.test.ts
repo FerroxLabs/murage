@@ -1,4 +1,3 @@
-import { HighLevelCallLedger } from "./highlevel/call-ledger.ts";
 import { appendFixtureMessage } from './testing/approval-card.ts';
 import { BotOutsideWrites } from "./bot-outside-writes.ts";
 import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
@@ -139,11 +138,10 @@ function foldFixture() {
     shellSessions: new ShellSessionRegistry(),
     terminalPreparations: new WeakMap(), ledgerLeasesByAdmission: new WeakMap(), ledgerCompletionSources: new WeakMap(), ledgerProviderInstances: new WeakMap(),
     bus, queueMicrotask, replySpeakerTurns: createReplySpeakerTurns(), roomLiveTurns: new Map(), turnStartedAtMs: new Map(),
-    highlevelCallLedger: new HighLevelCallLedger(threadId => store.threadHighLevelMarked(threadId) !== "unmarked"),
     turnUsageRoutines: new TurnUsageRoutines(() => undefined), projectRoutineRunOfRoomTurn: () => null,
     legacyToolNamesByThread: new Map(),
     releaseLocalVmThread: noop, retiredProviderTurns: new Set(), removeGroupGoalCoordinatorTurn: noop,
-    turnUsage: new Map(), lateMemoryRedispatches: new Map(), turnRefusalNotes: new Map(),
+    turnUsage: new Map(), lateMemoryRedispatches: new Map(), lateRebuildWatches: new Map(), turnRefusalNotes: new Map(),
     takeReleasedStoppedTurn: () => false, consumeReleasedStoppedTurn: noop, settleDirectAttempts: noop,
     recordReplyActionCheck: noop, desktopActionCaughtByStop: () => false, hostStopNotedSinceLastUserMessage: () => false,
     browserCheckTurns: { terminal: () => false }, callRunByTurn: new Map(), delegationWatch: new Map(),
@@ -696,15 +694,18 @@ it("a hosted row's lead-in still lands before it after 600 earlier tool rows in 
   fold({ ...base, type: "item.completed", itemType: "tool", itemId: "hosted", ok: true });
   fold({ ...base, type: "item.completed", itemType: "assistant_text", text: "Let me search.", beforeItemId: "hosted" });
   const rows = store.activePath(bot.threadId).slice(-3);
-  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 f013bcef74: 600 execution anchors survive display exhaustion; assert their exact positions and keep exhausted provider words redacted.
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 f013bcef74: 600 execution anchors keep their exact positions.
+  // The words: a long clean turn stays shown (owner rule, MAIN 21:22Z GO of fix/1020-redact-acp-fable 832aa2ad61;
+  // the full field table lets go of its oldest settled field instead of masking the turn), so they are no longer «redacted».
   expect(rows.map(row => row.id)).toEqual([lastRead, expect.any(String), hosted]);
-  expect(rows.map(row => row.kind === "text" ? `text:${row.text}` : `row:${row.tool?.name}`)).toEqual(["row:«redacted»", "text:«redacted»", "row:«redacted»"]);
+  expect(rows.map(row => row.kind === "text" ? `text:${row.text}` : `row:${row.tool?.name}`)).toEqual(["row:read", "text:Let me search.", "row:web_search"]);
   const path = store.activePath(bot.threadId), tail = path.slice(-3);
-  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 over f013bcef74: collector exhaustion redacts words; all 600 rows and hosted insertion order remain exact by durable id.
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 over f013bcef74: all 600 rows and hosted insertion order remain exact by durable id.
   expect(path.slice(0, 600).map(row => row.id)).toEqual(earlier.map(row => row.id));
   expect(path).toHaveLength(602);
   expect(tail.map(row => row.id)).toEqual([earlier.at(-1)!.id, path.find(row => row.kind === "text")!.id, hosted]);
-  expect(tail.map(row => row.kind === "text" ? `text:${row.text}` : `row:${row.tool?.name}`)).toEqual(["row:«redacted»", "text:«redacted»", "row:«redacted»"]);
+  expect(tail.map(row => row.kind === "text" ? `text:${row.text}` : `row:${row.tool?.name}`)).toEqual(["row:read", "text:Let me search.", "row:web_search"]);
+  expect(JSON.stringify(path)).not.toContain("«redacted»");
 }, 120_000);
 
 /** Hosted-row anchors held for a thread, whatever shape the map keeps. */

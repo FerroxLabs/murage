@@ -1092,6 +1092,7 @@ export function ownLineVerdicts(db: DatabaseSync, threadId: string, messageIds: 
 
 /** A bounded footprint supplies the probes. The reader's complete membership is never copied. */
 function lineageAudienceHasScope(db: DatabaseSync,audience: import('./lineage-types.ts').LineageAudience,scope: string): boolean {
+  if(audience.scopeCeiling && !audience.scopeCeiling.includes(scope))return false;
   if(audience.view){assertRecallView(db,audience.view);return recallViewHasScope(db,audience.view,scope,audience.recallOnly!==true,audience.personOnly===true);}
   return audience.scopeIds.includes(scope);
 }

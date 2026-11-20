@@ -4,6 +4,14 @@
 import { DatabaseSync } from '../sqlite-open.ts';
 
 /** Derived data only. The original scopes, evidence and grants remain authority. */
+// The storage charge of one derived table: every row costs 512 bytes (a term row also its term), counted in memory_recall_storage.
+function storageTriggers(table:string):string {
+ const cost=(row:string)=>table==='memory_recall_view_terms'?`(512+4*length(CAST(${row}.term AS BLOB)))`: '512';
+ return `CREATE TRIGGER IF NOT EXISTS ${table}_storage_i BEFORE INSERT ON ${table} BEGIN
+ SELECT CASE WHEN (SELECT bytes FROM memory_recall_storage WHERE id=1)+${cost('NEW')}>536870912 THEN RAISE(ABORT,'MEMORY_RECALL_STORAGE_LIMIT') END;
+ UPDATE memory_recall_storage SET bytes=bytes+${cost('NEW')} WHERE id=1; END;
+ CREATE TRIGGER IF NOT EXISTS ${table}_storage_d AFTER DELETE ON ${table} BEGIN UPDATE memory_recall_storage SET bytes=bytes-${cost('OLD')} WHERE id=1; END;`;
+}
 export const RECALL_VIEW_SCHEMA = `
 CREATE TABLE IF NOT EXISTS memory_recall_epoch(id INTEGER PRIMARY KEY CHECK(id=1),epoch INTEGER NOT NULL,projection_floor INTEGER NOT NULL DEFAULT 0);
 INSERT OR IGNORE INTO memory_recall_epoch(id,epoch) VALUES(1,0);
@@ -38,13 +46,7 @@ INSERT OR IGNORE INTO memory_recall_storage VALUES(1,0);
 CREATE TRIGGER IF NOT EXISTS memory_recall_change_trim AFTER INSERT ON memory_recall_changes BEGIN
  UPDATE memory_recall_epoch SET projection_floor=max(projection_floor,NEW.sequence-1000000) WHERE id=1;
  DELETE FROM memory_recall_changes WHERE sequence=NEW.sequence-1000000; END;
-${['memory_recall_view_scopes','memory_recall_view_records','memory_recall_view_terms','memory_recall_view_pending','memory_recall_view_jobs','memory_recall_contains'].map(table=>{
- const cost=(row:string)=>table==='memory_recall_view_terms'?`(512+4*length(CAST(${row}.term AS BLOB)))`: '512';
- return `CREATE TRIGGER IF NOT EXISTS ${table}_storage_i BEFORE INSERT ON ${table} BEGIN
- SELECT CASE WHEN (SELECT bytes FROM memory_recall_storage WHERE id=1)+${cost('NEW')}>536870912 THEN RAISE(ABORT,'MEMORY_RECALL_STORAGE_LIMIT') END;
- UPDATE memory_recall_storage SET bytes=bytes+${cost('NEW')} WHERE id=1; END;
- CREATE TRIGGER IF NOT EXISTS ${table}_storage_d AFTER DELETE ON ${table} BEGIN UPDATE memory_recall_storage SET bytes=bytes-${cost('OLD')} WHERE id=1; END;`;
-}).join('\n')}
+${['memory_recall_view_scopes','memory_recall_view_records','memory_recall_view_terms','memory_recall_view_pending','memory_recall_view_jobs','memory_recall_contains'].map(storageTriggers).join('\n')}
 CREATE TRIGGER IF NOT EXISTS memory_recall_record_i AFTER INSERT ON memory_records BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('record',NEW.id,NEW.version); END;
 CREATE TRIGGER IF NOT EXISTS memory_recall_record_u AFTER UPDATE ON memory_records BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('record',OLD.id,OLD.version); INSERT INTO memory_recall_changes(kind,object_id,version) SELECT 'record',NEW.id,NEW.version WHERE NEW.id IS NOT OLD.id OR NEW.version IS NOT OLD.version; END;
 CREATE TRIGGER IF NOT EXISTS memory_recall_record_d AFTER DELETE ON memory_records BEGIN INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('record',OLD.id,OLD.version); END;
@@ -86,8 +88,25 @@ export function recallSchemaObjects() {
     return expected;
   } finally { db.close(); }
 }
+/** The pending table stays exactly as 1.0.19 shipped it and is still written (recall-view.ts projectRecord), though the pending page reads the
+ * receipts' own index (recall-view-index.ts): 1.0.19 refuses a file without it (MEMORY_SCHEMA_UNSUPPORTED, then its restore page), and a
+ * 1.0.19 that opens a view built here reads that table. Retiring it waits for a release that bumps MEMORY_SCHEMA_VERSION. */
+export const RECALL_PENDING_OBJECTS=['memory_recall_view_pending','memory_recall_pending_record','memory_recall_view_pending_storage_i','memory_recall_view_pending_storage_d'] as const;
+/** A 1.0.20 candidate build dropped the pending table. Such a file gets it back empty, and every view goes stale in the same step (the
+ * authority epoch moves), so no reader of either release trusts a view whose pending rows were never written. Whole or not at all. */
+function restoreDroppedPending(db: DatabaseSync): boolean {
+  if(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_recall_view_pending'").get()
+    || !db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_recall_epoch'").get())return false;
+  db.exec('SAVEPOINT recall_pending_restore');
+  try {
+    db.exec(RECALL_VIEW_SCHEMA);
+    db.exec('UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1');
+    db.exec('RELEASE recall_pending_restore');
+  } catch(error) { db.exec('ROLLBACK TO recall_pending_restore');db.exec('RELEASE recall_pending_restore');throw error; }
+  return true;
+}
 export function ensureRecallViewSchema(db: DatabaseSync) {
-  db.exec(RECALL_VIEW_SCHEMA);
+  if(!restoreDroppedPending(db))db.exec(RECALL_VIEW_SCHEMA);
   db.exec(`INSERT OR IGNORE INTO memory_recall_excluded SELECT DISTINCT CAST(e.value AS TEXT) FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings'`);
 }
 /** One change row of kind 'receipts' stands for a producer chunk of receipt flips (FIX3-DESIGN, MAIN 2026-11-17T00:49Z). It names the chunk's

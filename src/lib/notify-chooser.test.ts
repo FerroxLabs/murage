@@ -14,7 +14,7 @@ const E = en as Record<string, string>;
 const caps = (platform: string, over: Record<string, { available: boolean; reason?: any }> = {}): NotifyCapabilities =>
   ({ platform, session: platform === "linux" ? "x11" : null, surfaces: { ...Object.fromEntries(IDS.map(id => [id, { available: true }])), ...over } as any });
 const state = (platform: string): NotifySurfaces => ({
-  v: 1, origin: "new", chooser: "unseen", notifyActions: true, quietSummary: true, badgeMenu: true, badgeCount: "needs-you", receiptMinMinutes: 2, nudgeMinutes: 5,
+  v: 1, origin: "new", chooser: "unseen", notifyActions: true, quietSummary: true, badgeCount: "needs-you", receiptMinMinutes: 2, nudgeMinutes: 5,
   hideFullscreen: true, respectFocus: true, pinnedBotId: null, shortcut: null, asks: { backgroundApproval: false, longJob: false },
   surfaces: { notify: true, receipt: true, tray: platform !== "darwin", pill: platform === "darwin", badge: true, bubble: false, dock: false, shortcut: false },
 } as unknown as NotifySurfaces);

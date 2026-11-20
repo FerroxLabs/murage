@@ -9,7 +9,7 @@
 
 /** Why the profile is protected. `owner-input`: the owner typed or clicked in
  * the page while holding control, so something only the owner knows may be in
- * the session; only the owner's Reopen blank page hands it back. `sensitive-
+ * the session; the bot is moved to a new blank tab and never sees it. `sensitive-
  * page`: the document guard found a protected field, an embedded frame, or a
  * closed shadow root in a page the bot opened; the bot never saw it and may
  * leave it for another address. */
@@ -21,8 +21,11 @@ import { murageTool, murageToolOnThisServer } from "./murage-tool-surface.ts";
 const DO_NOT_ROUTE_AROUND = "Do not switch to another browser, a browser plugin, or run the browser program yourself.";
 
 export const BROWSER_REFUSALS = {
-  browser_protected_owner_input: `Murage's browser is protecting this page because the owner typed or clicked in it, so you cannot read it or act on it. Ask the owner to open your Browser panel and choose Take control, then Reopen blank page, then hand control back. ${DO_NOT_ROUTE_AROUND}`,
-  browser_protected_sensitive_page: `Murage's browser is protecting this page because it has a password, one-time-code or payment field, an embedded frame, or content Murage cannot inspect, so you cannot read it or act on it. You can leave it by calling ${murageToolOnThisServer("agent_browser_open")} with a different address; if that page is protected too, ask the owner to open your Browser panel and choose Take control, then Reopen blank page. ${DO_NOT_ROUTE_AROUND}`,
+  browser_protected_owner_input: `Murage's browser is protecting this page because the owner typed or clicked in it, so you cannot read it or act on it. The page stays the owner's: your next browser call opens a new blank tab of your own. ${DO_NOT_ROUTE_AROUND}`,
+  browser_protected_sensitive_page: `Murage's browser is protecting this page because it has a password, one-time-code or payment field, an embedded frame, or content Murage cannot inspect, so you cannot read it or act on it. You can leave it by calling ${murageToolOnThisServer("agent_browser_open")} with a different address: it opens in a new blank tab of your own and the protected page is left untouched. ${DO_NOT_ROUTE_AROUND}`,
+  // Sean 1.0.20 ruling: the owner is never asked to hand a browser back. A protected page is left as it is and the bot works on in a new blank tab.
+  browser_fresh_tab: `That page is protected, so Murage left it untouched and opened a new blank tab for you; this step did not run. Call ${murageToolOnThisServer("agent_browser_open")} with the address you need. ${DO_NOT_ROUTE_AROUND}`,
+  browser_protected_tab: `A protected tab in this browser stays the owner's, so listing, switching, opening more or closing tabs, and closing the browser, are off while it is open. Work in the one tab you have: call ${murageToolOnThisServer("agent_browser_open")} with the address you need. ${DO_NOT_ROUTE_AROUND}`,
   browser_held: `The owner has taken control of this browser, so it refuses your reads and actions until they hand it back. Wait, or ask the owner in chat. ${DO_NOT_ROUTE_AROUND}`,
   // The engine stopped (often its idle exit) and could not start again in
   // time. Nothing about the page: the next call starts it again.
@@ -54,6 +57,6 @@ export function isBrowserRefusal(error: unknown): error is Error & { status: num
  * of the prefix. */
 export function browserLockTurnNote(protection: BrowserProtection): string {
   return protection === "owner-input"
-    ? " Your browser is locked: the owner typed or clicked in its page, so its tools are listed but every read and action is refused until the owner opens your Browser panel, chooses Take control and then Reopen blank page. If you need the browser, tell the owner that; never use another browser, a browser plugin, or run the browser program yourself instead."
-    : ` Your browser is locked: its page has a password, one-time-code or payment field, an embedded frame, or content Murage cannot inspect, so reads and actions on it are refused. Opening a different address with ${murageTool("agent_browser_open", "browser")} clears the lock when that page is not protected; otherwise ask the owner to use Take control and then Reopen blank page in your Browser panel. Never use another browser, a browser plugin, or run the browser program yourself instead.`;
+    ? " Your browser is locked: the owner typed or clicked in its page, so that page stays the owner's. Your next browser call opens a new blank tab of your own; never use another browser, a browser plugin, or run the browser program yourself instead."
+    : ` Your browser is locked: its page has a password, one-time-code or payment field, an embedded frame, or content Murage cannot inspect, so reads and actions on it are refused. Opening a different address with ${murageTool("agent_browser_open", "browser")} clears the lock: it opens in a new blank tab of your own and the protected page is left untouched. Never use another browser, a browser plugin, or run the browser program yourself instead.`;
 }

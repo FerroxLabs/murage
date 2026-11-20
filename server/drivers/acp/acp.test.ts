@@ -2548,6 +2548,33 @@ createInterface({ input: process.stdin }).on("line", line => {
       .filter((row) => row.dir === "lifecycle")
       .map((row) => row.msg);
 
+  // meetgreet 1.0.19 (item 2): every engine_lifecycle event carried appVersion:null and engineVersion:null.
+  it("lifecycle diagnostics name the app build and the engine's initialize version", async () => {
+    vi.stubEnv("MURAGE_APP_VERSION", "1.0.19");
+    vi.stubEnv("FAKE_ACP_AGENT_VERSION", "9.8.7");
+    try {
+      await create();
+      const first = `t-lifecycle-versions-a-${Date.now()}`;
+      const one = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: first, text: "fixture only" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === one.turnId);
+      await expect(instance.adapter.awaitTurnTeardown!(first, one.turnId)).resolves.toEqual({ closeConfirmed: true });
+      const rows = lifecycleRows(first);
+      expect(rows.length).toBeGreaterThan(3);
+      expect(rows.every((row) => row.appVersion === "1.0.19")).toBe(true);
+      // from the initialize answer on, the engine's own version
+      const answered = rows.findIndex((row) => row.event === "rpc_requested" && row.method !== "initialize");
+      expect(answered).toBeGreaterThan(0);
+      expect(rows.slice(answered).every((row) => row.engineVersion === "9.8.7")).toBe(true);
+      // a later engine of the same driver carries it from its first event (no probe per turn)
+      const second = `t-lifecycle-versions-b-${Date.now()}`;
+      const two = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: second, text: "fixture only" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === two.turnId);
+      await expect(instance.adapter.awaitTurnTeardown!(second, two.turnId)).resolves.toEqual({ closeConfirmed: true });
+      const later = lifecycleRows(second);
+      expect(later[0]).toMatchObject({ event: "spawn_requested", appVersion: "1.0.19", engineVersion: "9.8.7" });
+    } finally { vi.unstubAllEnvs(); vi.stubEnv("FAKE_ACP_MCP_READY", "1"); vi.stubEnv("FAKE_ACP_MCP_LIST", "all:ready"); }
+  });
+
   it("lifecycle diagnostics: a completed turn traces one generation from spawn to close", async () => {
     await create();
     const threadId = `t-lifecycle-complete-${Date.now()}`;
@@ -2893,6 +2920,29 @@ createInterface({ input: process.stdin }).on("line", line => {
     }
     await new Promise(resolve => setTimeout(resolve, 30));
     expect(JSON.parse(readFileSync(dump, "utf8")).promptRequests).toBe(1);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+  });
+
+  // meetgreet 1.0.19 (item 1): Fuigo's service failed (retry_state failed, kind api), session/prompt came back -32603 with no
+  // message or data, and the card said only that the engine gave no explanation. Every ACP engine shares this path: the
+  // owner reads one plain line naming the engine, with the next step, and the turn ends as a failure exactly once.
+  it.each([
+    ["Fuigo", "observed"], ["Fuigo", "bare"], ["Fuigo", "blank"], ["Grok", "observed"], ["Grok", "bare"], ["Grok", "blank"],
+  ] as const)("%s session/prompt rejected with no reason (%s) still tells the owner why, once", async (engine, variant) => {
+    await create(engine === "Fuigo" ? FuigoDiagnosticDriver : GrokAgentDriver, `no-reason:${variant}`);
+    const threadId = `t-no-reason-${engine}-${variant}`;
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === turnId)).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    const errors = recorder.events.filter(event => event.type === "runtime.error");
+    expect(errors).toHaveLength(1);
+    // the engine as the owner named it (the instance's display name, "ACP Test" in this fixture)
+    expect(errors[0].message).toBe("ACP Test's service returned an error. Try again, or switch engine.");
+    // never the bare JSON-RPC word the card reads as "no explanation"
+    expect(errors[0].message).not.toMatch(/^(?:internal error|request failed)\.?$/i);
+    expect(errors[0]).not.toHaveProperty("setup");
+    expect(errors[0].details).toContain("Engine error code: -32603");
+    if (engine === "Fuigo" && variant === "observed") expect(errors[0].diagnostic?.observedKind).toBe("api");
     expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
   });
 

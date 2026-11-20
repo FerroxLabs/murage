@@ -104,7 +104,7 @@ for (const field of ['ino', 'dev'] as const) test(`positive-form journal matches
 
 for (const field of ['ino', 'dev'] as const) test.each([Number.MAX_SAFE_INTEGER + 1, -1, 1.5, '1e3', '-1', ''])('stat rejects ambiguous ' + field + ' %s', value => {
   const { root } = fixture();
-  expect(() => identityStat({ ...fs.lstatSync(root), [field]: value })).toThrow('unsafe file identity');
+  expect(() => identityStat({ ...fs.lstatSync(root), [field]: value })).toThrow('invalid file identity');
 });
 
 test('old journals with safe numeric dev and ino load as decimal strings', () => {

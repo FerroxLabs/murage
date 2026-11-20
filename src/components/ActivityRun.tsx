@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, Check } from "lucide-react";
 import type { Message } from "@/state/store";
-import { describeRun, describeRunRaw } from "@/lib/activity-runs";
+import { describeInterimSteps, describeRun, describeRunRaw } from "@/lib/activity-runs";
 
 export function ActivityRun({
   messages,
@@ -56,6 +56,26 @@ export function ActivityRun({
         <span className="max-w-[480px] truncate">{describeRun(messages)}</span>
         <ChevronRight size={13} />
       </button>
+    </div>
+  );
+}
+
+/** 1020: the steps a bot ran between two things it said in one turn ("Let me verify." -> searched the web ->
+ * the answer), as one quiet line so the texts read as one reply. Shown with Tool calls off too; the raw names
+ * are one pointer away. */
+export function InterimStepsRow({ messages }: { messages: Message[] }) {
+  const failed = messages.some((message) => message.tool?.ok === false);
+  return (
+    <div className="flex justify-start">
+      <div
+        role="status"
+        data-testid="interim-steps-row"
+        title={describeRunRaw(messages)}
+        className="flex min-w-0 max-w-full items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary"
+      >
+        {!failed && <Check size={12} aria-hidden="true" className="shrink-0 text-success" />}
+        <span className="block truncate first-letter:uppercase">{describeInterimSteps(messages)}</span>
+      </div>
     </div>
   );
 }

@@ -59,7 +59,7 @@ const PRIVATE_LINES = [
   "ls ~/." + "sable/ops/numbers/",
   "/tmp/" + "murage-qualification-" + "private-20260914/evidence/receipt.json",
   "const DEFAULT_SOURCE = \"/Volumes/" + "Mando/wayland/app\";",
-  "/volumes/" + "mando/waylandbots",
+  "/volumes/" + "mando/workspace",
   "ssh " + "sean." + "imsc.example",
 ];
 

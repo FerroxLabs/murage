@@ -391,3 +391,17 @@ it('refuses foreign update notice reports before reading their payload', async (
   await expect(handlers.get('update:notice-report')({}, payload)).rejects.toMatchObject({ code: OWNED_MAIN_IPC_REFUSAL });
   expect(read).not.toHaveBeenCalled();
 });
+
+// fablehunt-1020q item 9: the launch pause main.mjs registers at startup is the one the install uses.
+it("the registered launch pause takes the timed jobs down before quitAndInstall", async () => {
+  const api = await import("./updater.mjs");
+  const order = [];
+  api.useUpdateLaunchPause({ pause: () => { order.push("pause"); }, resume: () => { order.push("resume"); } });
+  api.registerUpdaterIpc();
+  api.startUpdater();
+  fakeDownload();
+  await handlers.get("update:download")();
+  updater.quitAndInstall = vi.fn(() => { order.push("quitAndInstall"); });
+  await handlers.get("update:install")();
+  expect(order).toEqual(["pause", "quitAndInstall"]);
+});

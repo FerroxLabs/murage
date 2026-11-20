@@ -18,6 +18,11 @@ export const posixStatus = { deny: 10, unreachable: 126 };
 // images (the launching sh and the tool), so half its median is that unavoidable cost; the 10 ms then bounds the shim's
 // own work on every host. A second extra image (a full direct-call median of overhead) is still over the budget.
 export const fastPathBudgetMs = (platform, realMedianMs) => 10 + (platform === 'win32' ? realMedianMs / 2 : 0);
+// The fast path is timed in fastPathBlocks independent blocks, each with its own warm-up and medians, and the row judges
+// the median block. A load burst on a shared runner (macOS 2026-11-18: 11.07 ms in one run, 5.12 ms in the run before)
+// spoils at most one block; a shim slow in most blocks still fails. Never a retry: every block is measured and reported.
+export const fastPathBlocks = 3;
+export const medianBlock = blocks => [...blocks].sort((a, b) => a.overheadMs - b.overheadMs)[Math.floor(blocks.length / 2)];
 export const ruleIds = new Set(['wipe-check-fault', 'delete-root', 'delete-home', 'delete-system-folder',
   'disk-erase', 'fork-bomb', 'unreadable', 'unknown-target', 'protected-path', 'other']);
 export const tools = ['rm', 'rmdir', 'mv', 'dd', 'shred', 'wipefs', 'mkfs', 'mkfs.ext4', 'diskutil'];

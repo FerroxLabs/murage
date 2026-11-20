@@ -7,10 +7,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { denyGeneration, fenceVerdict, preparedWindowIdentity, prepareWindowMemory, refsLookup } from "./deny-read.ts";
 import type { BuiltPrompt, LineageReader, LineageRef, LineageVerdict, TurnLineage } from "./lineage-types.ts";
-import { bindRetainedTurn, checkedOpenTurns, refuseRetainedTurn, retainedTurnDatabase, type OpenTurn } from "./lineage-write.ts";
+import { bindRetainedTurn, checkedOpenTurns, dropRetainedParents, refuseRetainedTurn, retainedTurnDatabase, type OpenTurn } from "./lineage-write.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { sendFenceDeps } from "./send-fence-deps.ts";
-import { withReleaseBudgets, chargeReleaseWork, reserveRelease } from "./release-budget.ts";
+import { withReleaseBudgets, chargeReleaseWork, reserveRelease, outsideReleaseBudgets } from "./release-budget.ts";
 
 import type { SettleClass, SettleScope } from "./settle-target.ts";
 
@@ -61,9 +61,10 @@ const refLabel = (ref: LineageRef): string => ref.kind === "line" ? (ref.replay 
   : ref.kind === "prefix" ? (ref.shown !== undefined ? "prefix-shown" : ref.content ? "own-prefix" : "prefix") : ref.kind;
 
 /** Final reader and prospective validation belong to the concrete generation. */
-export function prepareRetainedFence(turn: TurnLineage, reader: LineageReader, onRefused: (verdict: LineageVerdict) => void, db?: DatabaseSync): LineageReader {
+export function prepareRetainedFence(turn: TurnLineage, reader: LineageReader, onRefused: (verdict: LineageVerdict) => void, db?: DatabaseSync,
+  continuePending?: (verdict?: LineageVerdict) => boolean): LineageReader {
   const authority = retainedTurnDatabase(turn);
-  const frozen = bindRetainedTurn(turn, reader, onRefused, refs => assertRetainedFence(turn, db, 0, refs));
+  const frozen = bindRetainedTurn(turn, reader, onRefused, refs => assertRetainedFence(turn, db, 0, refs), continuePending);
   const file = db ?? authority;
   if (file !== authority) retainedRefusal(checkedOpenTurns(turn)[0]!, turn.parents, { state: "checking", reason: "not-built" });
   if (file) {
@@ -112,6 +113,13 @@ export function assertRetainedFence(turn: TurnLineage, db?: DatabaseSync, bytes 
         // the marker runner; settling it here would change the evidence checked.
         return refsLookup(file, refs, open.reader!, true, open.preparedWindow);
       }));
+      // 1.0.20 A-5: a release that re-checks only what the engine already holds (no prospective refs), still checking:pending (a revoke
+      // walk not finished, not a proven revoke), on an owner-audience direct turn: the running turn continues and the owner is told once
+      // that remembered details were left out. Nothing new is released by this decision; the next release is checked again.
+      if (verdict.state === "checking" && verdict.reason === "pending" && !prospective && open.continuePending?.(verdict) === true) continue;
+      // 1.0.20 revokekeep (SEAN RULING): any other refusal of context the owner's running turn already holds (a revoke, a change, a lookup
+      // that failed) never stops that turn: the refused refs leave what it keeps and cites, a privacy revoke's words leave its stored reply.
+      if (verdict.state !== "shown" && !prospective && open.continuePending && keepOwnerTurn(open, db ?? authority, verdict)) continue;
       if (verdict.state !== "shown") withReleaseBudgets([open.budget!], () => retainedRefusal(open, refs, verdict));
     } catch (error) {
       if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
@@ -119,6 +127,44 @@ export function assertRetainedFence(turn: TurnLineage, db?: DatabaseSync, bytes 
     } finally { allowance.close(); }
   }
 }
+/** 1.0.20 revokekeep: the owner's running turn continues after a refusal of what it already holds. Each held ref is judged on its own: the
+ * ones still shown stay, every other one is dropped (a lookup that fails drops it: fail closed toward keeping less). The words of lines a
+ * privacy revoke withheld (the owner forgot them, the audience narrowed) are remembered so the stored reply never keeps them; nothing else of
+ * the reply is touched. The per-ref judging runs outside the release budget (it releases nothing) and is bounded by the retained caps. */
+/** A line withdrawn by its own privacy revoke (the owner forgot or flagged it, its conversation or memory was deleted, its scope denied):
+ * only such a line's words are redacted. A line withheld for its position (after a revoked line: deny-range), a watermark or footprint is
+ * dropped from what the turn keeps, but its words are not the revoked text. */
+const OWN_REVOKE_REASONS: ReadonlySet<string> = new Set(["deny-line", "tombstone", "own-flag", "thread-deny", "deny-memory", "session-forgotten", "scope-deny"]);
+const ownRevoke = (verdict: LineageVerdict): boolean => verdict.state === "withheld" && OWN_REVOKE_REASONS.has(verdict.reason);
+function keepOwnerTurn(open: OpenTurn, file: DatabaseSync | null, verdict: LineageVerdict): boolean {
+  if (open.continuePending?.(verdict) !== true) return false;
+  const judge = (ref: LineageRef): LineageVerdict => {
+    if (!file || !open.reader) return { state: "checking", reason: "lookup-error" };
+    try { return refsLookup(file, [ref], open.reader, true); } catch { return { state: "checking", reason: "lookup-error" }; }
+  };
+  const words = (threadId: string, messageId: string): string[] => {
+    try {
+      const text = file?.prepare("SELECT text FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId)?.text;
+      return typeof text === "string" && text ? [text] : [];
+    } catch { return []; }
+  };
+  const kept: LineageRef[] = [], withdrawn: string[] = [];
+  outsideReleaseBudgets(() => {
+    for (const ref of open.parents) {
+      const own = judge(ref);
+      if (own.state === "shown") { kept.push(ref); continue; }
+      if (!ownRevoke(own)) continue;
+      if (ref.kind === "line") withdrawn.push(...words(ref.threadId, ref.messageId));
+      else if (ref.kind === "prefix") for (const id of ref.shown ?? [])
+        if (ownRevoke(judge({ kind: "line", threadId: ref.threadId, messageId: id }))) withdrawn.push(...words(ref.threadId, id));
+    }
+  });
+  const dropped = open.parents.length - kept.length;
+  dropRetainedParents(open, kept, withdrawn);
+  console.warn("[memory] held context changed during an owner turn; the turn continues", { kept: kept.length, dropped, redacted: withdrawn.length, verdict: verdict.state === "shown" ? "shown" : `${verdict.state}:${verdict.reason}` });
+  return true;
+}
+
 export type FenceRefusalCounts = { reader: "content" | "audience"; parts: number; refusedParts: number; refs: Record<string, number>; reasons: Record<string, number>; truncated: boolean };
 // The adapter wraps a refusal but keeps the verdict object. Preserve diagnostic
 // counts across that boundary without changing the driver's authority contract.

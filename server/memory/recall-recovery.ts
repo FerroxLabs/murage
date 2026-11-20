@@ -4,6 +4,8 @@
 export class RecallPreparationPending extends Error {
   constructor() { super('MEMORY_RECALL_UNAVAILABLE'); }
 }
+/** R01 owner: recall-reclaim-r2. Every recall view is in use by a live reader; a waiting turn ends on its card. */
+export class RecallCapacityPending extends RecallPreparationPending {}
 /** Record callers retain their scope-denial diagnostic, without confusing availability with authority. */
 export class RecallViewLost extends Error {
   constructor() { super('MEMORY_SCOPE_DENIED'); }

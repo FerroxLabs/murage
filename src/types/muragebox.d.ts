@@ -327,6 +327,10 @@ type SkillRecordingPayload = {
         onData(listener: (payload: { id: string; data: Uint8Array }) => void): () => void;
         onClosed(listener: (payload: { id: string; reason: string }) => void): () => void;
       };
+      /** The launch id this launch's engine puts in every answer (x-murage-launch); "" when main has none. */
+      serverLaunch?: string;
+      /** The chat on screen, so a window that follows a restarted engine reopens it. */
+      reportOpenChat?(threadId: string): void;
       getCapabilities(): Promise<DesktopCapabilities>;
       onCapabilitiesChanged(cb: (capabilities: DesktopCapabilities) => void): () => void;
       /** Whether the engine is alive, and whether it is coming back. A dead
@@ -519,10 +523,6 @@ type SkillRecordingPayload = {
         submitCode(provider: import("../../shared/provider-connections").SignInPreset, code: string): Promise<boolean>;
         signOut(provider: import("../../shared/provider-connections").SignInPreset): Promise<import("../../shared/model-signin").SignInResult>;
       };
-      /** Confirm a source-staged HighLevel flow. IDs enter; no secret values leave main. */
-      highlevel?: {
-        commit(intent: { flowId: string; versionId: string }): Promise<{ ok: true } | { ok: false; error: "storage" | "invalid_request" | "outcome_unknown" | "unavailable" }>;
-      };
       /** The owner's own MCP servers (MCP-LINK T11). Desktop only; every
        * result is value-free. See lanes/mcplink/API-T11.md for the sequencing. */
       mcpServers?: {
@@ -542,7 +542,7 @@ type SkillRecordingPayload = {
       /** Reconnect connected apps here after another computer took over. */
       reconnectConnectedApps?(): Promise<{ reconnected: boolean; outcome?: "held" | "completed" | "deferred" | "failed"; reason?: string; retryAt?: number; attempted?: boolean; status?: number }>;
       setCredential?(
-        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "highlevelPrivateToken" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
+        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
         value: string,
       ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). onState

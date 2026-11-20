@@ -33,6 +33,7 @@ import type { ConsumingIdentity } from "./ledger-refusal.ts";
 import { LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
 import { consumingSinkEntry, type SinkInventoryEntry } from "./consuming-sink-inventory.ts";
 import { checkReleaseAvailable, reserveRelease, withReleaseBudgets, RELEASE_CHUNK_MAX } from "./memory/release-budget.ts";
+import { logSwallowedConsumingError } from "./consuming-error-log.ts";
 import { isDatabaseBusy, setBusy, DEFAULT_BUSY_MS, BACKGROUND_BUSY_MS } from "./db-busy.ts";
 
 export interface ConsumingTurnBinding {
@@ -95,6 +96,7 @@ export function assertConsumingBinding(binding: ConsumingTurnBinding): void {
     if (!terminalAllowances.has(binding)) terminalAllowances.set(binding, members.map(member => member.budget!));
   } catch (error) {
     if (error instanceof Object && reportedRefusals.has(error)) throw error;
+    logSwallowedConsumingError("binding.assert", error);
     refuseConsumingTurn(binding, (error as { fence?: LineageVerdict }).fence);
   }
 }
@@ -192,6 +194,7 @@ function emitPreparedConsumingResponse<T>(binding: ConsumingTurnBinding, descrip
     }
     if (entered) throw error; // Native transport errors retain identity.
     if (error instanceof Object && reportedRefusals.has(error)) throw error;
+    logSwallowedConsumingError(isDatabaseBusy(error) ? "response.emit:busy" : "response.emit", error);
     if (isDatabaseBusy(error)) {
       // A committed revoke still wins over contention. Read the retained
       // ledger without trying to acquire the already-held writer again.
@@ -453,6 +456,7 @@ export function denyConsumingHttp(raw: ServerResponse, binding?: ConsumingTurnBi
   if (raw.headersSent) { raw.destroy(); return; }
   for (const name of raw.getHeaderNames()) raw.removeHeader(name);
   raw.writeHead(409, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+  console.warn("[memory] ledger refusal cause=consuming-http-denied");
   raw.end(LEDGER_REFUSAL_LINE);
 }
 

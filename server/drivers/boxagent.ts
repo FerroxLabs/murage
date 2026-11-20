@@ -1,5 +1,6 @@
 import { fluxTurnDecision } from "../flux-memory-headers.ts";
-import { registerBusyloopRequestSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { registerBusyloopRequestSite, registerBusyloopPayloadSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { inspectFluxResponse } from "./flux-busyloop-readers.ts";
 import { withRequestDelivery } from "./request-delivery.ts";
 import { engineJsonBody } from "./engine-wire.ts";
 import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
@@ -103,12 +104,15 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
     const gate = createStopGate({ engineName: "the Cloud computer", emit: (event, source) => emit(event as unknown as RuntimeEvent, source as SendTurnInput["sourceContext"]), base });
 
     const api = async (path: string, opts: RequestInit = {}) => {
-      const res = await registerBusyloopRequestSite(fluxRouteFor(`${BOX_API}${path}`), fetch(`${BOX_API}${path}`, {
+      const res = await registerBusyloopRequestSite(fluxRouteFor(`${BOX_API}${path}`), fetch(fluxRouteFor(`${BOX_API}${path}`).requestUrl, {
         ...opts,
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...opts.headers, ...(fluxRouteFor(`${BOX_API}${path}`).routed ? fluxTurnDecision({ background: true }).headers : {}) },
         signal: (opts as any).signal ?? AbortSignal.timeout(30_000),
       }));
-      const body: any = await res.json().catch(() => null);
+      // only a routed refusal body is read here: every other answer keeps its one body for the read below (no unread copy per poll)
+      const flux = await inspectFluxResponse(fluxRouteFor(`${BOX_API}${path}`).routed && !res.ok ? res.clone() : res, fluxRouteFor(`${BOX_API}${path}`).routed, (opts as any).signal);
+      if (flux.decision && flux.decision.action !== "PASS") throw new Error(`box refused: ${flux.decision.reason}`);
+      const body: any = await registerBusyloopPayloadSite("read", res.json()).catch(() => null);
       if (!res.ok || body?.ok === false) {
         throw new Error(body?.code ?? body?.error ?? `box HTTP ${res.status}`);
       }
@@ -193,13 +197,15 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         // the irreversible call: the entry is live once the box ACCEPTED the prompt (liveWhen: a refused POST, an HTTP error status or a body
         // saying ok:false, never goes live; a mark that landed during the POST is read by the step below)
         post: () => gate.launch(entry, async () => {
-          const res = await registerBusyloopRequestSite(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`), fetch(`${BOX_API}/boxes/${boxId}/prompt`, {
+          const res = await registerBusyloopRequestSite(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`), fetch(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`).requestUrl, {
             method: "POST",
             headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`).routed ? fluxTurnDecision(turn).headers : {}) },
             body: JSON.stringify({ provider: providerFor(model), model, prompt }),
             signal: AbortSignal.timeout(30_000),
           }));
-          return { status: res.status, body: await res.json().catch(() => null) };
+          const flux = await inspectFluxResponse(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`).routed && !res.ok ? res.clone() : res, fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`).routed);
+          if (flux.decision && flux.decision.action !== "PASS") return { status: res.status, body: { ok: false, code: `box refused: ${flux.decision.reason}` } };
+          return { status: res.status, body: await registerBusyloopPayloadSite("read", res.json()).catch(() => null) };
         }, { liveOn: "resolve", liveWhen: (res) => res.status >= 200 && res.status < 300 && (res.body as { ok?: unknown } | null)?.ok !== false }),
       }), {
         // a Stop or a dispose landed while the box was answering: the prompt is on the box, so it is Stopped now and the turn ends
