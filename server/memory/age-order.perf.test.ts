@@ -3,7 +3,7 @@
 //
 // 1.0.3 lane 2, the measured gate (LANE2-MEMORY-DESIGN r2.8, r3.3): on a synthetic 1,000,000-record store no statement of owner search
 // or browse runs over 50 ms, on every fixture the design names (a sparse scope of 50 records, a common word across the years, two
-// conjunctive common words, 64 KB documents, mode F mid-fill and mode R), and the p95 is reported. Runs on the build host rig only
+// conjunctive common words, 64 KB documents, mode F mid-fill and mode R), and the p95 is reported. Runs on the Hetzner rig only
 // (MEMORY_PERF_LANE2=1): the fixture takes minutes to write.
 import { openTestIndex } from "./testing/open-index.ts";
 import { mkdirSync, rmSync } from "node:fs";

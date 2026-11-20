@@ -167,7 +167,7 @@ const PI_ARGS = ["--mode", "rpc", "--no-session"];
  * --no-context-files 0.67.4. A version below the newest floor, or unknown
  * (the probe is retried once), is rejected: the turn does not start and the
  * owner is told to update pi.
- * Rig (build host, pi 0.73.1, fake model): before = personal extension tool,
+ * Rig (Hetzner, pi 0.73.1, fake model): before = personal extension tool,
  * personal skill and global AGENTS.md in the request; after = none of them,
  * project AGENTS.md and an explicit `-e` extension's tool still present.
  */

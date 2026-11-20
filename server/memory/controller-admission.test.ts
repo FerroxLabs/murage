@@ -208,6 +208,23 @@ it("A3 dispatch plans its step from remaining room after server background work"
  const state=ioBudget.admissionState();expect(state.bg+state.debt+state.reserved,"A3 dispatch preserves minute bound").toBeLessThanOrEqual(12*1024*1024);
 });
 
+it("RED2C an owed capture is claimed in the minute an index batch has no room for, instead of waiting behind it",()=>{
+ enqueue();const db=database(),scope=String(db.prepare("SELECT id FROM memory_scopes LIMIT 1").get()!.id);
+ db.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,valid_from,created_at) VALUES('fixture-small',1,?,'fact','fixture','owner-statement','active',0,0)").run(scope);
+ db.exec("INSERT INTO memory_projection_receipts VALUES('fixture-small',1,0,'pending','pending',NULL)");
+ // Leave less BG room than one index batch needs beside the parent's 2 MiB write room, but plenty for a capture lease.
+ const page=ioMeterPageSize(),minimum=commitCeiling(META_ENVELOPE_FRAMES+32,4096,page)+checkpointCeiling(META_ENVELOPE_FRAMES+32,4096,page)+4*page;
+ const paid=ioBudget.admit("BG",ioBudget.backgroundRoom()-(2*1024*1024+minimum-page))!;ioBudget.settle(paid,paid.bytes);
+ expect(ioBudget.backgroundRoom()-2*1024*1024,"fixture: an index batch does not fit").toBeLessThan(minimum);
+ const i=controller as unknown as Internals;
+ ioBudget.withSource("memory-worker",()=>i.tick(true));
+ const sent=i.child!.send.mock.calls.map(([m])=>m as {type?:string;stage?:string});
+ expect(sent.some(m=>m.type==="index"),"no index batch without its room").toBe(false);
+ expect(db.prepare("SELECT status FROM memory_jobs LIMIT 1").get()?.status,"the capture is leased in this minute").toBe("leased");
+ expect(sent.some(m=>m.stage==="capture"),"the capture went to the helper").toBe(true);
+ expect(db.prepare("SELECT lexical_status FROM memory_projection_receipts WHERE record_id='fixture-small'").get()?.lexical_status,"the index stays owed").toBe("pending");
+});
+
 it.each([[2600960,9900032,40960],[2486272,10022912,36864]])('capture snapshot %i/%i: native minimum commit refuses before lease, settlement restores it', (charged,reserved,cap)=>{
  ioBudget.start();enqueue();
  const paid=ioBudget.admit('BG',charged)!;ioBudget.settle(paid,charged);

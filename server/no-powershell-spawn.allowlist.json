@@ -289,7 +289,7 @@
   "reviewed_security": {
     "server/channels/signal/storage.ts": {
       "reason": "CLM owner/DACL/reparse read before any Signal key access; six JSON roots or ancestor-first path batches with an optional recursive component root in the environment, fixed stdin script, absolute SystemRoot program, bounded hidden runner; malformed, partial, foreign-owner and reparse evidence refuses.",
-      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /work/build/_small/SEATING-RULES.txt; /root/fuigo-builds/orph/_ev/designs/SIGNAL-SLICE-1019-r3.md section 6.1 (B3); bea800eee5185305eb0e80d3484e76ac84930392; protected server/channels/signal/storage.test.ts:337 T-WIN-CLM and scripts/win-signal-native.README.md",
+      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /root/fuigo-builds/swarm-b/_small/SEATING-RULES.txt; /root/fuigo-builds/orph/_ev/designs/SIGNAL-SLICE-1019-r3.md section 6.1 (B3); bea800eee5185305eb0e80d3484e76ac84930392; protected server/channels/signal/storage.test.ts:337 T-WIN-CLM and scripts/win-signal-native.README.md",
       "callsite": "server/channels/signal/storage.ts:91 -> defaultSecurityRunner -> execFileSync",
       "lines": {
         "e9525a08174b1edf": "const output = run(win32.join(systemRoot, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\"),"
@@ -301,7 +301,7 @@
     },
     "server/channels/signal/service.ts": {
       "reason": "Signal bootstrap projects owner/DACL/reparse attributes before creating missing directories; fixed stdin script, JSON paths in the environment, absolute SystemRoot program, bounded hidden runner; foreign ownership and unknown evidence refuse without ownership transfer.",
-      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /work/build/_small/SEATING-RULES.txt; /root/fuigo-builds/orph/_ev/designs/SIGNAL-SLICE-1019-r3.md section 6.1 (B3); server/channels/signal/service.ts prepareDirectories B3 bootstrap; protected server/channels/signal/storage.test.ts:337 T-WIN-CLM and scripts/ci-signal-windows.ps1",
+      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /root/fuigo-builds/swarm-b/_small/SEATING-RULES.txt; /root/fuigo-builds/orph/_ev/designs/SIGNAL-SLICE-1019-r3.md section 6.1 (B3); server/channels/signal/service.ts prepareDirectories B3 bootstrap; protected server/channels/signal/storage.test.ts:337 T-WIN-CLM and scripts/ci-signal-windows.ps1",
       "callsite": "server/channels/signal/service.ts:133 -> defaultSecurityRunner -> execFileSync",
       "lines": {
         "a90d832505ef6042": "const output = run(win32.join(systemRoot, \"System32/WindowsPowerShell/v1.0/powershell.exe\"),"
@@ -313,7 +313,7 @@
     },
     "server/browser-window-chrome.ts": {
       "reason": "Read-only Registry64 HKLM Chrome policy query: only explicit absent-key output permits preparation; reg.exe combines absence/access errors as exit 1 with localized diagnostics, and the shipped native helper has no registry query. Keep this fixed registry API script, absolute SystemRoot program, bounded hidden runner and fail-closed output validation.",
-      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /work/build/_small/SEATING-RULES.txt; d7e42a63f9912871d35d9ad621dfbfce9d25fba9; docs/verification/window-chrome.md Windows policy contract; protected server/browser-window-policy.test.ts:21-44 (nine subprocess outcomes) and server/browser-window-chrome.test.ts Windows organization policy",
+      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /root/fuigo-builds/swarm-b/_small/SEATING-RULES.txt; d7e42a63f9912871d35d9ad621dfbfce9d25fba9; docs/verification/window-chrome.md Windows policy contract; protected server/browser-window-policy.test.ts:21-44 (nine subprocess outcomes) and server/browser-window-chrome.test.ts Windows organization policy",
       "callsite": "server/browser-window-chrome.ts:110 organizationManaged -> runTool -> execFile",
       "lines": {
         "de3635f850f6430a": "const result = await run(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script]);"

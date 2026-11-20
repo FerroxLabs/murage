@@ -27,9 +27,9 @@ conditional write; a provider change after the final read is still possible.
 Run verification only through the job's offline container runner:
 
 ```sh
-bash /work/build/afix-hlf7-r3/it.sh 'pnpm exec vitest run server/highlevel shared/highlevel.test.ts scripts/release-workflows.test.mjs src/components/HighLevelReviewValues.test.ts && pnpm i18n:check && pnpm typecheck'
-bash /work/build/afix-hlf7-r3/it.sh 'node --experimental-strip-types scripts/highlevel-hlf7-fixture.mjs'
-bash /work/build/afix-hlf7-r3/it.sh 'node scripts/highlevel-hlf7-mutants.mjs'
+bash /root/fuigo-builds/swarm-b/afix-hlf7-r3/it.sh 'pnpm exec vitest run server/highlevel shared/highlevel.test.ts scripts/release-workflows.test.mjs src/components/HighLevelReviewValues.test.ts && pnpm i18n:check && pnpm typecheck'
+bash /root/fuigo-builds/swarm-b/afix-hlf7-r3/it.sh 'node --experimental-strip-types scripts/highlevel-hlf7-fixture.mjs'
+bash /root/fuigo-builds/swarm-b/afix-hlf7-r3/it.sh 'node scripts/highlevel-hlf7-mutants.mjs'
 ```
 
 The fixture follows `docs/verification/README.md`: it launches an isolated

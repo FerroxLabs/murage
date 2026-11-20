@@ -7,6 +7,7 @@ import { appendFixtureMessage } from './testing/approval-card.ts';
 // its page; a 1.0.1 renderer, the phone and the companion never read that field
 // and are sent every open card inside their page, as they always were.
 
+import { REPLY_WITHHELD } from "./owner-display.ts";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -232,4 +233,25 @@ it("historical status retains finite zero counts and excludes undeclared data", 
   let reads = 0;
   expect(JSON.stringify(project({ get met() { reads++; return 1; }, total: 1 }))).not.toContain('criteria_claim_corrected');
   expect(reads).toBe(0);
+});
+
+it("an old marker keeps its field without blanking its owner-only row siblings", () => {
+  const store = new Store(selection), bot = store.createBot();
+  const old = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "Before upgrade." });
+  const marker = "«redacted»";
+  const legacy = { ...old, text: marker, removedText: "Earlier stored detail." };
+  database().prepare("UPDATE messages SET text=?, json=? WHERE id=?").run(marker, JSON.stringify(legacy), old.id);
+  const reader = new Store(selection);
+  const page = { messages: reader.messagesFor(bot.threadId) };
+  const owner = wireThread(reader, bot.threadId, page, { ownerOnly: true });
+  // redact2-1020 (Sean report, routine thread): an assistant text row that is ONLY the marker reads as Murage's plain line for the owner,
+  // never a bare «redacted» bubble; its sibling fields still keep their own words (the point of this test).
+  expect(owner.messages.find(row => row.id === old.id)).toMatchObject({ text: REPLY_WITHHELD, removedText: legacy.removedText });
+  const shared = wireThread(reader, bot.threadId, page);
+  expect(shared.messages.find(row => row.id === old.id)).toMatchObject({ text: marker, removedText: marker });
+  const credential = "fixture" + "PrivateValue123";
+  const unsafe = { ...legacy, removedText: `password: ${credential}`, tool: { name: "A readable label." } };
+  const guarded = wireThread(reader, bot.threadId, { message: unsafe }, { ownerOnly: true });
+  expect(guarded.message.tool?.name).toBe(marker);
+  expect(guarded.message.removedText).not.toContain(credential);
 });

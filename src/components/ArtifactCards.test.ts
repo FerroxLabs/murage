@@ -134,7 +134,7 @@ describe("no card fetches bytes without a capability", () => {
     expect(acceptedArtifactMedia({ asset: readyAsset, url: `/api/artifacts/${base.id}/download` })).toBeNull();
     expect(acceptedArtifactMedia({ asset: readyAsset, url: `http://127.0.0.1:8799/api/media/bytes/${ASSET_ID}?cap=${CAP}` })).toBeNull();
     expect(acceptedArtifactMedia({ asset: readyAsset, url: `//evil.example/api/media/bytes/${ASSET_ID}?cap=${CAP}` })).toBeNull();
-    expect(acceptedArtifactMedia({ asset: readyAsset, url: "/Users/alex/desk/chart.png" })).toBeNull();
+    expect(acceptedArtifactMedia({ asset: readyAsset, url: "/Users/sean/desk/chart.png" })).toBeNull();
   });
 
   it("builds the image item from the capability URL, pinned to the digest, with the reference rule of the Files preview", () => {

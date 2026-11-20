@@ -16,7 +16,7 @@ describe("M14 production refusal provenance", () => {
     expect(readdirSync(root).filter(f => f !== "siblings").sort()).toEqual([...cases, "PROVENANCE.json", "MANIFEST.json"].sort());
     for (const [file, entry] of Object.entries(manifest.files) as Array<[string, { sha256: string; source: string; fixture_set: string; capture_method: unknown; redaction: string }]>) {
       expect(sha(read(file)), file).toBe(entry.sha256);
-      expect(entry.source).toBe(`build-host:/work/build/busyloop-capture/flux-prod-429/${file}`);
+      expect(entry.source).toBe(`hetzner-dsm:/root/fuigo-builds/swarm-b/busyloop-capture/flux-prod-429/${file}`);
       expect(entry.fixture_set).toBe("000000005e57485741d2ec74492392de7c049946");
       expect(entry.redaction).toBe("KEYHASH_REDACTED, <HTTP-date>");
       if (file !== "PROVENANCE.json") expect(entry.capture_method).toEqual(provenance.files[file].capture_method);

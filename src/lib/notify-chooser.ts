@@ -51,7 +51,7 @@ export function chooserRows(caps: NotifyCapabilities, opts: { includePill?: bool
   return CHOOSER_SURFACES.filter(id => id !== "pill" || family === "mac" || opts.includePill === true).map(id => {
     const cap = caps.surfaces[id];
     const available = cap?.available !== false;
-    return { id, label: LABEL[id][family], note: NOTE[id], available, needsSettings: id === "shortcut",
+    return { id, label: LABEL[id][family], note: id === "badge" && family === "linux" ? "notifyChooser.badge.linux.note" : NOTE[id], available, needsSettings: id === "shortcut",
       ...(!available && cap?.reason ? { reason: REASON[cap.reason] } : {}) };
   });
 }

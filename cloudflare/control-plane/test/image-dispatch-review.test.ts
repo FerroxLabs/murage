@@ -462,7 +462,7 @@ describe("13 (c): the sweep", () => {
     const spy = vi.spyOn(Date, "now").mockImplementation(() => real() + (skew += 100));
     try { await deadlineScenario(); } finally { spy.mockRestore(); }
   });
-  it("without a build host token or with an unreadable config it does nothing and throws nothing", async () => {
+  it("without a Hetzner token or with an unreadable config it does nothing and throws nothing", async () => {
     await seed("e1", { provider_server_id: "3000" });
     await sweepDispatchReview(mkEnv(undefined, { HCLOUD_TOKEN: undefined }), NOW);
     await sweepDispatchReview(mkEnv(undefined, { B5_PROVISIONER_CONFIG: "nope" }), NOW);

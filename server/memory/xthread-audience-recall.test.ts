@@ -95,6 +95,8 @@ describe("T3: fail closed for a reader that is not the owner", () => {
   it("control: a shown line of another thread is shown", () => {
     expect(rule("t3", "shown", big())).toBe(false);
     expect(rule("orig", "o0", big())).toBe(false);
+    exchange("t2", "own-shown");
+    expect(rule("t2", "own-shown", big())).toBe(false);
   });
   it("a line in a thread with no number, and a generated line with no lineage row", () => {
     database().prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t-nonum','m1',1,'bot','text','x',json_object('id','m1','role','bot','kind','text','text','x','at',1))").run();

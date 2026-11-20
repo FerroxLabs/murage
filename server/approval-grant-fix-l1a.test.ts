@@ -33,7 +33,7 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const PAY = "stop:pay:stripe:brightline";
-const DELETE: StopHit = { kind: "delete", place: "/Users/alex/old", what: "Delete" };
+const DELETE: StopHit = { kind: "delete", place: "/Users/sean/old", what: "Delete" };
 
 describe("A1: a payment is never written for good, whoever writes", () => {
   beforeEach(() => { removeTempDirSync(DATA_DIR); });
@@ -41,10 +41,10 @@ describe("A1: a payment is never written for good, whoever writes", () => {
   it("the bot PATCH path (patchBot) drops it from the bot and its tasks; the rest is kept", () => {
     const store = new Store(selection);
     const bot = store.createBot();
-    store.patchBot(bot.id, { alwaysAllow: [PAY, "Bash:git", "stop:delete:/Users/alex/site"] });
-    expect(store.bot(bot.id)?.alwaysAllow).toEqual(["Bash:git", "stop:delete:/Users/alex/site"]);
+    store.patchBot(bot.id, { alwaysAllow: [PAY, "Bash:git", "stop:delete:/Users/sean/site"] });
+    expect(store.bot(bot.id)?.alwaysAllow).toEqual(["Bash:git", "stop:delete:/Users/sean/site"]);
     // the one task mirrors the bot's list, without the payment
-    expect(store.tasks(bot.id)[0]?.alwaysAllow).toEqual(["Bash:git", "stop:delete:/Users/alex/site"]);
+    expect(store.tasks(bot.id)[0]?.alwaysAllow).toEqual(["Bash:git", "stop:delete:/Users/sean/site"]);
     const tasks = store.bot(bot.id)!.tasks!.map((task) => ({ ...task, alwaysAllow: [PAY, "Read"] }));
     store.patchBot(bot.id, { tasks });
     expect(store.tasks(bot.id).map((task) => task.alwaysAllow)).toEqual([["Read"]]);
@@ -105,7 +105,7 @@ describe("A2: the routine route saves only from the card's own routine row", () 
     });
     const stopKey = card.grantRequest!.routine!.stopKeys[0]!.key;
     expect(routineSaveRefusal(card, "r1", [stopKey])).toBeUndefined();
-    expect(routineSaveRefusal(card, "r1", ["stop:delete:/Users/alex"])?.status).toBe(409);
+    expect(routineSaveRefusal(card, "r1", ["stop:delete:/Users/sean"])?.status).toBe(409);
     // another routine's id never matches this card's row
     expect(routineSaveRefusal(card, "r2", [stopKey])?.status).toBe(400);
   });
@@ -193,7 +193,7 @@ describe("A7: the task row is checked before delivery and its receipt is exact",
     expect(taskGrantRefusal({ allowKey: "Read" })).toBe("This approval can only be allowed once.");
     expect(taskGrantRefusal(undefined)).toBe("This approval can only be allowed once.");
     // a card an older build stored with a task key it would not offer now (F18)
-    expect(taskGrantRefusal({ taskAllowKey: "stop:delete:/Users/alex/old" })).toBe("This approval can only be allowed once.");
+    expect(taskGrantRefusal({ taskAllowKey: "stop:delete:/Users/sean/old" })).toBe("This approval can only be allowed once.");
   });
 
   it("grant says whether the allowance is new, so a second card's Undo never takes back the first", () => {

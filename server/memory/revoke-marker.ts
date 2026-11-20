@@ -117,7 +117,7 @@ function uncertifiedRecordForget(job: JobRow): boolean {
 export type JobState = "active" | "undoing" | "done" | "undone" | "folded" | "seeding";
 export type JobPhase = "flow" | "mark" | "hold" | "tidy" | "undo" | "done";
 type JobRow = { revoke_id: number; kind: string; root: string; root_lsn: number; started_lsn: number; phase: JobPhase; cursor: string; state: JobState };
-type Budget = { rows: number; deadline: number; over?: () => boolean };
+type Budget = { rows: number; deadline: number; over?: () => boolean; lateBuildAttempted?: true };
 const spend = (budget: Budget, n: number) => { budget.rows -= Math.max(1, n); };
 const exhausted = (budget: Budget) => budget.rows <= 0 || performance.now() >= budget.deadline || Boolean(budget.over?.());
 /** Rows this connection changed so far (inserts, updates and deletes, trigger writes included): the marker's write meter. */
@@ -873,7 +873,10 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
       if (done === "late") {
         // a lookup table the walk needs is still being built: build a window of it now (the walk resumes on the next slice)
         save();
-        if (late?.(db, page(budget))) return "progress";
+        if (late) {
+          budget.lateBuildAttempted = true;
+          if (late(db, page(budget))) return "progress";
+        }
         return progressed ? "progress" : "wait";
       }
       if (done) { job.phase = "hold"; c = {}; }
@@ -967,7 +970,19 @@ const flipQueued = (db: DatabaseSync) => Boolean(st(db, "SELECT 1 FROM memory_re
 export const MARKER_STEP_RESERVE = 512;
 /** Options of one capped slice. `only`: an owner's inline walk (revoke-commit.ts markInline) moves only its own revoke and never drains
  * the queued flips (unrelated backlog the runner carries). */
-export type MarkerSliceOptions = { only?: number; flipsOnly?: true; flowsOnly?: true };
+export type MarkerSliceOptions = { only?: number; flipsOnly?: true; flowsOnly?: true; jobs?: number };
+/** 1.0.20 (fable-macmem): the most revoke jobs one paced drain slice serves (`jobs`, passed by revoke-budget.ts budgetedMarkerSlice only).
+ * The walker served ONE job per slice and every slice is its own paced commit (revoke-budget.ts REVOKE_PACE: about one commit a minute
+ * once its copy half is held), so a queue of N small jobs took N commits whatever room each commit had left: on the owner's file more than
+ * 1000 active jobs held every thread "checking" for hours while each commit used a few of its rows. Further jobs are served in the SAME
+ * transaction only while the slice's own limits have room (rows, deadline and the write cap: `exhausted`), and never past a queued flip, a
+ * waiting fold or a job still in flow (each takes the next slice's first turn, as before). Each serve is the walker's whole scheduling
+ * decision on the transaction's own state, so k serves in one transaction are k consecutive slices with one COMMIT: no job skips a phase, no
+ * mark or pending row is written or removed that the same slices would not have, and no budget is raised. A serve that throws rolls the whole
+ * slice back, as it always did; the next `soloAfterError` slices then serve one job each (the rotation has moved past the failing job, so the
+ * others still progress exactly as before this change). */
+export const MARKER_SLICE_JOBS = { max: 64, soloAfterError: 64 };
+const soloSlices = new WeakMap<DatabaseSync, number>();
 export type BlockedCause = "flip-queued" | "flip-room" | "fold-seeding" | "fold-room";
 export type MarkerSliceOutcome =
   | { outcome: "progress" | "idle" }
@@ -1049,7 +1064,22 @@ function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBu
       if (exhausted(budget)) return { outcome: "progress" };
     }
   }
-  if (opts.only === undefined && REVOKE_COVER.enabled) return { outcome: walkerSlice(db, budget, late) ? "progress" : "idle" };
+  if (opts.only === undefined && REVOKE_COVER.enabled) {
+    if (!walkerSlice(db, budget, late)) return { outcome: "idle" };
+    const solo = soloSlices.get(db) ?? 0;
+    if (solo > 0) soloSlices.set(db, solo - 1);
+    const most = solo > 0 ? 1 : Math.max(1, Math.min(Math.floor(opts.jobs ?? 1), MARKER_SLICE_JOBS.max));
+    // what would take the next slice's first turn ends this one: a queued flip, a fold (unreadable counts as waiting) or a job still in flow
+    const preempted = () => { try { return flipQueued(db) || Boolean(foldHooks?.pending(db)) || Boolean(st(db, FLOW_JOB).get()); } catch { return true; } };
+    try {
+      // A late-build page uses the remaining row allowance without debiting it.
+      for (let served = 1; served < most && !budget.lateBuildAttempted && !exhausted(budget) && !preempted(); served++) {
+        chargeReleaseWork();
+        if (!walkerSlice(db, budget, late)) break;
+      }
+    } catch (error) { soloSlices.set(db, MARKER_SLICE_JOBS.soloAfterError); throw error; }
+    return { outcome: "progress" };
+  }
   for (const row of st(db, opts.only === undefined ? ACTIVE_JOBS : ACTIVE_JOB_ONE).all(...(opts.only === undefined ? [] : [opts.only])) as JobRow[]) {
     chargeReleaseWork();
     const job = { ...row, revoke_id: Number(row.revoke_id) } as JobRow;

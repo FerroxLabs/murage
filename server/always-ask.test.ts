@@ -84,7 +84,7 @@ const CATASTROPHIC: Array<[string, AlwaysAskRule | null]> = [
   ["rm -rf $HOME", "delete-home"],
   ['rm -rf "$HOME"', "delete-home"],
   ["rm -rf ${HOME}/", "delete-home"],
-  ["rm -rf /Users/alex", "delete-home"],
+  ["rm -rf /Users/sean", "delete-home"],
   ["rm -rf /home/sean/", "delete-home"],
   ["rm -rf /usr", "delete-system-folder"],
   ["sudo rm -rf /etc/", "delete-system-folder"],
@@ -307,10 +307,10 @@ const FROM_FOLDER: Array<[string, string, AlwaysAskRule]> = [
   ["find . -delete", "/", "delete-root"],
   ["rm -rf .", "~", "delete-home"],
   ["rm -rf *", "~", "delete-home"],
-  ["rm -rf *", "/Users/alex", "delete-home"],
+  ["rm -rf *", "/Users/sean", "delete-home"],
   ["rm -rf .", "/home/sean/", "delete-home"],
   ["rm -rf *", homedir(), "delete-home"],
-  ["rm -rf ..", "/Users/alex", "delete-system-folder"],
+  ["rm -rf ..", "/Users/sean", "delete-system-folder"],
   ["rm -rf *", "/usr", "delete-system-folder"],
   ["Remove-Item -Recurse -Force *", "C:\\", "delete-root"],
   ["(cd / && rm -rf *)", "/tmp", "delete-root"],
@@ -322,7 +322,7 @@ const FROM_FOLDER: Array<[string, string, AlwaysAskRule]> = [
   ["cd \"$(mktemp -d)\" && rm -rf *", "/", "unreadable"],
 ];
 const ORDINARY_FROM_FOLDER: Array<[command: string, cwd: string, rule?: AlwaysAskRule]> = [
-  ["rm -rf .", "/Users/alex/projects/app/build"],
+  ["rm -rf .", "/Users/sean/projects/app/build"],
   ["rm -rf *", "/tmp/murage-test"],
   ["rm -rf ./node_modules", "/"],
   ["rm -rf build", "~"],
@@ -339,7 +339,7 @@ const ORDINARY: Array<string | NowAsks> = [
   "rm -rf build dist",
   "rm -rf /tmp/murage-test",
   "rm -rf ~/projects/app/node_modules",
-  "rm -rf /Users/alex/Documents/old",
+  "rm -rf /Users/sean/Documents/old",
   // "rm /" asks under A+ (protected-path): always-ask-protected-path.test.ts
   "rm -f ~/.cache/thing",
   'echo "rm -rf /"',
@@ -1169,7 +1169,7 @@ const NO_CWD_ORDINARY: NoCwd = [
   ["rm -rf build dist", "unreadable", "value-path"],
   ["rm -rf /tmp/murage-test", null],
   ["rm -rf ~/projects/app/node_modules", null],
-  ["rm -rf /Users/alex/Documents/old", null],
+  ["rm -rf /Users/sean/Documents/old", null],
   ["rm -f ~/.cache/thing", "unreadable", "value-path"],
   ["echo \"rm -rf /\"", null],
   ["echo 'rm -rf ~'", null],
@@ -1618,8 +1618,8 @@ describe("5.5 unreadable: asks, and its twin does not", () => {
   });
 
   it("reads a non-command summary as text: a stray apostrophe does not ask", () => {
-    expect(alwaysAskCommand("Edit /Users/alex/it's notes.md", undefined, "text")).toBeNull();
-    expect(alwaysAskCommand("Edit /Users/alex/it's notes.md", undefined, "command")?.rule).toBe("unreadable");
+    expect(alwaysAskCommand("Edit /Users/sean/it's notes.md", undefined, "text")).toBeNull();
+    expect(alwaysAskCommand("Edit /Users/sean/it's notes.md", undefined, "command")?.rule).toBe("unreadable");
     expect(alwaysAskCommand("rm -rf ~", undefined, "text")?.rule).toBe("delete-home");
   });
 });

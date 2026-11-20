@@ -55,7 +55,7 @@ import fs from "node:fs";
 import { accountedPrepare, chargeReleaseWork } from "./release-budget.ts";
 import { endianness } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
-import { headFlipCost, receiptFlipCost, MARKER_STEP_RESERVE, markerSlice, markerSliceDetailed, totalChanges, type MarkerSliceOptions, type MarkerSliceOutcome } from "./revoke-marker.ts";
+import { headFlipCost, receiptFlipCost, MARKER_SLICE_JOBS, MARKER_STEP_RESERVE, markerSlice, markerSliceDetailed, totalChanges, type MarkerSliceOptions, type MarkerSliceOutcome } from "./revoke-marker.ts";
 import { darwinWrittenBytes } from "../os-disk-written.ts";
 import { walResetFence } from "../wal-maintenance.ts";
 
@@ -549,7 +549,8 @@ export function budgetedMarkerSlice(db: DatabaseSync, rows: number, ms: number, 
   }
   const before = totalChanges(db);
   try {
-    const moved = markerSlice(db, rows, ms, late, room - MARKER_STEP_RESERVE, opts);
+    // the paced drain serves several jobs inside this same cap and deadline (revoke-marker.ts MARKER_SLICE_JOBS); an owner's inline walk stays its own revoke
+    const moved = markerSlice(db, rows, ms, late, room - MARKER_STEP_RESERVE, opts.only === undefined ? { jobs: MARKER_SLICE_JOBS.max } : opts);
     return moved === "blocked" ? "budget" : moved;
   } finally {
     const changed = Math.max(0, totalChanges(db) - before);

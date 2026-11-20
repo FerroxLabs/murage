@@ -27,9 +27,9 @@ const testOnly:Record<string,string>={
   installB34EvaluatorRuntime:'Fixture-only evaluator under memory/testing; production must never launch its deterministic scoring service.',
 };
 
-it('every exported decision, HighLevel and memory installer has a production index.ts caller',()=>{
+it('every exported decision and memory installer has a production index.ts caller',()=>{
   const installers=new Set<string>();
-  for(const file of ['decision','highlevel','memory'].flatMap(files)) {
+  for(const file of ['decision','memory'].flatMap(files)) {
     const syntax=source(file);
     for(const statement of syntax.statements) {
       const exported=ts.canHaveModifiers(statement)&&ts.getModifiers(statement)?.some(m=>m.kind===ts.SyntaxKind.ExportKeyword);

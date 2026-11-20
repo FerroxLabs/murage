@@ -12,7 +12,7 @@ import { STEP_UP_EN } from "./step-up-locale.mjs";
 
 // One concrete request per step-up / credential entry in server/route-policy.ts (and a few the gate escalates by shape).
 const SAMPLES = [
-  ["PUT", "/api/highlevel/other"], ["POST", "/api/restore-job/start"], ["POST", "/api/permissions/no-limits"],
+  ["POST", "/api/restore-job/start"], ["POST", "/api/permissions/no-limits"],
   ["POST", "/api/claude-code-import"], ["POST", "/api/move-in/grok"],
   ["POST", "/api/cloud/model-signins/chatgpt/start"], ["POST", "/api/cloud/model-signins/supergrok/attempts/abc123/cancel"], ["DELETE", "/api/cloud/model-signins/chatgpt"],
   ["POST", "/api/cloud/own-server"], ["POST", "/api/data-dir/confirm-root"], ["POST", "/api/cloud/pairing"], ["POST", "/api/cloud/devices/d1"],
@@ -60,9 +60,6 @@ const SAMPLES = [
   ["POST", "/api/calls/turn-end"], ["POST", "/api/engine-setup-check"], ["POST", "/api/engine-signin-recipe"], ["POST", "/api/engine-signin-probe"],
   // 1.0.17 C31: add a Voice Library voice to the owner's own ElevenLabs account.
   ["POST", "/api/tts/voices/add"],
-  // 1.0.18 HighLevel owner routes (read only): check, confirm, per-bot read access, disconnect, and the catch-all.
-  ["POST", "/api/highlevel/token/check"], ["POST", "/api/highlevel/token/0f8fad5b-d9cb-469f-a165-70867728950e/confirm"],
-  ["PUT", "/api/highlevel/bots/b1/access"], ["DELETE", "/api/highlevel/connections/hl_abcd1234"], ["PATCH", "/api/highlevel/other"],
   // 1.0.18 CROSS-CHAT-READ: the owner's Share / Don't share on a share card, and the composer's ask for a room.
   ["POST", "/api/room-shares/s1/share"], ["POST", "/api/room-shares/s1/decline"], ["POST", "/api/groups/g1/room-shares"],
   ["GET", "/api/connector-incidents/0f8fad5b-d9cb-469f-a165-70867728950e"],
@@ -104,15 +101,6 @@ describe("every step-up route has a human label", () => {
     const described = describeStepUp({ method: "POST", path: "/api/email/bots/ember-1/pause", body: {}, botName: "Ember" });
     expect(JSON.stringify(described)).toContain("Change a bot's email address or who can email it");
     expect(JSON.stringify(described)).toContain("Ember (ember-1)");
-  });
-
-  it("each HighLevel owner route gets its own sentence, and a pasted token in the body is never shown (1.0.18)", () => {
-    expect(findStepUpLabel("POST", "/api/highlevel/token/check")?.label).toBe("Check a HighLevel location");
-    expect(findStepUpLabel("PUT", "/api/highlevel/bots/b1/access")?.label).toBe("Change what a bot can read in HighLevel");
-    expect(findStepUpLabel("DELETE", "/api/highlevel/connections/hl_abcd1234")?.label).toBe("Disconnect your HighLevel location");
-    const described = describeStepUp({ method: "POST", path: "/api/highlevel/token/check", body: { token: "pit-SECRET-1", locationId: "loc1" } });
-    expect(JSON.stringify(described)).not.toContain("SECRET-1");
-    expect(JSON.stringify(described)).not.toContain("loc1");
   });
 
   it("Signal and app reconnection confirmations name the action without showing body values", () => {

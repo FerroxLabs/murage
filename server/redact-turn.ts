@@ -24,11 +24,14 @@ export interface TurnTextPolicy {
   finish(cap: TurnAdmission | undefined, how: "complete" | "cancel" | "exit"): PolicyDecision;
   retire(cap: TurnAdmission): void;
 }
-export const TURN_TEXT_LIMITS = Object.freeze({ clean: 256, pending: 65_536, streams: 64, globalStreams: 4096, scalarUnits: 262_144, nodes: 20_000, depth: 40, keyUnits: 1024, work: SECRET_SCAN_BUDGET });
+export const TURN_TEXT_LIMITS = Object.freeze({ clean: 256, pending: 65_536, streams: 64, retainedStreams: 2048, globalStreams: 4096, scalarUnits: 262_144, nodes: 20_000, depth: 40, keyUnits: 1024, work: SECRET_SCAN_BUDGET });
 const MARKER = "«redacted»";
 type Stream = { path: string; key: string; region: string; revision: number; scanner: LabelStream; pending: string; lfEnd: number; wordEnd: number; emitted: string | undefined; started: boolean; completed: boolean; snapshot?: string; queued: number; target?: Target; d: number; decisions: number; deferred: boolean; resume?: { end: number; partial: string } };
 type Target = { items: Stream[]; last?: string; context: ChainContext };
-type Turn = { streams: Map<string, Stream>; targets: Map<string, Target>; pending: number; history: number };
+// shed: keys of released fields a full table let go (see letGo). A let-go key is never treated as a fresh field.
+type Turn = { streams: Map<string, Stream>; targets: Map<string, Target>; pending: number; history: number; shed: Set<string> };
+/** How many let-go keys one turn remembers. Past it nothing more is let go: a new field is then withheld alone. */
+const SHED_KEYS = 16_384;
 export type TurnTextPolicyOptions = { separateItemRegions?: boolean; contextFor?: (cap: TurnAdmission, target: string) => ChainContext; traceDecision?: (event: Readonly<{ stream: string; size: number; runningMax: number }>) => void; scan?: Scanner; streamAllowance?: number; wholeAllowance?: number; contexts?: Readonly<Record<string, ChainContext>> };
 const decision = (masked: boolean, exhausted: boolean, operations: SafeTextOperation[] = []): PolicyDecision => Object.freeze({ masked, exhausted, operations: Object.freeze(operations.map(o => Object.freeze(o))) });
 const data = (o: object, key: string): unknown => Object.getOwnPropertyDescriptor(o, key)?.value;
@@ -63,8 +66,45 @@ export function createTurnTextPolicy(options: TurnTextPolicyOptions = {}) {
     if (r.exhausted || budget.left < 0) throw new Error("intake budget");
     if (r.detected) throw new Latch();
   };
+  // A long clean turn stays shown (owner rule, 1.0.20). The turn's retained history (CONTEXT_LIMIT) used to
+  // fill up and then drop the NEWEST field's history, so the next reuse of that key (a tool's result after
+  // its input) could not be joined to it and the whole turn was masked. Now the OLDEST settled histories
+  // (a whole field, a completed item) make room; an open item's history is never dropped.
+  const makeRoom = (t: Turn, keep: Stream, need: number) => {
+    for (const old of t.streams.values()) {
+      if (t.history + need <= CONTEXT_LIMIT) return;
+      if (old === keep || !old.emitted || (old.target && !old.completed)) continue;
+      t.history -= old.emitted.length; old.emitted = undefined;
+    }
+  };
+  // A long clean turn stays shown (owner rule, 1.0.20). The field table (retainedStreams per turn, globalStreams for
+  // the process) used to end the turn's display when it filled: an engine whose tool results are records (an ACP
+  // rawOutput object: two fields per leaf) filled it in a few dozen steps and every later row and the reply read
+  // «redacted». Now the table lets go of this turn's OLDEST released entry (a whole field, or a text item that
+  // completed) to seat the newest. Its key is remembered: if the engine writes that key again, the new value can
+  // no longer be joined to the old one for the scan, so that one field is withheld alone (the makeRoom rule).
+  // Nothing unreleased is ever let go: an open text item keeps its place.
+  const letGo = (t: Turn, keep: ReadonlySet<Stream>): boolean => {
+    if (t.shed.size >= SHED_KEYS) return false;
+    for (const [key, old] of t.streams) {
+      if (keep.has(old) || (old.target && !old.completed) || old.pending || old.snapshot !== undefined) continue;
+      t.streams.delete(key); t.shed.add(key); streamCount--; t.history -= old.emitted?.length ?? 0;
+      return true;
+    }
+    return false;
+  };
+  // This turn's table is full: its own oldest goes. Only the process table is full (other long turns hold it): the
+  // turn holding the most lets go, so a turn that has just started is still seated.
+  const NONE: ReadonlySet<Stream> = new Set();
+  const seat = (t: Turn, keep: ReadonlySet<Stream>): boolean => {
+    if (t.streams.size >= TURN_TEXT_LIMITS.retainedStreams) return letGo(t, keep);
+    let most = t;
+    for (const other of clean.values()) if (other.streams.size > most.streams.size) most = other;
+    return (most !== t && letGo(most, NONE)) || letGo(t, keep);
+  };
   const remember = (t: Turn, s: Stream, value: string, replace = false) => {
     if (replace) { t.history -= s.emitted?.length ?? 0; s.emitted = ""; }
+    if (s.emitted !== undefined && t.history + value.length > CONTEXT_LIMIT && s.emitted.length + value.length <= CONTEXT_LIMIT) makeRoom(t, s, value.length);
     if (s.emitted !== undefined && t.history + value.length <= CONTEXT_LIMIT) { s.emitted += value; t.history += value.length; }
     else { t.history -= s.emitted?.length ?? 0; s.emitted = undefined; }
   };
@@ -155,7 +195,7 @@ export function createTurnTextPolicy(options: TurnTextPolicyOptions = {}) {
     s.deferred = false;
   };
   const api = {
-    admit(cap: TurnAdmission) { if (!clean.has(cap) && clean.size < TURN_TEXT_LIMITS.clean) clean.set(cap, { streams: new Map(), targets: new Map(), pending: 0, history: 0 }); },
+    admit(cap: TurnAdmission) { if (!clean.has(cap) && clean.size < TURN_TEXT_LIMITS.clean) clean.set(cap, { streams: new Map(), targets: new Map(), pending: 0, history: 0, shed: new Set() }); },
     retire,
     consume(cap: TurnAdmission | undefined, batch: ManifestBatch): PolicyDecision {
       const t = get(cap), carriers: TextCarrier[] = [], budget = { left: TURN_TEXT_LIMITS.work };
@@ -183,6 +223,8 @@ export function createTurnTextPolicy(options: TurnTextPolicyOptions = {}) {
           budget.left -= text.length + 16; units += text.length + 16;
           carriers.push({ path, stream, mode: mode as TextCarrier["mode"], text });
         }
+        if (carriers.length > TURN_TEXT_LIMITS.streams &&
+            new Set(carriers.map(carrier => carrier.stream)).size > TURN_TEXT_LIMITS.streams) throw new Error("batch stream budget");
         if (!t) return mask(cap, carriers, batch);
         for (const target of t.targets.values()) for (const s of target.items) { s.d = 0; s.decisions = 0; }
         // Only previously deferred/serialized work resumes here; ordinary
@@ -210,9 +252,17 @@ export function createTurnTextPolicy(options: TurnTextPolicyOptions = {}) {
         for (let ci = 0; ci < carriers.length; ci++) {
           const c = carriers[ci]; let s = t.streams.get(c.stream);
           const previous = s;
+          // A let-go key written again, or a table with nothing left to let go: this one carrier is withheld alone.
+          // Its own words are still checked first, so a hit in them latches the turn as before.
+          const alone = () => { checked(c.text, budget); operations.push(certifyRelease({ path: c.path, stream: c.stream, regionId: region(c.stream, batch), revision: 0, op: "omit", text: MARKER, speech: "none" })); };
+          if (!s && t.shed.has(c.stream)) { alone(); continue; }
           if (!s || ((s.completed || s.snapshot !== undefined) && c.mode !== "whole")) {
             const addsEntry = !previous || !previous.completed;
-            if (addsEntry && (entries(t).size >= TURN_TEXT_LIMITS.streams || streamCount >= TURN_TEXT_LIMITS.globalStreams)) throw new Error("stream budget");
+            if (addsEntry && (t.streams.size >= TURN_TEXT_LIMITS.retainedStreams || streamCount >= TURN_TEXT_LIMITS.globalStreams) && !seat(t, touched)) { alone(); continue; }
+            // The live cap counts unfinished text streams separately from retained fields.
+            const openStreams = [...t.targets.values()].reduce((count, target) => count + target.items.length, 0);
+            if ((addsEntry && (t.streams.size >= TURN_TEXT_LIMITS.retainedStreams || streamCount >= TURN_TEXT_LIMITS.globalStreams)) ||
+                (c.mode !== "whole" && openStreams >= TURN_TEXT_LIMITS.streams)) throw new Error("stream budget");
             let target: Target | undefined;
             if (c.mode !== "whole") {
               const name = /(?:^|:)(assistant|reasoning)$/.exec(c.stream)?.[1] ?? "other";
@@ -227,7 +277,10 @@ export function createTurnTextPolicy(options: TurnTextPolicyOptions = {}) {
           s.path = c.path; touched.add(s);
           if (c.mode === "whole") {
             checked(c.text, budget);
-            if (s.emitted === undefined) throw new Error("whole history lost");
+            // This field's earlier value can no longer be joined to the new one for the scan (its history
+            // made room, or was too long to keep). The join is not provably clean, so THIS field is
+            // withheld alone; the rest of the turn stays shown. A hit in the new value latched above.
+            if (s.emitted === undefined) { operations.push(certifyRelease({ path: s.path, stream: s.key, regionId: s.region, revision: ++s.revision, op: "omit", text: MARKER, speech: "none" })); continue; }
             if (!whole.clean(s.emitted + c.text)) throw new Latch();
             release(t, s, c.text, operations); continue;
           }

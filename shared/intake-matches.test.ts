@@ -335,7 +335,7 @@ describe("curated slugs and the catalogue agree", () => {
       .sort();
     expect(dead).toEqual([
       "cli-setup", "cowork",
-      "game-3d", "moltbook", "moltbook-skills", "morph-ppt",
+      "game-3d", "morph-ppt",
       "morph-ppt-3d", "planning-with-files", "ppt-creator",
       "star-office-helper", "starter-business-team", "starter-personal-home",
       "starter-solo-business", "ui-ux-pro-max", "word-creator",
@@ -356,9 +356,9 @@ describe("the size of the lists", () => {
   // Bot library wave 1 added 150 slugs (134 bots, 16 teams): 133 -> 283 lists,
   // 1,627 -> 2,343 terms, 870 -> 1,189 unique.
   it("matches the maintained inventory including the three starter profiles", () => {
-    expect(Object.keys(INTAKE_MATCH_TERMS)).toHaveLength(283);
-    expect(terms).toHaveLength(2239);
-    expect(new Set(terms).size).toBe(1129);
+    expect(Object.keys(INTAKE_MATCH_TERMS)).toHaveLength(281);
+    expect(terms).toHaveLength(2222);
+    expect(new Set(terms).size).toBe(1119);
     expect(INTAKE_GENERIC_WORDS.size).toBe(554);
   });
 });

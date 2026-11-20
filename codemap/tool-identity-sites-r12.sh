@@ -2,7 +2,7 @@
 # r1.2 section 8 site inventory, produced by rg so completeness is checkable. Each pattern is one class of approval
 # identity site; sites.out lists every hit as  P<n> <file>:<line>: <text>. Re-run after any merge; S6 diffs it.
 set -eu
-WT=${WT:-/work/build/nolimint/wt}
+WT=${WT:-/root/fuigo-builds/swarm-b/nolimint/wt}
 OUT=${1:-$(cd "$(dirname "$0")" && pwd)/sites.out}
 cd "$WT"
 : > "$OUT"

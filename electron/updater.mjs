@@ -141,6 +141,10 @@ export function attachUpdaterWindow(mainWindow) {
 
 // `installerFallback` (macOS only, from main.mjs: electron/mac-install-guard.mjs) offers the dmg when Squirrel.Mac
 // cannot replace this copy, and brings the app back if an install stalls after the server stopped.
+// The packaged app's launch pause (electron/update-launch-pause.mjs), set by main.mjs at startup before any install.
+let launchPause = null;
+export function useUpdateLaunchPause(pause) { launchPause = pause; }
+
 export function startUpdater({ beforeInstall = null, scheduleChecks = true, installerFallback = null, returnAuthority = null, notificationServices = null } = {}) {
   const publishOffer = () => {
     if (!scheduleChecks || !installerFallback || !updaterCoordinator) return;
@@ -194,6 +198,7 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true, inst
     nativeUpdater: autoUpdater.autoInstallOnAppQuit ? autoUpdater.nativeUpdater : null,
     handOffInstall: handOff ? handOffDownloadedPackage(packageType) : null,
     beforeInstall,
+    launchPause,
     returnAuthority,
     fallbackFeed: createGithubFallbackFeed(autoUpdater, { log: (line) => autoUpdater.logger.info(line) }),
     // Every platform checks the download against something signed, whichever feed (the normal one or the latest-release

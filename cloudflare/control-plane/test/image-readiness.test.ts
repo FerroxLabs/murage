@@ -118,7 +118,7 @@ describe("the readiness row: missing, stale, mismatched, failing", () => {
 });
 
 describe("hold rules: two zero runs, a config fault at once, valid_until", () => {
-  it("a zero that comes from the build host re-check holds only on the second consecutive run", async () => {
+  it("a zero that comes from the Hetzner re-check holds only on the second consecutive run", async () => {
     hetznerUp = false;
     await assertSalesImagesReady(mkEnv(), NOW); // run 1: zero, but sales are not held yet
     expect(await row()).toMatchObject({ usable_x86: 0, usable_arm: 0, zero_runs: 1 });

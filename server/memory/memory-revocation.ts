@@ -39,7 +39,8 @@ import { enqueueReceipts, markerSlice, markerWorkPending, releaseHold, totalChan
 import { coverReceiptChanges } from "./recall-view-schema.ts";
 import { setFlipWake } from "./receipt-outputs.ts";
 import { setSendFenceDeps } from "./send-fence-deps.ts";
-import { MARKER_SLICE_ROWS } from "./lineage-types.ts";
+import { MARKER_SLICE_ROWS, PENDING_ALL_SCOPES, PENDING_ALL_THREADS } from "./lineage-types.ts";
+import { bumpDenyGeneration } from "./revoke-marker.ts";
 import { recordCounter } from "../health/counters.ts";
 import { noteRevocationJobCreated, noteRevocationJobEnded, noteRevocationQueueEmpty } from "../health/pending-revocations.ts";
 
@@ -1037,7 +1038,9 @@ async function tick(): Promise<void> {
     const db = getDbRef();
     // the marker walks inside its write budget (revoke-budget.ts); under a live foreground turn it trickles (a half slice every busy pause)
     // rather than stopping: a window the walk holds open reads "checking" to every turn until the walk is done (SELF-OVERLOAD-105 item 1c)
-    const live = options.busy?.() === true;
+    // 1.0.20 checkfix-n4: a turn waiting on a checking:pending fence (fence-pending.ts) waits for exactly this walk, so the walk is not
+    // slowed for that turn (it slowed itself: every owner turn met a window the trickle had not closed, recall withheld). The pace still holds.
+    const live = options.busy?.() === true && fenceWaiters === 0;
     let marker = false;
     // the pace (revoke-budget.ts r3.5) holds every transaction of the runner, job steps and late builds too: none starts while its minute is full
     const paceWait = revokePaceWaitMs(revokePaceNeed(db));
@@ -1156,6 +1159,52 @@ export function drainRevokeMarker(db: DatabaseSync, maxSlices = 50_000_000): { s
     if (!moved) return { slices, pending: markerWorkPending(db) };
   }
 }
+/** 1.0.20 closer-n1 (option B, Fable pick): a turn waiting on a checking:pending fence closes ITS threads' and scopes' pending rows (and the
+ * revoke's '*' rows) ahead of the paced tidy pages, and only those of a revoke whose walk has written every mark: active, phase 'tidy', no
+ * frontier row (revoke-marker.ts tidyStep's own precondition; an inherit hold pushes a frontier row and sends the revoke back to 'mark').
+ * Before that nothing goes early: a mark into a thread can come from any frontier node. Its own background transaction (bounded lock wait,
+ * re-checked inside), measured into the revoke pace like any runner commit, at most WAITED_PENDING_ROWS rows a call and
+ * WAITED_PENDING_ROWS_PER_MIN a minute for the whole process (every waiter shares it). Busy or any error deletes nothing (the wait goes on).
+ * True when it deleted a row. */
+export const WAITED_PENDING_ROWS = 32;
+export const WAITED_PENDING_ROWS_PER_MIN = 256;
+const WAITED_WINDOW_MS = 60_000;
+let waitedFrom = 0, waitedRows = 0;
+export function resetWaitedPendingAllowance(): void { waitedFrom = 0; waitedRows = 0; }
+const READY_REVOKE = "SELECT 1 FROM memory_revoke_jobs j WHERE j.revoke_id=p.revoke_id AND j.state='active' AND j.phase='tidy' AND NOT EXISTS (SELECT 1 FROM memory_revoke_frontier f WHERE f.revoke_id=j.revoke_id)";
+export function closeWaitedPending(db: DatabaseSync, threads: readonly string[], scopes: readonly string[]): boolean {
+  if (db.isTransaction || (!threads.length && !scopes.length)) return false;
+  const now = performance.now();
+  if (now - waitedFrom >= WAITED_WINDOW_MS) { waitedFrom = now; waitedRows = 0; }
+  const room = Math.min(WAITED_PENDING_ROWS, WAITED_PENDING_ROWS_PER_MIN - waitedRows);
+  if (room <= 0) return false;
+  const pick = (table: "memory_deny_pending" | "memory_deny_pending_scope", column: string, all: string, keys: readonly string[], n: number) => keys.length && n > 0
+    ? st(db, `SELECT p.${column} AS k,p.since_lsn AS s,p.revoke_id AS r FROM ${table} p WHERE p.${column} IN (SELECT value FROM json_each(?1) UNION SELECT ?2) AND EXISTS (${READY_REVOKE}) LIMIT ?3`)
+      .all(JSON.stringify(keys), all, n) : [];
+  try {
+    const rows = pick("memory_deny_pending", "thread_id", PENDING_ALL_THREADS, threads, room);
+    const scoped = pick("memory_deny_pending_scope", "scope_id", PENDING_ALL_SCOPES, scopes, room - rows.length);
+    if (!rows.length && !scoped.length) return false;
+    waitedRows += rows.length + scoped.length; // charged before the write: a failed attempt still spends its share
+    beginBackground(db, "waited-pending");
+    let measure: ReturnType<typeof beginRevokeMeasure> | null = null, gone = 0;
+    try {
+      measure = beginRevokeMeasure(db);
+      // re-read inside the writer: the revoke may have moved back to 'mark' between the read above and this transaction
+      for (const [table, column, list] of [["memory_deny_pending", "thread_id", rows], ["memory_deny_pending_scope", "scope_id", scoped]] as const)
+        for (const row of list) gone += Number(st(db, `DELETE FROM ${table} AS p WHERE p.${column}=? AND p.since_lsn=? AND p.revoke_id=? AND EXISTS (${READY_REVOKE})`).run(row.k, row.s, row.r).changes);
+      if (gone) bumpDenyGeneration(db);
+      db.exec("COMMIT");
+    } catch (error) {
+      if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* rolled back */ } }
+      if (measure) endRevokeMeasure(db, measure, false, false);
+      throw error;
+    }
+    // after the COMMIT: the pace accounting cannot turn a committed close into a failed attempt
+    try { endRevokeMeasure(db, measure!, false); } catch { /* the delete is committed; accounting is best effort here */ }
+    return gone > 0;
+  } catch { return false; }
+}
 /** The send fence's inline drain (send-fence.ts): rows and wall time one send may spend walking a revoke's marker. */
 export const SEND_FENCE_DRAIN = { rows: 2048, ms: 40 };
 /** Walks the revoke marker inline within `budget` (each slice its own transaction), for a send whose prompt reads "checking: pending": the
@@ -1235,6 +1284,15 @@ export async function settleRevokesForTurn(db: DatabaseSync, maxMs = REDISPATCH_
 }
 /** Wakes the runner if this process started it, once the caller's synchronous transaction is over (a microtask runs after it):
  * a wake is never issued inside a transaction, and one after a rollback finds no row and stops. */
+/** Turns now waiting on a checking:pending fence. While any waits, a live turn does not slow the marker: the waiting turn is that turn. */
+let fenceWaiters = 0;
+export function noteFenceWaiter(): () => void {
+  fenceWaiters++;
+  let done = false;
+  return () => { if (!done) { done = true; fenceWaiters--; } };
+}
+/** How many turns wait on a checking:pending fence now (tests, diagnostics). */
+export const fenceWaitersNow = (): number => fenceWaiters;
 export function wakeIfStarted(): void {
   if (!getDbRef || stopped) return;
   queueMicrotask(() => { if (getDbRef && !stopped) wakeMemoryRevocation(getDbRef); });

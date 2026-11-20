@@ -15,7 +15,6 @@ import type { PermissionSetting } from './permission-inheritance.ts';
 //   (c) a writer on a marked turn records an ownWrite key (data only) off the old lane and at No limits.
 // Pure over external-marks.ts: no Murage server imports, so the unit rows drive it directly.
 import { decide } from './outside-authority.ts';
-import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_FAMILY_TOOLS } from "../shared/highlevel.ts";
 import { PHONE_TOOL_NAMES } from "../shared/phone-jobs-contract.ts";
 import { TextBudget, type DownloadRegistry, type FsHooks } from "./download-registry.ts";
 import { anyOwnWrite, downloadRegistry, markTurnOutside, ownWrite, ownWritten, turnOutsideRead, type OutsideSource } from "./email/external-marks.ts";
@@ -56,8 +55,6 @@ export const OWN_MARKS_TOOLS: readonly string[] = [
   "memory_search", "memory_get", "thread_search", "thread_list", "thread_read",
   "check_delegation", "wait_delegation", "skills_list", "tool_result_read", "project_read_messages", "venue_read_messages",
   "email_list", "email_read", "dweb_repo_status", "dweb_opencode_models", ...PHONE_TOOL_NAMES,
-  // Family calls can return CRM records; each marks the turn. The HighLevel host separately checks every operation and write approval.
-  ...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES,
 ];
 const READ_CLEAN = new Set(OWN_READ_CLEAN_TOOLS);
 /** 1.0.19 4.2 r3: the recall tools and the saved-result read never mark at the gate; each marks at its release, by what it

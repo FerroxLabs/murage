@@ -864,3 +864,40 @@ it("S5 site 11 launch verification rebases a login without rotating generations"
     } finally { roots.mockRestore(); }
   } finally { removeTempDirSync(dir); }
 });
+
+// 1.0.20 Windows gate box (no Developer Mode): Fuigo refused every turn with engine-symlink-required, because its scope
+// shares every entry of FUIGO_HOME (folders included) and the symlink was the only way offered.
+describe("Windows without the symlink privilege: a folder is a junction, a login not made yet is absent", () => {
+  const dirs: string[] = [];
+  const tmp = (prefix: string) => { const d = mkdtempSync(join(tmpdir(), prefix)); dirs.push(d); return d; };
+  const noSymlinkPrivilege: LinkIo = { ...nodeLinkIo, symlinkSync: () => { throw Object.assign(new Error("A required privilege is not held by the client"), { code: "EPERM" }); } };
+  beforeEach(() => { ensureDirs(); resetScopeBookkeeping(); resetIsolationCache(); setLinkIo(noSymlinkPrivilege); });
+  afterEach(() => { setLinkIo(null); for (const d of dirs.splice(0)) removeTempDirSync(d); });
+
+  it("an engine that renames over its login links nothing for a login the owner does not have yet (absent, never a refusal)", () => {
+    const fs = new FakeFs();
+    fs.symlinkError = "EPERM";
+    expect(linkSharedEntry(REAL, SCOPED, fs)).toBe("absent");
+    expect(fs.names.size).toBe(0);
+    expect(fs.links.size).toBe(0);
+  });
+
+  it("Fuigo No limits scope builds on the real file system: owner folders are one folder under two names, no copy", async () => {
+    const { applyFuigoNoLimitsHome } = await import("./acp/fuigo-no-limits.ts");
+    const home = tmp("winlink-fuigo-"), real = join(home, ".fuigo");
+    mkdirSync(join(real, "extensions-fixture"), { recursive: true });
+    writeFileSync(join(real, "extensions-fixture", "one.txt"), "OWNER");
+    const env: Record<string, string | undefined> = { HOME: home, FUIGO_HOME: real };
+    applyFuigoNoLimitsHome(env, "fixture-bot");
+    const scope = env.FUIGO_HOME!;
+    expect(scope).not.toBe(real);
+    const scopedFolder = join(scope, "extensions-fixture");
+    expect(lstatSync(scopedFolder).isSymbolicLink()).toBe(true);
+    writeFileSync(join(scopedFolder, "two.txt"), "THROUGH-SCOPE");
+    expect(readFileSync(join(real, "extensions-fixture", "two.txt"), "utf8")).toBe("THROUGH-SCOPE");
+    renameSync(join(scopedFolder, "two.txt"), join(scopedFolder, "three.txt"));
+    expect(readdirSync(join(real, "extensions-fixture")).sort()).toEqual(["one.txt", "three.txt"]);
+    expect(existsSync(join(scope, "auth.json"))).toBe(false);
+    expect(existsSync(join(real, "auth.json"))).toBe(false);
+  });
+});
