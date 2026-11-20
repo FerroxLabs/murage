@@ -10,7 +10,8 @@ for(const venue of ['bot','channel'] as const)for(const race of ['publication','
   registerHooks({load(url,context,next){
    const result=next(url,context);let text=String(result.source);
    if(url.endsWith('/server/memory/recall-view.ts')){
-    const needle='export function resolveRecallView(binding: RecallViewBinding, roster: MemoryRoster): Held {';
+    const needle="export function resolveRecallView(binding: RecallViewBinding, roster: MemoryRoster, issued = false): Held {";
+    if(!text.includes(needle))throw new Error("fixture anchor missing: resolveRecallView");
     text=text.replace(needle,needle+${JSON.stringify(race==='view-lost'?"try{const current=cache(database(),roster).get(recallContextKey(binding));if(!current)throw Error('cold');assertRecallView(database(),current.handle,binding);}catch{prepareRecallContextSync(binding.botId,binding.threadId,roster,binding.notOwnerAudience);}":"if(!globalThis.fixturePublished || "+JSON.stringify(race==='held-pending')+")throw new RecallPreparationPending();try{const current=cache(database(),roster).get(recallContextKey(binding));if(!current)throw Error('cold');assertRecallView(database(),current.handle,binding);}catch{prepareRecallContextSync(binding.botId,binding.threadId,roster,binding.notOwnerAudience);}")});
    }
    if(url.endsWith('/server/memory/recall-readiness.ts'))text=text.replace('this.readmitted = true;',"this.readmitted = true;console.warn('fixture readmission');");
@@ -64,7 +65,7 @@ for(const venue of ['bot','channel'] as const)for(const race of ['publication','
   expect(JSON.stringify(rows)).not.toContain('MEMORY_RECALL_UNAVAILABLE');
   if(race==='publication'){
    expect(requests[0].recall).toBe('held');expect(requests[0].memory).toBe(false);expect(requests[0].tools).not.toContain('memory');expect(requests[1].recall).toBe('full');expect(log).toContain('fixture held publication rebuilds=0');
-   expect(rows.messages.filter((row:any)=>row.tool?.name==='Memory is still catching up, so this reply did not use recalled memories.')).toHaveLength(1);
+   expect(rows.messages.filter((row:any)=>row.tool?.name==="Memory wasn't ready, so this reply didn't use what I remember.")).toHaveLength(1);
   }
   if(race==='held-pending'){expect(JSON.stringify(rows)).toContain('This reply is still being prepared, so this message was not sent. Send it again in a moment.');expect((log.match(/turn dispatch recall=/g)??[])).toHaveLength(0);}
   if(race==='mode-change')expect(requests.every(request=>request.recall==='off')).toBe(true);

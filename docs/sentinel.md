@@ -10,7 +10,7 @@ and keeps a short list in Settings. This page explains what runs, what it reads,
 - It keeps its own short notes about what it has already told you, so the same thing is never reported twice.
 - When something new needs a look, Murage shows one notification titled "Murage": "A health check needs your attention.
   Open Health to see it." The details are in Murage itself, never in the notification.
-- It works while Murage is closed. When Murage starts again, it picks up the list where the helper left it.
+- On Windows and Linux it works while Murage is closed. When Murage starts again, it picks up the list where the helper left it.
 
 ## What it reads, and what it never reads
 
@@ -30,7 +30,7 @@ so two installations on one computer never share notes.
 
 | System | How it starts | Its own notes |
 |---|---|---|
-| macOS | LaunchAgent `com.ferroxlabs.murage.sentinel.<id>` in `~/Library/LaunchAgents` | `~/Library/Application Support/MurageSentinel/<id>` |
+| macOS | Scanning is paused. Opening Murage retires earlier Sentinel launch agents. | `~/Library/Application Support/MurageSentinel/<id>` |
 | Windows | Task Scheduler task `\FerroxLabs\Murage\Sentinel\<id>` (runs at sign-in, repeats every 2 minutes, current user only) | `%LOCALAPPDATA%\MurageSentinel\<id>` |
 | Linux | systemd user timer `murage-sentinel-<id>.timer`; without a user session manager, a sign-in autostart entry `murage-sentinel-<id>.desktop` | `$XDG_STATE_HOME/MurageSentinel/<id>` (or `~/.local/state/...`) |
 | Murage Cloud | `murage-sentinel.timer` on the Cloud computer | `/var/lib/murage-sentinel` |
@@ -41,7 +41,7 @@ On a self-hosted box, `murage start` runs the helper next to Murage. It keeps ru
 unexpectedly, and stops when you stop `murage start`. Each start hands over to a fresh helper; the previous one steps
 down by itself within a few minutes.
 
-Murage registers the helper itself, a minute after it starts, and checks that it really ran before calling it ready. If
+On Windows and Linux, Murage registers the helper a minute after it starts and checks that it ran before calling it ready. If
 the system refuses the registration, Murage keeps working normally, runs the checks itself while it is open, and tries
 the registration again later. Closing Murage leaves the helper in place; it is light and runs at background
 priority.
@@ -57,7 +57,7 @@ is asked to run is the exact one it installed (by its fingerprint) before runnin
 
 ## Updating
 
-When Murage updates, the new app copies its helper next to the old one, points the registration at it, and checks that
+On Windows and Linux, when Murage updates, the new app copies its helper next to the old one, points the registration at it, and checks that
 it ran. If the new one does not report in within about half an hour of awake time, Murage switches back to the previous
 helper and tries again on the next update.
 
@@ -71,8 +71,7 @@ To remove it by hand, use only the names for your installation id:
 - Linux: `systemctl --user disable --now murage-sentinel-<id>.timer`, delete the two unit files from
   `~/.config/systemd/user`, any `murage-sentinel-<id>.desktop` in `~/.config/autostart`, and the notes folder.
 
-Removing the helper does not touch your Murage data. If Murage is still installed, it registers the helper again on its
-next start.
+Removing the helper leaves your Murage data in place. On Windows and Linux, Murage registers the helper again on its next start.
 
 ## For Murage Cloud operators
 

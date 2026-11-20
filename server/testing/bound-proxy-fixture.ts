@@ -267,6 +267,9 @@ import { StringDecoder } from "node:string_decoder";
 import type { ChildProcessWithoutNullStreams, SpawnOptions } from "node:child_process";
 const boundStates = new WeakMap<object, () => { sealed: boolean; refusals: number; terminal?: unknown }>();
 const boundTerminals = new WeakMap<object, () => unknown>();
+const boundTerminalReasons = new WeakMap<object, () => unknown>();
+/** The code word a terminal notice named for its first refusing check (undefined before one arrived). */
+export function boundTerminalReason(child: object): unknown { return boundTerminalReasons.get(child)?.(); }
 export function boundProxyState(child: object) {
   const state = boundStates.get(child);
   if (!state) throw new Error("fixture child was not admitted");
@@ -332,9 +335,11 @@ export async function spawnBoundProxy(role: string, command: string, args: reado
   Object.defineProperty(child, "stdin", { value: engineInput });
   Object.defineProperty(child, "stdout", { value: accepted });
   let terminal: unknown;
+  let terminalReason: unknown;
   let terminalExit: ReturnType<typeof setTimeout> | undefined;
   boundStates.set(child, () => ({ sealed: instance.ingress.sealed, refusals: fixture.refusals, ...(terminal ? { terminal } : {}) }));
   boundTerminals.set(child, () => terminal);
+  boundTerminalReasons.set(child, () => terminalReason);
   engineInput.on("error", () => { instance.ingress.seal(); child.kill(); });
   instance.ingress.supervise(child);
   output.setEncoding("utf8").on("data", chunk => {
@@ -358,7 +363,7 @@ export async function spawnBoundProxy(role: string, command: string, args: reado
     if (notice?.type !== "turn-release-terminal" || notice.instanceId !== instance.instanceId
       || notice.frame?.error?.code !== -32099 || notice.frame.error.data?.code !== "MEMORY_CONTEXT_REVOKED"
       || notice.frame.error.data.terminal !== true || terminal) { child.kill(); return; }
-    terminal = notice.frame;
+    terminal = notice.frame; terminalReason = (message as { reason?: unknown }).reason;
     // A valid terminal notice already sealed final ingress. Let the exact
     // child flush its close and exit code; still bound its process lifetime.
     terminalExit = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill(); }, 1000);

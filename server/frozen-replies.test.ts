@@ -34,7 +34,8 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const WORDS = "RBA cash rate 3.60 percent, last changed 2026-02-18 (FROZEN_WORKER_WORDS)";
 const FROZEN = `[${ROOM_REPLY_WITHHELD}]`;
-const NO_ANSWER = "(no answer: that memory is still being checked, try again later)";
+// 1.0.20: a retired hold reads the plain notice (held-replies.ts noAnswerLine), never the internal line above
+const NOTICE = "That reply isn't ready to share yet. Ask again in a minute.";
 let inlineMs: number;
 
 beforeEach(() => {
@@ -235,7 +236,7 @@ it("S24: an earlier build's held row with no receipt is retired by the boot reco
   expect(findDelegationReceipt("h-held")).toBeNull();
   expect(w.recoverAll()).toMatchObject({ restored: 0, retired: 1 });
   const retired = w.store.messageById(w.leader.threadId, row.id)!;
-  expect(retired.text).toBe(NO_ANSWER);
+  expect(retired.text).toBe(NOTICE);
   expect(retired.copyOf).toBeUndefined();
   expect(retired.withheldFromBots).toBeUndefined();
   expect(w.completed).toEqual([["h-held", row.id]]);
@@ -247,7 +248,7 @@ it("S24: an earlier build's held row with no receipt is retired by the boot reco
   const restoredRow = w.store.appendMessage(w.leader.threadId, { role: "bot", kind: "text", text: `@${w.a.name} replied to the delegated task:\n\n${WORDS}`, inboundKind: "action",
     from: { botId: w.a.id, name: w.a.name, color: w.a.color }, copyOf: copyOf2, withheldFromBots: "checking" }, restoredReplyId("h-lost-receipt"));
   expect(w.recoverAll()).toMatchObject({ restored: 0, retired: 1 });
-  expect(w.store.messageById(w.leader.threadId, restoredRow.id)!.text).toBe(NO_ANSWER);
+  expect(w.store.messageById(w.leader.threadId, restoredRow.id)!.text).toBe(NOTICE);
   expect(w.completed).toEqual([["h-held", row.id], ["h-lost-receipt", restoredRow.id]]);
   expect(w.store.messagesFor(w.leader.threadId).some(m => (m.text ?? "").includes("FROZEN_WORKER_WORDS"))).toBe(false);
 });

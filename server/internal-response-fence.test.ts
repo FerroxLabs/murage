@@ -642,7 +642,6 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
   ensureDirs();
   const { configureBotEgress } = await import("./bot-egress.ts");
 
-  const { HighLevelHost } = await import("./highlevel/host.ts");
   const botWriterScope = {
 
   };
@@ -672,7 +671,6 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
     // MAIN RULING: "keep only the wipe check, everything else is NO LIMITS".
     // BASE and HEAD return the disabled phone service's explicit off envelope, not a permission card.
     "POST device/call": { status: 200, contains: '"code":"off"' },
-    "POST highlevel/mcp": { status: 200, contains: '"result":{}', body: { jsonrpc: "2.0", id: 1, method: "ping" } },
     "POST host-computer": { status: 403, contains: "computer turn is no longer authorized" },
     "POST unified-browser": { status: 403, contains: "browser turn is no longer authorized" },
     "POST headless-browser": { status: 405, contains: "method not allowed" },
@@ -870,12 +868,6 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
       req: Object.assign(new (await import("node:events")).EventEmitter(), { method: route.method, headers: { authorization: `Bearer ${token}` } }), res: sink.raw,
       internalCapabilities: capabilities,
       ...(emailRoute?{emailRuntime}:{}),
-      highlevel: { host: new HighLevelHost({ capabilities, bot: () => bot,
-        signals: { onEnd: () => () => {} } as any,
-        get leases(): never { throw new Error("unexpected HighLevel lease use"); },
-        get client(): never { throw new Error("unexpected HighLevel client use"); },
-        get actions(): never { throw new Error("unexpected HighLevel action use"); },
-      }) },
       chiefProposals: proposals,
 
       cfg: { features: { skillRecorder: authorizedSkills,cloudBoxComputers:authorizedBox },box:authorizedBox?{token:"fixture-box-account"}:{}, imageGen: { enabled: false }, webSearch: { provider: "off" }, mcpServers: { approved: { url: "https://fixture.invalid/mcp", enabled: true } } },
@@ -993,7 +985,6 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
   ensureDirs();
   const { configureBotEgress } = await import("./bot-egress.ts");
 
-  const { HighLevelHost } = await import("./highlevel/host.ts");
   const botWriterScope = {
 
   };
@@ -1023,7 +1014,6 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
     // MAIN RULING: "keep only the wipe check, everything else is NO LIMITS".
     // BASE and HEAD return the disabled phone service's explicit off envelope, not a permission card.
     "POST device/call": { status: 200, contains: '"code":"off"' },
-    "POST highlevel/mcp": { status: 200, contains: '"result":{}', body: { jsonrpc: "2.0", id: 1, method: "ping" } },
     "POST host-computer": { status: 403, contains: "computer turn is no longer authorized" },
     "POST unified-browser": { status: 403, contains: "browser turn is no longer authorized" },
     "POST headless-browser": { status: 405, contains: "method not allowed" },
@@ -1225,12 +1215,6 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
       req: Object.assign(new (await import("node:events")).EventEmitter(), { method: route.method, headers: { authorization: `Bearer ${token}` } }), res: sink.raw,
       internalCapabilities: capabilities,
       ...(emailRoute?{emailRuntime}:{}),
-      highlevel: { host: new HighLevelHost({ capabilities, bot: () => bot,
-        signals: { onEnd: () => () => {} } as any,
-        get leases(): never { throw new Error("unexpected HighLevel lease use"); },
-        get client(): never { throw new Error("unexpected HighLevel client use"); },
-        get actions(): never { throw new Error("unexpected HighLevel action use"); },
-      }) },
       chiefProposals: proposals,
 
       cfg: { features: { skillRecorder: authorizedSkills,cloudBoxComputers:authorizedBox },box:authorizedBox?{token:"fixture-box-account"}:{}, imageGen: { enabled: false }, webSearch: { provider: "off" }, mcpServers: { approved: { url: "https://fixture.invalid/mcp", enabled: true } } },
@@ -1552,75 +1536,6 @@ async function validDispatchScope(f: ReturnType<typeof fixture>, path: string, m
 
   };
 }
-
-// red-at-fc2aad5b4: the rebased inventory includes the native HighLevel host.
-// Revoke inside the real host's authorized bot lookup, before its final return.
-it("T-ALL-RETURNS inventory HighLevel delegate after authorization", async () => {
-  const dispatch = await internalDispatchFixture();
-  const { HighLevelHost } = await import("./highlevel/host.ts");
-  const { INTERNAL_HTTP_ROUTES } = await import("./consuming-sink-inventory.ts");
-  const routes = INTERNAL_HTTP_ROUTES.filter(route => route.path.endsWith("/highlevel/mcp"));
-  expect(routes).toHaveLength(1);
-  for (const route of routes) for (const revoked of [false, true]) {
-    const f = fixture(), sink = consumingResponseRecorder();
-    const base = await validDispatchScope(f, route.path, route.method);
-    const bot = vi.fn(() => { if (revoked) f.flip(); return { id: "B" }; });
-    const host = new HighLevelHost({ capabilities: base.internalCapabilities, bot,
-      signals: { onEnd: () => () => {} } as any,
-      get leases(): never { throw new Error("unexpected HighLevel lease use"); },
-      get client(): never { throw new Error("unexpected HighLevel client use"); },
-      get actions(): never { throw new Error("unexpected HighLevel action use"); },
-    });
-    const handle = realMethodObserver(host, "handle");
-    const scope = { ...base, res: sink.raw, highlevel: { host },
-      readBody: async () => ({ jsonrpc: "2.0", id: 1, method: "ping" }) };
-    if (revoked) {
-      await expect(dispatch(scope)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
-      // Host refusal precedes HTTP serialization; no result has been released.
-      expect(sink.output).toEqual([]);
-    } else {
-      await dispatch(scope);
-      expect(JSON.parse(sink.output.at(-1)!.body!)).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
-    }
-
-    expect(handle).toHaveBeenCalledOnce(); expect(bot).toHaveBeenCalledOnce();
-    expect(f.refusals).toBe(revoked ? 1 : 0);
-  }
-});
-
-// MAIN RULING 1114-SC-SAFETY-HSCOPE4: added assertions use a separate ID.
-it("SC-SAFETY added assertions: T-ALL-RETURNS inventory HighLevel delegate after authorization", async () => {
-  const dispatch = await internalDispatchFixture();
-  const { HighLevelHost } = await import("./highlevel/host.ts");
-  const { INTERNAL_HTTP_ROUTES } = await import("./consuming-sink-inventory.ts");
-  const routes = INTERNAL_HTTP_ROUTES.filter(route => route.path.endsWith("/highlevel/mcp"));
-  expect(routes).toHaveLength(1);
-  for (const route of routes) for (const revoked of [false, true]) {
-    const f = fixture(), sink = consumingResponseRecorder();
-    const base = await validDispatchScope(f, route.path, route.method);
-    const bot = vi.fn(() => { if (revoked) f.flip(); return { id: "B" }; });
-    const host = new HighLevelHost({ capabilities: base.internalCapabilities, bot,
-      signals: { onEnd: () => () => {} } as any,
-      get leases(): never { throw new Error("unexpected HighLevel lease use"); },
-      get client(): never { throw new Error("unexpected HighLevel client use"); },
-      get actions(): never { throw new Error("unexpected HighLevel action use"); },
-    });
-    const handle = realMethodObserver(host, "handle");
-    const scope = { ...base, res: sink.raw, highlevel: { host },
-      readBody: async () => ({ jsonrpc: "2.0", id: 1, method: "ping" }) };
-    if (revoked) {
-      await expect(dispatch(scope)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
-      // Host refusal precedes HTTP serialization; no result has been released.
-      expect(sink.output).toEqual([]);
-    } else {
-      await dispatch(scope);
-      expect(JSON.parse(sink.output.at(-1)!.body!)).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
-    }
-    expect((dispatchBindings.get(scope)?.decisionAuthorities as Map<string, unknown>)?.get("T")).toMatchObject({ identity: { threadId: "T", generation: f.turn.turnId }, claim: expect.any(Object) });
-    expect(handle).toHaveBeenCalledOnce(); expect(bot).toHaveBeenCalledOnce();
-    expect(f.refusals).toBe(revoked ? 1 : 0);
-  }
-});
 
 // red-at-4df086541 A3-8: exercise nonempty scheduler/webhook projections after
 // sender authorization, using the real managers and the production callbacks.

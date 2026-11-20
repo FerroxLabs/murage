@@ -280,7 +280,8 @@ function productionWaiting(w: ReturnType<typeof world>, service: "image" | "high
 }
 
 describe("service callbacks carry the actor generation (U, production callbacks)", () => {
-  for (const service of ["image", "highlevel", "publish"] as const) {
+  // 1.0.20 hlstrip: the HighLevel service card is removed with Murage's own HighLevel.
+  for (const service of ["image", "publish"] as const) {
     it(`W21 service presentation uses actor generation before await (${service})`, () => {
       const w = world();
       const channel = `${w.T}-channel`;

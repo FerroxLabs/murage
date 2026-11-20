@@ -30,13 +30,17 @@ wg_read_guard() {
     # read can split the two arrays in C while it reads the compact file. This
     # avoids shell glob searches over a growing roots array. The final variable
     # preserves the remainder verbatim. Unusual brackets/formatting fall back.
-    if IFS='[]' read -r wg_header wg_root_items wg_between wg_client_items wg_tail < "$MURAGE_WIPE_GUARD"; then
-        : # A newline may precede further content: use the complete reader.
-    else
-        case $wg_header:$wg_between:$wg_tail in
+    wg_end=
+    if {
+        IFS='[]' read -r wg_header wg_root_items wg_between wg_client_items wg_guard_tail && wg_end=$wg_nl
+        [ -z "$wg_end" ] || { ! IFS= read -r wg_more && [ -z "$wg_more" ]; }
+    } < "$MURAGE_WIPE_GUARD"; then
+        case $wg_header:$wg_between:$wg_guard_tail in
             *'"roots":':',"client":':',"realTools":{'*)
-                wg_guard_text=$wg_header'['$wg_root_items']'$wg_between'['$wg_client_items']'$wg_tail
-                [ "${#wg_guard_text}" -le 262144 ] || return 1
+                # Measure the parts: copying the 1 MiB text costs Bash 3.2 more
+                # than the read. Like the line reader, the size omits the newline.
+                [ $((${#wg_header} + ${#wg_root_items} + ${#wg_between} + ${#wg_client_items} + ${#wg_guard_tail} + 4)) -le 1048576 ] || return 1
+                wg_guard_text=
                 wg_split_guard=1
                 return 0 ;;
         esac
@@ -44,8 +48,24 @@ wg_read_guard() {
     wg_guard_text=; wg_join=
     while IFS= read -r wg_line || [ -n "$wg_line" ]; do
         wg_guard_text=$wg_guard_text$wg_join$wg_line; wg_join=$wg_nl
-        [ "${#wg_guard_text}" -le 262144 ] || return 1
+        [ "${#wg_guard_text}" -le 1048576 ] || return 1
     done < "$MURAGE_WIPE_GUARD"
+}
+
+# Validate compact roots without decoding, splitting or storing each one:
+# whole-string patterns only, since
+# a per-root loop alone cost Bash 3.2 about 0.2 s at 8,192 roots. Accept exactly
+# "/r1","/r2",...: every inner quote lies in one "," separator followed by an
+# absolute root, so no root holds a quote. The full parser accepts all of
+# these; anything else (spacing, empty or relative roots) goes to that parser.
+wg_compact_roots() {
+    [ -n "$wg_root_items" ] || return 0
+    # One case: each expansion of the 1 MiB text costs Bash 3.2 about 10 ms.
+    case $wg_root_items in
+        *'"'[!,/]*|*'",'[!\"]*|*'","'[!/]*|*'","'|*[!,]'"/'*|*[!\"]',"/'*) return 1 ;;
+        '"/'*'"') return 0 ;;
+    esac
+    return 1
 }
 
 # The turn writer uses JSON.stringify in this fixed schema order. The fast
@@ -54,13 +74,23 @@ wg_read_guard() {
 # before callback. Pretty/alternate-order JSON uses that same full parser.
 wg_fast_guard() {
     [ "$wg_split_guard" = 1 ] || return 1
+    # Before 1.0.20 a file ending in the writer's newline always took the full
+    # parser. Keep its decisions: only roots the compact matcher reads exactly
+    # as that parser does may skip it (no spacing, empty or relative roots).
+    # Every other field still gets that parser, in its order, with the roots
+    # list emptied; it is short. A file that fails here takes the full parser.
+    if [ -n "$wg_end" ]; then
+        wg_compact_roots || return 1
+        wg_load_request || return 1
+        wg_guard "$wg_header"'[]'"$wg_between"'['"$wg_client_items"']'"$wg_guard_tail" || return 1
+    fi
     # Check only the short header; matching across roots with several wildcards
     # causes quadratic backtracking in supported shells.
     case $wg_header in
         '{"v":1,"socket":"'*'","threadId":"'*'","token":"'*'","roots":') ;;
         *) return 1 ;;
     esac
-    wg_json=${wg_tail#',"realTools":{'}
+    wg_json=${wg_guard_tail#',"realTools":{'}
     case $wg_json in
         *'},"off":false}') wg_off=0; wg_json=${wg_json%'},"off":false}'} ;;
         *'},"off":true}') wg_off=1; wg_json=${wg_json%'},"off":true}'} ;;
@@ -74,8 +104,21 @@ wg_fast_guard() {
     esac
     wg_root_text='['$wg_root_items']'
     wg_json=$wg_root_text
-    case $wg_root_text in
-        *'\'*|*'"'[a-zA-Z]':'*)
+    wg_decode=0
+    # Writer-format roots that wg_main canonicalises (one-letter top folder,
+    # dot segments, trailing slash) need the decoder too; compared as raw text
+    # they would miss their target. The decoder is what these files always
+    # used, so a broader pattern (fewer scans) only costs time. Never the plain
+    # root "/": the writer always lists it, so matching it would decode always.
+    if [ -n "$wg_end" ]; then
+        case $wg_root_text in
+            *'\'*|*'"'[a-zA-Z]':'*|*'/.'[./\"]*|*'"/'[a-zA-Z]'/'*|*[!\"]'/"'*) wg_decode=1 ;;
+        esac
+    else
+        case $wg_root_text in *'\'*|*'"'[a-zA-Z]':'*) wg_decode=1 ;; esac
+    fi
+    case $wg_decode in
+        1)
             # Escaped/non-POSIX roots need the complete decoder and normalizer.
             wg_load_request || return 1
             wg_array=roots
@@ -192,7 +235,7 @@ wg_main() {
             if [ -n "$wg_match" ]; then
                 if [ "$wg_fast" = 1 ]; then
                     wg_roots=0; wg_clients=0
-                    if ! wg_load_request || ! wg_guard; then wg_exec "$@"; fi
+                    if ! wg_load_request || ! wg_callback_guard; then wg_exec "$@"; fi
                 fi
                 wg_call "$@"
                 wg_result=$?

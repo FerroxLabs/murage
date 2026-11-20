@@ -8,13 +8,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { archiveFlightKeyframes } from "@/lib/archive-flight";
 
-vi.mock("@/lib/analytics", () => ({
-  analyticsEnabled: () => false, optAction: () => "none" as const, setAnalyticsEnabled: () => {}, initAnalytics: () => {},
-  track: () => {}, identifyEmail: () => {}, emailGateDone: () => false, setEmailGateDone: () => {},
-}));
 (globalThis as unknown as { window?: unknown }).window ??= {};
 const { TeamFeedbackToast, archiveFeedback, feedbackStays } = await import("./Sidebar");
 const source = readFileSync(fileURLToPath(new URL("./Sidebar.tsx", import.meta.url)), "utf8");

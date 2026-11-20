@@ -40,8 +40,6 @@ export function buildMcpServers(turn: SendTurnInput, options: { askBeforeCustom?
   if (turn.integrations?.phone) servers.phone = { ...turn.integrations.phone };
   // 1.0.9 S13b: the owner's phone; asks on every call like any non-listed own mount.
   if (turn.integrations?.phoneJobs) servers.phoneJobs = { ...turn.integrations.phoneJobs };
-  // native HighLevel (HL-S2, read only): its read tools are pre-allowed; the host grant is the gate and lists no change tool.
-  if (turn.integrations?.highlevel) servers.highlevel = { ...turn.integrations.highlevel };
   if (turn.integrations?.browser) servers.browser = { ...turn.integrations.browser };
   if (turn.integrations?.dweb) {
     servers.dweb = {
@@ -76,8 +74,6 @@ export function piMountRecords(turn: SendTurnInput, servers: Record<string, unkn
   if (turn.integrations?.browser) own.set("browser", "own:browser");
   // only a turn that mounts the phone owns that name; no other server may claim `own:phoneJobs`
   if (turn.integrations?.phoneJobs) own.set("phoneJobs", "own:phoneJobs");
-  // likewise only a turn that mounts native HighLevel owns `own:highlevel`; an owner's own server of that name stays custom
-  if (turn.integrations?.highlevel) own.set("highlevel", "own:highlevel");
   if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
   const records: McpMountRecord[] = [];
   for (const name of Object.keys(servers ?? {})) {
@@ -92,10 +88,13 @@ export function piMountRecords(turn: SendTurnInput, servers: Record<string, unkn
 import { assertConsumingBinding, refuseConsumingTurn, registerConsumingDescriptor, type ConsumingTurnBinding } from "../consuming-turn-response.ts";
 import { createProxyReleaseAuthority, createConsumingIngress } from "../consuming-turn-ingress.ts";
 import type { ReleaseEnvelope } from "../consuming-turn-ingress.ts";
+import { deferringPendingFence, isPendingFenceDeferral } from "../memory/send-fence.ts";
 export interface AdmittedMcpMount {
   readonly ingress: ReturnType<typeof createConsumingIngress>;
   readonly enveloped: boolean;
   accept(line: string, write: (frame: string) => void, delimiter?: "\n"): ReleaseEnvelope | undefined;
+  /** 1.0.20 revkill2: void a reply that met a pending check (see accept); nothing of it is released. */
+  drop?(): void;
   close(): void;
 }
 const admittedMounts = new WeakMap<object, AdmittedMcpMount>();
@@ -148,17 +147,23 @@ export function createMcpMountAdmission(binding: ConsumingTurnBinding, authority
       MURAGE_RELEASE_INSTANCE: instance.instanceId, MURAGE_RELEASE_TOKEN: instance.token, MURAGE_RELEASE_URL: url,
     } : {}) };
     const result = Object.freeze({ ...entry, args: Object.freeze([...(args ?? [])]), env: Object.freeze(env) });
-    admittedMounts.set(result, Object.freeze({ ingress: instance.ingress, enveloped: Boolean(role), close: instance.dispose, accept(line: string, write: (frame: string) => void, delimiter?: "\n") {
-      if (role) {
-        const envelope = decodeReleaseEnvelope(line);
-        instance.ingress.deliver(envelope, write, delimiter);
-        return envelope;
-      }
-      // Third-party stdout ends at this server-owned acceptance callback. It
-      // cannot receive a raw passthrough to a CLI or mint its own permit.
-      const envelope = instance.ingress.issue({ instanceId: instance.instanceId, sequence: ++sequence, frame: line, descriptor, refs: [] });
-      instance.ingress.deliver(envelope, write, delimiter);
-      return undefined;
+    // 1.0.20 revkill2: a frame that met held context still checking:pending keeps its envelope; the relay offers the same line once more.
+    let held: { line: string; envelope: ReleaseEnvelope } | undefined;
+    admittedMounts.set(result, Object.freeze({ ingress: instance.ingress, enveloped: Boolean(role), close: instance.dispose,
+      drop() { held = undefined; instance.ingress.drop(); },
+      accept(line: string, write: (frame: string) => void, delimiter?: "\n") {
+      return deferringPendingFence(() => {
+        const retry = held?.line === line ? held.envelope : undefined;
+        held = undefined;
+        // Third-party stdout ends at this server-owned acceptance callback. It
+        // cannot receive a raw passthrough to a CLI or mint its own permit.
+        const envelope = retry ?? (role ? decodeReleaseEnvelope(line)
+          : instance.ingress.issue({ instanceId: instance.instanceId, sequence: sequence + 1, frame: line, descriptor, refs: [] }));
+        if (!role) sequence = envelope.sequence;
+        try { instance.ingress.deliver(envelope, write, delimiter); }
+        catch (error) { if (isPendingFenceDeferral(error) && !instance.ingress.sealed) held = { line, envelope }; throw error; }
+        return role ? envelope : undefined;
+      });
     } }));
     return result;
   } });

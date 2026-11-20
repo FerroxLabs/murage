@@ -1,5 +1,6 @@
 import "../shared/win-hide-child-process.mjs";
 import {exitWithChildIoReceipt} from "./io-child-receipts.ts";
+import {isObservedChildIoMessage,isOwnChildIoAcknowledgement} from "./sentinel/io-child-receipts.ts";
 import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -98,11 +99,16 @@ const main = (): void => {
       const timer = setTimeout(lost, 50);
       child.once("exit", () => clearTimeout(timer));
     });
+    // Metering is per hop: this launcher's own meter observes the proxy under a fresh generation and folds its bytes into
+    // the launcher's receipts. The proxy's receipts and the server's acknowledgement of OUR receipt never cross the hop;
+    // the server observes only the launcher's generation and seals the relay on any other io frame (1.0.20 winrelay).
     process.on("message", message => {
+      if (isOwnChildIoAcknowledgement(message)) return;
       if (!child.connected || message === null) return lost();
       child.send!(message, error => { if (error) lost(); });
     });
     child.on("message", message => {
+      if (isObservedChildIoMessage(child, message)) return;
       if (!process.connected) return lost();
       process.send!(message, error => { if (error) lost(); });
     });

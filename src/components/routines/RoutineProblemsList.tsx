@@ -4,6 +4,7 @@ import { LayerSurface } from "@/components/LayerSurface";
 import { CheckCheck, CircleAlert, X } from "lucide-react";
 import { isUnseenRoutineProblem } from "../../../shared/routine-problems";
 import type { RoutineRun } from "@/lib/routines";
+import { routineErrorText } from "@/lib/routine-error";
 import type { Bot } from "@/state/store";
 import { BOX_FRAME, BoxBody, BoxHead } from "../ui/BoxShell";
 
@@ -47,7 +48,7 @@ export function RoutineProblemsList({ lifecycle, runs, bots, onClose, onOpen, on
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12.5px] font-medium text-ink">{run.routineName}</span>
                   <span className="mt-0.5 block truncate text-[10.5px] text-ink-secondary">{run.status === "missed" ? "Missed" : "Failed"} · {when(run.finishedAt ?? run.scheduledFor)}{bot ? ` · ${bot.name}` : ""}</span>
-                  {run.error && <span className="mt-0.5 block truncate text-[10.5px] text-danger">{run.error}</span>}
+                  {run.error && <span className="mt-0.5 block truncate text-[10.5px] text-danger">{routineErrorText(run.error)}</span>}
                 </span>
               </button>
             );

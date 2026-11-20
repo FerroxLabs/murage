@@ -27,7 +27,11 @@
     <section id="ownership" aria-labelledby="ownership-heading" hidden>
       <h2 id="ownership-heading">This data folder was last used on another computer</h2>
       <p id="ownership-summary"></p>
-      <p>Leave the folder and its files as they are, including any lock files. Renaming a computer and moving Murage to a new computer are fixed in different ways.</p>
+      <p id="ownership-leave">Leave the folder and its files as they are, including any lock files. Renaming a computer and moving Murage to a new computer are fixed in different ways.</p>
+      <div id="set-aside" hidden>
+        <p id="set-aside-note">If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.</p>
+        <button data-action="set-aside-foreign" id="set-aside-foreign" class="primary">This is my computer, continue</button>
+      </div>
       <p>Open the diagnostics folder and contact support with the two computer names shown here. Don't send your conversations, keys or the whole data folder. To move Murage to a new computer, make a backup on the old one and restore it here.</p>
     </section>
     <section id="capture-recovery" aria-labelledby="capture-heading" hidden>

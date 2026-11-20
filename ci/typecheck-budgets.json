@@ -23,13 +23,13 @@
       "config": "tsconfig.build.json",
       "shards": 1,
       "capMiB": 4300,
-      "recordedPeakMiB": 2537
+      "recordedPeakMiB": 2576
     },
     "server-build": {
       "config": "tsconfig.server.build.json",
       "shards": 4,
       "capMiB": 4300,
-      "recordedPeakMiB": 2815,
+      "recordedPeakMiB": 2876,
       "partition": "dependencies",
       "typecheckOnly": true,
       "emitProgram": "server-emit"

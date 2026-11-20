@@ -23,36 +23,6 @@ const bridge = String.raw`
           queue.presentNow(opened, opened.outcome.ref, () => {});
           return queue.answerNow(opened.outcome.ref.approvalId,{behavior:'allow'});
         }
-        if (body.op === 'highlevel') {
-          store.markThreadHighLevel(bot.threadId);
-          if (body.noLimits) store.patchBot(bot.id,{autoApprove:true,fullAccess:true,noLimits:true});
-          let editCall;
-          if (body.edit) {
-            const {codexNativeEditCall,routeDelivery}=await import('./drivers/codex-hook.ts');
-            const context={project:'/tmp/wiring-project',cwd:'/tmp',home:'/tmp/wiring-home',mounts:undefined};
-            const routed=body.route==='hook'
-              ? routeDelivery({tool_name:'apply_patch',tool_use_id:'fixture-edit',cwd:'/tmp',
-                  tool_input:'*** Begin Patch\n*** Update File: /tmp/fixture.txt\n@@\n-old\n+new\n*** End Patch'},
-                  {...context,...(body.noLimits?{noLimits:true}:{})})
-              : codexNativeEditCall({},[{path:'/tmp/fixture.txt',kind:'update'}],context);
-            if (!('toolCall' in routed) || !routed.toolCall) throw new Error('fixture edit did not ask');
-            editCall=routed.toolCall;
-          }
-          const toolCall=body.edit
-              ? editCall
-              : {name:body.engine==='pi'?'bash':'Bash',input:{command:'printf fixture'}};
-          // contracts.ts: every request.opened names its tool (the drivers send the call's own name).
-          const event={type:'request.opened',requestType:'permission',threadId:bot.threadId,
-            requestId:'wiring-hl-'+randomUUID(),turnId:'wiring-turn',providerInstanceId:'fixture',
-            toolEngine:body.engine ?? 'acp',toolKind:body.edit?'edit':'execute',tool:toolCall.name,toolCall,
-            ...(body.engine ? {} : {toolIdentity:{namespace:'claude',name:'Bash'}})};
-          // X3 shell judgement is prepared off the fold: the durable bus holds this ask and redelivers it, so read
-          // this event's own backstop (reset first) once the real fold has run, within a fixed bound.
-          globalThis.__wiringHighlevel=undefined;
-          bus.publish(event);
-          for(const end=Date.now()+15000;globalThis.__wiringHighlevel===undefined&&Date.now()<end;) await new Promise(resolve=>setTimeout(resolve,10));
-          return {backstop:globalThis.__wiringHighlevel};
-        }
         if (body.op === 'memory-open') {
           const {setMemoryMode}=await import('./memory/repository.ts');
           const {reconcileMemoryRoster}=await import('./memory/policy.ts');
@@ -167,8 +137,7 @@ beforeAll(async () => {
         }
         if(!source.includes(anchor)) throw new Error('fixture bridge anchor missing');
         return {...loaded,source:source.replace(anchor,${JSON.stringify(bridge)}+anchor)
-          .replace('async function currentConnectedAccessAccounts(options: { remembered?: boolean } = {}) {', 'async function currentConnectedAccessAccounts(options: { remembered?: boolean } = {}) { return [{toolkit:"gmail",accountId:"fixture-account"}];')
-          .replace('      if (highlevelBackstop) {', ${JSON.stringify("      if (event.requestId?.startsWith('wiring-hl-')) globalThis.__wiringHighlevel = highlevelBackstop ?? null;\n      if (highlevelBackstop) {")})};
+          .replace('async function currentConnectedAccessAccounts(options: { remembered?: boolean } = {}) {', 'async function currentConnectedAccessAccounts(options: { remembered?: boolean } = {}) { return [{toolkit:"gmail",accountId:"fixture-account"}];')};
       }
       return loaded;
     }});
@@ -210,23 +179,7 @@ it('C1 production owner bot-access PUT applies the reviewed grant',async()=>{
   expect(reviewed.body.policy.grants).toEqual([{toolkit:'gmail',accountId:'fixture-account',tools:['GMAIL_FETCH_EMAILS']}]);
 });
 
-it.each(['acp','claude','codex','pi'])('H1 production request.opened allows a proved %s shell through the normal decision path',async engine=>{
-  const result=await api('POST','/api/wiring-fixture',{botId,op:'highlevel',engine});
-  expect(result.status,JSON.stringify(result.body)).toBe(200);
-  expect(result.body).toEqual({backstop:null});
-});
-
-it.each([
-  {route:'native',noLimits:false},{route:'hook',noLimits:false},
-  {route:'native',noLimits:true},{route:'hook',noLimits:true},
-])('H1 Codex edit identity reaches normal approval handling %j',async options=>{
-  const result=await api('POST','/api/wiring-fixture',{botId,op:'highlevel',engine:'codex',edit:true,...options});
-  expect(result.status,JSON.stringify(result.body)).toBe(200);
-  expect(result.body).toEqual({backstop:null});
-  // Restore Ask for the later card/restart scenarios in this shared fixture.
-  await api('PATCH',`/api/bots/${botId}`,{autoApprove:false,fullAccess:false,noLimits:false});
-});
-
+// 1.0.20 hlstrip: the H1 cases proved the native HighLevel backstop let proved shells and edits through; the backstop is removed.
 it('C1 recovered bot-access PUT releases its durable continuation proof',async()=>{
   const opened=await api('POST','/api/wiring-fixture',{botId,op:'access-open'});
   expect(opened.status,JSON.stringify(opened.body)).toBe(200);

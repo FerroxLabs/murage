@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 import ts from 'typescript';
 import * as authority from './outside-authority.ts';
-import * as highlevel from '../shared/highlevel.ts';
 import * as phone from '../shared/phone-jobs-contract.ts';
 import * as downloads from './download-registry.ts';
 import * as marks from './email/external-marks.ts';
@@ -12,7 +11,7 @@ import * as noLimitsOrigin from './no-limits-origin.ts';
 import { World, traces } from './testing/botcreate-world.ts';
 import { useOutsideStoreFixture } from './testing/outside-store-fixture.ts';
 useOutsideStoreFixture();
-const imports: Record<string, unknown> = { './outside-authority.ts': authority, '../shared/highlevel.ts': highlevel, '../shared/phone-jobs-contract.ts': phone, './download-registry.ts': downloads, './email/external-marks.ts': marks, './outside-dl.ts': dl, './no-limits-origin.ts': noLimitsOrigin };
+const imports: Record<string, unknown> = { './outside-authority.ts': authority, '../shared/phone-jobs-contract.ts': phone, './download-registry.ts': downloads, './email/external-marks.ts': marks, './outside-dl.ts': dl, './no-limits-origin.ts': noLimitsOrigin };
 for (const trace of traces.filter(t => t.guard === 'mark-at-call')) it(`restoring mark-at-call goes RED through ${trace.id}`, () => {
   const source = readFileSync(new URL('./outside-own.ts', import.meta.url), 'utf8');
   const old = '"tool_result_read", "ask_bot", "delegate_bot"]);';

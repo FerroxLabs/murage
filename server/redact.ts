@@ -226,7 +226,7 @@ export const TEXT_RULES: readonly (readonly [string, TrackedRule])[] = [
   // their digits, byte for byte (shared/financial-ids.ts). Last, so a secret
   // rule above sees the text as typed.
   ["FINANCIAL_ID", (text, edits) => {
-    const shown = maskFinancialIdentifiers(text);
+    const shown = keepDecimalNumbers(text, maskFinancialIdentifiers(text));
     for (let at = 0; at < text.length;) {
       if (text[at] === shown[at]) { at++; continue; }
       const start = at++; while (at < text.length && text[at] !== shown[at]) at++;
@@ -236,6 +236,30 @@ export const TEXT_RULES: readonly (readonly [string, TrackedRule])[] = [
   }],
 ];
 
+
+/** A decimal number is not a card. The card rule reads any 13 to 19 digit
+ * Luhn-valid run "wherever it stands" and takes a dot as a group separator, so
+ * about one float in ten with a long fraction (a search score such as
+ * `4.718623638153076` in a tool's JSON result) was masked as a card, and that
+ * one hit latched the whole turn for its audience. Kept as typed: a digit run
+ * that is exactly ONE decimal literal (one to three digits, one dot, ten to
+ * eighteen digits; no digit, letter, `_` or further group joined on either
+ * side) and that the rules mask standing alone, i.e. with no context word. A
+ * card in any real grouping (three or more groups, spaces, dashes, a four
+ * digit first group) and every number beside a bank or id word stay masked. */
+const DECIMAL_LITERAL = /(?<![A-Za-z0-9_])(?<!\d[ \t.\/-]{1,2})\d{1,3}\.\d{10,18}(?![A-Za-z0-9_])(?![ \t.\/-]{1,2}\d)/g;
+function keepDecimalNumbers(text: string, shown: string): string {
+  if (shown === text) return shown;
+  let out = shown;
+  for (const m of text.matchAll(DECIMAL_LITERAL)) {
+    const start = m.index, end = start + m[0].length;
+    if (shown.slice(start, end) === m[0]) continue;
+    // Only the context-free hit: the literal alone masks the same way.
+    if (maskFinancialIdentifiers(m[0]) !== shown.slice(start, end)) continue;
+    out = out.slice(0, start) + m[0] + out.slice(end);
+  }
+  return out;
+}
 
 const USER_TEXT_WORK = 1_048_576;
 type TextScanResult = ReturnType<typeof scan>;

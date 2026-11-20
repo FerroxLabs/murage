@@ -31,6 +31,7 @@ const build = (options: ConstructorParameters<typeof MemoryWorkerController>[0] 
   internals = controller as unknown as Internals;
   internals.child = { kill() {}, on() {}, send: (message: any) => {
     if (message.type === "index") { settleFixtureIndexGrant(message,event=>internals.onWorkerMessage(internals.child,event)); internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
+    else if (message.type === "checkpoint") internals.onWorkerMessage(internals.child, { type: "checkpoint-result", requestId: message.requestId, ok: true });
     else sent.push(message);
   } };
   internals.ready = true;
@@ -73,10 +74,13 @@ it("over a minute of backlog the loop is held for at most a quarter of the time 
   build();
   const start = performance.now();
   controller.start();
+  const checkpoint = controller.requestCheckpoint();
   for (let step = 0; step < 240; step++) {
     await vi.advanceTimersByTimeAsync(250);
+    expect(sent.every(work => typeof work.text === "string"), "control messages are not capture work").toBe(true);
     while (sent.length) finish(sent.shift()!);
   }
+  expect(await checkpoint).toBe(true);
   const end = performance.now();
   const busyTotal = state.busy.reduce((sum, [a, b]) => sum + (b - a), 0);
   expect(state.busy.length).toBeGreaterThan(2);

@@ -10,7 +10,11 @@ export const updateRecoveryCopy = Object.freeze({
     "quit": "Quit",
     "update-wait": "Please wait while Murage finishes this step. Your backup is kept.",
   "cleanup-stopped": "Your backup is kept. Murage needs another try to close some background work.",
-  "settled-stopped": "The update was set aside and your backup was kept."
+  "settled-stopped": "The update was set aside and your backup was kept.",
+  "set-aside-foreign": "This is my computer, continue",
+  "set-aside-foreign-note": "If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.",
+  "LEASE_TAKEOVER_REFUSED": "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.",
+  "lease-busy": "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup."
 });
 const translations = {
   "de": {
@@ -25,7 +29,11 @@ const translations = {
     "quit": "Beenden",
     "update-wait": "Bitte warte, während Murage diesen Schritt abschließt. Dein Backup bleibt erhalten.",
     "cleanup-stopped": "Dein Backup bleibt erhalten. Murage braucht einen weiteren Versuch, um einige Hintergrundaufgaben zu schließen.",
-    "settled-stopped": "Das Update wurde beiseitegelegt und dein Backup bleibt erhalten."
+    "settled-stopped": "Das Update wurde beiseitegelegt und dein Backup bleibt erhalten.",
+    "set-aside-foreign": "Das ist mein Computer, weiter",
+    "set-aside-foreign-note": "Wenn Murage nur auf diesem Computer verwendet wird und dieser Ordner nicht mit einem anderen Computer geteilt oder von dort synchronisiert wird, wähle Das ist mein Computer, weiter. Murage benennt die alten Sperrdateien neben dem Ordner um (es löscht sie nicht) und öffnet sich erneut. Deine Daten bleiben unverändert.",
+    "LEASE_TAKEOVER_REFUSED": "Murage konnte nicht bestätigen, dass nichts anderes diesen Datenordner verwendet, und hat die Sperrdateien deshalb unverändert gelassen. Beende Murage auf jedem anderen Computer, der diesen Ordner verwendet, starte diesen Computer neu und versuche es dann erneut.",
+    "lease-busy": "Möglicherweise ist noch eine andere Kopie von Murage geöffnet. Schließe alle anderen Murage-Fenster und wähle dann Start erneut versuchen."
   },
   "es": {
     "BACKUP_UPGRADE_STAGED": "Murage sigue instalando la actualización. Si tarda más de unos minutos, cierra Murage, abre Monitor de Actividad, selecciona el proceso ShipIt de Murage y elige Forzar salida. Luego vuelve a abrir Murage. Tu copia de seguridad se conserva.",
@@ -39,7 +47,11 @@ const translations = {
     "quit": "Salir",
     "update-wait": "Espera mientras Murage termina este paso. Tu copia de seguridad se conserva.",
     "cleanup-stopped": "Tu copia de seguridad se conserva. Murage necesita otro intento para cerrar algunas tareas en segundo plano.",
-    "settled-stopped": "La actualización se dejó de lado y tu copia de seguridad se conservó."
+    "settled-stopped": "La actualización se dejó de lado y tu copia de seguridad se conservó.",
+    "set-aside-foreign": "Este es mi ordenador, continuar",
+    "set-aside-foreign-note": "Si Murage solo se usa en este ordenador y esta carpeta no se comparte ni se sincroniza con otro ordenador, elige Este es mi ordenador, continuar. Murage cambia el nombre de los archivos de bloqueo antiguos junto a la carpeta (no los elimina) y vuelve a abrirse. Tus datos no cambian.",
+    "LEASE_TAKEOVER_REFUSED": "Murage no pudo confirmar que nada más esté usando esta carpeta de datos, así que dejó los archivos de bloqueo como estaban. Cierra Murage en cualquier otro ordenador que use esta carpeta, reinicia este ordenador y vuelve a intentarlo.",
+    "lease-busy": "Puede que otra copia de Murage siga abierta. Cierra todas las demás ventanas de Murage y elige Reintentar inicio."
   },
   "fr": {
     "BACKUP_UPGRADE_STAGED": "Murage installe encore la mise à jour. Si cela prend plus de quelques minutes, quitte Murage, ouvre Moniteur d’activité, sélectionne le processus ShipIt de Murage et choisis Forcer à quitter. Rouvre ensuite Murage. Ta sauvegarde est conservée.",
@@ -53,7 +65,11 @@ const translations = {
     "quit": "Quitter",
     "update-wait": "Patiente pendant que Murage termine cette étape. Ta sauvegarde est conservée.",
     "cleanup-stopped": "Ta sauvegarde est conservée. Murage a besoin d’un nouvel essai pour fermer certaines tâches en arrière-plan.",
-    "settled-stopped": "La mise à jour a été mise de côté et ta sauvegarde est conservée."
+    "settled-stopped": "La mise à jour a été mise de côté et ta sauvegarde est conservée.",
+    "set-aside-foreign": "C’est mon ordinateur, continuer",
+    "set-aside-foreign-note": "Si Murage n’est utilisé que sur cet ordinateur et que ce dossier n’est ni partagé avec un autre ordinateur ni synchronisé depuis un autre, choisis C’est mon ordinateur, continuer. Murage renomme les anciens fichiers de verrou à côté du dossier (il ne les supprime pas) et se rouvre. Tes données ne changent pas.",
+    "LEASE_TAKEOVER_REFUSED": "Murage n’a pas pu confirmer que rien d’autre n’utilise ce dossier de données, il a donc laissé les fichiers de verrou tels quels. Quitte Murage sur tout autre ordinateur qui utilise ce dossier, redémarre cet ordinateur, puis réessaie.",
+    "lease-busy": "Une autre copie de Murage est peut-être encore ouverte. Ferme toutes les autres fenêtres de Murage, puis choisis Réessayer le démarrage."
   },
   "pt-br": {
     "BACKUP_UPGRADE_STAGED": "O Murage ainda está instalando a atualização. Se isso levar mais de alguns minutos, encerre o Murage, abra o Monitor de Atividade, selecione o processo ShipIt do Murage e escolha Forçar Encerrar. Depois abra o Murage novamente. Seu backup será mantido.",
@@ -67,7 +83,11 @@ const translations = {
     "quit": "Sair",
     "update-wait": "Aguarde enquanto o Murage conclui esta etapa. Seu backup está preservado.",
     "cleanup-stopped": "Seu backup será mantido. O Murage precisa de mais uma tentativa para encerrar algumas tarefas em segundo plano.",
-    "settled-stopped": "A atualização foi deixada de lado e seu backup foi mantido."
+    "settled-stopped": "A atualização foi deixada de lado e seu backup foi mantido.",
+    "set-aside-foreign": "Este é o meu computador, continuar",
+    "set-aside-foreign-note": "Se o Murage é usado só neste computador e esta pasta não é compartilhada com outro computador nem sincronizada a partir dele, escolha Este é o meu computador, continuar. O Murage renomeia os arquivos de bloqueio antigos ao lado da pasta (não os apaga) e abre de novo. Seus dados não mudam.",
+    "LEASE_TAKEOVER_REFUSED": "O Murage não conseguiu confirmar que nada mais está usando esta pasta de dados, então deixou os arquivos de bloqueio como estavam. Feche o Murage em qualquer outro computador que use esta pasta, reinicie este computador e tente de novo.",
+    "lease-busy": "Outra cópia do Murage pode ainda estar aberta. Feche todas as outras janelas do Murage e escolha Tentar iniciar novamente."
   },
   "ja": {
     "BACKUP_UPGRADE_STAGED": "Murage はまだアップデートをインストールしています。数分以上かかる場合は Murage を終了し、アクティビティモニタで Murage の ShipIt プロセスを選び、強制終了してください。その後 Murage をもう一度開いてください。バックアップは保持されます。",
@@ -81,7 +101,11 @@ const translations = {
     "quit": "終了",
     "update-wait": "Murage がこの手順を完了するまでお待ちください。バックアップは保持されています。",
     "cleanup-stopped": "バックアップは保持されます。一部のバックグラウンド処理を終了するには、Murage がもう一度試す必要があります。",
-    "settled-stopped": "アップデートは見送られ、バックアップは保持されています。"
+    "settled-stopped": "アップデートは見送られ、バックアップは保持されています。",
+    "set-aside-foreign": "これは自分のコンピュータです。続行",
+    "set-aside-foreign-note": "Murage をこのコンピュータだけで使っていて、このフォルダを他のコンピュータと共有・同期していない場合は、「これは自分のコンピュータです。続行」を選んでください。Murage はフォルダの横にある古いロックファイルの名前を変更し（削除はしません）、もう一度開きます。データは変更されません。",
+    "LEASE_TAKEOVER_REFUSED": "このデータフォルダを他に使っているものがないことを Murage が確認できなかったため、ロックファイルはそのままにしました。このフォルダを使っている他のコンピュータで Murage を終了し、このコンピュータを再起動してから、もう一度お試しください。",
+    "lease-busy": "Murage の別のコピーがまだ開いている可能性があります。他の Murage のウィンドウをすべて閉じてから、「起動を再試行」を選んでください。"
   },
   "zh": {
     "BACKUP_UPGRADE_STAGED": "Murage 仍在安装更新。如果超过几分钟，请退出 Murage，打开“活动监视器”，选择 Murage 的 ShipIt 进程，然后选择“强制退出”。之后重新打开 Murage。你的备份会保留。",
@@ -95,7 +119,11 @@ const translations = {
     "quit": "退出",
     "update-wait": "请等待 Murage 完成此步骤。你的备份会保留。",
     "cleanup-stopped": "你的备份会保留。Murage 需要再试一次，才能关闭部分后台任务。",
-    "settled-stopped": "更新已搁置，备份已保留。"
+    "settled-stopped": "更新已搁置，备份已保留。",
+    "set-aside-foreign": "这是我的电脑，继续",
+    "set-aside-foreign-note": "如果 Murage 只在这台电脑上使用，而且这个文件夹没有与其他电脑共享或从其他电脑同步，请选择“这是我的电脑，继续”。Murage 会给文件夹旁边的旧锁文件改名（不会删除它们），然后重新打开。你的数据不会改变。",
+    "LEASE_TAKEOVER_REFUSED": "Murage 无法确认没有其他程序或电脑在使用这个数据文件夹，所以锁文件保持原样。请在使用这个文件夹的其他电脑上退出 Murage，重启这台电脑，然后再试一次。",
+    "lease-busy": "可能还有另一个 Murage 副本处于打开状态。请关闭其他所有 Murage 窗口，然后选择“重试启动”。"
   },
   "hi": {
     "BACKUP_UPGRADE_STAGED": "Murage अभी अपडेट इंस्टॉल कर रहा है। अगर इसमें कुछ मिनट से ज़्यादा लगें, तो Murage बंद करें, Activity Monitor खोलें, Murage का ShipIt नाम का प्रोसेस चुनें और Force Quit चुनें। फिर Murage दोबारा खोलें। आपका बैकअप रखा गया है।",
@@ -109,7 +137,11 @@ const translations = {
     "quit": "बंद करें",
     "update-wait": "कृपया Murage के इस चरण को पूरा करने तक इंतज़ार करें। आपका बैकअप रखा गया है।",
     "cleanup-stopped": "आपका बैकअप रखा गया है। कुछ बैकग्राउंड काम बंद करने के लिए Murage को एक और कोशिश करनी होगी।",
-    "settled-stopped": "अपडेट अलग रख दिया गया है और आपका बैकअप रखा गया है।"
+    "settled-stopped": "अपडेट अलग रख दिया गया है और आपका बैकअप रखा गया है।",
+    "set-aside-foreign": "यह मेरा कंप्यूटर है, जारी रखें",
+    "set-aside-foreign-note": "अगर Murage सिर्फ़ इसी कंप्यूटर पर इस्तेमाल होता है, और यह फ़ोल्डर किसी दूसरे कंप्यूटर के साथ शेयर या उससे सिंक नहीं होता, तो यह मेरा कंप्यूटर है, जारी रखें चुनें। Murage फ़ोल्डर के पास की पुरानी लॉक फ़ाइलों का नाम बदल देता है (उन्हें मिटाता नहीं) और फिर से खुलता है। आपका डेटा नहीं बदलता।",
+    "LEASE_TAKEOVER_REFUSED": "Murage पक्का नहीं कर सका कि इस डेटा फ़ोल्डर को कोई और इस्तेमाल नहीं कर रहा, इसलिए उसने लॉक फ़ाइलें वैसी ही छोड़ दीं। इस फ़ोल्डर को इस्तेमाल करने वाले किसी भी दूसरे कंप्यूटर पर Murage बंद करें, इस कंप्यूटर को रीस्टार्ट करें, फिर दोबारा कोशिश करें।",
+    "lease-busy": "Murage की कोई दूसरी कॉपी शायद अब भी खुली है। Murage की बाकी सभी विंडो बंद करें, फिर स्टार्टअप फिर से आज़माएँ चुनें।"
   }
 };
 /** WIN-BACKUP-RT-1018: the whole-sentence backup codes the recovery window and the desktop notification show in the

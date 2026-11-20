@@ -11,7 +11,6 @@ import { WebDocumentBudget } from "../web-document-budget.ts";
 import { ToolResults } from "../tool-results.ts";
 import { ProjectTurnLeases } from "../project-turn-leases.ts";
 import { BrowserLifecycleGate } from "../browser-lifecycle-gate.ts";
-import { HighLevelTurnSignals } from "../highlevel/host.ts";
 import { AskTurnDevices } from "../ask-turn-device.ts";
 import { HeldDuringQuiet } from "../desktop-attention.ts";
 import { SseReplay } from "../sse-buffer.ts";
@@ -19,7 +18,7 @@ import type { StatePort } from "./source-extract.ts";
 import { registerPortConstructor } from "./port-integrity.ts";
 
 // Capture imported constructor and ancestor methods before any case hook.
-for (const Constructor of [DelegatedReplyChecks, PhoneAuthorities, HostComputerBroker, ComputerControl, MemoryWorkerController, WebDocuments, WebDocumentBudget, ToolResults, ProjectTurnLeases, BrowserLifecycleGate, HighLevelTurnSignals, AskTurnDevices, HeldDuringQuiet, SseReplay]) if (typeof Constructor === "function") registerPortConstructor(Constructor);
+for (const Constructor of [DelegatedReplyChecks, PhoneAuthorities, HostComputerBroker, ComputerControl, MemoryWorkerController, WebDocuments, WebDocumentBudget, ToolResults, ProjectTurnLeases, BrowserLifecycleGate, AskTurnDevices, HeldDuringQuiet, SseReplay]) if (typeof Constructor === "function") registerPortConstructor(Constructor);
 
 /** Only external I/O/callback edges are configurable. Services are complete
  * production instances, with no substituted authority or admission methods. */
@@ -79,8 +78,6 @@ export function runtimeFixturePorts(io: RuntimeFixtureIo = {}): StatePort[] {
       "Real project/folder admission registry; constructors do no path or process I/O.", value => value.disposed(value.generations())),
     port("browserLifecycle", () => new BrowserLifecycleGate(),
       "Real per-case lifecycle/session gate; no browser service is started."),
-    port("highlevelCalls", () => new HighLevelTurnSignals(),
-      "Real empty per-generation abort registry.", value => value.turnEndedAll()),
     port("askTurnDevices", () => new AskTurnDevices(), "Real empty generation-scoped device registry."),
     port("heldDuringQuiet", () => new HeldDuringQuiet(), "Real bounded quiet-hours queue.", value => value.ack()),
     port("replayBuffer", () => new SseReplay(), "Real bounded SSE replay state; no socket is created."),
