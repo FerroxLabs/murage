@@ -4,12 +4,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type { OptionCardData } from "@/state/store";
 
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { InboxRequestAnswer, inlineAnswerKind, requestHeadline, requestOpen } = await import("./InboxRequest");
 const { approvalButtonProps } = await import("./ApprovalFeedback");
 const { Inbox, botNameFromSource, INBOX_VIEWS } = await import("./Inbox");

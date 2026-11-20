@@ -7,7 +7,6 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { launchVerificationServer, type VerificationServer } from '../scripts/control-murage.ts';
-import { HIGHLEVEL_READ_TOOL_NAMES } from '../shared/highlevel.ts';
 import { raiseLevel } from './testing/raise-level.ts';
 import { withTurnSecrets } from './testing/fixture-dump.ts';
 import { waitForExit } from './testing/cleanup.ts';
@@ -76,10 +75,6 @@ async function tool(env: Record<string, string>, name: string, args: unknown) {
 beforeAll(async () => {
   fixture = await launchVerificationServer(process.env, undefined, { dumpLog: true, instrumentationSource: FAKE_FLUX_BROKER_INSTRUMENTATION + `
     process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
-    const {PrivateTokenLeaseSource}=await import(${JSON.stringify(new URL('./highlevel/private-token.ts', import.meta.url).href)});
-    const view={connectionId:'hl_review1',locationId:'loc_fixture',companyId:'co_fixture',epoch:1,state:'connected'};
-    PrivateTokenLeaseSource.prototype.ownerView=()=>({...view,confirmedAt:new Date().toISOString()});
-    PrivateTokenLeaseSource.prototype.connection=async id=>id===view.connectionId?{...view}:undefined;
   ` });
   desktop = { 'x-murage-surface': 'desktop', 'x-murage-surface-secret': (await api('GET', '/api/desktop-secret')).body.secret };
   // This suite exercises app review and credentials; cold recall has separate gates.
@@ -95,10 +90,10 @@ afterAll(async () => {
   }
   await fixture?.close();
 });
-it('REVIEW-H1 No limits native grant permits HighLevel and mixed connector requests without cards', async () => {
+// 1.0.20 hlstrip: Murage's own HighLevel (and its grant route) is removed; the No limits plain line stays for any app request.
+it('REVIEW-H1 No limits connector requests answer a plain line without cards', async () => {
   await withTurn('unlimited', async (bot, env, existing) => {
-    expect((await api('PUT', `/api/highlevel/bots/${bot.id}/access`, { grants: [{ connectionId: 'hl_review1', ceiling: 'read', tools: [HIGHLEVEL_READ_TOOL_NAMES[0]] }] })).status).toBe(200);
-    for (const items of [[{ slug: 'highlevel' }], [{ slug: 'highlevel' }, { slug: 'gmail' }]]) {
+    for (const items of [[{ slug: 'gmail' }], [{ slug: 'gmail' }, { slug: 'slack' }]]) {
       const reply = await api('POST', '/api/internal/connectors/request', { botId: bot.id, threadId: bot.threadId, items }, env.MURAGE_CONNECTORS_TOKEN);
       expect(reply.status, JSON.stringify(reply.body)).toBe(200);
       expect(reply.body).toMatchObject({ pending: false, messageIds: [], message: `${items.map(item => item.slug).join(', ')} is disconnected; turn it on in App Settings → Connections → Connected apps.` });
@@ -126,12 +121,8 @@ it('REVIEW-H2 No limits missing MCP credential returns a plain unavailable line 
     expect((await messages(bot.threadId)).filter(m => !existing.has(m.id) && (m.card || m.secret || m.connector))).toHaveLength(0);
   });
 });
-for (const level of ['ask', 'auto', 'full'] as const) it(`REVIEW lower ${level} preserves native refusal and MCP setup cards and wait`, async () => {
+for (const level of ['ask', 'auto', 'full'] as const) it(`REVIEW lower ${level} preserves MCP setup cards and wait`, async () => {
   await withTurn(level, async (bot, env) => {
-    expect((await api('PUT', `/api/highlevel/bots/${bot.id}/access`, { grants: [{ connectionId: 'hl_review1', ceiling: 'read', tools: [HIGHLEVEL_READ_TOOL_NAMES[0]] }] })).status).toBe(200);
-    const denied = await api('POST', '/api/internal/connectors/request', { botId: bot.id, threadId: bot.threadId, items: [{ slug: 'highlevel' }, { slug: 'gmail' }] }, env.MURAGE_CONNECTORS_TOKEN);
-    expect(denied.status).toBe(403);
-    expect(denied.body.error).toContain('This bot uses Murage');
     const name = 'review-' + level;
     expect((await tool(env, 'add_mcp_server', { name, command: 'node', env_keys: ['NOTES_TOKEN'] })).content[0].text).toBe(`Saved ${name} switched off`);
     const stored = entry(name);

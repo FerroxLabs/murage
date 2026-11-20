@@ -5,14 +5,14 @@
 // same with 20,000 rows that say the word as with 200,000.
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
-import { trigramQuery } from "./message-search-index.ts";
+import { rebuildMessageSearchIndex, SEARCH_WRITE_BYTES_PER_MIN, searchIndexTestHooks, startSearchIndex, stopSearchIndex, trigramQuery } from "./message-search-index.ts";
 import { mkdirSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { database } from "./database.ts";
-import { CANDIDATE_WALK_ROWS, closeMessageDb, SCOPED_WINDOW_THREADS, SEARCH_CHUNK, searchMessagesWithMeta, SHORT_QUERY_WINDOW, TRIGRAM_CANDIDATE_CAP, WINDOW_CHUNK } from "./message-db.ts";
-import { rebuildSearchFixture, watchSearch } from "./testing/message-search-fixture.ts";
+import { CANDIDATE_WALK_ROWS, closeMessageDb, insertMessage, SCOPED_WINDOW_THREADS, SEARCH_CHUNK, searchMessagesWithMeta, SHORT_QUERY_WINDOW, TRIGRAM_CANDIDATE_CAP, WINDOW_CHUNK } from "./message-db.ts";
+import { liftSearchPace, rebuildSearchFixture, SEARCH_PACE_LIFT, watchSearch } from "./testing/message-search-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 beforeEach(() => {
@@ -472,4 +472,60 @@ describe("rows withheld from bots", () => {
       }
     });
   }
+});
+
+// The statement-count fixtures above wait for whole rebuilds under the fixture's pace lift (testing/message-search-fixture.ts).
+// The lift belongs to the fixture wait only: an unlifted rebuild here is still paced at 256 MiB/min, and an owner append
+// that lands while a step is in flight is served after 10 ms, never behind the rebuild's pacing.
+describe("the search write pace under the fixture lift", () => {
+  it("unlifted, a rebuild step that wrote N bytes waits N / 256 MiB/min; an owner append never waits; the lift ends with the fixture wait", async () => {
+    expect(SEARCH_WRITE_BYTES_PER_MIN).toBe(256 * 1048576);
+    expect(SEARCH_PACE_LIFT).toBeGreaterThan(1);
+    // The lift is scoped: it restores whatever hook was there, and it scales only what the scheduler reads.
+    const seen: number[] = [], mine = (e: { type: string; bytes?: unknown }) => { if (e.type === "stepped") seen.push(Number(e.bytes)); };
+    searchIndexTestHooks.event = mine;
+    const passed = { type: "stepped", token: "x", bytes: 4096 * SEARCH_PACE_LIFT };
+    await liftSearchPace(async () => { searchIndexTestHooks.event!(passed); });
+    expect(seen).toEqual([4096 * SEARCH_PACE_LIFT]);
+    expect(passed.bytes).toBe(4096);
+    expect(searchIndexTestHooks.event).toBe(mine);
+    searchIndexTestHooks.event = null;
+    // 20,000 distinct ~1 KB rows: rebuild steps write MBs each, so the paced gap is far above the 10 ms nudge delay.
+    database().prepare(`WITH RECURSIVE n(x) AS(VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<20000)
+      INSERT INTO messages(thread_id,id,at,role,kind,text,json) SELECT 'history'||(x%40),'h'||x,x,'user','text',hex(randomblob(512)),'{}' FROM n`).run();
+    const PACED_MS = 200, steps: Array<{ at: number; bytes: number; delay: number; nudged: boolean; next?: number }> = [];
+    let appended = false, nudgedStep: (typeof steps)[number] | undefined;
+    searchIndexTestHooks.event = (e: { type: string; bytes?: unknown; worked?: unknown; rebuilding?: unknown }) => {
+      const at = performance.now();
+      if (e.type === "timer") { const last = steps.at(-1); if (last && last.next === undefined) last.next = at; return; }
+      if (e.type !== "stepped" || !e.worked || !e.rebuilding) return;
+      // The owed wait from the literal design rate, never from the product's own searchPacedDelay.
+      const step = { at, bytes: Number(e.bytes), delay: Number(e.bytes) * 60_000 / (256 * 1048576), nudged: false };
+      steps.push(step);
+      // The second large step: an owner append lands before its reply is scheduled (an append while the step is in flight).
+      if (!appended && step.delay >= PACED_MS && steps.filter(s => s.delay >= PACED_MS).length === 2) {
+        appended = true; step.nudged = true; nudgedStep = step;
+        insertMessage("owner", { id: "owner-append", role: "user", kind: "text", text: "owner append during rebuild", at: 30_000 });
+      }
+    };
+    try {
+      await stopSearchIndex();
+      rebuildMessageSearchIndex(database());
+      startSearchIndex(database(), join(DATA_DIR, "messages.db"));
+      const until = performance.now() + 40_000, done = () => steps.filter(s => !s.nudged && s.delay >= PACED_MS && s.next !== undefined).length >= 3 && nudgedStep?.next !== undefined;
+      while (!done() && performance.now() < until) await new Promise(r => setTimeout(r, 20));
+      const paced = steps.filter(s => !s.nudged && s.next !== undefined);
+      console.log(`[search pace witness] steps ${steps.length}, paced ${paced.map(s => `${(s.bytes / 1048576).toFixed(1)}MB/${Math.round(s.next! - s.at)}ms`).join(" ")}, nudged ${nudgedStep ? `${(nudgedStep.bytes / 1048576).toFixed(1)}MB/${Math.round(nudgedStep.next! - nudgedStep.at)}ms` : "none"}`);
+      // Pacing applies: at least three large rebuild steps, and every unnudged worked step waits its N / rate (5 ms timer slack).
+      expect(paced.filter(s => s.delay >= PACED_MS).length, "large paced rebuild steps observed").toBeGreaterThanOrEqual(3);
+      for (const s of paced) expect(s.next! - s.at + 5, `gap after a ${s.bytes} byte step`).toBeGreaterThanOrEqual(s.delay);
+      // The owner append never waits: the step it overlapped would have waited >= 200 ms; the next dispatch comes at the 10 ms nudge delay.
+      expect(nudgedStep, "an owner append overlapped a large rebuild step").toBeDefined();
+      expect(nudgedStep!.delay).toBeGreaterThanOrEqual(PACED_MS);
+      expect(nudgedStep!.next! - nudgedStep!.at, "owner append dispatch delay").toBeLessThan(100);
+    } finally {
+      searchIndexTestHooks.event = null;
+      await stopSearchIndex();
+    }
+  }, 60_000);
 });

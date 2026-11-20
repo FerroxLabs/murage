@@ -8,7 +8,7 @@ import { beforeEach, expect, it } from 'vitest';
 import { DATA_DIR } from '../config.ts';
 import { closeDatabase, database } from '../database.ts';
 import { InternalCapabilities } from '../internal-capabilities.ts';
-import { assertMemoryAccess, ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from './policy.ts';
+import { assertMemoryAccess, revalidateMemoryAccess, ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from './policy.ts';
 import { captureScopeId } from './capture.ts';
 import { ensureBotScope } from './lessons.ts';
 import { RecallPreparationPending, RecallViewLost } from './recall-recovery.ts';
@@ -61,10 +61,14 @@ it('an assert behind the roster refuses pending at a cost flat in roster size an
   }
   expect(large.cost).toEqual(small.cost);
   expect(large.runs).toBe(small.runs);
-  // The certified background path catches up; the same issued access then passes its cited-scope check.
+  // The certified background path catches up. MAIN RULING H5 2026-11-18T13:29Z (19:46Z Q3 stands, fix/1020-fable-recallrest
+  // 84f06daee0, merge 420659b00e): after the authority epoch moves the OLD handle is refused; the reader goes on only by
+  // re-validating, and the re-validated access passes its cited-scope check.
   reconcileMemoryRoster(large.roster);
   await large.views.prepareRecallContext('reader','direct',large.roster);
-  expect(() => assertMemoryAccess(large.access)).not.toThrow();
+  expect(() => assertMemoryAccess(large.access)).toThrow('MEMORY_CONTEXT_REVOKED');
+  const live = revalidateMemoryAccess(large.access);
+  expect(() => assertMemoryAccess(live)).not.toThrow();
 });
 
 it('a scope ensureScope creates for an unrelated owner leaves an issued view valid; a cited-scope narrowing still refuses', async () => {

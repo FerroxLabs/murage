@@ -318,6 +318,10 @@ it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k
 it("T4: deleting a conversation of 1k or 100k sources, or a bot of 1k or 50k records, is one deny row in a flat commit", () => {
   // an in-memory database (as T6): the commit and the slices measured are this lane's work, not the disk's
   countableInline();
+  // Open the main database first: a live recall reader left by an earlier test makes the commit's
+  // prepareActiveRecallReaders() (since fix/1020-fable-recallrest, merge 420659b00e) open it lazily, and its
+  // migration statements (routine_link_ready) would then be counted and EXPLAINed against this :memory: db.
+  database();
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys=ON");
   migrateMemorySchema(db, "active");

@@ -33,7 +33,7 @@ export interface SettingsCard {
  *  Controlled by the modal so an opener can open it before scrolling to an advanced anchor. */
 export interface AdvancedSectionProps {
   section: SettingsPage;
-  /** One line after "Advanced · " naming what is inside, e.g. "Start at login, keep running in the background, usage analytics, sidebar density". */
+  /** One line after "Advanced · " naming what is inside, e.g. "Start at login, keep running in the background, sidebar density". */
   summary: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;

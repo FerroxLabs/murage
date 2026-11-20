@@ -168,6 +168,8 @@ async function finishBatchAdmission(target:MemoryIndex):Promise<boolean>{
   while(!exiting&&target.writerCheckOwed?.()){
     try{await maintain(target);}catch(error){if(!isBgDeferred(error))throw error;}
     if(target.writerCheckOwed?.())await new Promise<void>(resolve=>setTimeout(resolve,MAINTENANCE_POLL_MS));
+    // Reads need no write check: a search queued while the log is checked is answered between the steps (T4).
+    while(!exiting&&queries.length&&index&&embeddings&&eligibility)await serveQueries();
   }
   if(exiting)return false;
   await settleHelperAdmission();
@@ -221,7 +223,9 @@ async function drain(){
           const restore=setAdmissionPurpose(batch.records.length>0&&batch.records.every(record=>record.deleted&&!record.rolled)?"owner-delete":"bg");
           try{written=await index.applyBatch(batch.records);}finally{restore();}
         }
-        catch(error){if(isBgDeferred(error)){batches.unshift(batch);await new Promise<void>(resolve=>setTimeout(resolve,MAINTENANCE_POLL_MS));continue;}throw error;}
+        // A refused batch is retried after the wait; a turn's search queued meanwhile goes first (fablehunt-1020q T4: recall waited behind
+        // the retries of a refused batch, past RECALL_WAIT_MS, and the turn went out with no memory).
+        catch(error){if(isBgDeferred(error)){batches.unshift(batch);await new Promise<void>(resolve=>setTimeout(resolve,MAINTENANCE_POLL_MS));queryBatchServed=false;continue;}throw error;}
         if(written.status!=="done"){
           if(written.reason==="segment-gate"||written.reason==="merge-floor"||written.reason==="age-blocked"){
             // These need the controller's durable/paced hold, not an internal
@@ -244,6 +248,7 @@ async function drain(){
           try{await maintain(index);}catch(error){console.error(`index maintenance failed: ${describe(error)}`);}
           reportIo();
           await new Promise<void>(resolve=>setTimeout(resolve,MAINTENANCE_POLL_MS));
+          queryBatchServed=false;
           continue;
         }
         // Return checked lexical-write reservations before awaiting model inference.
@@ -540,7 +545,9 @@ process.on("message",async input=>{
       if(exiting)return;
       // The 50 ms tick (1.11): seal and truncate whenever the log is over its tick line.
       const tickTimer=setInterval(()=>{
+        // A waiting search goes first: the tick starts again 50 ms after the queue is empty (T4).
         if(exiting||resetHeld()||busy||maintenanceBusy)return;
+        if(queries.length>0){void drain();return;}
         maintenanceBusy=true;
         void (async()=>{try{await index?.tick?.();if(index?.writerCheckOwed?.()&&!agingIndex)await maintain(index);}catch(error){console.error(`index tick failed: ${describe(error)}`);}finally{maintenanceBusy=false;void drain();}})();
       },MAINTENANCE_POLL_MS);tickTimer.unref();

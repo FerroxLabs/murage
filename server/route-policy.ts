@@ -87,14 +87,6 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)\/(start|sign-out|attempts\/[A-Za-z0-9_-]{1,200}\/cancel)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms a home model sign-in change." },
   { methods: ["DELETE"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms removing a home model connection." },
   { methods: "*", path: /^\/api\/cloud\/own-server(?:\/(?:confirm|test))?$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner connects, checks or removes their own server for bots to use as a computer (server/cloud-home/own-server.ts)." },
-  { methods: ["GET"], path: /^\/api\/highlevel\/reviews\/hla_[0-9a-f-]{36}$/, class: "desktop", why: "The owner's desktop card reads an open HighLevel review's values live; they are never stored in the conversation (server/highlevel/review-cards.ts)." },
-  { methods: ["GET"], path: "/api/highlevel", class: "companion", why: "The owner reads native HighLevel status: whether a token is saved, the confirmed location, pending changes and each bot's access. Never the token (server/highlevel/private-token.ts)." },
-  { methods: ["POST"], path: /^\/api\/highlevel\/token\/(?:check|[0-9a-f-]{36}\/confirm)$/, class: "desktop", cloudWrite: "credential", why: "The owner checks a HighLevel location with the saved token, then confirms that exact check; only then can a bot reach it." },
-  { methods: ["PUT"], path: re(`/api/highlevel/bots/${ID}/access`), class: "companion", cloudWrite: "ordinary", why: "The proven owner reads or revokes access; the handler requires the desktop app for change/full grants and removal of review rules." },
-  { methods: ["DELETE"], path: /^\/api\/highlevel\/connections\/(hl_[A-Za-z0-9_-]{1,157})$/, class: "desktop", cloudWrite: "credential", why: "The owner disconnects the HighLevel location; nothing more reaches it until they check and confirm again." },
-  { methods: ["POST", "PATCH", "DELETE", "HEAD", "OPTIONS"], path: /^\/api\/highlevel(?:\/.*)?$/, class: "desktop", cloudWrite: "credential", why: "Unknown HighLevel mutations answer 404 and retain desktop credential admission." },
-  { methods: ["GET"], path: /^\/api\/highlevel\/.*$/, class: "desktop", why: "Review values and unknown HighLevel reads remain desktop-only; only the exact status route admits paired owners." },
-  { methods: ["PUT"], path: /^\/api\/highlevel(?:$|\/(?!bots\/[\w-]+\/access$).*)$/, class: "desktop", cloudWrite: "credential", why: "Only the exact bot grant route admits paired owners; all other HighLevel PUT paths remain desktop-only." },
   { methods: ["GET", "PUT"], path: "/api/owner/timezone", class: "desktop", cloudWrite: "ordinary", why: "The owner reads and sets their time zone: the home's on a Cloud home, the desktop profile's on this computer (owner-time-zone.ts)." },
   { methods: ["GET"], path: "/api/data-dir/roots", class: "desktop", why: "S5 DR7: the data roots' states for Settings > Data folder; the owner's own computer only (isOwnersComputer), anyone else 404 with no body." },
   { methods: ["POST"], path: "/api/data-dir/confirm-root", class: "desktop", cloudWrite: "step-up", why: "S5 DR7: the owner confirms a linked data root that now points somewhere else; the owner's own computer only, a Cloud home answers 404." },
@@ -343,6 +335,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: "*", path: /^\/api\/about-me$/, class: "desktop", cloudWrite: "ordinary", why: "the owner's own profile" },
   { methods: "*", path: /^\/api\/house-rules(?:\/reset)?$/, class: "desktop", cloudWrite: "ordinary", why: "House Rules text and switch" },
   { methods: "*", path: /^\/api\/whats-new(?:\/seen)?$/, class: "desktop", cloudWrite: "ordinary", why: "What's New pages shown" },
+  { methods: ["GET"], path: /^\/api\/notices\/highlevel-moved$/, class: "desktop", cloudWrite: "ordinary", why: "One-time line: HighLevel moved to connected apps" },
   { methods: ["GET"], path: "/api/terms", class: "conversation", why: "which terms are accepted: any owner surface the door serves may read it, so a screen that cannot accept can still see that the desktop did, or say where to accept" },
   { methods: ["POST", "PUT", "PATCH", "DELETE"], path: "/api/terms", class: "companion", cloudWrite: "ordinary", why: "only GET reads the terms status; every other method on it is for the owner's desktop or paired phone" },
   { methods: "*", path: "/api/terms/accept", class: "companion", cloudWrite: "ordinary", why: "terms acceptance: the owner's desktop, paired phone or, on a Cloud home, the owner's own browser (a browser-only customer has no other surface; it grants no authority over bots, tools or money); nothing else can agree to the terms for them" },
@@ -522,8 +515,6 @@ export function routeRefusal(caller: RouteCaller, routeClassName?: RouteClass): 
  *  - POST /api/cloud/devices/:id/owner/revoke: "make this browser chat-only" (revokeOwnerFactor). It matches the
  *    `devices/[^/]+` sensitive pattern below, so it needs a step-up (owner-desktop or owner-phone), and a fresh emailed
  *    code for the owner's browser (browser-owner-policy.ts). */
-/** Open HighLevel review values remain desktop-only. */
-export const HIGHLEVEL_REVIEW_ROUTE = /^\/api\/highlevel\/reviews\//;
 export type CloudRouteDecision = "allow" | "deny" | "step-up required" | "email-code required";
 /** What the auth layer has verified about THIS request, for the owner's browser. */
 export interface CloudRouteContext {
@@ -572,7 +563,6 @@ export function cloudRouteDecision(method: string, targetRoute: string, scope: i
   if (scope === "service") return entry && ["health","internal","media","extension"].includes(entry.class) ? "allow" : "deny";
   // An engine sign-in terminal is a credential flow even though it opens with a
   // GET upgrade: owner-desktop only, and always behind a step-up assertion.
-  if (scope !== "owner-desktop" && HIGHLEVEL_REVIEW_ROUTE.test(targetRoute)) return "deny";
   if (entry?.class === "engine-login") {
     if (scope === "remembered-owner") return context.engineTicket ? "allow" : "deny";
     return scope !== "owner-desktop" ? "deny" : steppedUp ? "allow" : "step-up required";
@@ -593,7 +583,6 @@ export function cloudRouteDecision(method: string, targetRoute: string, scope: i
     || method === "PUT" && /^\/api\/skills\/collection\/[^/]+$/.test(targetRoute))) return "deny";
   // A HighLevel review's values are the owner's desktop app's alone (HL-S2-WRITES (c)); the handler's ownerAppSurface
   // refuses a Cloud phone too, this is the second check.
-  if (scope === "owner-phone" && HIGHLEVEL_REVIEW_ROUTE.test(targetRoute)) return "deny";
   if (sensitive && !steppedUp) return "step-up required";
   // Unknown targetRoutes keep the desktop default; concrete handler still decides 404.
   return "allow";

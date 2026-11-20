@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Your day (Today slice 1.0.18, designs/TODAY-SLICE-1104.md sections 2 and 3): what still runs between now and the
-// viewer's midnight, from dayTimeline (src/lib/today-day.ts). No calendar read: the meetings row is a placeholder
-// until 1.0.19. Empty states: a later run ("Nothing else is scheduled today. Next: {name}, {when}."), no routines
+// viewer's midnight, from dayTimeline (src/lib/today-day.ts). No calendar read, and no placeholder promising one
+// (1.0.20 owner walk). Empty states: a later run ("Nothing else is scheduled today. Next: {name}, {when}."), no routines
 // at all ("No routines yet. Tell {chief} what you want done every day."), or routines with no time at all.
 import { ArrowRight } from "lucide-react";
 import { t } from "@/lib/i18n";
@@ -65,7 +65,6 @@ export function YourDay({ timeline, now, botNames, chiefName, onOpenRoutines }: 
           <p className={marker}>{t("ux.l2a.today.day.midnight")}</p>
         </>
       )}
-      <p data-day="meetings" className="mt-2 px-2 py-1 text-[13px] text-ink-secondary">{t("ux.l2a.today.day.meetings")}</p>
     </section>
   );
 }

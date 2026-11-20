@@ -299,3 +299,31 @@ it.each([true,false])('room last-resort=%s resets only the rebuild session',asyn
   ?{resets:1,roomMemoryReset:true,roomContinuedSession:undefined,retained:false}
   :{resets:0,roomMemoryReset:false,roomContinuedSession:'kept-session',retained:true});
 });
+
+it('a resumed room retires shell state before resetting its adapter', async () => {
+  const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+  const start = source.indexOf('async function runGroupMemberTurnDispatch(');
+  expect(start).toBeGreaterThan(0);
+  const room = source.slice(start, source.indexOf('\n}\n', start));
+  // MAIN RULING 2026-11-17T19:46Z: execute the shipped reset; shell retirement must precede the adapter reset on resume.
+  const declaration = "const resetRoomMemberSession = ";
+  const resetStart = room.indexOf(declaration);
+  expect(resetStart).toBeGreaterThan(0);
+  const resetEnd = room.indexOf("\n  };", resetStart);
+  expect(resetEnd).toBeGreaterThan(resetStart);
+  const events: string[] = [];
+  let shellLive = true;
+  const reset = new Function('shellSessions', 'instance', 'threadId', 'internalCapabilities', 'internalGeneration',
+    'memoryState', 'roomStoredMemoryMode', 'roomRetainedMemory', 'roomRetainedKey', 'roomRetainedSession',
+    'deleteSessionChecks', 'database', 'sessionKeyOf',
+    'return (' + room.slice(resetStart + declaration.length, resetEnd + 4) + ');')(
+      { retire(thread: string, engine: string) { expect([thread, engine]).toEqual(['room-thread', 'engine']); shellLive = false; events.push('retire'); } },
+      { instanceId: 'engine', adapter: { async resetSession(thread: string) { expect(thread).toBe('room-thread'); expect(shellLive).toBe(false); events.push('reset'); } } },
+      'room-thread', { activeGeneration: () => 'generation' }, 'generation', () => ({ mode: 'active' }), 'active',
+      new Map([['retained', 'session']]), 'retained', (value: string) => value,
+      (_db: unknown, key: string[]) => { expect(key).toEqual(['room-thread', 'engine', 'session']); events.push('checks'); },
+      database, (...parts: string[]) => parts);
+  await buildMemoryBundleAfterReset('alarm code', access(), empty, reset, { allowance: LineageAllowance.tool(1_000_000_000) });
+  expect(events).toEqual(['retire', 'reset', 'checks']);
+  expect(room).toContain("const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,undefined,");
+});

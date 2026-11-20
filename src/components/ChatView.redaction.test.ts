@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { StoreProvider, useStore, type Action, type CommandOutboxEntry, commandOutboxBody, normalizeAudienceWire, createStreamDeltaBuffer } from "../state/store";
+import { StoreProvider, useStore, type Action, type CommandOutboxEntry, commandOutboxBody, normalizeAudienceWire, createStreamDeltaBuffer, LIVE_REPLY_WITHHELD } from "../state/store";
 import { createOutbox } from "../state/send-delivery";
 import { engineCommandPick, matchEngineCommands, selectedCommandSend } from "../lib/engine-commands-menu";
 
@@ -15,7 +15,29 @@ describe("audience stream regions", () => {
     push("t1", "assistant_text", "«redacted»", { regionId: "r1", itemRevision: 1, speechDisposition: "none" });
     push("t1", "assistant_text", "«redacted»", { regionId: "r1", itemRevision: 2, speechDisposition: "none" });
     buffer.flush(); buffer.dispose();
-    expect(text).toBe("«redacted»");
+    // CHANGED (redact2-1020): a whole withheld assistant region reads the plain line, still folded once; it was the bare marker
+    expect(text).toBe(LIVE_REPLY_WITHHELD);
+  });
+  it("REDACT2-1020-LIVE a withheld assistant item never paints a bare «redacted» bubble while the bot works; inline masks and reasoning keep the server's text", () => {
+    let text = "", reasoning = "";
+    const buffer = createStreamDeltaBuffer((entries) => { for (const [, d] of entries) { if (d.replaceText) text = d.text; else text += d.text; if (d.replaceReasoning) reasoning = d.reasoning; else reasoning += d.reasoning; } });
+    buffer.push("t1", "assistant_text", "Still sweeping. ", { regionId: "r1", itemRevision: 1, speechDisposition: "append", op: "append" });
+    buffer.flush();
+    expect(text).toBe("Still sweeping. ");
+    // the next item is withheld whole: by an omit op, and by a replace whose text is only the marker
+    buffer.push("t1", "assistant_text", "", { regionId: "r2", itemRevision: 1, speechDisposition: "none", op: "omit" });
+    buffer.flush();
+    expect(text).toBe(`Still sweeping. ${LIVE_REPLY_WITHHELD}`);
+    buffer.push("t1", "assistant_text", "«redacted»", { regionId: "r3", itemRevision: 1, speechDisposition: "none", op: "replace" });
+    buffer.flush();
+    expect(text).not.toContain("«redacted»");
+    // an inline mask inside the bot's other words is the server's own text, kept
+    buffer.push("t1", "assistant_text", "token «redacted» rotated", { regionId: "r4", itemRevision: 1, speechDisposition: "none", op: "replace" });
+    buffer.flush();
+    expect(text).toContain("token «redacted» rotated");
+    buffer.push("t1", "reasoning_text", "«redacted»", { regionId: "q1", itemRevision: 1, speechDisposition: "none", op: "replace" });
+    buffer.flush(); buffer.dispose();
+    expect(reasoning).toBe("«redacted»");
   });
   it("ux.clean-multiline and ux.unterminated preserve admitted server lines", () => {
     let text = "";
@@ -117,7 +139,8 @@ it("a replacement cannot restore a suppressed region or duplicate a clean revisi
   buffer.push("t1", "assistant_text", "Safe\n", { regionId: "r1", itemRevision: 1, speechDisposition: "append" });
   buffer.flush(); expect(text).toBe("Safe\n");
   buffer.push("t1", "assistant_text", "«redacted»", { regionId: "r1", itemRevision: 2, speechDisposition: "none", op: "replace" });
-  buffer.flush(); expect(text).toBe("«redacted»");
+  // CHANGED (redact2-1020): the suppressed region reads the plain line (was the bare marker); it still cannot be restored
+  buffer.flush(); expect(text).toBe(LIVE_REPLY_WITHHELD);
   buffer.push("t1", "assistant_text", "must not restore", { regionId: "r1", itemRevision: 3, speechDisposition: "none", op: "replace" });
-  buffer.flush(); buffer.dispose(); expect(text).toBe("«redacted»");
+  buffer.flush(); buffer.dispose(); expect(text).toBe(LIVE_REPLY_WITHHELD);
 });

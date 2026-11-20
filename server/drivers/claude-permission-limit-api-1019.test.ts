@@ -93,12 +93,13 @@ for(const scenario of ['large unchanged','small changed','oversize changed'] as 
     expect(JSON.stringify(messages)).not.toContain(PERMISSION_REPLY_TOO_LARGE);
    }else{
     expect(waited).toMatchObject({status:'settled'});expect(cards).toEqual([]);
-    // REDACT-MD revised turn policy: an oversize provider input exhausts the
-    // audience budget, while execution must still write its original bytes.
-    if(scenario==='large unchanged'){
-     expect(JSON.stringify(messages)).toContain('«redacted»');
-     expect(JSON.stringify(messages)).not.toContain('✓'.repeat(32));
-    }else expect(JSON.stringify(messages)).toContain('permission: allowed');
+    // Owner rule (hunt-redact2 prompt, MAIN 21:22Z GO of fix/1020-redact-acp-fable 832aa2ad61, supersedes the
+    // REDACT-MD turn mask): the owner never sees «redacted» in their own thread; an oversize input is shortened
+    // for display, never a turn mask. The 400 KiB input is still never shown whole, the reply is shown, and
+    // execution still writes its original bytes.
+    expect(JSON.stringify(messages)).not.toContain('«redacted»');
+    if(scenario==='large unchanged')expect(JSON.stringify(messages)).not.toContain('✓'.repeat(32));
+    expect(JSON.stringify(messages)).toContain('permission: allowed');
     expect(existsSync(target)).toBe(true);
     expect(readFileSync(target,'utf8')).toBe(scenario==='large unchanged'?input.content:changed.content);
    }

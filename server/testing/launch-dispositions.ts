@@ -123,8 +123,6 @@ export const launchDispositions: { file: string; kind: "TURN" | "PROBE" | "NOT-E
   {"file": "server/fuigo-probe-isolation.ts", "kind": "PROBE", "reason": "Catalog, version, or environment probe; runs no bot prompt."},
   {"file": "server/gepa-worker.ts", "kind": "NOT-ENGINE", "reason": "Host utility or service process, not a bot turn engine."},
   {"file": "server/harness/registry.ts", "kind": "NOT-ENGINE", "reason": "Host utility or service process, not a bot turn engine."},
-  {"file": "server/highlevel/approval-journal-storage.ts", "kind": "PROBE", "reason": "Queries the local filesystem type for the approval journal with fixed mount or volume commands; never launches a bot engine."},
-  {"file": "server/highlevel/returned-identities.mutants.mjs", "kind": "NOT-ENGINE", "reason": "Runs isolated Vitest mutation checks for returned identities; not a product engine launch."},
   {"file": "server/hook-canon.ts", "kind": "PROBE", "reason": "Queries Windows reparse metadata to canonicalize hook paths."},
   {"file": "server/host-power.ts", "kind": "TURN", "reason": "Power wrapper carries the validated inner command folder."},
   {"file": "server/index.ts", "kind": "NOT-ENGINE", "reason": "Version probe only; turn launches are delegated to drivers."},

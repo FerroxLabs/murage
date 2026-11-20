@@ -90,7 +90,7 @@ test("menus use exactly three allowlisted tasks on their own platform and clear 
       assert.deepEqual(r.tasks, ids);
     } else assert.deepEqual(r.calls, []);
     r.calls.length = 0;
-    r.prefs.badgeMenu = false;
+    r.prefs.surfaces.badge = false;
     r.surfaces.refreshMenu();
     assert.deepEqual(r.calls, platform === "win32" ? [["tasks", []]] : platform === "darwin" ? [["menu", []]] : []);
   }
@@ -154,4 +154,16 @@ test("main second-instance dispatches tasks and preserves the backup-only early 
   calls.length = 0;
   handler(null, ["--murage-task=nope"]);
   assert.deepEqual(calls, ["activate"]);
+});
+
+test("an upgraded profile with the badge on and the legacy menu off gets both Dock surfaces", () => {
+  const r = rig("darwin", "upgrade");
+  r.setPrefs({ ...r.prefs, badgeMenu: false });
+  r.surfaces.apply({ unread: 81, needsYou: 12 });
+  r.surfaces.refreshMenu();
+  assert.deepEqual(r.calls[0], ["count", 81]);
+  assert.deepEqual(r.calls[1][1].map(item => item.label), labels);
+  r.setPrefs({ ...r.prefs, badgeMenu: true, surfaces: { ...r.prefs.surfaces, badge: false } });
+  r.surfaces.refreshMenu();
+  assert.deepEqual(r.calls.at(-1), ["menu", []]);
 });

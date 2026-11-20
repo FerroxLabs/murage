@@ -12,21 +12,24 @@
 //   panel    createTrayPanel, built the first time it is asked for (the tray icon does not exist until the lifecycle creates it).
 //   float    createFloatWindows + createFloatSurface (the router's bubble rung, handed to createAttentionMain as showSurface/closeSurface).
 //
+//   pill     follows the current local Needs you count on Mac.
 // The shared host and items reader own refresh ordering and draft continuity for every window.
 import { createAttentionIpc } from "./attention-ipc.mjs";
 import { createAttentionWindowHost } from "./attention-window-host.mjs";
 import { itemsFromAttention } from "./attention-items.mjs";
 import { createFloatSurface, createFloatWindows } from "./float-windows.mjs";
 import { createTrayPanel } from "./tray-panel.mjs";
+import { createPillWindow } from "./pill-window.mjs";
 
 /** The window-kind to outside-surface map (shared/outside-limits.mjs): the tray panel kinds are all "flyout". */
-export const surfaceForKind = kind => (kind === "bubble" || kind === "dock" ? kind : "flyout");
+export const surfaceForKind = kind => (kind === "bubble" || kind === "dock" || kind === "pill" ? kind : "flyout");
 
 export function createAttentionSurfaces({ electron, ipcMain, platform, tray, actions, prefs, capabilities, presence, presenceWatch,
-  transportFor, readLocal, readPreviews, openApp, openTarget, sendToBot, pauseAutomations, loadUrlFor, log = () => {} }) {
+  transportFor, readLocal, readPreviews, openApp, openTarget, openNeedsYou, sendToBot, pauseAutomations, loadUrlFor,
+  getSafeAreaTop, presenceRefresh, log = () => {} }) {
   const gate = createAttentionIpc({ urlFor: loadUrlFor });
   const registered = new Set();
-  let host = null, panel = null, disposed = false, stopWatch = null, roster = [];
+  let host = null, panel = null, disposed = false, stopWatch = null, roster = [], syncGeneration = 0;
   const say = line => { try { log(line); } catch { /* logging never interrupts a surface */ } };
 
   const baseRegister = gate.register, baseUnregister = gate.unregister;
@@ -51,12 +54,22 @@ export function createAttentionSurfaces({ electron, ipcMain, platform, tray, act
     botStates: () => roster,
   });
 
+  const pillWindow = platform === "darwin" ? createPillWindow({
+    BrowserWindow: electron.BrowserWindow, screen: electron.screen, powerMonitor: electron.powerMonitor,
+    attentionIpc: gate, loadUrlFor, platform, presence, getSafeAreaTop,
+  }) : null;
+  const pillWanted = () => pillWindow && prefs()?.surfaces?.pill === true;
+  pillWindow?.onChange((windowId, { discard }) =>
+    host.invalidateWindow(windowId, discard ? undefined : { retainCards: true }));
+
   host = createAttentionWindowHost({
     actions, floatWindows, surfaceFor: surfaceForKind, log,
     transportFor: entry => transportFor(entry.home),
-    readItems,
+    readItems: kind => kind === "pill" && pillWindow ? pillWindow.readItems() : readItems(),
+    pillExpand: pillWindow?.pillExpand,
     openTarget: async target => {
       if (!target || typeof target !== "object") return;
+      if (target.kind === "needs-you") { await openNeedsYou(); return; }
       await openApp();
       if (target.kind === "app") return;
       if (target.kind === "bot") { if (typeof target.botId === "string") openTarget({ kind: "compose", botId: target.botId }); return; }
@@ -81,24 +94,44 @@ export function createAttentionSurfaces({ electron, ipcMain, platform, tray, act
     }
   }
 
-  /** Preference, roster or presence changed: read the roster, then let the floating windows follow, and poll presence only while one is visible. */
+  /** Follow the current roster, Needs you count, and presence. New reads fence slower snapshots. */
   async function sync() {
     if (disposed) return;
-    // Nothing floating is wanted and nothing floats: no roster read, no manager work (a preference or presence change calls this again).
-    if (!floatWanted() && floatWindows.status().windows.length === 0) { releaseWatch(); changed(); return; }
+    const ticket = ++syncGeneration;
+    const current = () => !disposed && ticket === syncGeneration;
+    const wantsPill = pillWanted(), wantsFloats = floatWanted() || floatWindows.status().windows.length > 0;
+    if (wantsPill) pillWindow.hideIfBlocked();
+    else if (pillWindow?.count()) pillWindow.hideAll();
+    if (!wantsPill && !wantsFloats) { releaseWatch(); changed(); return; }
+    let trayRead, attention, previews;
     try {
-      const [trayRead, attention] = await Promise.all([readLocal("/api/desktop/tray"), readLocal("/api/desktop/attention")]);
+      [trayRead, attention, previews] = await Promise.all([
+        readLocal("/api/desktop/tray"), readLocal("/api/desktop/attention"),
+        wantsPill && readPreviews().catch(() => false),
+      ]);
+    } catch { /* An unavailable snapshot clears the surfaces. */ }
+    if (!current()) return;
+    const count = wantsPill && Number.isSafeInteger(trayRead?.needsYou) ? trayRead.needsYou : 0;
+    if (count > 0) {
+      try { await presenceRefresh?.(); } catch { /* the pill checks committed presence before showing */ }
+      if (!current()) return;
+    }
+    if (wantsPill) {
+      const snapshot = itemsFromAttention({ attention, tray: trayRead, home: "local", previews });
+      // The count snapshot has no delivery claim on the registered approval.
+      const items = snapshot.items.slice(0, 100).map(item => ({ ...item, outsideOk: {} }));
+      await pillWindow.syncNeedsYou({ count, items, previews: snapshot.previews }, { isCurrent: current });
+    }
+    if (!current()) return;
+    if (wantsFloats) {
       roster = rosterFrom(trayRead, attention);
-    } catch { roster = []; }
-    if (disposed) return;
-    try { await floatWindows.sync(); } catch (error) { say(`attention-surfaces: float sync failed ${error?.message ?? error}`); }
-    // Presence is watched for as long as a float is wanted OR one exists: a float hidden by fullscreen or sharing must see that end, and
-    // only the watch can tell it (no held card is there to keep one open).
-    // The preference is read again here: the awaits above let a later sync switch floats off, and this one must not take the watch back.
-    if (disposed) return;
-    const wantedNow = floatWanted(), existing = floatWindows.status().windows.length > 0;
-    if ((wantedNow || existing) && !stopWatch) stopWatch = presenceWatch?.() ?? null;
-    else if (!wantedNow && !existing) releaseWatch();
+      try { await floatWindows.sync(); } catch (error) { say(`attention-surfaces: float sync failed ${error?.message ?? error}`); }
+    }
+    if (!current()) return;
+    // A waiting item or float hidden by sharing/fullscreen must see that end.
+    if (floatWanted() || floatWindows.status().windows.length > 0 || (pillWanted() && count > 0)) {
+      if (!stopWatch) stopWatch = presenceWatch?.() ?? null;
+    } else releaseWatch();
     changed();
   }
   function floatWanted() {
@@ -117,6 +150,8 @@ export function createAttentionSurfaces({ electron, ipcMain, platform, tray, act
 
   /** Privacy change, home change or teardown: every window forgets every card and token it holds. */
   function invalidateAll() {
+    syncGeneration++;
+    if (pillWindow?.count()) pillWindow.hideAll();
     for (const id of [...registered]) host.invalidateWindow(id);
     changed();
   }
@@ -134,6 +169,7 @@ export function createAttentionSurfaces({ electron, ipcMain, platform, tray, act
   function dispose() {
     disposed = true;
     if (stopWatch) { try { stopWatch(); } catch { /* released */ } stopWatch = null; }
+    pillWindow?.destroy();
     try { floatWindows.destroy(); } catch { /* windows already gone */ }
     try { panel?.destroy(); } catch { /* window already gone */ }
     for (const id of [...registered]) host.invalidateWindow(id);

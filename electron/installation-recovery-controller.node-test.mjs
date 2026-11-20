@@ -142,3 +142,33 @@ test("T23 Quit disables Return but retains diagnostics",async()=>{
   assert.equal((await f.controller.handle(f.event,{action:"retry"})).error,"BACKUP_UPGRADE_ACTION_UNAVAILABLE");
   await f.controller.handle(f.event,{action:"diagnostics"});assert.equal(returned,0);assert.equal(diagnostics,1);
 });
+// 1.0.19 stuck users (RECOVERY-STUCK-FABLE T2): "This is my computer, continue" for a foreign data-folder lock.
+test("set-aside-foreign runs only while the host offers it, then hands control to the host once", async () => {
+  let offered = false, setAside = 0;
+  const f = fixture({ isAvailable: () => false, canSetAsideForeign: () => offered, setAsideForeign: async () => { setAside++; } });
+  const before = await f.controller.handle(f.event, { action: "state" });
+  assert.equal(before.setAsideAvailable, false);
+  assert.equal((await f.controller.handle(f.event, { action: "set-aside-foreign" })).error, "RECOVERY_OWNERSHIP_REQUIRED");
+  assert.equal(setAside, 0);
+  offered = true;
+  const after = await f.controller.handle(f.event, { action: "set-aside-foreign" });
+  assert.equal(after.error, null);
+  assert.equal(after.setAsideAvailable, true);
+  assert.equal(setAside, 1);
+  await assert.rejects(f.controller.handle(f.event, { action: "set-aside-foreign", path: "/arbitrary" }), /INVALID_RECOVERY_REQUEST/);
+  assert.equal(setAside, 1);
+});
+test("a refused set-aside reports its code and leaves the window usable", async () => {
+  const f = fixture({ isAvailable: () => false, canSetAsideForeign: () => true,
+    setAsideForeign: async () => { throw Object.assign(new Error("private detail"), { code: "LEASE_TAKEOVER_REFUSED" }); } });
+  const state = await f.controller.handle(f.event, { action: "set-aside-foreign" });
+  assert.equal(state.error, "LEASE_TAKEOVER_REFUSED");
+  assert.equal(state.busy, false);
+  assert.equal(JSON.stringify(state).includes("private detail"), false);
+});
+test("an update pause never offers set-aside-foreign", async () => {
+  let setAside = 0;
+  const f = fixture({ updatePause: () => true, canSetAsideForeign: () => true, setAsideForeign: async () => { setAside++; } });
+  assert.equal((await f.controller.handle(f.event, { action: "set-aside-foreign" })).error, "BACKUP_UPGRADE_ACTION_UNAVAILABLE");
+  assert.equal(setAside, 0);
+});

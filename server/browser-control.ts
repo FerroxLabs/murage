@@ -34,7 +34,13 @@ const BROWSER_NOT_ANSWERING = "Murage's browser is not answering.";
 // After a failed connect the panel's status reads do not start another one
 // for this long, so a browser that cannot start is not relaunched every poll.
 const RECONNECT_AFTER_MS = 3000;
-type Entry = Omit<BrowserStatus, "closing"> & { readDocuments?: WebDocuments; closing?: number; closeTarget?: CloseTarget; daemonIdentity?: DaemonIdentity; botId?: string; opEpoch: number; forgetting?: number; deleted?: boolean; controlEpoch?: number; problem?: string; native?: NativeBrowser; spec?: AgentBrowserSpec; pending?: Promise<unknown>; frame?: BrowserFrame & { generation: number }; lastSeq: number; streamId?: string; connecting?: Promise<void>; retryAt?: number };
+/** A tab left to the owner: the page was protected when the bot was moved to a new blank tab. Never attached to, read, typed into or
+ * closed for the bot. Released once the browser no longer lists it. No address is kept (it can carry a sign-in token). */
+type OwnerTab = { id: string; reason: BrowserProtection };
+const OWNER_TAB_TOOLS = new Set(["agent_browser_tab_list", "agent_browser_tab_switch", "agent_browser_tab_close", "agent_browser_close"]);
+const MAX_OWNER_TABS = 20;
+const validOwnerTabs = (value: unknown): value is OwnerTab[] => Array.isArray(value) && value.length <= MAX_OWNER_TABS && value.every(t => t && typeof t.id === "string" && t.id.length <= 200 && (t.reason === "owner-input" || t.reason === "sensitive-page"));
+type Entry = Omit<BrowserStatus, "closing"> & { ownerTabs?: OwnerTab[]; botTab?: string; readDocuments?: WebDocuments; closing?: number; closeTarget?: CloseTarget; daemonIdentity?: DaemonIdentity; botId?: string; opEpoch: number; forgetting?: number; deleted?: boolean; controlEpoch?: number; problem?: string; native?: NativeBrowser; spec?: AgentBrowserSpec; pending?: Promise<unknown>; frame?: BrowserFrame & { generation: number }; lastSeq: number; streamId?: string; connecting?: Promise<void>; retryAt?: number };
 export type Trailing = { key: string; entry: Entry; op: number; run: () => Promise<BrowserStatus> };
 const transitionError = (code: string, status = 409) => Object.assign(new Error(code), { status, code });
 const boundedClose = async (native: NativeBrowser) => {
@@ -90,7 +96,7 @@ export class UnifiedBrowserController {
       let migrated = false;
       for (const [key, state] of saved) {
         if (typeof key !== "string" || !Number.isSafeInteger(state.generation) || typeof state.held !== "boolean") throw new Error("Invalid browser control state");
-        if ((state.closeFailed !== undefined && typeof state.closeFailed !== 'boolean') ||
+        if ((state.closeFailed !== undefined && typeof state.closeFailed !== 'boolean') || (state.ownerTabs !== undefined && !validOwnerTabs(state.ownerTabs)) ||
             (state.daemonIdentity !== undefined && !validDaemonIdentity(state.daemonIdentity)) ||
             (state.closeTarget !== undefined && !validCloseTarget(state.closeTarget))) throw new Error('Invalid browser control state');
         if (options.ownerMigration) {
@@ -100,13 +106,13 @@ export class UnifiedBrowserController {
         // A lock saved before its cause was recorded is treated as the
         // owner's: only the owner's reopen clears it.
         const protectedReason: BrowserProtection | null = state.protectedDocument === true ? (state.protectedReason === "sensitive-page" ? "sensitive-page" : "owner-input") : null;
-        this.entries.set(key, { held: state.held, owner: typeof state.owner === "string" ? state.owner : null, closeFailed: state.closeFailed === true, daemonIdentity: state.daemonIdentity, closeTarget: state.closeTarget, opEpoch: ++this.opSeq, ...(state.closeFailed ? { closing: this.opSeq } : {}), protectedDocument: protectedReason !== null, protectedReason, generation: state.generation + 1, connected: false, notRunning: false, url: "", lastSeq: -1 });
+        this.entries.set(key, { held: state.held, owner: typeof state.owner === "string" ? state.owner : null, closeFailed: state.closeFailed === true, daemonIdentity: state.daemonIdentity, closeTarget: state.closeTarget, opEpoch: ++this.opSeq, ...(state.closeFailed ? { closing: this.opSeq } : {}), protectedDocument: protectedReason !== null, protectedReason, ...(state.ownerTabs?.length ? { ownerTabs: state.ownerTabs, ...(typeof state.botTab === "string" && state.botTab.length <= 200 ? { botTab: state.botTab } : {}) } : {}), generation: state.generation + 1, connected: false, notRunning: false, url: "", lastSeq: -1 });
       }
       if (migrated && !isReadOnly()) this.save();
     }
   }
   private save() {
-    writeFileAtomic(this.stateFile, JSON.stringify([...this.entries].map(([key, e]) => [key, { generation: e.generation, held: e.held, owner: e.owner, protectedDocument: e.protectedDocument, protectedReason: e.protectedReason, ...(e.closeFailed ? { closeFailed: true, daemonIdentity: e.daemonIdentity, closeTarget: e.closeTarget } : {}) }])), { mode: 0o600 });
+    writeFileAtomic(this.stateFile, JSON.stringify([...this.entries].map(([key, e]) => [key, { generation: e.generation, held: e.held, owner: e.owner, protectedDocument: e.protectedDocument, protectedReason: e.protectedReason, ...(e.ownerTabs?.length ? { ownerTabs: e.ownerTabs, ...(e.botTab ? { botTab: e.botTab } : {}) } : {}), ...(e.closeFailed ? { closeFailed: true, daemonIdentity: e.daemonIdentity, closeTarget: e.closeTarget } : {}) }])), { mode: 0o600 });
   }
   holdState(key: string) {
     const e = this.entries.get(key);
@@ -429,7 +435,7 @@ export class UnifiedBrowserController {
           await this.sessionGate.run([key], token => {
             assertGateToken(token, key);
             if (!this.current(plan) || e.native !== opened || !e.held || e.owner !== owner) throw refusal();
-            e.protectedDocument = false; e.protectedReason = null; e.url = ''; e.opEpoch = ++this.opSeq; plan.op = e.opEpoch; this.save();
+            e.protectedDocument = false; e.protectedReason = null; e.ownerTabs = undefined; e.botTab = undefined; e.url = ''; e.opEpoch = ++this.opSeq; plan.op = e.opEpoch; this.save();
           });
         } catch {
           throw Object.assign(new Error(BROWSER_REOPEN_FAILED), { status: 503 });
@@ -441,6 +447,46 @@ export class UnifiedBrowserController {
     if (action === 'forget') { e.forgetting = plan.op; this.teardownDone.set(key, done); }
     else { e.closing = plan.op; this.closingDone.set(key, done); }
     return plan;
+  }
+  /** Sean 1.0.20 ruling: the owner is never asked to hand a browser back. A protected page (sensitive, or the owner's input) is
+   * left exactly where it is, and the bot gets a new blank tab of its own: every tab the browser lists now is recorded as the
+   * owner's (never looked at again for the bot), one blank tab is opened, and the lock clears only once that tab checks clean.
+   * Silent apart from one log line. False when it cannot be done (the owner holds control, a step is running, the browser
+   * cannot tell its tabs apart, or the new tab failed): the page stays locked, as before. */
+  async freshTab(key: string): Promise<boolean> {
+    const e = this.entry(key); this.available(e);
+    if (!e.protectedDocument) return true;
+    // A move already under way (the turn start and a step at once): its outcome is this caller's too, never a false "locked".
+    if (e.pending) { const generation = e.generation; await e.pending.catch(() => {}); return !e.protectedDocument && !e.held && e.generation === generation; }
+    if (e.held || e.closeFailed) return false;
+    const native = this.native(e);
+    if (!native.pages) return false;
+    const generation = e.generation; const reason = e.protectedReason ?? "owner-input";
+    const run = async () => {
+      const listed = await native.pages!();
+      const kept = this.ownerTabsStill(e.ownerTabs, listed);
+      const known = new Set(kept.map(t => t.id));
+      const left = [...kept, ...listed.filter(t => !known.has(t.id)).map(t => ({ id: t.id, reason }))];
+      if (left.length > MAX_OWNER_TABS) return false;
+      await native.request("tools/call", { name: "agent_browser_tab_new", arguments: {} });
+      const skip = new Set(left.map(t => t.id));
+      // The bot's tab is the one new tab, pinned by id: exactly one listed tab outside the owner's, or nothing moves.
+      const mine = (await native.pages!()).filter(t => !skip.has(t.id));
+      if (mine.length !== 1) return false;
+      if (await native.protected(false, skip)) return false;
+      this.available(e);
+      if (e.held || e.generation !== generation) return false;
+      e.ownerTabs = left.length ? left : undefined; e.botTab = mine[0].id; e.protectedDocument = false; e.protectedReason = null; this.disposeReads(e); this.save();
+      console.log(`[browser] protected page left to the owner; bot moved to a new blank tab (${reason})`);
+      return true;
+    };
+    const pending = run(); e.pending = pending;
+    try { return await pending.catch(() => false); } finally { if (e.pending === pending) e.pending = undefined; }
+  }
+  /** The owner's tabs the browser still lists: a tab the owner closed (or a browser that restarted) releases its record. A page
+   * that only changed address is not released: a sign-in form's own redirect lands on the owner's private page with no owner step. */
+  private ownerTabsStill(tabs: OwnerTab[] | undefined, listed: { id: string }[]): OwnerTab[] {
+    return (tabs ?? []).filter(t => listed.some(p => p.id === t.id));
   }
   async dispatch(key: string, method: string, params: Record<string, unknown> = {}, authorize: () => boolean = () => false, options: { readScope?: string; authority?: ServiceAuthority } = {}): Promise<unknown> {
     const e = this.entry(key); this.available(e); const generation = e.generation;
@@ -459,6 +505,16 @@ export class UnifiedBrowserController {
     const call = validateHeadlessBrowserCall(params.name, params.arguments ?? {});
     // Leaving a page the guard flagged by itself. Never a page the owner typed in.
     const leaving = call.name === "agent_browser_open" && typeof call.arguments.url === "string";
+    // A protected page: the bot is moved to a new blank tab and the page is left to the owner. Opening an address goes on in that
+    // tab; any other step was meant for the protected page, so it does not run and the bot is told it has a tab of its own.
+    if (!noLimits() && e.protectedDocument && !e.held && authorize() && await this.freshTab(key)) {
+      if (!leaving) throw browserRefusal("browser_fresh_tab");
+    }
+    if (e.ownerTabs?.length && e.native?.pages) {
+      const kept = this.ownerTabsStill(e.ownerTabs, await e.native.pages().catch(() => e.ownerTabs!));
+      if (kept.length !== e.ownerTabs.length) { e.ownerTabs = kept.length ? kept : undefined; if (!e.ownerTabs) e.botTab = undefined; this.save(); }
+    }
+    if (!noLimits() && e.ownerTabs?.length && OWNER_TAB_TOOLS.has(call.name)) throw browserRefusal("browser_protected_tab");
     const allowed = () => {
       this.available(e);
       if (!authorize()) throw browserRefusal("browser_not_authorized");
@@ -470,6 +526,26 @@ export class UnifiedBrowserController {
     // The engine went down during this step: nothing was read from the page,
     // so the profile is reported as not running, never as a sensitive page.
     let down = false;
+    // While a tab is left to the owner, the bot has exactly ONE tab of its own, before and after every step. The engine acts on
+    // its current tab and falls back to another tab by index when that one goes (a page script closing it, a crash), so with two
+    // or more bot tabs it could land on the owner's tab while the page check passes on the bot's other one. Zero or two-plus: every
+    // listed tab is recorded as the owner's, the bot is moved to a new blank tab, and the step does not run (or its result is withheld).
+    let relocate = false;
+    const oneBotTab = async (native: NativeBrowser, opening: boolean) => {
+      if (noLimits() || !e.ownerTabs?.length) return;
+      const owner = new Set(e.ownerTabs.map(t => t.id));
+      const mine = native.pages ? (await native.pages()).filter(t => !owner.has(t.id)) : [];
+      // The one tab must also be the bot's pinned tab: if the bot's tab closed itself after a page script opened another, the
+      // engine may now be on the owner's tab while the one bot tab left is a different one.
+      // No pinned tab (a state saved without one) is never taken on trust: the one tab left may be one the owner opened.
+      if (mine.length === 1 && e.botTab === mine[0].id) {
+        if (opening) throw browserRefusal("browser_protected_tab");
+        return;
+      }
+      // Whatever this step may have read landed on a tab that might be the owner's: it is dropped, never kept for a later read.
+      relocate = true; protect(e, "owner-input"); this.disposeReads(e); this.save();
+      throw protectionRefusal(e.protectedReason!);
+    };
     const run = async () => {
       const native = this.native(e);
       // Native Windows navigation can wait on an attached screencast. Keep
@@ -477,7 +553,9 @@ export class UnifiedBrowserController {
       // in-flight action and the next owner status read restores the stream.
       native.resetStream(); e.connected = false; e.frame = undefined;
       // All frame/tab/value reads use this same barrier. No direct MCP mount.
-      const before = !noLimits() && await native.protected();
+      await oneBotTab(native, call.name === "agent_browser_tab_new");
+      const skip = new Set((e.ownerTabs ?? []).map(t => t.id));
+      const before = !noLimits() && await native.protected(true, skip);
       if (before && !leaving) { protect(e, "sensitive-page"); this.save(); throw protectionRefusal(e.protectedReason!); }
       allowed();
       const result = call.name === "agent_browser_read"
@@ -485,7 +563,8 @@ export class UnifiedBrowserController {
           e.readDocuments ??= new WebDocuments(undefined, undefined, e.botId), options.readScope ?? (() => { throw Error("Browser read scope is required."); })(), noLimits))
         : await native.request(method, call);
       allowed();
-      const after = !noLimits() && await native.protected();
+      await oneBotTab(native, false);
+      const after = !noLimits() && await native.protected(true, skip);
       if (after) { protect(e, "sensitive-page"); this.save(); throw protectionRefusal(e.protectedReason!); }
       allowed();
       if (!noLimits() && e.protectedDocument) { e.protectedDocument = false; e.protectedReason = null; this.save(); }
@@ -501,12 +580,16 @@ export class UnifiedBrowserController {
       // Disarming can fail two ways. The engine is down: nothing to disarm and
       // nothing read, so it is not running. Anything else: the page may still
       // hold what the guard armed against, so it stays locked.
-      try { await e.native?.protected(false); }
+      try { await e.native?.protected(false, new Set((e.ownerTabs ?? []).map(t => t.id))); }
       catch (error) { if (browserEngineDown(error)) this.notRunning(e); else { protect(e, "sensitive-page"); this.save(); } }
     }); e.pending = pending;
     try { const result = await pending; allowed(); return result; }
     // The owner's own Chrome keeps its own words (remote debugging off, or Allow), set by the route.
-    catch (error) { if (down && !e.spec?.env.AGENT_BROWSER_CDP) throw browserRefusal("browser_not_running"); throw error; }
+    catch (error) {
+      if (down && !e.spec?.env.AGENT_BROWSER_CDP) throw browserRefusal("browser_not_running");
+      if (relocate) { if (e.pending === pending) e.pending = undefined; if (!e.held && authorize() && await this.freshTab(key)) throw browserRefusal("browser_fresh_tab"); }
+      throw error;
+    }
     finally { if (e.pending === pending) e.pending = undefined; }
   }
   async forgetEntry(key: string) {

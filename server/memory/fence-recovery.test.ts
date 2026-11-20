@@ -41,6 +41,28 @@ describe("bounded fence recovery", () => {
     // fresh human words still win and stay the owner's
     expect(messageOnlyPrompt(undefined, { rawHumanText: "raw human words", frame: "static frame", now: "time", serverFrame }).parts[1]).toEqual({ text: "raw human words", lineageOf: [{ kind: "none", reason: "owner-turn" }] });
   });
+  // comms "queues eight helpers" (1.0.20): a delegated turn's recovery carries its task as the hand-off's own line, fenced like any line.
+  it("H2 a delegated turn's message-only recovery carries the hand-off line as that line, and is refused once the line is withheld", async () => {
+    const { messageOnlyPrompt, handoffFramePart, assertHandoffRecoveryCarriesTask } = await import("./fence-recovery.ts");
+    const fixture = new WritetimeFixture().reply("desk", "handoff", 2);
+    try {
+      const frame = handoffFramePart("desk", { id: "handoff", text: "batch work 3" });
+      expect(frame).toEqual({ text: "batch work 3", lineageOf: [{ kind: "line", threadId: "desk", messageId: "handoff" }] });
+      const prompt = messageOnlyPrompt(undefined, { rawHumanText: undefined, frame: "static", now: "time", serverFrame: frame });
+      expect(prompt.parts.map(part => part.text)).toEqual(["static", "batch work 3", "time"]);
+      expect(prompt.text).not.toContain("Stored context is unavailable");
+      expect(fenceVerdict(fixture.db, prompt, CONTENT)).toEqual({ state: "shown" });
+      fixture.denyLine("desk", 2);
+      expect(fenceVerdict(fixture.db, prompt, CONTENT).state).toBe("withheld");
+      // no line, no text: no frame, and a delegated recovery without one is refused (never the static instruction read as done)
+      for (const line of [null, undefined, { id: "handoff" }, { id: "handoff", text: null }, { id: "handoff", text: "  \n" }]) expect(handoffFramePart("desk", line)).toBeNull();
+      expect(() => assertHandoffRecoveryCarriesTask(true, null)).toThrow("MEMORY_CONTEXT_REVOKED");
+      expect(() => assertHandoffRecoveryCarriesTask(true, undefined)).toThrow("MEMORY_CONTEXT_REVOKED");
+      expect(() => assertHandoffRecoveryCarriesTask(true, promptPart(" ", [noneRef("murage")]))).toThrow("MEMORY_CONTEXT_REVOKED");
+      expect(() => assertHandoffRecoveryCarriesTask(true, frame)).not.toThrow();
+      expect(() => assertHandoffRecoveryCarriesTask(false, null)).not.toThrow();
+    } finally { fixture.close(); }
+  });
   it("H1 recovery retains the result and card refs through a withdrawal after rendering, and refuses unknown lineage", async () => {
     const { messageOnlyPrompt } = await import("./fence-recovery.ts");
     const fixture = new WritetimeFixture().reply("desk", "result", 2);

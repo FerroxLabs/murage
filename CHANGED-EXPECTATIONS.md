@@ -163,3 +163,8 @@ Test implementation owner: ci-reds-ff3a-g. Product contract and native release q
 - `server/host-power.test.ts`, "reuses one caged ACP wrapper across three non-mounted turns with no integrations": a separate real-cage control requires one wrapper, one initialize/authenticate handshake, three successful prompts and one idle entry between turns. It verifies stable engine identity and the physical wrapper cmdline, no redundant session/load, and confirmed cleanup on disposal. No integration is supplied on any turn.
 
 Both native cases carry `// MAIN RULING 1115-ACP-MOUNTED-SINGLEUSE`. No other lifecycle, policy or platform expectation is changed. The anchored-reader diagnostic preserves refusal codes and guards; its Linux diagnostic unit does not qualify the macOS packaged job (B3 remains open).
+
+## redact2-1020 (fix/1020-redact2-n2)
+- server/transcript-page.test.ts "an old marker keeps its field without blanking its owner-only row siblings": the owner-only read of an
+  assistant text row stored as ONLY «redacted» now expects REPLY_WITHHELD (owner-display.ts), not the bare marker. Sean reported those
+  bubbles in a routine thread (1.0.20 pre9); the sibling field (removedText) assertion and the shared-audience assertions are unchanged.
