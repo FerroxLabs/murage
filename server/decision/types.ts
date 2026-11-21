@@ -165,7 +165,8 @@ export interface DecisionEngineTarget {
 }
 export interface DecisionTransport {
   respond(target: DecisionEngineTarget, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>): Promise<RequestDelivery>;
-  interrupt(target: DecisionEngineTarget): Promise<void>;
+  /** `hostStopReason`: Murage stops the turn itself; the thread says why, never "Stopped by you". */
+  interrupt(target: DecisionEngineTarget, hostStopReason?: string): Promise<void>;
 }
 /** S4 supplies the actual S1 Store instance before ingress/recovery. S1 owns
  * transactions, record/cache updates, row writes, text refusals and FIFO text.

@@ -24,6 +24,7 @@ import { labelWorkCollection } from "./work-collections.ts";
 import { isTracked, plainCopy, track, trackedRoot, untracked, type TrackedWrite } from "./tracked-state.ts";
 import { PersistedStateRecoveryError, readPersistedJson } from "./persisted-state.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { ERROR_REASON_WITHHELD } from "./owner-display.ts";
 import { fenceEmailDerived } from "./email/external-marks.ts";
 import { CLOUD_ROUTINE_NOT_YET, PROJECT_CLOSED_COPY, type RoutineRunCardData } from "../shared/routine-run.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
@@ -4122,7 +4123,8 @@ export class RoutineManager {
   /** The event handling shared by every run kind (the rest of handleRuntimeEvent). */
   private applyRunEvent(run: RoutineRun, event: RuntimeEvent): RoutineRun | null {
     const presentation = this.runtimePresentation.get(event) ?? event;
-    const display = (field: string) => (presentation as unknown as Record<string, unknown>)[field] as string ?? "«redacted»";
+    // redact-1020: a field the presentation leaves out (owner-display.ts routinePresentation: a masked reply) is absent, never the bare marker
+    const display = (field: string) => (presentation as unknown as Record<string, unknown>)[field] as string ?? "";
     // A room goal contains several provider turns. Its orchestrator owns the
     // terminal decision and reports it through finishGoalRun; one member's
     // completion and private coordinator envelope are only intermediate
@@ -4172,9 +4174,10 @@ export class RoutineManager {
         run.attention = undefined;
       }
     } else if (event.type === "item.completed" && event.itemType === "assistant_text") {
-      run.output = redactSecretsInText(display("text")).trim().slice(0, 2_000);
+      const text = redactSecretsInText(display("text")).trim().slice(0, 2_000);
+      if (text) run.output = text;
     } else if (event.type === "runtime.error") {
-      run.error = redactSecretsInText(display("message")).slice(0, 500);
+      run.error = redactSecretsInText(display("message") || ERROR_REASON_WITHHELD).slice(0, 500);
     } else if (event.type === "turn.retrying") {
       // the driver will relaunch this same run; a transient blip is not a
       // receipt-worthy failure, so keep the run running and stay quiet

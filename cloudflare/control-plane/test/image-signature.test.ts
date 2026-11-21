@@ -41,7 +41,7 @@ beforeEach(async () => {
 });
 
 describe("the happy path", () => {
-  it("a valid signature, a matching build host image and the right arch mint a capability", async () => {
+  it("a valid signature, a matching Hetzner image and the right arch mint a capability", async () => {
     const v = await run(good());
     expect(v).toMatchObject({ provider: "hetzner", image: "111", arch: "x86", env: "prod", epoch: 1 });
     expect(Object.isFrozen(v)).toBe(true);
@@ -100,7 +100,7 @@ describe("failure rows 1-5: the entry and the signature", () => {
   });
 });
 
-describe("failure rows 6-10: the re-check at the build host", () => {
+describe("failure rows 6-10: the re-check at Hetzner", () => {
   it("row 6: a changed created or image_size is image_changed, and the cache row is deleted", async () => {
     await run(good());
     expect(await cacheRows()).toHaveLength(1);
@@ -260,7 +260,7 @@ describe("failure rows 21-29", () => {
     const e = mkEnv({ B5_PROVISIONER_CONFIG: JSON.stringify({ images: { hetzner: { x86: "111" }, vultr: {} }, quarantineFirewallId: 1, sshKeyIds: [1], imageKinds: { "__proto__x": 1, ["z".repeat(500)]: 2 } }) });
     expect(provisionerConfig(e).sshKeyIds).toEqual([1]);
   });
-  it("row 27: build host answers with another image, or an arm image for an x86 rung", async () => {
+  it("row 27: Hetzner answers with another image, or an arm image for an x86 rung", async () => {
     await refused(run(good(), { h: hz(() => ({ id: 999 })) }), "image_recheck_failed");
     await refused(run(good(), { h: hz(() => ({ architecture: "arm" })) }), "image_arch_mismatch");
     await refused(run(good(), { arch: "arm" }), "image_arch_mismatch"); // the default answer for 111 is x86
@@ -294,7 +294,7 @@ describe("failure rows 21-29", () => {
     await expect(late.createServer({ ...input, image: real })).rejects.toThrow("image_unverified_call");
     expect(calls).toHaveLength(0);
   });
-  it("row 28 (call sites): a string image is a compile error at every creating call, and a build host capability never reaches the Vultr adapter", async () => {
+  it("row 28 (call sites): a string image is a compile error at every creating call, and a Hetzner capability never reaches the Vultr adapter", async () => {
     const real = await run(good());
     const calls: string[] = [];
     const fetcher = async (url: string) => { calls.push(String(url)); return new Response("{}", { status: 200 }); };

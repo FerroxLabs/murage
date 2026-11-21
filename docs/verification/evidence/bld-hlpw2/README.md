@@ -43,7 +43,7 @@ The historical checks also needed the already-landed `93ffcee3d` common identifi
 
 ## Verification
 
-All test and typecheck executions use `/workspace/tools/it-remote.sh` with `IT_JOB=bld-hlpw2`, the requested `IT_W`, the requested `IT_ORIG`, and network disabled. The job wrapper waits while build host's one-minute load exceeds 60. At most two owned containers run concurrently. Concurrent checks use separate remote machines/filesystems so mutations cannot alter a running verification suite.
+All test and typecheck executions use `/workspace/tools/it-remote.sh` with `IT_JOB=bld-hlpw2`, the requested `IT_W`, the requested `IT_ORIG`, and network disabled. The job wrapper waits while Hetzner's one-minute load exceeds 60. At most two owned containers run concurrently. Concurrent checks use separate remote machines/filesystems so mutations cannot alter a running verification suite.
 
 RED evidence precedes the corresponding implementation: the initial template tests failed 11 assertions; the host tests failed review/admission/uncertain-outcome assertions; review metadata and optional-photo tests failed; the unbound-envelope, provider-key diagnostic and encoded-identity regressions failed before their fixes. Later coverage additions are not represented as independently recorded RED runs.
 

@@ -43,7 +43,7 @@ const CATASTROPHIC: Row[] = [
   ["robocopy C:\\empty C:\\Users\\sean /MIR", "delete-home"],
   ["robocopy C:\\empty C:\\ /MIR", "delete-root"],
   ["robocopy C:\\empty C:\\Windows /PURGE", "delete-system-folder"],
-  ["robocopy.exe C:/empty C:/Users/alex //MIR", "delete-home"],
+  ["robocopy.exe C:/empty C:/Users/sean //MIR", "delete-home"],
   ["cmd /c robocopy C:\\empty C:\\Users\\sean /MIR /R:1", "delete-home"],
   ["powershell -Command \"robocopy C:\\empty 'C:\\Program Files' /mir\"", "delete-system-folder"],
   // unison: a sync propagates deletes into both roots
@@ -72,7 +72,7 @@ const CATASTROPHIC: Row[] = [
   ["npx -y rimraf@5 /etc", "delete-system-folder"],
   ["pnpm dlx rimraf ~/", "delete-home"],
   ["bunx rimraf /usr", "delete-system-folder"],
-  ["npx.cmd rimraf C:/Users/alex", "delete-home"],
+  ["npx.cmd rimraf C:/Users/sean", "delete-home"],
 ];
 
 /** A value or expansion as the destination: the reader cannot see it, so it asks. */

@@ -18,7 +18,7 @@ import { assertBotGrantAllowed } from "./approval-grant-routes.ts";
 import { PendingGrants, RUN_ENDED, rememberAndAnswer, type GrantChokeDeps, type RememberInput } from "./grant-choke.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-const KEY = "stop:delete:/Users/alex/site/build";
+const KEY = "stop:delete:/Users/sean/site/build";
 const dirs: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 

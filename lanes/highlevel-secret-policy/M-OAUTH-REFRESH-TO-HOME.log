@@ -1,0 +1,42 @@
+✔ G6 encrypted bank precedes activation and restart retains key/version (2.822278ms)
+✔ G6 bootstrap missing bank never manufactures a locator key (0.268439ms)
+✔ G6 unsafe storage and failed encrypted save cannot activate metadata (0.68162ms)
+✔ G6 lost commit response retains encrypted bank and forbids automatic resend (1.498134ms)
+✔ G6 renderer cannot submit secrets or arbitrary bodies (0.286435ms)
+✖ G6 strict provider-secret rejection at every bank/proposal boundary (1.559588ms)
+✔ G6 initialize refused with existing bank; replacement/disconnect preserve key (0.427008ms)
+✔ G6 basic_text/unknown storage fails closed regardless of plaintext opt-in (0.55205ms)
+✔ G6 mismatched revisions and corrupt banks cannot be replaced (0.495652ms)
+✔ G6 main/preload expose IDs only and bootstrap stays on private parent port (2.374311ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 9
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 73.057029
+
+✖ failing tests:
+
+test at electron/highlevel-credentials.node-test.mjs:56:1
+✖ G6 strict provider-secret rejection at every bank/proposal boundary (1.559588ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+  +   ok: true
+  -   error: 'invalid_request',
+  -   ok: false
+    }
+  
+      at TestContext.<anonymous> (file:///work/electron/highlevel-credentials.node-test.mjs:60:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { ok: true },
+    expected: { ok: false, error: 'invalid_request' },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

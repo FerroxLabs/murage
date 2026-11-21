@@ -165,7 +165,7 @@ export function envPolicy(input, { staticCheck = false, approvedImages = undefin
     const ids = hetznerImageIds(provisioner);
     const approved = new Set(approvedImages ?? APPROVED_HETZNER_IMAGE_IDS[env]);
     if (ids === null) bad("B5_PROVISIONER_CONFIG.images.hetzner has an unknown shape");
-    else for (const id of ids) if (!approved.has(id)) bad("a build host image id is not in this environment's approved set");
+    else for (const id of ids) if (!approved.has(id)) bad("a Hetzner image id is not in this environment's approved set");
     if (live) {
       const vultr = provisioner.images?.vultr;
       if (vultr !== undefined && (typeof vultr !== "object" || vultr === null || Object.keys(vultr).length > 0)) bad("Vultr images are not allowed");

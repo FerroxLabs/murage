@@ -1,7 +1,6 @@
 import { SKILL_PAGE_SIZE, type SkillPagination } from "../../shared/skill-pagination";
 import { SkillPageControls } from "./skills/SkillPageControls";
 import { LazyOverlay } from "@/components/LazyOverlay";
-import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import { plainText } from "@/lib/plain-text";
@@ -761,7 +760,6 @@ export function TeamLibraryPanel({
       for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
       const first = response.bots[0];
       if (first) dispatch({ type: "select", id: first.id });
-      track("team_imported", { members: response.bots.length, source, mode: "add" });
       onImported({
         name: pending.name,
         members: response.bots.length,
@@ -797,7 +795,6 @@ export function TeamLibraryPanel({
       setScouted(result);
       setScoutedFolder(folder);
       setRoomName(result.suggestion.roomName);
-      track("team_scouted", { signals: result.suggestion.manifest.team.members.length - 1 });
       // community candidates arrive lazily; an unreachable directory just
       // leaves this section empty
       void api(`/api/teams/scout/directory?cwd=${encodeURIComponent(folder)}`)
@@ -859,7 +856,6 @@ export function TeamLibraryPanel({
         dispatch({ type: "groupPatched", origin: fromAnswer(response.group), group: { ...response.group, messages: [] } });
         dispatch({ type: "select", id: response.group.id });
       }
-      track("team_imported", { members: response.bots.length, source: "scout", mode: "project" });
       onImported({
         name: room,
         members: response.bots.length,

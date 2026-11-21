@@ -1,7 +1,7 @@
 # Busy-loop MAIN R1/R2 (cfix2-busyA22)
 
 Baseline: `b796fbc9f143f407b37e3159cfc5c24729733a5d`, verified against
-`/work/mb-105-git.git` before edits. Binding inputs: crev2-busyA22 BLOCK,
+`/root/mb-105-git.git` before edits. Binding inputs: crev2-busyA22 BLOCK,
 MAIN-NOTE-r2.txt, MAIN-NOTE.txt, and the unchanged A2.2 executable specification
 (`d38a0661…`) and TSV (`951a3b87…`).
 
@@ -38,7 +38,7 @@ The first corrected behavioral run passed 309 tests, including the full Codex
 and headless suites. Subsequent verification includes added prompt-write markers
 and URL-only scope cases, not just that intermediate run.
 
-Run tests only through `/work/fuigo-builds/tools/it-remote.sh`, with
+Run tests only through `/root/fuigo-builds/tools/it-remote.sh`, with
 `IT_JOB=cfix2-busyA22`, the busyloop worktree and the supplied local fallback.
 `scripts/busyloop-r2-validate.sh` runs the complete busy-loop, neighboring,
 workflow, stop-gate, type and tier checks. `scripts/busyloop-r2-mutants.py` runs

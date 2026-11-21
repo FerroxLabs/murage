@@ -19,7 +19,7 @@ describe("durableGrantAllowed", () => {
 
   it("keeps deletes, messages, public posts, programs, tools, actions, exact commands", () => {
     const exact = exactCommandKey({ engine: "claude", cwd: "/tmp", command: "git push" })!;
-    for (const key of ["stop:delete:/Users/alex/site", "stop:delete:/Users/alex/question", "stop:delete:/x/y.bash", "stop:message:dana@acme.example", "stop:public:github:o/r", "Bash:git", "Read", "app-action:GMAIL_SEND_EMAIL", "ask_bot:@Helper", exact]) {
+    for (const key of ["stop:delete:/Users/sean/site", "stop:delete:/Users/sean/question", "stop:delete:/x/y.bash", "stop:message:dana@acme.example", "stop:public:github:o/r", "Bash:git", "Read", "app-action:GMAIL_SEND_EMAIL", "ask_bot:@Helper", exact]) {
       expect(durableGrantAllowed(key), key).toBe(true);
     }
   });

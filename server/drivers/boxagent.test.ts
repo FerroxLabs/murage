@@ -106,6 +106,27 @@ describe("BoxAgentDriver turns (fake API)", () => {
     for(const event of completed)expect(event).not.toHaveProperty("usage");
   });
 
+  it("an accepted box answer keeps its one body: no copy is made per prompt, poll or status read", async () => {
+    restoreFetch = installFakeBox([{ events: [{ id: "reply", type: "response", text: "done" }], status: { promptRun: { status: "finished", result: "done" } } }]);
+    const fake = globalThis.fetch;
+    const answered: string[] = [], cloned: string[] = [];
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      const res = await fake(input, init), site = `${String(init?.method ?? "GET").toUpperCase()} ${String(input).replace(BOX_AGENT_API, "")}`;
+      answered.push(site);
+      const clone = res.clone.bind(res);
+      res.clone = () => { cloned.push(site); return clone(); };
+      return res;
+    }) as typeof fetch;
+    await create();
+    const sent = await instance.adapter.sendTurn({ threadId: "one-body", text: "hi", integrations: { computer } });
+    await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
+    // both driver call sites answered through this fetch: the prompt POST (launch) and the api helper (events, prompt status)
+    expect(answered).toContain(`POST /boxes/${BOX}/prompt`);
+    expect(answered.some(site => site.startsWith(`GET /boxes/${BOX}/events`))).toBe(true);
+    expect(answered.some(site => site.includes(`/prompts/${PROMPT}`))).toBe(true);
+    expect(cloned).toEqual([]);
+  });
+
   // MAIN RULING 2026-11-14 consuming mounts never reach external destinations; this native cloud prompt control is non-consuming.
   it("runs with an external integration and submits the native cloud prompt", async () => {
     restoreFetch = installFakeBox([{ events: [], status: { promptRun: { status: "finished", result: "submitted" } } }]);

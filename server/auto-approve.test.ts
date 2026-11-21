@@ -763,7 +763,7 @@ describe("always-ask reads the whole command, and asks on a cut copy", () => {
 
   it("a non-command tool's summary is read as text: an apostrophe never asks", () => {
     // MAIN RULING 2026-11-13 wipe-only: these no-card cases are authenticated owner turns.
-    expect(autoVerdict(NO_LIMITS, "Edit", "Edit /Users/alex/it's notes.md", { fullAccessOrigin: "owner" }).approve).not.toBeNull();
+    expect(autoVerdict(NO_LIMITS, "Edit", "Edit /Users/sean/it's notes.md", { fullAccessOrigin: "owner" }).approve).not.toBeNull();
     expect(autoVerdict(NO_LIMITS, "Edit", `Edit ${"x".repeat(5_000)}`, { fullAccessOrigin: "owner" }).approve).not.toBeNull();
   });
 

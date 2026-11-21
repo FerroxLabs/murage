@@ -1,8 +1,16 @@
 import { randomUUID } from "node:crypto";
 
-const actions = new Set(["state", "choose-backup", "choose-separate-backup", "restore-separate", "capture-separate", "backup", "restore", "rollback", "retry", "diagnostics", "review-installation", "activate", "backup-encrypted", "choose-encrypted-backup", "restore-encrypted-new"]);
+const actions = new Set(["state", "choose-backup", "choose-separate-backup", "restore-separate", "capture-separate", "backup", "restore", "rollback", "retry", "diagnostics", "review-installation", "activate", "backup-encrypted", "choose-encrypted-backup", "restore-encrypted-new", "set-aside-foreign"]);
 const code = value => typeof value === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(value) ? value : "RECOVERY_OPERATION_FAILED";
 const controllerErrors = new Set(["UNTRUSTED_RECOVERY_SENDER", "INVALID_RECOVERY_REQUEST", "INVALID_RECOVERY_PREVIEW", "RECOVERY_SELECTION_EXPIRED", "RECOVERY_OWNERSHIP_REQUIRED", "BACKUP_IDENTITY_INVALID", "BACKUP_IDENTITY_MUST_BE_INDEPENDENT"]);
+
+/** The recovery page a refused start opens with. A data-folder lock still
+ * held by another copy reads "Another copy of Murage may still be open", not
+ * the generic "couldn't finish starting". */
+export function startupRecoveryReason(code) {
+  return code === "RESTORE_REVIEW_REQUIRED" || code === "LEASE_FOREIGN_HOST" ? code
+    : code === "LEASE_BUSY" || code === "LEASE_CHILD_BUSY" ? "LEASE_BUSY" : "STARTUP_FAILED";
+}
 
 /** Failure-window-only controller. Renderer input never supplies a path,
  * command or hash. The host owns dialogs, selection and process authority. */
@@ -20,8 +28,9 @@ export function createInstallationRecoveryController(host) {
   };
   const canSeparate = () => host.canRestoreSeparate?.() === true;
   const canCapture = () => canSeparate() && host.canCaptureSeparate?.() === true;
+  const canSetAside = () => host.canSetAsideForeign?.() === true;
   const allowed = () => host.updatePause?.() ? ["state", "diagnostics", ...(host.returnRevoked?.() ? [] : ["retry"])] : [...actions];
-  const state = () => ({ allowedActions:allowed(), busy, available: host.isAvailable(), encryptedAvailable:host.encryptedAvailable?.()===true, separateAvailable: canSeparate(), captureAvailable: canCapture(), retainedDataDirectory: host.retainedDestination?.() ?? null, selection: selection ? { id: selection.id, name: selection.name, encrypted:!!selection.encrypted, coverage:selection.preview.coverage, separate: !!selection.plan, destination: selection.plan?.dataDirectory, snapshotId: selection.preview.snapshotId, sha256: selection.preview.sha256, omittedCount: selection.preview.omittedCount, missingCount: selection.preview.missingCount } : null, review: activationReview ? { id: activationReview.id, snapshotId: activationReview.report.snapshotId, files: activationReview.report.files, bytes: activationReview.report.bytes, ...(activationReview.report.notice ? { notice: activationReview.report.notice } : {}) } : null, result, error, errorAction: error ? errorAction : null, errorPath: error ? errorPath : null, activationAvailable: !!activationReview });
+  const state = () => ({ allowedActions:allowed(), busy, available: host.isAvailable(), encryptedAvailable:host.encryptedAvailable?.()===true, separateAvailable: canSeparate(), captureAvailable: canCapture(), setAsideAvailable: canSetAside(), retainedDataDirectory: host.retainedDestination?.() ?? null, selection: selection ? { id: selection.id, name: selection.name, encrypted:!!selection.encrypted, coverage:selection.preview.coverage, separate: !!selection.plan, destination: selection.plan?.dataDirectory, snapshotId: selection.preview.snapshotId, sha256: selection.preview.sha256, omittedCount: selection.preview.omittedCount, missingCount: selection.preview.missingCount } : null, review: activationReview ? { id: activationReview.id, snapshotId: activationReview.report.snapshotId, files: activationReview.report.files, bytes: activationReview.report.bytes, ...(activationReview.report.notice ? { notice: activationReview.report.notice } : {}) } : null, result, error, errorAction: error ? errorAction : null, errorPath: error ? errorPath : null, activationAvailable: !!activationReview });
 
   return {
     async handle(event, input) {
@@ -31,7 +40,7 @@ export function createInstallationRecoveryController(host) {
       if (input.action === "state") return state();
       if (busy) return { ...state(), error: "RECOVERY_BUSY" };
       if(input.action.includes("encrypted")&&host.encryptedAvailable?.()!==true)return{...state(),error:"BACKUP_UNAVAILABLE"};
-      if (input.action === "capture-separate" ? !canCapture() : ["choose-separate-backup", "restore-separate"].includes(input.action) ? !canSeparate() : !host.isAvailable() && !["diagnostics", "retry"].includes(input.action)) return { ...state(), error: "RECOVERY_OWNERSHIP_REQUIRED" };
+      if (input.action === "capture-separate" ? !canCapture() : input.action === "set-aside-foreign" ? !canSetAside() : ["choose-separate-backup", "restore-separate"].includes(input.action) ? !canSeparate() : !host.isAvailable() && !["diagnostics", "retry"].includes(input.action)) return { ...state(), error: "RECOVERY_OWNERSHIP_REQUIRED" };
       busy = true; error = null; result = null; errorAction = input.action; errorPath = null;
       if (input.action !== "activate") activationReview = null;
       try {
@@ -132,6 +141,10 @@ export function createInstallationRecoveryController(host) {
             selection = null;
             result = await host.run("rollback", {});
           }
+        } else if (input.action === "set-aside-foreign") {
+          // The button names the owner's answer ("This is my computer,
+          // continue"); the host re-checks every lock record before renaming.
+          await host.setAsideForeign();
         } else if (input.action === "retry") {
           await host.retry();
         } else if (input.action === "diagnostics") {

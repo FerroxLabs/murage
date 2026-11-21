@@ -65,7 +65,7 @@ export const ALL_WAL_KINDS: ReadonlySet<string> = new Set<WalKind>(["group", "fi
 // META_VALUE_MAX_BYTES, enforced by the one put helper below and, for a file written by any other build, at open by checkGeometry.
 // Depth: SQLite's BTCURSOR_MAX_DEPTH is 20 (btreeInt.h, unchanged since 3.7.x); moveToChild returns SQLITE_CORRUPT past it, so a write on
 // a deeper tree rolls back with 0 frames and is never committed. node:sqlite in the packaged app (Electron 43.8.1 runs the server as Node 24.22.0 via ELECTRON_RUN_AS_NODE) bundles SQLite 3.53.4, the
-// same as the build host test image (node:24); the memory index suite prints sqlite_version() so a reviewer can confirm it. The design text
+// same as the Hetzner test image (node:24); the memory index suite prints sqlite_version() so a reviewer can confirm it. The design text
 // said 3.50.4; BTCURSOR_MAX_DEPTH is 20 in both.
 const LITERAL_META_KEYS: readonly string[] = [
   // the checked write path (this file)

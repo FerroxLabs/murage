@@ -24,7 +24,7 @@ describe("T-DS compiler parity", () => {
     for (const path of ["~/x", "/Users/alice/y", "/Volumes/disk/y", "/private/tmp/x", "/var/folders/x", "/dev/null"]) expect(spec.protectedPaths.some(p => p.path === canonicalPath(path).path)).toBe(false);
     expect(canonicalPath("C:\\..\\Windows")).toEqual({ status: "ok", path: "c:/windows" });
     expect(canonicalPath("c:/WINDOWS")).toEqual({ status: "ok", path: "c:/windows" });
-    for (const p of ["C:foo", "\\\\server\\share\\x", "\\\\?\\UNC\\server\\share", "\\\\?\\C:\\", "\\\\.\\PhysicalDrive0", "C:/GLOBALROOT/x", "C:/PROGRA~1", "C:/Users/USERNA~1", "C:/Windows.", "C:/Windows ", "C:/x::$DATA"]) expect(canonicalPath(p).status, p).toBe("unexpressible");
+    for (const p of ["C:foo", "\\\\server\\share\\x", "\\\\?\\UNC\\server\\share", "\\\\?\\C:\\", "\\\\.\\PhysicalDrive0", "C:/GLOBALROOT/x", "C:/PROGRA~1", "C:/Users/SEANDO~1", "C:/Windows.", "C:/Windows ", "C:/x::$DATA"]) expect(canonicalPath(p).status, p).toBe("unexpressible");
   });
   it("normalizes, deduplicates and hashes refusals and self paths deterministically", () => {
     const a = { kind: "path" as const, value: "/tmp/refused", reason: "owner" };

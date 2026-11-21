@@ -52,6 +52,13 @@ export function withReleaseBudgets<T>(budgets: readonly ReleaseBudget[], work: (
     return result;
   } finally { active = prior; }
 }
+/** Bounded bookkeeping that releases nothing (send-fence.ts keepOwnerTurn re-judging held refs one by one) runs outside the ambient budgets,
+ * so an exhausted budget cannot turn keeping the owner's turn into stopping it. Synchronous only. */
+export function outsideReleaseBudgets<T>(work: () => T): T {
+  const prior = active;
+  active = [];
+  try { return work(); } finally { active = prior; }
+}
 export function chargeReleaseWork(work = 1): void { reserveRelease(active, { work }); }
 export function chargeReleaseStatement(): void { reserveRelease(active, { statements: 1, work: 1 }); }
 export function accountedPrepare<T extends object>(db: { prepare(sql: string): T }, sql: string): T {

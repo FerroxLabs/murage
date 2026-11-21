@@ -1,0 +1,25 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/highlevel/scope-policy.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/highlevel/scope-policy.test.ts [ server/highlevel/scope-policy.test.ts ]
+Error: Cannot find module './scope-policy.ts' imported from /work/server/highlevel/scope-policy.test.ts
+ ❯ server/highlevel/scope-policy.test.ts:4:1
+      2| // SPDX-License-Identifier: AGPL-3.0-or-later
+      3| import { afterEach, describe, expect, it, vi } from "vitest";
+      4| import { planInvocation, projectFamilyScopeCoverage } from "./scope-po…
+       | ^
+      5| import { IMPLEMENTED_SCOPE_VECTORS } from "./scope-policy.vectors.ts";
+      6| import { HIGHLEVEL_OPERATION_MANIFEST } from "./operations/manifest.ts…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  14:01:39
+   Duration  10.13s (transform 7.89s, setup 9.84s, import 0ms, tests 0ms, environment 0ms)
+

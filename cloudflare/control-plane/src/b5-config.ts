@@ -149,7 +149,7 @@ export type PoolConfig = z.infer<typeof poolSchema>;
 /** The signer's name, informational only: the Worker trusts the signature (image-signature.ts), never a label. */
 export const VERIFIER_NAME = "hz-live-rescue";
 export const provisionerSchema = z.object({
-  /** Locations tried in order for build host; a server type is tried in every location before the next rung. */
+  /** Locations tried in order for Hetzner; a server type is tried in every location before the next rung. */
   hetznerLocations: z.array(z.enum(EU_HETZNER_LOCATIONS)).min(1).default(["fsn1", "nbg1", "hel1"]),
   /** EU only (customer data stays in the EU). Checked against Vultr's live regions list 2026-10-09; UK is not EU. */
   vultrRegions: z.array(z.enum(EU_VULTR_REGIONS)).min(1).default(["fra", "ams", "cdg", "sto", "waw", "mad"]),
@@ -177,7 +177,7 @@ export const provisionerSchema = z.object({
     quarantineFirewallGroupId: vultrId,
   }).strict().optional(),
   /** Ask the home to archive its data volume when it is suspended. Every snapshot is deleted with the home at day 14. */
-  /** build host Storage Box for per-home backups (sub-account per home). Absent = backups off. */
+  /** Hetzner Storage Box for per-home backups (sub-account per home). Absent = backups off. */
   /** One entry per box (each allows at most 100 sub-accounts). A single object is accepted and treated as a one-box list. */
   storageBox: z.preprocess((v) => (v === undefined || Array.isArray(v) ? v : [v]),
     z.array(z.object({ id: z.number().int().positive(), host: z.string().regex(/^[a-z0-9.-]+$/), mainUser: z.string().regex(/^u\d+$/),
@@ -190,7 +190,7 @@ export const provisionerSchema = z.object({
   /** Image id -> the signed entry the signer printed (image-signature.ts). NOT validated at parse time, so one bad entry or key can never stop
    *  suspend, fence or delete; verifyImageForUse validates the selected key and entry when a server is about to be created. */
   imageKinds: z.unknown().optional(),
-  /** Customer homes are build host only. Off: a ladder rung on Vultr is never used. On: it is walked like any other rung. */
+  /** Customer homes are Hetzner only. Off: a ladder rung on Vultr is never used. On: it is walked like any other rung. */
   allowVultrCustomerHomes: z.boolean().default(false),
 }).strict();
 export type ProvisionerConfig = z.infer<typeof provisionerSchema>;

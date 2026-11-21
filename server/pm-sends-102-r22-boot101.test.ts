@@ -1,6 +1,6 @@
 // Astra r21 finding 6, resolved within DESIGN-r22.md item 8: the REAL Murage 1.0.1 server (git archive d950cbf67, extracted into the gitignored
 // .v101-ref directory of this worktree) boots from the data folder that "Prepare to reinstall Murage 1.0.1" leaves behind, loads delegations.json and
-// runs the waiting hand-off exactly once. Test data only (fake engine, throwaway data folders). Run in the build host container (hz-test.sh), never on a Mac.
+// runs the waiting hand-off exactly once. Test data only (fake engine, throwaway data folders). Run in the Hetzner container (hz-test.sh), never on a Mac.
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";

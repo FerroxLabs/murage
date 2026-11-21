@@ -1,0 +1,13 @@
+
+ RUN  v4.1.10 /Volumes/Fixture/workspace/cx-swapfix
+
+··································································································································································································stdout | shared/reply-action-claims.test.ts > synthetic regression corpus > checks synthetic examples without qualifying real replies
+ACTION-GUARD-SYNTHETIC cases=70 precision=1.000 recall=1.000 tp=30 fp=0 fn=0
+
+·······································
+
+ Test Files  15 passed (15)
+      Tests  233 passed (233)
+   Start at  08:29:14
+   Duration  100.38s (transform 7.05s, setup 17.83s, import 4.62s, tests 70.12s, environment 7ms)
+

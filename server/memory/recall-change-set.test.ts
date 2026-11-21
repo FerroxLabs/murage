@@ -13,6 +13,7 @@ import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } f
 import { maintainRecallViewSlice, prepareRecallContext, RECALL_BUILD_SLICE, stopRecallViewMaintenance } from './recall-view.ts';
 import { advanceRevocationJob, type RevocationJob } from './memory-revocation.ts';
 import { coverReceiptChanges, recallChangeRangeMembers, RECALL_CHANGE_SET } from './recall-view-schema.ts';
+import { pendingViewPage } from './recall-view-index.ts';
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { stopRecallViewMaintenance(); closeDatabase(); });
@@ -35,7 +36,9 @@ async function fixture(records: number) {
   const token = registry.mint({ botId: 'reader', threadId: 'direct', generation: 'generation', depth: 0, kind: 'memory', skillAuthoring: false });
   const access = memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
   for (let n = 0; n < 1000 && !maintainRecallViewSlice(access.view); n++);
-  const pending = () => (db.prepare('SELECT record_id FROM memory_recall_view_pending WHERE view_id=? AND generation=? ORDER BY record_id').all(access.view.viewId, access.view.generation) as Array<{ record_id: string }>).map(row => row.record_id);
+  // recallrest-1020 (port onto 1.0.19): the per-view pending table is retired; the pending page is what a reader is served (recall-view-index.ts).
+  // It reads the receipts themselves, so a flip shows at once, not at the view's next re-check.
+  const pending = () => [...new Set(pendingViewPage(db, access.view, '', 4096).map(row => row.id))];
   const watermark = () => Number(db.prepare('SELECT watermark FROM memory_recall_views WHERE view_id=? AND generation=?').get(access.view.viewId, access.view.generation)!.watermark);
   return { access, ids, pending, watermark };
 }
@@ -127,7 +130,9 @@ it('a page re-checks at most RECALL_BUILD_SLICE records, and the watermark moves
   expect(RECALL_BUILD_SLICE).toBe(RECALL_CHANGE_SET);
   expect(maintainRecallViewSlice(f.access.view)).toBe(false);
   expect(f.watermark()).toBe(sequences[0]);
-  expect(f.pending()).toHaveLength(600 - 256);
+  // recallrest-1020 (port onto 1.0.19): the retired per-view table held the 344 records not yet re-checked here. The pending page reads the
+  // receipts, and all 600 are flipped already; how far the view has re-checked is the watermark above.
+  expect(f.pending()).toEqual([]);
   expect(maintainRecallViewSlice(f.access.view)).toBe(false);
   expect(f.watermark()).toBe(sequences[1]);
   expect(maintainRecallViewSlice(f.access.view)).toBe(true);

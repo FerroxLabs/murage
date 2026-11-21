@@ -2,30 +2,37 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import baseRequest from "./fixtures/learning-request.e2aa9ce.json";
 
-const notice = "Murage learns from your chats using Flux. You can change this in Settings.";
+// MAIN 11:35Z (ownerfb race bar): the learning disclosure is Settings toggle text only; no chat surface shows the in-chat notice.
+const oldNotice = "Murage learns from your chats using Flux.";
+const settingsLine = "Memory learning uses Flux to pick out what to remember from your chats when you have a Flux key.";
 let root: Root | undefined;
 let host: HTMLDivElement;
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; host?.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-async function fixture(blockStorage = false) {
+const learning = {
+  revision: 1,
+  settings: { version: 3, automaticFacts: true, automaticProcedures: true, reviewMode: false, perCallOutputTokens: { extraction: 2000, grounding: 64, reflection: 8000 }, ceiling: { input: 100_000_000, output: 15_000_000 }, callsPerMinute: 6, learnFrom: { chats: true, channels: true }, botsPaused: [] },
+  connection: { instanceId: "@murage/flux-fast", source: "default", label: "Flux Router · Fast" }, defaultOn: true,
+  ceiling: { month: "2026-11", input: 100_000_000, output: 15_000_000, inputUsed: 0, outputUsed: 0, paused: false },
+};
+
+async function fixture() {
   vi.resetModules();
   localStorage.clear();
-  if (blockStorage) {
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw Error("blocked"); });
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw Error("blocked"); });
-  }
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const extraction = await import("../../server/memory/extract.ts");
-  const live = await import("../lib/live-events.ts");
   const { MemorySectionContent } = await import("./MemorySection");
   const { learningDefaultOnFor, resolveLearningConnection } = await import("../../server/memory/extractor-connections.ts");
   const { openLearningGate } = await import("../../server/testing/open-learning-gate.ts");
-  // The production stream forwards the transport's contentless notification through this handler.
-  const hooks = extraction as unknown as { setLearningFluxSendListener?: (fn: () => void) => void };
+  const live = await import("../lib/live-events.ts");
+  // The transport hook the store forwarded each learning frame to before MAIN 11:35Z; absent now, so a send reaches no chat surface.
   const frames = live as unknown as { receiveLearningNoticeFrame?: (frame: { kind: string; learningFluxSent?: unknown }) => void };
-  hooks.setLearningFluxSendListener?.(() => frames.receiveLearningNoticeFrame?.({ kind: "learning.flux-sent" }));
+  const sends = vi.fn(() => frames.receiveLearningNoticeFrame?.({ kind: "learning.flux-sent" }));
+  extraction.setLearningFluxSendListener(sends);
   const fetcher = vi.fn(async () => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "[]" } }] })));
   vi.stubGlobal("fetch", fetcher);
   const connection = resolveLearningConnection({ selected: null, instances: [], readKey: () => "learning-fixture-key", defaultOn: learningDefaultOnFor(undefined, true) });
@@ -34,47 +41,39 @@ async function fixture(blockStorage = false) {
   const mount = async () => {
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     await act(async () => root!.render(createElement(MemorySectionContent, {
-      status: { mode: "active", configuration: { extractorInstanceId: null }, extractors: [] },
+      status: { mode: "active", learning, configuration: { extractorInstanceId: null }, extractors: [] },
       bots: [], events: [], cursor: null, filter: "", busy: false, historyBusy: false, refusals: {}, workspace: null,
       onAction: vi.fn(), onFilter: vi.fn(), onMore: vi.fn(), onOpen: vi.fn(), onRefresh: vi.fn(),
-    })));
+    } as never)));
   };
-  const unmount = async () => { await act(async () => root!.unmount()); root = undefined; host.remove(); };
-  return { send, mount, unmount, fetcher, config: () => frames.receiveLearningNoticeFrame?.({ kind: "config", learningFluxSent: true }) };
+  return { send, mount, fetcher, sends };
 }
 
-it("LEARNING-CONSENT fresh config and Flux key show the first send once on a mounted memory surface", async () => {
+it("LEARNING-CONSENT a Flux learning send shows no in-chat notice; the disclosure is the Settings toggle text", async () => {
   const f = await fixture();
-  await f.send(); // No mounted surface yet: the notice must remain pending.
   await f.mount();
-  expect(host.querySelectorAll("[data-learning-notice]")).toHaveLength(1);
-  expect(host.querySelector("[data-learning-notice]")?.textContent).toBe(notice);
-  await act(async () => { f.config(); });
-  expect(host.querySelector("[data-learning-notice]")?.textContent).toBe(notice);
   await act(async () => { await f.send(); });
-  expect(host.textContent).not.toContain(notice);
-  await f.unmount();
-  await f.send();
-  await f.mount();
-  expect(host.textContent).not.toContain(notice);
-  expect(f.fetcher).toHaveBeenCalledTimes(3);
+  expect(f.sends).toHaveBeenCalledTimes(1);
+  expect(host.querySelectorAll("[data-learning-notice]")).toHaveLength(0);
+  expect(host.textContent).not.toContain(oldNotice);
+  const how = host.querySelector('section[aria-label="How it learns"]');
+  expect(how?.textContent).toContain(settingsLine);
+  expect(how?.textContent).toContain("Learn as we talk");
 });
 
-it("LEARNING-CONSENT throwing storage still shows the first send exactly once", async () => {
-  const f = await fixture(true);
-  await f.mount();
-  await act(async () => { await f.send(); });
-  expect(host.querySelectorAll("[data-learning-notice]")).toHaveLength(1);
-  expect(host.querySelector("[data-learning-notice]")?.textContent).toBe(notice);
-  await act(async () => { f.config(); });
-  expect(host.querySelector("[data-learning-notice]")?.textContent).toBe(notice);
-  await act(async () => { await f.send(); });
-  expect(host.textContent).not.toContain(notice);
-  await f.unmount();
-  await f.send();
-  await f.mount();
-  expect(host.textContent).not.toContain(notice);
-  expect(f.fetcher).toHaveBeenCalledTimes(3);
+it("LEARNING-CONSENT no renderer source carries the in-chat learning notice", () => {
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) { walk(path); continue; }
+      if (!/\.(ts|tsx)$/.test(name) || /\.test\.tsx?$/.test(name)) continue;
+      const text = readFileSync(path, "utf8");
+      if (text.includes("data-learning-notice") || text.includes(oldNotice) || /learning-consent["']/.test(text)) found.push(path);
+    }
+  };
+  walk(join(process.cwd(), "src"));
+  expect(found).toEqual([]);
 });
 
 it("LEARNING-CONSENT disclosure accompanies the unchanged base extraction request", async () => {
@@ -87,7 +86,7 @@ it("LEARNING-CONSENT disclosure accompanies the unchanged base extraction reques
   expect(init.headers).toEqual({ "content-type": "application/json", authorization: "Bearer learning-fixture-key", "x-flux-feature": "memory", "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" });
   expect(JSON.parse(String(init.body))).toEqual(baseRequest);
   await f.mount();
-  expect(host.querySelector("[data-learning-notice]")?.textContent).toBe(notice);
+  expect(host.querySelector('section[aria-label="How it learns"]')?.textContent).toContain(settingsLine);
 });
 
 it("LEARNING-CONSENT a throwing notifier completes extraction and records one bounded diagnostic", async () => {

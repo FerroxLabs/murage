@@ -31,11 +31,11 @@ it("a cause is a short code: sqlite errors carry their code, anything else colla
 it("the helper's stderr is forwarded line by line, at most N a minute, with home paths removed", () => {
   let now = 0;
   const forward = makeStderrForwarder(2, () => now);
-  forward("index drain failed: Error: no such table: lexical\nsecond line at /Users/alex/secret/file.ts:12\nthird");
+  forward("index drain failed: Error: no such table: lexical\nsecond line at /Users/sean/secret/file.ts:12\nthird");
   forward(" line\n");
   expect(lines).toHaveLength(2);
   expect(lines[1]).toContain("<path>");
-  expect(lines[1]).not.toContain("/Users/alex");
+  expect(lines[1]).not.toContain("/Users/sean");
   now = 61_000;
   forward("again\n");
   expect(lines.at(-2)).toBe("[memory-worker] stderr more=1");
