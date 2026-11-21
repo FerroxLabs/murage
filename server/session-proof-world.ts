@@ -13,7 +13,7 @@ async function launchFixture(...args:Parameters<typeof launchVerificationServer>
 }
 
 
-export async function proofWorld(engine: 'claude' | 'acp', forceRecovery: 'none' | 'readiness' | 'checking' = 'none', extraSource = '') {
+export async function proofWorld(engine: 'claude' | 'acp' | 'fuigo', forceRecovery: 'none' | 'readiness' | 'checking' = 'none', extraSource = '') {
   const url = (file: string) => JSON.stringify(pathToFileURL(join(process.cwd(), file)).href);
   const fixture: VerificationServer = await launchFixture(process.env, undefined, { dumpLog: true, instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
 ${extraSource}
@@ -36,8 +36,13 @@ ${extraSource}
     const fs=await import('node:fs'),path=await import('node:path');
     const {fileURLToPath}=await import('node:url');
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json'),config=JSON.parse(fs.readFileSync(file,'utf8'));
-    if (${JSON.stringify(engine)}==='acp') config.instances.verification={driver:'grokAgent',config:{cli:fileURLToPath(${url('server/testing/fake-acp-cli.ts')})},environment:{
-      FAKE_ACP_UNIQUE_SESSIONS:'1',FAKE_ACP_MCP_LIST:'all:ready',FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',
+    const fixtureEngine=${JSON.stringify(engine)};
+    if (fixtureEngine==='fuigo') {
+      const login=path.join(process.env.HOME,'.fuigo');
+      fs.mkdirSync(login,{recursive:true});fs.writeFileSync(path.join(login,'auth.json'),'{}');
+    }
+    if (fixtureEngine!=='claude') config.instances.verification={driver:fixtureEngine==='fuigo'?'fuigoAgent':'grokAgent',config:{cli:fileURLToPath(${url('server/testing/fake-acp-cli.ts')})},environment:{
+      FAKE_ACP_UNIQUE_SESSIONS:'1',FAKE_ACP_MCP_LIST:'all:ready',FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:fixtureEngine==='fuigo'?'_fuigo/mcp_initialized':'_x.ai/mcp_initialized',
       FAKE_ACP_RPC_FULL_LOG:path.join(process.env.MURAGE_DATA_DIR,'warm-rpc.jsonl')}};
     fs.writeFileSync(file,JSON.stringify(config));
   ` });
@@ -60,7 +65,14 @@ ${extraSource}
   const log = () => readFileSync(fixture.info.logPath, 'utf8');
   const session = (thread: string) => read(db => String(db.prepare("SELECT native_session FROM memory_disclosures WHERE thread_id=? AND state='delivered' AND native_session IS NOT NULL ORDER BY rowid DESC LIMIT 1").get(thread)?.native_session ?? ''));
   const bot = async () => {
-    const { bot } = await api('POST', '/api/bots', { name: 'Warm fixture' });
+    let modelSelection: { instanceId: string; model: string } | undefined;
+    if (engine === 'fuigo') {
+      const { instances } = await api('GET', '/api/instances');
+      const instance = instances.find((row: { instanceId: string }) => row.instanceId === 'verification');
+      expect(instance).toBeTruthy();
+      modelSelection = { instanceId: 'verification', model: instance.models.options[0]?.id || instance.models.default || 'fixture-model' };
+    }
+    const { bot } = await api('POST', '/api/bots', { name: 'Warm fixture', modelSelection });
     await api('PATCH', `/api/bots/${bot.id}`, { computer: 'off', browser: false, composio: false });
     return bot as { id: string; threadId: string };
   };

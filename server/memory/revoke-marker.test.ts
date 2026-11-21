@@ -5,7 +5,7 @@
 // written here as S1's writers will write them (S1's writeLineage is still a stub), and every verdict is read through `verdict` below,
 // the design's read predicate (section 1) over the tables S3 writes: S4's deny-read.ts is the production reader of the same rows.
 // The revbound r3 cases closed in the write-time slices (REPORT.md A1-A6, FABLE-REPORT.md P1-1/P1-2 as F1/F2) have their commit side
-// here; S4 owns their reader side (lessons.ts, readable.ts, deny-read.ts) and references these tests. Every test runs on the build host.
+// here; S4 owns their reader side (lessons.ts, readable.ts, deny-read.ts) and references these tests. Every test runs on Hetzner.
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

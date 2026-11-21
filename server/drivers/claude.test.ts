@@ -4335,7 +4335,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       // every OWN_UNASKED tool of a mounted own server stays pre-allowed, by its exact name; the email tools only as the mount lists them
       // native HighLevel is not mounted on these turns: none of its tools may be pre-allowed (an owner's own server could carry the name)
       expect(allowed.filter((tool) => tool.startsWith("mcp__highlevel"))).toEqual([]);
-      const ownUnasked = OWN_UNASKED.filter((row) => row.mount !== "own:connector" && row.mount !== "own:highlevel").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
+      const ownUnasked = OWN_UNASKED.filter((row) => row.mount !== "own:connector").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
       expect(ownUnasked).toEqual(expect.arrayContaining(EMAIL_ALL));
       const expected = ownUnasked.filter((tool) => !EMAIL_ALL.includes(tool) || (emailListed as readonly string[]).includes(tool));
       expect(expected.length).toBeGreaterThan(40);

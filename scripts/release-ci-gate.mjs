@@ -27,7 +27,7 @@
 // failure classes and carries an approval line. Anything else stays strict.
 //
 // The latest nightly (nightly.yml: the tests over 60 s on all three OSes and
-// the wall-clock budget tests on the build host perf job, tagged out of CI's
+// the wall-clock budget tests on the Hetzner perf job, tagged out of CI's
 // shards in vite.config.ts) must be green too: its newest completed run must
 // have concluded success, on the pinned commit or one of its ancestors, and be
 // no older than NIGHTLY_MAX_AGE_HOURS (72). No waiver covers it. The release

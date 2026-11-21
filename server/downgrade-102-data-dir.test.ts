@@ -70,6 +70,8 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "about-me.md"), "owner words");
     writeFileSync(join(DATA_DIR, "memory-repairs.json"), JSON.stringify({ keepallUnwedge103: "x" }));
     writeFileSync(join(DATA_DIR, "memory-repairs.json.tmp"), "{"); // a repairs-note write cut short
+    // the 1.0.21 repair's progress, kept beside a repairs note it could not read (selfheal-1021.ts SELFHEAL_SIDE_FILE)
+    writeFileSync(join(DATA_DIR, "memory-repairs-selfheal.json"), "{}");
     writeFileSync(join(DATA_DIR, "memory-model-adopted.json"), "{}");
     writeFileSync(join(DATA_DIR, "memory-model-adopted.json.tmp"), "{}");
     writeFileSync(join(DATA_DIR, "learning-paused-left.json"), "{}");
@@ -128,8 +130,12 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     for (const suffix of ["-walstop", "-walok", "-walattempt"]) writeFileSync(join(DATA_DIR, "memory-index.db" + suffix), "fixture");
     // 2de8a7c65c: the derived search database and sidecars leave on the separate lifecycle path.
     for (const name of SEARCH_FILES) writeFileSync(join(DATA_DIR, name), "", { mode: 0o600 });
+    // the start-up note a start that died before listen leaves (1.0.20 boot-progress.ts; 1.0.2 never reads it)
+    writeFileSync(join(DATA_DIR, "boot-progress.json"), JSON.stringify({ v: 1, state: "starting", pid: 1, step: "database.memory", seq: 1, startedAt: 0, updatedAt: 0 }), { mode: 0o600 });
     // the S5 root record (1.0.18 data-roots.ts; 1.0.2 never reads it)
     writeFileSync(join(DATA_DIR, ".murage-root.json"), JSON.stringify({ schema: 1, root: DATA_DIR, previous: [] }), { mode: 0o600 });
+    // the data-version marker (1.0.20 shared/data-version-marker.mjs: the newest Murage that wrote the folder; 1.0.2 never reads it)
+    writeFileSync(join(DATA_DIR, "data-version.json"), JSON.stringify({ v: 1, newest: "1.0.20" }), { mode: 0o600 });
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102, ...SEARCH_FILES].sort());
 
     expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });

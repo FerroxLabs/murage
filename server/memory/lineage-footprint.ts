@@ -33,7 +33,7 @@ export interface LineageFootprint {
  * deletion move does not. */
 export function accessStamp(access: MemoryAccess): string {
   return JSON.stringify([access.threadId, access.botId, access.humanPrincipal, memoryAccessNotOwnerAudience(access), access.policyRevision,
-    access.deletionEpoch, access.view ?? [...access.scopeIds].sort()]);
+    access.deletionEpoch, access.scopeDigest ? [access.view,access.scopeDigest] : access.view ?? [...access.scopeIds].sort()]);
 }
 
 /** The externalUpdates field: the task's queued external-update ids (promptRows' pending list), sorted, as one string. */

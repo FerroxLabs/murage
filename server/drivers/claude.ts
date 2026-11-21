@@ -1,7 +1,6 @@
 import { deliverWipeGuardTerminal, wipeGuardTurnEnvironment } from './murage-exec-wipe.ts';
 import { wipeContextFor, wipeEnvironment } from '../wipe/context.ts';
 import { withHideInherit, stripNodeOptionsExceptHide } from "../../shared/win-hide-child-process.mjs";
-import { highlevelHandlerTools } from "../highlevel/engine-policy.ts";
 import { CLAUDE_NATIVE_SHELL_TOOLS } from './claude-tool-names.ts';
 import { HelperReadEvidence } from './helper-read-evidence.ts';
 import { complete_flag } from '../turn-settle.ts';
@@ -182,7 +181,7 @@ import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { BROKER_UNAVAILABLE_NOTE, brokerPathForArgv } from "../permission-pipe.ts";
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
-import { engineClosedLine, mountNeverConnectedLine } from "./stop-copy.ts";
+import { engineClosedLine, mountStopCause, mountStoppedDetails, mountStoppedLine } from "./stop-copy.ts";
 import { createStopGate, GateStopped, type GateEntry, type Verdict } from "./stop-gate.ts";
 import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
@@ -751,7 +750,6 @@ export function claudeMountRecords(keys: readonly string[], connectorKey: string
  * (phone, browser, computer) gets none, and every one of its calls asks through the broker. */
 export function claudeOwnUnaskedTools(builtin: OwnBuiltin, emailMode?: string): string[] {
   const server = OWN_BUILTINS[builtin];
-  if (builtin === "highlevel") return highlevelHandlerTools.map(tool => `mcp__${server}__${tool}`);
   // the email tools only on a turn whose email mount listed them (dark launch: with no mode the list is the build without email)
   return OWN_UNASKED.filter((row) => row.mount === `own:${builtin}`)
     .flatMap((row) => row.tools.filter((tool) => ownToolListedOnTurn(tool, emailMode)).map((tool) => `mcp__${server}__${tool}`));
@@ -1712,7 +1710,7 @@ function syncedSkillNames(root: string): string[] {
  *   conflict it can see (managed-mcp.json refusing --strict-mcp-config) is reported to the owner
  *   as CLAUDE_MANAGED_MCP_CONFLICT (claudeLaunchRefusal).
  *
- * Rig evidence (build host stub API, CLI 2.1.280, 2.1.281 and 2.1.295, each case with and without the flags so
+ * Rig evidence (Hetzner stub API, CLI 2.1.280, 2.1.281 and 2.1.295, each case with and without the flags so
  * the baseline proves the marker loads; logs in /root/mb-0161-hz/m102-rig4/logs, rig6 and rig7):
  * user plugin with hooks and a skill, plugins enabled only in personal or project-local
  * settings.local.json, a user hook, a user MCP server, `~/.claude/CLAUDE.md` and `rules/*.md`, a
@@ -2322,7 +2320,7 @@ const CLAUDE_OWNER_ROUTING_2_1_305: ReadonlyArray<{ name: string; prefix?: true;
     { name: "CLAUDE_CODE_PROXY_AUTH_HELPER_TTL_MS", why: "proxy login helper (Nl)" },
 ];
 
-/** 2.1.307 (measured against @anthropic-ai/claude-code-linux-x64@2.1.307 on the build host, diffed with 2.1.305): every set this table was
+/** 2.1.307 (measured against @anthropic-ai/claude-code-linux-x64@2.1.307 on Hetzner, diffed with 2.1.305): every set this table was
  * read from is the same except the untrusted-source refusal list (Ro in 2.1.305, Io in 2.1.307), whose last member NODE_TLS_REJECT_UNAUTHORIZED
  * became the pair NODE_TLS_REJECT_UNAUTHORIZED + BUN_TLS_REFUSE_DISTRUSTED_KEYS. NO_PROXY, no_proxy and the other proxy names
  * stay in that list and out of the project/local settings-env allowlist, exactly as in 2.1.305, so they stay routing names here.
@@ -4660,12 +4658,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers.phoneJobs = { ...turn.integrations.phoneJobs };
         allowed.push(...claudeOwnUnaskedTools("phoneJobs"));
       }
-      // native HighLevel (HL-S2, read only): its read tools are pre-allowed; the host checks the grant on every call and
-      // lists no change tool.
-      if (turn.integrations?.highlevel) {
-        mcpServers.highlevel = { ...turn.integrations.highlevel };
-        allowed.push(...claudeOwnUnaskedTools("highlevel"));
-      }
       if (turn.integrations?.browser) {
         mcpServers.browser = claudeBrowserMount(turn);
         allowed.push(...claudeOwnUnaskedTools("browser"));
@@ -5715,7 +5707,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         queueMicrotask(() => {
           if (sessions.get(threadId) !== session || !session.turn || session.turn.stopRequested || session.turn.settled) return;
           if (session.turn.submission === null) {
-            turnError({ message: mountNeverConnectedLine(ENGINE) });
+            // 1.0.20 item 5: the card names the real cause; only an app's own native failure blames a connected app.
+            const live = session.turn;
+            const cause = mountStopCause(_nativeError, refusal, live.fenced ?? fencedRefusalRegistry.byGeneration((live.releaseBinding as { identity?: { dispatchGeneration?: string | number } } | null | undefined)?.identity?.dispatchGeneration));
+            turnError({ message: mountStoppedLine(ENGINE, cause), details: mountStoppedDetails(ENGINE, cause) });
             void settle(false, "mcp_unavailable");
           } else closeSession(threadId, "mount-relay-sealed");
         });
@@ -5910,6 +5905,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           }
         }
         rememberCompletionProof(threadId, t.turnId, session, session.settleCheck, retireSingleUse);
+        if (ok && !t.stopRequested) session.relay?.reportUnavailable(() => base(threadId, t.turnId), emit);
         endTurn(t.turnId, { ok, stopReason: stopReason as string, ...opts, ...(refusedTurn ? { final: true as const, ...(fenced.lease ? { leaseMode: true as const } : {}) } : {}), extra: { cost, ...(usage ? { usage } : {}), ...(t.toolsUnavailable?.length ? { toolsUnavailable: t.toolsUnavailable } : {}), ...(t.mcpReadiness ? { mcpReadiness: t.mcpReadiness } : {}) } });
         // Teardown also runs when an earlier Stop already installed its proof,
         // or when the bounded proof cache cannot retain another entry.

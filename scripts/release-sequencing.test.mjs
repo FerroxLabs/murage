@@ -1,5 +1,8 @@
 import { expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parse } from 'yaml';
 import * as guard from './release-guard.mjs';
 const env={GITHUB_REPOSITORY:'o/r',GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'2'};
@@ -43,6 +46,38 @@ it('release DAG starts the sole writer early and all platforms wait for its prob
  expect(jobs.stage.needs).toEqual(expect.arrayContaining(['ci-gate','mac','mac-x64','windows','linux']));
  expect(jobs['abort-on-ci-failure']).toBeUndefined();
  expect(jobs.linux.permissions).toEqual({contents:'read'});
+});
+it('artifact-only releases keep the build gates and cannot start the release writer', () => {
+ const workflow = parse(readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8'));
+ const { prepare, preflight, assemble, stage } = workflow.jobs;
+ const mode = prepare.steps.find(step => step.id === 'mode');
+ const writeMode = "needs.prepare.outputs.artifact_only == 'false'";
+ expect(workflow.on.workflow_dispatch.inputs.artifact_only).toMatchObject({ type: 'boolean', default: false });
+ expect(mode.env.ARTIFACT_ONLY).toBe("${{ inputs.artifact_only || github.ref == 'refs/heads/rel/1.0.21-cand0' }}");
+ expect(prepare.outputs.artifact_only).toBe('${{ steps.mode.outputs.artifact_only }}');
+ expect(assemble.if).toBe(`needs.prepare.outputs.should_release == 'true' && ${writeMode}`);
+ expect(preflight.steps.at(-1).if).toBe(writeMode);
+ expect(stage.needs).toEqual(['prepare', 'ci-gate', 'mac', 'mac-x64', 'windows', 'linux']);
+ expect(mode.env.PRIVATE_REPO).toBe('${{ github.event.repository.private }}');
+ const dir = mkdtempSync(join(tmpdir(), 'release-mode-'));
+ const output = join(dir, 'output');
+ const selectMode = (artifactOnly, publish, privateRepo) => spawnSync('bash', ['-e', '-c', mode.run], {
+  encoding: 'utf8',
+  env: { ...process.env, ARTIFACT_ONLY: artifactOnly, PUBLISH: publish, PRIVATE_REPO: privateRepo, GITHUB_OUTPUT: output },
+ });
+ try {
+  expect(selectMode('true', 'true', 'true')).toMatchObject({
+   status: 1, stdout: expect.stringContaining('artifact-only runs cannot publish'),
+  });
+  expect(selectMode('true', 'false', 'false')).toMatchObject({
+   status: 1, stdout: expect.stringContaining('artifact-only runs require a private repository'),
+  });
+  expect(selectMode('true', 'false', 'true').status).toBe(0);
+  expect(selectMode('false', 'true', 'false').status).toBe(0);
+  expect(readFileSync(output, 'utf8')).toBe('artifact_only=true\nartifact_only=false\n');
+ } finally {
+  rmSync(dir, { recursive: true, force: true });
+ }
 });
 
 it('G-B publish waits for its independent extraction in this exact attempt', () => {

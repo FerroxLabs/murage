@@ -1,0 +1,3 @@
+# T30A report
+Design deliverable, no product code changed. Three variants (A Frame, B Rail, C Badge): see VARIANTS.md, shots/ (79 files). Gates: node --test on Hetzner 3/3 (copy rules, contrast floors, 76 PNGs written non-empty); typechecks unaffected (no src or server change). Full vitest not run: no product code touched. Mac data-safety not re-run for the same reason.
+Open: Sean picks a variant; Rail forced-colors fallback is weakest; the bottom-right Badge needs target avoidance when wired. Copy top-up: all mock strings in scripts/sidepanel-mock/copy.mjs (idle, your turn, done, allow always, task access, activity lines) need T09 keys.

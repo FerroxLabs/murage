@@ -34,7 +34,7 @@ origin and enrollment/storage contract before flow/grant integration. No
 staging alias or endpoint override is guessed. Shared contracts, route index,
 config and migration manifests remain S0/S-INT-owned.
 
-Upstream references: `/work/fuigo-builds/orph/_ev/refs/upstream-openmaus-highlevel/`
+Upstream references: `/root/fuigo-builds/orph/_ev/refs/upstream-openmaus-highlevel/`
 `highlevel.ts` and `highlevel.test.ts`; exchange/form, timeout, fake rotation and
 redaction cases adapted with tighter scope/location validation and custody.
 Existing root NOTICE retains OpenMausBot Apache-2.0 attribution.

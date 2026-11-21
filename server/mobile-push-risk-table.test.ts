@@ -181,12 +181,12 @@ const NOT_LEGIT_ANYMORE = [...TEST_RUNNERS, "git commit -m 'fix -e handling'", "
 // path resolves against the effective cwd (after any cd), `..` folded; absolute
 // paths, ~, a climb out, and a missing workspace are not inside.
 // The real workspace check (workspaceInside), not a stand-in: the turn runs in
-// /Users/alex/proj, which is itself a root.
-const ws = workspaceInside({ cwd: "/Users/alex/proj", roots: ["/Users/alex/proj"], home: "/Users/alex", knownRecipients: new Set<string>(), realpath: (p: string) => p }, []);
+// /Users/sean/proj, which is itself a root.
+const ws = workspaceInside({ cwd: "/Users/sean/proj", roots: ["/Users/sean/proj"], home: "/Users/sean", knownRecipients: new Set<string>(), realpath: (p: string) => p }, []);
 const OUTSIDE = [
-  "cat /Users/alex/.config/murage-mobile/AuthKey_ABC123.p8", "cat /Users/alex/.zsh_history", "tail -n 50 /Users/alex/.bash_history", "grep -r . /Users/alex/.config",
+  "cat /Users/sean/.config/murage-mobile/AuthKey_ABC123.p8", "cat /Users/sean/.zsh_history", "tail -n 50 /Users/sean/.bash_history", "grep -r . /Users/sean/.config",
   "cat /etc/hosts", "ls /Applications", "ls ..", "cat ../x", "cat src/../../x", "cd /tmp && ls", "cd && ls", "find / -name x", "find .. -name x",
-  "head ~/.zshrc", "du -sh /", "grep -rn x /Users/alex", "sed -n 1p /etc/passwd", "wc -l /etc/hosts", "rg x /Users/alex/.config", "tree /", "stat -x /etc/hosts",
+  "head ~/.zshrc", "du -sh /", "grep -rn x /Users/sean", "sed -n 1p /etc/passwd", "wc -l /etc/hosts", "rg x /Users/sean/.config", "tree /", "stat -x /etc/hosts",
 ];
 // Round 4: every exemption removed. No shell or interpreter is ever low, a line
 // break anywhere is never low, `cd` is not on the list, `..` is never folded.

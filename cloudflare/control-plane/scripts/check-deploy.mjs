@@ -620,7 +620,7 @@ export function environmentPolicy(resolved, target, opts = {}) {
   let b5vars = null; if (freeze) { try { b5vars = JSON.parse(vars.B5_PROVISIONER_CONFIG); } catch { b5vars = null; } }
   const approvedImages = freeze ? Object.values(b5vars?.images?.hetzner ?? {}).map(String)
     : target === "production" ? (home ? [home.x86, home.arm] : []).filter((id) => runtimeLive.has(String(id))) : undefined;
-  if (target === "production" && !freeze && approvedImages.length === 0) problems.push("production: no build host image is both pinned in PRODUCTION_HOME_IMAGES and approved in APPROVED_HETZNER_IMAGE_IDS.live");
+  if (target === "production" && !freeze && approvedImages.length === 0) problems.push("production: no Hetzner image is both pinned in PRODUCTION_HOME_IMAGES and approved in APPROVED_HETZNER_IMAGE_IDS.live");
   const result = envPolicy(input, { staticCheck: true, ...(target === "production" ? { approvedImages } : {}) });
   for (const p of result.problems) problems.push(`policy: ${p}`);
   return { problems, warnings: result.warnings, unverified: result.unverified };
@@ -834,7 +834,7 @@ export function checkProduction(p, opts = {}) {
     if (!loc.every((l) => ["fsn1", "nbg1", "hel1"].includes(l))) at("B5_PROVISIONER_CONFIG.hetznerLocations", "EU locations only");
     const types = [...Object.values(b5.ladders ?? {}).flat().map((r) => r.serverType), ...Object.values(b5.pool?.classes ?? {}).flatMap((c) => (c.rungs ?? []).map((r) => r.serverType))];
     if (types.some((x) => String(x).startsWith("cpx"))) at("B5_PROVISIONER_CONFIG", "no cpx server type in production");
-    if ((Object.values(b5.ladders ?? {}).flat()).some((r) => r.provider !== "hetzner")) at("B5_PROVISIONER_CONFIG.ladders", "build host only at launch");
+    if ((Object.values(b5.ladders ?? {}).flat()).some((r) => r.provider !== "hetzner")) at("B5_PROVISIONER_CONFIG.ladders", "Hetzner only at launch");
     const pool = b5.pool;
     if (!pool) at("B5_PROVISIONER_CONFIG.pool", "the warm pool is configured for launch");
     else {

@@ -1,0 +1,4 @@
+
+> murage@1.0.18 typecheck /work
+> tsc -b && tsc -p tsconfig.server.json && tsc -p tools/flux-stream-conformance/tsconfig.json
+

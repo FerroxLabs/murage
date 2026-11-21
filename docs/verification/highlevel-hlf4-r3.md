@@ -50,6 +50,6 @@ new failures are regressions. The new `calendar-additive*.test.ts` suites exerci
 the opt-in contract, including real process loss before settlement, zero-resend
 recovery and old-schema compatibility. Historical contract tests are not edited.
 
-Evidence and final counts: `/work/build/afix3-hlf4/evidence/` and the
+Evidence and final counts: `/root/fuigo-builds/swarm-b/afix3-hlf4/evidence/` and the
 job's `DONE`. New product English: none; the existing blocked-slot title is reused.
 The project memory tool is unavailable and `.ijfw/memory` is absent.

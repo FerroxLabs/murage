@@ -2,13 +2,13 @@
 
 Recorded Sol's exact 86 passing verdicts with `scripts/copy-review.mjs record`, reviewer `sol`. Record: `2026-11-11-1019-browser-re-review-3f31e16e2daa`. The ledger has exactly 86 additions; existing entries and the original failed record are unchanged. No shipped strings, source hashes, reviewer identities or verdicts were edited.
 
-[sol-re-review.json](sol-re-review.json) is the exact single fenced JSON block from `/work/build/sol-browser-rr/last.txt`. It reviews the corrected text at `d0236fbc995ba5bfe3005d2093f4c3c317a80256`. Source response SHA256: `fb96add796646da166b867a4231e294a2742af9e3a30a5f653a02bad890dfa0e`. Extracted bundle SHA256: `8d815d4ac26fe10e1447d922933d835e761e4869d3a308e516bcfd0a364ba059`.
+[sol-re-review.json](sol-re-review.json) is the exact single fenced JSON block from `/root/fuigo-builds/swarm-b/sol-browser-rr/last.txt`. It reviews the corrected text at `d0236fbc995ba5bfe3005d2093f4c3c317a80256`. Source response SHA256: `fb96add796646da166b867a4231e294a2742af9e3a30a5f653a02bad890dfa0e`. Extracted bundle SHA256: `8d815d4ac26fe10e1447d922933d835e761e4869d3a308e516bcfd0a364ba059`.
 
 ## Verification
 
 The recorder has no `verify` subcommand. Following the original job's verification procedure, the re-review audit checked the exact bundle hash, every recorded field and verdict, reviewer identity, record filename hash, shipped text and English, and all 86 ledger entries. It also checked that the ledger equals `ledgerFromRecords()` and that running `rebuild()` leaves its bytes unchanged. No ignored records, date problems or conflicts were found. Deterministic copy rules, links, completeness and same-as-English checks passed.
 
-Verification and tests ran in one Node 24 container on `murage-vt4`, through `/work/fuigo-builds/tools/it-remote.sh`, with `IT_JOB=rec-browser2`, `IT_W=/work/build/rec-browser/wt`, `IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`, and network none. No server or browser behavior changed or was claimed verified.
+Verification and tests ran in one Node 24 container on `murage-vt4`, through `/root/fuigo-builds/tools/it-remote.sh`, with `IT_JOB=rec-browser2`, `IT_W=/root/fuigo-builds/swarm-b/rec-browser/wt`, `IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`, and network none. No server or browser behavior changed or was claimed verified.
 
 | Check | Result |
 | --- | --- |
@@ -30,4 +30,4 @@ node node_modules/vitest/vitest.mjs run scripts/copy-review.test.mjs scripts/gen
 node scripts/generate-locale.mjs --check
 ```
 
-The verification script, JSON test report, logs and provenance are retained at `/work/build/rec-browser2/evidence/`. The temporary worktree evidence directory and container dependency links were removed after saving the evidence. No Mac, live app data or billable service was used.
+The verification script, JSON test report, logs and provenance are retained at `/root/fuigo-builds/swarm-b/rec-browser2/evidence/`. The temporary worktree evidence directory and container dependency links were removed after saving the evidence. No Mac, live app data or billable service was used.

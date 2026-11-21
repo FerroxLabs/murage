@@ -1,12 +1,13 @@
 // Owners: nl-backup-b owns this replay regression fixture; recall-scope owns prepared recall views.
-import { copyFileSync, mkdirSync } from "node:fs";
+import fs, { existsSync, mkdirSync } from "node:fs";
 import { backup, DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
-import { stopWalMaintenance } from "../wal-maintenance.ts";
-import { stopSearchIndex } from "../message-search-index.ts";
+import * as walMaintenance from "../wal-maintenance.ts";
+import * as searchIndex from "../message-search-index.ts";
+import * as handles from "../test-handle-registry.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { botRowOf, botViewer } from "../bot-read.ts";
 import type { Message } from "../store.ts";
@@ -244,17 +245,96 @@ it("F7-COPY: recall and checkpoint source readers cannot recover an excluded own
   expect(lineage.sourceIsWithheldMessage(LineageAllowance.tool(), source)).toBe(true);
 });
 
+async function restoreSnapshot(snapshot: string, file: string): Promise<void> {
+  // The search worker reads this file through a read-only connection, and a read-only last closer cannot checkpoint or
+  // remove the WAL. It leaves first, so the checkpointer's read-write connection is the last one to close.
+  expect(await searchIndex.stopSearchIndex()).toBe(true);
+  closeDatabase();
+  // Close every registered connection, including the message writer, before replacing its SQLite file.
+  await handles.settleTestHandles(DATA_DIR);
+  expect(await Promise.all([walMaintenance.stopWalMaintenance(), searchIndex.stopSearchIndex()])).toEqual([true, true]);
+  // Shutdown precondition, never a cleanup: a WAL left behind would be replayed onto the snapshot.
+  expect(existsSync(`${file}-wal`) || existsSync(`${file}-shm`)).toBe(false);
+  fs.copyFileSync(snapshot, file);
+}
+
+it("F7-RESTORE waits for all fixture handles before copying the snapshot", async () => {
+  let release!: () => void;
+  const closed = new Promise<void>(resolve => { release = resolve; });
+  const settle = vi.spyOn(handles, "settleTestHandles").mockReturnValueOnce(closed);
+  vi.spyOn(walMaintenance, "stopWalMaintenance").mockResolvedValue(true);
+  vi.spyOn(searchIndex, "stopSearchIndex").mockResolvedValue(true);
+  const copy = vi.spyOn(fs, "copyFileSync").mockImplementation(() => undefined);
+  const restoring = restoreSnapshot(join(DATA_DIR, "order-snapshot.sqlite"), join(DATA_DIR, "order-restored.sqlite"));
+  try {
+    for (let turn = 0; turn < 4; turn++) await new Promise<void>(resolve => setImmediate(resolve));
+    expect(settle).toHaveBeenCalledWith(DATA_DIR);
+    expect(copy).not.toHaveBeenCalled();
+  } finally {
+    release();
+    try { await restoring; expect(copy).toHaveBeenCalledTimes(1); }
+    finally { vi.restoreAllMocks(); await handles.settleTestHandles(DATA_DIR); }
+  }
+});
+
+it("F7-RESTORE refuses to copy over a WAL that shutdown left behind, and does not delete it", async () => {
+  vi.spyOn(handles, "settleTestHandles").mockResolvedValue(undefined);
+  vi.spyOn(walMaintenance, "stopWalMaintenance").mockResolvedValue(true);
+  vi.spyOn(searchIndex, "stopSearchIndex").mockResolvedValue(true);
+  const copy = vi.spyOn(fs, "copyFileSync").mockImplementation(() => undefined);
+  const target = join(DATA_DIR, "leftover-restored.sqlite");
+  try {
+    for (const suffix of ["-wal", "-shm"]) {
+      fs.writeFileSync(`${target}${suffix}`, "stale");
+      await expect(restoreSnapshot(join(DATA_DIR, "leftover-snapshot.sqlite"), target)).rejects.toThrow();
+      expect(copy).not.toHaveBeenCalled();
+      expect(existsSync(`${target}${suffix}`)).toBe(true);
+      fs.rmSync(`${target}${suffix}`);
+    }
+    await restoreSnapshot(join(DATA_DIR, "leftover-snapshot.sqlite"), target);
+    expect(copy).toHaveBeenCalledTimes(1);
+  } finally { vi.restoreAllMocks(); await handles.settleTestHandles(DATA_DIR); }
+});
+
+it("F7-RESTORE mechanism: only a read-write last closer removes the WAL", () => {
+  const leftover = (readerLast: boolean): boolean => {
+    const file = join(DATA_DIR, `last-closer-${readerLast}.sqlite`);
+    const writer = new DatabaseSync(file);
+    writer.exec("PRAGMA journal_mode=WAL; CREATE TABLE t(v); INSERT INTO t VALUES(1)");
+    const reader = new DatabaseSync(file, { readOnly: true });
+    reader.prepare("SELECT count(*) FROM t").get();
+    if (readerLast) { writer.close(); reader.close(); } else { reader.close(); writer.close(); }
+    return existsSync(`${file}-wal`);
+  };
+  expect(leftover(true)).toBe(true);
+  expect(leftover(false)).toBe(false);
+});
+
+it("F7-RESTORE: the search worker's read-only source reader has left before the server connection closes", async () => {
+  const db = database(), file = String(db.prepare("PRAGMA database_list").all().find(r => r.name === "main")!.file);
+  row("order");
+  const snapshot = join(DATA_DIR, "f7-order-snapshot.sqlite");
+  await backup(db, snapshot);
+  const events: string[] = [];
+  const stopSearch = searchIndex.stopSearchIndex, stopWal = walMaintenance.stopWalMaintenance;
+  vi.spyOn(searchIndex, "stopSearchIndex").mockImplementation(async () => {
+    events.push("search-stop"); const left = await stopSearch(); events.push(`search-left:${left}`); return left;
+  });
+  // closeDatabase asks the checkpointer to leave immediately after it closes the server connection.
+  vi.spyOn(walMaintenance, "stopWalMaintenance").mockImplementation((...args) => { events.push("server-closed"); return stopWal(...args); });
+  await restoreSnapshot(snapshot, file);
+  expect(events.slice(0, 3)).toEqual(["search-stop", "search-left:true", "server-closed"]);
+  expect(existsSync(`${file}-wal`) || existsSync(`${file}-shm`)).toBe(false);
+  expect(database().prepare("SELECT id FROM messages WHERE thread_id=?").all(thread).map(r => r.id)).toEqual(["order"]);
+});
+
 it("F7-RESTORE: SQLite backup restores exclusions and source epochs before reader reuse", async () => {
   const messages = [row("history"), row("failed")]; exclude("failed");
   const db = database(), file = String(db.prepare("PRAGMA database_list").all().find(r => r.name === "main")!.file);
   const snapshot = join(DATA_DIR, "f7-snapshot.sqlite");
   await backup(db, snapshot);
   db.exec("DELETE FROM send_replay_exclusions; UPDATE send_replay_epochs SET revision=revision+1");
-  closeDatabase();
-  // The restore replaces a closed SQLite file, including its worker handles.
-  // Await their actual exit so an old WAL cannot overlay the restored image.
-  await Promise.all([stopWalMaintenance(), stopSearchIndex()]);
-  copyFileSync(snapshot, file);
+  await restoreSnapshot(snapshot, file);
   expect(selection(messages).replayedMessages.map(m => m.id)).toEqual(["history"]);
 });
 

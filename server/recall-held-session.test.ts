@@ -28,7 +28,7 @@ for(const engine of ['claude','acp'] as const)for(const venue of ['direct','room
   const before=w.session(thread),at=w.log().length;expect(before).toBeTruthy();
   await send('Force held turn.');
   const messages=await w.api('GET',`/api/threads/${thread}/messages?limit=100`);
-  expect(JSON.stringify(messages)).toContain('did not use recalled memories');
+  expect(JSON.stringify(messages)).toContain("didn't use what I remember");
   expect(w.log().slice(at).split('\n').filter(l=>l.includes('memory continuation reset')&&l.includes('held-session-holds-recall'))).toHaveLength(1);
   const cursors=w.read(db=>db.prepare('SELECT native_session FROM memory_session_lineage WHERE thread_id=?').all(thread).map(r=>String(r.native_session)));
   expect(cursors.some(s=>s!==before)).toBe(true);

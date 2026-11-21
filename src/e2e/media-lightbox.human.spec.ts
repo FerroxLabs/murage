@@ -60,7 +60,7 @@ const MARKDOWN = [
   "",
   "Tracked: ![pixel](https://tracker.example/pixel.png)",
   "",
-  "Private: ![secret](/Users/alex/private/secret.png)",
+  "Private: ![secret](/Users/sean/private/secret.png)",
 ].join("\n");
 
 let server: ViteDevServer, origin: string, cache: string;

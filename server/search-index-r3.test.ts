@@ -314,8 +314,9 @@ it("T-SCAN-WRITES / T-SCAN-TRIG: closed mutation inventory includes JSON-only an
   }
   const authority=readFileSync("server/memory/authority-epoch.ts","utf8");
   expect(authority, "ORACLE:T-SCAN-WRITES ORACLE:T-SCAN-TRIG").not.toMatch(/(?:trigger\(|writes\()\s*["'`]?(?:search_intents|messages_fts)/);
-  // The production reclaim worker also VACUUMs messages.db. schema_version in
-  // worker lineage invalidates it, in addition to B2's offline-file cleanup.
+  // The production reclaim worker also VACUUMs messages.db. The moved schema cookie
+  // makes the worker re-check its row anchors (rowid -> message key) and reset on any
+  // change, in addition to B2's offline-file cleanup.
   expect(readFileSync("server/memory/root-set-compaction.ts","utf8"), "ORACLE:T-SCAN-WRITES ORACLE:T-SCAN-TRIG").toContain('db.exec("VACUUM")');
   expect(readFileSync("server/engine-exec.ts","utf8"), "ORACLE:T-SCAN-WRITES ORACLE:T-SCAN-TRIG").toContain('db.exec("VACUUM")');
 });

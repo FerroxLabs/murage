@@ -10,7 +10,8 @@ import type { DelegationReceipt } from "./delegations.ts";
 import type { EgressOrigin } from "./released-text.ts";
 import type { Message, Store } from "./store.ts";
 import { murageLine } from "./murage-line.ts";
-import { outboundWords, status, statusRecordOf } from "./murage-status.ts";
+import { noAnswerLine } from "./held-replies.ts";
+import { outboundWords, statusRecordOf } from "./murage-status.ts";
 
 /** What the source conversation is owed, kept on the receipt until the final commit has landed (delegations.ts finishHandoff). The `held` shape
  * is only read from receipts an earlier 1.0.3 build wrote: it is written as the no-answer line, never its words (NOHOLD-DELEGATION.md). */
@@ -37,7 +38,7 @@ export function appendHandoffReply(store: ReplyStore, input: { handoffId?: strin
   if ("text" in input.owed && "held" in input.owed) {
     // an earlier build's held reply: the asker's final answer is the no-answer line (its own kept status, so a bot reads it); the words are not written
     const target = store.bot(input.targetBotId);
-    const line = status("no_answer_checking");
+    const line = noAnswerLine();
     return store.appendMessage(input.sourceThreadId, murageLine({
       role: "bot", kind: "text", inboundKind: "action", text: outboundWords(line), murage: { kind: "status", status: statusRecordOf(line)! },
       ...(input.askRequestId ? { requestId: input.askRequestId, actorKind: "bot" as const } : {}),

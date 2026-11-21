@@ -1,4 +1,4 @@
-# Sourced by android-remote.sh (and its vitest). Prints the node_modules path
+# Sourced by android-hetzner.sh (and its vitest). Prints the node_modules path
 # that `cap sync` wrote into android/capacitor.settings.gradle, relative to
 # apps/mobile, or fails. The path ends up in rsync source and destination
 # arguments and in remote shell commands, so it must stay inside

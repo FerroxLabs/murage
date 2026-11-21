@@ -32,6 +32,7 @@ import type { ExecutionAudience } from "./work-admission.ts";
 import type { HumanPrincipal } from "./human-principals.ts";
 import type { PackAuthority } from "./delegation-pack/types.ts";
 import { isOwnerOrigin } from "./store.ts";
+import { isHeldLineKey } from "./held-replies.ts";
 
 /** Does this row record a step that failed or is being retried? Such a row is told to a bot as the kind of failure, never as its own words. */
 function failureOf(message: Message): WorkerMessage["failure"] {
@@ -131,7 +132,7 @@ export function boundaryStore(store: Store): BoundaryStore {
       let found: { id: string; noAnswer: boolean } | undefined;
       store.scanSince(threadId, Math.max(0, request.createdAt - 60_000), message => {
         if (message.requestId !== request.id || !message.turnTerminal) return false;
-        found = { id: message.id, noAnswer: (message.murage?.status as { key?: string } | undefined)?.key === "no_answer_checking" };
+        found = { id: message.id, noAnswer: isHeldLineKey((message.murage?.status as { key?: string } | undefined)?.key) };
         return true;
       });
       return found;

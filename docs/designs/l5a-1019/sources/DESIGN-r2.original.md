@@ -7,7 +7,7 @@ Job odr2-l5a; lane L5a; Murage 1.0.19; 2026-11-10. This document replaces DESIGN
 
 Deliver the entire REDACT-MD user-text rule, historical U1G3+L7 collector/execution separation and machine-sink preservation, historical bot-display sanitization, carrier/sink/UX proof, and the S appendNative dead-mask cleanup. No row moves out of 1.0.19. No Settings switch, secret reveal, new retention store, or weakened approval is introduced.
 
-Paths: B = `/work/fuigo-builds/orph/_base` (supplied int/1019 c12aaad93); E = `/work/fuigo-builds/orph/_ev`; H = `/work/swarm1018`; P = `/work/fuigo-builds/orph/ORPHAN-PLAN-1019.md`. Code and build paths below are relative to B. Source inspection was read-only, using searches and bounded ranges; no tests, builds, Node, Docker, or product edits were performed. Test REDs below are predictions, not results.
+Paths: B = `/root/fuigo-builds/orph/_base` (supplied int/1019 c12aaad93); E = `/root/fuigo-builds/orph/_ev`; H = `/root/swarm1018`; P = `/root/fuigo-builds/orph/ORPHAN-PLAN-1019.md`. Code and build paths below are relative to B. Source inspection was read-only, using searches and bounded ranges; no tests, builds, Node, Docker, or product edits were performed. Test REDs below are predictions, not results.
 
 | Authority | Binding decision and disposition |
 |---|---|
@@ -18,8 +18,8 @@ Paths: B = `/work/fuigo-builds/orph/_base` (supplied int/1019 c12aaad93); E = `/
 | E/handoffs/FIX-LEDGER.md:3546 | `merge order L7 then REDACT`, single collector ownership, no orphaned text rows. Current L5a merges the collector before enabling whole-text policy. |
 | E/handoffs/FIX-LEDGER.md:3547; H/_r3b/r6-redact-plain-ruling.txt:1–3 | `colon only, one word ... value must end its line`; fixed type list includes `token`; `password: 1234` masks and `tokens: 1200` stays. D3 and T3 implement the later ruling, superseding r3.2's earlier “no type-word exception” sentence. |
 | E/handoffs/SWARM-W1-STATUS.md:1690 | File-reading Grok is **required** at zero Highs on REDACT before AGREED. A SKIPPED stub is not a review. |
-| `/work/build/_designs/MURAGE-UX-BAR.md`:6–46; E/designs/SETTINGS-NO-REGRESS-GATES-1019.md:18 | G9 is mandatory: simple surface, all existing capabilities, working defaults, usable controls, desktop/phone and both themes, Fable and packaged proof. |
-| `/work/build/odes-l5a/last.txt`:5–35 | All nine answers and all ten amendments are adopted; the traceability tables below bind them to rules and tests. |
+| `/root/fuigo-builds/swarm-b/_designs/MURAGE-UX-BAR.md`:6–46; E/designs/SETTINGS-NO-REGRESS-GATES-1019.md:18 | G9 is mandatory: simple surface, all existing capabilities, working defaults, usable controls, desktop/phone and both themes, Fable and packaged proof. |
+| `/root/fuigo-builds/swarm-b/odes-l5a/last.txt`:5–35 | All nine answers and all ten amendments are adopted; the traceability tables below bind them to rules and tests. |
 
 Recovered evidence beyond the initial evidence copies:
 
@@ -320,7 +320,7 @@ The 49 original row-24 fixture entries map one-to-one: source index 1–37 → K
 
 K-REPLAY acceptance: replay available approved owner-text fixtures plus synthetic boundary cases on exact base/final policy, report totals and changes by rule and caller without storing raw credentials. The recovered binding ruling records 0 changed exact-grant commands of 8,761 historical commands and no done_when values available to measure; these are historical evidence, not a result on c12aaad93. Current builders must run actual auto-approve and done-when fixtures, including restored done_when, and report available-corpus limitations honestly. MAIN records the accepted replay outcome before activation. No invented count or global unchanged-caller claim is allowed.
 
-Performance proof: measure detector alone and end-to-end collector/serialization/sink consumers separately. Hostile shapes at 64 and 256 KiB include repeated labels, unmatched PEM headers, `a-` runs, long whitespace, backticks/guillemets/underscores and suffixes. On an idle build host fixture record load/hardware and repeated medians: 256KiB under 250ms and 4× size ratio under 6 for each measured path. Exercise the same logical content in one-unit chunks and many identities, with deterministic operation/allocation counters: each new unit is charged once per bounded pass, limits stop work, no fallback traversal remains. Measure ordinary clean throughput and maximum bounded-state memory separately; no speed claim follows merely from a cap. Timeouts/nonlinear behavior fail and are fixed in this train. Run focused suites, speech/bus/store/card/routine/channel/projection neighbors, typecheck and repository tier checks only during authorized build; this design ran none.
+Performance proof: measure detector alone and end-to-end collector/serialization/sink consumers separately. Hostile shapes at 64 and 256 KiB include repeated labels, unmatched PEM headers, `a-` runs, long whitespace, backticks/guillemets/underscores and suffixes. On an idle Hetzner fixture record load/hardware and repeated medians: 256KiB under 250ms and 4× size ratio under 6 for each measured path. Exercise the same logical content in one-unit chunks and many identities, with deterministic operation/allocation counters: each new unit is charged once per bounded pass, limits stop work, no fallback traversal remains. Measure ordinary clean throughput and maximum bounded-state memory separately; no speed claim follows merely from a cap. Timeouts/nonlinear behavior fail and are fixed in this train. Run focused suites, speech/bus/store/card/routine/channel/projection neighbors, typecheck and repository tier checks only during authorized build; this design ran none.
 
 ## 7. Review reconciliation and fixed decisions
 

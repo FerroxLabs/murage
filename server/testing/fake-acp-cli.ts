@@ -145,6 +145,8 @@ import { holdFixtureRelayClient } from "./relay-client-lifetime.ts";
 //                   session/load carrying `_meta` fuigo/permissionPolicyPath + Sha256 are checked the same way
 //                   (-32602 with the record as data) and acknowledged in `_meta["fuigo/permissionPolicy"]`.
 //   FAKE_ACP_POLICY_ACK=0  behave like an engine older than 1.0.36: ignore the policy, never acknowledge it
+//   FAKE_ACP_POLICY_PIN=1  keep the verified policy file open for the life of the process, as Fuigo 1.0.36+ does
+//                   (fuigo-workspace permission/launch_policy.rs keeps a same_file::Handle of it in its static pins)
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
 //   FAKE_ACP_LOAD_ERROR  JSON-RPC error object session/load answers with
@@ -217,9 +219,15 @@ import { holdFixtureRelayClient } from "./relay-client-lifetime.ts";
 //   FAKE_ACP_MCP_READY_GATE_FILE  also wait for this file before announcing
 //                        readiness, so a test can inspect the real process tree
 //                        before a reused turn reconciles its replacement servers
+//                        (writes `<path>.waiting` while held)
 //   FAKE_ACP_MCP_LIST_READY_AFTER_MS  with FAKE_ACP_MCP_LIST "all:<status>",
 //                        report every server "initializing" until that long
 //                        after the servers were handed over
+//   FAKE_ACP_MCP_LIST_OVERSIZE_AT  "N:ms": that long after list call N, write
+//                        one frame over the limit (the driver's overflow handler)
+//   FAKE_ACP_MCP_LIST_UNANSWERED  1-based list calls this process never answers,
+//                        comma separated; "N+" is call N and every later one
+//                        (a busy engine whose list RPC times out)
 //   FAKE_ACP_MCP_CONNECT=1  connect to every handed server the way a real
 //                        engine does: start it (command, args, env as handed),
 //                        initialize, then tools/list; a session/load with
@@ -604,6 +612,8 @@ const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: 
 
 // Fuigo 1.0.36+ launch policy (see FUIGO_POLICY_PATH above). Returns the error record, or null when the bytes match.
 const policyKnown = process.env.FAKE_ACP_POLICY_ACK !== "0";
+/** Open handles of verified policy files, never closed (FAKE_ACP_POLICY_PIN). */
+const policyPins: number[] = [];
 function policyFileError(path: unknown, sha256: unknown): Record<string, unknown> | null {
   if (typeof sha256 !== "string" || !/^[0-9a-f]{64}$/.test(sha256)) return { policy_error: "hash_missing", path, line: null, message: "hash missing" };
   if (typeof path !== "string" || !isAbsolute(path)) return { policy_error: "not_absolute", path, line: null, message: "not absolute" };
@@ -612,7 +622,9 @@ function policyFileError(path: unknown, sha256: unknown): Record<string, unknown
     if (lstatSync(path).isSymbolicLink()) return { policy_error: "symlink", path, line: null, message: "symlink" };
     bytes = readFileSync(path);
   } catch { return { policy_error: "not_found", path, line: null, message: "not found" }; }
-  return createHash("sha256").update(bytes).digest("hex") === sha256 ? null : { policy_error: "hash_mismatch", path, line: null, message: "hash mismatch" };
+  if (createHash("sha256").update(bytes).digest("hex") !== sha256) return { policy_error: "hash_mismatch", path, line: null, message: "hash mismatch" };
+  if (process.env.FAKE_ACP_POLICY_PIN === "1") policyPins.push(openSync(path, "r"));
+  return null;
 }
 if (policyKnown && process.env.FUIGO_POLICY_PATH !== undefined) {
   const failed = policyFileError(process.env.FUIGO_POLICY_PATH, process.env.FUIGO_POLICY_SHA256);
@@ -930,6 +942,8 @@ let lastMcpServerNames: string[] = [];
 /** When those servers were handed over, and whether the list has shown them settled since. */
 let mcpHandedAt = 0;
 let mcpListSettledLogged = false;
+/** FAKE_ACP_MCP_LIST_UNANSWERED: list calls seen by this process. */
+let mcpListCalls = 0;
 const mcpTimeline = (event: "ready" | "listed" | "prompt", name?: string) => {
   const file = process.env.FAKE_ACP_MCP_TIMELINE;
   if (file) appendFileSync(file, `${JSON.stringify({ event, at: Date.now(), ...(name ? { name } : {}) })}\n`);
@@ -947,6 +961,8 @@ const announceMcpReady = (sessionId: string, servers: unknown) => {
     if (afterListing && (connectionGeneration !== mcpConnectionGeneration || connectedMcp.some(child => child.exitCode !== null || child.signalCode !== null))) return;
     const gate = process.env.FAKE_ACP_MCP_READY_GATE_FILE;
     if (gate && !existsSync(gate)) {
+      // `<gate>.waiting` says the session was answered and the first prompt is held on readiness
+      if (!existsSync(`${gate}.waiting`)) writeFileSync(`${gate}.waiting`, "");
       setTimeout(announce, 10).unref();
       return;
     }
@@ -2017,6 +2033,17 @@ function handle(msg: any) {
           const frames = outputBatch; outputBatch = undefined;
           process.stdout.write(frames.map(frame => JSON.stringify(frame)).join("\n") + "\n");
         }
+        return;
+      }
+      // no-reason:<observed|bare|blank>: the 1.0.19 meetgreet failure. The engine's own retries end (retry_state failed, kind api),
+      // a stop notice says error/api, and session/prompt is rejected with -32603 and nothing that explains it.
+      if (mode.startsWith("no-reason:")) {
+        const variant = mode.slice("no-reason:".length);
+        if (variant === "observed") {
+          out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "retry_state", type: "failed", error_type: "api", creditLimit: false, hold: false }, _meta: { eventId: "fixture-no-reason-1", agentTimestampMs: Date.now() } } });
+          out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params.sessionId, stopReason: "error", errorKind: "api" } });
+        }
+        out({ jsonrpc: "2.0", id: msg.id, error: variant === "bare" ? { code: -32603 } : { code: -32603, message: "Internal error" } });
         return;
       }
       if (mode.startsWith("fuigo-diagnostic:")) {
@@ -3113,6 +3140,12 @@ function handle(msg: any) {
       // FAKE_ACP_MCP_LIST: per-server status JSON ({name: "ready" | "initializing"
       // | ...}), answered as Grok Build and Fuigo answer it; unset: method not found.
       if (!process.env.FAKE_ACP_MCP_LIST) { if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } }); break; }
+      const call = ++mcpListCalls;
+      const unanswered = (process.env.FAKE_ACP_MCP_LIST_UNANSWERED ?? "").split(",").filter(Boolean);
+      // FAKE_ACP_MCP_LIST_OVERSIZE_AT "N:ms": ms after list call N, one oversized frame (an overflow while that read is unanswered)
+      const [oversizeAt, oversizeMs] = (process.env.FAKE_ACP_MCP_LIST_OVERSIZE_AT ?? "").split(":").map(Number);
+      if (call === oversizeAt) setTimeout(() => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { text: fixtureOversizeText() } } } }), oversizeMs || 0);
+      if (unanswered.some((spec) => spec.endsWith("+") ? call >= Number(spec.slice(0, -1)) : call === Number(spec))) break;
       const listed = process.env.FAKE_ACP_MCP_LIST;
       const settling = Date.now() - mcpHandedAt < (Number(process.env.FAKE_ACP_MCP_LIST_READY_AFTER_MS) || 0);
       const states = listed.startsWith("all:")

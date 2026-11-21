@@ -203,6 +203,7 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "memory-upgrade-overall.json": excluded("Start-up note holding how far the memory upgrade got, so a restart's progress bar never moves back; removed when the upgrade finishes"),
   "memory-repairs.json": excluded("Start-up note naming the one-time memory repairs already run on this memory file (by its installation id); a missing note runs them again, and they change nothing a second time"),
   "memory-repairs.json.tmp": excluded(LEFTOVER),
+  "memory-repairs-selfheal.json": excluded("Progress of the 1.0.21 memory repair, kept here only while memory-repairs.json cannot be read; a missing note walks the repair again, and it changes nothing a second time"),
   // 1.0.3 names the static scan found unclassified (each one stopped every backup once written):
   "env": excluded("Kept copy of the owner's login-shell environment (env-path.ts), used only when a fresh capture fails; the next capture writes it again, and it can hold secrets, so it is not restored"),
   "pending-grants.json": excluded("Remembered approvals still waiting for their answer to land (pending-grants.ts); no reader treats a row as a grant, and an unanswered one is simply asked again, so it is not restored"),
@@ -212,6 +213,10 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // on every start. The recovery is idempotent (a restored reply is found by its id and left alone), so a missing note reads the file again
   // from the start and changes nothing a second time; it is keyed on rowids a restored copy need not keep, so it never travels.
   "frozen-replies-recovery.json": excluded("Start-up note saying how far the recovery of earlier withheld delegated replies has read; read again from the start when absent, changing nothing a second time"),
+  "boot-progress.json": excluded("Start-up note naming the step before listen this start is in (server/boot-progress.ts); removed at listen, read by the next start when left behind"),
+  // The newest Murage version that opened this data (shared/data-version-marker.mjs), so an older build can say which version to install.
+  // It describes this folder only: a restore leaves the destination's own.
+  "data-version.json": excluded("Which Murage version last wrote this data folder at the newest; written again by each start; not restored"),
   "memory-upgrade-status.json": excluded("Start-up note written while the memory upgrade runs (progress, or why it could not run); removed when the upgrade finishes"),
   // Installation-local recovery notice obligations must not replay in a restored installation.
   "fence-notices": excluded(RUNTIME),
@@ -389,7 +394,9 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // start deletes it), and the status note's own temp file.
   { pattern: /^messages\.pre-memory-v[234]\.db\.partial(?:-settle)?(?:-journal|-wal|-shm)?$/, entry: excluded(LEFTOVER), example: "messages.pre-memory-v3.db.partial-journal" },
   { pattern: /^memory-upgrade-(?:overall|counts)\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-overall.json.4242.tmp" },
+  { pattern: /^boot-progress\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "boot-progress.json.4242001.tmp" },
   { pattern: /^memory-upgrade-status\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-status.json.4242.tmp" },
+  { pattern: /^data-version\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "data-version.json.4242.tmp" },
   // A skill index build stopped before its rename (skill-search.ts).
   { pattern: /^skill-index\.db\.\d+\.[a-z0-9]{1,8}\.tmp(?:-journal|-wal|-shm)?$/, entry: excluded(DERIVED_SKILLS), example: "skill-index.db.1268.ffjn5f.tmp" },
   // writeFileAtomic (atomic.ts) writes `<name>.<pid>.<uuid>.tmp` beside the

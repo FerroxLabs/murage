@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { BOT_DESCRIPTION_PORTABLE_MAX } from "../shared/bot-profile.ts";
 import { schemaIssue, type JsonValue } from "./schema.ts";
 import type { EmberColor } from "./store.ts";
 import { botMascotBody, type MascotBodyId } from "../shared/mascot-bodies.ts";
@@ -44,7 +45,7 @@ const memberSchema = z.object({
   }),
   name: requiredText(100),
   title: optionalText(200),
-  description: optionalText(4_000),
+  description: optionalText(BOT_DESCRIPTION_PORTABLE_MAX),
   appearance: z.object({
     color: z.enum(COLORS, { error: "is not supported" }),
     mascotExpression: optionalText(80),

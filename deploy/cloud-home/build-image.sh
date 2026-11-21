@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run only in an authorized Ubuntu image builder. Does not provision a VM.
-# Base: Ubuntu 24.04 LTS amd64 or arm64 (aarch64, build host CAX), Ubuntu serial 20260926.
+# Base: Ubuntu 24.04 LTS amd64 or arm64 (aarch64, Hetzner CAX), Ubuntu serial 20260926.
 # One script builds either architecture; every download is pinned per architecture below.
 set -euo pipefail
 # Never let a python helper write __pycache__ into the source checkout (it dirties it and the stage 2 clean-checkout test refuses).
