@@ -669,26 +669,11 @@ export const RESTORE_PATH_INVENTORY: Record<string,MoveClass> = {
     "kind": "not-live-db",
     "reason": "Publishes the separate diagnostic statistics database."
   },
-  "server/highlevel/approval-idempotency.ts::#publish::linkSync::0": {
-    "kind": "not-live-db",
-    "reason": "Publishes an immutable HighLevel approval idempotency record in its journal."
-  },
-  "server/highlevel/journal-file.ts::#compactIfLong::renameWithRetry::0": {
-    "kind": "not-live-db",
-    "reason": "Replaces the provider journal with compacted JSON lines."
-  },
-  "server/highlevel/opportunity-recovery-plan.ts::saveOpportunityPlan::linkSync::0": {
-    "kind": "not-live-db",
-    "reason": "Publishes the HighLevel opportunity recovery plan beside its approval records."
-  },
-  "server/highlevel/private-token.ts::writeAtomic::renameSync::0": {
-    "kind": "not-live-db",
-    "reason": "Publishes the private provider token record."
-  },
-  "server/highlevel/rpc-approval-replay.ts::bindRpc::linkSync::0": {
-    "kind": "not-live-db",
-    "reason": "Publishes the HighLevel RPC approval binding in its replay journal."
-  },
+
+
+
+
+
   "server/home-events.ts::compact::renameSync::0": {
     "kind": "not-live-db",
     "reason": "Compacts the app event outbox with live entries, tombstones and floors."
@@ -877,6 +862,10 @@ export const RESTORE_PATH_INVENTORY: Record<string,MoveClass> = {
   "server/memory/schema.ts::snapshotBeforeMigration::renameWithRetry::0": {
     "kind": "not-live-db",
     "reason": "Preserves a migration snapshot outside the live database."
+  },
+  "server/memory/selfheal-1021.ts::writeState::renameSync::0": {
+    "kind": "not-live-db",
+    "reason": "Publishes the 1.0.21 memory self-heal receipt."
   },
   "server/memory/settings.ts::downloadModel::renameSync::0": {
     "kind": "not-live-db",

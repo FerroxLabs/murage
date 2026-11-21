@@ -83,8 +83,23 @@ CREATE TRIGGER IF NOT EXISTS memory_session_proof_root_update AFTER UPDATE OF se
  DELETE FROM memory_session_checks WHERE up_to=0 AND thread_id=NEW.thread_id AND driver_instance=NEW.driver_instance AND native_session=NEW.native_session; END;
 `;
 const tables=['memory_session_checks','memory_session_check_cites','memory_session_change_log','memory_session_state','memory_session_check_messages'] as const;
+// A 1.0.20 candidate build added this column; 1.0.19 refuses the table with it (MEMORY_SCHEMA_UNSUPPORTED, then its restore page). The
+// generation a check was proven at is the footprint envelope's dg, so the column carried nothing else. validateMemorySchema accepts the
+// candidate's exact text only, and ensureSessionProofSchema hands the column back, leaving the 1.0.19 table.
+export const SESSION_CHECKS_CANDIDATE_COLUMN = 'deny_generation INTEGER NOT NULL DEFAULT -1';
+let candidateSql: string | undefined;
+export function sessionChecksCandidateSql(): string {
+ if(candidateSql!==undefined)return candidateSql;
+ const db=new DatabaseSync(':memory:');
+ try {
+  db.exec(SESSION_PROOF_SCHEMA.split(';',1)[0]!);
+  db.exec(`ALTER TABLE memory_session_checks ADD COLUMN ${SESSION_CHECKS_CANDIDATE_COLUMN}`);
+  return candidateSql=String((db.prepare("SELECT sql FROM sqlite_schema WHERE name='memory_session_checks'").get() as {sql:string}).sql);
+ } finally { db.close(); }
+}
 export function ensureSessionProofSchema(db: DatabaseSync): void {
  db.exec(SESSION_PROOF_SCHEMA);
+ if(db.prepare("SELECT 1 FROM pragma_table_info('memory_session_checks') WHERE name='deny_generation'").get())db.exec('ALTER TABLE memory_session_checks DROP COLUMN deny_generation');
  if(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_deny'").get())db.exec(SESSION_PROOF_DENIALS);
  if(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_lineage_lsn_meta'").get())db.exec(SESSION_PROOF_DENY_GENERATION);
  // the receipt-line pair does not wait for memory_session_roots: a file the reclaim has handed back still needs it

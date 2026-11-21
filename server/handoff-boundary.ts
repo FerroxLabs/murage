@@ -11,6 +11,7 @@ import { restoreHeldPeerAuthority } from './held-peer-authority.ts';
 import { resolveReceiptBinding } from "./card-result-source.ts";
 import { handoffReplyId, type OwedReply } from "./handoff-reply.ts";
 import { type DelegatedReplyChecks } from "./delegated-reply-check.ts";
+import { heldReplyRule, noAnswerLine, type HeldWait } from "./held-replies.ts";
 import { authorizeStatus, peerApprovalStatus, resolveTaskSealed, type BoundaryComms, type BoundaryStore } from "./boundary-ports.ts";
 import { newId } from "./contracts.ts";
 import { MAX_HANDOFFS_PER_TURN, coordinationRefusalText, type CoordinationBudget, type CoordinationTrace } from "./coordination-budget.ts";
@@ -43,6 +44,7 @@ import { type HumanPrincipal } from "./human-principals.ts";
 import { type ProjectCard } from "./project-records.ts";
 import { APP_CHILD_NOT_ALLOWED, assertNotAppChild, refuseAppChild } from "./app-trigger-zero.ts";
 import { readDoneWhen } from "./done-when.ts";
+import { recordRequestAncestry, threadAutomationAncestry } from "./automation-ancestry.ts";
 import type { PackAuthority } from "./delegation-pack/types.ts";
 
 export type EventReply = { status: number; body: unknown };
@@ -303,7 +305,7 @@ function finalizeWatched(
   const neutral = notOwnerSource && gate !== undefined && gate.kind !== "text" && gate.kind !== "refused";
   const noAnswer = !notOwnerSource && gate?.kind === "checking" && succeeded && recorded.present && !deliverRefused;
   const reply: Outbound | undefined = deliverRefused || neutral ? undefined : gate?.kind === "text" ? gate.text
-    : noAnswer ? (timedOut ? status("no_answer_check_timed_out", { name: targetName }) : status("no_answer_checking"))
+    : noAnswer ? (timedOut ? status("no_answer_check_timed_out", { name: targetName }) : noAnswerLine())
     : gate && gate.kind !== "refused" && succeeded && recorded.present ? (gate.kind === "withheld" ? gate.line : status("withheld")) : undefined;
   const failureName: Outbound = deliverAllowed && !deliverAllowed.ok ? deliverAllowed.line : gate?.kind === "refused" ? gate.line : failure;
   const copyOf = gate?.kind === "text" ? gate.copyOf : undefined;
@@ -383,7 +385,7 @@ function finalizeWatched(
   if (!target || !channel) return true;
   // the channel copy is unchanged: a reply still being checked is mirrored as the checking line, with no link to its originals
   // (past the wait the mirror is the same line the asker read: the bare checking line would read like silence in the room)
-  if (noAnswer && gate?.kind === "checking") comms.reply(target, timedOut && reply ? reply : gate.line, channel, undefined, "action");
+  if (noAnswer && gate?.kind === "checking") comms.reply(target, reply ?? noAnswerLine(), channel, undefined, "action");
   else if (ok && reply) comms.reply(target, reply, channel, copyOf, "action");
   else if (ok) comms.activity(target, channel, status("delegated_turn_completed"), true);
   else comms.activity(target, channel, failureName, false);
@@ -396,7 +398,7 @@ export function receiptResultShown(released: ReleasedResult, receipt: { copyOf?:
   if (released.kind === "text") return { result: released.text };
   if (released.kind === "gone") return { result: receipt.copyOf ? status("result_unavailable") : status("nothing") };
   if (released.kind === "withheld") return { result: released.line };
-  if (released.kind === "checking") return { result: status("no_answer_checking") };
+  if (released.kind === "checking") return { result: noAnswerLine() };
   if (released.kind === "status") return { result: receipt.ended ?? status("request_finished") };
   return { result: released.line, reason: released.code };
 }
@@ -436,7 +438,7 @@ export function continuationOutcome(bx: ContinuationPorts, wake: RoomRequest, th
   if (released.kind === "gone" && source.targetThreadId && source.targetThreadId !== threadId) released = ask(threadId);
   if (released.kind === "refused") return null;
   // a result still being checked wakes the asker with the no-answer line, never with "deleted or changed" (R10) and never its words (NOHOLD-DELEGATION.md)
-  return { answer: released.kind === "text" ? released.text : released.kind === "withheld" ? released.line : released.kind === "checking" ? status("no_answer_checking") : status("result_unavailable") };
+  return { answer: released.kind === "text" ? released.text : released.kind === "withheld" ? released.line : released.kind === "checking" ? noAnswerLine() : status("result_unavailable") };
 }
 
 export type SharedDeliveryPorts = {
@@ -454,6 +456,8 @@ export function sharedDeliveryOnDisk(bx: SharedDeliveryPorts, request: RoomReque
 }
 
 export type DeliverSharedResultPorts = Pick<BoundaryPorts, "comms" | "store" | "rows"> & {
+  /** The bounded wait for a finished answer the gate is still checking (held-replies.ts heldReplyRule): nothing is written until it clears. */
+  heldWait?: HeldWait;
   /** A parentless request's asker (a direct chat) is woken at the delivered row (index.ts marks it an external update first, then askerWake.returned).
    * False while that wake is not on disk: the request is not marked delivered, so the owed-delivery pass calls again (deduped). */
   returned?: (request: RoomRequest, messageId: string) => boolean;
@@ -477,8 +481,8 @@ export function sharedResultReturned(bx: SharedResultReturnedPorts, request: Roo
   const worker = request.toBotId ? store.bot(request.toBotId) : undefined;
   return askerWake.returned(request.id, destination, { toBotId: request.toBotId ?? "", toBotName: worker?.name ?? "", ok: request.state === "done", messageId }) !== false;
 }
-export function runDeliverSharedResult(bx: DeliverSharedResultPorts, request: RoomRequest): void {
-  const { comms, store , rows, returned } = bx;
+export function runDeliverSharedResult(bx: DeliverSharedResultPorts, request: RoomRequest, heldSince?: number): void {
+  const { comms, store , rows, returned, heldWait } = bx;
   const target = request.toBotId && store.bot(request.toBotId), destination = requestSourceThread(request.id);
   if (!target || !destination) return;
   // The result leaves through the one gate, asked again on every attempt and before the copy, the mirror and the receipt: delivery
@@ -490,6 +494,10 @@ export function runDeliverSharedResult(bx: DeliverSharedResultPorts, request: Ro
   const finished = request.state === "done";
   // The request id is a durable delivery receipt; a terminal replay cannot copy twice.
   const existing = store.terminalFor(destination, request);
+  // HELD (held-replies.ts heldReplyRule): an answer still being checked is not written yet; the delivery is asked again (re-reading the request)
+  // until the check clears or the bound passes, and only then is the plain notice the asker's line
+  if (finished && !existing && released.kind === "checking"
+    && heldReplyRule(heldWait, `shared:${request.id}`, destination, since => { const now = store.roomRequest(request.id); if (now) runDeliverSharedResult(bx, now, since); }, heldSince).kind === "wait") return;
   // NO HOLD (NOHOLD-DELEGATION.md): a finished request's answer the gate is still checking is the asker's final no-answer line, written as
   // the result row (its own kept status, so the asker reads it) and kept on the receipt; the pair room is told the checking line, never the words.
   // Final: a delivery asked again after a crash keeps the no-answer it already wrote, whatever the originals read now.
@@ -498,7 +506,7 @@ export function runDeliverSharedResult(bx: DeliverSharedResultPorts, request: Ro
   const endLine = sharedEndingLine(released, request, store.requestEnding(request));
   // A run that did not finish never reads as finished: what it wrote before it stopped goes with how it ended, marked as a partial reply.
   const answer: Outbound | undefined = result && !finished ? status("unfinished_partial", { ending: endLine, partial: result }) : result;
-  const ending: Outbound = answer ?? (noAnswer ? status("no_answer_checking") : endLine);
+  const ending: Outbound = answer ?? (noAnswer ? noAnswerLine() : endLine);
   let delivered = existing?.id;
   if (!delivered) {
     const extra = { requestId: request.id, inboundKind: request.verb === "ask" ? "question" as const : "action" as const, turnTerminal: true as const, from: { botId: target.id, name: target.name, color: target.color } };
@@ -506,7 +514,7 @@ export function runDeliverSharedResult(bx: DeliverSharedResultPorts, request: Ro
     else if (noAnswer) delivered = writeBotRow(rows, destination, extra, ending).id;
     else delivered = writeActivityRow(rows, destination, extra, ending, finished).id;
     if (answer && result) comms.reply(target, answer, store.group(request.groupId), result.copyOf, request.verb === "ask" ? "question" : "action");
-    else if (noAnswer) comms.reply(target, status("checking"), store.group(request.groupId), undefined, request.verb === "ask" ? "question" : "action");
+    else if (noAnswer) comms.reply(target, ending, store.group(request.groupId), undefined, request.verb === "ask" ? "question" : "action");
   }
   recordDelegationReceipt({ id: request.id, sourceThreadId: destination, toBotId: target.id, toBotName: target.name,
     // a failed run's receipt keeps how it ended as its own line (the partial reply is in the conversation, marked as one)
@@ -753,6 +761,9 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
       now: Date.now(), parentRequestId: roomAskParent(fromBotId, fromThreadId)?.id, tag: sourceExecutionAudience(fromBotId, fromThreadId), routineAuthority: routinePeerSource(fromThreadId, fromBotId), unattended: isUnattended(fromThreadId), ...(internalEventId ? { eventId: internalEventId } : {}) });
     // Refused before anything was queued: nothing ran, so nothing is charged.
     if (!queued.ok) { unrun(); return botReply(409, { error: queued.refusal, code: queued.code }); }
+    // PHONEAUD: the request keeps its asker's automation ancestry from now on (sharedTurnOptions carries it to the worker's turn), whatever
+    // the asking thread runs later; an asker with no record counts as automation
+    recordRequestAncestry(queued.request.id, threadAutomationAncestry(fromThreadId) !== false);
     // a shared hand-off from a direct chat (no parent request) has no request tree to wake its asker through: when the asker does not get the answer
     // in its own turn (in line, or past its wait), the delivery wakes it directly (NOHOLD-DELEGATION.md, the asker's one wake). Only then is a wake
     // registered, so an answer read in the asker's own turn never owes one. One in line whose wake could not be written is cancelled before it runs.
@@ -775,7 +786,7 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
     const released = releaseStoredResult({ requestId: settled.id, ...(settled.targetThreadId && settled.resultMessageId ? { origin: { threadId: settled.targetThreadId, messageIds: [settled.resultMessageId] } } : {}) },
       toBotId, fromThreadId, { fromBotId }, internalClaim.notOwnerAudience === true);
     if (released.kind === "refused") return botReply(403, { error: released.line, code: released.code });
-    const replyText: Outbound = released.kind === "text" ? released.text : released.kind === "withheld" ? released.line : released.kind === "checking" ? status("no_answer_checking") : sharedEndingLine(released, settled, store.requestEnding(settled));
+    const replyText: Outbound = released.kind === "text" ? released.text : released.kind === "withheld" ? released.line : released.kind === "checking" ? noAnswerLine() : sharedEndingLine(released, settled, store.requestEnding(settled));
     // a no-answer or withheld result is final for this request: a repeat in the same event replays the line, never the originals read again
     if (released.kind === "checking" || released.kind === "withheld") record(noAnswerReceipt(released.kind));
     else if (settled.targetThreadId && settled.resultMessageId) record(`answer:${settled.targetThreadId}:${settled.resultMessageId}:${settled.id}`);
@@ -876,7 +887,7 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
   const written = comms.reply(currentTarget, shown, channel, answer.withheld ? undefined : answer.copyOf);
   // the asking bot's answer: a reply still being checked is the final no-answer line for this request (NOHOLD-DELEGATION.md), and a repeat in
   // the same event replays that line (or the withheld one), never the originals read again
-  if (answer.withheld) { record(noAnswerReceipt(answer.checking ? "checking" : "withheld")); return botReply(200, { botName: botName(currentTarget), text: answer.checking ? status("no_answer_checking") : shown }); }
+  if (answer.withheld) { record(noAnswerReceipt(answer.checking ? "checking" : "withheld")); return botReply(200, { botName: botName(currentTarget), text: answer.checking ? noAnswerLine() : shown }); }
   if (written) record(`answer:${channel.threadId}:${written}${askRequestId ? `:${askRequestId}` : ""}`);
   return botReply(200, { botName: botName(currentTarget), text: shown });
   } finally {
@@ -966,7 +977,7 @@ export async function checkDelegationRoute(bx: CheckDelegationRouteContext): Pro
       // is not asks for, comes back as the withheld line. A receipt written before results carried their origin cannot be checked, so its text is withheld.
       // a receipt whose result is the checking or no-answer line and that names no originals to judge again: the no-answer line, never "deleted or
       // changed" (C6) and never words (NOHOLD-DELEGATION.md)
-      if (!receipt.copyOf && (receipt.ended?.key === "checking" || receipt.ended?.key === "no_answer_checking")) return sendBot(res, 200, botBody({ status: receipt.status, toBotName: store.nameOf(receipt.toBotId), result: status("no_answer_checking") }));
+      if (!receipt.copyOf && (receipt.ended?.key === "checking" || receipt.ended?.key === "no_answer_checking")) return sendBot(res, 200, botBody({ status: receipt.status, toBotName: store.nameOf(receipt.toBotId), result: noAnswerLine() }));
       // the same for a check that ran past its wait (1.0.5): the kept line names the worker and where the words are
       if (!receipt.copyOf && receipt.ended?.key === "no_answer_check_timed_out") return sendBot(res, 200, botBody({ status: receipt.status, toBotName: store.nameOf(receipt.toBotId), result: receipt.ended }));
       const binding = resolveReceiptBinding(receipt, { byId: (id) => store.roomRequest(id), byKey: (key) => store.roomRequestByKey(key) });
@@ -1154,6 +1165,7 @@ function captureHeldPeerAuthority(bx: DelegateBotRouteContext | AskBotRouteConte
     version: 1, handoffId: randomUUID(), depth: claim.depth,
     notOwnerAudience: claim.notOwnerAudience === true || bx.ownerSurfacesByThread.get(claim.threadId) === false,
     unattended: bx.isUnattended(claim.threadId), eventId: bx.internalEventId ?? null,
+    automationAncestry: threadAutomationAncestry(claim.threadId) !== false,
     // The live source also carries admission/provenance metadata. Persist the
     // resolved ceiling in the held record's strict, versioned wire shape.
     routineAuthority: routine ? { permissionMode: routine.permissionMode, triggerSource: routine.triggerSource } : null,

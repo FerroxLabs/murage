@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { acpRequestTimeoutMessage, acpStopReasonMessage } from "./acp/core.ts";
 import { antigravityResultFailure } from "./antigravity.ts";
 import { codexRpcTimeoutMessage } from "./codex.ts";
-import { engineClosedLine, plainDuration } from "./stop-copy.ts";
+import { engineClosedLine, mountNeverConnectedLine, mountStopCause, mountStoppedDetails, mountStoppedLine, plainDuration } from "./stop-copy.ts";
 
 const INTERNAL = /MURAGE_|_MS\b|\d+ ?ms\b|session\/|initialize|thread\/|turn\/|prompt result|Agent\b|max_tokens|max_turn_requests/;
 
@@ -83,5 +83,26 @@ describe("stop line copy", () => {
     for (const method of ["initialize", "thread/start", "thread/resume", "turn/start", "review/start", "skills/list"]) {
       expect(codexRpcTimeoutMessage(method, 10_000)).not.toMatch(INTERNAL);
     }
+  });
+
+  // 1.0.20 item 5: the tool relay's close names its real cause; only an app's own failure blames a connected app.
+  it("blames a connected app only when the app's own connection failed", () => {
+    const revoked = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED", fence: { state: "checking", reason: "not-built" } });
+    const closed = Object.assign(new Error("MCP_TRANSPORT_CLOSED"), { code: "MCP_TRANSPORT_CLOSED" });
+    expect(mountStopCause(undefined, revoked, undefined)).toEqual({ kind: "memory", code: "memory-fence:not-built" });
+    expect(mountStopCause(revoked, undefined, undefined)).toEqual({ kind: "memory", code: "memory-fence:not-built" });
+    // the fence registered this turn's refusal first; the app's connection closing after it is not the cause
+    expect(mountStopCause(closed, undefined, { verdict: { state: "checking", reason: "not-built" } })).toEqual({ kind: "memory", code: "memory-fence:not-built" });
+    expect(mountStopCause(closed, undefined, undefined)).toEqual({ kind: "app", code: "MCP_TRANSPORT_CLOSED" });
+    expect(mountStopCause(new Error("boom"), undefined, undefined)).toEqual({ kind: "app", code: "MCP_TRANSPORT_CLOSED" });
+    expect(mountStopCause(undefined, undefined, undefined)).toEqual({ kind: "sealed", code: "mount-relay-sealed" });
+    expect(mountStoppedLine("Claude", { kind: "app", code: "MCP_TRANSPORT_CLOSED" })).toBe(mountNeverConnectedLine("Claude"));
+    for (const kind of ["memory", "sealed"] as const) {
+      const line = mountStoppedLine("Claude", { kind, code: "x" });
+      expect(line).not.toMatch(/connected app|did not connect/i);
+      expect(line).toMatch(/^Claude stopped because .*Nothing was sent\. Send your message again in a moment\.$/);
+      expect(line).not.toMatch(INTERNAL);
+    }
+    expect(mountStoppedDetails("Claude", { kind: "memory", code: "memory-fence:not-built" })).toBe(`${mountStoppedLine("Claude", { kind: "memory", code: "memory-fence:not-built" })}\nCause code: memory-fence:not-built`);
   });
 });

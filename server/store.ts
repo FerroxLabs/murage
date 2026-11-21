@@ -145,6 +145,8 @@ export interface OptionCardData {
   options: string[];
   answered?: string;
   dismissed?: boolean;
+  /** 1021 Retry: the owner's answer did not reach the engine, which still holds the ask ('offered': Send again; 'sending'). */
+  deliveryRetry?: "offered" | "sending";
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
   /** 1.0.4 SL-I I5: the harness's own limit offer (engines that can answer now, with their billing). */
@@ -961,7 +963,9 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       take(copy, fields);
     }
   }
-  const safe = sanitizeDisplayTextUnit(textFields.map(field => field.text));
+  // A reply holding one inline «redacted …» span (the turn policy's own
+  // redaction) is stored with that span, not as a bare marker for the whole row.
+  const safe = sanitizeDisplayTextUnit(textFields.map(field => field.text), undefined, { markerStays: true });
   textFields.forEach((field, i) => { field.target[field.key] = safe[i]; });
   // The unit has already crossed the shared mask on its original bytes.
   // Re-masking a generated marker can turn a scalar label into a wrapped
@@ -1363,9 +1367,9 @@ export interface BotRecord {
   browser?: boolean;
   /** 1.0.9 phone tools: what this bot may ask the owner's phone to do. Absent key = off. Owner-only PATCH (S7). */
   phoneApps?: import("../shared/phone-apps.ts").PhoneApps;
-  /** Native HighLevel grants (HL-S2): which confirmed locations and tools this bot may use, read or propose. Owner-only PUT
-   * /api/highlevel/bots/:botId/access; bound to the bot's role (server/highlevel/access.ts nativeAccessFor). */
-  highlevelAccess?: import("../shared/highlevel.ts").HighLevelBotAccess;
+  /** Stored grants of Murage's own HighLevel (removed in 1.0.20). Kept as stored so a bot save never rewrites them; nothing
+   *  reads them except the one-time moved line (highlevel-moved-notice.ts). Cleanup is a 1.0.21 row. */
+  highlevelAccess?: unknown;
   /** Id of a named browser profile from config.browserProfiles; absent = the
    * bot's own private session. */
   browserProfile?: string;

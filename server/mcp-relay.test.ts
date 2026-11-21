@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -238,6 +241,77 @@ describe("relayMcpCall over streamable HTTP", () => {
     expect(fake.requests.at(-1)!.headers["mcp-protocol-version"]).toBe("2025-06-18");
     const note = await relayMcpCall(context(rpc("notifications/initialized", undefined), { sessionId: init.sessionId }));
     expect(note).toMatchObject({ ok: true, status: 202 });
+  });
+
+  // 1.0.20 owner report: Settings Test passed (it takes any status below 400 for a notification and
+  // reads an answer whatever its type) while every turn's relay answered 502 and the proxy sealed the mount.
+  it("takes what Settings Test takes: a 200 text/plain or 204 notification answer, and a JSON answer labelled text/plain", async () => {
+    fake = await startFakeRemoteMcp({ auth: "none", notificationAnswer: "200-text", answerContentType: "text/plain" });
+    const init = await relayMcpCall(context(rpc("initialize", 1, { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "c", version: "1" } })));
+    expect(init).toMatchObject({ ok: true, status: 200, contentType: "application/json", sessionId: expect.stringMatching(/^sess-/) });
+    if (!init.ok) return;
+    expect(JSON.parse(String(init.body))).toMatchObject({ id: 1, result: { protocolVersion: "2025-06-18" } });
+    for (const answer of ["200-text", "204"] as const) {
+      fake.options.notificationAnswer = answer;
+      const note = await relayMcpCall(context(rpc("notifications/initialized", undefined), { sessionId: init.sessionId }));
+      expect(note, answer).toEqual({ ok: true, status: 202, contentType: "application/json", body: Buffer.alloc(0) });
+    }
+    const list = await relayMcpCall(context(rpc("tools/list", 2), { sessionId: init.sessionId, protocolVersion: "2025-06-18" }));
+    expect(list).toMatchObject({ ok: true, status: 200, contentType: "application/json" });
+    if (list.ok) expect(JSON.parse(String(list.body))).toMatchObject({ id: 2, result: { tools: expect.arrayContaining([expect.objectContaining({ name: "echo" })]) } });
+  });
+
+  it("still refuses an answer to a request that is not one JSON object, and a request answered with no content", async () => {
+    let reply: { status: number; type?: string; body: string } = { status: 200, type: "text/html", body: "<html>sign in</html>" };
+    const origin = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => { res.writeHead(reply.status, reply.type ? { "content-type": reply.type } : {}); res.end(reply.body); });
+    });
+    origin.listen(0, "127.0.0.1");
+    await once(origin, "listening");
+    try {
+      const server = { url: `http://127.0.0.1:${(origin.address() as AddressInfo).port}/mcp`, auth: "none", headers: {}, enabled: true, local: "this-computer", transport: "http" } as StoredRemoteMcpServer;
+      expect(await relayMcpCall(context(rpc("tools/list", 1), { server }))).toMatchObject({ ok: false, status: 502, body: { code: "wrong-address" } });
+      for (const body of ["[1]", '{"ok":true}']) {
+        reply = { status: 200, type: "text/plain", body };
+        expect(await relayMcpCall(context(rpc("tools/list", 1), { server })), body).toMatchObject({ ok: false, status: 502, body: { code: "wrong-address" } });
+      }
+      reply = { status: 204, body: "" };
+      expect(await relayMcpCall(context(rpc("tools/call", 1, { name: "echo" }), { server }))).toMatchObject({ ok: false, status: 502, body: { code: "wrong-address" } });
+    } finally {
+      await new Promise<void>((resolve) => origin.close(() => resolve()));
+    }
+  });
+
+  const originReplying = async (reply: { status: number; type?: string; body: string }) => {
+    const origin = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => { res.writeHead(reply.status, reply.type ? { "content-type": reply.type } : {}); res.end(reply.body); });
+    });
+    origin.listen(0, "127.0.0.1");
+    await once(origin, "listening");
+    const server = { url: `http://127.0.0.1:${(origin.address() as AddressInfo).port}/mcp`, auth: "none", headers: {}, enabled: true, local: "this-computer", transport: "http" } as StoredRemoteMcpServer;
+    return { server, close: () => new Promise<void>((resolve) => origin.close(() => resolve())) };
+  };
+  const taken = { ok: true, status: 202, contentType: "application/json", body: Buffer.alloc(0) };
+
+  it("a notification the server takes with a 204 or a 200 text/plain is accepted, not a 502", async () => {
+    for (const reply of [{ status: 204, body: "" }, { status: 200, type: "text/plain", body: "OK" }]) {
+      const origin = await originReplying(reply);
+      try {
+        expect(await relayMcpCall(context(rpc("notifications/initialized", undefined), { server: origin.server })), String(reply.status)).toEqual(taken);
+      } finally { await origin.close(); }
+    }
+  });
+
+  it("the engine's answer to a server request (id, no method) the server takes with a 204 or a 200 text/plain is accepted, not a 502", async () => {
+    const answer = { jsonrpc: "2.0", id: "srv-1", result: { action: "cancel" } };
+    for (const reply of [{ status: 204, body: "" }, { status: 200, type: "text/plain", body: "OK" }]) {
+      const origin = await originReplying(reply);
+      try {
+        expect(await relayMcpCall(context(answer, { server: origin.server })), String(reply.status)).toEqual(taken);
+      } finally { await origin.close(); }
+    }
   });
 
   it("an SSE framed answer keeps its content type and is streamed through (MCP-ELICITATION-109)", async () => {

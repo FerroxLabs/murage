@@ -22,7 +22,7 @@ describe("the E2E host", () => {
     expect(serve).not.toMatch(/--https=(443|8443)\b/);
   });
 
-  it("builds the web dist on the build host, never with vite on the Mac", () => {
+  it("builds the web dist on Hetzner, never with vite on the Mac", () => {
     const build = readFileSync(new URL("build-web-dist.sh", HOST), "utf8");
     expect(build).toContain("ssh \"$HOST\"");
     expect(build).toContain("murage-ci:node24");

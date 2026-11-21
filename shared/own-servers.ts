@@ -9,7 +9,6 @@
 // ACP's hosted tools, Pi's unasked rows are its exact mount/tool pairs). A
 // tool on an own mount that is NOT in OWN_UNASKED asks.
 
-import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_MCP_SERVER, HIGHLEVEL_FAMILY_TOOLS } from "./highlevel.ts";
 import { PHONE_TOOL_NAMES } from "./phone-jobs-contract.ts";
 
 /** The built-in own mounts, by the `mountId` suffix of Rule 54
@@ -23,11 +22,34 @@ export const OWN_BUILTINS = {
   browser: "browser",
   phone: "phone",
   phoneJobs: "phoneJobs",
-  highlevel: HIGHLEVEL_MCP_SERVER,
   dweb: "dweb",
 } as const;
 
 export type OwnBuiltin = keyof typeof OWN_BUILTINS;
+
+/** Murage's own web search on the agents mount (CODEX-WEB-1020). A Codex turn with this mount has no native search (codex.ts
+ *  turns it off there), so this is its search. */
+export const OWN_WEB_SEARCH_TOOL = "web_search";
+
+/** The Settings search providers under which own web_search runs with no card: the free default ("engine" and "auto" both go to
+ *  Parallel then DuckDuckGo, anonymous, no account and no charge) and "off" (the handler refuses before anything leaves). Every
+ *  other value is a paid provider the owner chose (flux, tavily, exa, firecrawl): it keeps the OWN_ALWAYS_ASK card. */
+export const OWN_WEB_SEARCH_NO_CARD_PROVIDERS: readonly string[] = ["engine", "auto", "off"];
+
+let ownWebSearchProvider: (() => string | undefined) | undefined;
+/** The server names where the live provider setting is read (server/index.ts, beside the config). Unset, the search asks. */
+export function setOwnWebSearchProviderProbe(probe: (() => string | undefined) | undefined): void { ownWebSearchProvider = probe; }
+
+/** Whether own:agents/web_search runs with no card right now. Read per call, never stored on a turn, so a switch to a paid
+ *  provider asks on the next call. Fail-closed: no probe, a probe that throws, or a value outside the list is an ask. The table
+ *  is not changed by this: web_search is an OWN_ALWAYS_ASK row and never an OWN_UNASKED one, so no engine pre-allows it. */
+export function ownWebSearchRunsUnasked(mountId: string, tool: string): boolean {
+  if (mountId !== "own:agents" || tool !== OWN_WEB_SEARCH_TOOL || !ownWebSearchProvider) return false;
+  try {
+    const provider = ownWebSearchProvider();
+    return typeof provider === "string" && OWN_WEB_SEARCH_NO_CARD_PROVIDERS.includes(provider);
+  } catch { return false; }
+}
 
 export interface OwnUnaskedRow {
   mount: `own:${OwnBuiltin}`;
@@ -119,11 +141,6 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
     tools: PHONE_TOOL_NAMES,
     boundary: "1.0.9 phone tools (ruling in the ledger): the live phone authority, the grant intersection and the phone's own confirmation card are the gate; the owner started the turn directly",
   },
-  {
-    mount: "own:highlevel",
-    tools: [...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES],
-    boundary: "native HighLevel: every family call reaches the host, which checks the owner turn, family level, operation, scope and connection, and requires the applicable owner approval before a change",
-  },
 ];
 
 /** Own tools that ASK on every engine, by design (Rule 51). */
@@ -137,6 +154,8 @@ export const OWN_ALWAYS_ASK: readonly { mount: `own:${OwnBuiltin}`; tool: string
   // search query) is judged by the verdict, so these ask
   { mount: "own:agents", tool: "resolve_image_reference" },
   { mount: "own:agents", tool: "register_artifact" },
+  // CODEX-WEB-1020: web_search stays in this table. Its one exception is read live, per call (ownWebSearchRunsUnasked above):
+  // no card while the search provider in Settings is the free default. A paid provider the owner chose keeps this ask.
   { mount: "own:agents", tool: "web_search" },
   { mount: "own:agents", tool: "web_read" },
 ];
@@ -215,10 +234,8 @@ export const OWN_READS: readonly { mount: `own:${OwnBuiltin}`; tools: readonly s
 /** The owner's phone tools, run with no desktop card at every level on every engine. Not reads: add, change, compose
  * and dial act, but the live phone authority, the grant intersection and the phone's own confirmation card are the gate
  * (OWN_UNASKED ruling). Kept apart from OWN_READS so that set stays read-only. */
-export const PHONE_PREALLOWED: readonly { mount: "own:phoneJobs" | "own:highlevel"; tools: readonly string[] }[] = [
+export const PHONE_PREALLOWED: readonly { mount: "own:phoneJobs"; tools: readonly string[] }[] = [
   { mount: "own:phoneJobs", tools: PHONE_TOOL_NAMES },
-  // HighLevel family tools are handler-carded: the host decides reads, changes and approvals per operation
-  { mount: "own:highlevel", tools: [...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES] },
 ];
 
 /** Whether an own tool runs with no desktop card as a read or as a phone tool: an OWN_READS or PHONE_PREALLOWED row,

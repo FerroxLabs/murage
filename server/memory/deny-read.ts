@@ -807,9 +807,31 @@ function prefixVerdict(db: DatabaseSync, ref: Extract<LineageRef, { kind: "prefi
   if (since !== null && (bound === undefined || since <= bound)) return checking("pending");
   return SHOWN;
 }
+/** 1.0.21 cause1 (MAIN ruling (a)): a receipt row whose cited versions are not two arrays of well-formed entries ({id, version} records,
+ * {id, revision} sources, each a safe integer >= 1). Validated before any verdict, so a corrupted receipt never reads as a proven refusal
+ * (revoked, a missing record, a Murage anchor) that the owner keep rule may drop. A plain loop over already-parsed JSON: no lookups. */
+function malformedReceiptRow(row: Record<string, unknown>): boolean {
+  let records: unknown, sources: unknown;
+  try { records = JSON.parse(String(row.record_versions)); sources = JSON.parse(String(row.source_versions)); } catch { return true; }
+  if (!Array.isArray(records) || !Array.isArray(sources)) return true;
+  const entry = (value: unknown, field: "version" | "revision"): boolean => {
+    const item = value as Record<string, unknown> | null;
+    return Boolean(item) && typeof item === "object" && typeof item!.id === "string" && Number.isSafeInteger(item![field]) && Number(item![field]) >= 1;
+  };
+  return !records.every(record => entry(record, "version")) || !sources.every(source => entry(source, "revision"));
+}
+/** The send fence's keep rule asks this before it drops a held receipt: true for a malformed receipt row (above) or one that cannot be read. */
+export function receiptMalformed(db: DatabaseSync, bundleId: string): boolean {
+  try {
+    const row = one(db, "SELECT record_versions,source_versions FROM memory_disclosures WHERE bundle_id=?", bundleId);
+    return !row || malformedReceiptRow(row);
+  } catch { return true; }
+}
 function receiptVerdict(db: DatabaseSync, ref: Extract<LineageRef, { kind: "receipt" }>, reader: LineageReader): LineageVerdict {
-  const row = one(db, "SELECT d.state,d.policy_revision,d.deletion_epoch,m.policy_revision AS p,m.deletion_epoch AS e FROM memory_disclosures d, memory_meta m WHERE m.id=1 AND d.bundle_id=?", ref.bundleId);
+  const row = one(db, "SELECT d.state,d.policy_revision,d.deletion_epoch,d.record_versions,d.source_versions,m.policy_revision AS p,m.deletion_epoch AS e FROM memory_disclosures d, memory_meta m WHERE m.id=1 AND d.bundle_id=?", ref.bundleId);
   if (!row) return checking("lookup-error");
+  // validate first: a malformed receipt is unreadable whatever its state (revoked included) or any later reason would say
+  if (malformedReceiptRow(row)) return checking("lookup-error");
   if (row.state === "revoked") return withheld("deny-memory");
   if (reader.audience === null) return contentReceiptVerdict(db, ref.bundleId, reader);
   const anchored = receiptAnchorVerdict(db, ref.bundleId);
@@ -826,6 +848,57 @@ function receiptVerdict(db: DatabaseSync, ref: Extract<LineageRef, { kind: "rece
   return contentReceiptVerdict(db, ref.bundleId, reader);
 }
 
+/** 1.0.20 ctxrev-h1: a cited notebook chunk (import evidence) that later re-imports superseded without changing anything it showed: every
+ * later version of the id has its exact words, kind, scope, assertion and pin, rests only on the same notebook source (one handle per
+ * version, at that version's revision), and the newest of them is the one active version. Returns that version, the revision its evidence
+ * cites, and each (source, revision) the cited version rested on; undefined for anything else (changed or restored words, a shorter
+ * notebook, a correction or derived record, a deleted or archived later version), which stays withheld. Bounded by the id's versions. */
+function reimportedChunk(db: DatabaseSync, id: string, version: number): { version: number; revision: number; sources: Array<[string, number]> } | undefined {
+  const cited = one(db, `SELECT o.kind,o.assertion,count(e.source_id) AS n,min(e.source_id) AS source_id,min(e.source_revision) AS revision FROM memory_records o
+    LEFT JOIN memory_evidence e ON e.record_id=o.id AND e.record_version=o.version WHERE o.id=? AND o.version=? AND o.state='superseded' GROUP BY o.id,o.version`, id, version);
+  if (!cited || cited.kind !== "evidence" || cited.assertion !== "unverified-import" || Number(cited.n) !== 1) return undefined;
+  // one aggregate over the id's later versions (primary-key range), never a row per version back to the caller
+  const later = one(db, `SELECT count(*) AS n, max(n.version) AS newest, min(n.version) AS first, max(CASE WHEN n.state='active' THEN n.version END) AS live,
+      sum(n.state='superseded') AS superseded,
+      sum(n.text IS o.text AND n.kind IS o.kind AND n.scope_id IS o.scope_id AND n.assertion IS o.assertion AND n.owner_pinned IS o.owner_pinned
+        AND (SELECT count(*) FROM memory_evidence e WHERE e.record_id=n.id AND e.record_version=n.version)=1
+        AND EXISTS (SELECT 1 FROM memory_evidence e WHERE e.record_id=n.id AND e.record_version=n.version AND e.source_id=? AND e.source_revision=n.version)) AS same
+    FROM memory_records o JOIN memory_records n ON n.id=o.id AND n.version>o.version WHERE o.id=? AND o.version=?`, String(cited.source_id), id, version);
+  const count = Number(later?.n ?? 0);
+  if (!later || !count || Number(later.same) !== count || Number(later.superseded) !== count - 1 || later.live === null || Number(later.live) !== Number(later.newest)) return undefined;
+  // r3: contiguous versions only. A removal (a shorter notebook) writes no row at its revision, so versions 1 and 3 with the same words are
+  // a removed chunk restored later, never this; and no forget of the notebook at the cited or any later revision (an in-between one
+  // included, which neither endpoint's own lookup reads)
+  if (Number(later.first) !== version + 1 || Number(later.newest) - version !== count) return undefined;
+  if (one(db, "SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision>=?) LIMIT 1", String(cited.source_id), Number(cited.revision))) return undefined;
+  // 1.0.21 combine (h1 x selfheal H2): nor a forgotten import's contents (forget.ts: an import tombstone by scope and content hash) at the
+  // cited or any later notebook revision; the cleanup (memory-revocation.ts importWindowStep) may not have reached its copy yet
+  if (one(db, `SELECT 1 FROM memory_tombstones t JOIN memory_source_versions v ON v.source_id=? AND v.revision>=? AND v.content_hash=t.content_hash
+      WHERE t.target_type='import' AND t.target_id=(SELECT scope_id FROM memory_sources WHERE id=?) LIMIT 1`, String(cited.source_id), Number(cited.revision), String(cited.source_id))) return undefined;
+  return { version: Number(later.newest), revision: Number(later.newest), sources: [[String(cited.source_id), Number(cited.revision)]] };
+}
+/** 1.0.20 ctxrev-h1 r3: the one carry both receipt readers use (contentReceiptVerdict below, disclosures.ts revokedReason on every adapter
+ * acceptance, the Flux/HTTP tool rounds included): each cited record version that is such a re-imported unchanged chunk -> its newest
+ * version, and the notebook (source, revision) it rested on -> the revision that newest version cites. Nothing else is carried. */
+export type ReimportCarry = { records: Map<string, number>; sources: Map<string, number> };
+export const reimportCarryKey = (id: string, version: number) => `${id}\u0000${version}`;
+export function reimportCarry(db: DatabaseSync, records: ReadonlyArray<{ id: string; version: number }>): ReimportCarry {
+  const carry: ReimportCarry = { records: new Map(), sources: new Map() };
+  for (const record of records) {
+    if (!record || typeof record.id !== "string" || !Number.isSafeInteger(record.version) || record.version < 1) continue;
+    if (one(db, "SELECT state FROM memory_records WHERE id=? AND version=?", record.id, record.version)?.state !== "superseded") continue;
+    const replacement = reimportedChunk(db, record.id, record.version);
+    if (!replacement) continue;
+    carry.records.set(reimportCarryKey(record.id, record.version), replacement.version);
+    for (const [sourceId, revision] of replacement.sources) carry.sources.set(reimportCarryKey(sourceId, revision), replacement.revision);
+  }
+  return carry;
+}
+/** disclosures.ts revokedReason: a receipt that leans on the carry must also read shown by the content verdict here (cited and newest
+ * versions, both notebook revisions, marks, anchors), so the HTTP acceptance never accepts what the retained fence withholds. */
+export function reimportedReceiptVerdict(db: DatabaseSync, bundleId: string, reader: LineageReader): LineageVerdict {
+  try { return contentReceiptVerdict(db, bundleId, reader); } catch { return checking("lookup-error"); }
+}
 /** Ordinary direct owners ignore audience flips, but never the receipt's content dependencies. */
 function contentReceiptVerdict(db: DatabaseSync, bundleId: string, reader: LineageReader): LineageVerdict {
   const row = one(db, "SELECT thread_id,record_versions,source_versions FROM memory_disclosures WHERE bundle_id=?", bundleId);
@@ -842,25 +915,35 @@ function contentReceiptVerdict(db: DatabaseSync, bundleId: string, reader: Linea
   const anchored = receiptAnchorVerdict(db, bundleId);
   if (anchored) return anchored;
   const refs: MemoryRef[] = [];
+  // a re-imported notebook's source revision the receipt's unchanged chunks were cited at -> the revision their replacements cite
+  const carry = reimportCarry(db, records), carried = carry.sources;
   for (const record of records) {
     chargeReleaseWork();
     if (!record || typeof record.id !== "string" || !Number.isSafeInteger(record.version) || record.version < 1) return checking("lookup-error");
-    const current = one(db, "SELECT state,kind,scope_id,owner_pinned FROM memory_records WHERE id=? AND version=?", record.id, record.version);
+    const current = one(db, "SELECT state,kind,scope_id,owner_pinned,assertion FROM memory_records WHERE id=? AND version=?", record.id, record.version);
     if (!current) return withheld("deny-memory");
     const checkpointId = `checkpoint:${createHash("sha256").update(JSON.stringify([String(current.scope_id), String(row.thread_id)])).digest("hex")}`;
     const superseded = current.kind === "checkpoint" && current.state === "archived" && current.owner_pinned !== 1 && record.id === checkpointId
       && Boolean(one(db, "SELECT 1 FROM memory_records WHERE id=? AND version>? AND state='active' ORDER BY version DESC LIMIT 1", record.id, record.version));
-    if (current.state !== "active" && !superseded) return withheld("deny-memory");
+    // 1.0.20 ctxrev-h1: a tracked notebook's re-import supersedes every chunk, its words unchanged included (import.ts reclaim-n6 withdraws
+    // only the changed ones). Such a chunk is judged as its replacement: the cited version and every later one must still read clean below.
+    const newest = current.state === "superseded" ? carry.records.get(reimportCarryKey(record.id, record.version)) : undefined;
+    const replacement = newest === undefined ? undefined : { version: newest };
+    if (current.state !== "active" && !superseded && !replacement) return withheld("deny-memory");
+    if (replacement) refs.push({ kind: "record", id: record.id, version: replacement.version, scopeId: String(current.scope_id) });
     if (one(db, "SELECT 1 FROM memory_deny WHERE kind='scope' AND id=?", String(current.scope_id))
-      || one(db, "SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1", record.id, record.version)) return withheld("deny-memory");
+      || one(db, `SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?${replacement ? " OR revision>?" : ""}) LIMIT 1`, record.id, record.version, ...replacement ? [record.version] : [])) return withheld("deny-memory");
     refs.push({ kind: "record", id: record.id, version: record.version, scopeId: String(current.scope_id) });
   }
   for (const source of sources) {
     chargeReleaseWork();
     if (!source || typeof source.id !== "string" || !Number.isSafeInteger(source.revision) || source.revision < 1) return checking("lookup-error");
     const current = one(db, `SELECT s.state,s.revision,s.thread_id,s.message_id,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`, source.id);
-    if (!current || current.state !== "active" || current.revision !== source.revision || current.denied
-      || one(db, "SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1", source.id, source.revision)) return withheld("deny-memory");
+    // the notebook source of a re-imported unchanged chunk this receipt cites moved on with the chunk: judged at the revision the chunk's
+    // replacement cites (a source cited on its own, or at a revision no unchanged chunk carries, still withholds)
+    const moved = carried.get(reimportCarryKey(source.id, source.revision));
+    if (!current || current.state !== "active" || (current.revision !== source.revision && current.revision !== moved) || current.denied
+      || one(db, "SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=? OR revision=?) LIMIT 1", source.id, source.revision, Number(current.revision))) return withheld("deny-memory");
     // A receipt preserves the source anchor's content obligations even when
     // the stored speaker is human. Audience-only marks still do not deny content.
     if (current.thread_id !== null && current.message_id !== null && one(db,
@@ -868,6 +951,7 @@ function contentReceiptVerdict(db: DatabaseSync, bundleId: string, reader: Linea
        JOIN memory_deny_line d ON d.thread_id=t.thread_id AND d.lsn=l.lsn
        WHERE t.thread_id=? AND l.message_id=? AND ${NOT_AUDIENCE_ONLY} LIMIT 1`, String(current.thread_id), String(current.message_id))) return withheld("deny-line");
     refs.push({ kind: "source", id: source.id, version: source.revision });
+    if (moved !== undefined && moved !== source.revision) refs.push({ kind: "source", id: source.id, version: moved });
   }
   let worst: LineageVerdict = SHOWN;
   for (const verdict of memoryLookup(db, refs, reader).values()) worst = worstVerdict(worst, verdict);
@@ -1092,6 +1176,7 @@ export function ownLineVerdicts(db: DatabaseSync, threadId: string, messageIds: 
 
 /** A bounded footprint supplies the probes. The reader's complete membership is never copied. */
 function lineageAudienceHasScope(db: DatabaseSync,audience: import('./lineage-types.ts').LineageAudience,scope: string): boolean {
+  if(audience.scopeCeiling && !audience.scopeCeiling.includes(scope))return false;
   if(audience.view){assertRecallView(db,audience.view);return recallViewHasScope(db,audience.view,scope,audience.recallOnly!==true,audience.personOnly===true);}
   return audience.scopeIds.includes(scope);
 }

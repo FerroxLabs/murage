@@ -1,7 +1,7 @@
 # Signal G0 capture sanitization
 
 `g0/scrub.py` is the repository-owned replacement for
-`/work/fuigo-builds/l1-signal/g0/scrub.py` named by the Signal ruling. It uses
+`/root/fuigo-builds/l1-signal/g0/scrub.py` named by the Signal ruling. It uses
 source-derived schemas at `48a0a5e90cb0c36153f0276c0affff090e588290`.
 No real captures or identities are included here.
 

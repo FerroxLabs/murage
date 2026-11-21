@@ -32,9 +32,10 @@ it("every engine reaches both tools through the agents server, and an answer on 
 });
 
 // MAIN 2026-11-17T17:20Z Q3: a publish card gets the same thread waiting flag and notification as image and HighLevel cards.
-it("image, HighLevel and publish cards all wait through the one service waiting function and its shared flag", () => {
+// 1.0.20 hlstrip: the HighLevel cards are removed with Murage's own HighLevel.
+it("image and publish cards both wait through the one service waiting function and its shared flag", () => {
   const index = read("../index.ts");
-  for (const [make, service] of [["const imageOperations = new ImageOperations", "image"], ["const publishOperations = new PublishOperations", "publish"], ["const highlevelCards = new HighLevelReviewCards", "highlevel"]]) {
+  for (const [make, service] of [["const imageOperations = new ImageOperations", "image"], ["const publishOperations = new PublishOperations", "publish"]]) {
     const start = index.indexOf(make);
     expect(start, make).toBeGreaterThan(0);
     // The constructor call ends at its closing "});" (a line of its own, or after the last option).

@@ -87,6 +87,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   own_write_holds: { required: false, optional: [] },
   // seq: the per-thread sequence (transcript-seq.ts), new in 1.0.3; an archive from before it lacks the column and its index
   gh18_operations: { required: false, optional: [] },
+  // the bot create commit marker (bot-create-rollback.ts), new in 1.0.19: made at the first bot create and kept, empty, after it
+  bot_create_commits: { required: false, optional: [] },
   messages: { required: true, optional: ["seq", "turn_id"] },
   // L8/I0: optional for pre-1.0.19 archives; definitions come from the serving initializers.
   send_attempts: { required: false, optional: [] },
@@ -268,6 +270,8 @@ function columnShape(db: DatabaseSync, table: string): string[] {
 let reference: Map<string, ReferenceObject> | undefined;
 /** APP_TABLES plus every table of APP_SCHEMA_102_ADDITIONS the initializers create: one list for what the downgrade drops and what a snapshot accepts. */
 let registeredTables: Map<string, { required: boolean; optional: string[] }> = APP_TABLES;
+/** The exact table bot-create-rollback.ts makes; a snapshot of a data dir where a bot was created holds it (red-audit B2). */
+const BOT_CREATE_COMMITS_DDL = "CREATE TABLE IF NOT EXISTS bot_create_commits(id TEXT PRIMARY KEY NOT NULL)";
 function appTables() { referenceSchema(); return registeredTables; }
 /** The definitions the harness's own initializers create, read back from a
  * fresh in-memory database rather than copied by hand, so an index or table
@@ -299,6 +303,7 @@ function referenceSchema(): Map<string, ReferenceObject> {
     db.exec(RESTORE_JOB_MARKS_DDL);
     db.exec(RESTORE_BOOT_WAIT_DDL);
     ensureIndexOverrun(db);
+    db.exec(BOT_CREATE_COMMITS_DDL);
     const objects = new Map<string, ReferenceObject>();
     const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
     const tables = new Map(APP_TABLES);

@@ -4,7 +4,7 @@ import { insertFixtureRows } from './testing/approval-card.ts';
 // NEEDS YOU COUNT, 1.0.12: GROWTH GATES G1, G1k, G2 to G5 (docs/designs/NEEDS-YOU-COUNT-1012.md section 3).
 //
 // Opt in (NYC_GROWTH=1): these build fixtures of up to 240k rows and time
-// thousands of calls, so they run in a build host lane container, never on a
+// thousands of calls, so they run in a Hetzner lane container, never on a
 // laptop and never in the default suite. The same file runs on the 1.0.10 tree
 // (no correction there) to record the baseline: NYC_GROWTH_OUT names the JSON
 // written, NYC_GROWTH_BASELINE the baseline JSON the "+ N ms" limits read.

@@ -105,6 +105,10 @@ jobs:
         run: |
           python -I native/gepa/build-windows.py "$env:RUNNER_TEMP/gepa-windows"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: List GEPA native images to sign (never Microsoft redistributables)
+        # Microsoft's VC++ runtime keeps Microsoft's own signature; verify-windows.ps1 requires it.
+        shell: pwsh
+        run: ./native/gepa/sign-list-windows.ps1 -Bundle "$pwd/dist-native/gepa/win32-x64" -List "$pwd/qualification-evidence/gepa-windows-sign-list.txt"
       - name: Sign GEPA native images before freezing their manifest
         uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         with:
@@ -114,9 +118,7 @@ jobs:
           endpoint: https://eus.codesigning.azure.net
           signing-account-name: ferrox-labs-signing
           certificate-profile-name: ferroxlabs
-          files-folder: ${{ github.workspace }}/dist-native/gepa/win32-x64
-          files-folder-filter: exe,dll,pyd
-          files-folder-recurse: true
+          files-catalog: ${{ github.workspace }}/qualification-evidence/gepa-windows-sign-list.txt
           file-digest: SHA256
           timestamp-digest: SHA256
           exclude-azure-cli-credential: true

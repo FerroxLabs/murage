@@ -1755,9 +1755,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.",
     "heading": "HighLevel",
     "breadcrumb": "Murage docs → Connected apps",
-    "where": "Settings → Connected apps → HighLevel",
+    "where": "Settings → Connected apps",
     "url": "https://murage.ai/docs/connected-apps#highlevel",
-    "text": "Your bots can look things up in your HighLevel CRM. They can read it and cannot change anything in it. On this computer, open Settings → Connected apps → HighLevel and paste a private integration token (make one in HighLevel under Settings, Private Integrations). Enter your Location ID, select Check location, then Confirm. Then choose which bots can read that location. Murage keeps the token with your other saved keys and never shows it again. HighLevel opens only for a message you send a bot directly in its chat."
+    "text": "Connect HighLevel the same way as any other app: through Settings → Connected apps (Composio), or add your own HighLevel MCP server under Settings → Connected apps → Advanced → Connected tools details. Then turn on connected apps or that tool for each bot that should use it."
   },
   {
     "id": "connected-apps#disconnecting",
@@ -2825,16 +2825,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Settings → General → Advanced → Start at login and run in the background\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/general/startup"
   },
   {
-    "id": "features/every-setting#general-advanced-send-usage-analytics",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "General, Advanced: Send usage analytics",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → General → Advanced → Send usage analytics",
-    "url": "https://murage.ai/docs/features/every-setting#general-advanced-send-usage-analytics",
-    "text": "Settings → General → Advanced → Send usage analytics\n\nAddress: murage://settings/app/general/analytics"
-  },
-  {
     "id": "features/every-setting#general-about-me-for-every-bot",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
@@ -2933,16 +2923,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Skills → Teach a skill",
     "url": "https://murage.ai/docs/features/every-setting#skills-teach-a-skill",
     "text": "Settings → Skills → Teach a skill\n\nOn the computer running Murage.\n\nWhen it is off: Off. Turn it on to let bots learn a skill from a recording or /learn.\n\nAddress: murage://settings/app/skills/recorder"
-  },
-  {
-    "id": "features/every-setting#skills-advanced-voice-transcription-key",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Skills, Advanced: Voice transcription key",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Skills → Advanced → Voice transcription key",
-    "url": "https://murage.ai/docs/features/every-setting#skills-advanced-voice-transcription-key",
-    "text": "Settings → Skills → Advanced → Voice transcription key\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/voice-key"
   },
   {
     "id": "features/every-setting#skills-skills-library-and-import",
@@ -3253,16 +3233,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Connected apps → Bot email",
     "url": "https://murage.ai/docs/features/every-setting#connected-apps-bot-email",
     "text": "Settings → Connected apps → Bot email\n\nOn the computer running Murage.\n\nWhen it is off: Needs a Flux Router account with email on. Ask your Chief to set it up, or open Flux Router.\n\nAddress: murage://settings/app/connections/bot-email"
-  },
-  {
-    "id": "features/every-setting#connected-apps-highlevel",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Connected apps: HighLevel",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Connected apps → HighLevel",
-    "url": "https://murage.ai/docs/features/every-setting#connected-apps-highlevel",
-    "text": "Settings → Connected apps → HighLevel\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/connections/highlevel"
   },
   {
     "id": "features/every-setting#connected-apps-phone-calls",

@@ -30,7 +30,7 @@ import {
   type CarryChildKind, type LineageParents, type LineageRef, type LineageToken, type LineInput, type MemoryRef, type SessionKey, type TurnLineage,
 } from "./lineage-types.ts";
 import { denyGeneration } from "./deny-read.ts";
-import { inheritMarks, type CarryRange, type InheritChild } from "./revoke-commit.ts";
+import { hideTurnRecord, inheritMarks, type CarryRange, type InheritChild } from "./revoke-commit.ts";
 import { ensureThreadNo, threadNo } from "./thread-no.ts";
 import type { LineageReader, LineageVerdict } from "./lineage-types.ts";
 import { normalizeRetainedRefs, retainedRefCounts, RETAINED_LINES_MAX, RETAINED_OBJECTS_MAX } from "./retained-refs.ts";
@@ -422,7 +422,53 @@ export interface OpenTurn extends TurnLineage {
   budget?: ReleaseBudget;
   preparedWindow?: import("./lineage-types.ts").PreparedWindow;
   onLedgerRefused?: (verdict: LineageVerdict) => void;
-  validateParents?: (refs: readonly LineageRef[]) => void;
+  /** `settleHeld` (CTXREV H2, set only by proposeTurnParents): when the refs are refused because of what the turn ALREADY holds, the owner's
+   * running turn drops that held context by the keep rule instead of being sealed (send-fence.ts settleHeldContext). True then: the held
+   * parents changed and the caller must build its proposal again; that second proposal is validated strictly. */
+  validateParents?: (refs: readonly LineageRef[], settleHeld?: boolean) => boolean | void;
+  /** 1.0.20 A-5: set only for an owner-audience direct turn. A later release whose re-check of the context the engine ALREADY holds (no
+   * prospective refs) is still checking:pending lets the running turn continue when this returns true (it tells the one left-out note);
+   * a proven revoke, new context, or any other audience still refuses. 1.0.20 revokekeep (SEAN RULING): asked with the verdict for any
+   * refusal of held context, so a revoke or change mid-turn never stops the owner's turn (send-fence.ts keepOwnerTurn). */
+  continuePending?: (verdict?: LineageVerdict) => boolean;
+  /** 1.0.20 revokekeep: the words of held lines a privacy revoke withdrew while the turn ran; the turn's stored reply never keeps them
+   * (message-db.ts redactRevoked). Bounded by REDACTIONS_MAX. */
+  redactions?: Set<string>;
+  /** CTXREV H2 A-2: set when the keep rule dropped a held ref for its own privacy revoke (a receipt or memory, or a line). Redaction removes
+   * only whole withdrawn lines; a reply can still carry a derived excerpt or a detail from the revoked memory, so the turn's stored reply is
+   * withheld from bots for good (message-db.ts redactRevoked: withheldFromBots). The owner still sees it. */
+  noReplay?: true;
+}
+/** The most withdrawn texts one turn redacts; the shortest it redacts (a shorter one would erase ordinary words of the reply). */
+const REDACTIONS_MAX = 256;
+export const REDACTION_MIN_CHARS = 8;
+export const REDACTED_TEXT = "[removed]";
+/** 1.0.20 revokekeep: the running turn keeps only `kept` of what it was shown (the refused held refs leave its parents, so its reply is not
+ * built on them and does not cite them), and remembers the withdrawn words it must not store. Never seals the turn. */
+export function dropRetainedParents(open: OpenTurn, kept: readonly LineageRef[], withdrawn: readonly string[], noReplay = false): void {
+  if (noReplay) open.noReplay = true;
+  open.parents = [...kept];
+  open.keys = new Set(kept.map(lineageRefKey));
+  open.revision++;
+  open.resolved = undefined;
+  for (const text of withdrawn) {
+    const words = text.trim();
+    if (words.length < REDACTION_MIN_CHARS) continue;
+    open.redactions ??= new Set();
+    if (open.redactions.size >= REDACTIONS_MAX) break;
+    open.redactions.add(words);
+  }
+}
+/** The reply text of a running turn without the words a privacy revoke withdrew from it; unchanged when nothing was withdrawn. */
+export function redactTurnText(turn: TurnLineage, text: string): string {
+  let out = text;
+  for (const open of openTurnsOf(turn)) for (const words of open.redactions ?? []) if (out.includes(words)) out = out.split(words).join(REDACTED_TEXT);
+  return out;
+}
+/** CTXREV H2 A-2: the running turn's reply rests on context a privacy revoke withdrew mid-turn; bots are never shown it again. */
+export function turnWithheldFromBots(turn: TurnLineage): boolean {
+  for (const open of openTurnsOf(turn)) if (open.noReplay) return true;
+  return false;
 }
 /** The deny_generation values the running turns' own writes produced (ownCarry), one row per value, in a TEMP table on the writing
  * connection. Written in the same transaction as the bump, so a rollback (an atomically() savepoint, or the caller's transaction) takes the
@@ -514,12 +560,12 @@ export function refuseRetainedTurn(open: OpenTurn, verdict: LineageVerdict): voi
 }
 
 export function freezeLineageReader(reader: LineageReader): LineageReader {
-  return Object.freeze({ ...reader, audience: reader.audience === null ? null : Object.freeze({ ...reader.audience, ...(reader.audience.view ? {view:Object.freeze({...reader.audience.view}),scopeIds:Object.freeze([])} : {scopeIds: Object.freeze([...reader.audience.scopeIds])}) }) });
+  return Object.freeze({ ...reader, audience: reader.audience === null ? null : Object.freeze({ ...reader.audience, ...(reader.audience.scopeCeiling ? {scopeCeiling:Object.freeze([...reader.audience.scopeCeiling])} : {}), ...(reader.audience.view ? {view:Object.freeze({...reader.audience.view}),scopeIds:Object.freeze([])} : {scopeIds: Object.freeze([...reader.audience.scopeIds])}) }) });
 }
 
 /** Finalize once, before authoritative preparation and receipt joins. */
 export function bindRetainedTurn(turn: TurnLineage, reader: LineageReader, onRefused: (verdict: LineageVerdict) => void,
-  validate: (refs: readonly LineageRef[]) => void): LineageReader {
+  validate: (refs: readonly LineageRef[], settleHeld?: boolean) => boolean | void, continuePending?: (verdict?: LineageVerdict) => boolean): LineageReader {
   const members = checkedOpenTurns(turn, false);
   if (members.length !== 1 || members[0]!.reader) throw new Error("RETAINED_READER_ALREADY_BOUND");
   const open = members[0]!;
@@ -527,10 +573,11 @@ export function bindRetainedTurn(turn: TurnLineage, reader: LineageReader, onRef
     refuseRetainedTurn(open, { state: "checking", reason: "not-built" });
     throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
   }
-  const frozen = Object.isFrozen(reader) && (reader.audience === null || Object.isFrozen(reader.audience) && Object.isFrozen(reader.audience.scopeIds)) ? reader : freezeLineageReader(reader);
+  const frozen = Object.isFrozen(reader) && (reader.audience === null || Object.isFrozen(reader.audience) && Object.isFrozen(reader.audience.scopeIds) && (!reader.audience.scopeCeiling || Object.isFrozen(reader.audience.scopeCeiling))) ? reader : freezeLineageReader(reader);
   open.reader = frozen;
   open.onLedgerRefused = onRefused;
   open.validateParents = validate;
+  if (continuePending) open.continuePending = continuePending;
   Object.defineProperty(open, "budget", { value: new ReleaseBudget(verdict => refuseRetainedTurn(open, verdict)), enumerable: true, writable: false, configurable: false });
   // Preparation may have staged parents before receipt access was final.
   // They acquire authority only under this exact frozen reader.
@@ -711,17 +758,28 @@ export function proposeTurnParents(turn: TurnLineage, refs: readonly LineageRef[
     // Bound staging itself, including repeated duplicate input and prefix-only carries.
     // Do not allocate the prospective concatenation before bounding its input count.
     if (open.parents.length + refs.length > 4 * (RETAINED_LINES_MAX + RETAINED_OBJECTS_MAX)) overflow();
-    chargeReleaseWork(open.parents.length + refs.length);
-    let visited = 0;
-    const parents = normalizeRetainedRefs([...open.parents, ...refs], units => {
-      chargeReleaseWork(units);
-      if ((visited += units) > 16 * (RETAINED_LINES_MAX + RETAINED_OBJECTS_MAX)) overflow();
-    });
-    const counts = retainedRefCounts(parents);
-    if (open.over || counts.lines > RETAINED_LINES_MAX || counts.objects > RETAINED_OBJECTS_MAX) {
-      overflow();
+    const prospective = (): LineageRef[] => {
+      chargeReleaseWork(open.parents.length + refs.length);
+      let visited = 0;
+      const parents = normalizeRetainedRefs([...open.parents, ...refs], units => {
+        chargeReleaseWork(units);
+        if ((visited += units) > 16 * (RETAINED_LINES_MAX + RETAINED_OBJECTS_MAX)) overflow();
+      });
+      const counts = retainedRefCounts(parents);
+      if (open.over || counts.lines > RETAINED_LINES_MAX || counts.objects > RETAINED_OBJECTS_MAX) {
+        overflow();
+      }
+      return parents;
+    };
+    let parents = prospective();
+    // CTXREV H2 (1.0.20 outage): the proposal is everything the turn already holds plus the new refs. Held context that a revoke withheld
+    // since (an install-wide receipt revoke flips the running turn's own receipt) is not new context: the owner's running turn drops it
+    // by the keep rule (SEAN RULING revokekeep) and the proposal is built again from what it still holds. That second proposal is
+    // validated strictly, so a NEW ref that is withheld or unsettled is refused exactly as before and never released to the engine.
+    if (open.validateParents?.(parents, true) === true) {
+      parents = prospective();
+      open.validateParents(parents);
     }
-    open.validateParents?.(parents);
     return { open, revision: open.revision, parents };
   }));
   return { turn, entries };
@@ -763,6 +821,8 @@ export function writeRecordLineage(tx: DatabaseSync, record: MemoryRef, turn: Tu
     const resolved: Resolved = { ranges: [prefix, ...parents.ranges], fold: parents.fold, flowThreads: new Set([turn.threadId, ...parents.flowThreads]), flowScopes: parents.flowScopes, others: parents.others };
     const scopeNode = record.scopeId ? scopeFlowNode(record.scopeId) : null;
     carryOnto(tx, { kind: "record", ref: recordChildRef(record), thread: null, flowTo: scopeNode, ...(CONSUMED_REF_KINDS.has(record.kind) ? { flowObject: objectFlowNode(record) } : {}), flowLsn: Math.max(1, now), inherit: { kind: "record", ref: record, lsn: Math.max(1, now) } }, resolved);
+    // CTXREV H2 A-2: a turn whose held context an own privacy revoke withdrew mid-turn saved this after seeing the detail: never shown to bots
+    if (turnWithheldFromBots(turn)) hideTurnRecord(tx, record);
     // an object others read: the threads it rests on flow into its node, which flows into its consumers' threads (carryOnto)
     if (CONSUMED_REF_KINDS.has(record.kind)) for (const thread of resolved.flowThreads) run(tx, SQL.flow, thread, objectFlowNode(record), Math.max(1, now));
   });

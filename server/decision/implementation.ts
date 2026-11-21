@@ -1,4 +1,5 @@
 import { OWNER_PERMISSION_REPLY_TOO_LARGE } from '../permission-reply.ts';
+import {PERMISSION_UNDELIVERED_STOP_REASON,isStopFailed} from './host-stop-interrupt.ts';
 import { sanitizeDisplayTextUnit } from '../transcript-page.ts';
 import { approveTextExecWipeOnce } from '../drivers/murage-exec-wipe.ts';
 import { wipeBreaker, nativeEffectsWipe, nativeWipeBreaker, wipeCheckFault } from '../wipe-breaker.ts';
@@ -12,6 +13,8 @@ import { appendDecision } from '../decision-log.ts';
 import { cardAuditSummary } from '../approval-text.ts';
 import { DATA_DIR } from '../config.ts';
 import { afterCommit } from '../tx-scope.ts';
+import { recordableAnswers } from '../question-normalize.ts';
+import { questionsForCard } from '../../shared/questions.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
 import type * as T from './types.ts';
@@ -78,7 +81,7 @@ function shedCompletedRequests():void {
 }
 
 interface Authority {explicitNoLimits?:boolean;noLimitsOrigin?:NoLimitsOrigin;fullAccessChannelMessages?:boolean;actor:T.Registration['actor'];level:T.Registration['level'];botId:string;generation:string;provenance?:T.TurnProvenance}
-interface Entry {replyTooLargeShown?:boolean;wipeUnknownReleaseUsed?:string;execWipeCreditIssued?:boolean;permissionReplyHold?:string;featureOffNoted?:boolean;wipeReleaseHash?:string;originalOperationHash?:string;releaseRefused?:boolean;successfulRelease?:boolean;releaseUpdatedInput?:T.ApprovalAnswer['updatedInput'];exact?:ExtractedOperation;initialInspection?:ReleaseInspection;releaseApproval?:T.ApprovalRef;handle:T.RequestHandle;registration:T.Registration;authority:Authority;threadId:string;requestId:string;created:number;conflict:boolean;fault?:'reader'|'deny'|'identity'|'overflow';outcome?:T.Outcome;base?:T.BaseVerdictFn;baseValue?:Readonly<ReturnType<T.BaseVerdictFn>>;ref?:T.ApprovalRef;row?:records.RecordRow;attached?:T.QueueAttachment;delivery?:Promise<void>;deliveryStarted?:boolean;execution?:Promise<any>;executionResult?:T.ServiceExecution<any>;executionStarted?:boolean;cancelled?:boolean;cancellation?:'cancelled'|'expired'|'superseded';approvalDeliveryFailed?:boolean;executionCall?:T.ServiceCall;terminal?:boolean;receiptDelivery?:T.DeliveryState;receiptAnswer?:T.ApprovalAnswer}
+interface Entry {undeliveredStop?:'pending'|'landed'|'rejected'|'terminal';endedFailed?:boolean;replyTooLargeShown?:boolean;wipeUnknownReleaseUsed?:string;execWipeCreditIssued?:boolean;permissionReplyHold?:string;featureOffNoted?:boolean;wipeReleaseHash?:string;originalOperationHash?:string;releaseRefused?:boolean;successfulRelease?:boolean;releaseUpdatedInput?:T.ApprovalAnswer['updatedInput'];exact?:ExtractedOperation;initialInspection?:ReleaseInspection;releaseApproval?:T.ApprovalRef;handle:T.RequestHandle;registration:T.Registration;authority:Authority;threadId:string;requestId:string;created:number;conflict:boolean;fault?:'reader'|'deny'|'identity'|'overflow';outcome?:T.Outcome;base?:T.BaseVerdictFn;baseValue?:Readonly<ReturnType<T.BaseVerdictFn>>;ref?:T.ApprovalRef;row?:records.RecordRow;attached?:T.QueueAttachment;delivery?:Promise<void>;deliveryStarted?:boolean;execution?:Promise<any>;executionResult?:T.ServiceExecution<any>;executionStarted?:boolean;cancelled?:boolean;cancellation?:'cancelled'|'expired'|'superseded';approvalDeliveryFailed?:boolean;executionCall?:T.ServiceCall;terminal?:boolean;receiptDelivery?:T.DeliveryState;receiptAnswer?:T.ApprovalAnswer}
 function observe(e:T.DecisionObservation){for(const fn of observers)try{fn(freeze(e));}catch{}}
 function safely<V>(read:()=>V,fallback:V):V {try{return read();}catch{return fallback;}}
 function requiredHost(){if(!host)throw new Error('decision-host-missing');return host;}
@@ -135,6 +138,8 @@ export function installRequestIngress(bus:T.RequestIngress):()=>void{return bus.
  else if(event.type==='request.resolved'||event.type==='turn.completed'){
   const matching=[...entries.values()].filter(e=>!!e.registration.snapshot&&e.threadId===event.threadId&&e.registration.snapshot?.providerInstanceId===event.providerInstanceId&&e.registration.snapshot?.turnId===event.turnId&&(event.type!=='request.resolved'||e.requestId===event.requestId));
   const generations=new Set(matching.map(e=>e.authority.generation));
+  // 1021 Retry: the ask left the engine; a card still offering Send again ends now.
+  for(const e of matching)endRetryOffer(e);
   // Never substitute the live generation for the one carried by a captured
   // native identity. An ambiguous reused native identity cannot retire a new turn.
   if(generations.size===1){const generation=matching[0].authority.generation;
@@ -449,9 +454,9 @@ export async function presentApproval(ref:T.ApprovalRef,view:T.ApprovalView):Pro
  const question=row.why==='question';
  const count=records.openRecords(database(),row.thread_id).filter(r=>r.why==='question').length;
  if(question&&count>=8&&!(e&&owner(e))&&!records.readRecord(database(),row.id)){if(e){e.outcome={kind:'refuse',message:'Please answer one question at a time.'};await deliverRequest(e.handle);}return;}
- try {commitPresentation(row,ref,view,count);}catch(error){if(e&&row.source_kind==='engine'){e.outcome={kind:'refuse',message:REFUSAL};await deliverRequest(e.handle);}throw error;}
+ try {commitPresentation(row,ref,view);}catch(error){if(e&&row.source_kind==='engine'){e.outcome={kind:'refuse',message:REFUSAL};await deliverRequest(e.handle);}throw error;}
 }
-function commitPresentation(row:records.RecordRow,ref:T.ApprovalRef,view:T.ApprovalView,count:number){
+function commitPresentation(row:records.RecordRow,ref:T.ApprovalRef,view:T.ApprovalView){
  const h=requiredHost(),question=row.why==='question';
  const target=row.source_kind==='engine'?JSON.parse(row.evidence).target:undefined;
  const turn=typeof target?.turnId==='string'&&target.turnId?{turnId:target.turnId}:{};
@@ -469,7 +474,9 @@ function commitPresentation(row:records.RecordRow,ref:T.ApprovalRef,view:T.Appro
     row.evidence=JSON.stringify(payload);
   }
   if(fresh)records.insertRecord(db,row);
-  const message=question?h.store.appendMessage(row.thread_id,{role:'bot',kind:'text',text:questionText(row,count+1),...turn},row.chat_message_id):h.store.appendApprovalCard(row.thread_id,ref,{...view,...turn});
+  // A question is not an approval: at every level, No limits included, it is
+  // presented as its interactive card (owner report 2026-11-21), never as text.
+  const message=h.store.appendApprovalCard(row.thread_id,ref,{...view,...turn});
   if(message.id!==row.chat_message_id||!db.prepare('SELECT 1 FROM messages WHERE thread_id=? AND id=?').get(row.thread_id,row.chat_message_id))throw new Error('approval-row-not-written');
   const questionEvent=entryForRef(ref)?.registration.snapshot?.event;
   if(fresh&&row.source_kind==='engine'&&!question)afterCommit(()=>{
@@ -490,7 +497,7 @@ function projection(row:records.RecordRow):T.ApprovalRecordView{
 export function readApproval(id:string):T.ApprovalRecordView|undefined{const row=records.readRecord(database(),id);return row?projection(row):undefined;}
 export function openApprovals(threadId?:string):readonly T.ApprovalRecordView[]{return freeze(records.openRecords(database(),threadId).map(projection));}
 export function lookupApproval(threadId:string,messageId:string):T.ApprovalRecordView|undefined{const r=records.lookupRecord(database(),threadId,messageId);return r?projection(r):undefined;}
-function patchTerminal(row:records.RecordRow,label:string){
+function patchTerminal(row:records.RecordRow,label:string,answer?:T.ApprovalAnswer){
  if(row.queue_kind && row.state!=='open')afterCommit(()=>host?.recoveredAttention?.close(row.thread_id,row.id));
  // These producers expose canonical terminal values to continuation readers.
  const canonicalService=['peer','event-limit','routine','browser','host-computer'].includes(row.queue_kind??'');
@@ -501,8 +508,14 @@ function patchTerminal(row:records.RecordRow,label:string){
  const questionExpired=(row.state==='expired'||row.state==='cancelled')&&!folderExpired&&!sendExpired&&m?.card?.cardClass?.reason==='question';
  if(sendExpired)label='expired';
  if(questionExpired&&m?.card)appendDecision(DATA_DIR,{threadId:row.thread_id,requestId:row.request_id,botId:row.bot_id,botName:s.bot(row.bot_id)?.name,summary:cardAuditSummary(m.card),decision:'question-expired',source:'question',unattended:m.card.unattended||undefined});
- if(m?.card)s.patchMessagePoint(row.thread_id,row.chat_message_id,{card:{...m.card,answered:folderExpired||questionExpired?'expired':label,dismissed:!folderExpired&&!questionExpired&&!(canonicalService&&(label==='allow'||label==='deny')),
-  ...(folderExpired||sendExpired||questionExpired?{expired:true,dismissed:false}:{}),...(row.state==='expired'||row.state==='cancelled'||row.state==='superseded'?{orphaned:true}:{})}});
+ // 1021 Retry: a terminal card never keeps Send again (cancel, renewal, restart, unconfirmed all end it here).
+ const {deliveryRetry:_retry,...shown}=m?.card??({} as Record<string,unknown>);
+ if(m?.card)s.patchMessagePoint(row.thread_id,row.chat_message_id,{card:{...(shown as typeof m.card),answered:folderExpired||questionExpired?'expired':label,dismissed:!folderExpired&&!questionExpired&&!(canonicalService&&(label==='allow'||label==='deny')),
+  ...(folderExpired||sendExpired||questionExpired?{expired:true,dismissed:false}:{}),...(row.state==='expired'||row.state==='cancelled'||row.state==='superseded'?{orphaned:true}:{}),
+  // The owner's settled question card stays in place and shows what was answered,
+  // whether it was tapped on the card or typed as a reply. Secret answers are never recorded.
+  ...(row.why==='question'&&row.state==='answered'&&answer&&answer.behavior!=='allow'&&!(answer.behavior==='deny'&&answer.message===REFUSAL)?{answered:answer.behavior==='deny'?'skipped':'answer',dismissed:false,
+   ...(answer.behavior==='answer'&&answer.answers?{answers:recordableAnswers(questionsForCard(m.card),answer.answers)}:{})}:{})}});
 }
 export async function settle(ref:T.ApprovalRef,state:Exclude<T.ApprovalState,'open'>,answer?:T.ApprovalAnswer):Promise<void>{
  const row=requireRow(ref),e=entryForRef(ref);if(row.state!=='open'&&!(row.state==='answered'&&row.delivery==='pending'&&!e?.deliveryStarted&&state!=='answered')&&!(state==='superseded'&&row.source_kind==='engine'&&row.state!=='superseded'))return;
@@ -517,7 +530,7 @@ function creditTextWipe(row:records.RecordRow|undefined,e:Entry|undefined,answer
   ||answer.updatedInput!==undefined||e.exact?.kind!=='operation'||!e.registration.snapshot?.turnId)return;
  e.execWipeCreditIssued=approveTextExecWipeOnce(e.threadId,e.registration.snapshot.turnId,e.exact.exactOperation);
 }
-async function send(row:records.RecordRow|undefined,e:Entry|undefined,answer:T.ApprovalAnswer):Promise<void>{
+async function send(row:records.RecordRow|undefined,e:Entry|undefined,answer:T.ApprovalAnswer,retry?:{rearm:()=>boolean}):Promise<void>{
  // Reload answers carry the saved engine envelope to the driver-held ask.
  // The action is bound by the registry hash; display fields cannot mint identity.
  if(row?.source_kind==='engine'&&answer.behavior!=='answer'){
@@ -535,7 +548,7 @@ async function send(row:records.RecordRow|undefined,e:Entry|undefined,answer:T.A
  const prior=row?.answer&&!partial?JSON.parse(row.answer):answer;
  if(row&&(row.delivery==='accepted'||row.source_kind==='engine'&&row.delivery==='failed'))return;
  if(row&&row.answer&&canonical(prior)!==canonical(answer))throw new Error('approval-answer-conflict');
- if(row)try{transaction(db=>{records.updateRecord(db,row.id,{state:'answered',settled_at:row.settled_at??Date.now(),answer:JSON.stringify(prior),answer_id:answerId,delivery:'pending'});patchTerminal({...row,state:'answered'},prior.behavior==='deny'?'Denied':'Allowed');});}catch(error){
+ if(row)try{transaction(db=>{records.updateRecord(db,row.id,{state:'answered',settled_at:row.settled_at??Date.now(),answer:JSON.stringify(prior),answer_id:answerId,delivery:'pending'});if(!retry)patchTerminal({...row,state:'answered'},prior.behavior==='deny'?'Denied':'Allowed',prior);});}catch(error){
   if(e&&row.source_kind==='engine'){await send(undefined,e,{behavior:'deny',message:REFUSAL});try{requiredHost().store.appendMessage(e.threadId,{role:'bot',kind:'text',text:REFUSAL});}catch{}}
   throw error;
  }
@@ -543,10 +556,13 @@ async function send(row:records.RecordRow|undefined,e:Entry|undefined,answer:T.A
  const q=row?.queue_kind?queues.get(row.queue_kind as T.ServiceId):undefined;
  const item=q?.pendingApprovals().find(i=>i.approvalId===row?.id);
  if(row?.queue_kind&&(!item||!queueCallMatches(e,item,row.input_hash)))return;
- const respond=()=>{if(row&&e?.cancelled)return {state:'cancelled' as const};if(row?.queue_kind&&(!item||!queueCallMatches(e,item,row.input_hash)))return;const latest=!row&&e&&owner(e)?refresh(e):undefined;const current=!row&&e?.cancelled?{behavior:'deny' as const,message:REFUSAL}:latest?.kind==='refuse'?{behavior:'deny' as const,message:latest.message}:prior;if(current.behavior==='allow'&&e&&checkEntryRelease(e,prior,approvedForDelivery)){return;}creditTextWipe(row,e,current);if(e)e.deliveryStarted=true;if(e)e.receiptAnswer=freeze(boundedProjection(current));return row?.queue_kind?(q&&item?q.respond(item,prior,{answerId}):Promise.resolve({state:'failed' as const})):target&&transport?transport.respond(target,current,{answerId}):Promise.resolve({state:'failed' as const});};
- let accepted=false,deliveryFailed=false;
+ const respond=()=>{if(row&&e?.cancelled)return {state:'cancelled' as const};if(row?.queue_kind&&(!item||!queueCallMatches(e,item,row.input_hash)))return;const latest=!row&&e&&owner(e)?refresh(e):undefined;const current=!row&&e?.cancelled?{behavior:'deny' as const,message:REFUSAL}:latest?.kind==='refuse'?{behavior:'deny' as const,message:latest.message}:prior;if(current.behavior==='allow'&&e&&checkEntryRelease(e,prior,approvedForDelivery)){return;}creditTextWipe(row,e,current);if(e)e.deliveryStarted=true;if(e)e.receiptAnswer=freeze(boundedProjection(current));
+  // 1021 Retry (RETRY-DESIGN-r2 step 4): the driver re-arm runs only here, after every release check above, one-shot.
+  if(retry&&!retry.rearm())return Promise.resolve({state:'failed' as const});
+  return row?.queue_kind?(q&&item?q.respond(item,prior,{answerId}):Promise.resolve({state:'failed' as const})):target&&transport?transport.respond(target,current,{answerId}):Promise.resolve({state:'failed' as const});};
+ let accepted=false,deliveryFailed=false,reason='no-target';
  for(let attempt=0;attempt<2;attempt++){
-  try{const run=()=>withDeadline(scheduleDelivery<Awaited<ReturnType<typeof respond>>>(respond),10000);const result=e&&owner(e)?await noLimitsSlot(e,run,false):await run();if(!result)return;if(result.state==='cancelled')break;if(e?.permissionReplyHold&&answer.behavior==='allow')return;if(result.state==='accepted'||result.state==='already'){accepted=true;break;}if(result.state==='failed'&&target){deliveryFailed=true;break;}}catch(error){if(target&&(error as {terminal?:boolean})?.terminal===true){deliveryFailed=true;break;}}
+  try{const run=()=>withDeadline(scheduleDelivery<Awaited<ReturnType<typeof respond>>>(respond),10000);const result=e&&owner(e)?await noLimitsSlot(e,run,false):await run();if(!result)return;if(result.state==='cancelled'){reason='cancelled';break;}if(e?.permissionReplyHold&&answer.behavior==='allow')return;if(result.state==='accepted'||result.state==='already'){accepted=true;break;}if(result.state==='failed'){reason=row?.queue_kind?'queue-failed':target?'no-open-entry':'no-target';}if(result.state==='failed'&&target){deliveryFailed=true;break;}}catch(error){if(target&&(error as {terminal?:boolean})?.terminal===true){reason='terminal-throw';deliveryFailed=true;break;}reason='deadline';}
   // Native acknowledgements can arrive before the transport's promise ends.
   const receipt=row&&records.readRecord(database(),row.id);
   if(receipt?.answer_id===answerId&&receipt.delivery==='accepted'){accepted=true;break;}
@@ -558,16 +574,130 @@ async function send(row:records.RecordRow|undefined,e:Entry|undefined,answer:T.A
  if(row&&e?.cancelled&&!e.deliveryStarted)return;
  const delivery=accepted||e?.receiptDelivery==='accepted'?'accepted':deliveryFailed?'failed':'unconfirmed';
  if(e)e.receiptDelivery=delivery;
- if(row)transaction(db=>{records.updateRecord(db,row.id,{delivery});if(deliveryFailed)patchTerminal({...row,state:'answered'},e?.replyTooLargeShown?OWNER_PERMISSION_REPLY_TOO_LARGE:'The tool permission could not be delivered. Nothing was confirmed.');});
+ // 1021 Retry: a failed engine permission card is decided by settleFailed (offered or endFailed), never patched here.
+ const retryClass=!accepted&&deliveryFailed&&!!row&&!!e&&!!target&&!!transport&&row.source_kind==='engine'&&!row.queue_kind&&(prior.behavior==='allow'||prior.behavior==='deny')&&!e.replyTooLargeShown&&!e.permissionReplyHold&&!e.cancelled&&!e.cancellation;
+ if(row)transaction(db=>{records.updateRecord(db,row.id,{delivery});if(deliveryFailed&&!retryClass)patchTerminal({...row,state:'answered'},e?.replyTooLargeShown?OWNER_PERMISSION_REPLY_TOO_LARGE:'The tool permission could not be delivered. Nothing was confirmed.');});
  if(!accepted&&row&&e?.cancellation){
   const state=e.cancellation;
   transaction(db=>{records.updateRecord(db,row.id,{state,settled_at:Date.now()});patchTerminal({...row,state},state==='superseded'?'Continued at the new level':state==='expired'?'Expired':'Cancelled');});
   if(e.row)e.row.state=state;
  }
  observe({type:'delivery',requestKey:e?.registration.key??row!.request_key,answerId,state:delivery});
- if(!accepted){if(target&&transport)await withDeadline(transport.interrupt(target),1000).catch(()=>{});if(q&&item){if(row)records.updateRecord(database(),row.id,{delivery:'failed'});await withDeadline(q.cancel(item,'delivery-failed'),5000);}requiredHost().store.appendMessage(e?.threadId??row!.thread_id,{role:'bot',kind:'text',text:e?.replyTooLargeShown?OWNER_PERMISSION_REPLY_TOO_LARGE:'The tool permission could not be delivered. Nothing was confirmed.'});}
+ // 1021 undelivered card: one value-free line per answer not taken, naming the path (never an id, tool or input).
+ if(delivery!=='accepted')console.info(`[decision] delivery not taken class=${row?.queue_kind?'queue':e?.registration.source.kind??row?.source_kind??'unknown'} reason=${reason} state=${delivery}`);
+ // 1020 perm-deliver: at No limits an owner allow the engine already settled (failed, not unconfirmed) never ran and leaves
+ // nothing waiting, so the turn goes on; only an answer that may have landed (unconfirmed) or a card answer stops the turn.
+ if(!accepted&&deliveryFailed&&target&&!row&&e&&owner(e)&&!e.replyTooLargeShown&&answer.behavior==='allow'){console.warn('[decision] No limits allow not taken by the engine; the turn continues');}
+ else if(retryClass){await stopAttempt(e!,target!);settleFailed(row!.id,e);}
+ else if(!accepted){if(target&&transport)await withDeadline(transport.interrupt(target,PERMISSION_UNDELIVERED_STOP_REASON),1000).catch(()=>{});if(q&&item){if(row)records.updateRecord(database(),row.id,{delivery:'failed'});await withDeadline(q.cancel(item,'delivery-failed'),5000);}requiredHost().store.appendMessage(e?.threadId??row!.thread_id,{role:'bot',kind:'text',text:e?.replyTooLargeShown?OWNER_PERMISSION_REPLY_TOO_LARGE:'The tool permission could not be delivered. Nothing was confirmed.'});}
  if(e&&(e.registration.source.kind==='service'||e.outcome?.kind!=='card'&&e.outcome?.kind!=='question'))e.terminal=true;
  shedCompletedRequests();
+}
+// 1021 Retry on a delivery-failed approval card (RETRY-DESIGN-r2). settleFailed decides, endFailed is the only terminal transition.
+const FAILED_CARD='The tool permission could not be delivered. Nothing was confirmed.';
+const endedRecords=new Set<string>();
+/** D4 (r3): only a stop the driver resolved as stop-failed (decisionInterrupt rejects with the marker) leaves the ask retryable;
+ * landed, thrown, timeout or still pending at 1 s is terminal and one-way. */
+async function stopAttempt(e:Entry,target:T.DecisionEngineTarget):Promise<void>{
+ if(!transport)return;
+ e.undeliveredStop='pending';
+ let stop:Promise<void>;try{stop=transport.interrupt(target,PERMISSION_UNDELIVERED_STOP_REASON);}catch(error){stop=Promise.reject(error);}
+ const settled=stop.then(()=>{if(e.undeliveredStop==='pending')e.undeliveredStop='landed';},error=>{if(e.undeliveredStop==='pending')e.undeliveredStop=isStopFailed(error)?'rejected':'terminal';});
+ await withDeadline(settled,1000).catch(()=>{});
+}
+/** D3, in memory only: every condition must hold. */
+function retryable(row:records.RecordRow,e:Entry|undefined):boolean{
+ const target=e?.registration.snapshot?targetOf(e.registration.snapshot):undefined;
+ if(!e||!target||!transport?.canRedeliver||e.endedFailed||endedRecords.has(row.id))return false;
+ if(row.source_kind!=='engine'||row.queue_kind||row.why==='question'||row.why==='wipe'||owner(e)||row.state!=='answered'||row.delivery!=='failed'||!row.answer)return false;
+ const behavior=safely(()=>JSON.parse(row.answer!).behavior,undefined);if(behavior!=='allow'&&behavior!=='deny')return false;
+ if(e.row?.id!==row.id||e.cancelled||e.terminal||e.cancellation||e.permissionReplyHold||e.replyTooLargeShown)return false;
+ if(captures.get(scopedKey(e.threadId,e.registration.key))?.snapshot.inputHash!==row.input_hash)return false;
+ // MUTANT:retry-authority-reread
+ if(ownerEligible(authority(e.threadId,e.authority.botId,e.authority.generation)))return false;
+ // MUTANT:retry-stop-rejected-only
+ if(e.undeliveredStop!=='rejected')return false;
+ return safely(()=>transport!.canRedeliver!(target)===true,false);
+}
+function patchRetry(row:records.RecordRow,value?:'offered'|'sending'):void{
+ const s=requiredHost().store,m=s.messageById(row.thread_id,row.chat_message_id,{buildIndex:false});if(!m?.card)return;
+ const {deliveryRetry:_,...card}=m.card;s.patchMessagePoint(row.thread_id,row.chat_message_id,{card:value?{...card,deliveryRetry:value}:card});
+}
+function settleFailed(id:string,e:Entry|undefined):void{
+ const row=records.readRecord(database(),id);if(!row)return;
+ if(retryable(row,e)){patchRetry(row,'offered');return;}
+ endFailed(row,e);
+}
+/** The only terminal transition of a failed engine card, idempotent per record: read-only card, one text row, attention settled. */
+function endFailed(row:records.RecordRow,e:Entry|undefined):void{
+ if(e)e.endedFailed=true;
+ if(endedRecords.has(row.id))return;endedRecords.add(row.id);
+ if(endedRecords.size>4096)endedRecords.delete(endedRecords.values().next().value!);
+ patchRetry(row);
+ patchTerminal({...row,state:'answered'},FAILED_CARD);
+ try{requiredHost().store.appendMessage(row.thread_id,{role:'bot',kind:'text',text:FAILED_CARD});}catch{}
+ try{host?.deliveryEnded?.(refFor(row.id));}catch{}
+}
+/** The ask left the driver (request.resolved, retire, dispose): a failed card still offering Send again ends. */
+function endRetryOffer(e:Entry):void{
+ if(!e.row||e.endedFailed||e.undeliveredStop===undefined)return;
+ const row=records.readRecord(database(),e.row.id);
+ if(row?.source_kind==='engine'&&row.state==='answered'&&row.delivery==='failed')endFailed(row,e);
+}
+type RetryDeliveryResult='accepted'|'delivery_pending'|'delivery_retry'|'delivery_failed_terminal'|'delivery_unconfirmed';
+function retryResult(id:string):RetryDeliveryResult{
+ const row=records.readRecord(database(),id);
+ if(!row||row.state!=='answered')return 'delivery_failed_terminal';
+ if(row.delivery==='accepted')return 'accepted';
+ if(row.delivery==='pending')return 'delivery_pending';
+ if(row.delivery==='unconfirmed')return 'delivery_unconfirmed';
+ if(row.delivery==='failed'){const m=requiredHost().store.messageById(row.thread_id,row.chat_message_id,{buildIndex:false});return m?.card?.deliveryRetry==='offered'&&!endedRecords.has(row.id)?'delivery_retry':'delivery_failed_terminal';}
+ return 'delivery_failed_terminal';
+}
+/** POST .../retry-delivery: re-send the owner's stored answer through send() (every release check runs again). */
+export async function retryDelivery(ref:T.ApprovalRef):Promise<RetryDeliveryResult>{
+ const row=requireRow(ref),e=entryForRef(ref);
+ // Step 1: single flight per record, shared with answerApproval.
+ const joined=answerFlights.get(row.id)??e?.delivery;
+ if(joined){await joined.catch(()=>{});return retryResult(row.id);}
+ const work=retryWork(row.id,e);answerFlights.set(row.id,work);if(e)e.delivery=work;
+ try{await work;}finally{if(answerFlights.get(row.id)===work)answerFlights.delete(row.id);if(e?.delivery===work)e.delivery=undefined;}
+ return retryResult(row.id);
+}
+async function retryWork(id:string,e:Entry|undefined):Promise<void>{
+ const row=records.readRecord(database(),id);
+ // Step 2: anything but a failed engine card is reported as it is and left alone.
+ if(!row||row.source_kind!=='engine'||row.delivery!=='failed')return;
+ const target=e?.registration.snapshot?targetOf(e.registration.snapshot):undefined;
+ // Opus r2 H3: the extra stop only while the ask is still live in its own generation (a stale click never stops a newer turn).
+ const live=()=>!!e&&!!target&&!e.cancelled&&safely(()=>transport?.canRedeliver?.(target)===true,false);
+ if(!retryable(row,e)){const stop=live()&&e!.undeliveredStop!==undefined;endFailed(row,e);if(stop)await stopAttempt(e!,target!);return;}
+ // Step 3: compare-and-set failed -> pending with a new answer_id while the old one still matches.
+ const answerId=randomUUID();let won=false;
+ // MUTANT:retry-cas
+ transaction(db=>{const now=records.readRecord(db,id);if(now?.delivery==='failed'&&now.answer_id===row.answer_id){records.updateRecord(db,id,{delivery:'pending',answer_id:answerId});won=true;}});
+ if(!won)return;
+ if(e)e.deliveryStarted=false;
+ patchRetry(row,'sending');
+ // Step 4: the existing send(); the re-arm is one-shot inside its respond closure.
+ let rearmed:boolean|undefined;
+ // MUTANT:retry-rearm-once
+ const rearm=()=>rearmed??=safely(()=>transport?.rearmRetry?.(target!)===true,false);
+ const stored=JSON.parse(row.answer!) as T.ApprovalAnswer;
+ try{await send(records.readRecord(database(),id)!,e,stored,{rearm});}catch{}
+ // Step 6: the gate's silent returns write nothing; read the row again.
+ const after=records.readRecord(database(),id);if(!after)return;
+ if(after.state!=='answered'){if(after.delivery==='pending')records.updateRecord(database(),id,{delivery:'none'});return;}
+ if(after.delivery==='accepted'){patchRetry(after);patchTerminal(after,stored.behavior==='deny'?'Denied':'Allowed');return;}
+ if(after.delivery==='unconfirmed'){patchRetry(after);return;}
+ // MUTANT:retry-refused-settle
+ if(after.delivery==='pending'&&after.answer_id===answerId){
+  // Opus r2 H4: once the re-arm ran a native send may still be in flight (a slow first pass), so the answer is unconfirmed.
+  // MUTANT:retry-rearm-memo
+  const next=rearmed===true?'unconfirmed' as const:'failed' as const;let refused=false;
+  transaction(db=>{const now=records.readRecord(db,id);if(now?.delivery==='pending'&&now.answer_id===answerId){records.updateRecord(db,id,{delivery:next});refused=true;}});
+  if(refused){const stop=live();endFailed({...after,delivery:next},e);if(stop)await stopAttempt(e!,target!);}
+ }
 }
 export async function answerApproval(ref:T.ApprovalRef,answer:T.ApprovalAnswer):Promise<void>{
  const e=entryForRef(ref),row=requireRow(ref);
@@ -636,6 +766,7 @@ export async function onLevelChange(botId:string):Promise<void>{
 async function cancelEntry(e:Entry,state:'cancelled'|'expired'|'superseded'){
  // Fence every new release synchronously, independently of receipt settlement.
  e.cancelled=true;e.terminal=true;if(!e.approvalDeliveryFailed)e.cancellation=state;
+ endRetryOffer(e);
  // Retirement cannot undo an Allow the native transport already confirmed.
  // Preserve that history while the fence prevents later execution or replay.
  if(e.registration.source.kind==='engine'&&e.deliveryStarted&&e.receiptDelivery==='accepted'&&e.receiptAnswer?.behavior==='allow')return;
@@ -679,7 +810,11 @@ export async function answerQuestionReply(threadId:string,text:string):Promise<T
  await answerApproval(ref,{behavior:'answer',message,...(collected?{answers:collected}:{})});return {kind:'answered',ref};
 }
 
-export async function relistQuestions(threadId:string):Promise<void>{const rows=records.openRecords(database(),threadId).filter(r=>r.why==='question');for(let i=0;i<rows.length;i++)requiredHost().store.appendMessage(threadId,{role:'bot',kind:'text',text:questionText(rows[i],i+1,rows.length)});}
+export async function relistQuestions(threadId:string):Promise<void>{const rows=records.openRecords(database(),threadId).filter(r=>r.why==='question');for(let i=0;i<rows.length;i++){
+  // An open card is still on screen and answerable. Only a question that an
+  // earlier build stored as a text row is listed again.
+  if(requiredHost().store.messageById(threadId,rows[i].chat_message_id,{buildIndex:false})?.card)continue;
+  requiredHost().store.appendMessage(threadId,{role:'bot',kind:'text',text:questionText(rows[i],i+1,rows.length)});}}
 export async function saveContinuation(key:T.ContinuationKey,parent:T.TurnIdentity):Promise<void>{const a=authority(parent.threadId,key.botId,parent.generation);if(parent.threadId!==key.threadId||a.actor==='unproven'||!a.provenance)throw new Error('unproven-continuation');records.saveContinuationRecord(database(),canonical(key),canonical({level:a.level,actor:a.actor,initiator:a.provenance.initiator,principal:a.provenance.principal,roomOwnerOnly:a.provenance.roomOwnerOnly}));}
 export function readContinuation(key:T.ContinuationKey):T.ContinuationProvenance|undefined{const value=records.readContinuationRecord(database(),canonical(key));return value?freeze(JSON.parse(value)):undefined;}
 export async function deleteContinuation(key:T.ContinuationKey):Promise<void>{records.deleteContinuationRecord(database(),canonical(key));}
@@ -704,6 +839,9 @@ export async function recover():Promise<void>{
  for(const kind of records.requiredQueueKinds(db))if(!queues.has(kind as T.ServiceId))throw new Error('queue-recovery-source-missing');
  // No engine generation survives restart. Persisted pending delivery is honest.
  for(const row of records.openRecords(db))if(row.source_kind==='engine')await settle(refFor(row.id),'expired');
+ // 1021 Retry: no eligibility survives a restart. A failed engine card still offering Send again ends read-only.
+ // MUTANT:retry-boot-sweep
+ for(const r of records.failedEngineAnswers(db)){const m=requiredHost().store.messageById(r.thread_id,r.chat_message_id,{buildIndex:false});if(m?.card?.deliveryRetry)endFailed(r,undefined);}
  for(const r of records.pendingEngineAnswers(db)){records.updateRecord(db,r.id,{delivery:'unconfirmed'});patchTerminal(r,r.answer&&JSON.parse(r.answer).behavior==='deny'?'Denied':'Allowed, not run (restart)');
  }
  const queueRows=records.openRecords(db).filter(r=>r.source_kind==='service');
@@ -801,7 +939,7 @@ export function presentApprovalSync(ref:T.ApprovalRef,view:T.ApprovalView):void 
  if(row.state!=='open')return;
  const count=records.openRecords(database(),row.thread_id).filter(r=>r.why==='question').length;
  if(row.why==='question'&&count>=8&&!records.readRecord(database(),row.id))throw new Error('question-capacity');
- commitPresentation(row,ref,view,count);
+ commitPresentation(row,ref,view);
 }
 export function installSynchronousQueueDeliveries(deliveries:readonly T.SynchronousQueueDelivery[]):()=>void {
  const own=new Map<T.ServiceId,{source:T.QueueRecoverySource;delivery:T.SynchronousQueueDelivery}>();
@@ -1031,10 +1169,10 @@ function checkEntryRelease(e:Entry,answer:T.ApprovalAnswer,approved?:T.ApprovalR
   referenceEpochs.set(persisted.id,{});
   records.updateRecord(database(),persisted.id,{state:'open',why,answer:null,answer_id:null,delivery:'none',settled_at:null,evidence:JSON.stringify(payload),action_hash:actionHash,registration_hash:e.registration.registrationHash,...(replaceMessage?{chat_message_id:messageId,presented_action:null}:{})});
   e.row=records.readRecord(database(),persisted.id);e.ref=refFor(persisted.id);e.outcome=freeze({kind:'card',ref:e.ref});
-  if(replaceMessage)commitPresentation(e.row!,e.ref,requiredHost().view(e.registration),0);
+  if(replaceMessage)commitPresentation(e.row!,e.ref,requiredHost().view(e.registration));
  }else{
   e.row=undefined;e.ref=undefined;e.outcome=freeze(approval(e,why,evidence));
-  if(e.outcome.kind==='card'&&e.registration.source.kind==='engine')commitPresentation(e.row!,e.outcome.ref,requiredHost().view(e.registration),0);
+  if(e.outcome.kind==='card'&&e.registration.source.kind==='engine')commitPresentation(e.row!,e.outcome.ref,requiredHost().view(e.registration));
  }
  return e.outcome?.kind==='run'?{kind:'refuse',message:REFUSAL}:e.outcome;
 }
@@ -1130,6 +1268,6 @@ function holdPermissionReply(identity:NativeReleaseIdentity,line:string):boolean
  const actionHash=hash(actionProjection(payload.action));payload.action.actionHash=actionHash;
  e.row={...row,evidence:JSON.stringify(payload),action_hash:actionHash};
  if(persisted)records.updateRecord(database(),row.id,{evidence:e.row.evidence,action_hash:actionHash,presented_action:null});
- commitPresentation(e.row,e.outcome.ref,{title:'Approval needed',subtitle:line},0);
+ commitPresentation(e.row,e.outcome.ref,{title:'Approval needed',subtitle:line});
  return true;
 }

@@ -2,14 +2,14 @@
 
 Start verified clean: `dev/1019-int19m2` at `cf92d12b3106c5f3630d7cb5b82d78c9de17b96a`. Read both pre-integration notes, the required-merge ledger, int19m MERGES.md and MERGE-NOTE.md. int19m has 76 commits absent from the start. Project memory tool/storage unavailable.
 
-The locale continuation was still `bbf96a5cb20c8cd7a902e1d41cc82905d9864c75` at start; that is the selected step 1 tip. Hub is the private local bare repository `/work/mb-105-git.git`; this is one of its worktrees. Only fast-forward updates are permitted.
+The locale continuation was still `bbf96a5cb20c8cd7a902e1d41cc82905d9864c75` at start; that is the selected step 1 tip. Hub is the private local bare repository `/root/mb-105-git.git`; this is one of its worktrees. Only fast-forward updates are permitted.
 
 ## 0. int19m — b4dc27ea9
 
 - `ci/gate-tests.txt`: preserve the union of the leak-guard registration and all incoming Signal/release/Claude/copy-review registrations.
 - Inspected automatic integration of preparation/submission fences, held-bot authority, Signal initialization, package provenance/offline update metadata, and scratch-cleanup inventory. Both behavior sets remain.
 
-Evidence is retained outside the tracked tree under `/work/build/int19m2-A/evidence/`. Step 0 app/server/Flux conformance types PASS (`merge0-types.log`). Touched tests will run on the completed integration.
+Evidence is retained outside the tracked tree under `/root/fuigo-builds/swarm-b/int19m2-A/evidence/`. Step 0 app/server/Flux conformance types PASS (`merge0-types.log`). Touched tests will run on the completed integration.
 
 ## 1. preB — bbf96a5cb
 
@@ -166,4 +166,4 @@ All **176 historical pre failures** are classified: **35 NEW / 141 BASE / 0 KNOW
 
 The five package-signing assertions were rechecked on clean commit e15aa45f3: all still fail because the synthetic packager context omits the repository path required by provenance generation. No production provenance check was bypassed.
 
-Baseline evidence comes from a clean detached b4dc27ea9 checkout, with exact named comparisons for every current failure that exists there and all 176 historical failures. The supplied shared full vtq run was still unfinished when these comparisons completed. KNOWN cases cite the int19m ledger or the committed Fuigo capture findings. Full names, classifications, evidence paths, rechecks and the historical ledger are in `/work/build/int19m2-A/evidence/TEST-RESULTS-A.md`; the NEW-only file/test list is `NEW-FAILURES-A.md` in that directory. All failures are classified; no review was invented and no gate was waived.
+Baseline evidence comes from a clean detached b4dc27ea9 checkout, with exact named comparisons for every current failure that exists there and all 176 historical failures. The supplied shared full vtq run was still unfinished when these comparisons completed. KNOWN cases cite the int19m ledger or the committed Fuigo capture findings. Full names, classifications, evidence paths, rechecks and the historical ledger are in `/root/fuigo-builds/swarm-b/int19m2-A/evidence/TEST-RESULTS-A.md`; the NEW-only file/test list is `NEW-FAILURES-A.md` in that directory. All failures are classified; no review was invented and no gate was waived.

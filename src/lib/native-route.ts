@@ -25,3 +25,12 @@ export const reportRoute = createRouteReporter((threadId) => {
   void callNative("setRoute", { threadId }).catch(() => {});
   return true;
 });
+
+/** The same, told to the desktop main process: a window that follows a
+ *  restarted engine to another port reopens this chat (electron/server-follow.mjs). */
+export const reportDesktopRoute = createRouteReporter((threadId) => {
+  const report = window.muragebox?.reportOpenChat;
+  if (!report) return false;
+  try { report(threadId); } catch { return false; }
+  return true;
+});

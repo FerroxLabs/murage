@@ -59,7 +59,7 @@ function validRoot(root: Record<string, unknown>, kind: string): boolean {
       && ["forget", "hide", "edit", "delete", "branch-switch", "regenerate"].includes(root.cause);
     case "memory": return object(root.ref) && str(root.ref.id) && (MEMORY_REF_KINDS as readonly unknown[]).includes(root.ref.kind)
       && (root.ref.version === undefined || Number.isSafeInteger(root.ref.version))
-      && ["archive", "correct", "forget", "revise", "retire", "delete", "unprovable"].includes(root.cause);
+      && ["archive", "correct", "forget", "revise", "retire", "delete", "unprovable", "hide"].includes(root.cause);
     case "scope": return str(root.scopeId) && root.cause === "scope-deny";
     case "receipt": return str(root.bundleId) && ["receipt-revoked", "receipt-content"].includes(root.cause);
     case "session": return object(root.session) && str(root.session.threadId) && str(root.session.driverInstance) && str(root.session.nativeSession) && root.cause === "session-revoked";

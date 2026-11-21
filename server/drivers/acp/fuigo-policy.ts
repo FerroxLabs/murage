@@ -22,7 +22,7 @@ import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
  */
 import { comparable } from "../../data-roots.ts";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeFileAtomic } from "../../atomic.ts";
@@ -43,6 +43,7 @@ export const FUIGO_POLICY_ACK = "fuigo/permissionPolicy";
 export const FUIGO_POLICY_ASK = ["Bash", "Read", "Edit", "Grep", "MCPTool"] as const;
 export const FUIGO_POLICY_TEXT = `[permission]\nask = [${FUIGO_POLICY_ASK.map((rule) => JSON.stringify(rule)).join(", ")}]\n`;
 export const FUIGO_POLICY_SHA256 = createHash("sha256").update(FUIGO_POLICY_TEXT, "utf8").digest("hex");
+const FUIGO_POLICY_BYTES = Buffer.from(FUIGO_POLICY_TEXT, "utf8");
 
 export interface FuigoPolicy { path: string; sha256: string }
 
@@ -58,15 +59,30 @@ export function fuigoPolicyPath(dataDir: string = DATA_DIR): string {
   return join(dataDir, "native", "fuigo-policy", `launch-${FUIGO_POLICY_SHA256.slice(0, 16)}.toml`);
 }
 
-/** Write the policy file (atomically, every launch) and hand back its path and hash. A folder that is a link or
- *  not a folder refuses the turn: never a start without the policy. */
+/** Whether `path` is a plain file (not a link) holding exactly the policy bytes. */
+function holdsPolicy(path: string): boolean {
+  try {
+    const st = lstatSync(path);
+    return st.isFile() && st.size === FUIGO_POLICY_BYTES.length && readFileSync(path).equals(FUIGO_POLICY_BYTES);
+  } catch { return false; }
+}
+
+/** Make sure the policy file holds the policy (written atomically when it is missing or differs) and hand back its
+ *  path and hash. A folder that is a link or not a folder refuses the turn: never a start without the policy.
+ *  FUIGO2BOT (1.0.20): every running Fuigo keeps this one per-install file OPEN as its pin (launch_policy.rs keeps a
+ *  same_file::Handle), and Windows refuses a rename onto a file another process holds open. So a file that already
+ *  holds the exact bytes is left alone, and a refused replace is accepted only when the file still holds them: a
+ *  second bot's launch beside a running one starts, and a missing or changed file is still rewritten or refused. */
 export function ensureFuigoPolicy(dataDir: string = DATA_DIR): FuigoPolicy {
   const path = fuigoPolicyPath(dataDir);
   const dir = join(dataDir, "native", "fuigo-policy");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const st = lstatSync(dir);
   if (st.isSymbolicLink() || !st.isDirectory()) throw new FuigoPolicyError(fuigoPolicyRefusal("the approval settings folder is not a plain folder"));
-  writeFileAtomic(path, FUIGO_POLICY_TEXT, { mode: 0o600 });
+  if (!holdsPolicy(path)) {
+    try { writeFileAtomic(path, FUIGO_POLICY_TEXT, { mode: 0o600 }); }
+    catch (error) { if (!holdsPolicy(path)) throw error; }
+  }
   return { path, sha256: FUIGO_POLICY_SHA256 };
 }
 

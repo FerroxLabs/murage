@@ -1,5 +1,5 @@
 # WP2a replacement tests brief (builder: NEW files only, no index.ts/worker.ts edits)
-Branch fix/1018-memw-r32-wp2 on hz /work/swarm1018/memw32/wp2. Base commit: the sha WP2a announces after 5b47ffd52 (head at time of writing: 5b47ffd52 on 24fdc9026).
+Branch fix/1018-memw-r32-wp2 on hz /root/swarm1018/memw32/wp2. Base commit: the sha WP2a announces after 5b47ffd52 (head at time of writing: 5b47ffd52 on 24fdc9026).
 The replacement verification uses a neutral isolated fixture.
 Helpers: server/memory/testing/open-index.ts (openTestIndex, closeSealed, grantCharge, put = applyBatch that throws unless done).
 New design entry points (server/memory/index.ts): applyBatch(records) -> {status:"done"} | {status:"failed",reason:"segment-gate"|"merge-floor"|"wal-over"|"drain"|"check-owed"|"age-blocked",committed}; maintenanceStep() -> {ran,drain?,gateClear?} (merges/tier when over the segment gate, one tier at L=32 then sealed); segmentCount(table); sealAndTruncate(); purgeRolledCheckpoints/fillPostings/purgeRecords/finishRewrite are async. Segment limit: FTS_SEGMENT_LIMIT and isSegmentLimitError in segment-limit.ts; gate: segmentGateOpen in memw-steps.ts.
@@ -10,4 +10,4 @@ Old test (deleted, see git show HEAD~1:server/memory/fts-segments.test.ts) -> ne
  (d) memw-index "purgeRecords, finishRewrite, recoverSegments write the same bounded log": the recoverSegments case is replaced by maintenanceStep merge on the same 20k vs 200k fixtures; WAL growth equal.
  (e) msearch2-r4 T9 (500k/1M postings): the removed settlePostings timing -> assert fillPostings steps stay bounded and the log after sealAndTruncate is header only; the settles list is gone.
  Also age-order.test.ts dropped expect(index.recoverSegments()).toBe("none") -> expect(await index.maintenanceStep()).toMatchObject({ran:null}) after the writes.
-Every new test needs a named RED mutant (apply, run only that test, see it FAIL with a real vitest Tests line, revert, green control on the same tree). Record rows in /work/swarm1018/memw32/wp2/MUTANTS-wp2.tsv style. Report 20 lines max to the MEMW owner.
+Every new test needs a named RED mutant (apply, run only that test, see it FAIL with a real vitest Tests line, revert, green control on the same tree). Record rows in /root/swarm1018/memw32/wp2/MUTANTS-wp2.tsv style. Report 20 lines max to the MEMW owner.

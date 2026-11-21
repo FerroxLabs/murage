@@ -20,7 +20,7 @@ vi.mock("@/state/store", () => ({
 // otherwise; `undefined` is the moment before the harness has answered.
 let surfaceAnswer: boolean | undefined = true;
 vi.mock("@/lib/use-surface", () => ({ useDesktopSurface: () => surfaceAnswer }));
-vi.mock("@/lib/analytics", () => ({ identifyEmail: () => {}, setEmailGateDone: () => {} }));
+vi.mock("@/lib/first-run-gate", () => ({ identifyEmail: () => {}, setEmailGateDone: () => {} }));
 
 const { FirstRunCard } = await import("./FirstRunCard");
 const { helloAnswerReady } = await import("./FirstRunHelloCard");

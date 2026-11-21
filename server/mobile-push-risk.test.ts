@@ -5,8 +5,8 @@ import { fastestOfMs } from "./testing/timing.ts";
 
 // R2-2: a command is low only when what it reads is inside the workspace.
 // The real workspace check (workspaceInside), not a stand-in: the turn runs in
-// /Users/alex/proj, which is itself a root.
-const ws = workspaceInside({ cwd: "/Users/alex/proj", roots: ["/Users/alex/proj"], home: "/Users/alex", knownRecipients: new Set<string>(), realpath: (p: string) => p }, []);
+// /Users/sean/proj, which is itself a root.
+const ws = workspaceInside({ cwd: "/Users/sean/proj", roots: ["/Users/sean/proj"], home: "/Users/sean", knownRecipients: new Set<string>(), realpath: (p: string) => p }, []);
 const here = { cardOnly: true as const, inside: ws };
 
 describe("pushRiskFor (Decision 7)", () => {
@@ -58,7 +58,7 @@ describe("pushRiskFor (Decision 7)", () => {
     // .env files
     "cat .env.local", "cat app/.env.production", "source .env", "dotenv -e .env.test run", "docker compose --env-file ./prod.env up", "direnv allow .envrc",
     // ssh, keys and config credentials
-    "ls ~/.ssh", "cat /Users/alex/.ssh/known_hosts", "cat ~/.ssh/id_dsa", "cat id_ed25519-sk", "scp ~/.ssh/id_rsa.pub host:",
+    "ls ~/.ssh", "cat /Users/sean/.ssh/known_hosts", "cat ~/.ssh/id_dsa", "cat id_ed25519-sk", "scp ~/.ssh/id_rsa.pub host:",
     "cat ~/.aws/credentials", "cat ~/.aws/config", "cat server.p12", "cat bundle.pfx", "openssl rsa -in tls.key", "cat ~/.git-credentials",
     "cat ~/.config/gh/hosts.yml", "gh auth token", "cat ~/.gnupg/secring.gpg",
     // keychains and secret stores
@@ -70,8 +70,8 @@ describe("pushRiskFor (Decision 7)", () => {
   });
 
   it("the tool name counts: Read of an env file is risky", () => {
-    expect(pushRiskFor(null, "Read", "/Users/alex/app/.env")).toBe("risky");
-    expect(pushRiskFor(null, "Read", "/Users/alex/.ssh/config")).toBe("risky");
+    expect(pushRiskFor(null, "Read", "/Users/sean/app/.env")).toBe("risky");
+    expect(pushRiskFor(null, "Read", "/Users/sean/.ssh/config")).toBe("risky");
   });
 
   it.each([
@@ -105,7 +105,7 @@ describe("pushRiskFor (Decision 7)", () => {
   it.each([
     "python -c 'import os;print(os.environ)'", "python3 -c \"import os; print(os.environ['HOME'])\"",
     "declare -x", "declare -p", "typeset -x", "compgen -e", "ps eww", "ps -Eww 123", "ps auxeww",
-    "cat ~/.codex/auth.json", "cat ~/.config/some-tool/auth.json", "cat /Users/alex/.cursor/auth.json",
+    "cat ~/.codex/auth.json", "cat ~/.config/some-tool/auth.json", "cat /Users/sean/.cursor/auth.json",
     "cat ~/.azure/accessTokens.json", "ls ~/.azure", "ls ~/.aws/sso/cache/", "cat ~/.aws/sso/cache/abc.json", "ls ~/.aws",
     "cat ~/.config/gcloud/application_default_credentials.json", "ls ~/.config/gcloud",
     "kubectl config view --raw", "kubectl  config   view", "gcloud config config-helper --format=json", "gcloud auth print-identity-token",
@@ -191,7 +191,7 @@ describe("pushRiskFor (Decision 7)", () => {
     "*** Begin Patch\n*** Delete File: src/a.ts\n*** End Patch",
     // overwriting through a redirection
     "echo hi > notes.txt", "cat a >b", "echo x >| f", "cmd &> out.log", "cmd 2> err.log", "cmd 1>out", "printf x > ~/.zshrc",
-    "echo x > \"/Users/alex/Documents/a b.txt\"", "tee out.txt", "cat a | tee -a b", "Set-Content -Path a -Value b", "echo x | Out-File a",
+    "echo x > \"/Users/sean/Documents/a b.txt\"", "tee out.txt", "cat a | tee -a b", "Set-Content -Path a -Value b", "echo x | Out-File a",
     // git that throws work away or rewrites a remote
     "git clean -fdx", "git clean -n", "git reset --hard", "git reset --hard HEAD~3", "git push --force origin main", "git push -f",
     "git push origin +main", "git push --force-with-lease", "git -C repo push --force", "git push origin :feature", "git push --delete origin x",
@@ -255,14 +255,14 @@ describe("pushRiskFor (Decision 7)", () => {
   describe("a tool that writes a file", () => {
     const workspace = (path: string) => path.startsWith("/w/");
     it.each([
-      ["Write", { file_path: "/Users/alex/Documents/x.md", content: "hi" }],
-      ["Edit", { file_path: "/Users/alex/.zshrc", old_string: "a", new_string: "b" }],
+      ["Write", { file_path: "/Users/sean/Documents/x.md", content: "hi" }],
+      ["Edit", { file_path: "/Users/sean/.zshrc", old_string: "a", new_string: "b" }],
       ["MultiEdit", { file_path: "/etc/hosts", edits: [] }],
-      ["NotebookEdit", { notebook_path: "/Users/alex/n.ipynb", new_source: "x" }],
-      ["mcp__fs__write_file", { path: "/Users/alex/Desktop/a.txt", content: "x" }],
-      ["str_replace_editor", { path: "/Users/alex/a.py", command: "create" }],
-      ["mcp__fs__move_file", { source: "/w/a", destination: "/Users/alex/a" }],
-      ["mcp__fs__edit_file", { paths: ["/w/a", "/Users/alex/b"] }],
+      ["NotebookEdit", { notebook_path: "/Users/sean/n.ipynb", new_source: "x" }],
+      ["mcp__fs__write_file", { path: "/Users/sean/Desktop/a.txt", content: "x" }],
+      ["str_replace_editor", { path: "/Users/sean/a.py", command: "create" }],
+      ["mcp__fs__move_file", { source: "/w/a", destination: "/Users/sean/a" }],
+      ["mcp__fs__edit_file", { paths: ["/w/a", "/Users/sean/b"] }],
     ])("%s outside the workspace is risky", (tool, input) => {
       expect(pushRiskFor(null, tool, JSON.stringify(input).slice(0, 200), { input, inside: workspace })).toBe("risky");
     });
@@ -279,10 +279,10 @@ describe("pushRiskFor (Decision 7)", () => {
       expect(pushRiskFor(null, "Write", "/w/a", { input: { file_path: "/w/a" }, inside: () => { throw new Error("boom"); } })).toBe("risky");
     });
     it("reads the path the engine gave, not the card text", () => {
-      expect(pushRiskFor(null, "Write", "notes.md", { input: { file_path: "/Users/alex/.ssh/authorized_keys", content: "x" }, inside: workspace })).toBe("risky");
+      expect(pushRiskFor(null, "Write", "notes.md", { input: { file_path: "/Users/sean/.ssh/authorized_keys", content: "x" }, inside: workspace })).toBe("risky");
     });
     it("a tool that only reads is not held to the workspace", () => {
-      expect(pushRiskFor(null, "Read", "/Users/alex/src/a.ts", { input: { file_path: "/Users/alex/src/a.ts" }, inside: workspace })).toBe("low");
+      expect(pushRiskFor(null, "Read", "/Users/sean/src/a.ts", { input: { file_path: "/Users/sean/src/a.ts" }, inside: workspace })).toBe("low");
     });
   });
 
@@ -302,10 +302,10 @@ describe("pushRiskFor (Decision 7)", () => {
       expect(pushRiskFor(null, "edit", "apply the patch", { inside })).toBe("risky");
     });
     it.each([
-      ["edit", { abs_path: "/Users/alex/a" }], ["edit", { absolute_path: "/Users/alex/a" }], ["edit", { locations: [{ path: "/Users/alex/a" }] }],
-      ["Write", { filename: "/Users/alex/a" }], ["mcp__fs__write_file", { uri: "file:///Users/alex/a" }], ["mcp__fs__write_file", { uri: "https://x/a" }],
-      ["move", { from: "/w/a", to: "/Users/alex/a" }], ["mcp__fs__move_file", { src: "/w/a", dst: "/Users/alex/a" }],
-      ["Write", { file_path: 42 }], ["Write", { file_path: { p: "/w/a" } }], ["Write", { content: "x" }], ["mcp__fs__set_contents", { path: "/Users/alex/a" }],
+      ["edit", { abs_path: "/Users/sean/a" }], ["edit", { absolute_path: "/Users/sean/a" }], ["edit", { locations: [{ path: "/Users/sean/a" }] }],
+      ["Write", { filename: "/Users/sean/a" }], ["mcp__fs__write_file", { uri: "file:///Users/sean/a" }], ["mcp__fs__write_file", { uri: "https://x/a" }],
+      ["move", { from: "/w/a", to: "/Users/sean/a" }], ["mcp__fs__move_file", { src: "/w/a", dst: "/Users/sean/a" }],
+      ["Write", { file_path: 42 }], ["Write", { file_path: { p: "/w/a" } }], ["Write", { content: "x" }], ["mcp__fs__set_contents", { path: "/Users/sean/a" }],
       ["edit", { locations: [{ line: 3 }] }],
     ])("%s %j is risky", (tool, input) => {
       expect(pushRiskFor(null, tool, "x", { input, inside })).toBe("risky");
@@ -317,14 +317,14 @@ describe("pushRiskFor (Decision 7)", () => {
       expect(pushRiskFor(null, tool, "x", { input, inside })).toBe("low");
     });
     it("the paths the driver read (event.filePaths) count", () => {
-      expect(pushRiskFor(null, "edit", "Edit a.ts", { filePaths: ["/Users/alex/a.ts"], inside })).toBe("risky");
+      expect(pushRiskFor(null, "edit", "Edit a.ts", { filePaths: ["/Users/sean/a.ts"], inside })).toBe("risky");
       expect(pushRiskFor(null, "edit", "Edit a.ts", { filePaths: ["/w/a.ts"], inside })).toBe("low");
-      expect(pushRiskFor(null, "edit", "Edit a.ts", { input: { abs_path: "/w/a.ts" }, filePaths: ["/Users/alex/b.ts"], inside })).toBe("risky");
+      expect(pushRiskFor(null, "edit", "Edit a.ts", { input: { abs_path: "/w/a.ts" }, filePaths: ["/Users/sean/b.ts"], inside })).toBe("risky");
     });
     it("the engine's own tool name counts as well as the ACP kind", () => {
       expect(pushRiskFor(null, "other", "x", { name: "delete_file", input: {}, inside })).toBe("risky");
-      expect(pushRiskFor(null, "other", "x", { name: "write_file", input: { path: "/Users/alex/a" }, inside })).toBe("risky");
-      expect(pushRiskFor(null, "other", "x", { name: "read_file", input: { path: "/Users/alex/a" }, inside })).toBe("low");
+      expect(pushRiskFor(null, "other", "x", { name: "write_file", input: { path: "/Users/sean/a" }, inside })).toBe("risky");
+      expect(pushRiskFor(null, "other", "x", { name: "read_file", input: { path: "/Users/sean/a" }, inside })).toBe("low");
     });
     it("a known command tool whose input has no readable command is risky", () => {
       for (const input of ["rm -rf ~", { commands: ["rm -rf ~"] }, { input: { command: "rm -rf ~" } }]) {
@@ -337,8 +337,8 @@ describe("pushRiskFor (Decision 7)", () => {
   it.each([
     // I1
     "rsync -a --delete src/ ~/Documents/", "rsync -a --delete-after a b", "rsync --remove-source-files a b", "rsync -a --del a b",
-    "osascript -e 'tell application \"Finder\" to delete POSIX file \"/Users/alex/Documents\"'",
-    "mv ~/Documents /tmp/x", "mv notes.txt ~/Documents/important.txt", "mv $X a", "mv /Users/alex/a b", "cp a ~/Documents/a.txt", "cp /dev/null ~/.zsh_history",
+    "osascript -e 'tell application \"Finder\" to delete POSIX file \"/Users/sean/Documents\"'",
+    "mv ~/Documents /tmp/x", "mv notes.txt ~/Documents/important.txt", "mv $X a", "mv /Users/sean/a b", "cp a ~/Documents/a.txt", "cp /dev/null ~/.zsh_history",
     "git checkout .", "git worktree remove --force x", "dropdb prod", "redis-cli FLUSHALL", "redis-cli flushdb", "mongo --eval 'db.dropDatabase()'",
     "kubectl delete ns prod", "terraform destroy", "gcloud projects delete p", "gh repo delete o/r --yes", "docker system prune -af", "docker volume prune",
     "crontab -r", "crontab -ir", "tmutil delete /x", "npm unpublish pkg", "dropuser bob", "chmod -R 000 ~", "chown -R nobody ~/Documents", "chmod --recursive 777 /",
@@ -360,8 +360,8 @@ describe("pushRiskFor (Decision 7)", () => {
       expect(pushRiskFor(null, "Bash", command, { input: { command }, inside })).toBe("risky");
     });
     it.each([
-      "echo hi > ~/notes.txt", "echo hi > /etc/hosts", "echo x > $OUT", "echo x > `f`", "echo x > ../up.txt", "echo x > \"/Users/alex/a b\"",
-      "a > x; b > /Users/alex/y", "mv a.ts ~/b.ts", "cp a ../b",
+      "echo hi > ~/notes.txt", "echo hi > /etc/hosts", "echo x > $OUT", "echo x > `f`", "echo x > ../up.txt", "echo x > \"/Users/sean/a b\"",
+      "a > x; b > /Users/sean/y", "mv a.ts ~/b.ts", "cp a ../b",
     ])("%j stays risky", (command) => {
       expect(pushRiskFor(null, "Bash", command, { input: { command }, inside })).toBe("risky");
     });
@@ -385,10 +385,10 @@ describe("pushRiskFor (Decision 7)", () => {
   describe("M3: workspaceInside leaves out the temp roots", () => {
     const place = (home: string, roots: string[]) => ({ cwd: `${home}/proj`, roots, home, knownRecipients: new Set<string>(), realpath: (p: string) => p });
     it("a /Users home: the workspace is inside, Documents and /tmp are not", () => {
-      const inside = workspaceInside(place("/Users/alex", ["/Users/alex/proj", "/tmp", "/private/tmp"]), ["/tmp", "/private/tmp"]);
-      expect(inside("/Users/alex/proj/a.ts")).toBe(true);
+      const inside = workspaceInside(place("/Users/sean", ["/Users/sean/proj", "/tmp", "/private/tmp"]), ["/tmp", "/private/tmp"]);
+      expect(inside("/Users/sean/proj/a.ts")).toBe(true);
       expect(inside("src/a.ts")).toBe(true);
-      expect(inside("/Users/alex/Documents/a")).toBe(false);
+      expect(inside("/Users/sean/Documents/a")).toBe(false);
       expect(inside("/tmp/x")).toBe(false);
       expect(inside("")).toBe(false);
     });
@@ -414,12 +414,12 @@ describe("pushRiskFor (Decision 7)", () => {
     const inside = (path: string) => path.startsWith("/w/") || (path !== "" && !path.startsWith("/") && !path.startsWith("~") && !path.includes(".."));
     const rate = (command: string) => pushRiskFor(null, "Bash", command, { input: { command }, inside });
     it.each([
-      "sed -i 's/a/b/' ~/.zshrc", "sed -i '' 's/a/b/' /Users/alex/.zshrc", "sed -i 's|a|b|' ~/.zshrc", "sed --in-place=.bak s/a/b/ /etc/hosts", "sed -i s/a/b/ $F",
-      "sed -i -e 's/a/b/' \"/Users/alex/My Docs/x.txt\"", "perl -pi -e 's/a/b/' ~/.bashrc", "install -m 755 bin ~/bin/x", "install x /usr/local/bin/x", "install",
-      "ditto a ~/Documents/a", "tar -xf x.tar -C ~", "tar xzf x.tgz --directory=/Users/alex", "tar -czf ~/out.tgz src", "tar -x -f a.tar -C ../up",
-      "unzip -o a.zip -d ~/Documents", "unzip a.zip -d /Users/alex", "ln -sf /dev/null ~/.zsh_history", "ln -f a /Users/alex/b", "ln -s /x",
+      "sed -i 's/a/b/' ~/.zshrc", "sed -i '' 's/a/b/' /Users/sean/.zshrc", "sed -i 's|a|b|' ~/.zshrc", "sed --in-place=.bak s/a/b/ /etc/hosts", "sed -i s/a/b/ $F",
+      "sed -i -e 's/a/b/' \"/Users/sean/My Docs/x.txt\"", "perl -pi -e 's/a/b/' ~/.bashrc", "install -m 755 bin ~/bin/x", "install x /usr/local/bin/x", "install",
+      "ditto a ~/Documents/a", "tar -xf x.tar -C ~", "tar xzf x.tgz --directory=/Users/sean", "tar -czf ~/out.tgz src", "tar -x -f a.tar -C ../up",
+      "unzip -o a.zip -d ~/Documents", "unzip a.zip -d /Users/sean", "ln -sf /dev/null ~/.zsh_history", "ln -f a /Users/sean/b", "ln -s /x",
       "patch ~/.zshrc x.diff", "patch -d /etc -p1", "rsync -a src/ ~/Documents/", "scp a host:b", "curl -o ~/x https://y", "curl --output=/etc/x https://y",
-      "wget -O /Users/alex/x https://y", "git mv a ~/b", "cp -t ~/Documents a", "cp a b ~/", "env A=1 install a ~/b", "FOO=1 ditto a /etc/b",
+      "wget -O /Users/sean/x https://y", "git mv a ~/b", "cp -t ~/Documents a", "cp a b ~/", "env A=1 install a ~/b", "FOO=1 ditto a /etc/b",
     ])("%j is risky", (command) => {
       expect(rate(command)).toBe("risky");
     });
@@ -447,7 +447,7 @@ describe("pushRiskFor (Decision 7)", () => {
     };
     it("a Write card whose bot cannot be found rates risky on re-rate", () => {
       const s = store("low");
-      expect(ratePushRevision(s, "t", "r", 2, { stopHit: null, tool: "Write", summary: "{\"file_path\":\"/Users/alex/x\"}" }, 1)).toBe("risky");
+      expect(ratePushRevision(s, "t", "r", 2, { stopHit: null, tool: "Write", summary: "{\"file_path\":\"/Users/sean/x\"}" }, 1)).toBe("risky");
       expect(pushRiskFor(null, "Write", "x", { cardOnly: true })).toBe("risky");
     });
     it("with the workspace known, the card-only re-rate leaves an engine-rated low Write low", () => {
@@ -461,7 +461,7 @@ describe("pushRiskFor (Decision 7)", () => {
   });
 
   it("round 2: workspaceInside treats a $ or ~ path it cannot expand as outside", () => {
-    const inside = workspaceInside({ cwd: "/Users/alex/proj", roots: ["/Users/alex/proj"], home: "/Users/alex", knownRecipients: new Set<string>(), realpath: (p: string) => p }, []);
+    const inside = workspaceInside({ cwd: "/Users/sean/proj", roots: ["/Users/sean/proj"], home: "/Users/sean", knownRecipients: new Set<string>(), realpath: (p: string) => p }, []);
     expect(inside("$HOME/a")).toBe(false);
     expect(inside("a/$X/b")).toBe(false);
     expect(inside("${PWD}/a")).toBe(false);

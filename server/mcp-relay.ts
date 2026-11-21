@@ -262,16 +262,32 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
     return failed(reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable"), host);
   }
   const { status } = response;
+  // A notification, or the engine's answer to the server's own request: the server owes no answer.
+  const awaitsNoAnswer = message.id === undefined || message.method === undefined;
+  const accepted = (): RelayResult => {
+    response.close();
+    return { ok: true, status: 202, contentType: "application/json", body: Buffer.alloc(0), ...sessionOf(response) };
+  };
   if (status === 200 || status === 202) {
     const type = String(Array.isArray(response.headers["content-type"]) ? response.headers["content-type"][0] : response.headers["content-type"] ?? "");
     const contentType = /^application\/json/i.test(type) ? "application/json" : /^text\/event-stream/i.test(type) ? "text/event-stream" : null;
-    if (status === 202) {
-      response.close();
-      return { ok: true, status: 202, contentType: "application/json", body: Buffer.alloc(0), ...sessionOf(response) };
-    }
+    if (status === 202) return accepted();
     if (!contentType) {
-      response.close();
-      return failed("wrong-address", host);
+      // A message that waits for no answer: a 200 in another type is the server taking it, as
+      // Settings Test reads it. Its body is closed unread. 1.0.20: this was a 502, and the proxy
+      // sealed the whole mount.
+      if (awaitsNoAnswer) return accepted();
+      // An answer labelled another type (text/plain) is still read, bounded, the way Test reads
+      // it; only one JSON-RPC object passes, as JSON. Anything else stays the wrong address.
+      let body: Buffer;
+      try {
+        body = await readAll(response, deadline);
+      } catch (error) {
+        if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+        return failed(reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable"), host);
+      }
+      if (!jsonObjectBody(body)) return failed("wrong-address", host);
+      return { ok: true, status: 200, contentType: "application/json", body, ...sessionOf(response) };
     }
     // An SSE answer has no deadline here: the engine's proxy owns the call's
     // bound (paused while the owner answers the server's question), and the
@@ -292,6 +308,8 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
     }
     return { ok: true, status: 200, contentType, body, ...sessionOf(response) };
   }
+  // Any other 2xx (204 No Content) for a message that waits for no answer: the server took it.
+  if (awaitsNoAnswer && status >= 200 && status < 300) return accepted();
   // nothing below reads the body
   response.close();
   if (status === 401 || status === 403) {
@@ -309,6 +327,16 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
     return viaSse(ctx, url, host, message, timeoutMs, auth);
   }
   return failed(status >= 500 ? "server-error" : "wrong-address", host);
+}
+
+/** True when the body is exactly one JSON-RPC object (the only answer shape read without its content type). */
+function jsonObjectBody(body: Buffer): boolean {
+  try {
+    const value: unknown = JSON.parse(body.toString("utf8"));
+    return value !== null && typeof value === "object" && !Array.isArray(value) && (value as { jsonrpc?: unknown }).jsonrpc === "2.0";
+  } catch {
+    return false;
+  }
 }
 
 function sessionOf(response: Pick<StreamedResponse, "headers">): { sessionId?: string } {

@@ -11,6 +11,7 @@ import fs, { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boundaryStore } from "./boundary-ports.ts";
 import { botRows, botViewer, doorEgress } from "./bot-read.ts";
@@ -331,6 +332,50 @@ it("a reply the gate is still checking is waited for: nothing is written or woke
   expect((await w.check("task-a")).result).toContain("RESEARCHER_A_WORDS");
   // nothing before the delivery carried the words anywhere a bot reads
   expect(w.mirrored().join("\n")).not.toContain(CHECKING);
+});
+
+/** The server's own finalizeDelegationWatch (index.ts), run over this world's ports: the wiring the shipped build uses, not a hand-built port set. */
+function shippedFinalizer(w: ReturnType<typeof world>) {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+  let node: ts.FunctionDeclaration | undefined;
+  const visit = (n: ts.Node) => { if (ts.isFunctionDeclaration(n) && n.name?.text === "finalizeDelegationWatch") node = n; else ts.forEachChild(n, visit); };
+  visit(ast);
+  expect(node, "index must define finalizeDelegationWatch").toBeDefined();
+  const p = w.ports;
+  const env: Record<string, unknown> = {
+    runFinalizeDelegationWatch, WorkerText, rows: p.rows, askerWakePort: p.askerWake, boundaryCommsPort: p.comms, delegationSource: p.delegationSource,
+    delegationWatch: p.delegationWatch, finalizingDelegations: p.finalizingDelegations, handoffRequestId: p.handoffRequestId,
+    markTaskContextExternallyUpdated: p.markTaskContextExternallyUpdated, completeRoomAsk: p.completeRoomAsk, afterRoomCompletion: p.afterRoomCompletion,
+    boundaryOwedReply: p.owedReply, boundaryStoreView: p.store, hurryDelegatedReplyCheck: p.hurryReplyCheck, delegatedReplyChecks: w.checks,
+    ownerDeletedThread, database,
+  };
+  const code = ts.transpileModule(`${node!.getText(ast)}; return finalizeDelegationWatch;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  return new Function(...Object.keys(env), code)(...Object.values(env)) as (threadId: string, succeeded: boolean, recordedReply?: string, failure?: unknown, stopped?: boolean, recordedCopyOf?: Message["copyOf"]) => boolean;
+}
+
+it("1.0.20: through the server's own finalizer, a delegated reply held while memory is checked never posts the no-answer placeholder to the asker; it waits and is delivered when checking clears", () => {
+  const w = world();
+  const finalize = shippedFinalizer(w);
+  w.asked("task-s");
+  const replyA = w.heldReply(w.a, WORDS_A);
+  expect(w.verdictOf(w.a, replyA.id)).toEqual({ state: "checking", reason: "pending" });
+  w.ports.delegationWatch.set(w.a.threadId, { toBotId: w.a.id, toBotName: w.a.name, taskId: "task-s", sourceThreadId: w.leader.threadId });
+  expect(finalize(w.a.threadId, true, replyA.text ?? "", undefined, false, { threadId: w.a.threadId, messageIds: [replyA.id] })).toBe(true);
+  // the asker's conversation shows no bubble at all while the check runs: never the internal placeholder
+  const leaderText = () => w.store.messagesFor(w.leader.threadId).map(m => m.text ?? "").join("\n");
+  expect(leaderText()).not.toContain(NO_ANSWER);
+  expect(w.row("task-s")).toBeUndefined();
+  expect(findDelegationReceipt("task-s")).toBeFalsy();
+  expect(w.wakeCalls).toEqual([]);
+  expect(w.checks.has("task-s")).toBe(true);
+  // checking clears: the next re-check delivers the real reply once
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  w.time.advance(DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  const row = w.row("task-s")!;
+  expect(row.text).toContain(WORDS_A);
+  expect(w.wakeCalls).toEqual([`task-s:${row.id}`]);
+  expect(leaderText()).not.toContain(NO_ANSWER);
 });
 
 it("a reply still checking when the wait runs out ends with a line that names the worker and where the words are: final, one wake, read by bots, the words in no store, the room told the same", async () => {

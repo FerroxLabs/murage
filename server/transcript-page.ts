@@ -3,6 +3,7 @@
 //
 // The page of a transcript a frame or a listing carries, in the shape the
 // asking client takes (lane E, 1.0.2).
+import { REPLY_WITHHELD } from "./owner-display.ts";
 import type { IncomingHttpHeaders } from "node:http";
 
 import { redactSecretsInText } from "./redact.ts";
@@ -13,7 +14,7 @@ import { CARDS_BESIDE_HEADER, CARDS_BESIDE_QUERY, CARDS_BESIDE_VALUE } from "./t
  * This minimal authorship tag is supplied by the transcript reader, never by an HTTP body.
  * Only a stored, proved owner origin exempts text; a user role alone is not
  * owner authority. Bot senders and automation always use the display boundary. */
-export type TrustedRowMetadata = Readonly<{ authorship: "owner" | "bot" | "unknown"; hostRequestId?: string }>;
+export type TrustedRowMetadata = Readonly<{ authorship: "owner" | "bot" | "unknown"; hostRequestId?: string; ownerOnly?: boolean }>;
 const DISPLAY_MARKER = "«redacted»";
 const DISPLAY_SCALARS = 256 * 1024;
 const DISPLAY_NODES = 20_000;
@@ -21,8 +22,15 @@ const DISPLAY_WORK = 1_048_576;
 
 /** One bounded standalone display unit. Call BEFORE shortening, flattening,
  * quoting or encoding. The input must be a host-built list of text fields,
- * not a provider's object. A hit/failure masks siblings atomically. */
-export function sanitizeDisplayTextUnit(texts: readonly string[], redact: (text: string) => string = redactSecretsInText): string[] {
+ * not a provider's object. A hit/failure masks siblings atomically.
+ * `ownerOnly` (boolean, or the option): the route proved the only reader is
+ * the owner on his own surface (index.ts ownerOnlyTranscript). A stored
+ * marker stays in its own field and masks nothing else. `markerStays`
+ * (the store's write of a bot row): a fresh hit still masks siblings, a marker
+ * already in a field does not. */
+export function sanitizeDisplayTextUnit(texts: readonly string[], redact: (text: string) => string = redactSecretsInText, audience: boolean | { ownerOnly?: boolean; markerStays?: boolean } = false): string[] {
+  const ownerOnly = audience === true || (typeof audience === "object" && audience.ownerOnly === true);
+  const markerStays = typeof audience === "object" && audience.markerStays === true;
   let size = 0;
   for (const text of texts) {
     size += text.length;
@@ -30,9 +38,12 @@ export function sanitizeDisplayTextUnit(texts: readonly string[], redact: (text:
   }
   try {
     const safe = texts.map(text => redact(text));
-    // A persisted marker is not a proof of provenance. Conservatively keep
-    // siblings hidden on subsequent reads as well as on the first pass.
-    const masked = safe.some((text, i) => text !== texts[i] || text.includes("«redacted"));
+    // A fresh hit masks siblings for every audience, the owner included (the
+    // tip's rule, transcript-page.test.ts "an old marker keeps its field...").
+    // A persisted marker is only evidence about its own field on a private
+    // owner read, and at the store's write (`markerStays`); every shared read
+    // keeps siblings hidden.
+    const masked = safe.some((text, i) => text !== texts[i] || (!ownerOnly && !markerStays && text.includes("«redacted")));
     return masked ? safe.map((text, i) => text !== texts[i] || text.length === 0 ? text : DISPLAY_MARKER) : safe;
   } catch { return texts.map(text => text ? DISPLAY_MARKER : ""); }
 }
@@ -51,6 +62,7 @@ DISPLAY_KEYS.push(..."Badge Box Button Caption Card Chart Checkbox Col DatePicke
 // Only these exact paths carry identities created by the host. Familiar
 // provider field names (id, handle, turnId) are ordinary scanned text.
 const HOST_CONTROL_PATHS = new Set("routineRun.runId routineRun.routineId routineRun.executionThreadId goalRun.runId goalRun.coordinatorBotId from.botId from.groupId connector.slug connector.resumeKey mcpSignIn.resumeKey mcpSignIn.botId secret.target secret.requestKey".split(" "));
+const HOST_ENGINE_PATHS = new Set(["engine.instanceId", "engine.driverKind", "engine.connectionId", "engine.capabilityHash"]);
 const HOST_ROOT_IDS = new Set("id parentId insertedBefore replyToId sendId responderBotId queueId quoteMessageId roomShareId steerId artifactIds withheldFromBots workItemId handoffFrom dispatchedIn speechGenerationId".split(" "));
 
 const CONTROL_VALUES = new Set(("text options activity screen connector mcpSignIn secret routine.run goal.run image user bot owner person murage routine desktop companion unproven queued running waiting needs-you completed failed cancelled missed working needs-input blocked limit-reached paused stopped required authorizing connected signed-in timed-out denied ready pending in_progress done started local-computer finished timeout read write exec shell network search file folder browser tool-reported tool owner-statement assistant hypothesis allow deny answer skip Allow Deny Allow once Not now").split(" "));
@@ -164,7 +176,10 @@ export function sanitizeBotDisplayMessage(row: unknown, trustedRowMetadata: Trus
       if (scalars > DISPLAY_SCALARS) throw new Error("display scalar budget");
       (target as Record<string | number, unknown>)[key] = value;
       const field = String(key);
-      const isControl = HOST_CONTROL_PATHS.has(path) && value.length <= 1024;
+      // A validated host stamp names the engine even when the row text is withheld.
+      const isEngineIdentity = HOST_ENGINE_PATHS.has(path) && value.length <= 1024 &&
+        !value.includes("«redacted") && redactSecretsInText(value) === value;
+      const isControl = isEngineIdentity || HOST_CONTROL_PATHS.has(path) && value.length <= 1024;
       const isEnum = ["kind", "status", "type", "state", "reason", "role", "origin", "verification", "reportedOutcome", "approvalScope"].includes(field) && CONTROL_VALUES.has(value);
       const isPermissionLabel = path.startsWith("card.options.") && PERMISSION_LABELS.has(value);
       if (!isControl && !isEnum && !isPermissionLabel) slots.push({ target, key, text: value });
@@ -239,8 +254,11 @@ export function sanitizeBotDisplayMessage(row: unknown, trustedRowMetadata: Trus
         if (optionIndex >= 0) out.limitApplication = { optionIndex, nextTime: ownValue(answer, 'nextTime'), routines: ownValue(answer, 'routines') };
       }
     }
-    const safe = sanitizeDisplayTextUnit(slots.map(slot => slot.text));
+    const safe = sanitizeDisplayTextUnit(slots.map(slot => slot.text), redactSecretsInText, trustedRowMetadata.ownerOnly);
     for (let i = 0; i < slots.length; i++) (slots[i].target as Record<string | number, unknown>)[slots[i].key] = safe[i];
+    // redact2-1020: an assistant message stored as the bare marker (before ownerReplyText) reads as a plain line for the owner alone
+    if (trustedRowMetadata.ownerOnly === true && out.role === "bot" && out.kind === "text" && typeof out.text === "string"
+      && out.text.includes(DISPLAY_MARKER) && !out.text.replaceAll(DISPLAY_MARKER, "").trim()) out.text = REPLY_WITHHELD;
     const masked = safe.some((text, i) => text !== slots[i].text || text.includes("«redacted"));
     if (!masked && ownValue(row, "kind") === "screen") {
       // Raster bytes are a separate existing image boundary, not free text.
@@ -320,11 +338,47 @@ type Gated<B> = Omit<B, "newestSeq"> & { newestSeq?: number };
  *   `newestSeq` = the server's MAX(seq) now (0 for an empty thread).
  * The rows and the cache are never changed: the gate shapes copies. Read, probed and gated in one synchronous step, so no delivery
  * straddles the walk's flip of the thread. */
-export function wireThread<B extends { message?: unknown; messages?: readonly unknown[]; openCards?: readonly unknown[] }>(store: SeqStore, threadId: string, body: B, options: { slim?: boolean; legacy?: boolean } = {}): Gated<B> {
+/** The reader-side metadata of one stored row. `ownerOnly` is the route's
+ * proof (index.ts ownerOnlyTranscript), never a request field. */
+export function storedRowReadMetadata(row: unknown, ownerOnly: boolean | undefined, hostRequestId?: string): TrustedRowMetadata {
+  const base = storedRowDisplayMetadata(row);
+  return { ...base, ...(ownerOnly === true && base.authorship === "unknown" && ownerOwnUnstampedRow(row) ? { authorship: "bot" as const } : {}), hostRequestId, ownerOnly };
+}
+/** On the owner's own read a user row that carries no origin at all (a call
+ * note, a steer recovered after a restart, history from before origins) is
+ * shown as the owner's line through the normal display scan (no owner text
+ * exemption without a proven origin), never as a bare «redacted» activity row.
+ * A row with any origin, a phone share/ask line, a sender or a routine prompt
+ * keeps its stored standing. */
+function ownerOwnUnstampedRow(row: unknown): boolean {
+  if (!row || typeof row !== "object") return false;
+  const origin = ownValue(row, "origin");
+  return ownValue(row, "role") === "user" && (origin === undefined || origin === null) && ownValue(row, "via") === undefined
+    && !ownValue(row, "from") && !ownValue(row, "routineRunPrompt");
+}
+
+/** CTXREV H2 A-2 (cause1 r6): whether a stored row is a kept reply hidden from bots (revoke-commit.ts replyHiddenFromBots), for a reader
+ * that is not the owner's own surface (index.ts hiddenReplyGate). Undefined: the owner reads every row. */
+export type HiddenReply = (messageId: string) => boolean;
+/** The fields a hidden reply keeps for a reader that is not the owner: where it sits and who wrote it, never its words or attachments. */
+const HIDDEN_REPLY_KEYS = "id at seq parentId insertedBefore replyToId role kind turnId turnTerminal sendId responderBotId from".split(" ");
+/** CTXREV H2 A-2: a reply whose held context an own privacy revoke withdrew mid-turn (Sean revokekeep: kept for the owner) reaches any other
+ * reader (a script's grant, the MCP door, a bot's own shell, a shared export) as the withheld line only. A row with no hide mark passes. */
+export function withholdHiddenReply(row: unknown, hidden: HiddenReply | undefined): unknown {
+  if (!hidden || !row || typeof row !== "object") return row;
+  const id = ownValue(row, "id");
+  if (typeof id !== "string" || ownValue(row, "role") === "user" || !hidden(id)) return row;
+  const out: Record<string, unknown> = {};
+  for (const key of HIDDEN_REPLY_KEYS) { const value = ownValue(row, key); if (value !== undefined) out[key] = value; }
+  return { ...out, kind: "text", text: REPLY_WITHHELD, withheldFromBots: true };
+}
+
+export function wireThread<B extends { message?: unknown; messages?: readonly unknown[]; openCards?: readonly unknown[] }>(store: SeqStore, threadId: string, body: B, options: { slim?: boolean; legacy?: boolean; ownerOnly?: boolean; hiddenReply?: HiddenReply } = {}): Gated<B> {
   const numbered = !options.legacy && store.threadNumbered(threadId);
   const slim = options.slim !== false;
-  const wire = (row: unknown): unknown => {
-    const safe = sanitizeBotDisplayMessage(row, { ...storedRowDisplayMetadata(row), hostRequestId: store.displayHostRequestId?.(threadId, row) });
+  const wire = (stored: unknown): unknown => {
+    const row = withholdHiddenReply(stored, options.hiddenReply);
+    const safe = sanitizeBotDisplayMessage(row, storedRowReadMetadata(row, options.ownerOnly, store.displayHostRequestId?.(threadId, row)));
     const shaped = (slim ? slimMessage(safe as unknown as Message) : safe) as Row;
     const { seq, ...rest } = shaped as Record<string, unknown>;
     if (!numbered) return rest;
@@ -374,7 +428,7 @@ const BRANCH_HEAD_PAGE_CAP = 500;
 
 /** The rows of a page as sent, with the cards beside it and the cursor to page
  * back by when the page is a branch page. */
-export function wirePage(store: TranscriptStore, threadId: string, page: ReturnType<typeof transcriptPage>, beside: boolean, bound = false) {
+export function wirePage(store: TranscriptStore, threadId: string, page: ReturnType<typeof transcriptPage>, beside: boolean, bound = false, ownerOnly = false, hiddenReply?: HiddenReply) {
   return wireThread(store, threadId, {
     messages: page.messages as Message[],
     ...(beside ? pageOpenCards(store, threadId, page.messages) : {}),
@@ -383,7 +437,7 @@ export function wirePage(store: TranscriptStore, threadId: string, page: ReturnT
     ...(beside && bound && page.activeLeafId ? { openCardsLeaf: page.activeLeafId } : {}),
     ...(beside && page.olderFrom ? { olderFrom: page.olderFrom } : {}),
     hasMore: page.hasMore,
-  }, page.branch ? { legacy: true } : {});
+  }, { legacy: page.branch, ownerOnly, hiddenReply });
 }
 
 /** `openCards` for a frame, left out when the page already holds every open card. */

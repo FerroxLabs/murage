@@ -22,7 +22,7 @@ import { withoutImageTags } from "../../src/lib/composer-attachments.ts";
 import { scopeRow } from "./scope-id.ts";
 import { insertScope } from "./scope-insert.ts";
 import { revokeThreadDisclosures } from "./revocation.ts";
-import { commitRevoke, inheritEdge } from "./revoke-commit.ts";
+import { commitRevoke, inheritEdge, replyHiddenFromBots } from "./revoke-commit.ts";
 import { hasWritetime } from "./revoke-marker.ts";
 import { FIRST_LSN } from "./lineage-types.ts";
 import { writeCaptureLineage } from "./lineage-write.ts";
@@ -303,7 +303,10 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
   // empty payload, never a source text and never a tool-observation. HighLevel's reads, changes and status (HL-S2-RO 1.0.18) answer with
   // HighLevel's own records and are left out the same way.
   const leftOut = userText && isExportPaste(message) ? "export-paste" : finalText && answersExportPaste(db, threadId, message) ? "export-paste-reply"
-    : tool && (isEmailReadToolName(message.tool!.name) || isHighLevelChangeToolName(message.tool!.name)) ? "external-mail" : undefined;
+    : tool && (isEmailReadToolName(message.tool!.name) || isHighLevelChangeToolName(message.tool!.name)) ? "external-mail"
+    // CTXREV H2 A-2: a reply kept after an own privacy revoke of what its turn held is hidden from bots (revoke-commit.ts hideReplyLine);
+    // its words may carry the revoked detail, so it is never a source to learn from either
+    : finalText && replyHiddenFromBots(db, threadId, message.id) ? "withheld-reply" : undefined;
   // A completed tool row that carries nothing but the tool's name (read_file with no text) has nothing to learn from (MEMORY-TOOL-NAME-JUNK):
   // its payload text is empty and its job is born complete (captureSource), so no source text is ever just a tool name. It keeps its
   // metadata and its `action` label and stays active, so what the bot did is still admitted as an action (pip-admission.ts actionRow).

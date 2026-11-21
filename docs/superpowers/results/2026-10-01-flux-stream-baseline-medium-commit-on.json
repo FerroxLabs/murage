@@ -1,0 +1,122 @@
+{
+  "mode": "dev",
+  "base": "ws://127.0.0.1:8787/v1",
+  "sim": true,
+  "results": [
+    {
+      "id": "E-latency",
+      "status": "pass",
+      "ms": 42801
+    },
+    {
+      "id": "E-murage",
+      "status": "pass",
+      "ms": 96412
+    }
+  ],
+  "metrics": {
+    "rtt": {
+      "p50": 0,
+      "p90": 3,
+      "n": 5
+    },
+    "text_client": {
+      "p50": 878,
+      "p90": 962,
+      "n": 5
+    },
+    "eot_client": {
+      "p50": 878,
+      "p90": 1719,
+      "n": 5
+    },
+    "server_lag": {
+      "p50": 349,
+      "p90": 467,
+      "n": 5
+    },
+    "start": {
+      "p50": 1324,
+      "p90": 1376,
+      "n": 5
+    },
+    "eot_murage": {
+      "p50": 866,
+      "p90": 1179,
+      "n": 5
+    },
+    "audible_restarts": {
+      "p50": 0,
+      "p90": 0,
+      "n": 6
+    },
+    "superseded": {
+      "p50": 0,
+      "p90": 2,
+      "n": 5
+    }
+  },
+  "gates": [
+    {
+      "id": "T-text-p50",
+      "value": 878,
+      "limit": 800,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-text-p90",
+      "value": 962,
+      "limit": 1000,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-eot-p50",
+      "value": 878,
+      "limit": 900,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-eot-p90",
+      "value": 1719,
+      "limit": 2000,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-eot-murage-p90",
+      "value": 1179,
+      "limit": 1300,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-superseded",
+      "value": 3,
+      "limit": 2,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-audible-restarts",
+      "value": 0,
+      "limit": 0,
+      "samples": 6,
+      "needed": 6,
+      "pass": true
+    }
+  ],
+  "owner": [],
+  "failures": [
+    "gate T-text-p50",
+    "gate T-superseded"
+  ]
+}

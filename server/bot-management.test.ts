@@ -6,6 +6,7 @@ import { Store, canReach } from "./store.ts";
 import { MASCOT_BODY_IDS } from "../shared/mascot-bodies.ts";
 import { managedBotProfile, manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import type { StagedBot } from "./bot-staging-types.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function setup() {
@@ -103,4 +104,42 @@ it("keeps a bot's mascot body when it is created from another bot's profile, as 
     expect(copy.mascotBody, mascotBody).toBe(mascotBody);
   }
   expect(store.createBot({ name: "Plain" }).mascotBody).toBeUndefined();
+});
+
+it("finds a permitted bot by its exact name, ignoring case, when the caller gives a name instead of an id", () => {
+  const { store, chief, lead, specialist, options } = setup();
+  expect(manageBot(store, chief, { action: "get", botId: "specialist" }, options).bot.id).toBe(specialist.id);
+  expect(manageBot(store, lead, { action: "get", botId: " SPECIALIST " }, options).bot.id).toBe(specialist.id);
+  // a by-id read of a bot outside the caller's organization keeps the permission refusal
+  const other = store.bots.find(bot => bot.name === "Other")!;
+  expect(() => manageBot(store, lead, { action: "get", botId: other.id }, options)).toThrow("That bot is not in your permitted organization.");
+});
+
+it("says plainly when no permitted bot has that name, without the permission text or leaking hidden bots", () => {
+  const { store, lead, options } = setup();
+  const missing = () => manageBot(store, lead, { action: "get", botId: "Nobody" }, options);
+  expect(missing).toThrow("No bot called Nobody");
+  expect(missing).not.toThrow("permitted organization");
+  // "Other" exists but is outside the lead's organization: same plain miss, no permission hint
+  expect(() => manageBot(store, lead, { action: "get", botId: "other" }, options)).toThrow("No bot called other");
+  try { missing(); } catch (error) { expect((error as { status: number }).status).toBe(404); }
+});
+
+it("lists the matches by name when a name is shared by more than one permitted bot", () => {
+  const { store, chief, specialist, options } = setup();
+  const twin = store.createBot({ name: "specialist", section: "Design" });
+  const staged = store.createBot({ name: "Specialist", section: "Hidden team" });
+  store.patchBot(staged.id, { staged: {} as StagedBot }); // waiting for review: mayInspectBot hides any staged bot
+  let message = "";
+  try { manageBot(store, chief, { action: "get", botId: "Specialist" }, options); } catch (error) { message = (error as Error).message; }
+  expect(message).toBe("2 bots are called Specialist: specialist (Design), Specialist (Studio). Use the bot's id.");
+  expect(message).not.toContain(specialist.id); expect(message).not.toContain(twin.id);
+});
+
+it("keeps changes id-only: a name never selects the bot to change", () => {
+  const { store, lead, specialist, options } = setup();
+  const revision = managedBotProfile(specialist).revision;
+  expect(() => manageBot(store, lead, { action: "update", botId: "Specialist", revision, role: "Changed" }, options)).toThrow("Read Specialist first and change it by its id.");
+  expect(specialist.title ?? "").toBe("");
+  expect(() => manageBot(store, lead, { action: "archive", botId: "Nobody", revision }, options)).toThrow("No bot called Nobody");
 });

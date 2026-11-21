@@ -33,9 +33,9 @@ Build **both** packaged-layout runtime fixtures through the container harness,
 before starting any full shard:
 
 ```sh
-/work/fuigo-builds/tools/it-remote.sh 'node scripts/test-truth/prepare-runtime.mjs base' > "$JOB_EVIDENCE/base-runtime.log"
+/root/fuigo-builds/tools/it-remote.sh 'node scripts/test-truth/prepare-runtime.mjs base' > "$JOB_EVIDENCE/base-runtime.log"
 python3 scripts/test-truth/collect-runtime.py --log "$JOB_EVIDENCE/base-runtime.log" --side base --sha BASE_SHA --destination .test-tmp/truth --scratch "$JOB_EVIDENCE"
-/work/fuigo-builds/tools/it-remote.sh 'node scripts/test-truth/prepare-runtime.mjs head' > "$JOB_EVIDENCE/head-runtime.log"
+/root/fuigo-builds/tools/it-remote.sh 'node scripts/test-truth/prepare-runtime.mjs head' > "$JOB_EVIDENCE/head-runtime.log"
 python3 scripts/test-truth/collect-runtime.py --log "$JOB_EVIDENCE/head-runtime.log" --side head --sha HEAD_SHA --destination .test-tmp/truth --scratch "$JOB_EVIDENCE"
 ```
 

@@ -1,0 +1,122 @@
+{
+  "base": "9e6f55e19857ca403bfec8723403090e1c29a724",
+  "job": "fix-webread-r3",
+  "environment": {
+    "wrapper": "/root/fuigo-builds/tools/it-remote.sh",
+    "network": "none",
+    "maximumConcurrentContainers": 1,
+    "fakesOnly": true
+  },
+  "tests": {
+    "passed": 126,
+    "log": ".webread-evidence/r3/green.log"
+  },
+  "fullTypecheck": {
+    "exit": 0,
+    "commands": [
+      "tsc -b",
+      "tsc -p tsconfig.server.json",
+      "tsc -p tools/flux-stream-conformance/tsconfig.json"
+    ],
+    "log": ".webread-evidence/r3/typecheck.log"
+  },
+  "baselineAndMutants": [
+    {
+      "id": "RED-first-read-baseline",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "WAITING FOR THE OWNER",
+        "4 failed"
+      ]
+    },
+    {
+      "id": "RED-release-gate-baseline",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "RED: false release PASS with UNVERIFIED exclusion proof"
+      ]
+    },
+    {
+      "id": "M5-askSite",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "WAITING FOR THE OWNER",
+        "4 failed"
+      ]
+    },
+    {
+      "id": "M5-read-destination",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "WAITING FOR THE OWNER",
+        "2 failed"
+      ]
+    },
+    {
+      "id": "M5-never",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "expected []",
+        "1 failed"
+      ]
+    },
+    {
+      "id": "M6-release-gate",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "expected 'PASS' to be 'UNVERIFIED'",
+        "1 failed"
+      ]
+    }
+  ],
+  "fakeReplay": {
+    "routeVerdict": "PASS",
+    "verdict": "UNVERIFIED",
+    "installedExclusions": {
+      "status": "UNVERIFIED",
+      "disposition": "P1-3 OPEN",
+      "reason": "Fake browser replay does not prove installed native reader exclusions, including Codex/Sol and Droid/Sol."
+    },
+    "processExit": 1,
+    "engines": [
+      {
+        "id": "verification",
+        "status": "PASS"
+      },
+      {
+        "id": "fake-codex",
+        "status": "PASS"
+      },
+      {
+        "id": "fake-droid-sol",
+        "status": "PASS"
+      },
+      {
+        "id": "fake-gemini",
+        "status": "PASS"
+      },
+      {
+        "id": "fake-fuigo",
+        "status": "PASS"
+      }
+    ],
+    "zeroCards": true,
+    "log": ".webread-evidence/r3/replay.log",
+    "evidence": ".webread-evidence/r3/replay/verdict.json"
+  },
+  "sourceSha256": {
+    "server/browser-extension-service.ts": "b7a70e4255d3e938cc1c2c3a9d76959d2eb686eafd31e70ffffb064e0b067702",
+    "server/browser-extension-integration.ts": "30d42446b559b520cc6bc81775eb5fadc5f333ada96ccc8aadf3a2c8cdc85fff",
+    "server/index.ts": "9e1a369a50f25cf9be2f54b3e63f19ff111ee28a3ad670d1725453581561718c",
+    "server/browser-read-route-inventory.test.ts": "7376562a49ef13255a83d902f39f63777d78a7cdf49571e875522e3fedb296f5",
+    "scripts/web-read-replay/run.mjs": "c49f34714105f6837a4a895b234071b8b17b16106d2a82ed3f5a3bf13240e5e4",
+    "scripts/web-read-replay/replay.test.mjs": "51eae978e252a8450fc941bf9c3e011ca87bb50cba476112f1fe956b38c9d4a4",
+    "scripts/web-read-replay/round3-mutants.mjs": "0760ffd9924071c2fe9d1657c37970372d29ab0fc7d22421de229a3ac4506768"
+  }
+}

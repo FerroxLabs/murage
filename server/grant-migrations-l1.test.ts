@@ -33,15 +33,15 @@ describe("bot and task lists", () => {
     const botsFile = join(DATA_DIR, "bots.json");
     const legacy: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
     const record = legacy.find((candidate) => candidate.id === bot.id)!;
-    record.alwaysAllow = ["stop:pay:stripe:brightline", "Bash:git", "stop:delete:/Users/alex/site"];
+    record.alwaysAllow = ["stop:pay:stripe:brightline", "Bash:git", "stop:delete:/Users/sean/site"];
     record.tasks![0]!.alwaysAllow = ["stop:pay:stripe:brightline", "Read"];
     writeFileSync(botsFile, JSON.stringify(legacy));
 
     const reloaded = new Store(selection);
     const saved = (JSON.parse(readFileSync(botsFile, "utf8")) as BotRecord[]).find((candidate) => candidate.id === bot.id)!;
-    expect(saved.alwaysAllow).toEqual(["Bash:git", "stop:delete:/Users/alex/site"]);
+    expect(saved.alwaysAllow).toEqual(["Bash:git", "stop:delete:/Users/sean/site"]);
     expect(saved.tasks![0]!.alwaysAllow).toEqual(["Read"]);
-    expect(reloaded.bot(bot.id)?.alwaysAllow).toEqual(["Bash:git", "stop:delete:/Users/alex/site"]);
+    expect(reloaded.bot(bot.id)?.alwaysAllow).toEqual(["Bash:git", "stop:delete:/Users/sean/site"]);
     const lines = warn.mock.calls.map((call) => String(call[0])).filter((line) => line.includes("never kept for good"));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("dropped 2");
@@ -63,11 +63,11 @@ describe("routine lists", () => {
     const file = join(fresh, "routines.json");
     copyFileSync(join(dir, "routines.json"), file);
     const disk = JSON.parse(readFileSync(file, "utf8")) as { routines: { id: string; alwaysAllow?: string[] }[] };
-    disk.routines.find((item) => item.id === routine.id)!.alwaysAllow = ["stop:pay:stripe:brightline", "stop:delete:/Users/alex/site"];
+    disk.routines.find((item) => item.id === routine.id)!.alwaysAllow = ["stop:pay:stripe:brightline", "stop:delete:/Users/sean/site"];
     writeFileSync(file, JSON.stringify(disk));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const loaded = new RoutineManager(options(file));
-    expect(loaded.listRoutines().find((item) => item.id === routine.id)?.alwaysAllow).toEqual(["stop:delete:/Users/alex/site"]);
+    expect(loaded.listRoutines().find((item) => item.id === routine.id)?.alwaysAllow).toEqual(["stop:delete:/Users/sean/site"]);
     const lines = warn.mock.calls.map((call) => String(call[0])).filter((line) => line.includes("never kept for good"));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("dropped 1");

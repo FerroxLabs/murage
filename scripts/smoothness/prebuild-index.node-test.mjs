@@ -20,7 +20,9 @@ for (const product of products) {
     const run = (...args) => spawnSync(process.execPath, [cli, ...args], { encoding: "utf8" });
     const indexes = await preListenIndexes(product);
     const schema = await import(pathToFileURL(join(resolve(product), "server/memory/schema.ts")).href);
-    const declared = Object.values(schema).filter(value => value?.preListen && typeof value.sql === "string");
+    // schema.ts also loads app-table modules that register their own preListen indexes (messages_turn).
+    const messages = await import(pathToFileURL(join(resolve(product), "server/message-tables.ts")).href);
+    const declared = [...Object.values(schema), ...Object.values(messages)].filter(value => value?.preListen && typeof value.sql === "string");
     assert.deepEqual(indexes.map(index => index.name).sort(), declared.map(index => index.name).sort(),
       "discover every exported preListen registration, not only the first");
     let db;

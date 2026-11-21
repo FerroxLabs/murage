@@ -68,6 +68,11 @@ it("T37 a routine turn never lists venue_post, even on a line that carries a pic
   expect(venuePostMounts(base)).not.toBeNull();
   expect(venuePostMounts({ ...base, automationSource: { kind: "routine", routineId: "r1" } })).toBeNull();
   expect(venuePostMounts({ ...base, automationThread: true })).toBeNull();
+  // PHONEAUD (Astra 5): No limits admits no turn with automation ancestry other than the routine's own run
+  const unlimited = { ...base, bot: { ...roster.bots[0]!, noLimits: true, autoApprove: true, fullAccess: true } } as typeof base;
+  expect(venuePostMounts(unlimited), "No-limits owner turn (control)").toMatchObject({ noLimits: true });
+  expect(venuePostMounts({ ...unlimited, automationThread: true }), "No-limits routine-started hand-off").toBeNull();
+  expect(venuePostMounts({ ...unlimited, automationThread: true, automationSource: "schedule" }), "No-limits routine's own run").toMatchObject({ noLimits: true });
   // the turn launcher drops the pick for any automation source before the mount ever sees it
   const source = readFileSync(join(import.meta.dirname, "index.ts"), "utf8");
   expect(source).toMatch(/opts\?\.postTo && !opts\.automationSource && !dlg \? \{ postTo: opts\.postTo/);

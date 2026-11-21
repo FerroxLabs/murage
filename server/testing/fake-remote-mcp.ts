@@ -68,6 +68,11 @@ export interface FakeRemoteMcpOptions {
   /** Every access token expires right after a tools/list is answered: the
    * next call in the same session (a tool call mid-turn) answers 401. */
   expireOnToolsList: boolean;
+  /** How a notification is accepted: the spec's "202", or the shapes real servers also send
+   * (Settings Test takes any status below 400): "200-text" (200, text/plain "OK") or "204". */
+  notificationAnswer: "202" | "200-text" | "204";
+  /** The content type a JSON answer to a request is labelled with (the body stays one JSON-RPC object). */
+  answerContentType: string;
 }
 
 export interface RecordedRequest {
@@ -151,6 +156,8 @@ const DEFAULT_OPTIONS: FakeRemoteMcpOptions = {
   toolCount: undefined,
   sseSilent: false,
   expireOnToolsList: false,
+  notificationAnswer: "202",
+  answerContentType: "application/json",
 };
 
 const DEFAULT_SCOPE = "tools:call";
@@ -533,7 +540,12 @@ export async function startFakeRemoteMcp(overrides: Partial<FakeRemoteMcpOptions
       return;
     }
     if (result.message === undefined) {
-      res.writeHead(result.status, result.headers);
+      if (result.status === 202 && options.notificationAnswer === "200-text") {
+        res.writeHead(200, { "content-type": "text/plain", ...result.headers });
+        res.end("OK");
+        return;
+      }
+      res.writeHead(result.status === 202 && options.notificationAnswer === "204" ? 204 : result.status, result.headers);
       res.end();
       return;
     }
@@ -542,7 +554,7 @@ export async function startFakeRemoteMcp(overrides: Partial<FakeRemoteMcpOptions
       res.end(frame(result.message));
       return;
     }
-    sendJson(res, result.status, result.message, result.headers);
+    sendJson(res, result.status, result.message, { "content-type": options.answerContentType, ...result.headers });
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

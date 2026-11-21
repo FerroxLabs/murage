@@ -326,6 +326,7 @@ it.each([
  expect(report.errors.some(e=>e.file===name && e.reason.includes(reason))).toBe(true);
 });
 it.each([
+ ['writer loses artifact-only guard', d=>{d.jobs.assemble.if="needs.prepare.outputs.should_release == 'true'";}],
  ['conditional probe gate', d=>{d.jobs.preflight.steps.at(-1).if='false';}],
  ['ignored probe failure', d=>{d.jobs.preflight['continue-on-error']=true;}],
  ['conditional probe step', d=>{d.jobs.assemble.steps.find(s=>s.run?.endsWith(' probe-prepared')).if='false';}],

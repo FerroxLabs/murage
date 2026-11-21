@@ -10,6 +10,6 @@ murage-rig-runner-2: generated output absent: node_modules
 murage-rig-runner-2: generated output absent: dist-server
 murage-rig-runner-2: generated output absent: .test-tmp/cfix3-winscen
 murage-rig-runner-2: no cfix3-winscen containers remain
-build-host: generated output absent: node_modules
-build-host: generated output absent: dist-server
-build-host: generated output absent: .test-tmp/cfix3-winscen
+hetzner-dsm: generated output absent: node_modules
+hetzner-dsm: generated output absent: dist-server
+hetzner-dsm: generated output absent: .test-tmp/cfix3-winscen

@@ -6,6 +6,8 @@ import { deferRecordsScan, revokeRecordsBounded } from "./memory-revocation.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { wakeFlipMarker } from "./receipt-outputs.ts";
 import { REF_MATCH } from "./revocation-ref-match.ts";
+import { objectCarryThread } from "./lineage-types.ts";
+import { threadNo } from "./thread-no.ts";
 
 /** Disclosure receipt revocation, in three widths. Every writer that ends
  * receipts goes through here, so each event logs one line with ids and counts
@@ -53,7 +55,24 @@ export function revokeThreadDisclosures(db: DatabaseSync, threadId: string, caus
   return noteRevocation("thread", cause, Number(db.prepare(sql).run(threadId).changes));
 }
 
-export function revokeRecordDisclosures(db: DatabaseSync, cause: string, affected: { recordIds?: readonly string[]; sourceIds?: readonly string[]; viaSources?: boolean; withdraws?: false }): number {
+/** 1020 ROSTER: every live receipt that cites a record or a source held in one of `scopes` (an audience move of the bot or room that owns
+ * them), in any thread. */
+export function revokeScopeDisclosures(db: DatabaseSync, scopes: readonly string[], cause: string): number {
+  const ids = JSON.stringify(scopes);
+  return noteRevocation("records", cause, Number(db.prepare(`UPDATE memory_disclosures SET state='revoked' WHERE state IN ('prepared','delivered') AND (
+    EXISTS (SELECT 1 FROM json_each(record_versions) j JOIN memory_records r ON r.id=json_extract(j.value,'$.id') WHERE r.scope_id IN (SELECT value FROM json_each(?1)))
+    OR EXISTS (SELECT 1 FROM json_each(source_versions) j JOIN memory_sources s ON s.id=json_extract(j.value,'$.id') WHERE s.scope_id IN (SELECT value FROM json_each(?1))))`).run(ids).changes));
+}
+
+export function revokeRecordDisclosures(db: DatabaseSync, cause: string, affected: { recordIds?: readonly string[]; sourceIds?: readonly string[]; viaSources?: boolean; withdraws?: false;
+  /** The one version of a record that was withdrawn, when its replacement keeps the same id (a changed notebook's chunks, import.ts): the
+   * write-time revoke then names that version only, so the replacement is not denied with it. Receipts still end at any version (none can
+   * cite the replacement yet: it is written in the same transaction). */
+  versions?: Readonly<Record<string, number>>;
+  /** 1.0.20 ctxrev-h1 (a changed notebook, import.ts): a receipt ends only by a record it cites, never by citing the notebook source or an
+   * evidence source of an affected record. A notebook chunk's words reach a session only through a receipt that cites the chunk, so one
+   * that cites only unchanged chunks keeps its turn; deny-read.ts contentReceiptVerdict still judges every source it cites live. */
+  receiptsByRecordOnly?: true }): number {
   // A change that withdraws nothing any session was shown and adds nothing one must not keep (designs/MEMORY-CHANGED-RESET-106.md):
   // pinning (a mark is added, never removed), keeping a learned memory (its confirmation, not its words) and remembering a brand-new
   // record (nothing can cite an id that did not exist). No receipt ends and no write-time revoke is committed, so a warm engine
@@ -65,9 +84,15 @@ export function revokeRecordDisclosures(db: DatabaseSync, cause: string, affecte
   // records derived from it, their output lines and everything after them), unless the change shows nothing new (viaSources: false:
   // approving a candidate, a pin, a review keep). The record's own visibility stays its state's.
   let revokeId = 0;
+  // 1.0.20 checkwin: a changed notebook's import withdraws chunks no session was shown (the storm: one import a minute, count=0). Each soft
+  // revoke opens a "checking" window over every thread and scope until its marker closes it (revoke-commit.ts), so an unshown chunk opened
+  // a window for nothing and, under a reclaim storm, kept every thread's recall withheld. An import revokes only what something was shown.
+  const shown = cause === "import" ? importShownProbe(db, sourceIds) : null;
   if (affected.viaSources !== false) for (const id of recordIds) {
     if (typeof id !== "string") continue;
-    const r = commitRevoke(db, { kind: "memory", ref: { kind: "record", id }, cause: writetimeCause(cause) });
+    if (shown && !shown(id)) continue;
+    const version = affected.versions?.[id];
+    const r = commitRevoke(db, { kind: "memory", ref: { kind: "record", id, ...(version !== undefined && version > 0 ? { version } : {}) }, cause: writetimeCause(cause) });
     revokeId ||= r;
   }
   // A record's words also travel in its evidence sources: a session may have
@@ -76,7 +101,8 @@ export function revokeRecordDisclosures(db: DatabaseSync, cause: string, affecte
   // that cite any evidence source of an affected record, at any version and
   // in any thread, end too. Only writers that change nothing a session was
   // shown (approving a candidate, a pin flag) pass viaSources: false.
-  const viaSources = affected.viaSources !== false ? 1 : 0;
+  const viaSources = affected.viaSources !== false && !affected.receiptsByRecordOnly ? 1 : 0;
+  if (affected.receiptsByRecordOnly) sourceIds.length = 0;
   // memory_disclosure_refs (schema v8) holds, for every receipt not yet
   // revoked, exactly the ids its JSON names, so this reads the receipts that
   // cite an affected id instead of parsing every receipt ever written (F6).
@@ -96,6 +122,35 @@ export function revokeRecordDisclosures(db: DatabaseSync, cause: string, affecte
   return noteRevocation("records", cause, revokeRecordsBounded(db, cause, recordIds as string[], sourceIds as string[], viaSources === 1, revokeId || undefined));
 }
 
+/** Whether anything was ever shown a withdrawn import record (null: the file cannot tell, so every record is revoked, as before). A session
+ * is shown a record only through a disclosure receipt (the file header); a live one is in memory_disclosure_refs (citing the record, or a
+ * source its words travel in: the import's own sources and the record's evidence sources), a revoked one hangs a consumer edge on each item
+ * it cites (revoke-commit.ts holdRevokedReceipt) or on the kind's wildcard, and one whose flip is not drained yet sits in
+ * memory_receipt_flips. A record derived from it carries its words further: shown, fail closed. Any wildcard hold or queued flip answers
+ * "shown" for every record (withholds more, never less). Bounded: index seeks per record, never a scan of the receipts. */
+function importShownProbe(db: DatabaseSync, sourceIds: readonly string[]): ((id: string) => boolean) | null {
+  try {
+    if (!revocationIndexReady(db)) return null;
+    const carried = (kind: "record" | "source", id: string) => {
+      const no = threadNo(db, objectCarryThread({ kind, id }));
+      return no !== null && Boolean(db.prepare("SELECT 1 AS x FROM memory_lineage_carry WHERE parent_thread_no=? LIMIT 1").get(no));
+    };
+    if (carried("record", "*") || carried("source", "*")) return null;
+    if (db.prepare("SELECT 1 AS x FROM memory_receipt_flips LIMIT 1").get()) return null;
+    const live = db.prepare(`SELECT 1 AS x FROM memory_disclosure_refs x WHERE x.kind=?2 AND ${REF_MATCH("SELECT ?1")} LIMIT 1`);
+    const sourceShown = new Map<string, boolean>();
+    const source = (id: string) => {
+      let v = sourceShown.get(id);
+      if (v === undefined) sourceShown.set(id, v = Boolean(live.get(id, "source")) || carried("source", id));
+      return v;
+    };
+    if (sourceIds.some(source)) return () => true;
+    const evidence = db.prepare("SELECT DISTINCT source_id AS s FROM memory_evidence WHERE record_id=?");
+    const derived = db.prepare("SELECT 1 AS x FROM memory_derivations WHERE parent_id=? LIMIT 1");
+    return id => Boolean(live.get(id, "record")) || carried("record", id) || Boolean(derived.get(id))
+      || (evidence.all(id) as Array<{ s: unknown }>).some(row => typeof row.s !== "string" || source(row.s));
+  } catch { return null; } // a table missing on an older file: revoke every record, as before
+}
 /** The write-time cause of a records revocation (lineage-types.ts RevokeRoot memory causes; none of these removes the record). */
 function writetimeCause(cause: string): "archive" | "correct" | "revise" {
   if (cause === "archive") return "archive";

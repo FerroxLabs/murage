@@ -183,8 +183,8 @@ path; a handoff rerun also needs MAIN to reset the disposable gate user's profil
 and installation through the box's existing reset procedure.
 
 Container verification (no Windows workflow is claimed) runs through
-`/work/fuigo-builds/tools/it-remote.sh` with `IT_JOB=cfix3-winscen`, this worktree as
-`IT_W`, and `IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`. Evidence is in
+`/root/fuigo-builds/tools/it-remote.sh` with `IT_JOB=cfix3-winscen`, this worktree as
+`IT_W`, and `IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`. Evidence is in
 `scripts/windows/evidence`. It covers Node receipt/feed/echo behavior, the real
 updater isolation refusal, PowerShell parsing, embedded C# compilation, argument
 quoting and both receipt schemas. The pairing mutant that accepts one receipt

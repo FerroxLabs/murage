@@ -36,7 +36,7 @@ dropin() { # UNIT : every ExecStart drop-in begins with an empty ExecStart= (ste
 }
 
 install_rig() {
-  # 1. artifacts from the build host arrive under $ART: built server, murage-clock, CP Worker with node_modules, wrangler 4.125.0, murage-control-20f95f742a
+  # 1. artifacts from Hetzner arrive under $ART: built server, murage-clock, CP Worker with node_modules, wrangler 4.125.0, murage-control-20f95f742a
   install -d "$LIBEXEC" "$CTL" "$HOME_DIR" "$MINER_DIR" /var/lib/j5b
   # 2. the r5 prerequisites
   getent group murage >/dev/null || groupadd --system murage

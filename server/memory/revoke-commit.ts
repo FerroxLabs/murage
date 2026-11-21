@@ -122,6 +122,48 @@ function seedForgetSupport(tx: DatabaseSync, id: string, version: number | undef
   else for (const [thread, message] of lines.values()) { const line = lineOf(tx, thread, message); if (line) seeds.push([thread, line.lsn]); }
   return rows.length <= maxRows;
 }
+/** CTXREV H2 A-2: the stored reply of an owner turn whose held context an own privacy revoke withdrew mid-turn is withheld from every
+ * bot reader by its own line mark (deny_line, read by the door whatever the reader's ownFlag), and by nothing else: no range, no walk, no
+ * session stage. A line revoke (commitRevoke) would also deny the running owner turn's own engine session and later lines of the thread,
+ * stopping the turn Sean's revokekeep rule keeps (index.ts:16986-16993). Idempotent from the stored marks (a rolled-back write leaves none,
+ * so the next write of the reply adds it). A line with no lineage row already reads "checking" (withheld). True when a mark was added. */
+export function hideReplyLine(tx: DatabaseSync, threadId: string, messageId: string): boolean {
+  if (!hasWritetime(tx)) return false;
+  const line = lineOf(tx, threadId, messageId);
+  if (!line || st(tx, "SELECT 1 AS x FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='hide-reply' LIMIT 1").get(threadId, line.lsn)) return false;
+  const now = takeCommitLsn(tx);
+  const R = Number(st(tx, "SELECT coalesce(max(revoke_id),0)+1 AS r FROM memory_revoke_jobs").get()!.r);
+  st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,?,?,?,?,'done','','done')")
+    .run(R, "line", compactRoot({ kind: "line", threadId, messageIds: [messageId], cause: "hide" }), line.lsn, now);
+  writeLine(tx, R, threadId, line.lsn, "hide-reply");
+  bumpDenyGeneration(tx);
+  return true;
+}
+
+/** CTXREV H2 A-2: a note, record, lesson or claim saved by an owner turn whose held context an own privacy revoke withdrew mid-turn (before
+ * or after its reply is written) may carry the revoked detail, as the reply may: it is withheld from every bot by its own mark, nothing
+ * else (a just-written object has no readers to walk). Idempotent per object version. A Murage object with no version (a note, card, skill
+ * or file path: every version is one object, prompt-parts.ts fileRef) is withheld whole, as a forget carried onto it would be (DECISIONS D7). */
+export function hideTurnRecord(tx: DatabaseSync, record: MemoryRef): void {
+  if (!hasWritetime(tx)) return;
+  const version = record.version ?? 0;
+  // already denied to every reader (a done job's row may be pruned, so the mark itself is the test; an audience-only mark is not enough)
+  if (st(tx, `SELECT 1 AS x FROM memory_deny_memory m WHERE m.kind=? AND m.id=? AND m.version=?
+    AND NOT EXISTS (SELECT 1 FROM memory_revoke_audience a WHERE a.revoke_id=m.revoke_id) LIMIT 1`).get(record.kind, record.id, Math.max(0, version))) return;
+  const now = takeCommitLsn(tx);
+  const R = Number(st(tx, "SELECT coalesce(max(revoke_id),0)+1 AS r FROM memory_revoke_jobs").get()!.r);
+  st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,?,?,?,?,'done','','done')")
+    .run(R, "memory", JSON.stringify({ kind: "memory", ref: record, cause: "hide" }), now, now);
+  writeMemory(tx, R, record.kind, record.id, version);
+  bumpDenyGeneration(tx);
+}
+/** CTXREV H2 A-2: whether a stored line carries a reply's hide mark (hideReplyLine): it is never a memory source with its words. */
+export function replyHiddenFromBots(tx: DatabaseSync, threadId: string, messageId: string): boolean {
+  if (!hasWritetime(tx)) return false;
+  const line = lineOf(tx, threadId, messageId);
+  return Boolean(line && st(tx, "SELECT 1 AS x FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='hide-reply' LIMIT 1").get(threadId, line.lsn));
+}
+
 export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: RevokeOptions = {}): number {
   if (!hasWritetime(tx)) return 0;
   // the commit's own lsn: the cap of its ranges and of the walk's session stage is this slot, so a prompt built after the commit (head =
@@ -390,8 +432,10 @@ function addRows(out: Found, rows: Array<Record<string, unknown>>, denied: boole
 function rangeRevokes(tx: DatabaseSync, range: CarryRange, out: Found): void {
   const T = range.threadId, to = range.to;
   const unknown = to >= UNKNOWN_LSN;
-  addRows(out, (unknown ? st(tx, "SELECT revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn<>? LIMIT 64").all(T, FIRST_LSN)
-    : st(tx, "SELECT revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn<>? AND lsn BETWEEN ? AND ? LIMIT 64").all(T, FIRST_LSN, range.from, to)) as Array<Record<string, unknown>>, true);
+  // CTXREV H2 A-2: a reply's hide mark (hideReplyLine) is no revoke of the thread. The door withholds the reply from every bot, so no later
+  // turn's line, note or session rests on it; what the hidden reply's own turn saves takes its own mark at its write (hideTurnRecord)
+  addRows(out, (unknown ? st(tx, "SELECT revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn<>? AND reason<>'hide-reply' LIMIT 64").all(T, FIRST_LSN)
+    : st(tx, "SELECT revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn<>? AND lsn BETWEEN ? AND ? AND reason<>'hide-reply' LIMIT 64").all(T, FIRST_LSN, range.from, to)) as Array<Record<string, unknown>>, true);
   // a positional range denies a carried line only when the read rule does (deny-read.ts): the line is after the range's start and its turn
   // began before the range's end. A clean reply written after the forget lies outside it (Astra audit P1 6); the carried run is checked for
   // such a line in one seek per range row. A thread with no number has no lines to look at: any range of it counts (fail closed).

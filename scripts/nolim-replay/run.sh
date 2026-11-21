@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build host only. The Mac uses MAIN's fixed grep procedure, never this script.
+# Hetzner only. The Mac uses MAIN's fixed grep procedure, never this script.
 set -euo pipefail
 umask 077
 [[ $# == 7 ]] || { echo 'usage: run.sh IMAGE CORPUS RESULTS SHA CORPUS_DIGEST POLICY_DIGEST PENDING_RECEIPT'; exit 2; }
